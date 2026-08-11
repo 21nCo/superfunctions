@@ -22,7 +22,10 @@ export const Portal: React.FC<PortalProps> = ({ children, container }) => {
     setPortalReady(true);
   }, []);
 
-  if (!mountNode || !portalReady) return <>{children}</>;
+  // Portals have no server-rendered owner. Keeping descendants absent until
+  // the portal is ready means they mount once under their final portal owner,
+  // instead of first mounting in a fragment and then remounting after hydration.
+  if (!mountNode || !portalReady) return null;
 
   try {
     return ReactDOM.createPortal(children, mountNode);

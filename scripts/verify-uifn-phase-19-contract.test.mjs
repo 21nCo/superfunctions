@@ -5,6 +5,7 @@ import test from 'node:test';
 import Ajv from 'ajv';
 import {
   createPhase19Signature,
+  phase19BlockingDefectIssues,
   phase19DefectSetSha256,
   phase19ManualEvidenceSetSha256,
   phase19PublicKeyId,
@@ -18,7 +19,7 @@ import {
   PHASE_19_REVIEW_SCOPE,
 } from './uifn-phase-19-contract.mjs';
 
-const matrix = JSON.parse(readFileSync(new URL('../uifn/accessibility/phase-19/matrix.json', import.meta.url), 'utf8'));
+const matrix = JSON.parse(readFileSync(new URL('../uifn/.conduct/accessibility/phase-19/matrix.json', import.meta.url), 'utf8'));
 const defectPolicy = JSON.parse(readFileSync(new URL('../uifn/.conduct/contracts/defect-policy.json', import.meta.url), 'utf8'));
 const now = new Date('2026-07-26T12:00:00.000Z');
 const timing = {
@@ -414,6 +415,23 @@ test('TV-A11Y-004-N rejects an open P1 accessibility defect', () => {
   assert(codes.includes('UIFN_A11Y_BLOCKING_DEFECT'));
 });
 
+test('TV-A11Y-004-N rejects a relevant defect with an unknown severity', () => {
+  const issues = phase19BlockingDefectIssues([{
+    id: 'A11Y-UNKNOWN-SEVERITY',
+    severity: 'urgent',
+    status: 'triaged',
+    owner: 'uifn-maintainer',
+    createdAt: '2026-07-25T00:00:00.000Z',
+    lastTriagedAt: '2026-07-25T01:00:00.000Z',
+    affectedRequirements: ['A11Y-003'],
+    affectedEvidence: [],
+    accessibility: true,
+  }], defectPolicy, now);
+
+  assert.deepEqual(issues.map((entry) => entry.code), ['UIFN_A11Y_BLOCKING_DEFECT']);
+  assert.deepEqual(issues[0].reasons, ['UIFN_DEFECT_SEVERITY_INVALID']);
+});
+
 test('independent findings and retests must bind to the exact defect set and review interval', () => {
   const manualDocuments = completeManualDocuments();
   const review = reviewDocument(manualDocuments);
@@ -570,9 +588,9 @@ test('manual defect retests must be human-observed after defect creation and ins
 
 test('published JSON Schemas accept complete evidence and reject missing observation coverage', () => {
   const ajv = new Ajv({ allErrors: true, schemaId: 'auto' });
-  const participantSchema = JSON.parse(readFileSync(new URL('../uifn/accessibility/phase-19/participants.schema.json', import.meta.url), 'utf8'));
-  const manualSchema = JSON.parse(readFileSync(new URL('../uifn/accessibility/phase-19/manual-evidence.schema.json', import.meta.url), 'utf8'));
-  const reviewSchema = JSON.parse(readFileSync(new URL('../uifn/accessibility/phase-19/independent-review.schema.json', import.meta.url), 'utf8'));
+  const participantSchema = JSON.parse(readFileSync(new URL('../uifn/.conduct/accessibility/phase-19/participants.schema.json', import.meta.url), 'utf8'));
+  const manualSchema = JSON.parse(readFileSync(new URL('../uifn/.conduct/accessibility/phase-19/manual-evidence.schema.json', import.meta.url), 'utf8'));
+  const reviewSchema = JSON.parse(readFileSync(new URL('../uifn/.conduct/accessibility/phase-19/independent-review.schema.json', import.meta.url), 'utf8'));
   assert.equal(ajv.validate(participantSchema, registry()), true, ajv.errorsText());
   const manual = manualDocument(matrix.rows[0]);
   assert.equal(ajv.validate(manualSchema, manual), true, ajv.errorsText());

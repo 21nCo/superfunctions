@@ -15,8 +15,8 @@
     "packageGraphId": { "const": "uifn-1.0-stable-dag" },
     "frameworks": { "const": ["react", "svelte", "solid"] },
     "implementationStatusPolicy": {
-      "type": "object", "additionalProperties": false, "required": ["phase", "allowedCurrentStatus", "generatedMetadataIsImplementationEvidence"],
-      "properties": { "phase": { "const": "PHASE_20" }, "allowedCurrentStatus": { "const": "implemented" }, "generatedMetadataIsImplementationEvidence": { "const": true } }
+      "type": "object", "additionalProperties": false, "required": ["allowedCurrentStatus", "generatedMetadataIsImplementationEvidence"],
+      "properties": { "allowedCurrentStatus": { "const": "implemented" }, "generatedMetadataIsImplementationEvidence": { "const": true } }
     },
     "primitiveCount": { "const": 69 },
     "sourceSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },

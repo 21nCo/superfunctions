@@ -36,8 +36,8 @@
   },
   "sideEffects": false,
   "scripts": {
-    "generate": "node ../../scripts/generate-uifn-phase-13.mjs --write",
-    "generate:check": "node ../../scripts/generate-uifn-phase-13.mjs --check",
+    "generate": "node ../../scripts/generate-uifn-solid.mjs --write",
+    "generate:check": "node ../../scripts/generate-uifn-solid.mjs --check",
     "build": "node ../../scripts/build-uifn-solid.mjs",
     "dev": "tsc --project tsconfig.build.json --watch",
     "test": "vitest run --config vitest.config.ts && vitest run --config vitest.ssr.config.ts",

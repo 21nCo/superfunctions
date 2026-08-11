@@ -1,5 +1,5 @@
 {
-  "catalogSha256": "0a84df4b8e8415afc9af0e5a1bce312a7a3355ab37d6f1ed2701d6c998acc80a",
+  "catalogSha256": "eaf2782a22ad3a0153f29e8de410631438fd280d5c29905f7a37694178cb1f2d",
   "catalogVersion": "1.0.0",
   "domServices": [
     "root-scope-modality-tabbability",
@@ -10,20 +10,8 @@
     "portal-presence-transitions",
     "form-bridges-live-regions"
   ],
-  "frameworkImplementationPhases": {
-    "react": "PHASE_11",
-    "solid": "PHASE_13",
-    "svelte": "PHASE_12"
-  },
   "generatorVersion": "1.0.0",
   "implementationEvidence": true,
-  "phaseCounts": {
-    "PHASE_06": 21,
-    "PHASE_07": 8,
-    "PHASE_08": 7,
-    "PHASE_09": 19,
-    "PHASE_10": 14
-  },
   "primitives": [
     {
       "domServices": [
@@ -32,7 +20,6 @@
       ],
       "id": "accordion",
       "name": "Accordion",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -49,7 +36,6 @@
       ],
       "id": "alert-dialog",
       "name": "AlertDialog",
-      "owningPhase": "PHASE_07",
       "requirements": [
         "CAT-001",
         "PRIM-002"
@@ -62,7 +48,6 @@
       ],
       "id": "angle-slider",
       "name": "AngleSlider",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-006"
@@ -79,7 +64,6 @@
       ],
       "id": "autocomplete",
       "name": "Autocomplete",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-005"
@@ -89,7 +73,6 @@
       "domServices": [],
       "id": "avatar",
       "name": "Avatar",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -99,7 +82,6 @@
       "domServices": [],
       "id": "button",
       "name": "Button",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -113,7 +95,6 @@
       ],
       "id": "carousel",
       "name": "Carousel",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-006"
@@ -126,7 +107,6 @@
       ],
       "id": "checkbox",
       "name": "Checkbox",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -139,7 +119,6 @@
       ],
       "id": "checkbox-group",
       "name": "CheckboxGroup",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -152,7 +131,6 @@
       ],
       "id": "clipboard",
       "name": "Clipboard",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-005"
@@ -165,7 +143,6 @@
       ],
       "id": "collapsible",
       "name": "Collapsible",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -182,7 +159,6 @@
       ],
       "id": "color-picker",
       "name": "ColorPicker",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-007"
@@ -199,7 +175,6 @@
       ],
       "id": "combobox",
       "name": "Combobox",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -215,7 +190,6 @@
       ],
       "id": "context-menu",
       "name": "ContextMenu",
-      "owningPhase": "PHASE_08",
       "requirements": [
         "CAT-001",
         "PRIM-003"
@@ -228,7 +202,6 @@
       ],
       "id": "date-input",
       "name": "DateInput",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-007"
@@ -245,7 +218,6 @@
       ],
       "id": "date-picker",
       "name": "DatePicker",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-007"
@@ -262,7 +234,6 @@
       ],
       "id": "dialog",
       "name": "Dialog",
-      "owningPhase": "PHASE_07",
       "requirements": [
         "CAT-001",
         "PRIM-002"
@@ -279,7 +250,6 @@
       ],
       "id": "drawer",
       "name": "Drawer",
-      "owningPhase": "PHASE_07",
       "requirements": [
         "CAT-001",
         "PRIM-002"
@@ -292,7 +262,6 @@
       ],
       "id": "editable",
       "name": "Editable",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-005"
@@ -304,7 +273,6 @@
       ],
       "id": "field",
       "name": "Field",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -316,7 +284,6 @@
       ],
       "id": "fieldset",
       "name": "Fieldset",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -329,7 +296,6 @@
       ],
       "id": "file-upload",
       "name": "FileUpload",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-005"
@@ -345,7 +311,6 @@
       ],
       "id": "floating-panel",
       "name": "FloatingPanel",
-      "owningPhase": "PHASE_07",
       "requirements": [
         "CAT-001",
         "PRIM-002"
@@ -357,7 +322,6 @@
       ],
       "id": "form",
       "name": "Form",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -373,7 +337,6 @@
       ],
       "id": "hover-card",
       "name": "HoverCard",
-      "owningPhase": "PHASE_07",
       "requirements": [
         "CAT-001",
         "PRIM-002"
@@ -386,7 +349,6 @@
       ],
       "id": "image-cropper",
       "name": "ImageCropper",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -398,7 +360,6 @@
       ],
       "id": "input",
       "name": "Input",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -411,7 +372,6 @@
       ],
       "id": "listbox",
       "name": "Listbox",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -421,7 +381,6 @@
       "domServices": [],
       "id": "marquee",
       "name": "Marquee",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -437,7 +396,6 @@
       ],
       "id": "menu",
       "name": "Menu",
-      "owningPhase": "PHASE_08",
       "requirements": [
         "CAT-001",
         "PRIM-003"
@@ -453,7 +411,6 @@
       ],
       "id": "menubar",
       "name": "Menubar",
-      "owningPhase": "PHASE_08",
       "requirements": [
         "CAT-001",
         "PRIM-003"
@@ -465,7 +422,6 @@
       ],
       "id": "meter",
       "name": "Meter",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-008"
@@ -481,7 +437,6 @@
       ],
       "id": "navigation-menu",
       "name": "NavigationMenu",
-      "owningPhase": "PHASE_08",
       "requirements": [
         "CAT-001",
         "PRIM-003"
@@ -494,7 +449,6 @@
       ],
       "id": "number-input",
       "name": "NumberInput",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-005"
@@ -506,7 +460,6 @@
       ],
       "id": "pagination",
       "name": "Pagination",
-      "owningPhase": "PHASE_08",
       "requirements": [
         "CAT-001",
         "PRIM-003"
@@ -519,7 +472,6 @@
       ],
       "id": "password-input",
       "name": "PasswordInput",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-005"
@@ -532,7 +484,6 @@
       ],
       "id": "pin-input",
       "name": "PinInput",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-005"
@@ -548,7 +499,6 @@
       ],
       "id": "popover",
       "name": "Popover",
-      "owningPhase": "PHASE_07",
       "requirements": [
         "CAT-001",
         "PRIM-002"
@@ -560,7 +510,6 @@
       ],
       "id": "progress",
       "name": "Progress",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-008"
@@ -570,7 +519,6 @@
       "domServices": [],
       "id": "qr-code",
       "name": "QRCode",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -583,7 +531,6 @@
       ],
       "id": "radio-group",
       "name": "RadioGroup",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -596,7 +543,6 @@
       ],
       "id": "rating-group",
       "name": "RatingGroup",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-006"
@@ -608,7 +554,6 @@
       ],
       "id": "scroll-area",
       "name": "ScrollArea",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -621,7 +566,6 @@
       ],
       "id": "segment-group",
       "name": "SegmentGroup",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -638,7 +582,6 @@
       ],
       "id": "select",
       "name": "Select",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -648,7 +591,6 @@
       "domServices": [],
       "id": "separator",
       "name": "Separator",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -661,7 +603,6 @@
       ],
       "id": "signature-pad",
       "name": "SignaturePad",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-006"
@@ -674,7 +615,6 @@
       ],
       "id": "slider",
       "name": "Slider",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-006"
@@ -686,7 +626,6 @@
       ],
       "id": "splitter",
       "name": "Splitter",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-006"
@@ -699,7 +638,6 @@
       ],
       "id": "steps",
       "name": "Steps",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-008"
@@ -712,7 +650,6 @@
       ],
       "id": "switch",
       "name": "Switch",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -724,7 +661,6 @@
       ],
       "id": "tabs",
       "name": "Tabs",
-      "owningPhase": "PHASE_08",
       "requirements": [
         "CAT-001",
         "PRIM-003"
@@ -737,7 +673,6 @@
       ],
       "id": "tags-input",
       "name": "TagsInput",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -750,7 +685,6 @@
       ],
       "id": "timer",
       "name": "Timer",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-007"
@@ -764,7 +698,6 @@
       ],
       "id": "toast",
       "name": "Toast",
-      "owningPhase": "PHASE_10",
       "requirements": [
         "CAT-001",
         "PRIM-008"
@@ -776,7 +709,6 @@
       ],
       "id": "toggle",
       "name": "Toggle",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -788,7 +720,6 @@
       ],
       "id": "toggle-group",
       "name": "ToggleGroup",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -800,7 +731,6 @@
       ],
       "id": "toolbar",
       "name": "Toolbar",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -815,7 +745,6 @@
       ],
       "id": "tooltip",
       "name": "Tooltip",
-      "owningPhase": "PHASE_07",
       "requirements": [
         "CAT-001",
         "PRIM-002"
@@ -833,7 +762,6 @@
       ],
       "id": "tour",
       "name": "Tour",
-      "owningPhase": "PHASE_07",
       "requirements": [
         "CAT-001",
         "PRIM-002"
@@ -846,7 +774,6 @@
       ],
       "id": "tree-view",
       "name": "TreeView",
-      "owningPhase": "PHASE_08",
       "requirements": [
         "CAT-001",
         "PRIM-003",
@@ -857,7 +784,6 @@
       "domServices": [],
       "id": "badge",
       "name": "Badge",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -867,7 +793,6 @@
       "domServices": [],
       "id": "breadcrumb",
       "name": "Breadcrumb",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -877,7 +802,6 @@
       "domServices": [],
       "id": "card",
       "name": "Card",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -890,7 +814,6 @@
       ],
       "id": "command",
       "name": "Command",
-      "owningPhase": "PHASE_09",
       "requirements": [
         "CAT-001",
         "PRIM-004"
@@ -902,7 +825,6 @@
       ],
       "id": "input-group",
       "name": "InputGroup",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -912,7 +834,6 @@
       "domServices": [],
       "id": "skeleton",
       "name": "Skeleton",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -922,7 +843,6 @@
       "domServices": [],
       "id": "table",
       "name": "Table",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -934,7 +854,6 @@
       ],
       "id": "textarea",
       "name": "Textarea",
-      "owningPhase": "PHASE_06",
       "requirements": [
         "CAT-001",
         "PRIM-001"
@@ -942,5 +861,5 @@
     }
   ],
   "schemaVersion": 1,
-  "sourceSha256": "5ffc3431ecf062d7cbc46545ecbcbda89310d2057701e38c1492ca61c89d16cf"
+  "sourceSha256": "b1c584fe1444a6350203be6ff3f226004e5d29b25433ba241c97b6f1edfeefb7"
 }

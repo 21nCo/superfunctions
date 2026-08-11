@@ -102,7 +102,7 @@ result.counts = {
 };
 
 if (scopes.has("contracts")) {
-  if (shared.workbenchComponents.length !== 45) fail("UIFN_EXAMPLES_COMPONENT_COUNT", "component inventory must contain 45 components", { actual: shared.workbenchComponents.length });
+  if (shared.workbenchComponents.length !== 69) fail("UIFN_EXAMPLES_COMPONENT_COUNT", "component inventory must contain 69 components", { actual: shared.workbenchComponents.length });
   if (!shared.workbenchScenarios.length) fail("UIFN_WORKBENCH_SCENARIO_MISSING", "at least one product scenario is required");
   if (shared.workbenchPatterns.length !== 14) fail("UIFN_EXAMPLES_PATTERN_COUNT", "pattern inventory must contain 14 patterns", { actual: shared.workbenchPatterns.length });
   if (shared.workbenchSfPanels.length !== 14) fail("UIFN_EXAMPLES_SF_COUNT", "SF inventory must contain 14 panels", { actual: shared.workbenchSfPanels.length });

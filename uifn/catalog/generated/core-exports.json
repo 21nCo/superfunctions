@@ -1,9 +1,8 @@
 {
-  "catalogSha256": "0a84df4b8e8415afc9af0e5a1bce312a7a3355ab37d6f1ed2701d6c998acc80a",
+  "catalogSha256": "eaf2782a22ad3a0153f29e8de410631438fd280d5c29905f7a37694178cb1f2d",
   "catalogVersion": "1.0.0",
   "exports": [
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "accordion",
@@ -11,7 +10,6 @@
       "symbol": "AccordionController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "accordion",
@@ -19,7 +17,6 @@
       "symbol": "createAccordionController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "alert-dialog",
@@ -27,7 +24,6 @@
       "symbol": "AlertDialogController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "alert-dialog",
@@ -35,7 +31,6 @@
       "symbol": "createAlertDialogController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "angle-slider",
@@ -43,7 +38,6 @@
       "symbol": "AngleSliderController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "angle-slider",
@@ -51,7 +45,6 @@
       "symbol": "createAngleSliderController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "autocomplete",
@@ -59,7 +52,6 @@
       "symbol": "AutocompleteController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "autocomplete",
@@ -67,7 +59,6 @@
       "symbol": "createAutocompleteController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "avatar",
@@ -75,7 +66,6 @@
       "symbol": "AvatarContract"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "button",
@@ -83,7 +73,6 @@
       "symbol": "ButtonContract"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "carousel",
@@ -91,7 +80,6 @@
       "symbol": "CarouselController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "carousel",
@@ -99,7 +87,6 @@
       "symbol": "createCarouselController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "checkbox",
@@ -107,7 +94,6 @@
       "symbol": "CheckboxController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "checkbox",
@@ -115,7 +101,6 @@
       "symbol": "createCheckboxController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "checkbox-group",
@@ -123,7 +108,6 @@
       "symbol": "CheckboxGroupController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "checkbox-group",
@@ -131,7 +115,6 @@
       "symbol": "createCheckboxGroupController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "clipboard",
@@ -139,7 +122,6 @@
       "symbol": "ClipboardController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "clipboard",
@@ -147,7 +129,6 @@
       "symbol": "createClipboardController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "collapsible",
@@ -155,7 +136,6 @@
       "symbol": "CollapsibleController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "collapsible",
@@ -163,7 +143,6 @@
       "symbol": "createCollapsibleController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "color-picker",
@@ -171,7 +150,6 @@
       "symbol": "ColorPickerController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "color-picker",
@@ -179,7 +157,6 @@
       "symbol": "createColorPickerController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "combobox",
@@ -187,7 +164,6 @@
       "symbol": "ComboboxController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "combobox",
@@ -195,7 +171,6 @@
       "symbol": "createComboboxController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "context-menu",
@@ -203,7 +178,6 @@
       "symbol": "ContextMenuController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "context-menu",
@@ -211,7 +185,6 @@
       "symbol": "createContextMenuController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "date-input",
@@ -219,7 +192,6 @@
       "symbol": "DateInputController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "date-input",
@@ -227,7 +199,6 @@
       "symbol": "createDateInputController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "date-picker",
@@ -235,7 +206,6 @@
       "symbol": "DatePickerController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "date-picker",
@@ -243,7 +213,6 @@
       "symbol": "createDatePickerController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "dialog",
@@ -251,7 +220,6 @@
       "symbol": "DialogController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "dialog",
@@ -259,7 +227,6 @@
       "symbol": "createDialogController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "drawer",
@@ -267,7 +234,6 @@
       "symbol": "DrawerController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "drawer",
@@ -275,7 +241,6 @@
       "symbol": "createDrawerController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "editable",
@@ -283,7 +248,6 @@
       "symbol": "EditableController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "editable",
@@ -291,7 +255,6 @@
       "symbol": "createEditableController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "field",
@@ -299,7 +262,6 @@
       "symbol": "FieldContract"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "fieldset",
@@ -307,7 +269,6 @@
       "symbol": "FieldsetContract"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "file-upload",
@@ -315,7 +276,6 @@
       "symbol": "FileUploadController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "file-upload",
@@ -323,7 +283,6 @@
       "symbol": "createFileUploadController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "floating-panel",
@@ -331,7 +290,6 @@
       "symbol": "FloatingPanelController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "floating-panel",
@@ -339,7 +297,6 @@
       "symbol": "createFloatingPanelController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "form",
@@ -347,7 +304,6 @@
       "symbol": "FormContract"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "hover-card",
@@ -355,7 +311,6 @@
       "symbol": "HoverCardController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "hover-card",
@@ -363,7 +318,6 @@
       "symbol": "createHoverCardController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "image-cropper",
@@ -371,7 +325,6 @@
       "symbol": "ImageCropperController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "image-cropper",
@@ -379,7 +332,6 @@
       "symbol": "createImageCropperController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "input",
@@ -387,7 +339,6 @@
       "symbol": "InputContract"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "listbox",
@@ -395,7 +346,6 @@
       "symbol": "ListboxController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "listbox",
@@ -403,7 +353,6 @@
       "symbol": "createListboxController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "marquee",
@@ -411,7 +360,6 @@
       "symbol": "MarqueeContract"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "menu",
@@ -419,7 +367,6 @@
       "symbol": "MenuController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "menu",
@@ -427,7 +374,6 @@
       "symbol": "createMenuController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "menubar",
@@ -435,7 +381,6 @@
       "symbol": "MenubarController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "menubar",
@@ -443,7 +388,6 @@
       "symbol": "createMenubarController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "meter",
@@ -451,7 +395,6 @@
       "symbol": "MeterContract"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "navigation-menu",
@@ -459,7 +402,6 @@
       "symbol": "NavigationMenuController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "navigation-menu",
@@ -467,7 +409,6 @@
       "symbol": "createNavigationMenuController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "number-input",
@@ -475,7 +416,6 @@
       "symbol": "NumberInputController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "number-input",
@@ -483,7 +423,6 @@
       "symbol": "createNumberInputController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "pagination",
@@ -491,7 +430,6 @@
       "symbol": "PaginationController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "pagination",
@@ -499,7 +437,6 @@
       "symbol": "createPaginationController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "password-input",
@@ -507,7 +444,6 @@
       "symbol": "PasswordInputController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "password-input",
@@ -515,7 +451,6 @@
       "symbol": "createPasswordInputController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "pin-input",
@@ -523,7 +458,6 @@
       "symbol": "PinInputController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "pin-input",
@@ -531,7 +465,6 @@
       "symbol": "createPinInputController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "popover",
@@ -539,7 +472,6 @@
       "symbol": "PopoverController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "popover",
@@ -547,7 +479,6 @@
       "symbol": "createPopoverController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "progress",
@@ -555,7 +486,6 @@
       "symbol": "ProgressContract"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "qr-code",
@@ -563,7 +493,6 @@
       "symbol": "QRCodeContract"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "radio-group",
@@ -571,7 +500,6 @@
       "symbol": "RadioGroupController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "radio-group",
@@ -579,7 +507,6 @@
       "symbol": "createRadioGroupController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "rating-group",
@@ -587,7 +514,6 @@
       "symbol": "RatingGroupController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "rating-group",
@@ -595,7 +521,6 @@
       "symbol": "createRatingGroupController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "scroll-area",
@@ -603,7 +528,6 @@
       "symbol": "ScrollAreaController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "scroll-area",
@@ -611,7 +535,6 @@
       "symbol": "createScrollAreaController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "segment-group",
@@ -619,7 +542,6 @@
       "symbol": "SegmentGroupController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "segment-group",
@@ -627,7 +549,6 @@
       "symbol": "createSegmentGroupController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "select",
@@ -635,7 +556,6 @@
       "symbol": "SelectController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "select",
@@ -643,7 +563,6 @@
       "symbol": "createSelectController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "separator",
@@ -651,7 +570,6 @@
       "symbol": "SeparatorContract"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "signature-pad",
@@ -659,7 +577,6 @@
       "symbol": "SignaturePadController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "signature-pad",
@@ -667,7 +584,6 @@
       "symbol": "createSignaturePadController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "slider",
@@ -675,7 +591,6 @@
       "symbol": "SliderController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "slider",
@@ -683,7 +598,6 @@
       "symbol": "createSliderController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "splitter",
@@ -691,7 +605,6 @@
       "symbol": "SplitterController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "splitter",
@@ -699,7 +612,6 @@
       "symbol": "createSplitterController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "steps",
@@ -707,7 +619,6 @@
       "symbol": "StepsController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "steps",
@@ -715,7 +626,6 @@
       "symbol": "createStepsController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "switch",
@@ -723,7 +633,6 @@
       "symbol": "SwitchController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "switch",
@@ -731,7 +640,6 @@
       "symbol": "createSwitchController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tabs",
@@ -739,7 +647,6 @@
       "symbol": "TabsController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tabs",
@@ -747,7 +654,6 @@
       "symbol": "createTabsController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tags-input",
@@ -755,7 +661,6 @@
       "symbol": "TagsInputController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tags-input",
@@ -763,7 +668,6 @@
       "symbol": "createTagsInputController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "timer",
@@ -771,7 +675,6 @@
       "symbol": "TimerController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "timer",
@@ -779,7 +682,6 @@
       "symbol": "createTimerController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "toast",
@@ -787,7 +689,6 @@
       "symbol": "ToastController"
     },
     {
-      "implementationPhase": "PHASE_10",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "toast",
@@ -795,7 +696,6 @@
       "symbol": "createToastController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "toggle",
@@ -803,7 +703,6 @@
       "symbol": "ToggleController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "toggle",
@@ -811,7 +710,6 @@
       "symbol": "createToggleController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "toggle-group",
@@ -819,7 +717,6 @@
       "symbol": "ToggleGroupController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "toggle-group",
@@ -827,7 +724,6 @@
       "symbol": "createToggleGroupController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "toolbar",
@@ -835,7 +731,6 @@
       "symbol": "ToolbarController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "toolbar",
@@ -843,7 +738,6 @@
       "symbol": "createToolbarController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tooltip",
@@ -851,7 +745,6 @@
       "symbol": "TooltipController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tooltip",
@@ -859,7 +752,6 @@
       "symbol": "createTooltipController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tour",
@@ -867,7 +759,6 @@
       "symbol": "TourController"
     },
     {
-      "implementationPhase": "PHASE_07",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tour",
@@ -875,7 +766,6 @@
       "symbol": "createTourController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tree-view",
@@ -883,7 +773,6 @@
       "symbol": "TreeViewController"
     },
     {
-      "implementationPhase": "PHASE_08",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "tree-view",
@@ -891,7 +780,6 @@
       "symbol": "createTreeViewController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "badge",
@@ -899,7 +787,6 @@
       "symbol": "BadgeContract"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "breadcrumb",
@@ -907,7 +794,6 @@
       "symbol": "BreadcrumbContract"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "card",
@@ -915,7 +801,6 @@
       "symbol": "CardContract"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "command",
@@ -923,7 +808,6 @@
       "symbol": "CommandController"
     },
     {
-      "implementationPhase": "PHASE_09",
       "implementationStatus": "implemented",
       "kind": "interactive-controller",
       "primitiveId": "command",
@@ -931,7 +815,6 @@
       "symbol": "createCommandController"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "input-group",
@@ -939,7 +822,6 @@
       "symbol": "InputGroupContract"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "skeleton",
@@ -947,7 +829,6 @@
       "symbol": "SkeletonContract"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "table",
@@ -955,7 +836,6 @@
       "symbol": "TableContract"
     },
     {
-      "implementationPhase": "PHASE_06",
       "implementationStatus": "implemented",
       "kind": "typed-static-contract",
       "primitiveId": "textarea",
@@ -966,5 +846,5 @@
   "generatorVersion": "1.0.0",
   "implementationEvidence": true,
   "schemaVersion": 1,
-  "sourceSha256": "5ffc3431ecf062d7cbc46545ecbcbda89310d2057701e38c1492ca61c89d16cf"
+  "sourceSha256": "b1c584fe1444a6350203be6ff3f226004e5d29b25433ba241c97b6f1edfeefb7"
 }

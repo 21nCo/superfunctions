@@ -56,7 +56,6 @@ function sectionForField(field) {
     inputs: 'state-actions-parts',
     name: 'overview',
     outputs: 'source-install',
-    owningPhase: 'known-constraints',
     release: 'known-constraints',
     requirementIds: 'known-constraints',
     states: 'state-actions-parts',

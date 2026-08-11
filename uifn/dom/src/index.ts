@@ -20,5 +20,4 @@ export * from './scope';
 export const domPackageBoundary = {
   name: '@uifn/dom',
   ownsBrowserBehavior: true,
-  implementationPhase: 'PHASE_05',
 } as const;

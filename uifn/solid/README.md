@@ -85,7 +85,7 @@ The compound source is generated from `uifn/catalog/generated/catalog.json`; do 
 npm --workspace @uifn/solid run generate:check
 npm --workspace @uifn/solid run typecheck
 npm --workspace @uifn/solid run test
-npm run verify:uifn-phase-13
+npm --workspace @uifn/solid run test
 ```
 
 The phase verifier checks exact catalog/export inventory, stale-reactivity mutations, SSR determinism, packaged and source consumers, Chromium/Firefox/WebKit behavior, tree shaking, forms, portals, dynamic collections, abrupt disposal, and tarball contents.

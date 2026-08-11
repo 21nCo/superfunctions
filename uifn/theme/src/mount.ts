@@ -18,12 +18,15 @@ export class UIFnThemeError extends Error {
 
 export interface StyleTarget {
   setProperty: (name: string, value: string) => void;
+  getPropertyValue?: (name: string) => string;
   removeProperty?: (name: string) => void;
 }
 
 export interface ThemeMountRoot {
   style: StyleTarget;
   setAttribute?: (name: string, value: string) => void;
+  getAttribute?: (name: string) => string | null;
+  hasAttribute?: (name: string) => boolean;
   removeAttribute?: (name: string) => void;
 }
 
@@ -107,6 +110,12 @@ export function mountTheme(
   const css = themeToCSS(resolvedTheme, scope);
   const previousSheets = options.shadowRoot?.adoptedStyleSheets;
   const mountedSheet = options.shadowRoot ? createThemeStyleSheet(css) : undefined;
+  const previousThemeName = options.root?.getAttribute?.('data-uifn-theme') ?? null;
+  const hadThemeName = options.root?.hasAttribute?.('data-uifn-theme') ?? previousThemeName !== null;
+  const previousVars = new Map(Object.keys(vars).map((name) => [
+    name,
+    options.root?.style.getPropertyValue?.(name) ?? null,
+  ]));
 
   assertSafeThemeScope(scope);
   options.root?.setAttribute?.('data-uifn-theme', resolvedTheme.name);
@@ -120,8 +129,12 @@ export function mountTheme(
     vars,
     css,
     unmount() {
-      Object.keys(vars).forEach((name) => options.root?.style.removeProperty?.(name));
-      options.root?.removeAttribute?.('data-uifn-theme');
+      for (const [name, previousValue] of previousVars) {
+        if (previousValue) options.root?.style.setProperty(name, previousValue);
+        else options.root?.style.removeProperty?.(name);
+      }
+      if (hadThemeName) options.root?.setAttribute?.('data-uifn-theme', previousThemeName ?? '');
+      else options.root?.removeAttribute?.('data-uifn-theme');
       if (mountedSheet && previousSheets) {
         options.shadowRoot!.adoptedStyleSheets = options.shadowRoot!.adoptedStyleSheets.filter(
           (sheet) => sheet !== mountedSheet

@@ -668,7 +668,7 @@ ${reactExports}
 
 export { useMediaQuery } from '@uifn/react/hooks/use-media-query';
 export { useCopyToClipboard } from '@uifn/react/hooks/use-copy-to-clipboard';
-export const componentsReactPackageBoundary = { name: '@uifn/components-react', framework: 'react', componentCount: ${primitives.length}, partCount: ${allParts.length}, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/react', stylingOwner: '@uifn/components', styling: 'styled-open-compounds', implementationPhase: 'PHASE_15' } as const;
+export const componentsReactPackageBoundary = { name: '@uifn/components-react', framework: 'react', componentCount: ${primitives.length}, partCount: ${allParts.length}, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/react', stylingOwner: '@uifn/components', styling: 'styled-open-compounds' } as const;
 `);
 
   const solidExports = primitives.map((primitive) => `export * from './generated/${primitive.id}';`).join('\n');
@@ -676,7 +676,7 @@ export const componentsReactPackageBoundary = { name: '@uifn/components-react', 
 ${solidExports}
 
 export { createMediaQuery, useMediaQuery, createCopyToClipboard, useCopyToClipboard } from '@uifn/solid';
-export const componentsSolidPackageBoundary = { name: '@uifn/components-solid', framework: 'solid', componentCount: ${primitives.length}, partCount: ${allParts.length}, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/solid', stylingOwner: '@uifn/components', styling: 'styled-open-compounds', implementationPhase: 'PHASE_15' } as const;
+export const componentsSolidPackageBoundary = { name: '@uifn/components-solid', framework: 'solid', componentCount: ${primitives.length}, partCount: ${allParts.length}, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/solid', stylingOwner: '@uifn/components', styling: 'styled-open-compounds' } as const;
 `);
 
   const svelteExports = primitives.map((primitive) => `export * from './generated/${primitive.id}/index.js';`).join('\n');
@@ -684,7 +684,7 @@ export const componentsSolidPackageBoundary = { name: '@uifn/components-solid', 
 ${svelteExports}
 
 export { createMediaQuery, useMediaQuery, createCopyToClipboard, useCopyToClipboard, copyToClipboardAction } from '@uifn/svelte';
-export const componentsSveltePackageBoundary = { name: '@uifn/components-svelte', framework: 'svelte', componentCount: ${primitives.length}, partCount: ${allParts.length}, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/svelte', stylingOwner: '@uifn/components', styling: 'styled-open-compounds', implementationPhase: 'PHASE_15' } as const;
+export const componentsSveltePackageBoundary = { name: '@uifn/components-svelte', framework: 'svelte', componentCount: ${primitives.length}, partCount: ${allParts.length}, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/svelte', stylingOwner: '@uifn/components', styling: 'styled-open-compounds' } as const;
 `);
 
   for (const framework of ['react', 'solid', 'svelte']) {

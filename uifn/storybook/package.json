@@ -28,8 +28,8 @@
     }
   },
   "scripts": {
-    "generate": "node ../../scripts/generate-uifn-phase-17.mjs --write",
-    "generate:check": "node ../../scripts/generate-uifn-phase-17.mjs --check",
+    "generate": "node ../../scripts/generate-uifn-docs-storybook.mjs --write",
+    "generate:check": "node ../../scripts/generate-uifn-docs-storybook.mjs --check",
     "build": "tsup src/index.ts src/preset.ts src/preview.ts src/manager.ts --format esm,cjs --dts --external react --external storybook --external storybook/manager-api",
     "build:react": "storybook build --config-dir workbenches/react/.storybook --output-dir storybook-static/react --disable-telemetry",
     "build:svelte": "storybook build --config-dir workbenches/svelte/.storybook --output-dir storybook-static/svelte --disable-telemetry",

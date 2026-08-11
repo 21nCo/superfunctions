@@ -16,8 +16,8 @@
     }
   },
   "scripts": {
-    "generate": "node ../../scripts/generate-uifn-phase-16.mjs --write",
-    "generate:check": "node ../../scripts/generate-uifn-phase-16.mjs --check",
+    "generate": "node ../../scripts/generate-uifn-registry.mjs --write",
+    "generate:check": "node ../../scripts/generate-uifn-registry.mjs --check",
     "build": "tsup src/index.ts --format esm,cjs --dts && tsup src/bin.ts --format esm,cjs",
     "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
     "test": "vitest run --config vitest.config.ts",

@@ -30,7 +30,7 @@ test('TV-CAT-001-P: canonical catalog is exact, complete, deterministic, and che
   assert.ok(first.catalog.primitives.every((primitive) => primitive.domServices.every(Boolean)));
   assert.ok(first.catalog.primitives.every((primitive) => Object.keys(primitive.frameworks).join(',') === 'react,svelte,solid'));
   assert.ok(first.catalog.primitives.every((primitive) => primitive.release.implementationStatus === 'implemented'));
-  assert.ok(first.catalog.primitives.every((primitive) => primitive.accessibility.rules.review.status === 'reviewed'));
+  assert.ok(first.catalog.primitives.every((primitive) => !Object.hasOwn(primitive.accessibility.rules, 'review')));
   compareGeneratedOutputs(first.outputs, second.outputs);
   await verifyGeneratedDirectory(generatedRoot, first.outputs);
 });

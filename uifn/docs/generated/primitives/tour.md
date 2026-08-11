@@ -75,7 +75,7 @@ Root inputs and defaults:
 | `step` | `number` | no | yes | `undefined (no public prop override)` | Optional reactive step input from the canonical Tour contract. |
 | `defaultStep` | `number` | no | yes | `undefined (component initial value)` | Optional reactive defaultStep input from the canonical Tour contract. |
 | `steps` | `tour-step[]` | yes | yes | `required` | Required reactive steps input from the canonical Tour contract. |
-| `modal` | `boolean` | no | yes | `undefined → false` | Optional reactive modal input from the canonical Tour contract. |
+| `modal` | `boolean` | no | yes | `undefined → true` | Optional reactive modal input from the canonical Tour contract. |
 
 ## Controlled and uncontrolled
 

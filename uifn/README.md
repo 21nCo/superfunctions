@@ -17,9 +17,9 @@
 | `@uifn/recipes` | styling | Framework-neutral part recipes |
 | `@uifn/theme-tailwind` | styling | Generated Tailwind integration |
 | `@uifn/components` | styled-neutral | Framework-neutral contracts, CSS, recipes, and metadata |
-| `@uifn/components-react` | styled adapter | React styled-package boundary; implementation completes in PHASE_15 |
-| `@uifn/components-svelte` | styled adapter | Svelte styled-package boundary; implementation completes in PHASE_15 |
-| `@uifn/components-solid` | styled adapter | Solid styled-package boundary; implementation completes in PHASE_15 |
+| `@uifn/components-react` | styled adapter | React styled-package boundary |
+| `@uifn/components-svelte` | styled adapter | Svelte styled-package boundary |
+| `@uifn/components-solid` | styled adapter | Solid styled-package boundary |
 | `@uifn/registry` | delivery | Source installation, locks, diff, and update tooling |
 | `@uifn/storybook` | workshop | Storybook integration and documentation tooling |
 

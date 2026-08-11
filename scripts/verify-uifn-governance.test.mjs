@@ -29,6 +29,14 @@ test('complete evidence passes the fail-closed evidence validator', () => {
   assert.deepEqual(validateEvidence(evidence, { now: '2026-07-17T13:00:00Z' }), []);
 });
 
+test('evidence expiry cannot exceed its class policy window', () => {
+  const evidence = structuredClone(readJson(`${contracts}/fixtures/evidence/complete.json`));
+  evidence.expiresAt = '2099-01-01T00:00:00Z';
+  assert.ok(validateEvidence(evidence, { now: '2026-07-17T13:00:00Z' }).some((entry) => (
+    entry.code === 'UIFN_EVIDENCE_STALE' && entry.reason === 'evidence-class-expiry-policy'
+  )));
+});
+
 test('every required negative evidence fixture is caught by its intended error code', () => {
   for (const fixtureName of ['missing.json', 'stale.json', 'blocked.json', 'malformed.json', 'unsigned.json', 'dirty.json', 'skipped.json', 'not-applicable.json']) {
     const fixture = materializeEvidenceFixture(fixtureName);

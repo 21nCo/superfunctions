@@ -361,9 +361,18 @@ export function validateEvidence(evidence, options = {}) {
   }
   if (!Array.isArray(evidence.signatures) || evidence.signatures.length === 0) failures.push(issue('UIFN_EVIDENCE_UNSIGNED'));
   const expiresAt = new Date(evidence.expiresAt).getTime();
+  const completedAt = new Date(evidence.timing?.completedAt).getTime();
   const now = new Date(options.now ?? Date.now()).getTime();
-  if (!Number.isFinite(expiresAt)) failures.push(issue('UIFN_EVIDENCE_MALFORMED'));
+  const policy = options.policy ?? readJson(contractPath('defect-policy.json'));
+  const expiryHours = policy.evidenceExpiryHours?.[evidence.evidenceClass];
+  const maximumExpiry = completedAt + expiryHours * 60 * 60 * 1000;
+  if (!Number.isFinite(expiresAt) || !Number.isFinite(completedAt) || !Number.isFinite(expiryHours)) failures.push(issue('UIFN_EVIDENCE_MALFORMED'));
   else if (expiresAt <= now) failures.push(issue('UIFN_EVIDENCE_STALE', { expiresAt: evidence.expiresAt }));
+  else if (expiresAt > maximumExpiry) failures.push(issue('UIFN_EVIDENCE_STALE', {
+    expiresAt: evidence.expiresAt,
+    maximumExpiresAt: new Date(maximumExpiry).toISOString(),
+    reason: 'evidence-class-expiry-policy',
+  }));
   if (evidence.source?.dirty === true) failures.push(issue('UIFN_EVIDENCE_DIRTY'));
   if (evidence.status === 'blocked') failures.push(issue('UIFN_EVIDENCE_BLOCKED'));
   if (evidence.status === 'skipped') failures.push(issue('UIFN_EVIDENCE_SKIPPED'));

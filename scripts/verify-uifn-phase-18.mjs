@@ -81,9 +81,9 @@ const docsPath = phase17Root ? path.join(phase17Root, 'docs.json') : null;
 const browserPath = evidenceRoot ? path.join(evidenceRoot, 'browser.json') : null;
 const ledgerPath = evidenceRoot ? path.join(evidenceRoot, 'ledger.json') : null;
 
-const ledgerSourcePath = path.join(root, 'uifn/accessibility/generated/normative-ledger.json');
-const automationPath = path.join(root, 'uifn/accessibility/generated/automation-manifest.json');
-const handoffPath = path.join(root, 'uifn/accessibility/generated/manual-handoff.json');
+const ledgerSourcePath = path.join(root, 'uifn/.conduct/generated/phase-18/normative-ledger.json');
+const automationPath = path.join(root, 'uifn/.conduct/generated/phase-18/automation-manifest.json');
+const handoffPath = path.join(root, 'uifn/.conduct/generated/phase-18/manual-handoff.json');
 const ledgerSource = readJson(ledgerSourcePath);
 const handoffSource = readJson(handoffPath);
 const storyInventory = readJson(path.join(root, 'uifn/storybook/generated/story-inventory.json'));

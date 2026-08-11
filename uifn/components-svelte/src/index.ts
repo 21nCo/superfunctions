@@ -70,4 +70,4 @@ export * from './generated/table/index.js';
 export * from './generated/textarea/index.js';
 
 export { createMediaQuery, useMediaQuery, createCopyToClipboard, useCopyToClipboard, copyToClipboardAction } from '@uifn/svelte';
-export const componentsSveltePackageBoundary = { name: '@uifn/components-svelte', framework: 'svelte', componentCount: 69, partCount: 465, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/svelte', stylingOwner: '@uifn/components', styling: 'styled-open-compounds', implementationPhase: 'PHASE_15' } as const;
+export const componentsSveltePackageBoundary = { name: '@uifn/components-svelte', framework: 'svelte', componentCount: 69, partCount: 465, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/svelte', stylingOwner: '@uifn/components', styling: 'styled-open-compounds' } as const;

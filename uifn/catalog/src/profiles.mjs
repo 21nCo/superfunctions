@@ -32,17 +32,14 @@ export const FRAMEWORK_TARGETS = {
   react: {
     headlessPackage: '@uifn/react',
     styledPackage: '@uifn/components-react',
-    implementationPhase: 'PHASE_11',
   },
   svelte: {
     headlessPackage: '@uifn/svelte',
     styledPackage: '@uifn/components-svelte',
-    implementationPhase: 'PHASE_12',
   },
   solid: {
     headlessPackage: '@uifn/solid',
     styledPackage: '@uifn/components-solid',
-    implementationPhase: 'PHASE_13',
   },
 };
 
@@ -126,20 +123,10 @@ const commonPreferences = {
   rtl: 'Declare logical versus physical direction behavior and mirror only directional semantics.',
 };
 
-const completedReview = {
-  owner: 'uifn-maintainer',
-  owningPhase: 'PHASE_18',
-  status: 'reviewed',
-  reviewedAt: '2026-07-24',
-  revision: 'uifn-a11y-ledger-v1',
-  ledger: 'uifn/accessibility/generated/normative-ledger.json',
-};
-
 function profile(value) {
   return {
     ...value,
     preferences: { ...commonPreferences, ...(value.preferences ?? {}) },
-    review: { ...completedReview },
   };
 }
 

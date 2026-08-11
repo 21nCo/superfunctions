@@ -42,8 +42,9 @@ const REMOVED_PROCESS_GLOBAL_ID_SYMBOLS = Object.freeze([
 ]);
 
 const ALLOWED_EXPORTS = Object.freeze([
-  '.', './aria', './aria/*', './utils', './utils/*', './errors', './controller',
-  './environment', './parts', './algorithms', './primitives', './package.json',
+  '.', './aria', './aria/*', './utils', './errors', './controller',
+  './utils/id', './environment', './parts', './algorithms', './primitives',
+  './primitives/overlay', './primitives/*', './package.json',
 ]);
 
 function collectFiles(directory, predicate, result = {}) {
@@ -69,10 +70,12 @@ function issue(code, message, path) {
 }
 
 function isCurrentSurface(path) {
-  if (path === 'uifn/core/MIGRATION.md' || path.startsWith('uifn/core/migrations/')) return false;
-  if (path.startsWith('uifn/core/type-tests/')) return false;
-  if (/verify-uifn-controller-contract(?:\.test)?\.mjs$/.test(path)) return false;
-  return /\.(?:[cm]?[jt]sx?|svelte|md|json)$/.test(path);
+  if (!path.startsWith('uifn/')) return false;
+  if (/(?:^|\/)(?:__tests__|test|tests|fixtures|migrations|type-tests)(?:\/|$)/.test(path)) return false;
+  if (/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path)) return false;
+  if (path.endsWith('/package.json')) return true;
+  if (!path.includes('/src/') && !path.includes('/lib/')) return false;
+  return /\.(?:[cm]?[jt]sx?|svelte)$/.test(path);
 }
 
 export function loadControllerContractInput({ requireDist = false } = {}) {
@@ -140,7 +143,7 @@ export function inspectControllerContract(input) {
     symbol,
     pattern: new RegExp(`\\b${escapeRegExp(symbol)}\\b`),
   }));
-  const legacyPathPattern = /@uifn\/core\/state(?:\/[^'"`\s]*)?|@uifn\/core\/primitives\/(?!index\b)[^'"`\s]+|controller-adapters|controller-migration/;
+  const legacyPathPattern = /@uifn\/core\/state(?:\/[^'"`\s]*)?|@uifn\/core\/primitives\/(?:controller-adapters|controller-migration)\b|controller-adapters|controller-migration/;
   for (const [path, source] of Object.entries(input.scanFiles)) {
     for (const { symbol, pattern } of legacyPatterns) {
       if (pattern.test(source)) {

@@ -51,8 +51,9 @@ export function createThemeProvider(initialTheme: FirstPartyThemeName | DesignTo
       return currentTheme;
     },
     setTheme(nextTheme) {
-      currentTheme = getTheme(nextTheme);
-      validateTokenTheme(currentTheme);
+      const candidate = getTheme(nextTheme);
+      validateTokenTheme(candidate);
+      currentTheme = candidate;
       return currentTheme;
     },
     getTheme() {

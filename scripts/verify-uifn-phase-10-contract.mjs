@@ -54,7 +54,9 @@ function allPrimitiveSources() {
 export async function verifyPhase10Contract({ requireDist = false } = {}) {
   const issues = [];
   const catalog = JSON.parse(source('uifn/catalog/generated/catalog.json'));
-  const selected = catalog.primitives.filter((primitive) => primitive.owningPhase === 'PHASE_10').map((primitive) => primitive.name);
+  const selected = catalog.primitives
+    .filter((primitive) => PHASE10.includes(primitive.name) && primitive.requirementIds.some((id) => ['PRIM-006', 'PRIM-007', 'PRIM-008'].includes(id)))
+    .map((primitive) => primitive.name);
   if (JSON.stringify(selected) !== JSON.stringify(PHASE10)) issues.push(issue('UIFN_CATALOG_IMPLEMENTATION_INCOMPLETE', 'PHASE_10 catalog ownership differs from the reviewed fourteen-primitive set.', 'uifn/catalog/generated/catalog.json'));
 
   for (const name of PHASE10) {
@@ -80,13 +82,13 @@ export async function verifyPhase10Contract({ requireDist = false } = {}) {
   const tree = source('uifn/core/src/primitives/tree-view.ts');
   for (const symbol of ['TreeViewWorkflowStatus','setStatus','statuses']) if (!tree.includes(symbol)) issues.push(issue('UIFN_WORKFLOW_STATUS_INCOMPLETE', `TreeView workflow status omits ${symbol}.`, 'uifn/core/src/primitives/tree-view.ts'));
 
-  const generated = JSON.parse(source('uifn/core/generated/phase-10-golden-corpus.json'));
+  const generated = JSON.parse(source('uifn/.conduct/generated/phase-10/phase-10-golden-corpus.json'));
   if (
     generated.primitiveCount !== 14
     || generated.catalogPrimitiveCount !== catalog.primitives.length
     || generated.corpus?.length !== 14
   ) {
-    issues.push(issue('UIFN_PHASE_10_GENERATED_DRIFT', 'Golden corpus does not cover all Phase 10 and catalog contracts.', 'uifn/core/generated/phase-10-golden-corpus.json'));
+    issues.push(issue('UIFN_PHASE_10_GENERATED_DRIFT', 'Golden corpus does not cover all Phase 10 and catalog contracts.', 'uifn/.conduct/generated/phase-10/phase-10-golden-corpus.json'));
   }
 
   let publicCore = null;

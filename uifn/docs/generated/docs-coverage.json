@@ -5,10 +5,10 @@
   "registryVersion": "0.0.1",
   "primitiveCount": 69,
   "requiredSectionCount": 897,
-  "mappedFieldCount": 13127,
+  "mappedFieldCount": 12368,
   "sampleCount": 414,
-  "definitionSha256": "1922a99421d69a4cdb4b1f68a362146a46d30a26ea1fb746f3412a03151c88b9",
-  "generatorSha256": "9da367ad045f1baa361e21cf41e2650f65ed615cb7776f2c5f300206b866fa59",
+  "definitionSha256": "7e39dd9cadd1445add9c654defda4204ba677174de0795257d25b6b3e2e37637",
+  "generatorSha256": "f9fdd5a711cc4d92c8b3cc4d45df776263a43fe57621ef2776a2a30157aa4ecb",
   "pages": [
     {
       "primitive": "accordion",
@@ -159,30 +159,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -418,10 +394,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -442,10 +414,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -463,10 +431,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -622,19 +586,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -726,7 +682,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 170,
+      "fieldCount": 159,
       "sampleIds": [
         "accordion-react-package",
         "accordion-react-source",
@@ -895,30 +851,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -1262,10 +1194,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -1286,10 +1214,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -1307,10 +1231,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -1450,19 +1370,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -1570,7 +1482,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 199,
+      "fieldCount": 188,
       "sampleIds": [
         "alert-dialog-react-package",
         "alert-dialog-react-source",
@@ -1579,8 +1491,8 @@
         "alert-dialog-solid-package",
         "alert-dialog-solid-source"
       ],
-      "markdownSha256": "9a118aee5ae7edd0bbafdbb5e2f8925f5988bc85d2213e7c326742003dae77d4",
-      "htmlSha256": "20534334355e50150769c157bf991435e07ab36032ee919617d41f678ffd2648"
+      "markdownSha256": "19cc3a0ca9488fba617b71913c8d668dd1fd937a078af0d7a78de256dafa2905",
+      "htmlSha256": "b9cd33838071e086e967ab8269b922ffe11e3f144a7e61941709b7aa18d94a5a"
     },
     {
       "primitive": "angle-slider",
@@ -1759,30 +1671,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -2038,10 +1926,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -2062,10 +1946,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -2083,10 +1963,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -2274,19 +2150,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -2378,7 +2246,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 190,
+      "fieldCount": 179,
       "sampleIds": [
         "angle-slider-react-package",
         "angle-slider-react-source",
@@ -2591,30 +2459,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -2946,10 +2790,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -2970,10 +2810,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -2991,10 +2827,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -3166,19 +2998,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -3286,7 +3110,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 215,
+      "fieldCount": 204,
       "sampleIds": [
         "autocomplete-react-package",
         "autocomplete-react-source",
@@ -3431,30 +3255,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -3638,10 +3438,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -3662,10 +3458,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -3683,10 +3475,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -3806,19 +3594,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -3906,7 +3686,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 143,
+      "fieldCount": 132,
       "sampleIds": [
         "avatar-react-package",
         "avatar-react-source",
@@ -4051,30 +3831,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -4270,10 +4026,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -4294,10 +4046,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -4315,10 +4063,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -4454,19 +4198,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -4562,7 +4298,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 152,
+      "fieldCount": 141,
       "sampleIds": [
         "button-react-package",
         "button-react-source",
@@ -4571,8 +4307,8 @@
         "button-solid-package",
         "button-solid-source"
       ],
-      "markdownSha256": "d87edd450c1ceeb029dbd7523d05cd119e2f746c95ce98b2d51a8a6f1313b005",
-      "htmlSha256": "cba249a674661e6a7ae1a8805b0cb203573b669bd796b5524bc3849f7041daf2"
+      "markdownSha256": "5dafc33e1c837dce2794f5211d810a28de6d7599c69bf8f9411eedf8b9799166",
+      "htmlSha256": "9cc67678665464a7c2d4c9606b5b7dda779a988d2a720e026fe437c54f1aa957"
     },
     {
       "primitive": "carousel",
@@ -4751,30 +4487,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -5086,10 +4798,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -5110,10 +4818,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -5131,10 +4835,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -5306,19 +5006,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -5426,7 +5118,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 204,
+      "fieldCount": 193,
       "sampleIds": [
         "carousel-react-package",
         "carousel-react-source",
@@ -5639,30 +5331,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -5906,10 +5574,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -5930,10 +5594,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -5951,10 +5611,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -6142,19 +5798,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -6254,7 +5902,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 195,
+      "fieldCount": 184,
       "sampleIds": [
         "checkbox-react-package",
         "checkbox-react-source",
@@ -6467,30 +6115,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -6758,10 +6382,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -6782,10 +6402,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -6803,10 +6419,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -6978,19 +6590,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -7082,7 +6686,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 195,
+      "fieldCount": 184,
       "sampleIds": [
         "checkbox-group-react-package",
         "checkbox-group-react-source",
@@ -7243,30 +6847,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -7486,10 +7066,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -7510,10 +7086,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -7531,10 +7103,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -7658,19 +7226,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -7778,7 +7338,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 162,
+      "fieldCount": 151,
       "sampleIds": [
         "clipboard-react-package",
         "clipboard-react-source",
@@ -7939,30 +7499,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -8170,10 +7706,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -8194,10 +7726,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -8215,10 +7743,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -8342,19 +7866,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -8462,7 +7978,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 159,
+      "fieldCount": 148,
       "sampleIds": [
         "collapsible-react-package",
         "collapsible-react-source",
@@ -8659,30 +8175,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -9050,10 +8542,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -9074,10 +8562,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -9095,10 +8579,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -9318,19 +8798,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -9430,7 +8902,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 230,
+      "fieldCount": 219,
       "sampleIds": [
         "color-picker-react-package",
         "color-picker-react-source",
@@ -9643,30 +9115,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -10050,10 +9498,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -10074,10 +9518,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -10095,10 +9535,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -10318,19 +9754,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -10438,7 +9866,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 240,
+      "fieldCount": 229,
       "sampleIds": [
         "combobox-react-package",
         "combobox-react-source",
@@ -10631,30 +10059,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -11010,10 +10414,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -11034,10 +10434,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -11055,10 +10451,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -11198,19 +10590,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -11310,7 +10694,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 206,
+      "fieldCount": 195,
       "sampleIds": [
         "context-menu-react-package",
         "context-menu-react-source",
@@ -11507,30 +10891,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -11794,10 +11154,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -11818,10 +11174,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -11839,10 +11191,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -12062,19 +11410,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -12174,7 +11514,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 204,
+      "fieldCount": 193,
       "sampleIds": [
         "date-input-react-package",
         "date-input-react-source",
@@ -12371,30 +11711,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -12814,10 +12130,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -12838,10 +12150,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -12859,10 +12167,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -13098,19 +12402,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -13218,7 +12514,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 249,
+      "fieldCount": 238,
       "sampleIds": [
         "date-picker-react-package",
         "date-picker-react-source",
@@ -13383,30 +12679,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -13718,10 +12990,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -13742,10 +13010,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -13763,10 +13027,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -13922,19 +13182,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -14042,7 +13294,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 194,
+      "fieldCount": 183,
       "sampleIds": [
         "dialog-react-package",
         "dialog-react-source",
@@ -14051,8 +13303,8 @@
         "dialog-solid-package",
         "dialog-solid-source"
       ],
-      "markdownSha256": "0becea1070913ff8a9c65667212cc719bdea172ea89d122803a0a48bfd81af69",
-      "htmlSha256": "9dcb1645d98c057726646fee4d70b4fd40c7bb79ed81deed74fe71650b661a67"
+      "markdownSha256": "b268568d57e6b983526366bdb96b73cdc3e88bdf3642827bf8d399a42f732f44",
+      "htmlSha256": "1bcd82f308b3b610454d0c6d511774dcf106c8b256045a1987b64ff3f2516d0c"
     },
     {
       "primitive": "drawer",
@@ -14207,30 +13459,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -14578,10 +13806,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -14602,10 +13826,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -14623,10 +13843,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -14782,19 +13998,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -14910,7 +14118,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 205,
+      "fieldCount": 194,
       "sampleIds": [
         "drawer-react-package",
         "drawer-react-source",
@@ -14919,8 +14127,8 @@
         "drawer-solid-package",
         "drawer-solid-source"
       ],
-      "markdownSha256": "dab540efe59cdae1879c1fab700d6fe28d0a90cc86688c3ec4b61881bf249601",
-      "htmlSha256": "2c452e2731ef71ea85bf5597542401d8f2551a7202848deadf08ddcfdb4fbe04"
+      "markdownSha256": "c1010e646a133f18895699d45f20d12e81213a095cdb21a1fb08072d1159c6cf",
+      "htmlSha256": "04cb79eeb215262384f3cccae93907237d863fb3715a1d83407959a7588e6453"
     },
     {
       "primitive": "editable",
@@ -15095,30 +14303,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -15458,10 +14642,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -15482,10 +14662,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -15503,10 +14679,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -15710,19 +14882,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -15830,7 +14994,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 218,
+      "fieldCount": 207,
       "sampleIds": [
         "editable-react-package",
         "editable-react-source",
@@ -16015,30 +15179,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -16278,10 +15418,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -16302,10 +15438,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -16323,10 +15455,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -16478,19 +15606,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -16578,7 +15698,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 175,
+      "fieldCount": 164,
       "sampleIds": [
         "field-react-package",
         "field-react-source",
@@ -16763,30 +15883,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -17014,10 +16110,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -17038,10 +16130,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -17059,10 +16147,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -17166,19 +16250,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -17266,7 +16342,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 160,
+      "fieldCount": 149,
       "sampleIds": [
         "fieldset-react-package",
         "fieldset-react-source",
@@ -17451,30 +16527,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -17842,10 +16894,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -17866,10 +16914,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -17887,10 +16931,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -18110,19 +17150,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -18238,7 +17270,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 231,
+      "fieldCount": 220,
       "sampleIds": [
         "file-upload-react-package",
         "file-upload-react-source",
@@ -18403,30 +17435,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -18778,10 +17786,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -18802,10 +17806,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -18823,10 +17823,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -18998,19 +17994,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -19118,7 +18106,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 208,
+      "fieldCount": 197,
       "sampleIds": [
         "floating-panel-react-package",
         "floating-panel-react-source",
@@ -19303,30 +18291,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -19530,10 +18494,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -19554,10 +18514,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -19575,10 +18531,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -19682,19 +18634,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -19790,7 +18734,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 156,
+      "fieldCount": 145,
       "sampleIds": [
         "form-react-package",
         "form-react-source",
@@ -19955,30 +18899,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -20254,10 +19174,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -20278,10 +19194,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -20299,10 +19211,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -20458,19 +19366,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -20578,7 +19478,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 185,
+      "fieldCount": 174,
       "sampleIds": [
         "hover-card-react-package",
         "hover-card-react-source",
@@ -20767,30 +19667,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -21094,10 +19970,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -21118,10 +19990,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -21139,10 +20007,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -21330,19 +20194,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -21458,7 +20314,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 208,
+      "fieldCount": 197,
       "sampleIds": [
         "image-cropper-react-package",
         "image-cropper-react-source",
@@ -21646,30 +20502,6 @@
           "section": "accessibility"
         },
         {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
-          "section": "accessibility"
-        },
-        {
           "field": "accessibility.rules.wcag[0]",
           "section": "accessibility"
         },
@@ -21846,10 +20678,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -21870,10 +20698,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -21891,10 +20715,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -22094,19 +20914,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -22202,7 +21014,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 174,
+      "fieldCount": 163,
       "sampleIds": [
         "input-react-package",
         "input-react-source",
@@ -22415,30 +21227,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -22742,10 +21530,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -22766,10 +21550,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -22787,10 +21567,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -23010,19 +21786,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -23122,7 +21890,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 218,
+      "fieldCount": 207,
       "sampleIds": [
         "listbox-react-package",
         "listbox-react-source",
@@ -23267,30 +22035,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -23486,10 +22230,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -23510,10 +22250,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -23531,10 +22267,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -23686,19 +22418,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -23786,7 +22510,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 154,
+      "fieldCount": 143,
       "sampleIds": [
         "marquee-react-package",
         "marquee-react-source",
@@ -23979,30 +22703,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -24358,10 +23058,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -24382,10 +23078,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -24403,10 +23095,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -24562,19 +23250,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -24674,7 +23354,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 210,
+      "fieldCount": 199,
       "sampleIds": [
         "menu-react-package",
         "menu-react-source",
@@ -24867,30 +23547,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -25198,10 +23854,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -25222,10 +23874,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -25243,10 +23891,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -25386,19 +24030,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -25506,7 +24142,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 196,
+      "fieldCount": 185,
       "sampleIds": [
         "menubar-react-package",
         "menubar-react-source",
@@ -25667,30 +24303,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -25902,10 +24514,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -25926,10 +24534,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -25947,10 +24551,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -26134,19 +24734,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -26234,7 +24826,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 170,
+      "fieldCount": 159,
       "sampleIds": [
         "meter-react-package",
         "meter-react-source",
@@ -26427,30 +25019,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -26754,10 +25322,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -26778,10 +25342,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -26799,10 +25359,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -26974,19 +25530,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -27086,7 +25634,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 201,
+      "fieldCount": 190,
       "sampleIds": [
         "navigation-menu-react-package",
         "navigation-menu-react-source",
@@ -27271,30 +25819,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -27650,10 +26174,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -27674,10 +26194,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -27695,10 +26211,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -27934,19 +26446,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -28054,7 +26558,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 230,
+      "fieldCount": 219,
       "sampleIds": [
         "number-input-react-package",
         "number-input-react-source",
@@ -28247,30 +26751,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -28546,10 +27026,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -28570,10 +27046,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -28591,10 +27063,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -28766,19 +27234,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -28886,7 +27346,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 196,
+      "fieldCount": 185,
       "sampleIds": [
         "pagination-react-package",
         "pagination-react-source",
@@ -29071,30 +27531,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -29374,10 +27810,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -29398,10 +27830,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -29419,10 +27847,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -29626,19 +28050,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -29738,7 +28154,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 201,
+      "fieldCount": 190,
       "sampleIds": [
         "password-input-react-package",
         "password-input-react-source",
@@ -29923,30 +28339,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -30242,10 +28634,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -30266,10 +28654,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -30287,10 +28671,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -30510,19 +28890,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -30630,7 +29002,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 211,
+      "fieldCount": 200,
       "sampleIds": [
         "pin-input-react-package",
         "pin-input-react-source",
@@ -30795,30 +29167,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -31126,10 +29474,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -31150,10 +29494,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -31171,10 +29511,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -31346,19 +29682,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -31466,7 +29794,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 197,
+      "fieldCount": 186,
       "sampleIds": [
         "popover-react-package",
         "popover-react-source",
@@ -31627,30 +29955,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -31874,10 +30178,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -31898,10 +30198,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -31919,10 +30215,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -32074,19 +30366,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -32182,7 +30466,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 167,
+      "fieldCount": 156,
       "sampleIds": [
         "progress-react-package",
         "progress-react-source",
@@ -32327,30 +30611,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -32534,10 +30794,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -32558,10 +30814,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -32579,10 +30831,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -32718,19 +30966,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -32802,7 +31042,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 143,
+      "fieldCount": 132,
       "sampleIds": [
         "qr-code-react-package",
         "qr-code-react-source",
@@ -33018,30 +31258,6 @@
           "section": "accessibility"
         },
         {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
-          "section": "accessibility"
-        },
-        {
           "field": "accessibility.rules.wcag[0]",
           "section": "accessibility"
         },
@@ -33314,10 +31530,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -33338,10 +31550,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -33359,10 +31567,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -33566,19 +31770,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -33678,7 +31874,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 207,
+      "fieldCount": 196,
       "sampleIds": [
         "radio-group-react-package",
         "radio-group-react-source",
@@ -33867,30 +32063,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -34170,10 +32342,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -34194,10 +32362,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -34215,10 +32379,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -34422,19 +32582,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -34534,7 +32686,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 202,
+      "fieldCount": 191,
       "sampleIds": [
         "rating-group-react-package",
         "rating-group-react-source",
@@ -34723,30 +32875,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -35010,10 +33138,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -35034,10 +33158,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -35055,10 +33175,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -35198,19 +33314,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -35310,7 +33418,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 182,
+      "fieldCount": 171,
       "sampleIds": [
         "scroll-area-react-package",
         "scroll-area-react-source",
@@ -35523,30 +33631,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -35810,10 +33894,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -35834,10 +33914,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -35855,10 +33931,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -36046,19 +34118,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -36158,7 +34222,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 200,
+      "fieldCount": 189,
       "sampleIds": [
         "segment-group-react-package",
         "segment-group-react-source",
@@ -36371,30 +34435,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -36802,10 +34842,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -36826,10 +34862,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -36847,10 +34879,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -37054,19 +35082,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -37166,7 +35186,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 240,
+      "fieldCount": 229,
       "sampleIds": [
         "select-react-package",
         "select-react-source",
@@ -37311,30 +35331,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -37494,10 +35490,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -37518,10 +35510,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -37539,10 +35527,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -37646,19 +35630,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -37730,7 +35706,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 129,
+      "fieldCount": 118,
       "sampleIds": [
         "separator-react-package",
         "separator-react-source",
@@ -37919,30 +35895,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -38238,10 +36190,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -38262,10 +36210,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -38283,10 +36227,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -38458,19 +36398,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -38570,7 +36502,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 198,
+      "fieldCount": 187,
       "sampleIds": [
         "signature-pad-react-package",
         "signature-pad-react-source",
@@ -38759,30 +36691,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -39090,10 +36998,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -39114,10 +37018,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -39135,10 +37035,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -39390,19 +37286,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -39502,7 +37390,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 221,
+      "fieldCount": 210,
       "sampleIds": [
         "slider-react-package",
         "slider-react-source",
@@ -39691,30 +37579,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -39970,10 +37834,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -39994,10 +37854,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -40015,10 +37871,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -40206,19 +38058,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -40310,7 +38154,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 190,
+      "fieldCount": 179,
       "sampleIds": [
         "splitter-react-package",
         "splitter-react-source",
@@ -40471,30 +38315,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -40774,10 +38594,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -40798,10 +38614,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -40819,10 +38631,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -40978,19 +38786,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -41090,7 +38890,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 183,
+      "fieldCount": 172,
       "sampleIds": [
         "steps-react-package",
         "steps-react-source",
@@ -41275,30 +39075,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -41550,10 +39326,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -41574,10 +39346,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -41595,10 +39363,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -41786,19 +39550,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -41890,7 +39646,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 188,
+      "fieldCount": 177,
       "sampleIds": [
         "switch-react-package",
         "switch-react-source",
@@ -42083,30 +39839,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -42350,10 +40082,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -42374,10 +40102,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -42395,10 +40119,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -42570,19 +40290,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -42682,7 +40394,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 186,
+      "fieldCount": 175,
       "sampleIds": [
         "tabs-react-package",
         "tabs-react-source",
@@ -42895,30 +40607,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -43262,10 +40950,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -43286,10 +40970,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -43307,10 +40987,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -43530,19 +41206,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -43642,7 +41310,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 228,
+      "fieldCount": 217,
       "sampleIds": [
         "tags-input-react-package",
         "tags-input-react-source",
@@ -43803,30 +41471,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -44098,10 +41742,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -44122,10 +41762,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -44143,10 +41779,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -44318,19 +41950,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -44438,7 +42062,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 187,
+      "fieldCount": 176,
       "sampleIds": [
         "timer-react-package",
         "timer-react-source",
@@ -44599,30 +42223,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -44938,10 +42538,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -44962,10 +42558,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -44983,10 +42575,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -45238,19 +42826,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -45366,7 +42946,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 220,
+      "fieldCount": 209,
       "sampleIds": [
         "toast-react-package",
         "toast-react-source",
@@ -45582,30 +43162,6 @@
           "section": "accessibility"
         },
         {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
-          "section": "accessibility"
-        },
-        {
           "field": "accessibility.rules.wcag[0]",
           "section": "accessibility"
         },
@@ -45786,10 +43342,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -45810,10 +43362,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -45831,10 +43379,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -45958,19 +43502,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -46062,7 +43598,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 162,
+      "fieldCount": 151,
       "sampleIds": [
         "toggle-react-package",
         "toggle-react-source",
@@ -46278,30 +43814,6 @@
           "section": "accessibility"
         },
         {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
-          "section": "accessibility"
-        },
-        {
           "field": "accessibility.rules.wcag[0]",
           "section": "accessibility"
         },
@@ -46502,10 +44014,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -46526,10 +44034,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -46547,10 +44051,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -46722,19 +44222,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -46834,7 +44326,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 181,
+      "fieldCount": 170,
       "sampleIds": [
         "toggle-group-react-package",
         "toggle-group-react-source",
@@ -47027,30 +44519,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -47286,10 +44754,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -47310,10 +44774,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -47331,10 +44791,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -47474,19 +44930,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -47578,7 +45026,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 174,
+      "fieldCount": 163,
       "sampleIds": [
         "toolbar-react-package",
         "toolbar-react-source",
@@ -47743,30 +45191,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -48046,10 +45470,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -48070,10 +45490,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -48091,10 +45507,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -48266,19 +45678,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -48386,7 +45790,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 190,
+      "fieldCount": 179,
       "sampleIds": [
         "tooltip-react-package",
         "tooltip-react-source",
@@ -48551,30 +45955,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -48974,10 +46354,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -48998,10 +46374,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -49019,10 +46391,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -49194,19 +46562,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -49322,7 +46682,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 222,
+      "fieldCount": 211,
       "sampleIds": [
         "tour-react-package",
         "tour-react-source",
@@ -49331,8 +46691,8 @@
         "tour-solid-package",
         "tour-solid-source"
       ],
-      "markdownSha256": "2f1880cbb31f799a9f33b3241c6eeaa786fc7fc053a083a158e9c576ed83596a",
-      "htmlSha256": "b91946a7cae0d0d1c5a6cb99e69d03312141a861a3074f5bf21fd5420ad1036e"
+      "markdownSha256": "40d0154597ef8ff5e4b45a9d2d77658d00b867655132e412c0a79f981d1d7a19",
+      "htmlSha256": "20f6b5c1d430fbf13e3434a3af2128d4ae1d9e78fad249383483e9a5bd4a68f3"
     },
     {
       "primitive": "tree-view",
@@ -49535,30 +46895,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -49882,10 +47218,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -49906,10 +47238,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -49927,10 +47255,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -50118,19 +47442,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -50250,7 +47566,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 220,
+      "fieldCount": 209,
       "sampleIds": [
         "tree-view-react-package",
         "tree-view-react-source",
@@ -50395,30 +47711,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -50578,10 +47870,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -50602,10 +47890,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -50623,10 +47907,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -50714,19 +47994,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -50798,7 +48070,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 125,
+      "fieldCount": 114,
       "sampleIds": [
         "badge-react-package",
         "badge-react-source",
@@ -50950,30 +48222,6 @@
           "section": "accessibility"
         },
         {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
-          "section": "accessibility"
-        },
-        {
           "field": "accessibility.rules.wcag[0]",
           "section": "accessibility"
         },
@@ -51202,10 +48450,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -51226,10 +48470,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -51247,10 +48487,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -51338,19 +48574,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -51422,7 +48650,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 144,
+      "fieldCount": 133,
       "sampleIds": [
         "breadcrumb-react-package",
         "breadcrumb-react-source",
@@ -51570,30 +48798,6 @@
           "section": "accessibility"
         },
         {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
-          "section": "accessibility"
-        },
-        {
           "field": "accessibility.rules.wcag[0]",
           "section": "accessibility"
         },
@@ -51822,10 +49026,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -51846,10 +49046,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -51867,10 +49063,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -51958,19 +49150,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -52042,7 +49226,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 143,
+      "fieldCount": 132,
       "sampleIds": [
         "card-react-package",
         "card-react-source",
@@ -52051,8 +49235,8 @@
         "card-solid-package",
         "card-solid-source"
       ],
-      "markdownSha256": "51010e844e0ba9185cbb05bbf7b86128ba7e4bfaeb8113e6315140a415bb88ec",
-      "htmlSha256": "b197a915ead1dcdf80d1285e1f5060f034e879eb1aab9cb704d9dab5ff9729aa"
+      "markdownSha256": "80b446479fceadd88087f42154630bb80e74a341ef9b8ee6a41653a632649293",
+      "htmlSha256": "e34469f3c6b7808668d64f98a28397781f61ecae61a2b723f5aafde8a5a28930"
     },
     {
       "primitive": "command",
@@ -52259,30 +49443,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -52666,10 +49826,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -52690,10 +49846,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -52711,10 +49863,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -52982,19 +50130,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -53110,7 +50250,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 255,
+      "fieldCount": 244,
       "sampleIds": [
         "command-react-package",
         "command-react-source",
@@ -53295,30 +50435,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -53570,10 +50686,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -53594,10 +50706,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -53615,10 +50723,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -53722,19 +50826,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -53822,7 +50918,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 166,
+      "fieldCount": 155,
       "sampleIds": [
         "input-group-react-package",
         "input-group-react-source",
@@ -53990,30 +51086,6 @@
           "section": "accessibility"
         },
         {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
-          "section": "accessibility"
-        },
-        {
           "field": "accessibility.rules.wcag[0]",
           "section": "accessibility"
         },
@@ -54174,10 +51246,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -54198,10 +51266,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -54219,10 +51283,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -54310,19 +51370,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -54402,7 +51454,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 133,
+      "fieldCount": 122,
       "sampleIds": [
         "skeleton-react-package",
         "skeleton-react-source",
@@ -54551,30 +51603,6 @@
         },
         {
           "field": "accessibility.rules.preferences.rtl",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
           "section": "accessibility"
         },
         {
@@ -54830,10 +51858,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -54854,10 +51878,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -54875,10 +51895,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -54966,19 +51982,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -55050,7 +52058,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 150,
+      "fieldCount": 139,
       "sampleIds": [
         "table-react-package",
         "table-react-source",
@@ -55238,30 +52246,6 @@
           "section": "accessibility"
         },
         {
-          "field": "accessibility.rules.review.ledger",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owner",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.owningPhase",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.reviewedAt",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.revision",
-          "section": "accessibility"
-        },
-        {
-          "field": "accessibility.rules.review.status",
-          "section": "accessibility"
-        },
-        {
           "field": "accessibility.rules.wcag[0]",
           "section": "accessibility"
         },
@@ -55438,10 +52422,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.react.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.react.implementationStatus",
           "section": "package-install"
         },
@@ -55462,10 +52442,6 @@
           "section": "package-install"
         },
         {
-          "field": "frameworks.solid.implementationPhase",
-          "section": "package-install"
-        },
-        {
           "field": "frameworks.solid.implementationStatus",
           "section": "package-install"
         },
@@ -55483,10 +52459,6 @@
         },
         {
           "field": "frameworks.svelte.headlessPackage",
-          "section": "package-install"
-        },
-        {
-          "field": "frameworks.svelte.implementationPhase",
           "section": "package-install"
         },
         {
@@ -55718,19 +52690,11 @@
           "section": "source-install"
         },
         {
-          "field": "owningPhase",
-          "section": "known-constraints"
-        },
-        {
           "field": "release.catalogStatus",
           "section": "known-constraints"
         },
         {
           "field": "release.channel",
-          "section": "known-constraints"
-        },
-        {
-          "field": "release.implementationPhase",
           "section": "known-constraints"
         },
         {
@@ -55818,7 +52782,7 @@
           "section": "known-constraints"
         }
       ],
-      "fieldCount": 180,
+      "fieldCount": 169,
       "sampleIds": [
         "textarea-react-package",
         "textarea-react-source",

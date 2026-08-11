@@ -1,16 +1,9 @@
 {
   "allImplementationsImplemented": true,
-  "catalogSha256": "0a84df4b8e8415afc9af0e5a1bce312a7a3355ab37d6f1ed2701d6c998acc80a",
+  "catalogSha256": "eaf2782a22ad3a0153f29e8de410631438fd280d5c29905f7a37694178cb1f2d",
   "catalogVersion": "1.0.0",
   "generatorVersion": "1.0.0",
   "implementationEvidence": true,
-  "phaseCounts": {
-    "PHASE_06": 21,
-    "PHASE_07": 8,
-    "PHASE_08": 7,
-    "PHASE_09": 19,
-    "PHASE_10": 14
-  },
   "primitives": [
     {
       "frameworkStatuses": {
@@ -23,7 +16,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -38,7 +30,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       }
     },
@@ -53,7 +44,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -68,7 +58,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -83,7 +72,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -98,7 +86,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -113,7 +100,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -128,7 +114,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -143,7 +128,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -158,7 +142,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -173,7 +156,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -188,7 +170,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -203,7 +184,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -218,7 +198,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       }
     },
@@ -233,7 +212,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -248,7 +226,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -263,7 +240,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       }
     },
@@ -278,7 +254,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       }
     },
@@ -293,7 +268,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -308,7 +282,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -323,7 +296,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -338,7 +310,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -353,7 +324,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       }
     },
@@ -368,7 +338,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -383,7 +352,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       }
     },
@@ -398,7 +366,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -413,7 +380,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -428,7 +394,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -443,7 +408,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -458,7 +422,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       }
     },
@@ -473,7 +436,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       }
     },
@@ -488,7 +450,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -503,7 +464,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       }
     },
@@ -518,7 +478,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -533,7 +492,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       }
     },
@@ -548,7 +506,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -563,7 +520,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -578,7 +534,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       }
     },
@@ -593,7 +548,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -608,7 +562,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -623,7 +576,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -638,7 +590,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -653,7 +604,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -668,7 +618,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -683,7 +632,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -698,7 +646,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -713,7 +660,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -728,7 +674,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -743,7 +688,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -758,7 +702,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -773,7 +716,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -788,7 +730,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       }
     },
@@ -803,7 +744,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -818,7 +758,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -833,7 +772,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       }
     },
@@ -848,7 +786,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -863,7 +800,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -878,7 +814,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -893,7 +828,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       }
     },
@@ -908,7 +842,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       }
     },
@@ -923,7 +856,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       }
     },
@@ -938,7 +870,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -953,7 +884,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -968,7 +898,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -983,7 +912,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       }
     },
@@ -998,7 +926,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -1013,7 +940,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -1028,7 +954,6 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     },
@@ -1043,12 +968,11 @@
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       }
     }
   ],
   "releaseChannel": "stable-1.0",
   "schemaVersion": 1,
-  "sourceSha256": "5ffc3431ecf062d7cbc46545ecbcbda89310d2057701e38c1492ca61c89d16cf"
+  "sourceSha256": "b1c584fe1444a6350203be6ff3f226004e5d29b25433ba241c97b6f1edfeefb7"
 }

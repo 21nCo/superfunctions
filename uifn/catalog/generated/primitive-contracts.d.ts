@@ -8,6 +8,5 @@ export type UifnImplementationStatus = 'implemented';
 export interface UifnPrimitiveDefinitionStub {
   readonly id: UifnPrimitiveId;
   readonly name: UifnPrimitiveName;
-  readonly owningPhase: 'PHASE_06' | 'PHASE_07' | 'PHASE_08' | 'PHASE_09' | 'PHASE_10';
   readonly implementationStatus: UifnImplementationStatus;
 }

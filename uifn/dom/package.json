@@ -41,5 +41,5 @@
   "engines": { "node": ">=20 <25" },
   "repository": { "type": "git", "url": "git+https://github.com/21nCo/super-functions.git", "directory": "uifn/dom" },
   "publishConfig": { "access": "public" },
-  "uifn": { "status": "ga-candidate", "layer": "dom", "schemaVersion": 1, "sourcePolicy": "clean-room", "implementationPhase": "PHASE_05" }
+  "uifn": { "status": "ga-candidate", "layer": "dom", "schemaVersion": 1, "sourcePolicy": "clean-room" }
 }

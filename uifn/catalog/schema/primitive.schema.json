@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "id", "name", "canonicalOrder", "behaviorFamily", "implementationKind", "owningPhase",
+    "id", "name", "canonicalOrder", "behaviorFamily", "implementationKind",
     "requirementIds", "anatomy", "inputs", "events", "states", "controlledModel", "formSemantics",
     "domServices", "accessibility", "frameworks", "vectors", "docs", "stories", "outputs", "release", "exceptions"
   ],
@@ -15,7 +15,6 @@
     "canonicalOrder": { "type": "integer", "minimum": 1, "maximum": 69 },
     "behaviorFamily": { "enum": ["disclosure", "modal-overlay", "menu-navigation", "selection-collection", "forms-input", "range-gesture", "date-color", "status-feedback", "static-foundation"] },
     "implementationKind": { "enum": ["interactive-controller", "typed-static-contract"] },
-    "owningPhase": { "type": "string", "pattern": "^PHASE_(0[6-9]|10)$" },
     "requirementIds": { "type": "array", "minItems": 2, "uniqueItems": true, "contains": { "const": "CAT-001" }, "items": { "type": "string", "pattern": "^[A-Z0-9]+-[0-9]{3}$" } },
     "anatomy": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/part" } },
     "inputs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/input" } },
@@ -86,7 +85,7 @@
         "profile": { "enum": ["disclosure", "modal-overlay", "menu-navigation", "selection-collection", "forms-input", "range-gesture", "date-color", "status-feedback", "static-foundation"] },
         "rules": {
           "type": "object", "additionalProperties": false,
-          "required": ["normativeBasis", "nativeSemantics", "accessibleName", "description", "keyboard", "pointerTouch", "focus", "announcements", "wcag", "preferences", "review"],
+          "required": ["normativeBasis", "nativeSemantics", "accessibleName", "description", "keyboard", "pointerTouch", "focus", "announcements", "wcag", "preferences"],
           "properties": {
             "normativeBasis": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
             "nativeSemantics": { "type": "string", "minLength": 1 },
@@ -97,31 +96,17 @@
             "focus": { "type": "array", "minItems": 1, "items": { "type": "string" } },
             "announcements": { "type": "array", "minItems": 1, "items": { "type": "string" } },
             "wcag": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[1-4]\\.[1-9][0-9]*\\.[1-9][0-9]*$" } },
-            "preferences": { "type": "object", "required": ["forcedColors", "reflow", "reducedMotion", "rtl"], "properties": { "forcedColors": { "type": "string" }, "reflow": { "type": "string" }, "reducedMotion": { "type": "string" }, "rtl": { "type": "string" } } },
-            "review": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["owner", "owningPhase", "status", "reviewedAt", "revision", "ledger"],
-              "properties": {
-                "owner": { "const": "uifn-maintainer" },
-                "owningPhase": { "const": "PHASE_18" },
-                "status": { "const": "reviewed" },
-                "reviewedAt": { "type": "string", "format": "date" },
-                "revision": { "const": "uifn-a11y-ledger-v1" },
-                "ledger": { "const": "uifn/accessibility/generated/normative-ledger.json" }
-              }
-            }
+            "preferences": { "type": "object", "required": ["forcedColors", "reflow", "reducedMotion", "rtl"], "properties": { "forcedColors": { "type": "string" }, "reflow": { "type": "string" }, "reducedMotion": { "type": "string" }, "rtl": { "type": "string" } } }
           }
         },
         "primitiveNotes": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
       }
     },
     "frameworkTarget": {
-      "type": "object", "additionalProperties": false, "required": ["headlessPackage", "styledPackage", "implementationPhase", "compoundRoot", "support", "implementationStatus"],
+      "type": "object", "additionalProperties": false, "required": ["headlessPackage", "styledPackage", "compoundRoot", "support", "implementationStatus"],
       "properties": {
         "headlessPackage": { "type": "string", "pattern": "^@uifn/" },
         "styledPackage": { "type": "string", "pattern": "^@uifn/components-" },
-        "implementationPhase": { "enum": ["PHASE_11", "PHASE_12", "PHASE_13"] },
         "compoundRoot": { "type": "string", "minLength": 1 },
         "support": { "const": "required" },
         "implementationStatus": { "const": "implemented" }
@@ -150,8 +135,8 @@
       }
     },
     "release": {
-      "type": "object", "additionalProperties": false, "required": ["channel", "catalogStatus", "implementationStatus", "implementationPhase"],
-      "properties": { "channel": { "const": "stable-1.0" }, "catalogStatus": { "const": "ga-required" }, "implementationStatus": { "const": "implemented" }, "implementationPhase": { "type": "string", "pattern": "^PHASE_(0[6-9]|10)$" } }
+      "type": "object", "additionalProperties": false, "required": ["channel", "catalogStatus", "implementationStatus"],
+      "properties": { "channel": { "const": "stable-1.0" }, "catalogStatus": { "const": "ga-required" }, "implementationStatus": { "const": "implemented" } }
     },
     "exception": {
       "type": "object", "additionalProperties": false, "required": ["id", "scope", "rationale", "owner", "expiresAt", "vectors"],

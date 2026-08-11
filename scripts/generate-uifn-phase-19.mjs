@@ -16,9 +16,9 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mode = process.argv.includes('--write') ? 'write' : 'check';
 const readJson = (relative) => JSON.parse(readFileSync(path.join(root, relative), 'utf8'));
-const handoff = readJson('uifn/accessibility/generated/manual-handoff.json');
+const handoff = readJson('uifn/.conduct/generated/phase-18/manual-handoff.json');
 const catalog = readJson('uifn/catalog/generated/catalog.json');
-const ledger = readJson('uifn/accessibility/generated/normative-ledger.json');
+const ledger = readJson('uifn/.conduct/generated/phase-18/normative-ledger.json');
 const matrix = buildPhase19Matrix(handoff, catalog, ledger);
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 
@@ -631,20 +631,20 @@ Use \`npm run sign:uifn-phase-19 -- --kind <participants|manual|review> --input 
 `;
 
 const outputs = {
-  'uifn/accessibility/phase-19/matrix.json': json(matrix),
-  'uifn/accessibility/phase-19/manual-evidence.schema.json': json(manualSchema),
-  'uifn/accessibility/phase-19/participants.schema.json': json(participantSchema),
-  'uifn/accessibility/phase-19/independent-review.schema.json': json(reviewSchema),
-  'uifn/accessibility/phase-19/templates/manual-row.template.json': json(manualTemplate),
-  'uifn/accessibility/phase-19/templates/participants.template.json': json(participantTemplate),
-  'uifn/accessibility/phase-19/templates/independent-review.template.json': json(reviewTemplate),
-  'uifn/accessibility/phase-19/README.md': `${readme.trimEnd()}\n`,
+  'uifn/.conduct/accessibility/phase-19/matrix.json': json(matrix),
+  'uifn/.conduct/accessibility/phase-19/manual-evidence.schema.json': json(manualSchema),
+  'uifn/.conduct/accessibility/phase-19/participants.schema.json': json(participantSchema),
+  'uifn/.conduct/accessibility/phase-19/independent-review.schema.json': json(reviewSchema),
+  'uifn/.conduct/accessibility/phase-19/templates/manual-row.template.json': json(manualTemplate),
+  'uifn/.conduct/accessibility/phase-19/templates/participants.template.json': json(participantTemplate),
+  'uifn/.conduct/accessibility/phase-19/templates/independent-review.template.json': json(reviewTemplate),
+  'uifn/.conduct/accessibility/phase-19/README.md': `${readme.trimEnd()}\n`,
 };
 
 const failures = materializeOutputs(root, outputs, {
   mode,
   errorCode: 'UIFN_PHASE19_GENERATED_DRIFT',
-  managedRoots: ['uifn/accessibility/phase-19'],
+  managedRoots: ['uifn/.conduct/accessibility/phase-19'],
 });
 const result = {
   ok: failures.length === 0,

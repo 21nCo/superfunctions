@@ -1,19 +1,20 @@
 {
   "schemaVersion": 1,
-  "phase": "PHASE_11",
-  "generatedBy": "generate-uifn-phase-11.mjs",
+  "phase": "PHASE_12",
+  "generatedBy": "generate-uifn-phase-12.mjs",
   "implementationEvidence": true,
-  "catalogSha256": "093a751bd5d47b4e1ce1925c29cad28aeb08cbba4870c3f41f651d9576e61fc3",
-  "outputSha256": "d48beea3b39cd4c6b7fef114e409b51486ac9eff1d15cafc4251a2f6999c46e9",
+  "catalogSha256": "f90d50283106d40b028d205350733200d2d9f6982287db54fe7f52429774d282",
+  "outputSha256": "948ff81f1867abe097d818004f7b9ae51c72bfc5bfd6a007e225ea9ad418e3ba",
   "primitiveCount": 69,
+  "anatomyCount": 465,
   "primitives": [
     {
       "id": "accordion",
       "name": "Accordion",
       "kind": "interactive-controller",
       "family": "disclosure",
-      "source": "src/generated/accordion.tsx",
-      "hook": "useAccordion",
+      "source": "lib/generated/accordion/Root.svelte",
+      "module": "lib/generated/accordion/index.ts",
       "provider": "AccordionProvider",
       "namespace": "Accordion",
       "components": [
@@ -55,6 +56,9 @@
           "element": "span",
           "id": "indicator"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -62,8 +66,8 @@
       "name": "AlertDialog",
       "kind": "interactive-controller",
       "family": "modal-overlay",
-      "source": "src/generated/alert-dialog.tsx",
-      "hook": "useAlertDialog",
+      "source": "lib/generated/alert-dialog/Root.svelte",
+      "module": "lib/generated/alert-dialog/index.ts",
       "provider": "AlertDialogProvider",
       "namespace": "AlertDialog",
       "components": [
@@ -135,6 +139,9 @@
           "element": "button",
           "id": "close"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -142,8 +149,8 @@
       "name": "AngleSlider",
       "kind": "interactive-controller",
       "family": "range-gesture",
-      "source": "src/generated/angle-slider.tsx",
-      "hook": "useAngleSlider",
+      "source": "lib/generated/angle-slider/Root.svelte",
+      "module": "lib/generated/angle-slider/index.ts",
       "provider": "AngleSliderProvider",
       "namespace": "AngleSlider",
       "components": [
@@ -179,6 +186,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -186,8 +196,8 @@
       "name": "Autocomplete",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/autocomplete.tsx",
-      "hook": "useAutocomplete",
+      "source": "lib/generated/autocomplete/Root.svelte",
+      "module": "lib/generated/autocomplete/index.ts",
       "provider": "AutocompleteProvider",
       "namespace": "Autocomplete",
       "components": [
@@ -247,6 +257,9 @@
           "element": "div",
           "id": "empty"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -254,8 +267,8 @@
       "name": "Avatar",
       "kind": "typed-static-contract",
       "family": "static-foundation",
-      "source": "src/generated/avatar.tsx",
-      "hook": "useAvatar",
+      "source": "lib/generated/avatar/Root.svelte",
+      "module": "lib/generated/avatar/index.ts",
       "provider": "AvatarProvider",
       "namespace": "Avatar",
       "components": [
@@ -279,15 +292,16 @@
           "element": "span",
           "id": "fallback"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "button",
       "name": "Button",
       "kind": "typed-static-contract",
       "family": "static-foundation",
-      "source": "src/generated/button.tsx",
-      "hook": "useButton",
+      "source": "lib/generated/button/Root.svelte",
+      "module": "lib/generated/button/index.ts",
       "provider": "ButtonProvider",
       "namespace": "Button",
       "components": [
@@ -317,15 +331,16 @@
           "element": "span",
           "id": "spinner"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "carousel",
       "name": "Carousel",
       "kind": "interactive-controller",
       "family": "range-gesture",
-      "source": "src/generated/carousel.tsx",
-      "hook": "useCarousel",
+      "source": "lib/generated/carousel/Root.svelte",
+      "module": "lib/generated/carousel/index.ts",
       "provider": "CarouselProvider",
       "namespace": "Carousel",
       "components": [
@@ -379,6 +394,9 @@
           "element": "div",
           "id": "liveRegion"
         }
+      ],
+      "bindableValues": [
+        "index"
       ]
     },
     {
@@ -386,8 +404,8 @@
       "name": "Checkbox",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/checkbox.tsx",
-      "hook": "useCheckbox",
+      "source": "lib/generated/checkbox/Root.svelte",
+      "module": "lib/generated/checkbox/index.ts",
       "provider": "CheckboxProvider",
       "namespace": "Checkbox",
       "components": [
@@ -423,6 +441,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "checked"
       ]
     },
     {
@@ -430,8 +451,8 @@
       "name": "CheckboxGroup",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/checkbox-group.tsx",
-      "hook": "useCheckboxGroup",
+      "source": "lib/generated/checkbox-group/Root.svelte",
+      "module": "lib/generated/checkbox-group/index.ts",
       "provider": "CheckboxGroupProvider",
       "namespace": "CheckboxGroup",
       "components": [
@@ -479,6 +500,9 @@
           "element": "div",
           "id": "error"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -486,8 +510,8 @@
       "name": "Clipboard",
       "kind": "interactive-controller",
       "family": "status-feedback",
-      "source": "src/generated/clipboard.tsx",
-      "hook": "useClipboard",
+      "source": "lib/generated/clipboard/Root.svelte",
+      "module": "lib/generated/clipboard/index.ts",
       "provider": "ClipboardProvider",
       "namespace": "Clipboard",
       "components": [
@@ -511,15 +535,16 @@
           "element": "span",
           "id": "status"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "collapsible",
       "name": "Collapsible",
       "kind": "interactive-controller",
       "family": "disclosure",
-      "source": "src/generated/collapsible.tsx",
-      "hook": "useCollapsible",
+      "source": "lib/generated/collapsible/Root.svelte",
+      "module": "lib/generated/collapsible/index.ts",
       "provider": "CollapsibleProvider",
       "namespace": "Collapsible",
       "components": [
@@ -543,6 +568,9 @@
           "element": "div",
           "id": "content"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -550,8 +578,8 @@
       "name": "ColorPicker",
       "kind": "interactive-controller",
       "family": "date-color",
-      "source": "src/generated/color-picker.tsx",
-      "hook": "useColorPicker",
+      "source": "lib/generated/color-picker/Root.svelte",
+      "module": "lib/generated/color-picker/index.ts",
       "provider": "ColorPickerProvider",
       "namespace": "ColorPicker",
       "components": [
@@ -629,6 +657,10 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value",
+        "open"
       ]
     },
     {
@@ -636,8 +668,8 @@
       "name": "Combobox",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/combobox.tsx",
-      "hook": "useCombobox",
+      "source": "lib/generated/combobox/Root.svelte",
+      "module": "lib/generated/combobox/index.ts",
       "provider": "ComboboxProvider",
       "namespace": "Combobox",
       "components": [
@@ -715,6 +747,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -722,8 +757,8 @@
       "name": "ContextMenu",
       "kind": "interactive-controller",
       "family": "menu-navigation",
-      "source": "src/generated/context-menu.tsx",
-      "hook": "useContextMenu",
+      "source": "lib/generated/context-menu/Root.svelte",
+      "module": "lib/generated/context-menu/index.ts",
       "provider": "ContextMenuProvider",
       "namespace": "ContextMenu",
       "components": [
@@ -795,6 +830,9 @@
           "element": "div",
           "id": "submenuContent"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -802,8 +840,8 @@
       "name": "DateInput",
       "kind": "interactive-controller",
       "family": "date-color",
-      "source": "src/generated/date-input.tsx",
-      "hook": "useDateInput",
+      "source": "lib/generated/date-input/Root.svelte",
+      "module": "lib/generated/date-input/index.ts",
       "provider": "DateInputProvider",
       "namespace": "DateInput",
       "components": [
@@ -839,6 +877,9 @@
           "element": "div",
           "id": "error"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -846,8 +887,8 @@
       "name": "DatePicker",
       "kind": "interactive-controller",
       "family": "date-color",
-      "source": "src/generated/date-picker.tsx",
-      "hook": "useDatePicker",
+      "source": "lib/generated/date-picker/Root.svelte",
+      "module": "lib/generated/date-picker/index.ts",
       "provider": "DatePickerProvider",
       "namespace": "DatePicker",
       "components": [
@@ -943,6 +984,10 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value",
+        "open"
       ]
     },
     {
@@ -950,8 +995,8 @@
       "name": "Dialog",
       "kind": "interactive-controller",
       "family": "modal-overlay",
-      "source": "src/generated/dialog.tsx",
-      "hook": "useDialog",
+      "source": "lib/generated/dialog/Root.svelte",
+      "module": "lib/generated/dialog/index.ts",
       "provider": "DialogProvider",
       "namespace": "Dialog",
       "components": [
@@ -1011,6 +1056,9 @@
           "element": "button",
           "id": "close"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -1018,8 +1066,8 @@
       "name": "Drawer",
       "kind": "interactive-controller",
       "family": "modal-overlay",
-      "source": "src/generated/drawer.tsx",
-      "hook": "useDrawer",
+      "source": "lib/generated/drawer/Root.svelte",
+      "module": "lib/generated/drawer/index.ts",
       "provider": "DrawerProvider",
       "namespace": "Drawer",
       "components": [
@@ -1085,6 +1133,9 @@
           "element": "button",
           "id": "close"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -1092,8 +1143,8 @@
       "name": "Editable",
       "kind": "interactive-controller",
       "family": "forms-input",
-      "source": "src/generated/editable.tsx",
-      "hook": "useEditable",
+      "source": "lib/generated/editable/Root.svelte",
+      "module": "lib/generated/editable/index.ts",
       "provider": "EditableProvider",
       "namespace": "Editable",
       "components": [
@@ -1153,6 +1204,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -1160,8 +1214,8 @@
       "name": "Field",
       "kind": "typed-static-contract",
       "family": "forms-input",
-      "source": "src/generated/field.tsx",
-      "hook": "useField",
+      "source": "lib/generated/field/Root.svelte",
+      "module": "lib/generated/field/index.ts",
       "provider": "FieldProvider",
       "namespace": "Field",
       "components": [
@@ -1203,15 +1257,16 @@
           "element": "span",
           "id": "requiredIndicator"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "fieldset",
       "name": "Fieldset",
       "kind": "typed-static-contract",
       "family": "forms-input",
-      "source": "src/generated/fieldset.tsx",
-      "hook": "useFieldset",
+      "source": "lib/generated/fieldset/Root.svelte",
+      "module": "lib/generated/fieldset/index.ts",
       "provider": "FieldsetProvider",
       "namespace": "Fieldset",
       "components": [
@@ -1247,15 +1302,16 @@
           "element": "div",
           "id": "error"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "file-upload",
       "name": "FileUpload",
       "kind": "interactive-controller",
       "family": "forms-input",
-      "source": "src/generated/file-upload.tsx",
-      "hook": "useFileUpload",
+      "source": "lib/generated/file-upload/Root.svelte",
+      "module": "lib/generated/file-upload/index.ts",
       "provider": "FileUploadProvider",
       "namespace": "FileUpload",
       "components": [
@@ -1333,6 +1389,9 @@
           "element": "div",
           "id": "status"
         }
+      ],
+      "bindableValues": [
+        "files"
       ]
     },
     {
@@ -1340,8 +1399,8 @@
       "name": "FloatingPanel",
       "kind": "interactive-controller",
       "family": "modal-overlay",
-      "source": "src/generated/floating-panel.tsx",
-      "hook": "useFloatingPanel",
+      "source": "lib/generated/floating-panel/Root.svelte",
+      "module": "lib/generated/floating-panel/index.ts",
       "provider": "FloatingPanelProvider",
       "namespace": "FloatingPanel",
       "components": [
@@ -1407,6 +1466,9 @@
           "element": "button",
           "id": "close"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -1414,8 +1476,8 @@
       "name": "Form",
       "kind": "typed-static-contract",
       "family": "forms-input",
-      "source": "src/generated/form.tsx",
-      "hook": "useForm",
+      "source": "lib/generated/form/Root.svelte",
+      "module": "lib/generated/form/index.ts",
       "provider": "FormProvider",
       "namespace": "Form",
       "components": [
@@ -1439,15 +1501,16 @@
           "element": "div",
           "id": "actions"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "hover-card",
       "name": "HoverCard",
       "kind": "interactive-controller",
       "family": "modal-overlay",
-      "source": "src/generated/hover-card.tsx",
-      "hook": "useHoverCard",
+      "source": "lib/generated/hover-card/Root.svelte",
+      "module": "lib/generated/hover-card/index.ts",
       "provider": "HoverCardProvider",
       "namespace": "HoverCard",
       "components": [
@@ -1483,6 +1546,9 @@
           "element": "div",
           "id": "arrow"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -1490,8 +1556,8 @@
       "name": "ImageCropper",
       "kind": "interactive-controller",
       "family": "range-gesture",
-      "source": "src/generated/image-cropper.tsx",
-      "hook": "useImageCropper",
+      "source": "lib/generated/image-cropper/Root.svelte",
+      "module": "lib/generated/image-cropper/index.ts",
       "provider": "ImageCropperProvider",
       "namespace": "ImageCropper",
       "components": [
@@ -1539,6 +1605,9 @@
           "element": "div",
           "id": "status"
         }
+      ],
+      "bindableValues": [
+        "crop"
       ]
     },
     {
@@ -1546,8 +1615,8 @@
       "name": "Input",
       "kind": "typed-static-contract",
       "family": "forms-input",
-      "source": "src/generated/input.tsx",
-      "hook": "useInput",
+      "source": "lib/generated/input/Root.svelte",
+      "module": "lib/generated/input/index.ts",
       "provider": "InputProvider",
       "namespace": "Input",
       "components": [
@@ -1559,6 +1628,9 @@
           "element": "input",
           "id": "root"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -1566,8 +1638,8 @@
       "name": "Listbox",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/listbox.tsx",
-      "hook": "useListbox",
+      "source": "lib/generated/listbox/Root.svelte",
+      "module": "lib/generated/listbox/index.ts",
       "provider": "ListboxProvider",
       "namespace": "Listbox",
       "components": [
@@ -1621,6 +1693,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -1628,8 +1703,8 @@
       "name": "Marquee",
       "kind": "typed-static-contract",
       "family": "static-foundation",
-      "source": "src/generated/marquee.tsx",
-      "hook": "useMarquee",
+      "source": "lib/generated/marquee/Root.svelte",
+      "module": "lib/generated/marquee/index.ts",
       "provider": "MarqueeProvider",
       "namespace": "Marquee",
       "components": [
@@ -1659,15 +1734,16 @@
           "element": "div",
           "id": "item"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "menu",
       "name": "Menu",
       "kind": "interactive-controller",
       "family": "menu-navigation",
-      "source": "src/generated/menu.tsx",
-      "hook": "useMenu",
+      "source": "lib/generated/menu/Root.svelte",
+      "module": "lib/generated/menu/index.ts",
       "provider": "MenuProvider",
       "namespace": "Menu",
       "components": [
@@ -1739,6 +1815,9 @@
           "element": "div",
           "id": "submenuContent"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -1746,8 +1825,8 @@
       "name": "Menubar",
       "kind": "interactive-controller",
       "family": "menu-navigation",
-      "source": "src/generated/menubar.tsx",
-      "hook": "useMenubar",
+      "source": "lib/generated/menubar/Root.svelte",
+      "module": "lib/generated/menubar/index.ts",
       "provider": "MenubarProvider",
       "namespace": "Menubar",
       "components": [
@@ -1795,6 +1874,9 @@
           "element": "div",
           "id": "submenuContent"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -1802,8 +1884,8 @@
       "name": "Meter",
       "kind": "typed-static-contract",
       "family": "status-feedback",
-      "source": "src/generated/meter.tsx",
-      "hook": "useMeter",
+      "source": "lib/generated/meter/Root.svelte",
+      "module": "lib/generated/meter/index.ts",
       "provider": "MeterProvider",
       "namespace": "Meter",
       "components": [
@@ -1839,6 +1921,9 @@
           "element": "span",
           "id": "valueText"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -1846,8 +1931,8 @@
       "name": "NavigationMenu",
       "kind": "interactive-controller",
       "family": "menu-navigation",
-      "source": "src/generated/navigation-menu.tsx",
-      "hook": "useNavigationMenu",
+      "source": "lib/generated/navigation-menu/Root.svelte",
+      "module": "lib/generated/navigation-menu/index.ts",
       "provider": "NavigationMenuProvider",
       "namespace": "NavigationMenu",
       "components": [
@@ -1901,6 +1986,9 @@
           "element": "div",
           "id": "indicator"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -1908,8 +1996,8 @@
       "name": "NumberInput",
       "kind": "interactive-controller",
       "family": "forms-input",
-      "source": "src/generated/number-input.tsx",
-      "hook": "useNumberInput",
+      "source": "lib/generated/number-input/Root.svelte",
+      "module": "lib/generated/number-input/index.ts",
       "provider": "NumberInputProvider",
       "namespace": "NumberInput",
       "components": [
@@ -1969,6 +2057,9 @@
           "element": "div",
           "id": "error"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -1976,8 +2067,8 @@
       "name": "Pagination",
       "kind": "interactive-controller",
       "family": "menu-navigation",
-      "source": "src/generated/pagination.tsx",
-      "hook": "usePagination",
+      "source": "lib/generated/pagination/Root.svelte",
+      "module": "lib/generated/pagination/index.ts",
       "provider": "PaginationProvider",
       "namespace": "Pagination",
       "components": [
@@ -2025,6 +2116,9 @@
           "element": "span",
           "id": "ellipsis"
         }
+      ],
+      "bindableValues": [
+        "page"
       ]
     },
     {
@@ -2032,8 +2126,8 @@
       "name": "PasswordInput",
       "kind": "interactive-controller",
       "family": "forms-input",
-      "source": "src/generated/password-input.tsx",
-      "hook": "usePasswordInput",
+      "source": "lib/generated/password-input/Root.svelte",
+      "module": "lib/generated/password-input/index.ts",
       "provider": "PasswordInputProvider",
       "namespace": "PasswordInput",
       "components": [
@@ -2075,6 +2169,9 @@
           "element": "div",
           "id": "error"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2082,8 +2179,8 @@
       "name": "PinInput",
       "kind": "interactive-controller",
       "family": "forms-input",
-      "source": "src/generated/pin-input.tsx",
-      "hook": "usePinInput",
+      "source": "lib/generated/pin-input/Root.svelte",
+      "module": "lib/generated/pin-input/index.ts",
       "provider": "PinInputProvider",
       "namespace": "PinInput",
       "components": [
@@ -2125,6 +2222,9 @@
           "element": "div",
           "id": "error"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2132,8 +2232,8 @@
       "name": "Popover",
       "kind": "interactive-controller",
       "family": "modal-overlay",
-      "source": "src/generated/popover.tsx",
-      "hook": "usePopover",
+      "source": "lib/generated/popover/Root.svelte",
+      "module": "lib/generated/popover/index.ts",
       "provider": "PopoverProvider",
       "namespace": "Popover",
       "components": [
@@ -2193,6 +2293,9 @@
           "element": "button",
           "id": "close"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -2200,8 +2303,8 @@
       "name": "Progress",
       "kind": "typed-static-contract",
       "family": "status-feedback",
-      "source": "src/generated/progress.tsx",
-      "hook": "useProgress",
+      "source": "lib/generated/progress/Root.svelte",
+      "module": "lib/generated/progress/index.ts",
       "provider": "ProgressProvider",
       "namespace": "Progress",
       "components": [
@@ -2243,6 +2346,9 @@
           "element": "span",
           "id": "valueText"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2250,8 +2356,8 @@
       "name": "QRCode",
       "kind": "typed-static-contract",
       "family": "static-foundation",
-      "source": "src/generated/qr-code.tsx",
-      "hook": "useQRCode",
+      "source": "lib/generated/qr-code/Root.svelte",
+      "module": "lib/generated/qr-code/index.ts",
       "provider": "QRCodeProvider",
       "namespace": "QRCode",
       "components": [
@@ -2275,15 +2381,16 @@
           "element": "figcaption",
           "id": "caption"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "radio-group",
       "name": "RadioGroup",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/radio-group.tsx",
-      "hook": "useRadioGroup",
+      "source": "lib/generated/radio-group/Root.svelte",
+      "module": "lib/generated/radio-group/index.ts",
       "provider": "RadioGroupProvider",
       "namespace": "RadioGroup",
       "components": [
@@ -2331,6 +2438,9 @@
           "element": "div",
           "id": "error"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2338,8 +2448,8 @@
       "name": "RatingGroup",
       "kind": "interactive-controller",
       "family": "range-gesture",
-      "source": "src/generated/rating-group.tsx",
-      "hook": "useRatingGroup",
+      "source": "lib/generated/rating-group/Root.svelte",
+      "module": "lib/generated/rating-group/index.ts",
       "provider": "RatingGroupProvider",
       "namespace": "RatingGroup",
       "components": [
@@ -2387,6 +2497,9 @@
           "element": "span",
           "id": "valueText"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2394,8 +2507,8 @@
       "name": "ScrollArea",
       "kind": "interactive-controller",
       "family": "range-gesture",
-      "source": "src/generated/scroll-area.tsx",
-      "hook": "useScrollArea",
+      "source": "lib/generated/scroll-area/Root.svelte",
+      "module": "lib/generated/scroll-area/index.ts",
       "provider": "ScrollAreaProvider",
       "namespace": "ScrollArea",
       "components": [
@@ -2437,15 +2550,16 @@
           "element": "div",
           "id": "corner"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "segment-group",
       "name": "SegmentGroup",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/segment-group.tsx",
-      "hook": "useSegmentGroup",
+      "source": "lib/generated/segment-group/Root.svelte",
+      "module": "lib/generated/segment-group/index.ts",
       "provider": "SegmentGroupProvider",
       "namespace": "SegmentGroup",
       "components": [
@@ -2487,6 +2601,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2494,8 +2611,8 @@
       "name": "Select",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/select.tsx",
-      "hook": "useSelect",
+      "source": "lib/generated/select/Root.svelte",
+      "module": "lib/generated/select/index.ts",
       "provider": "SelectProvider",
       "namespace": "Select",
       "components": [
@@ -2585,6 +2702,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2592,8 +2712,8 @@
       "name": "Separator",
       "kind": "typed-static-contract",
       "family": "static-foundation",
-      "source": "src/generated/separator.tsx",
-      "hook": "useSeparator",
+      "source": "lib/generated/separator/Root.svelte",
+      "module": "lib/generated/separator/index.ts",
       "provider": "SeparatorProvider",
       "namespace": "Separator",
       "components": [
@@ -2605,15 +2725,16 @@
           "element": "div",
           "id": "root"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "signature-pad",
       "name": "SignaturePad",
       "kind": "interactive-controller",
       "family": "range-gesture",
-      "source": "src/generated/signature-pad.tsx",
-      "hook": "useSignaturePad",
+      "source": "lib/generated/signature-pad/Root.svelte",
+      "module": "lib/generated/signature-pad/index.ts",
       "provider": "SignaturePadProvider",
       "namespace": "SignaturePad",
       "components": [
@@ -2661,6 +2782,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2668,8 +2792,8 @@
       "name": "Slider",
       "kind": "interactive-controller",
       "family": "range-gesture",
-      "source": "src/generated/slider.tsx",
-      "hook": "useSlider",
+      "source": "lib/generated/slider/Root.svelte",
+      "module": "lib/generated/slider/index.ts",
       "provider": "SliderProvider",
       "namespace": "Slider",
       "components": [
@@ -2723,6 +2847,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2730,8 +2857,8 @@
       "name": "Splitter",
       "kind": "interactive-controller",
       "family": "range-gesture",
-      "source": "src/generated/splitter.tsx",
-      "hook": "useSplitter",
+      "source": "lib/generated/splitter/Root.svelte",
+      "module": "lib/generated/splitter/index.ts",
       "provider": "SplitterProvider",
       "namespace": "Splitter",
       "components": [
@@ -2761,6 +2888,9 @@
           "element": "div",
           "id": "resizeHandle"
         }
+      ],
+      "bindableValues": [
+        "sizes"
       ]
     },
     {
@@ -2768,8 +2898,8 @@
       "name": "Steps",
       "kind": "interactive-controller",
       "family": "status-feedback",
-      "source": "src/generated/steps.tsx",
-      "hook": "useSteps",
+      "source": "lib/generated/steps/Root.svelte",
+      "module": "lib/generated/steps/index.ts",
       "provider": "StepsProvider",
       "namespace": "Steps",
       "components": [
@@ -2823,6 +2953,9 @@
           "element": "span",
           "id": "completed"
         }
+      ],
+      "bindableValues": [
+        "step"
       ]
     },
     {
@@ -2830,8 +2963,8 @@
       "name": "Switch",
       "kind": "interactive-controller",
       "family": "forms-input",
-      "source": "src/generated/switch.tsx",
-      "hook": "useSwitch",
+      "source": "lib/generated/switch/Root.svelte",
+      "module": "lib/generated/switch/index.ts",
       "provider": "SwitchProvider",
       "namespace": "Switch",
       "components": [
@@ -2867,6 +3000,9 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "checked"
       ]
     },
     {
@@ -2874,8 +3010,8 @@
       "name": "Tabs",
       "kind": "interactive-controller",
       "family": "menu-navigation",
-      "source": "src/generated/tabs.tsx",
-      "hook": "useTabs",
+      "source": "lib/generated/tabs/Root.svelte",
+      "module": "lib/generated/tabs/index.ts",
       "provider": "TabsProvider",
       "namespace": "Tabs",
       "components": [
@@ -2911,6 +3047,9 @@
           "element": "div",
           "id": "indicator"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2918,8 +3057,8 @@
       "name": "TagsInput",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/tags-input.tsx",
-      "hook": "useTagsInput",
+      "source": "lib/generated/tags-input/Root.svelte",
+      "module": "lib/generated/tags-input/index.ts",
       "provider": "TagsInputProvider",
       "namespace": "TagsInput",
       "components": [
@@ -2985,6 +3124,9 @@
           "element": "div",
           "id": "error"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -2992,8 +3134,8 @@
       "name": "Timer",
       "kind": "interactive-controller",
       "family": "status-feedback",
-      "source": "src/generated/timer.tsx",
-      "hook": "useTimer",
+      "source": "lib/generated/timer/Root.svelte",
+      "module": "lib/generated/timer/index.ts",
       "provider": "TimerProvider",
       "namespace": "Timer",
       "components": [
@@ -3035,6 +3177,9 @@
           "element": "span",
           "id": "status"
         }
+      ],
+      "bindableValues": [
+        "remaining"
       ]
     },
     {
@@ -3042,8 +3187,8 @@
       "name": "Toast",
       "kind": "interactive-controller",
       "family": "status-feedback",
-      "source": "src/generated/toast.tsx",
-      "hook": "useToast",
+      "source": "lib/generated/toast/Viewport.svelte",
+      "module": "lib/generated/toast/index.ts",
       "provider": "ToastProvider",
       "namespace": "Toast",
       "components": [
@@ -3085,15 +3230,16 @@
           "element": "button",
           "id": "close"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "toggle",
       "name": "Toggle",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/toggle.tsx",
-      "hook": "useToggle",
+      "source": "lib/generated/toggle/Root.svelte",
+      "module": "lib/generated/toggle/index.ts",
       "provider": "ToggleProvider",
       "namespace": "Toggle",
       "components": [
@@ -3105,6 +3251,9 @@
           "element": "button",
           "id": "root"
         }
+      ],
+      "bindableValues": [
+        "pressed"
       ]
     },
     {
@@ -3112,8 +3261,8 @@
       "name": "ToggleGroup",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/toggle-group.tsx",
-      "hook": "useToggleGroup",
+      "source": "lib/generated/toggle-group/Root.svelte",
+      "module": "lib/generated/toggle-group/index.ts",
       "provider": "ToggleGroupProvider",
       "namespace": "ToggleGroup",
       "components": [
@@ -3131,6 +3280,9 @@
           "element": "button",
           "id": "item"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     },
     {
@@ -3138,8 +3290,8 @@
       "name": "Toolbar",
       "kind": "interactive-controller",
       "family": "menu-navigation",
-      "source": "src/generated/toolbar.tsx",
-      "hook": "useToolbar",
+      "source": "lib/generated/toolbar/Root.svelte",
+      "module": "lib/generated/toolbar/index.ts",
       "provider": "ToolbarProvider",
       "namespace": "Toolbar",
       "components": [
@@ -3175,15 +3327,16 @@
           "element": "div",
           "id": "separator"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "tooltip",
       "name": "Tooltip",
       "kind": "interactive-controller",
       "family": "modal-overlay",
-      "source": "src/generated/tooltip.tsx",
-      "hook": "useTooltip",
+      "source": "lib/generated/tooltip/Root.svelte",
+      "module": "lib/generated/tooltip/index.ts",
       "provider": "TooltipProvider",
       "namespace": "Tooltip",
       "components": [
@@ -3219,6 +3372,9 @@
           "element": "div",
           "id": "arrow"
         }
+      ],
+      "bindableValues": [
+        "open"
       ]
     },
     {
@@ -3226,8 +3382,8 @@
       "name": "Tour",
       "kind": "interactive-controller",
       "family": "modal-overlay",
-      "source": "src/generated/tour.tsx",
-      "hook": "useTour",
+      "source": "lib/generated/tour/Root.svelte",
+      "module": "lib/generated/tour/index.ts",
       "provider": "TourProvider",
       "namespace": "Tour",
       "components": [
@@ -3311,6 +3467,10 @@
           "element": "div",
           "id": "progress"
         }
+      ],
+      "bindableValues": [
+        "open",
+        "step"
       ]
     },
     {
@@ -3318,8 +3478,8 @@
       "name": "TreeView",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/tree-view.tsx",
-      "hook": "useTreeView",
+      "source": "lib/generated/tree-view/Root.svelte",
+      "module": "lib/generated/tree-view/index.ts",
       "provider": "TreeViewProvider",
       "namespace": "TreeView",
       "components": [
@@ -3373,6 +3533,10 @@
           "element": "span",
           "id": "indicator"
         }
+      ],
+      "bindableValues": [
+        "expanded",
+        "selection"
       ]
     },
     {
@@ -3380,8 +3544,8 @@
       "name": "Badge",
       "kind": "typed-static-contract",
       "family": "static-foundation",
-      "source": "src/generated/badge.tsx",
-      "hook": "useBadge",
+      "source": "lib/generated/badge/Root.svelte",
+      "module": "lib/generated/badge/index.ts",
       "provider": "BadgeProvider",
       "namespace": "Badge",
       "components": [
@@ -3393,15 +3557,16 @@
           "element": "span",
           "id": "root"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "breadcrumb",
       "name": "Breadcrumb",
       "kind": "typed-static-contract",
       "family": "static-foundation",
-      "source": "src/generated/breadcrumb.tsx",
-      "hook": "useBreadcrumb",
+      "source": "lib/generated/breadcrumb/Root.svelte",
+      "module": "lib/generated/breadcrumb/index.ts",
       "provider": "BreadcrumbProvider",
       "namespace": "Breadcrumb",
       "components": [
@@ -3449,15 +3614,16 @@
           "element": "span",
           "id": "ellipsis"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "card",
       "name": "Card",
       "kind": "typed-static-contract",
       "family": "static-foundation",
-      "source": "src/generated/card.tsx",
-      "hook": "useCard",
+      "source": "lib/generated/card/Root.svelte",
+      "module": "lib/generated/card/index.ts",
       "provider": "CardProvider",
       "namespace": "Card",
       "components": [
@@ -3505,15 +3671,16 @@
           "element": "div",
           "id": "footer"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "command",
       "name": "Command",
       "kind": "interactive-controller",
       "family": "selection-collection",
-      "source": "src/generated/command.tsx",
-      "hook": "useCommand",
+      "source": "lib/generated/command/Root.svelte",
+      "module": "lib/generated/command/index.ts",
       "provider": "CommandProvider",
       "namespace": "Command",
       "components": [
@@ -3597,6 +3764,10 @@
           "element": "input",
           "id": "hiddenInput"
         }
+      ],
+      "bindableValues": [
+        "value",
+        "inputValue"
       ]
     },
     {
@@ -3604,8 +3775,8 @@
       "name": "InputGroup",
       "kind": "typed-static-contract",
       "family": "forms-input",
-      "source": "src/generated/input-group.tsx",
-      "hook": "useInputGroup",
+      "source": "lib/generated/input-group/Root.svelte",
+      "module": "lib/generated/input-group/index.ts",
       "provider": "InputGroupProvider",
       "namespace": "InputGroup",
       "components": [
@@ -3653,15 +3824,16 @@
           "element": "button",
           "id": "button"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "skeleton",
       "name": "Skeleton",
       "kind": "typed-static-contract",
       "family": "status-feedback",
-      "source": "src/generated/skeleton.tsx",
-      "hook": "useSkeleton",
+      "source": "lib/generated/skeleton/Root.svelte",
+      "module": "lib/generated/skeleton/index.ts",
       "provider": "SkeletonProvider",
       "namespace": "Skeleton",
       "components": [
@@ -3673,15 +3845,16 @@
           "element": "div",
           "id": "root"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "table",
       "name": "Table",
       "kind": "typed-static-contract",
       "family": "static-foundation",
-      "source": "src/generated/table.tsx",
-      "hook": "useTable",
+      "source": "lib/generated/table/Root.svelte",
+      "module": "lib/generated/table/index.ts",
       "provider": "TableProvider",
       "namespace": "Table",
       "components": [
@@ -3741,15 +3914,16 @@
           "element": "caption",
           "id": "caption"
         }
-      ]
+      ],
+      "bindableValues": []
     },
     {
       "id": "textarea",
       "name": "Textarea",
       "kind": "typed-static-contract",
       "family": "forms-input",
-      "source": "src/generated/textarea.tsx",
-      "hook": "useTextarea",
+      "source": "lib/generated/textarea/Root.svelte",
+      "module": "lib/generated/textarea/index.ts",
       "provider": "TextareaProvider",
       "namespace": "Textarea",
       "components": [
@@ -3761,6 +3935,9 @@
           "element": "textarea",
           "id": "root"
         }
+      ],
+      "bindableValues": [
+        "value"
       ]
     }
   ]

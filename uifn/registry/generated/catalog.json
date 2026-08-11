@@ -9,8 +9,8 @@
     "solid"
   ],
   "artifactCount": 69,
-  "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-  "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+  "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+  "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
   "sourcePolicy": "clean-room",
   "licensePolicy": [
     "MIT"
@@ -32,8 +32,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:accordion",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -54,6 +54,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -152,6 +157,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -187,6 +197,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -204,8 +219,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -224,8 +239,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:alert-dialog",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -246,6 +261,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -389,6 +409,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -424,6 +449,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -441,8 +471,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -461,8 +491,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:angle-slider",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -483,6 +513,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -572,6 +607,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -607,6 +647,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -624,8 +669,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -644,8 +689,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:autocomplete",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -666,6 +711,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -791,6 +841,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -826,6 +881,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -843,8 +903,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -863,8 +923,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:avatar",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -885,6 +945,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -956,6 +1021,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -991,6 +1061,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1008,8 +1083,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -1028,8 +1103,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:button",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -1050,6 +1125,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -1130,6 +1210,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1165,6 +1250,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1182,8 +1272,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -1202,8 +1292,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:carousel",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -1224,6 +1314,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -1340,6 +1435,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1375,6 +1475,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1392,8 +1497,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -1412,8 +1517,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:checkbox",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -1434,6 +1539,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -1523,6 +1633,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1558,6 +1673,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1575,8 +1695,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -1595,8 +1715,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:checkbox-group",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -1617,6 +1737,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -1724,6 +1849,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1759,6 +1889,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1776,8 +1911,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -1796,8 +1931,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:clipboard",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -1818,6 +1953,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -1889,6 +2029,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1924,6 +2069,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -1941,8 +2091,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -1961,8 +2111,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:collapsible",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -1983,6 +2133,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -2054,6 +2209,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -2089,6 +2249,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -2106,8 +2271,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -2126,8 +2291,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:color-picker",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -2148,6 +2313,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -2300,6 +2470,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -2335,6 +2510,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -2352,8 +2532,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -2372,8 +2552,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:combobox",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -2394,6 +2574,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -2546,6 +2731,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -2581,6 +2771,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -2598,8 +2793,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -2618,8 +2813,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:context-menu",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -2640,6 +2835,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -2783,6 +2983,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -2818,6 +3023,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -2835,8 +3045,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -2855,8 +3065,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:date-input",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -2877,6 +3087,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -2966,6 +3181,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3001,6 +3221,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3018,8 +3243,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -3038,8 +3263,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:date-picker",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -3060,6 +3285,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -3239,6 +3469,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3274,6 +3509,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3291,8 +3531,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -3311,8 +3551,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:dialog",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -3333,6 +3573,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -3458,6 +3703,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3493,6 +3743,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3510,8 +3765,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -3530,8 +3785,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:drawer",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -3552,6 +3807,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -3686,6 +3946,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3721,6 +3986,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3738,8 +4008,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -3758,8 +4028,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:editable",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -3780,6 +4050,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -3905,6 +4180,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3940,6 +4220,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -3957,8 +4242,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -3977,8 +4262,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:field",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -3999,6 +4284,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -4097,6 +4387,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4132,6 +4427,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4149,8 +4449,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -4169,8 +4469,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:fieldset",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -4191,6 +4491,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -4280,6 +4585,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4315,6 +4625,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4332,8 +4647,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -4352,8 +4667,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:file-upload",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -4374,6 +4689,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -4526,6 +4846,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4561,6 +4886,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4578,8 +4908,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -4598,8 +4928,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:floating-panel",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -4620,6 +4950,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -4754,6 +5089,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4789,6 +5129,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4806,8 +5151,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -4826,8 +5171,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:form",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -4848,6 +5193,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -4919,6 +5269,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4954,6 +5309,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -4971,8 +5331,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -4991,8 +5351,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:hover-card",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -5013,6 +5373,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -5102,6 +5467,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5137,6 +5507,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5154,8 +5529,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -5174,8 +5549,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:image-cropper",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -5196,6 +5571,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -5303,6 +5683,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5338,6 +5723,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5355,8 +5745,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -5375,8 +5765,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:input",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -5397,6 +5787,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -5450,6 +5845,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5485,6 +5885,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5502,8 +5907,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -5522,8 +5927,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:listbox",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -5544,6 +5949,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -5660,6 +6070,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5695,6 +6110,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5712,8 +6132,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -5732,8 +6152,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:marquee",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -5754,6 +6174,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -5834,6 +6259,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5869,6 +6299,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -5886,8 +6321,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -5906,8 +6341,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:menu",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -5928,6 +6363,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -6071,6 +6511,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6106,6 +6551,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6123,8 +6573,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -6143,8 +6593,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:menubar",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -6165,6 +6615,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -6272,6 +6727,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6307,6 +6767,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6324,8 +6789,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -6344,8 +6809,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:meter",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -6366,6 +6831,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -6455,6 +6925,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6490,6 +6965,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6507,8 +6987,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -6527,8 +7007,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:navigation-menu",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -6549,6 +7029,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -6665,6 +7150,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6700,6 +7190,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6717,8 +7212,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -6737,8 +7232,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:number-input",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -6759,6 +7254,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -6884,6 +7384,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6919,6 +7424,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -6936,8 +7446,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -6956,8 +7466,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:pagination",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -6978,6 +7488,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -7085,6 +7600,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7120,6 +7640,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7137,8 +7662,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -7157,8 +7682,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:password-input",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -7179,6 +7704,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -7277,6 +7807,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7312,6 +7847,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7329,8 +7869,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -7349,8 +7889,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:pin-input",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -7371,6 +7911,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -7469,6 +8014,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7504,6 +8054,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7521,8 +8076,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -7541,8 +8096,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:popover",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -7563,6 +8118,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -7688,6 +8248,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7723,6 +8288,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7740,8 +8310,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -7760,8 +8330,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:progress",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -7782,6 +8352,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -7880,6 +8455,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7915,6 +8495,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -7932,8 +8517,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -7952,8 +8537,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:qr-code",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -7974,6 +8559,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -8045,6 +8635,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8080,6 +8675,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8097,8 +8697,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -8117,8 +8717,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:radio-group",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -8139,6 +8739,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -8246,6 +8851,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8281,6 +8891,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8298,8 +8913,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -8318,8 +8933,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:rating-group",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -8340,6 +8955,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -8447,6 +9067,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8482,6 +9107,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8499,8 +9129,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -8519,8 +9149,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:scroll-area",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -8541,6 +9171,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -8639,6 +9274,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8674,6 +9314,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8691,8 +9336,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -8711,8 +9356,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:segment-group",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -8733,6 +9378,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -8831,6 +9481,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8866,6 +9521,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -8883,8 +9543,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -8903,8 +9563,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:select",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -8925,6 +9585,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -9095,6 +9760,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9130,6 +9800,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9147,8 +9822,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -9167,8 +9842,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:separator",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -9189,6 +9864,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -9242,6 +9922,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9277,6 +9962,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9294,8 +9984,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -9314,8 +10004,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:signature-pad",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -9336,6 +10026,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -9443,6 +10138,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9478,6 +10178,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9495,8 +10200,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -9515,8 +10220,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:slider",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -9537,6 +10242,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -9653,6 +10363,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9688,6 +10403,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9705,8 +10425,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -9725,8 +10445,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:splitter",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -9747,6 +10467,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -9827,6 +10552,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9862,6 +10592,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -9879,8 +10614,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -9899,8 +10634,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:steps",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -9921,6 +10656,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -10037,6 +10777,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10072,6 +10817,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10089,8 +10839,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -10109,8 +10859,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:switch",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -10131,6 +10881,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -10220,6 +10975,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10255,6 +11015,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10272,8 +11037,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -10292,8 +11057,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:tabs",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -10314,6 +11079,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -10403,6 +11173,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10438,6 +11213,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10455,8 +11235,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -10475,8 +11255,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:tags-input",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -10497,6 +11277,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -10631,6 +11416,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10666,6 +11456,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10683,8 +11478,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -10703,8 +11498,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:timer",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -10725,6 +11520,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -10823,6 +11623,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10858,6 +11663,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -10875,8 +11685,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -10895,8 +11705,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:toast",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -10917,6 +11727,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -11015,6 +11830,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11050,6 +11870,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11067,8 +11892,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -11087,8 +11912,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:toggle",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -11109,6 +11934,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -11162,6 +11992,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11197,6 +12032,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11214,8 +12054,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -11234,8 +12074,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:toggle-group",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -11256,6 +12096,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -11318,6 +12163,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11353,6 +12203,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11370,8 +12225,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -11390,8 +12245,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:toolbar",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -11412,6 +12267,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -11501,6 +12361,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11536,6 +12401,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11553,8 +12423,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -11573,8 +12443,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:tooltip",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -11595,6 +12465,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -11684,6 +12559,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11719,6 +12599,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11736,8 +12621,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -11756,8 +12641,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:tour",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -11778,6 +12663,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -11939,6 +12829,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11974,6 +12869,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -11991,8 +12891,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -12011,8 +12911,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:tree-view",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -12033,6 +12933,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -12149,6 +13054,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -12184,6 +13094,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -12201,8 +13116,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -12221,8 +13136,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:badge",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -12243,6 +13158,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -12296,6 +13216,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -12331,6 +13256,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -12348,8 +13278,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -12368,8 +13298,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:breadcrumb",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -12390,6 +13320,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -12497,6 +13432,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -12532,6 +13472,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -12549,8 +13494,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -12569,8 +13514,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:card",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -12591,6 +13536,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -12698,6 +13648,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -12733,6 +13688,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -12750,8 +13710,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -12770,8 +13730,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:command",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -12792,6 +13752,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -12953,6 +13918,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -12988,6 +13958,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -13005,8 +13980,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -13025,8 +14000,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:input-group",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -13047,6 +14022,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -13154,6 +14134,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -13189,6 +14174,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -13206,8 +14196,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -13226,8 +14216,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:skeleton",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -13248,6 +14238,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -13301,6 +14296,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -13336,6 +14336,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -13353,8 +14358,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -13373,8 +14378,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:table",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -13395,6 +14400,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -13520,6 +14530,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -13555,6 +14570,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -13572,8 +14592,8 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     },
     {
@@ -13592,8 +14612,8 @@
       "sourcePolicy": "clean-room",
       "lockKey": "component:textarea",
       "artifactDependencies": [],
-      "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-      "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d",
+      "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+      "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073",
       "frameworks": {
         "react": {
           "supported": true,
@@ -13614,6 +14634,11 @@
           "dependencies": [
             {
               "name": "@uifn/components",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
+              "name": "@uifn/recipes",
               "version": "0.0.1",
               "relationship": "runtime"
             },
@@ -13667,6 +14692,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/svelte",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -13702,6 +14732,11 @@
               "relationship": "runtime"
             },
             {
+              "name": "@uifn/recipes",
+              "version": "0.0.1",
+              "relationship": "runtime"
+            },
+            {
               "name": "@uifn/solid",
               "version": "0.0.1",
               "relationship": "runtime"
@@ -13719,10 +14754,10 @@
         "source": "uifn/catalog/generated/anatomy-types.json",
         "sourcePolicy": "clean-room",
         "generatedBy": "uifn-delivery-generator@16.6.0",
-        "definitionSha256": "001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4",
-        "generatorSha256": "2c3bc117b2ee7efd073a5c43756a35f65d4fa375960a4d323fc24f1ea017e78d"
+        "definitionSha256": "c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279",
+        "generatorSha256": "843875ea7302cd252e5d25a4c1e7803f7a404ff195cfeae6e92e4037f873e073"
       }
     }
   ],
-  "catalogSha256": "2490fcd76d0eee6be8800d7f63587d89a8fba069b969b60a9e61c41fc5642cc1"
+  "catalogSha256": "f48f6df70804a703488b77235c28e694fc79c1cc1033d8babfee74747e69cf85"
 }

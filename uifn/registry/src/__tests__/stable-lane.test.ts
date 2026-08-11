@@ -30,7 +30,11 @@ describe('stable source delivery lane', () => {
       expect(entry.provenance.sourcePolicy).toBe('clean-room');
       expect(entry.provenance.definitionSha256).toHaveLength(64);
       expect(entry.files.every((file) => existsSync(path.join(rootDir, file.path)) && file.installedSha256 === file.outputSha256)).toBe(true);
-      expect(readFileSync(path.join(rootDir, 'package.json'), 'utf8')).toContain(`@uifn/${framework}`);
+      const manifest = JSON.parse(readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+      expect(manifest.dependencies).toMatchObject({
+        '@uifn/recipes': '0.0.1',
+        [`@uifn/${framework}`]: '0.0.1',
+      });
     });
   });
 

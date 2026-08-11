@@ -61,10 +61,9 @@ function configFor(name) {
 export async function verifyPhase09Contract({ requireDist = false } = {}) {
   const issues = [];
   const catalog = JSON.parse(readFileSync(path.join(repoRoot, 'uifn/catalog/generated/catalog.json'), 'utf8'));
-  const selected = catalog.primitives
-    .filter((primitive) => primitive.owningPhase === 'PHASE_09' && primitive.name !== 'Switch')
-    .map((primitive) => primitive.name);
-  if (JSON.stringify(selected) !== JSON.stringify(['Autocomplete','Checkbox','CheckboxGroup','Clipboard','Combobox','Editable','FileUpload','Listbox','NumberInput','PasswordInput','PinInput','RadioGroup','SegmentGroup','Select','TagsInput','Toggle','ToggleGroup'])) {
+  const expected = ['Autocomplete','Checkbox','CheckboxGroup','Clipboard','Combobox','Editable','FileUpload','Listbox','NumberInput','PasswordInput','PinInput','RadioGroup','SegmentGroup','Select','TagsInput','Toggle','ToggleGroup'];
+  const selected = catalog.primitives.filter((primitive) => expected.includes(primitive.name)).map((primitive) => primitive.name);
+  if (JSON.stringify(selected) !== JSON.stringify(expected)) {
     issues.push(issue('UIFN_CONTROLLED_STATE_DIVERGED', 'PHASE_09 catalog ownership differs from the reviewed seventeen-primitive set plus inherited Switch.', 'uifn/catalog/generated/catalog.json'));
   }
 

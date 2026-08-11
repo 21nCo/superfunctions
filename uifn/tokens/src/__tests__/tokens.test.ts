@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createCustomSurface, contrastRatio, parseColorToOklch, validateContrastPair } from '../oklch';
+import { createCustomSurface, contrastRatio, parseColorToOklch, parseOklch, validateContrastPair } from '../oklch';
 import { UIFnTokenError, type DesignTokenTheme } from '../schema';
 import { assertSemanticStylesUseTokens, validateTokenTheme } from '../validate';
 
@@ -169,6 +169,11 @@ describe('semantic token validation', () => {
     expect(color.c).toBeGreaterThan(0);
     expect(color.h).toBeGreaterThanOrEqual(0);
     expect(color.h).toBeLessThan(360);
+  });
+
+  it('TV-STYLE-003 preserves unitless OKLCH lightness', () => {
+    expect(parseOklch('oklch(0.5 0.1 240)')).toMatchObject({ l: 0.5, c: 0.1, h: 240 });
+    expect(parseOklch('oklch(50% 0.1 240)')).toMatchObject({ l: 0.5, c: 0.1, h: 240 });
   });
 
   it('TV-STYLE-003 negative rejects low contrast pairs', () => {

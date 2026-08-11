@@ -32,20 +32,13 @@ export const GENERATED_OUTPUT_NAMES = [
 ];
 
 const PRIMITIVE_REQUIRED_FIELDS = [
-  'id', 'name', 'canonicalOrder', 'behaviorFamily', 'implementationKind', 'owningPhase',
+  'id', 'name', 'canonicalOrder', 'behaviorFamily', 'implementationKind',
   'requirementIds', 'anatomy', 'inputs', 'events', 'states', 'controlledModel', 'formSemantics',
   'domServices', 'accessibility', 'frameworks', 'vectors', 'docs', 'stories', 'outputs', 'release', 'exceptions',
 ];
 const ALLOWED_CONTROLLED_MODES = ['none', 'native', 'single', 'multiple', 'single-or-multiple', 'compound'];
-const ALLOWED_PHASES = ['PHASE_06', 'PHASE_07', 'PHASE_08', 'PHASE_09', 'PHASE_10'];
 const DOM_SERVICE_IDS = Object.values(DOM_SERVICES);
-const PHASE_REQUIREMENTS = {
-  PHASE_06: ['PRIM-001'],
-  PHASE_07: ['PRIM-002'],
-  PHASE_08: ['PRIM-003', 'PRIM-008'],
-  PHASE_09: ['PRIM-004', 'PRIM-005'],
-  PHASE_10: ['PRIM-006', 'PRIM-007', 'PRIM-008'],
-};
+const PRIMITIVE_REQUIREMENTS = new Set(['PRIM-001', 'PRIM-002', 'PRIM-003', 'PRIM-004', 'PRIM-005', 'PRIM-006', 'PRIM-007', 'PRIM-008']);
 
 export class CatalogError extends Error {
   constructor(code, message, details = {}) {
@@ -98,7 +91,7 @@ function validateAccessibility(primitive) {
   assert(accessibility && typeof accessibility === 'object', 'UIFN_CATALOG_FIELD_MISSING', `${primitive.name} is missing accessibility.`, { primitive: primitive.name, field: 'accessibility' });
   assert(BEHAVIOR_FAMILIES.includes(accessibility.profile), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive.name} has an unsupported accessibility profile.`, { primitive: primitive.name, value: accessibility.profile });
   const rules = accessibility.rules;
-  const requiredRules = ['normativeBasis', 'nativeSemantics', 'accessibleName', 'description', 'keyboard', 'pointerTouch', 'focus', 'announcements', 'wcag', 'preferences', 'review'];
+  const requiredRules = ['normativeBasis', 'nativeSemantics', 'accessibleName', 'description', 'keyboard', 'pointerTouch', 'focus', 'announcements', 'wcag', 'preferences'];
   assert(rules && typeof rules === 'object', 'UIFN_CATALOG_FIELD_MISSING', `${primitive.name} is missing accessibility rules.`, { primitive: primitive.name });
   for (const field of requiredRules) {
     assert(Object.hasOwn(rules, field), 'UIFN_CATALOG_FIELD_MISSING', `${primitive.name} is missing accessibility.rules.${field}.`, { primitive: primitive.name, field });
@@ -112,18 +105,6 @@ function validateAccessibility(primitive) {
   assert(typeof rules.description?.supported === 'boolean' && Array.isArray(rules.description.relationships), 'UIFN_CATALOG_FIELD_MISSING', `${primitive.name} needs a description contract.`, { primitive: primitive.name });
   assert(typeof rules.keyboard?.model === 'string' && rules.keyboard.keys?.length > 0, 'UIFN_CATALOG_FIELD_MISSING', `${primitive.name} needs a keyboard contract.`, { primitive: primitive.name });
   assert(['forcedColors', 'reflow', 'reducedMotion', 'rtl'].every((field) => typeof rules.preferences?.[field] === 'string' && rules.preferences[field].length > 0), 'UIFN_CATALOG_FIELD_MISSING', `${primitive.name} needs all accessibility preference contracts.`, { primitive: primitive.name });
-  assert(
-    rules.review?.owner === 'uifn-maintainer'
-      && rules.review?.owningPhase === 'PHASE_18'
-      && rules.review?.status === 'reviewed'
-      && /^\d{4}-\d{2}-\d{2}$/.test(rules.review?.reviewedAt ?? '')
-      && typeof rules.review?.revision === 'string'
-      && rules.review.revision.length > 0
-      && rules.review?.ledger === 'uifn/accessibility/generated/normative-ledger.json',
-    'UIFN_CATALOG_IMPLEMENTATION_STATUS_INVALID',
-    `${primitive.name} accessibility review must reference the reviewed PHASE_18 normative ledger.`,
-    { primitive: primitive.name, review: rules.review },
-  );
   assert(Array.isArray(accessibility.primitiveNotes) && accessibility.primitiveNotes.length > 0, 'UIFN_CATALOG_FIELD_MISSING', `${primitive.name} needs primitive-specific accessibility notes.`, { primitive: primitive.name });
 }
 
@@ -137,13 +118,10 @@ function validatePrimitive(primitive, index) {
   assert(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(primitive.id), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive.name} has an invalid id.`, { primitive: primitive.name, value: primitive.id });
   assert(BEHAVIOR_FAMILIES.includes(primitive.behaviorFamily), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive.name} has an unsupported behavior family.`, { primitive: primitive.name, value: primitive.behaviorFamily });
   assert(IMPLEMENTATION_KINDS.includes(primitive.implementationKind), 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive.name} has an unsupported implementation kind.`, { primitive: primitive.name, value: primitive.implementationKind });
-  assert(ALLOWED_PHASES.includes(primitive.owningPhase), 'UIFN_CATALOG_PHASE_MAPPING_INVALID', `${primitive.name} has an unsupported owning phase.`, { primitive: primitive.name, value: primitive.owningPhase });
-
-  assert(Array.isArray(primitive.requirementIds) && primitive.requirementIds.includes('CAT-001') && primitive.requirementIds.length >= 2, 'UIFN_CATALOG_PHASE_MAPPING_INVALID', `${primitive.name} must map CAT-001 and a primitive requirement.`, { primitive: primitive.name });
+  assert(Array.isArray(primitive.requirementIds) && primitive.requirementIds.includes('CAT-001') && primitive.requirementIds.length >= 2, 'UIFN_CATALOG_REQUIREMENT_MAPPING_INVALID', `${primitive.name} must map CAT-001 and a primitive requirement.`, { primitive: primitive.name });
   assertUnique(primitive.requirementIds, 'requirement id', primitive.name);
-  const phaseRequirements = PHASE_REQUIREMENTS[primitive.owningPhase];
   const primitiveRequirements = primitive.requirementIds.filter((id) => id.startsWith('PRIM-'));
-  assert(primitiveRequirements.length > 0 && primitiveRequirements.every((id) => phaseRequirements.includes(id)), 'UIFN_CATALOG_PHASE_MAPPING_INVALID', `${primitive.name} requirement ownership disagrees with ${primitive.owningPhase}.`, { primitive: primitive.name, primitiveRequirements, phaseRequirements });
+  assert(primitiveRequirements.length > 0 && primitiveRequirements.every((id) => PRIMITIVE_REQUIREMENTS.has(id)), 'UIFN_CATALOG_REQUIREMENT_MAPPING_INVALID', `${primitive.name} has unsupported primitive requirements.`, { primitive: primitive.name, primitiveRequirements });
 
   for (const [field, key] of [['anatomy', 'id'], ['inputs', 'name'], ['events', 'type'], ['states', 'name']]) {
     assert(Array.isArray(primitive[field]), 'UIFN_CATALOG_FIELD_MISSING', `${primitive.name} is missing ${field}.`, { primitive: primitive.name, field });
@@ -174,7 +152,7 @@ function validatePrimitive(primitive, index) {
   for (const framework of STABLE_FRAMEWORKS) {
     const target = primitive.frameworks[framework];
     const expected = FRAMEWORK_TARGETS[framework];
-    assert(target?.headlessPackage === expected.headlessPackage && target?.styledPackage === expected.styledPackage && target?.implementationPhase === expected.implementationPhase && target?.compoundRoot === primitive.name && target?.support === 'required', 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive.name} has invalid ${framework} target metadata.`, { primitive: primitive.name, framework });
+    assert(target?.headlessPackage === expected.headlessPackage && target?.styledPackage === expected.styledPackage && target?.compoundRoot === primitive.name && target?.support === 'required', 'UIFN_CATALOG_UNSUPPORTED_VALUE', `${primitive.name} has invalid ${framework} target metadata.`, { primitive: primitive.name, framework });
     assert(target.implementationStatus === 'implemented', 'UIFN_CATALOG_IMPLEMENTATION_STATUS_INVALID', `${primitive.name} ${framework} must identify its implemented stable adapter.`, { primitive: primitive.name, framework });
   }
 
@@ -192,7 +170,7 @@ function validatePrimitive(primitive, index) {
   assertExactArray(primitive.outputs?.core, expectedCore, 'core outputs', primitive.name);
   assertExactArray(primitive.outputs?.headlessPackages, STABLE_FRAMEWORKS.map((framework) => FRAMEWORK_TARGETS[framework].headlessPackage), 'headless package outputs', primitive.name);
   assertExactArray(primitive.outputs?.styledPackages, STABLE_FRAMEWORKS.map((framework) => FRAMEWORK_TARGETS[framework].styledPackage), 'styled package outputs', primitive.name);
-  assert(primitive.release?.channel === 'stable-1.0' && primitive.release?.catalogStatus === 'ga-required' && primitive.release?.implementationPhase === primitive.owningPhase, 'UIFN_CATALOG_PHASE_MAPPING_INVALID', `${primitive.name} release ownership is invalid.`, { primitive: primitive.name });
+  assert(primitive.release?.channel === 'stable-1.0' && primitive.release?.catalogStatus === 'ga-required', 'UIFN_CATALOG_RELEASE_MAPPING_INVALID', `${primitive.name} release metadata is invalid.`, { primitive: primitive.name });
   assert(primitive.release?.implementationStatus === 'implemented', 'UIFN_CATALOG_IMPLEMENTATION_STATUS_INVALID', `${primitive.name} release status must identify the implemented primitive.`, { primitive: primitive.name });
   assert(Array.isArray(primitive.exceptions), 'UIFN_CATALOG_FIELD_MISSING', `${primitive.name} exceptions must be an array.`, { primitive: primitive.name });
 }
@@ -202,7 +180,7 @@ export function validateCatalogSource(source = CATALOG_SOURCE) {
   assert(source?.catalogVersion === CATALOG_VERSION && source?.generatorVersion === GENERATOR_VERSION, 'UIFN_CATALOG_SCHEMA_INVALID', 'Catalog or generator version is unsupported.');
   assert(source?.sourcePolicy === 'clean-room-original-definition', 'UIFN_CATALOG_UNSUPPORTED_VALUE', 'Catalog source policy must be clean-room original definition.');
   assertExactArray(source?.frameworks, STABLE_FRAMEWORKS, 'catalog frameworks', 'catalog');
-  assert(source?.implementationStatusPolicy?.phase === 'PHASE_20' && source?.implementationStatusPolicy?.allowedCurrentStatus === 'implemented' && source?.implementationStatusPolicy?.generatedMetadataIsImplementationEvidence === true, 'UIFN_CATALOG_IMPLEMENTATION_STATUS_INVALID', 'The current catalog must describe the implemented stable package graph.');
+  assert(source?.implementationStatusPolicy?.allowedCurrentStatus === 'implemented' && source?.implementationStatusPolicy?.generatedMetadataIsImplementationEvidence === true, 'UIFN_CATALOG_IMPLEMENTATION_STATUS_INVALID', 'The current catalog must describe the implemented stable package graph.');
   assert(Array.isArray(source?.primitives), 'UIFN_CATALOG_FIELD_MISSING', 'Catalog primitives must be an array.');
   assert(source.primitives.length === EXPECTED_PRIMITIVE_NAMES.length && EXPECTED_PRIMITIVE_NAMES.length === 69, 'UIFN_CATALOG_NAME_SET_INVALID', 'Catalog must contain exactly 69 canonical primitives.', { actual: source.primitives.length });
   assertUnique(source.primitives.map((primitive) => primitive.id), 'primitive id', 'catalog');
@@ -226,10 +204,6 @@ export function compileCatalog(source = CATALOG_SOURCE) {
   return { ...withoutCatalogHash, catalogSha256 };
 }
 
-function phaseCounts(primitives) {
-  return Object.fromEntries(ALLOWED_PHASES.map((phase) => [phase, primitives.filter((primitive) => primitive.owningPhase === phase).length]));
-}
-
 function definitionHeader() {
   return [
     '// Generated by @uifn/catalog. Do not hand edit.',
@@ -241,13 +215,13 @@ function definitionHeader() {
 function primitiveContractsDts(catalog) {
   const names = catalog.primitives.map((primitive) => `'${primitive.name}'`).join(' | ');
   const ids = catalog.primitives.map((primitive) => `'${primitive.id}'`).join(' | ');
-  return `${definitionHeader()}export type UifnPrimitiveName = ${names};\nexport type UifnPrimitiveId = ${ids};\nexport type UifnStableFramework = 'react' | 'svelte' | 'solid';\nexport type UifnImplementationStatus = 'implemented';\n\nexport interface UifnPrimitiveDefinitionStub {\n  readonly id: UifnPrimitiveId;\n  readonly name: UifnPrimitiveName;\n  readonly owningPhase: 'PHASE_06' | 'PHASE_07' | 'PHASE_08' | 'PHASE_09' | 'PHASE_10';\n  readonly implementationStatus: UifnImplementationStatus;\n}\n`;
+  return `${definitionHeader()}export type UifnPrimitiveName = ${names};\nexport type UifnPrimitiveId = ${ids};\nexport type UifnStableFramework = 'react' | 'svelte' | 'solid';\nexport type UifnImplementationStatus = 'implemented';\n\nexport interface UifnPrimitiveDefinitionStub {\n  readonly id: UifnPrimitiveId;\n  readonly name: UifnPrimitiveName;\n  readonly implementationStatus: UifnImplementationStatus;\n}\n`;
 }
 
 export function createGeneratedOutputs(source = CATALOG_SOURCE) {
   const catalog = compileCatalog(source);
   const metadata = { schemaVersion: catalog.schemaVersion, catalogVersion: catalog.catalogVersion, generatorVersion: catalog.generatorVersion, sourceSha256: catalog.sourceSha256, catalogSha256: catalog.catalogSha256, implementationEvidence: true };
-  const coreExports = catalog.primitives.flatMap((primitive) => primitive.outputs.core.map((symbol) => ({ primitiveId: primitive.id, primitiveName: primitive.name, symbol, kind: primitive.implementationKind, implementationPhase: primitive.owningPhase, implementationStatus: 'implemented' })));
+  const coreExports = catalog.primitives.flatMap((primitive) => primitive.outputs.core.map((symbol) => ({ primitiveId: primitive.id, primitiveName: primitive.name, symbol, kind: primitive.implementationKind, implementationStatus: 'implemented' })));
   const packageNames = ['@uifn/core', ...STABLE_FRAMEWORKS.flatMap((framework) => [FRAMEWORK_TARGETS[framework].headlessPackage, FRAMEWORK_TARGETS[framework].styledPackage])];
   const packageExports = packageNames.map((packageName) => ({
     packageName,
@@ -260,13 +234,13 @@ export function createGeneratedOutputs(source = CATALOG_SOURCE) {
     'package-exports.json': stableStringify({ ...metadata, packages: packageExports }),
     'anatomy-types.json': stableStringify({ ...metadata, primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, anatomy: primitive.anatomy, inputs: primitive.inputs, events: primitive.events, states: primitive.states, controlledModel: primitive.controlledModel, formSemantics: primitive.formSemantics })) }),
     'primitive-contracts.d.ts': primitiveContractsDts(catalog),
-    'adapter-coverage.json': stableStringify({ ...metadata, frameworks: STABLE_FRAMEWORKS, primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, owningPhase: primitive.owningPhase, frameworks: primitive.frameworks })) }),
+    'adapter-coverage.json': stableStringify({ ...metadata, frameworks: STABLE_FRAMEWORKS, primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, frameworks: primitive.frameworks })) }),
     'registry-metadata.json': stableStringify({ ...metadata, writePolicy: 'metadata-targets-only-no-registry-write', primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, outputs: primitive.outputs, implementationStatus: primitive.release.implementationStatus })) }),
     'story-manifest.json': stableStringify({ ...metadata, manifestStatus: 'implemented', primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, ...primitive.stories })) }),
     'docs-manifest.json': stableStringify({ ...metadata, manifestStatus: 'implemented', primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, ...primitive.docs })) }),
     'test-manifest.json': stableStringify({ ...metadata, primitiveCount: catalog.primitiveCount, vectors: ['TV-CAT-001-P', 'TV-CAT-001-N'], primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, requirementIds: primitive.requirementIds, vectors: primitive.vectors })) }),
-    'release-matrix.json': stableStringify({ ...metadata, releaseChannel: 'stable-1.0', phaseCounts: phaseCounts(catalog.primitives), allImplementationsImplemented: true, primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, release: primitive.release, frameworkStatuses: Object.fromEntries(STABLE_FRAMEWORKS.map((framework) => [framework, primitive.frameworks[framework].implementationStatus])) })) }),
-    'implementation-ownership.json': stableStringify({ ...metadata, domServices: DOM_SERVICE_IDS, frameworkImplementationPhases: Object.fromEntries(STABLE_FRAMEWORKS.map((framework) => [framework, FRAMEWORK_TARGETS[framework].implementationPhase])), phaseCounts: phaseCounts(catalog.primitives), primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, owningPhase: primitive.owningPhase, requirements: primitive.requirementIds, domServices: primitive.domServices })) }),
+    'release-matrix.json': stableStringify({ ...metadata, releaseChannel: 'stable-1.0', allImplementationsImplemented: true, primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, release: primitive.release, frameworkStatuses: Object.fromEntries(STABLE_FRAMEWORKS.map((framework) => [framework, primitive.frameworks[framework].implementationStatus])) })) }),
+    'implementation-ownership.json': stableStringify({ ...metadata, domServices: DOM_SERVICE_IDS, primitives: catalog.primitives.map((primitive) => ({ id: primitive.id, name: primitive.name, requirements: primitive.requirementIds, domServices: primitive.domServices })) }),
   };
   assertExactArray(Object.keys(outputs).sort(), GENERATED_OUTPUT_NAMES, 'generated output names', 'compiler');
   const outputRecords = Object.entries(outputs).sort(([left], [right]) => left.localeCompare(right)).map(([outputPath, contents]) => ({ path: outputPath, sha256: sha256(contents), bytes: Buffer.byteLength(contents) }));

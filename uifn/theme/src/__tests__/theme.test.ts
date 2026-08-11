@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateTokenTheme } from '@uifn/tokens';
 import { createBrandTheme } from '../brand';
-import { FIRST_PARTY_THEMES, listFirstPartyThemes } from '../provider';
+import { createThemeProvider, FIRST_PARTY_THEMES, listFirstPartyThemes } from '../provider';
 import { UIFnThemeError, mountTheme, themeToCSS, type ThemeStyleSheet } from '../mount';
 
 describe('runtime theme mounting', () => {
@@ -92,6 +92,40 @@ describe('runtime theme mounting', () => {
     mounted.unmount();
     expect(vars.size).toBe(0);
     expect(attrs.has('data-uifn-theme')).toBe(false);
+  });
+
+  it('keeps the current theme when a candidate fails validation', () => {
+    const provider = createThemeProvider('uifn-light');
+    const invalid = structuredClone(FIRST_PARTY_THEMES['uifn-dark']);
+    delete (invalid.tokens.color as Record<string, Record<string, unknown>>).danger;
+
+    expect(() => provider.setTheme(invalid)).toThrow();
+    expect(provider.theme).toBe(FIRST_PARTY_THEMES['uifn-light']);
+    expect(provider.getTheme()).toBe(FIRST_PARTY_THEMES['uifn-light']);
+  });
+
+  it('restores pre-existing root variables and theme attributes on cleanup', () => {
+    const vars = new Map<string, string>([['--uifn-color-surface-canvas', 'consumer-value']]);
+    const attrs = new Map<string, string>([['data-uifn-theme', 'consumer-theme']]);
+    const mounted = mountTheme('uifn-light', {
+      root: {
+        style: {
+          setProperty: (name, value) => vars.set(name, value),
+          getPropertyValue: (name) => vars.get(name) ?? '',
+          removeProperty: (name) => vars.delete(name),
+        },
+        setAttribute: (name, value) => attrs.set(name, value),
+        getAttribute: (name) => attrs.get(name) ?? null,
+        hasAttribute: (name) => attrs.has(name),
+        removeAttribute: (name) => attrs.delete(name),
+      },
+    });
+
+    expect(attrs.get('data-uifn-theme')).toBe('uifn-light');
+    expect(vars.get('--uifn-color-surface-canvas')).not.toBe('consumer-value');
+    mounted.unmount();
+    expect(attrs.get('data-uifn-theme')).toBe('consumer-theme');
+    expect(vars.get('--uifn-color-surface-canvas')).toBe('consumer-value');
   });
 
   it('TV-STYLE-002 supports shadow-root adopted stylesheet mounting and cleanup', () => {

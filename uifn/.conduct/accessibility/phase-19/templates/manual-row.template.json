@@ -15,7 +15,7 @@
     "definitionSha256": "<Phase 18 definition SHA-256>",
     "artifactSetSha256": "<Phase 14 tarball-set SHA-256>",
     "phase18EvidenceSha256": "<Phase 18 evidence SHA-256>",
-    "matrixDefinitionSha256": "164e6e73fd9f1bb6f33569ec2500f00edc20a1e6cf3f4232b66f95333103d184",
+    "matrixDefinitionSha256": "538887bdf6529a846de228c4bf62cd5257eaf30b0caec27a8918843b624f9f15",
     "artifacts": []
   },
   "tester": {

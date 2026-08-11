@@ -71,4 +71,4 @@ export * from './generated/textarea';
 
 export { useMediaQuery } from '@uifn/react/hooks/use-media-query';
 export { useCopyToClipboard } from '@uifn/react/hooks/use-copy-to-clipboard';
-export const componentsReactPackageBoundary = { name: '@uifn/components-react', framework: 'react', componentCount: 69, partCount: 465, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/react', stylingOwner: '@uifn/components', styling: 'styled-open-compounds', implementationPhase: 'PHASE_15' } as const;
+export const componentsReactPackageBoundary = { name: '@uifn/components-react', framework: 'react', componentCount: 69, partCount: 465, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/react', stylingOwner: '@uifn/components', styling: 'styled-open-compounds' } as const;

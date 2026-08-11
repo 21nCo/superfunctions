@@ -45,6 +45,7 @@ function frameworkFiles(delivery, primitive, framework) {
 function dependencies(framework) {
   const values = [
     { name: '@uifn/components', version: '0.0.1', relationship: 'runtime' },
+    { name: '@uifn/recipes', version: '0.0.1', relationship: 'runtime' },
     { name: `@uifn/${framework}`, version: '0.0.1', relationship: 'runtime' },
   ];
   if (framework === 'react') values.push(

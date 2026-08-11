@@ -12,7 +12,7 @@ export interface OklchRampOptions {
   lightness?: number[];
 }
 
-const OKLCH_PATTERN = /^oklch\(\s*([0-9.]+)%?\s+([0-9.]+)\s+([0-9.]+)(?:deg)?\s*\)$/i;
+const OKLCH_PATTERN = /^oklch\(\s*([0-9.]+)(%)?\s+([0-9.]+)\s+([0-9.]+)(?:deg)?\s*\)$/i;
 const HEX_COLOR_PATTERN = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
 function clamp(value: number, min: number, max: number): number {
@@ -33,9 +33,9 @@ export function parseOklch(input: string): OklchColor {
   }
 
   return {
-    l: Number(match[1]) / 100,
-    c: Number(match[2]),
-    h: normalizeHue(Number(match[3])),
+    l: Number(match[1]) / (match[2] ? 100 : 1),
+    c: Number(match[3]),
+    h: normalizeHue(Number(match[4])),
   };
 }
 

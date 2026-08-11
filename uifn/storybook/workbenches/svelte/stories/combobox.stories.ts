@@ -9,7 +9,7 @@ const meta = {
   component: StoryHarness,
   tags: ['autodocs'],
   args: { Root: ComboboxRoot, parts, primitive: 'combobox', scenario: 'default', rootId: 'root', rootElement: 'div', rootProps: {}, rootVoid: false },
-  parameters: { controls: { disable: true }, uifnCompatibility: {"primitive":"combobox","canonicalVersion":"1.0.0","registryVersion":"0.0.1","frameworks":["react","svelte","solid"],"sourcePolicy":"clean-room","definitionSha256":"001daccb7435555c81efd63d044db083d3ae4b2833270a4ff2242eb34191b0b4","registryCatalogSha256":"5a4371c6007791ce2807c66d60ff977c1f48e1422ab05992abd3c81a186cc86b","certification":"semantic-parity-complete-external-compatibility-pending"} },
+  parameters: { controls: { disable: true }, uifnCompatibility: {"primitive":"combobox","canonicalVersion":"1.0.0","registryVersion":"0.0.1","frameworks":["react","svelte","solid"],"sourcePolicy":"clean-room","definitionSha256":"c74dd80940ac66ec2bd08d3bd2a4c1893deb2d5b3733520dc09912c834817279","registryCatalogSha256":"f2336d6dec721978dca3836584f7933f810646834bc43918bd2eda31a1daab9d","certification":"semantic-parity-complete-external-compatibility-pending"} },
 };
 export default meta;
 

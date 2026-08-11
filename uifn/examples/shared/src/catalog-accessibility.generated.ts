@@ -55,14 +55,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -129,14 +121,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -211,14 +195,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -300,14 +276,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -372,14 +340,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.1.1",
         "1.3.1",
@@ -440,14 +400,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.1.1",
@@ -520,14 +472,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -608,14 +552,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -698,14 +634,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -774,14 +702,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -847,14 +767,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -929,14 +841,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -1018,14 +922,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -1101,14 +997,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -1186,14 +1074,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -1270,14 +1150,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -1346,14 +1218,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "1.4.13",
@@ -1421,14 +1285,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -1502,14 +1358,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -1587,14 +1435,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "1.3.5",
@@ -1670,14 +1510,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -1755,14 +1587,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "1.3.5",
@@ -1833,14 +1657,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -1915,14 +1731,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "1.3.5",
@@ -1993,14 +1801,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -2076,14 +1876,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -2156,14 +1948,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -2248,14 +2032,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -2319,14 +2095,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.1.1",
@@ -2400,14 +2168,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -2484,14 +2244,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -2558,14 +2310,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -2641,14 +2385,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -2721,14 +2457,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -2808,14 +2536,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -2888,14 +2608,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -2973,14 +2685,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "1.3.5",
@@ -3052,14 +2756,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "1.4.13",
@@ -3127,14 +2823,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -3196,14 +2884,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.1.1",
@@ -3283,14 +2963,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -3366,14 +3038,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -3447,14 +3111,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -3535,14 +3191,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -3625,14 +3273,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -3696,14 +3336,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.1.1",
@@ -3776,14 +3408,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -3859,14 +3483,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -3941,14 +3557,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -4015,14 +3623,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -4095,14 +3695,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -4181,14 +3773,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -4270,14 +3854,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -4346,14 +3922,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -4419,14 +3987,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -4506,14 +4066,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -4596,14 +4148,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -4680,14 +4224,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -4756,14 +4292,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "1.4.13",
@@ -4831,14 +4359,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",
@@ -4920,14 +4440,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -4992,14 +4504,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.1.1",
         "1.3.1",
@@ -5062,14 +4566,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.1.1",
         "1.3.1",
@@ -5130,14 +4626,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.1.1",
@@ -5218,14 +4706,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -5300,14 +4780,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "1.3.5",
@@ -5379,14 +4851,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
       },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
-      },
       "wcag": [
         "1.3.1",
         "2.1.1",
@@ -5449,14 +4913,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.1.1",
@@ -5528,14 +4984,6 @@ export const CATALOG_ACCESSIBILITY = {
         "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
         "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
         "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       },
       "wcag": [
         "1.3.1",

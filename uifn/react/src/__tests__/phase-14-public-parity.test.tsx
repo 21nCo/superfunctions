@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import * as React from 'react';
 import { act, render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import manifest from '../../../parity/generated/phase-14-public-vectors.json';
+import manifest from '../../../.conduct/generated/phase-14/phase-14-public-vectors.json';
 import {
   assemblePhase14Trace,
   capturePhase14Checkpoint,

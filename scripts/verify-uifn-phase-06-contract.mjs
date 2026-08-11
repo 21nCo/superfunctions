@@ -33,7 +33,7 @@ export function classifyPhase06Mutations(mutations) {
 export async function verifyPhase06Contract({ requireDist = false } = {}) {
   const issues = [];
   const catalog = JSON.parse(readFileSync(path.join(repoRoot, 'uifn/catalog/generated/catalog.json'), 'utf8'));
-  const selected = catalog.primitives.filter((primitive) => primitive.owningPhase === 'PHASE_06');
+  const selected = catalog.primitives.filter((primitive) => PHASE_PRIMITIVES.includes(primitive.name));
   if (JSON.stringify(selected.map((primitive) => primitive.name)) !== JSON.stringify(PHASE_PRIMITIVES)) {
     issues.push(issue('UIFN_COLLECTION_INVARIANT', 'PHASE_06 catalog ownership differs from the reviewed 14-primitive set.', 'uifn/catalog/generated/catalog.json'));
   }

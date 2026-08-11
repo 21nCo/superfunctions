@@ -38,8 +38,8 @@
     "**/*.svelte"
   ],
   "scripts": {
-    "generate": "node ../../scripts/generate-uifn-phase-12.mjs --write",
-    "generate:check": "node ../../scripts/generate-uifn-phase-12.mjs --check",
+    "generate": "node ../../scripts/generate-uifn-svelte.mjs --write",
+    "generate:check": "node ../../scripts/generate-uifn-svelte.mjs --check",
     "build": "svelte-package -i lib -o dist --tsconfig ./tsconfig.json",
     "dev": "svelte-package -i lib -o dist --tsconfig ./tsconfig.json --watch",
     "test": "vitest run --config vitest.config.mts",

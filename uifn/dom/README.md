@@ -88,8 +88,8 @@ Imports do not read browser globals. The same contracts work with same-origin if
 
 ```sh
 npm run verify:uifn-dom-platform
-npm run verify:uifn-phase-05
-npm run verify:uifn-phase-07
+npm --workspace @uifn/dom run typecheck
+npm --workspace @uifn/dom run test
 ```
 
 The phase gate builds and packs the public package, imports it in a clean consumer, rejects seeded framework-local behavior forks, and runs all `TV-DOM-001` through `TV-DOM-007` positive/negative vectors in Chromium, Firefox, and WebKit with screenshots and traces.

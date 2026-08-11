@@ -29,7 +29,7 @@ const startedAt = new Date();
 const evidenceRoot = process.env.UIFN_PHASE19_EVIDENCE_DIR
   ? path.resolve(process.env.UIFN_PHASE19_EVIDENCE_DIR)
   : null;
-const matrixPath = path.join(root, 'uifn/accessibility/phase-19/matrix.json');
+const matrixPath = path.join(root, 'uifn/.conduct/accessibility/phase-19/matrix.json');
 const defectPolicyPath = path.join(root, 'uifn/.conduct/contracts/defect-policy.json');
 const ownershipPath = path.join(root, 'uifn/.conduct/contracts/ownership.json');
 const defaultTrustPolicyPath = path.join(root, 'uifn/.conduct/contracts/phase-19-trust-policy.json');

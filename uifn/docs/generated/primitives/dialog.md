@@ -63,9 +63,9 @@ Root inputs and defaults:
 |---|---|---:|---:|---|---|
 | `open` | `boolean` | no | yes | `undefined → false` | Optional reactive open input from the canonical Dialog contract. |
 | `defaultOpen` | `boolean` | no | yes | `undefined → false` | Optional reactive defaultOpen input from the canonical Dialog contract. |
-| `modal` | `boolean` | no | yes | `undefined → false` | Optional reactive modal input from the canonical Dialog contract. |
+| `modal` | `boolean` | no | yes | `undefined → true` | Optional reactive modal input from the canonical Dialog contract. |
 | `initialFocus` | `string` | no | yes | `undefined (no public prop override)` | Optional reactive initialFocus input from the canonical Dialog contract. |
-| `restoreFocus` | `boolean` | no | yes | `undefined → false` | Optional reactive restoreFocus input from the canonical Dialog contract. |
+| `restoreFocus` | `boolean` | no | yes | `undefined → true` | Optional reactive restoreFocus input from the canonical Dialog contract. |
 
 ## Controlled and uncontrolled
 
@@ -132,6 +132,7 @@ CSS variables:
 - `--uifn-component-radius-md` (shared)
 - `--uifn-component-radius-sm` (shared)
 - `--uifn-component-shadow` (shared)
+- `--uifn-component-shadow-overlay` (shared)
 - `--uifn-control-block-size` (shared)
 - `--uifn-control-gap` (shared)
 

@@ -33,4 +33,4 @@ npm run build
 npm run build:workbenches
 ```
 
-The complete repository gate is `npm run verify:uifn-phase-17`. Its result remains provisional until the separately split signed external compatibility gate is complete.
+Run `npm --workspace @uifn/storybook run typecheck`, `test`, and `build` for the complete package gate. Its result remains provisional until the separately signed external compatibility gate is complete.

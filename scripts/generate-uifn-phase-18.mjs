@@ -148,7 +148,6 @@ const ledgerPrimitives = catalog.primitives.map((primitive) => {
       },
     })),
     traceContract: traceContract(primitive),
-    review: primitive.accessibility.rules.review,
   };
 });
 
@@ -283,15 +282,15 @@ The automated result is deliberately provisional. It does not infer assistive-te
 `;
 
 const outputs = {
-  'uifn/accessibility/generated/normative-ledger.json': stableJson(ledger),
-  'uifn/accessibility/generated/automation-manifest.json': stableJson(automation),
-  'uifn/accessibility/generated/manual-handoff.json': stableJson(manualHandoff),
+  'uifn/.conduct/generated/phase-18/normative-ledger.json': stableJson(ledger),
+  'uifn/.conduct/generated/phase-18/automation-manifest.json': stableJson(automation),
+  'uifn/.conduct/generated/phase-18/manual-handoff.json': stableJson(manualHandoff),
   'uifn/accessibility/README.md': `${readme.trimEnd()}\n`,
 };
 const failures = materializeOutputs(root, outputs, {
   mode,
   errorCode: 'UIFN_PHASE18_GENERATED_DRIFT',
-  managedRoots: ['uifn/accessibility/generated'],
+  managedRoots: ['uifn/.conduct/generated/phase-18'],
 });
 if (failures.length) {
   console.error(stableJson({ ok: false, command: 'generate:uifn-phase-18:check', failures }));

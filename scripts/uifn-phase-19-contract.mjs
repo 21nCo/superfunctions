@@ -572,6 +572,7 @@ export function phase19BlockingDefectIssues(defects, policy, now = new Date(), {
   for (const defect of defects) {
     const evaluated = evaluateDefect(defect, policy, now);
     const blocking = evaluated.filter((entry) => [
+      'UIFN_DEFECT_SEVERITY_INVALID',
       'UIFN_DEFECT_RELEASE_BLOCKING_OPEN',
       'UIFN_DEFECT_P2_EXCEPTION_INVALID_OR_MISSING',
       'UIFN_DEFECT_UNTRIAGED_OR_EXPIRED',

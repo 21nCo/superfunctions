@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "revision": "uifn-manual-at-matrix-v1",
   "sourceLedgerRevision": "uifn-a11y-ledger-v1",
-  "sourceDefinitionSha256": "04e714a595d3e5ecd6dead518e540d1a9f6c62ca079301afe18c969b4ecf2317",
-  "sourceLedgerDefinitionSha256": "04e714a595d3e5ecd6dead518e540d1a9f6c62ca079301afe18c969b4ecf2317",
+  "sourceDefinitionSha256": "51932f86f5558eaed81c6dec1d946479db4ec1b60407678ce98a974eba0804b6",
+  "sourceLedgerDefinitionSha256": "51932f86f5558eaed81c6dec1d946479db4ec1b60407678ce98a974eba0804b6",
   "jaws": {
     "status": "not-tested-user-deferred",
     "required": false,
@@ -30011,5 +30011,5 @@
       "status": "human-evidence-required"
     }
   ],
-  "definitionSha256": "164e6e73fd9f1bb6f33569ec2500f00edc20a1e6cf3f4232b66f95333103d184"
+  "definitionSha256": "538887bdf6529a846de228c4bf62cd5257eaf30b0caec27a8918843b624f9f15"
 }

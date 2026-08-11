@@ -133,7 +133,6 @@
   },
   "files": [
     "dist",
-    "generated",
     "README.md",
     "MIGRATION.md",
     "migrations",

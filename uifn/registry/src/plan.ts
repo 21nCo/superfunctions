@@ -116,6 +116,16 @@ function readPackageJson(rootDir: string): { pathname: string; source: string | 
   }
 }
 
+export function inferFrameworkDependencies(manifest: RegistryManifest, framework: RegistryFramework): RegistryDependency[] {
+  const target = manifest.frameworks[framework];
+  const dependencies = structuredClone(target.dependencies);
+  const importsRecipes = target.files.some((file) => /(?:from\s+|import\s*)['"]@uifn\/recipes(?:\/[^'"]*)?['"]/.test(file.contents));
+  if (importsRecipes && !dependencies.some((dependency) => dependency.name === '@uifn/recipes')) {
+    dependencies.push({ name: '@uifn/recipes', version: '0.0.1', relationship: 'runtime' });
+  }
+  return dependencies;
+}
+
 function lockEntry(manifest: RegistryManifest, framework: RegistryFramework): UifnLockFileEntry {
   const target = manifest.frameworks[framework];
   return {
@@ -128,7 +138,7 @@ function lockEntry(manifest: RegistryManifest, framework: RegistryFramework): Ui
     framework,
     mode: 'source',
     license: manifest.license,
-    dependencies: structuredClone(target.dependencies),
+    dependencies: inferFrameworkDependencies(manifest, framework),
     files: target.files.map((file) => ({ path: file.destination, sourceSha256: file.sourceSha256, outputSha256: file.outputSha256, installedSha256: file.outputSha256 })),
     provenance: {
       source: manifest.provenance.source,
@@ -193,7 +203,7 @@ export function planInstall(options: PlanInstallOptions): RegistryPlanResult {
   const packageJson = structuredClone(packageResult.value);
   const packageDependencies = { ...((packageJson.dependencies && typeof packageJson.dependencies === 'object' && !Array.isArray(packageJson.dependencies)) ? packageJson.dependencies as Record<string, string> : {}) };
   const dependencyMap = new Map<string, RegistryDependency>();
-  manifests.forEach((manifest) => manifest.frameworks[framework].dependencies.forEach((dependency) => dependencyMap.set(dependency.name, dependency)));
+  manifests.forEach((manifest) => inferFrameworkDependencies(manifest, framework).forEach((dependency) => dependencyMap.set(dependency.name, dependency)));
   const dependencies: RegistryPlanDependency[] = [];
   for (const dependency of [...dependencyMap.values()].sort((left, right) => left.name.localeCompare(right.name))) {
     const current = packageDependencies[dependency.name];

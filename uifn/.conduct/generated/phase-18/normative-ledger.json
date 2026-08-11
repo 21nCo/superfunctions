@@ -3,7 +3,7 @@
   "revision": "uifn-a11y-ledger-v1",
   "generatorVersion": "18.0.0",
   "catalogVersion": "1.0.0",
-  "definitionSha256": "04e714a595d3e5ecd6dead518e540d1a9f6c62ca079301afe18c969b4ecf2317",
+  "definitionSha256": "51932f86f5558eaed81c6dec1d946479db4ec1b60407678ce98a974eba0804b6",
   "normativeStandard": "WCAG 2.2 Level A and AA",
   "review": {
     "owner": "uifn-maintainer",
@@ -36,27 +36,27 @@
   "modeCount": 705,
   "traceHashes": [
     {
-      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/package-react.json",
+      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T21-38-00-000Z-PHASE-14-69-production-readiness/traces/package-react.json",
       "sha256": "b42e8fbbb0b2ae5701685f2708da65bd97f0286d5fd90f98052c7b8ceb21de24"
     },
     {
-      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/package-svelte.json",
+      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T21-38-00-000Z-PHASE-14-69-production-readiness/traces/package-svelte.json",
       "sha256": "7ffc300d7f4351416d623f69a20ce9702e09788a994023029dea362f032439f4"
     },
     {
-      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/package-solid.json",
+      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T21-38-00-000Z-PHASE-14-69-production-readiness/traces/package-solid.json",
       "sha256": "ef34b2288356a3b43ebfffd2ae052abde80ea68a0bf4c6c590b7fd7d28189104"
     },
     {
-      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/source-react.json",
+      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T21-38-00-000Z-PHASE-14-69-production-readiness/traces/source-react.json",
       "sha256": "0916382ee843a606db7845f0dde17b2fbcb5aafad1066579089770db6e35aa1e"
     },
     {
-      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/source-svelte.json",
+      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T21-38-00-000Z-PHASE-14-69-production-readiness/traces/source-svelte.json",
       "sha256": "dc41057e373dfe3a343daaee660b83b1f657b19d1e0bd2d05b421f1ad1b6faf2"
     },
     {
-      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T16-24-44-979Z-PHASE-14-a2f71877/traces/source-solid.json",
+      "path": "uifn/.conduct/evidence/phase-14/2026-07-30T21-38-00-000Z-PHASE-14-69-production-readiness/traces/source-solid.json",
       "sha256": "75b42cf75d8eff79c98f8670980932c0df8eb425dc9a7e6f723cbde456467859"
     }
   ],
@@ -983,14 +983,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -2052,14 +2044,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -2992,14 +2976,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -4031,14 +4007,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -4789,14 +4757,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -5565,14 +5525,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -6546,14 +6498,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -7509,14 +7453,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -8500,14 +8436,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -9390,14 +9318,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -10271,14 +10191,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -11326,14 +11238,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -12418,14 +12322,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -13460,14 +13356,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -14405,14 +14293,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -15488,14 +15368,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -16518,14 +16390,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -17585,14 +17449,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -18627,14 +18483,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -19492,14 +19340,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -20342,14 +20182,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -21430,14 +21262,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -22489,14 +22313,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -23312,14 +23128,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -24259,14 +24067,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -25243,14 +25043,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -26049,14 +25841,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -27056,14 +26840,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -27824,14 +27600,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -28867,14 +28635,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -29851,14 +29611,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -30657,14 +30409,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -31637,14 +31381,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -32683,14 +32419,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -33643,14 +33371,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -34635,14 +34355,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -35623,14 +35335,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -36646,14 +36350,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -37457,14 +37153,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -38222,14 +37910,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -39220,14 +38900,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -40182,14 +39854,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -41147,14 +40811,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -42127,14 +41783,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -43234,14 +42882,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -43968,14 +43608,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -44930,14 +44562,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -45922,14 +45546,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -46850,14 +46466,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -47811,14 +47419,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -48786,14 +48386,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -49734,14 +49326,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -50785,14 +50369,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -51709,14 +51285,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -52642,14 +52210,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -53545,14 +53105,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -54463,14 +54015,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -55408,14 +54952,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -56355,14 +55891,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -57485,14 +57013,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -58489,14 +58009,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -59220,14 +58732,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -60037,14 +59541,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -60845,14 +60341,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -61942,14 +61430,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -62831,14 +62311,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -63581,14 +63053,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -64418,14 +63882,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     },
     {
@@ -65224,14 +64680,6 @@
             "expected": "Zero listeners, observers, timers, frames, portals, layers, locks, inert roots, child services, subscriptions, and connected semantic nodes after unmount."
           }
         ]
-      },
-      "review": {
-        "ledger": "uifn/accessibility/generated/normative-ledger.json",
-        "owner": "uifn-maintainer",
-        "owningPhase": "PHASE_18",
-        "reviewedAt": "2026-07-24",
-        "revision": "uifn-a11y-ledger-v1",
-        "status": "reviewed"
       }
     }
   ]

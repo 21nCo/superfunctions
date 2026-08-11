@@ -1,7 +1,7 @@
 {
   "$schema": "../schema/catalog.schema.json",
   "catalogId": "uifn-ga-catalog",
-  "catalogSha256": "0a84df4b8e8415afc9af0e5a1bce312a7a3355ab37d6f1ed2701d6c998acc80a",
+  "catalogSha256": "eaf2782a22ad3a0153f29e8de410631438fd280d5c29905f7a37694178cb1f2d",
   "catalogVersion": "1.0.0",
   "frameworks": [
     "react",
@@ -11,8 +11,7 @@
   "generatorVersion": "1.0.0",
   "implementationStatusPolicy": {
     "allowedCurrentStatus": "implemented",
-    "generatedMetadataIsImplementationEvidence": true,
-    "phase": "PHASE_20"
+    "generatedMetadataIsImplementationEvidence": true
   },
   "packageGraphId": "uifn-1.0-stable-dag",
   "primitiveCount": 69,
@@ -72,14 +71,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -181,7 +172,6 @@
         "react": {
           "compoundRoot": "Accordion",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -189,7 +179,6 @@
         "solid": {
           "compoundRoot": "Accordion",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -197,7 +186,6 @@
         "svelte": {
           "compoundRoot": "Accordion",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -260,11 +248,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -360,14 +346,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -512,7 +490,6 @@
         "react": {
           "compoundRoot": "AlertDialog",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -520,7 +497,6 @@
         "solid": {
           "compoundRoot": "AlertDialog",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -528,7 +504,6 @@
         "svelte": {
           "compoundRoot": "AlertDialog",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -585,11 +560,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_07",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -698,14 +671,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -816,7 +781,6 @@
         "react": {
           "compoundRoot": "AngleSlider",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -824,7 +788,6 @@
         "solid": {
           "compoundRoot": "AngleSlider",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -832,7 +795,6 @@
         "svelte": {
           "compoundRoot": "AngleSlider",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -907,11 +869,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -1018,14 +978,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -1165,7 +1117,6 @@
         "react": {
           "compoundRoot": "Autocomplete",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -1173,7 +1124,6 @@
         "solid": {
           "compoundRoot": "Autocomplete",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -1181,7 +1131,6 @@
         "svelte": {
           "compoundRoot": "Autocomplete",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -1250,11 +1199,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -1353,14 +1300,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.1.1",
             "1.3.1",
@@ -1428,7 +1367,6 @@
         "react": {
           "compoundRoot": "Avatar",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -1436,7 +1374,6 @@
         "solid": {
           "compoundRoot": "Avatar",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -1444,7 +1381,6 @@
         "svelte": {
           "compoundRoot": "Avatar",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -1494,11 +1430,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -1590,14 +1524,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.1.1",
             "1.3.1",
@@ -1670,7 +1596,6 @@
         "react": {
           "compoundRoot": "Button",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -1678,7 +1603,6 @@
         "solid": {
           "compoundRoot": "Button",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -1686,7 +1610,6 @@
         "svelte": {
           "compoundRoot": "Button",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -1742,11 +1665,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -1852,14 +1773,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -1994,7 +1907,6 @@
         "react": {
           "compoundRoot": "Carousel",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -2002,7 +1914,6 @@
         "solid": {
           "compoundRoot": "Carousel",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -2010,7 +1921,6 @@
         "svelte": {
           "compoundRoot": "Carousel",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -2079,11 +1989,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -2199,14 +2107,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "2.1.1",
@@ -2309,7 +2209,6 @@
         "react": {
           "compoundRoot": "Checkbox",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -2317,7 +2216,6 @@
         "solid": {
           "compoundRoot": "Checkbox",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -2325,7 +2223,6 @@
         "svelte": {
           "compoundRoot": "Checkbox",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -2400,11 +2297,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -2515,14 +2410,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -2636,7 +2523,6 @@
         "react": {
           "compoundRoot": "CheckboxGroup",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -2644,7 +2530,6 @@
         "solid": {
           "compoundRoot": "CheckboxGroup",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -2652,7 +2537,6 @@
         "svelte": {
           "compoundRoot": "CheckboxGroup",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -2721,11 +2605,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -2820,14 +2702,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "2.1.1",
@@ -2916,7 +2790,6 @@
         "react": {
           "compoundRoot": "Clipboard",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -2924,7 +2797,6 @@
         "solid": {
           "compoundRoot": "Clipboard",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -2932,7 +2804,6 @@
         "svelte": {
           "compoundRoot": "Clipboard",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -2983,11 +2854,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -3090,14 +2959,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "2.1.1",
@@ -3187,7 +3048,6 @@
         "react": {
           "compoundRoot": "Collapsible",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -3195,7 +3055,6 @@
         "solid": {
           "compoundRoot": "Collapsible",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -3203,7 +3062,6 @@
         "svelte": {
           "compoundRoot": "Collapsible",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -3254,11 +3112,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -3369,14 +3225,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -3529,7 +3377,6 @@
         "react": {
           "compoundRoot": "ColorPicker",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -3537,7 +3384,6 @@
         "solid": {
           "compoundRoot": "ColorPicker",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -3545,7 +3391,6 @@
         "svelte": {
           "compoundRoot": "ColorPicker",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -3632,11 +3477,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -3747,14 +3590,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -3917,7 +3752,6 @@
         "react": {
           "compoundRoot": "Combobox",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -3925,7 +3759,6 @@
         "solid": {
           "compoundRoot": "Combobox",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -3933,7 +3766,6 @@
         "svelte": {
           "compoundRoot": "Combobox",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -4020,11 +3852,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -4134,14 +3964,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -4293,7 +4115,6 @@
         "react": {
           "compoundRoot": "ContextMenu",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -4301,7 +4122,6 @@
         "solid": {
           "compoundRoot": "ContextMenu",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -4309,7 +4129,6 @@
         "svelte": {
           "compoundRoot": "ContextMenu",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -4366,11 +4185,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_08",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -4477,14 +4294,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -4599,7 +4408,6 @@
         "react": {
           "compoundRoot": "DateInput",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -4607,7 +4415,6 @@
         "solid": {
           "compoundRoot": "DateInput",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -4615,7 +4422,6 @@
         "svelte": {
           "compoundRoot": "DateInput",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -4702,11 +4508,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -4813,14 +4617,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -4996,7 +4792,6 @@
         "react": {
           "compoundRoot": "DatePicker",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -5004,7 +4799,6 @@
         "solid": {
           "compoundRoot": "DatePicker",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -5012,7 +4806,6 @@
         "svelte": {
           "compoundRoot": "DatePicker",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -5105,11 +4898,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -5212,14 +5003,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -5350,7 +5133,6 @@
         "react": {
           "compoundRoot": "Dialog",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -5358,7 +5140,6 @@
         "solid": {
           "compoundRoot": "Dialog",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -5366,7 +5147,6 @@
         "svelte": {
           "compoundRoot": "Dialog",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -5429,11 +5209,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_07",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -5536,14 +5314,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -5691,7 +5461,6 @@
         "react": {
           "compoundRoot": "Drawer",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -5699,7 +5468,6 @@
         "solid": {
           "compoundRoot": "Drawer",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -5707,7 +5475,6 @@
         "svelte": {
           "compoundRoot": "Drawer",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -5770,11 +5537,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_07",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -5886,14 +5651,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -6039,7 +5796,6 @@
         "react": {
           "compoundRoot": "Editable",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -6047,7 +5803,6 @@
         "solid": {
           "compoundRoot": "Editable",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -6055,7 +5810,6 @@
         "svelte": {
           "compoundRoot": "Editable",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -6136,11 +5890,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -6249,14 +6001,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "1.3.5",
@@ -6346,7 +6090,6 @@
         "react": {
           "compoundRoot": "Field",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -6354,7 +6097,6 @@
         "solid": {
           "compoundRoot": "Field",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -6362,7 +6104,6 @@
         "svelte": {
           "compoundRoot": "Field",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -6424,11 +6165,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -6530,14 +6269,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "1.3.5",
@@ -6622,7 +6353,6 @@
         "react": {
           "compoundRoot": "Fieldset",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -6630,7 +6360,6 @@
         "solid": {
           "compoundRoot": "Fieldset",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -6638,7 +6367,6 @@
         "svelte": {
           "compoundRoot": "Fieldset",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -6682,11 +6410,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -6787,14 +6513,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -6951,7 +6669,6 @@
         "react": {
           "compoundRoot": "FileUpload",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -6959,7 +6676,6 @@
         "solid": {
           "compoundRoot": "FileUpload",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -6967,7 +6683,6 @@
         "svelte": {
           "compoundRoot": "FileUpload",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -7054,11 +6769,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -7165,14 +6878,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -7323,7 +7028,6 @@
         "react": {
           "compoundRoot": "FloatingPanel",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -7331,7 +7035,6 @@
         "solid": {
           "compoundRoot": "FloatingPanel",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -7339,7 +7042,6 @@
         "svelte": {
           "compoundRoot": "FloatingPanel",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -7408,11 +7110,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_07",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -7521,14 +7221,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "1.3.5",
@@ -7603,7 +7295,6 @@
         "react": {
           "compoundRoot": "Form",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -7611,7 +7302,6 @@
         "solid": {
           "compoundRoot": "Form",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -7619,7 +7309,6 @@
         "svelte": {
           "compoundRoot": "Form",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -7663,11 +7352,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -7767,14 +7454,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -7892,7 +7571,6 @@
         "react": {
           "compoundRoot": "HoverCard",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -7900,7 +7578,6 @@
         "solid": {
           "compoundRoot": "HoverCard",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -7908,7 +7585,6 @@
         "svelte": {
           "compoundRoot": "HoverCard",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -7971,11 +7647,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_07",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -8084,14 +7758,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -8224,7 +7890,6 @@
         "react": {
           "compoundRoot": "ImageCropper",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -8232,7 +7897,6 @@
         "solid": {
           "compoundRoot": "ImageCropper",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -8240,7 +7904,6 @@
         "svelte": {
           "compoundRoot": "ImageCropper",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -8315,11 +7978,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -8432,14 +8093,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "1.3.5",
@@ -8508,7 +8161,6 @@
         "react": {
           "compoundRoot": "Input",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -8516,7 +8168,6 @@
         "solid": {
           "compoundRoot": "Input",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -8524,7 +8175,6 @@
         "svelte": {
           "compoundRoot": "Input",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -8604,11 +8254,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -8720,14 +8368,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -8858,7 +8498,6 @@
         "react": {
           "compoundRoot": "Listbox",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -8866,7 +8505,6 @@
         "solid": {
           "compoundRoot": "Listbox",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -8874,7 +8512,6 @@
         "svelte": {
           "compoundRoot": "Listbox",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -8961,11 +8598,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -9060,14 +8695,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.1.1",
             "1.3.1",
@@ -9140,7 +8767,6 @@
         "react": {
           "compoundRoot": "Marquee",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -9148,7 +8774,6 @@
         "solid": {
           "compoundRoot": "Marquee",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -9156,7 +8781,6 @@
         "svelte": {
           "compoundRoot": "Marquee",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -9218,11 +8842,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -9325,14 +8947,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -9484,7 +9098,6 @@
         "react": {
           "compoundRoot": "Menu",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -9492,7 +9105,6 @@
         "solid": {
           "compoundRoot": "Menu",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -9500,7 +9112,6 @@
         "svelte": {
           "compoundRoot": "Menu",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -9563,11 +9174,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_08",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -9673,14 +9282,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -9812,7 +9413,6 @@
         "react": {
           "compoundRoot": "Menubar",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -9820,7 +9420,6 @@
         "solid": {
           "compoundRoot": "Menubar",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -9828,7 +9427,6 @@
         "svelte": {
           "compoundRoot": "Menubar",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -9885,11 +9483,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_08",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -9992,14 +9588,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "2.1.1",
@@ -10084,7 +9672,6 @@
         "react": {
           "compoundRoot": "Meter",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -10092,7 +9679,6 @@
         "solid": {
           "compoundRoot": "Meter",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -10100,7 +9686,6 @@
         "svelte": {
           "compoundRoot": "Meter",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -10174,11 +9759,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -10281,14 +9864,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -10417,7 +9992,6 @@
         "react": {
           "compoundRoot": "NavigationMenu",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -10425,7 +9999,6 @@
         "solid": {
           "compoundRoot": "NavigationMenu",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -10433,7 +10006,6 @@
         "svelte": {
           "compoundRoot": "NavigationMenu",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -10502,11 +10074,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_08",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -10610,14 +10180,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -10771,7 +10333,6 @@
         "react": {
           "compoundRoot": "NumberInput",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -10779,7 +10340,6 @@
         "solid": {
           "compoundRoot": "NumberInput",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -10787,7 +10347,6 @@
         "svelte": {
           "compoundRoot": "NumberInput",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -10880,11 +10439,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -10994,14 +10551,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -11121,7 +10670,6 @@
         "react": {
           "compoundRoot": "Pagination",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -11129,7 +10677,6 @@
         "solid": {
           "compoundRoot": "Pagination",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -11137,7 +10684,6 @@
         "svelte": {
           "compoundRoot": "Pagination",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -11206,11 +10752,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_08",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -11318,14 +10862,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -11444,7 +10980,6 @@
         "react": {
           "compoundRoot": "PasswordInput",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -11452,7 +10987,6 @@
         "solid": {
           "compoundRoot": "PasswordInput",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -11460,7 +10994,6 @@
         "svelte": {
           "compoundRoot": "PasswordInput",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -11541,11 +11074,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -11649,14 +11180,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -11783,7 +11306,6 @@
         "react": {
           "compoundRoot": "PinInput",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -11791,7 +11313,6 @@
         "solid": {
           "compoundRoot": "PinInput",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -11799,7 +11320,6 @@
         "svelte": {
           "compoundRoot": "PinInput",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -11886,11 +11406,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -11993,14 +11511,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -12130,7 +11640,6 @@
         "react": {
           "compoundRoot": "Popover",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -12138,7 +11647,6 @@
         "solid": {
           "compoundRoot": "Popover",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -12146,7 +11654,6 @@
         "svelte": {
           "compoundRoot": "Popover",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -12215,11 +11722,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_07",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -12322,14 +11827,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "2.1.1",
@@ -12419,7 +11916,6 @@
         "react": {
           "compoundRoot": "Progress",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -12427,7 +11923,6 @@
         "solid": {
           "compoundRoot": "Progress",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -12435,7 +11930,6 @@
         "svelte": {
           "compoundRoot": "Progress",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -12497,11 +11991,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -12597,14 +12089,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.1.1",
             "1.3.1",
@@ -12672,7 +12156,6 @@
         "react": {
           "compoundRoot": "QRCode",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -12680,7 +12163,6 @@
         "solid": {
           "compoundRoot": "QRCode",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -12688,7 +12170,6 @@
         "svelte": {
           "compoundRoot": "QRCode",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -12744,11 +12225,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -12848,14 +12327,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -12973,7 +12444,6 @@
         "react": {
           "compoundRoot": "RadioGroup",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -12981,7 +12451,6 @@
         "solid": {
           "compoundRoot": "RadioGroup",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -12989,7 +12458,6 @@
         "svelte": {
           "compoundRoot": "RadioGroup",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -13070,11 +12538,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -13179,14 +12645,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -13307,7 +12765,6 @@
         "react": {
           "compoundRoot": "RatingGroup",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -13315,7 +12772,6 @@
         "solid": {
           "compoundRoot": "RatingGroup",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -13323,7 +12779,6 @@
         "svelte": {
           "compoundRoot": "RatingGroup",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -13404,11 +12859,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -13513,14 +12966,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -13629,7 +13074,6 @@
         "react": {
           "compoundRoot": "ScrollArea",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -13637,7 +13081,6 @@
         "solid": {
           "compoundRoot": "ScrollArea",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -13645,7 +13088,6 @@
         "svelte": {
           "compoundRoot": "ScrollArea",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -13702,11 +13144,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -13817,14 +13257,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -13937,7 +13369,6 @@
         "react": {
           "compoundRoot": "SegmentGroup",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -13945,7 +13376,6 @@
         "solid": {
           "compoundRoot": "SegmentGroup",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -13953,7 +13383,6 @@
         "svelte": {
           "compoundRoot": "SegmentGroup",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -14028,11 +13457,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -14143,14 +13570,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -14323,7 +13742,6 @@
         "react": {
           "compoundRoot": "Select",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -14331,7 +13749,6 @@
         "solid": {
           "compoundRoot": "Select",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -14339,7 +13756,6 @@
         "svelte": {
           "compoundRoot": "Select",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -14420,11 +13836,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -14519,14 +13933,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.1.1",
             "1.3.1",
@@ -14584,7 +13990,6 @@
         "react": {
           "compoundRoot": "Separator",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -14592,7 +13997,6 @@
         "solid": {
           "compoundRoot": "Separator",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -14600,7 +14004,6 @@
         "svelte": {
           "compoundRoot": "Separator",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -14644,11 +14047,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -14742,14 +14143,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -14878,7 +14271,6 @@
         "react": {
           "compoundRoot": "SignaturePad",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -14886,7 +14278,6 @@
         "solid": {
           "compoundRoot": "SignaturePad",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -14894,7 +14285,6 @@
         "svelte": {
           "compoundRoot": "SignaturePad",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -14963,11 +14353,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -15072,14 +14460,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -15213,7 +14593,6 @@
         "react": {
           "compoundRoot": "Slider",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -15221,7 +14600,6 @@
         "solid": {
           "compoundRoot": "Slider",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -15229,7 +14607,6 @@
         "svelte": {
           "compoundRoot": "Slider",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -15328,11 +14705,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -15437,14 +14812,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -15557,7 +14924,6 @@
         "react": {
           "compoundRoot": "Splitter",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -15565,7 +14931,6 @@
         "solid": {
           "compoundRoot": "Splitter",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -15573,7 +14938,6 @@
         "svelte": {
           "compoundRoot": "Splitter",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -15648,11 +15012,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -15746,14 +15108,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -15874,7 +15228,6 @@
         "react": {
           "compoundRoot": "Steps",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -15882,7 +15235,6 @@
         "solid": {
           "compoundRoot": "Steps",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -15890,7 +15242,6 @@
         "svelte": {
           "compoundRoot": "Steps",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -15953,11 +15304,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -16061,14 +15410,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -16174,7 +15515,6 @@
         "react": {
           "compoundRoot": "Switch",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -16182,7 +15522,6 @@
         "solid": {
           "compoundRoot": "Switch",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -16190,7 +15529,6 @@
         "svelte": {
           "compoundRoot": "Switch",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -16265,11 +15603,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -16371,14 +15707,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -16484,7 +15812,6 @@
         "react": {
           "compoundRoot": "Tabs",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -16492,7 +15819,6 @@
         "solid": {
           "compoundRoot": "Tabs",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -16500,7 +15826,6 @@
         "svelte": {
           "compoundRoot": "Tabs",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -16569,11 +15894,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_08",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -16684,14 +16007,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -16840,7 +16155,6 @@
         "react": {
           "compoundRoot": "TagsInput",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -16848,7 +16162,6 @@
         "solid": {
           "compoundRoot": "TagsInput",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -16856,7 +16169,6 @@
         "svelte": {
           "compoundRoot": "TagsInput",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -16943,11 +16255,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -17045,14 +16355,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -17171,7 +16473,6 @@
         "react": {
           "compoundRoot": "Timer",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -17179,7 +16480,6 @@
         "solid": {
           "compoundRoot": "Timer",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -17187,7 +16487,6 @@
         "svelte": {
           "compoundRoot": "Timer",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -17256,11 +16555,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -17362,14 +16659,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -17503,7 +16792,6 @@
         "react": {
           "compoundRoot": "Toast",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -17511,7 +16799,6 @@
         "solid": {
           "compoundRoot": "Toast",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -17519,7 +16806,6 @@
         "svelte": {
           "compoundRoot": "Toast",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -17618,11 +16904,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_10",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_10",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -17742,14 +17026,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "2.1.1",
@@ -17827,7 +17103,6 @@
         "react": {
           "compoundRoot": "Toggle",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -17835,7 +17110,6 @@
         "solid": {
           "compoundRoot": "Toggle",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -17843,7 +17117,6 @@
         "svelte": {
           "compoundRoot": "Toggle",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -17894,11 +17167,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -18006,14 +17277,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "2.1.1",
@@ -18100,7 +17363,6 @@
         "react": {
           "compoundRoot": "ToggleGroup",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -18108,7 +17370,6 @@
         "solid": {
           "compoundRoot": "ToggleGroup",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -18116,7 +17377,6 @@
         "svelte": {
           "compoundRoot": "ToggleGroup",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -18185,11 +17445,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -18296,14 +17554,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "2.1.1",
@@ -18398,7 +17648,6 @@
         "react": {
           "compoundRoot": "Toolbar",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -18406,7 +17655,6 @@
         "solid": {
           "compoundRoot": "Toolbar",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -18414,7 +17662,6 @@
         "svelte": {
           "compoundRoot": "Toolbar",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -18471,11 +17718,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -18570,14 +17815,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -18698,7 +17935,6 @@
         "react": {
           "compoundRoot": "Tooltip",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -18706,7 +17942,6 @@
         "solid": {
           "compoundRoot": "Tooltip",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -18714,7 +17949,6 @@
         "svelte": {
           "compoundRoot": "Tooltip",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -18783,11 +18017,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_07",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -18890,14 +18122,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -19064,7 +18288,6 @@
         "react": {
           "compoundRoot": "Tour",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -19072,7 +18295,6 @@
         "solid": {
           "compoundRoot": "Tour",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -19080,7 +18302,6 @@
         "svelte": {
           "compoundRoot": "Tour",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -19149,11 +18370,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_07",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_07",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -19272,14 +18491,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -19417,7 +18628,6 @@
         "react": {
           "compoundRoot": "TreeView",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -19425,7 +18635,6 @@
         "solid": {
           "compoundRoot": "TreeView",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -19433,7 +18642,6 @@
         "svelte": {
           "compoundRoot": "TreeView",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -19508,11 +18716,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_08",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_08",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -19614,14 +18820,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.1.1",
             "1.3.1",
@@ -19679,7 +18877,6 @@
         "react": {
           "compoundRoot": "Badge",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -19687,7 +18884,6 @@
         "solid": {
           "compoundRoot": "Badge",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -19695,7 +18891,6 @@
         "svelte": {
           "compoundRoot": "Badge",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -19733,11 +18928,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -19821,14 +19014,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.1.1",
@@ -19917,7 +19102,6 @@
         "react": {
           "compoundRoot": "Breadcrumb",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -19925,7 +19109,6 @@
         "solid": {
           "compoundRoot": "Breadcrumb",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -19933,7 +19116,6 @@
         "svelte": {
           "compoundRoot": "Breadcrumb",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -19971,11 +19153,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -20058,14 +19238,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.1.1",
@@ -20154,7 +19326,6 @@
         "react": {
           "compoundRoot": "Card",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -20162,7 +19333,6 @@
         "solid": {
           "compoundRoot": "Card",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -20170,7 +19340,6 @@
         "svelte": {
           "compoundRoot": "Card",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -20208,11 +19377,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -20313,14 +19480,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.3.1",
@@ -20483,7 +19642,6 @@
         "react": {
           "compoundRoot": "Command",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -20491,7 +19649,6 @@
         "solid": {
           "compoundRoot": "Command",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -20499,7 +19656,6 @@
         "svelte": {
           "compoundRoot": "Command",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -20604,11 +19760,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_09",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_09",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -20721,14 +19875,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "1.3.5",
@@ -20823,7 +19969,6 @@
         "react": {
           "compoundRoot": "InputGroup",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -20831,7 +19976,6 @@
         "solid": {
           "compoundRoot": "InputGroup",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -20839,7 +19983,6 @@
         "svelte": {
           "compoundRoot": "InputGroup",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -20883,11 +20026,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -20984,14 +20125,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "2.1.1",
@@ -21050,7 +20183,6 @@
         "react": {
           "compoundRoot": "Skeleton",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -21058,7 +20190,6 @@
         "solid": {
           "compoundRoot": "Skeleton",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -21066,7 +20197,6 @@
         "svelte": {
           "compoundRoot": "Skeleton",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -21104,11 +20234,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -21196,14 +20324,6 @@
             "reducedMotion": "Remove non-essential motion while preserving state changes and completion.",
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
-          },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
           },
           "wcag": [
             "1.1.1",
@@ -21302,7 +20422,6 @@
         "react": {
           "compoundRoot": "Table",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -21310,7 +20429,6 @@
         "solid": {
           "compoundRoot": "Table",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -21318,7 +20436,6 @@
         "svelte": {
           "compoundRoot": "Table",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -21356,11 +20473,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -21454,14 +20569,6 @@
             "reflow": "Remain operable without two-dimensional scrolling at 400% zoom except intrinsically two-dimensional content.",
             "rtl": "Declare logical versus physical direction behavior and mirror only directional semantics."
           },
-          "review": {
-            "ledger": "uifn/accessibility/generated/normative-ledger.json",
-            "owner": "uifn-maintainer",
-            "owningPhase": "PHASE_18",
-            "reviewedAt": "2026-07-24",
-            "revision": "uifn-a11y-ledger-v1",
-            "status": "reviewed"
-          },
           "wcag": [
             "1.3.1",
             "1.3.5",
@@ -21530,7 +20637,6 @@
         "react": {
           "compoundRoot": "Textarea",
           "headlessPackage": "@uifn/react",
-          "implementationPhase": "PHASE_11",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-react",
           "support": "required"
@@ -21538,7 +20644,6 @@
         "solid": {
           "compoundRoot": "Textarea",
           "headlessPackage": "@uifn/solid",
-          "implementationPhase": "PHASE_13",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-solid",
           "support": "required"
@@ -21546,7 +20651,6 @@
         "svelte": {
           "compoundRoot": "Textarea",
           "headlessPackage": "@uifn/svelte",
-          "implementationPhase": "PHASE_12",
           "implementationStatus": "implemented",
           "styledPackage": "@uifn/components-svelte",
           "support": "required"
@@ -21638,11 +20742,9 @@
           "@uifn/components-solid"
         ]
       },
-      "owningPhase": "PHASE_06",
       "release": {
         "catalogStatus": "ga-required",
         "channel": "stable-1.0",
-        "implementationPhase": "PHASE_06",
         "implementationStatus": "implemented"
       },
       "requirementIds": [
@@ -21685,5 +20787,5 @@
   ],
   "schemaVersion": 1,
   "sourcePolicy": "clean-room-original-definition",
-  "sourceSha256": "5ffc3431ecf062d7cbc46545ecbcbda89310d2057701e38c1492ca61c89d16cf"
+  "sourceSha256": "b1c584fe1444a6350203be6ff3f226004e5d29b25433ba241c97b6f1edfeefb7"
 }

@@ -70,4 +70,4 @@ export * from './generated/table';
 export * from './generated/textarea';
 
 export { createMediaQuery, useMediaQuery, createCopyToClipboard, useCopyToClipboard } from '@uifn/solid';
-export const componentsSolidPackageBoundary = { name: '@uifn/components-solid', framework: 'solid', componentCount: 69, partCount: 465, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/solid', stylingOwner: '@uifn/components', styling: 'styled-open-compounds', implementationPhase: 'PHASE_15' } as const;
+export const componentsSolidPackageBoundary = { name: '@uifn/components-solid', framework: 'solid', componentCount: 69, partCount: 465, behaviorOwner: '@uifn/core', headlessOwner: '@uifn/solid', stylingOwner: '@uifn/components', styling: 'styled-open-compounds' } as const;

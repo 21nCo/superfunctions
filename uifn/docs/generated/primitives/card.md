@@ -123,6 +123,7 @@ CSS variables:
 - `--uifn-component-shadow` (shared)
 - `--uifn-control-block-size` (shared)
 - `--uifn-control-gap` (shared)
+- `--uifn-space-8` (shared)
 - `--uifn-space-card` (shared)
 
 ## Package install

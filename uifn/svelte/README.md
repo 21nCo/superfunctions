@@ -72,7 +72,7 @@ npm run verify:uifn-browser -- --framework svelte
 ## Verification
 
 ```bash
-npm run verify:uifn-phase-12
+npm --workspace @uifn/svelte run typecheck
 ```
 
 The phase gate covers the full catalog inventory, Svelte diagnostics, source and packed production builds, SSR/hydration equivalence, Chromium/Firefox/WebKit behavior, lifecycle counters, forms, portals, exact negative mutation codes, and clean npm tarballs.
