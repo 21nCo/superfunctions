@@ -49,4 +49,3 @@ Expected outcome: the phase report contains a complete current-state inventory a
 ## Stop Condition
 
 Report the inventory summary and any current APIs that conflict with SFN-15.
-

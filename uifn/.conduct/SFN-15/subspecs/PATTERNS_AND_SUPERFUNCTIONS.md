@@ -134,4 +134,3 @@ Every pattern MUST include fixtures and stories for:
 ## Security
 
 Pattern fixtures MUST NOT use realistic secrets, real OAuth tokens, live upload URLs, real customer names, or real billing records.
-

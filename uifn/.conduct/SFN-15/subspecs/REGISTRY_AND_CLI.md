@@ -124,4 +124,3 @@ The registry MUST NOT require Bit.
 ## Security and Portability
 
 Registry locks MUST use repository-relative paths. CLI logs MUST redact secrets and absolute local paths.
-

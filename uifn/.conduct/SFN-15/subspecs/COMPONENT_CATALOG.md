@@ -110,4 +110,3 @@ Command MUST specify filtering, grouping, empty state, keyboard loop behavior, i
 Sidebar MUST specify collapsed state, responsive mode, focus behavior, persistent state hooks, and nested navigation semantics.
 
 Resizable MUST specify pointer behavior, keyboard behavior, min/max constraints, orientation, and nested panel rules.
-

@@ -56,4 +56,3 @@ Expected outcome: batch A components pass render, a11y, visual, recipe, and regi
 ## Stop Condition
 
 Report completed components and any API normalization decisions.
-

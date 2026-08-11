@@ -42,4 +42,3 @@ The following are acceptable:
 ## Review Gate
 
 Before a package can claim GA, release verification MUST include a source-provenance check that fails on copied external source, copied external docs, or unexpected third-party assets.
-

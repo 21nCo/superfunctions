@@ -63,4 +63,3 @@ Expected outcome: package graph and dry-run manifest name every target package w
 ## Stop Condition
 
 Report packages created, packages rewritten, and legacy surfaces removed.
-

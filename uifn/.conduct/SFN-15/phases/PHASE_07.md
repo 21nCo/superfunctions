@@ -50,4 +50,3 @@ Expected outcome: Vue passes conformance and no longer claims experimental statu
 ## Stop Condition
 
 Report Vue API parity and any intentional Vue-only syntax differences.
-

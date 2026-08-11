@@ -87,4 +87,3 @@ Architecture is complete only when:
 - manifest status validation passes,
 - every public package can be packed without tests, fixtures, or private internals leaking,
 - docs and manifests agree on package names and status.
-

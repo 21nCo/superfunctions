@@ -48,4 +48,3 @@ Expected outcome: catalog validator reports 45 components, 2 hooks, and no missi
 ## Stop Condition
 
 Report catalog counts and any component requiring special implementation handling.
-

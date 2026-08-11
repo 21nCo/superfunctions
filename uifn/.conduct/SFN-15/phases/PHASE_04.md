@@ -62,4 +62,3 @@ Expected outcome: all styling vectors pass and contrast failures block validatio
 ## Stop Condition
 
 Report token schema, first-party themes, and recipe output examples.
-

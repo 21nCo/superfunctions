@@ -59,4 +59,3 @@ Expected outcome: patterns pass controlled-state, fixture, story, and no-backend
 ## Stop Condition
 
 Report pattern APIs and state coverage.
-

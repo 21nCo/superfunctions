@@ -50,4 +50,3 @@ Expected outcome: React passes conformance and SSR/hydration checks.
 ## Stop Condition
 
 Report any primitive where React behavior still diverges from core vectors.
-

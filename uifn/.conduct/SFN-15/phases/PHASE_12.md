@@ -73,4 +73,3 @@ Expected outcome: batch B passes conformance, a11y, stories, and registry checks
 ## Stop Condition
 
 Report any primitive/component behavior mismatches.
-

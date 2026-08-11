@@ -160,4 +160,3 @@ The conformance harness MUST run a primitive vector against every adapter and co
 ```
 
 Adapters fail when normalized results diverge.
-

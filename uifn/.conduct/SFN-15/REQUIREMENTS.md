@@ -645,4 +645,3 @@ Acceptance criteria:
 Test vectors: TV-VER-001
 
 Notes: Existing package names SHOULD be preserved when they align with the target architecture.
-

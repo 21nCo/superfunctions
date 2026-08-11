@@ -104,4 +104,3 @@ The gate MUST emit machine-readable JSON:
 ## Manual Evidence
 
 Manual evidence SHOULD be minimized, but if required it MUST be structured and checked by the gate. Free-form manual signoff MUST NOT be the only release proof for accessibility or visual behavior.
-

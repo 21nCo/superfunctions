@@ -32,4 +32,3 @@ SFN-15 is not an MVP. It specifies the complete target architecture and implemen
 - Bit-like component lifecycle metadata without adopting Bit as a required toolchain,
 - Superfunction-backed patterns for `authfn`, `plugfn`, `filefn`, and `billfn`,
 - production release gates with accessibility, interaction, visual, SSR, packaging, and manifest validation.
-

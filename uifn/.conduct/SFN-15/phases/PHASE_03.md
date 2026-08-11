@@ -54,4 +54,3 @@ Expected outcome: conformance harness can run at least two primitive vectors and
 ## Stop Condition
 
 Report conformance runner API and any framework-specific harness gaps.
-

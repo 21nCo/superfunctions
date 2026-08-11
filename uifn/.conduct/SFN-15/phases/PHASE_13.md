@@ -53,4 +53,3 @@ Expected outcome: data-rich components pass interaction, large-data, a11y, and v
 ## Stop Condition
 
 Report performance characteristics and any selected third-party engine decisions.
-

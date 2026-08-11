@@ -52,4 +52,3 @@ Expected outcome: Angular passes directive conformance and two-way binding tests
 ## Stop Condition
 
 Report Angular directive naming conventions and any unsupported SSR checks.
-

@@ -51,4 +51,3 @@ Expected outcome: Storybook validates stories and exposes compatibility metadata
 ## Stop Condition
 
 Report Storybook commands, decorators, and panel fields.
-

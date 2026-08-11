@@ -54,4 +54,3 @@ Expected outcome: backed patterns pass injected-client, mock, state, and redacti
 ## Stop Condition
 
 Report client contracts and any backend API gaps.
-

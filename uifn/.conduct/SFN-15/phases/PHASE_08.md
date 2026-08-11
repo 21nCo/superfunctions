@@ -51,4 +51,3 @@ Expected outcome: Solid passes conformance and signal freshness checks.
 ## Stop Condition
 
 Report Solid component API shape and any peer dependency constraints.
-

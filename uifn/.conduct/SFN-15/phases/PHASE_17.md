@@ -56,4 +56,3 @@ Expected outcome: CLI fixture tests pass and source installs create expected fil
 ## Stop Condition
 
 Report CLI UX, lockfile format, and unsupported cases.
-

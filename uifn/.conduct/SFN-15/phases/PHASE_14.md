@@ -48,4 +48,3 @@ Expected outcome: hooks pass SSR, cleanup, and failure behavior tests for every 
 ## Stop Condition
 
 Report exact hook/composable/service names per framework.
-

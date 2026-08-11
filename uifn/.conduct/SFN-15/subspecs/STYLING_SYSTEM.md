@@ -188,4 +188,3 @@ Styled components MUST support:
 ```
 
 Equivalent APIs MUST be idiomatic per framework.
-
