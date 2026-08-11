@@ -2,8 +2,8 @@
  * Workflow state selector: set draft / in_review / approved and persist _cms via patch.
  */
 
-import type { CmsfnWorkflowState, CmsfnWorkflowMetadata } from "@cmsfn/core";
-import { CMS_RESERVED_FIELD } from "@cmsfn/core";
+import type { CmsfnWorkflowState, CmsfnWorkflowMetadata } from "cmsfn";
+import { CMS_RESERVED_FIELD } from "cmsfn";
 import { writeCmsMetadata } from "./writeCmsMetadata.js";
 import { patchDoc } from "../contentfn/client.js";
 

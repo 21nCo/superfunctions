@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { createCmsfnServer } from "../index.js";
 import type { CmsfnServerConfig } from "../index.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { CmsfnRole } from "@cmsfn/core";
+import type { CmsfnRole } from "cmsfn";
 
 function minimalConfig(overrides: Partial<CmsfnServerConfig> = {}): CmsfnServerConfig {
   return {

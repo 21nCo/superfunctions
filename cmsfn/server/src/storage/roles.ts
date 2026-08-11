@@ -5,9 +5,9 @@
  */
 
 import type { Adapter } from "@superfunctions/db";
-import type { CmsfnEnvelope } from "@cmsfn/core";
-import type { CmsfnRole } from "@cmsfn/core";
-import { ok, err } from "@cmsfn/core";
+import type { CmsfnEnvelope } from "cmsfn";
+import type { CmsfnRole } from "cmsfn";
+import { ok, err } from "cmsfn";
 
 export const CMSFN_ROLES_TABLE = "cmsfn_roles";
 

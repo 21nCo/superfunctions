@@ -2,7 +2,7 @@
  * Build _cms workflow metadata for draft documents (deterministic shape).
  */
 
-import type { CmsfnWorkflowMetadata, CmsfnWorkflowState } from "@cmsfn/core";
+import type { CmsfnWorkflowMetadata, CmsfnWorkflowState } from "cmsfn";
 
 const DEFAULT_WORKFLOW_NAME = "default";
 

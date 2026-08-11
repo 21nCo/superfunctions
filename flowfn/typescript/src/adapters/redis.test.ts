@@ -86,9 +86,7 @@ describe('RedisAdapter', () => {
         };
         await adapter.publish('test-stream', message);
 
-        // Wait for polling loop
-        await new Promise(r => setTimeout(r, 200));
-        expect(received.length).toBeGreaterThan(0);
+        await vi.waitFor(() => expect(received.length).toBeGreaterThan(0), { timeout: 1500 });
         expect(received[0].data).toEqual({ hello: 'world' });
         expect(received[0].headers).toEqual({ foo: 'bar' });
     });
@@ -111,10 +109,7 @@ describe('RedisAdapter', () => {
         };
         await adapter.publish('group-stream', message);
 
-        // Wait for polling loop
-        await new Promise(r => setTimeout(r, 200));
-        
-        expect(received.length).toBeGreaterThan(0);
+        await vi.waitFor(() => expect(received.length).toBeGreaterThan(0), { timeout: 1500 });
         expect(received[0].data).toEqual({ group: 'test' });
         
         // Verify xgroup/xack called

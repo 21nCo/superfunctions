@@ -1,6 +1,6 @@
 {
   "name": "@cifn/runner",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "CiFn runner - executes CI/CD pipeline jobs",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -28,7 +28,7 @@
     "namespace": "cifn"
   },
   "dependencies": {
-    "@cifn/control-plane": "0.0.1",
+    "@cifn/control-plane": "0.0.2",
     "uuid": "^9.0.0"
   },
   "devDependencies": {

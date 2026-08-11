@@ -1,7 +1,7 @@
-import type { Request, Response, Router } from "express";
-import { createRouter as createHttpRouter } from "@superfunctions/http-express";
+import type { Request, RequestHandler, Response } from "express";
+import { toExpress } from "@superfunctions/http-express";
 import type { WatchFn } from "../core/watch-fn";
-import { createRoutes } from "../http/router";
+import { createWatchFnRouter } from "../http/router";
 
 export interface ExpressWatchFnOptions {
   prefix?: string;
@@ -13,9 +13,8 @@ export interface ExpressWatchFnOptions {
 export function createExpressRouter(
   watchFn: WatchFn,
   options: ExpressWatchFnOptions = {}
-): Router {
-  const routes = createRoutes(watchFn);
-  return createHttpRouter(routes, options);
+): RequestHandler {
+  return toExpress(createWatchFnRouter(watchFn));
 }
 
 /**

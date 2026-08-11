@@ -1,6 +1,6 @@
 {
   "name": "@cifn/cli",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "CLI for CiFn",
   "type": "module",
   "author": "21n",
@@ -27,7 +27,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cifn/control-plane": "0.0.1",
+    "@cifn/control-plane": "0.0.2",
     "commander": "^11.0.0",
     "js-yaml": "^4.1.0"
   },

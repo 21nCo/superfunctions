@@ -4,9 +4,9 @@
  */
 
 import type { IncomingMessage } from "http";
-import { ok } from "@cmsfn/core";
-import { CMS_RESERVED_FIELD } from "@cmsfn/core";
-import type { CmsfnWorkflowMetadata } from "@cmsfn/core";
+import { ok } from "cmsfn";
+import { CMS_RESERVED_FIELD } from "cmsfn";
+import type { CmsfnWorkflowMetadata } from "cmsfn";
 import { authorize } from "../auth/authorize.js";
 import type { AuthorizeConfig } from "../auth/authorize.js";
 import { canPublish } from "../publish/gates.js";

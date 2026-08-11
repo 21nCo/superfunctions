@@ -1,6 +1,6 @@
 {
   "name": "@watchfn/browser",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Browser RUM agent for WatchFn",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

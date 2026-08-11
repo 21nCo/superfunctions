@@ -11,7 +11,7 @@ import {
   resolveEnvMap,
   type PipelineSpec,
   type ExpressionContext,
-} from 'cifn';
+} from '@cifn/control-plane';
 import { Runner } from './runner.js';
 import { MemoryLogFnClient } from './reporting/logfn-client.js';
 import { redactSecrets } from './reporting/redact.js';

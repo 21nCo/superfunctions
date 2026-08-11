@@ -7,6 +7,7 @@ import { CONTENTFN_TABLE_NAMES } from "./schema.js";
 import { datasetExists } from "./datasets.js";
 import { appendEvent } from "./events.js";
 import { appendRevision } from "./revisions.js";
+import { documentStorageId } from "./documentIdentity.js";
 
 export interface PublishStorageConfig {
   db: Adapter;
@@ -32,7 +33,7 @@ export async function docPublish(
     model: CONTENTFN_TABLE_NAMES.docsDrafts,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "id", operator: "eq" as const, value: draftId },
+      { field: "documentId", operator: "eq" as const, value: draftId },
     ],
   });
 
@@ -64,7 +65,7 @@ export async function docPublish(
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "id", operator: "eq" as const, value: publishedId },
+      { field: "documentId", operator: "eq" as const, value: publishedId },
     ],
   });
 
@@ -73,7 +74,7 @@ export async function docPublish(
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "id", operator: "eq" as const, value: publishedId },
+        { field: "documentId", operator: "eq" as const, value: publishedId },
       ],
     });
   }
@@ -82,7 +83,8 @@ export async function docPublish(
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     data: {
       dataset: input.dataset,
-      id: publishedId,
+      id: documentStorageId(input.dataset, publishedId),
+      documentId: publishedId,
       type: publishedDoc._type,
       docJson: publishedDoc,
       rev: newRev,
@@ -136,7 +138,7 @@ export async function docUnpublish(
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "id", operator: "eq" as const, value: publishedId },
+      { field: "documentId", operator: "eq" as const, value: publishedId },
     ],
   });
 
@@ -154,7 +156,7 @@ export async function docUnpublish(
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "id", operator: "eq" as const, value: publishedId },
+      { field: "documentId", operator: "eq" as const, value: publishedId },
     ],
   });
 

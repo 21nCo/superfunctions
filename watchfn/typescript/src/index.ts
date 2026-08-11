@@ -28,7 +28,12 @@ export * from "./core/context-manager";
 // Query
 export * from "./query/aggregations";
 export * from "./query/filters";
-export * from "./query/time-range";
+export {
+  TimeRangeParser,
+  type AbsoluteTimeRange,
+  type TimeRangeShortcut,
+  type TimeRange as ParsedTimeRange,
+} from "./query/time-range";
 
 // Utils
 export * from "./utils/sampling";
@@ -36,7 +41,12 @@ export * from "./utils/compression";
 
 // Storage
 export * from "./storage/time-series/index";
-export * from "./storage/time-series/aggregation";
+export {
+  TimeSeriesAggregator,
+  type AggregatedPoint,
+  type AggregationFunc,
+  type AggregationConfig as TimeSeriesAggregationConfig,
+} from "./storage/time-series/aggregation";
 export * from "./storage/time-series/retention";
 export * from "./storage/events/index";
 
@@ -62,15 +72,18 @@ export * from "./collectors/rum/user-interactions";
 export * from "./trace/context-propagation";
 
 // Alerts
-export * from "./alerts/conditions";
+export {
+  ConditionEvaluator,
+  type AnomalyCondition,
+  type CompositeCondition,
+  type ConditionOperator,
+  type ThresholdCondition,
+  type AlertCondition as EvaluatedAlertCondition,
+} from "./alerts/conditions";
 export * from "./alerts/evaluator";
 export * from "./alerts/channels/slack";
 export * from "./alerts/channels/webhook";
 export * from "./alerts/channels/email";
-
-// Logs
-export * from "./logs/aggregator";
-export * from "./logs/parser";
 
 // Business
 export * from "./business/metrics-tracker";

@@ -1,6 +1,6 @@
 {
   "name": "@drawfn/svelte",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Svelte adapter for drawfn drawing canvas library",
   "license": "MIT",
   "type": "module",
@@ -59,7 +59,7 @@
   },
   "sideEffects": false,
   "dependencies": {
-    "drawfn": "0.0.1"
+    "drawfn": "0.0.2"
   },
   "peerDependencies": {
     "svelte": "^4.0.0 || ^5.0.0"

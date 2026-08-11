@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { QueueClient, JobPayload } from 'cifn';
+import type { QueueClient, JobPayload } from '@cifn/control-plane';
 import {
   DEFAULT_QUEUE_NAME,
   getReadyJobs,
@@ -10,7 +10,7 @@ import {
   hashFiles,
   type MemoryStore,
   type PipelineSpec,
-} from 'cifn';
+} from '@cifn/control-plane';
 import { executeRunStep } from './executor/run-step.js';
 import { executeCheckout } from './steps/checkout.js';
 import { executeArtifactUpload } from './steps/artifact-upload.js';

@@ -1,5 +1,5 @@
 import { loadConfig } from "../config.js";
-import { compFn } from "@superfunctions/compfn";
+import { compFn } from "compfn";
 
 export async function attestCommand(options: {
   controlId: string;

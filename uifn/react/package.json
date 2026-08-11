@@ -1,6 +1,6 @@
 {
   "name": "@uifn/react",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Permanently headless React adapter for uifn primitives",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

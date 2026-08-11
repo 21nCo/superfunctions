@@ -4,7 +4,7 @@
 
 import type { IncomingMessage, ServerResponse } from "http";
 import { createServer } from "http";
-import type { CmsfnEnvelope, CmsfnStudioConfig } from "@cmsfn/core";
+import type { CmsfnEnvelope, CmsfnStudioConfig } from "cmsfn";
 import type { Adapter } from "@superfunctions/db";
 import { handleStatus } from "./http/status.js";
 import { handleRolesList, handleRolesUpsert, handleRolesDelete } from "./http/roles.js";
@@ -18,7 +18,7 @@ import {
 } from "./http/releases.js";
 import { handleOpsExport, handleOpsImport } from "./http/ops.js";
 import { handleAuditEvents, handleAuditWebhooks } from "./http/audit.js";
-import type { CmsfnRole } from "@cmsfn/core";
+import type { CmsfnRole } from "cmsfn";
 
 export type {
   CmsfnEnvelope,
@@ -32,7 +32,7 @@ export type {
   CmsfnAuditEvent,
   CmsfnWebhookDeliveryStatus,
   CmsfnServerAPI,
-} from "@cmsfn/core";
+} from "cmsfn";
 
 /** Server config: studio config plus optional status auth and roles. */
 export interface CmsfnServerConfig extends CmsfnStudioConfig {

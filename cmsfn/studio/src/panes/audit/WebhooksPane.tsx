@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback, useEffect } from "react";
-import type { CmsfnWebhookDeliveryStatus } from "@cmsfn/core";
+import type { CmsfnWebhookDeliveryStatus } from "cmsfn";
 
 export interface WebhooksPaneProps {
   cmsfnApiUrl: string;

@@ -517,6 +517,8 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
   });
 
   it('join timeout transitions to error (TV-BOT-011)', async () => {
+    vi.useFakeTimers();
+
     const bot = await store.createBot({
       meetingUrl: 'https://zoom.us/j/123',
       platform: 'zoom',
@@ -540,8 +542,9 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
       createdAt: new Date().toISOString(),
     });
 
-    // Platform adapter that takes too long
-    const adapter = createMockPlatformAdapter({ joinDelay: 200 });
+    // Platform adapter that takes longer than the configured timeout and its
+    // five-second connection grace period.
+    const adapter = createMockPlatformAdapter({ joinDelay: 10_000 });
     const worker = createBotWorker({
       store,
       queue,
@@ -549,11 +552,15 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
       platformAdapters: new Map([['zoom', adapter]]),
     });
 
-    await worker.processNext();
+    const processing = worker.processNext();
+    await vi.advanceTimersByTimeAsync(5_050);
+    await processing;
 
     const updated = await store.getBot(bot.id, 'ns_test');
     expect(updated!.status).toBe('error');
     expect(updated!.errorMessage).toContain('Join timeout exceeded');
+
+    vi.useRealTimers();
   });
 
   it('join error transitions to error', async () => {

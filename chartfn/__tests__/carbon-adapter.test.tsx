@@ -24,6 +24,7 @@ vi.mock("@carbon/charts-react", () => {
     PieChart: makeComponent("PieChart"),
     DonutChart: makeComponent("DonutChart"),
     AreaChart: makeComponent("AreaChart"),
+    SimpleBarChart: makeComponent("SimpleBarChart"),
   };
 });
 

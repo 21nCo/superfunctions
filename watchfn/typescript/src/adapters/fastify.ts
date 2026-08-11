@@ -4,9 +4,9 @@ import type {
   FastifyRequest,
   FastifyReply,
 } from "fastify";
-import { createPlugin as createHttpPlugin } from "@superfunctions/http-fastify";
+import { toFastify } from "@superfunctions/http-fastify";
 import type { WatchFn } from "../core/watch-fn";
-import { createRoutes } from "../http/router";
+import { createWatchFnRouter } from "../http/router";
 
 export interface FastifyWatchFnOptions {
   prefix?: string;
@@ -19,8 +19,7 @@ export function createFastifyPlugin(
   watchFn: WatchFn,
   options: FastifyWatchFnOptions = {}
 ): FastifyPluginCallback {
-  const routes = createRoutes(watchFn);
-  return createHttpPlugin(routes, options);
+  return toFastify(createWatchFnRouter(watchFn));
 }
 
 /**

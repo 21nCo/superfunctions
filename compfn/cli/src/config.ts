@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import type { Adapter } from "@superfunctions/db";
-import type { CompFnConfig } from "@superfunctions/compfn";
+import type { CompFnConfig } from "compfn";
 
 export interface CliConfig extends Omit<CompFnConfig, 'database'> {
   database: Adapter;

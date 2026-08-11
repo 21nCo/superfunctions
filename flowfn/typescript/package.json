@@ -1,6 +1,6 @@
 {
   "name": "@flowfn/core",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Self-hosted flow control platform for developers - Queues, Streams, and Workflows",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

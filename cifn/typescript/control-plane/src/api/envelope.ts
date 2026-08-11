@@ -48,7 +48,10 @@ const errorRegistry = createErrorRegistry([
 export function success<T>(data: T): SuccessEnvelope<T> {
   const canonical = createEnvelopeSuccess(data);
   const legacy = toLegacyDataEnvelope(canonical);
-  return { ok: true, data: legacy.data };
+  if (!legacy.ok) {
+    throw new Error('Expected a successful CI envelope');
+  }
+  return legacy;
 }
 
 export function error(
@@ -68,5 +71,15 @@ export function error(
     details,
   });
   const legacy = toLegacyDataEnvelope(canonical);
-  return legacy;
+  if (legacy.ok) {
+    throw new Error('Expected an error CI envelope');
+  }
+  return {
+    ok: false,
+    error: {
+      code: legacy.error.code as ErrorCode,
+      message: legacy.error.message,
+      details: legacy.error.details,
+    },
+  };
 }

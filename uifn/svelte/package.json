@@ -1,6 +1,6 @@
 {
   "name": "@uifn/svelte",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Catalog-complete, permanently headless Svelte 5 compounds for uifn primitives",
   "type": "module",
   "main": "dist/index.js",

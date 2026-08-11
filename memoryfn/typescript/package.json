@@ -1,6 +1,6 @@
 {
   "name": "@memoryfn/core",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Self-hostable AI memory system for agents and applications",
   "type": "module",
   "main": "./dist/index.js",
@@ -46,7 +46,7 @@
   },
   "peerDependencies": {
     "@superfunctions/auth": "0.1.2",
-    "@watchfn/core": "0.0.1",
+    "@watchfn/core": "0.0.2",
     "secfn": "*"
   },
   "devDependencies": {

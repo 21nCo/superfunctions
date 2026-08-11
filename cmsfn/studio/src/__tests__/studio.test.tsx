@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { App, DeskTree, DatasetSelector, getInitialDataset } from "../index.js";
-import type { CmsfnStudioConfig } from "@cmsfn/core";
+import type { CmsfnStudioConfig } from "cmsfn";
 
 function fixedConfig(): CmsfnStudioConfig {
   return {

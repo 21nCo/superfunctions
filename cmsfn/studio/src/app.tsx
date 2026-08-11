@@ -4,7 +4,7 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import type { CmsfnStudioConfig } from "@cmsfn/core";
+import type { CmsfnStudioConfig } from "cmsfn";
 import { loadConfig, getInitialDataset } from "./config/loadConfig.js";
 import { DeskTree } from "./desk/DeskTree.js";
 import type { DocumentListNode } from "./desk/DeskTree.js";

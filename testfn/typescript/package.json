@@ -1,6 +1,6 @@
 {
   "name": "@testfn/core",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Comprehensive self-hosted testing platform",
   "type": "module",
   "main": "./dist/index.js",

@@ -4,8 +4,8 @@
  */
 
 import type { IncomingMessage } from "http";
-import type { CmsfnEnvelope, CmsfnStatusResult } from "@cmsfn/core";
-import { ok, err } from "@cmsfn/core";
+import type { CmsfnEnvelope, CmsfnStatusResult } from "cmsfn";
+import { ok, err } from "cmsfn";
 import { fetchContentfnStatus } from "../contentfn/statusClient.js";
 
 /** CmsFn capabilities reported by status. */

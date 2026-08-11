@@ -1,10 +1,10 @@
 /**
  * Deterministic desk navigation tree from CmsfnStudioConfig.desk.
- * Uses @cmsfn/core deskNodeKeys for stable keys and order.
+ * Uses cmsfn deskNodeKeys for stable keys and order.
  */
 
-import type { CmsfnDeskNode } from "@cmsfn/core";
-import { deskNodeKeys } from "@cmsfn/core";
+import type { CmsfnDeskNode } from "cmsfn";
+import { deskNodeKeys } from "cmsfn";
 
 export type DocumentListNode = Extract<CmsfnDeskNode, { kind: "documentList" }>;
 

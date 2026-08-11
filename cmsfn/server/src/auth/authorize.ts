@@ -4,8 +4,8 @@
  */
 
 import type { IncomingMessage } from "http";
-import type { CmsfnRole, CmsfnAction } from "@cmsfn/core";
-import { evaluatePermissions } from "@cmsfn/core";
+import type { CmsfnRole, CmsfnAction } from "cmsfn";
+import { evaluatePermissions } from "cmsfn";
 
 export interface AuthorizeConfig {
   /**

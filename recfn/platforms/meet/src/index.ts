@@ -42,16 +42,28 @@ async function writeMeetJoinDebugArtifacts(
   const screenshotPath = join(dir, `meet-join-${stamp}.png`);
   const htmlPath = join(dir, `meet-join-${stamp}.html`);
   const statePath = join(dir, `meet-join-${stamp}.txt`);
+  const debugPage = page as Page & {
+    url?: () => string;
+    locator?: Page["locator"];
+    content?: Page["content"];
+    screenshot?: Page["screenshot"];
+  };
 
   const [title, url, bodyText, html] = await Promise.all([
     page.title().catch(() => ''),
-    Promise.resolve(page.url()).catch(() => ''),
-    page.locator('body').innerText({ timeout: 1_000 }).catch(() => ''),
-    page.content().catch(() => ''),
+    Promise.resolve(typeof debugPage.url === 'function' ? debugPage.url() : '').catch(() => ''),
+    typeof debugPage.locator === 'function'
+      ? debugPage.locator('body').innerText({ timeout: 1_000 }).catch(() => '')
+      : Promise.resolve(''),
+    typeof debugPage.content === 'function'
+      ? debugPage.content().catch(() => '')
+      : Promise.resolve(''),
   ]);
 
   await Promise.all([
-    page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {}),
+    typeof debugPage.screenshot === 'function'
+      ? debugPage.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {})
+      : Promise.resolve(),
     writeFile(htmlPath, html).catch(() => {}),
     writeFile(
       statePath,

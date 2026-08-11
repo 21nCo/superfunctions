@@ -3,7 +3,7 @@
  */
 
 import { useEffect } from "react";
-import type { CmsfnDeskNode } from "@cmsfn/core";
+import type { CmsfnDeskNode } from "cmsfn";
 import { useCfqlQuery } from "./useCfqlQuery.js";
 import { ListErrorState } from "./ListErrorState.js";
 
