@@ -1,6 +1,9 @@
-import { MCPProtocolError, MCPTransportError } from "../core/errors.js";
-import type { JSONRPCRequest, JSONRPCResponse, MCPTransport } from "./types.js";
-import { isJSONRPCResponse } from "./types.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type {
+  Transport,
+  TransportSendOptions
+} from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/sdk/types.js";
 
 export interface SSEMCPTransportOptions {
   url: string;
@@ -8,82 +11,44 @@ export interface SSEMCPTransportOptions {
   headers?: HeadersInit;
 }
 
-export class SSEMCPTransport implements MCPTransport {
-  private readonly fetchImpl: typeof fetch;
-  private readonly url: string;
-  private readonly headers?: HeadersInit;
-  private nextId = 1;
-  private readonly controllers = new Set<AbortController>();
+/**
+ * Compatibility name for LangFn's HTTP transport. The implementation now uses
+ * MCP Streamable HTTP from the official SDK rather than the legacy one-shot SSE shape.
+ */
+export class SSEMCPTransport implements Transport {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void;
+
+  private readonly delegate: StreamableHTTPClientTransport;
 
   constructor(options: SSEMCPTransportOptions) {
-    this.url = options.url;
-    this.fetchImpl = options.fetchImpl ?? fetch;
-    this.headers = options.headers;
+    this.delegate = new StreamableHTTPClientTransport(new URL(options.url), {
+      ...(options.fetchImpl ? { fetch: options.fetchImpl } : {}),
+      ...(options.headers ? { requestInit: { headers: options.headers } } : {})
+    });
   }
 
-  async request<TResult = unknown>(method: string, params: Record<string, unknown> = {}): Promise<TResult> {
-    const controller = new AbortController();
-    this.controllers.add(controller);
-    const payload: JSONRPCRequest = {
-      jsonrpc: "2.0",
-      id: this.nextId++,
-      method,
-      params
-    };
+  get sessionId(): string | undefined {
+    return this.delegate.sessionId;
+  }
 
-    try {
-      const response = await this.fetchImpl(this.url, {
-        method: "POST",
-        headers: {
-          accept: "text/event-stream",
-          "content-type": "application/json",
-          ...(this.headers ?? {})
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-      if (!response.ok) {
-        throw new MCPTransportError("SSE transport returned a non-success status", {
-          metadata: { status: response.status }
-        });
-      }
+  async start(): Promise<void> {
+    this.delegate.onmessage = (message: JSONRPCMessage) => this.onmessage?.(message);
+    this.delegate.onerror = (error) => this.onerror?.(error);
+    this.delegate.onclose = () => this.onclose?.();
+    await this.delegate.start();
+  }
 
-      const text = await response.text();
-      const frame = parseSSEFrame(text);
-      if (!isJSONRPCResponse(frame)) {
-        throw new MCPProtocolError("Invalid SSE MCP response", {
-          metadata: { frame }
-        });
-      }
-      if (frame.error) {
-        throw new MCPProtocolError(frame.error.message, {
-          metadata: { error: frame.error }
-        });
-      }
-      return frame.result as TResult;
-    } finally {
-      this.controllers.delete(controller);
-    }
+  async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
+    await this.delegate.send(message, options);
   }
 
   async close(): Promise<void> {
-    for (const controller of this.controllers) {
-      controller.abort();
-    }
-    this.controllers.clear();
+    await this.delegate.close();
   }
-}
 
-function parseSSEFrame(text: string): JSONRPCResponse | unknown {
-  const line = text
-    .split("\n")
-    .find((entry) => entry.startsWith("data:"));
-  if (!line) {
-    throw new MCPTransportError("SSE transport returned no data frame");
-  }
-  try {
-    return JSON.parse(line.slice(5).trim()) as JSONRPCResponse;
-  } catch (error) {
-    throw new MCPProtocolError("Failed to parse SSE MCP payload", { cause: error });
+  setProtocolVersion(version: string): void {
+    this.delegate.setProtocolVersion(version);
   }
 }

@@ -1,0 +1,99 @@
+{
+  "formatVersion": 1,
+  "server": {
+    "name": "mcpfn-calculator-example",
+    "version": "1.0.0",
+    "instructions": "Use the calculator tools for deterministic arithmetic."
+  },
+  "transports": [
+    "stdio",
+    "streamable-http"
+  ],
+  "capabilities": {
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "calculator_divide",
+      "description": "Divide one finite number by another non-zero number.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dividend": {
+            "type": "number"
+          },
+          "divisor": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "dividend",
+          "divisor"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "calculator_sum",
+      "description": "Add two finite numbers.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "left": {
+            "type": "number"
+          },
+          "right": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "left",
+          "right"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    }
+  ],
+  "resources": [],
+  "resourceTemplates": [],
+  "prompts": [],
+  "hash": "b759cde2846e643c207efd7da4091828a4afc884b5a4ae2e2b30d6e83c8fb653"
+}
