@@ -154,6 +154,33 @@ describe("buildCanonicalBlogRecords", () => {
     expect(canonical.archives[0].path).toBe("/changelog");
   });
 
+  it("keeps root collection routes free of duplicate slashes", () => {
+    const canonical = buildCanonicalDatedCollectionRecords({
+      posts: [
+        createPost("collection:releases:release.mdx", {
+          collectionId: "releases",
+          slug: "release",
+          tags: ["release"],
+        }),
+        createPost("collection:releases:older.mdx", {
+          collectionId: "releases",
+          slug: "older",
+          date: "2026-02-01",
+        }),
+      ],
+      collectionId: "releases",
+      basePath: "/",
+      routeBase: "/",
+      feedPath: "/rss.xml",
+      pageSize: 1,
+    });
+
+    expect(canonical.feedPath).toBe("/rss.xml");
+    expect(canonical.posts.map((post) => post.path)).toEqual(["/release", "/older"]);
+    expect(canonical.tags.release.path).toBe("/tags/release");
+    expect(canonical.archives.map((archive) => archive.path)).toEqual(["/", "/page/2"]);
+  });
+
   it("throws DOCS_ARTIFACT_INVALID when publish date metadata is invalid", () => {
     expect(() =>
       buildCanonicalBlogRecords({

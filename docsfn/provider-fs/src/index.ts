@@ -9,6 +9,9 @@ import {
   createDiagnostic,
   createDocsError,
   createSourceEntryId,
+  getNamedCollectionId,
+  isNamedCollection,
+  normalizeDatedCollectionId,
   normalizeProviderPath,
   toLegacyRawEntries,
   type DocsCollection,
@@ -34,25 +37,6 @@ const DEFAULT_COLLECTIONS: DocsCollection[] = [
   "api",
   "assets",
 ];
-
-function normalizeDatedCollectionId(value: string): string {
-  return normalizeProviderPath(value)
-    .replaceAll("/", "-")
-    .trim()
-    .toLowerCase();
-}
-
-function isNamedCollection(collection: DocsCollection): collection is `collection:${string}` {
-  return collection.startsWith("collection:");
-}
-
-function getNamedCollectionId(collection: DocsCollection): string | undefined {
-  if (!isNamedCollection(collection)) {
-    return undefined;
-  }
-  const collectionId = collection.slice("collection:".length);
-  return collectionId.length > 0 ? collectionId : undefined;
-}
 
 export interface FsProviderOptions {
   root: string;

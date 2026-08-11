@@ -867,6 +867,7 @@
 }
 
 .docsfn-mobile-backdrop {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 30;
@@ -1542,6 +1543,10 @@
 }
 
 @media (max-width: 1023px) {
+  .docsfn-mobile-backdrop {
+    display: block;
+  }
+
   .docsfn-mobile-toolbar {
     display: block;
   }

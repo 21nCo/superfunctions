@@ -731,7 +731,7 @@ cli
   .command("migrate <kind> [source]", "Migrate an existing docs site into docsfn content")
   .option("--source <dir>", "Docusaurus site root")
   .option("--out <dir>", "Target output directory (legacy option)")
-  .option("--out-dir <dir>", "Target output directory", { default: "docsfn-migration" })
+  .option("--out-dir <dir>", "Target output directory")
   .option("--docs-dir <dir>", "Docusaurus docs directory", { default: "docs" })
   .option("--pages-dir <dir>", "Docusaurus product pages directory, e.g. src/pages/memotron")
   .option("--changelog-dir <dir>", "Docusaurus changelog/blog directory", { default: "blog" })

@@ -595,7 +595,7 @@ describe("buildManifest", () => {
       provider,
       createConfig({
         collections: {
-          changelog: {
+          ChangeLog: {
             dir: "content/changelog",
             routeBase: "/changelog",
             label: "Changelog",
@@ -629,6 +629,37 @@ describe("buildManifest", () => {
     });
     expect(artifact.documents.map((doc) => doc.path)).toEqual(["/changelog/release"]);
     expect(artifact.documents.map((doc) => doc.scope)).toEqual(["changelog"]);
+  });
+
+  it("requests each normalized dated collection only once", async () => {
+    let requestedCollections: DocsCollection[] = [];
+    const provider: DocsContentProvider = {
+      providerId: "capture-collections",
+      async listEntries(input) {
+        requestedCollections = input.collections;
+        return [];
+      },
+      async loadEntry(input) {
+        return input.entry;
+      },
+      async list() {
+        return [];
+      },
+    };
+
+    await buildManifest(
+      provider,
+      createConfig({
+        collections: {
+          ChangeLog: { dir: "content/changelog-one" },
+          changelog: { dir: "content/changelog-two" },
+        },
+      })
+    );
+
+    expect(
+      requestedCollections.filter((collection) => collection === "collection:changelog")
+    ).toEqual(["collection:changelog"]);
   });
 
   it("builds mixed docs/api/blog search scope from manifest-derived routes (TV-SEARCH-001)", async () => {

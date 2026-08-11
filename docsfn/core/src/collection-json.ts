@@ -1,4 +1,5 @@
 import { assertValidBlogPublishMetadata } from "./blog";
+import { normalizeDatedCollectionId } from "./provider";
 import type { BlogPost, DocsManifest } from "./types";
 
 export interface DatedCollectionJsonFeedItem {
@@ -50,14 +51,7 @@ function normalizeCollectionId(collectionId: string): string {
   const withoutPrefix = trimmed.startsWith("collection:")
     ? trimmed.slice("collection:".length)
     : trimmed;
-  return withoutPrefix
-    .replaceAll("\\", "/")
-    .split("/")
-    .filter((segment) => segment.length > 0 && segment !== ".")
-    .join("/")
-    .replaceAll("/", "-")
-    .trim()
-    .toLowerCase();
+  return normalizeDatedCollectionId(withoutPrefix);
 }
 
 function getPostCollectionId(post: BlogPost): string {
@@ -65,7 +59,9 @@ function getPostCollectionId(post: BlogPost): string {
 }
 
 function appendEmbedParam(path: string, param: string): string {
-  const [pathAndSearch, hash = ""] = path.split("#", 2);
+  const hashIndex = path.indexOf("#");
+  const pathAndSearch = hashIndex === -1 ? path : path.slice(0, hashIndex);
+  const hash = hashIndex === -1 ? "" : path.slice(hashIndex + 1);
   const separator = pathAndSearch.includes("?") ? "&" : "?";
   const withParam = `${pathAndSearch}${separator}${encodeURIComponent(param)}=1`;
   return hash.length > 0 ? `${withParam}#${hash}` : withParam;

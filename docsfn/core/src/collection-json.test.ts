@@ -115,4 +115,39 @@ describe("buildDatedCollectionJsonFeed", () => {
     expect(feed.latest?.path).toBe("/changelog/beta");
     expect(feed.latest?.embedPath).toBe("/changelog/beta?docsEmbed=1");
   });
+
+  it("normalizes Unicode collection ids consistently", () => {
+    const manifest = createManifest();
+    const changelog = manifest.collections!.changelog;
+    manifest.collections = {
+      "chang\u00e9log": {
+        ...changelog,
+        id: "chang\u00e9log",
+      },
+    };
+    for (const post of Object.values(manifest.posts)) {
+      if (post.collectionId === "changelog") {
+        post.collectionId = "chang\u00e9log";
+      }
+    }
+
+    const feed = buildDatedCollectionJsonFeed(manifest, {
+      collectionId: "Change\u0301log",
+    });
+
+    expect(feed.collectionId).toBe("chang\u00e9log");
+    expect(feed.items.map((item) => item.slug)).toEqual(["beta", "alpha"]);
+  });
+
+  it("preserves multi-hash fragments when appending the embed param", () => {
+    const feed = buildDatedCollectionJsonFeed(createManifest(), {
+      collectionId: "changelog",
+      limit: 1,
+      itemPath: (post) => `${post.path}#section#details`,
+    });
+
+    expect(feed.latest?.embedPath).toBe(
+      "/changelog/beta?embed=1#section#details"
+    );
+  });
 });

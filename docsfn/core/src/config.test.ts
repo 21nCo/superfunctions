@@ -271,6 +271,30 @@ describe("loadDocsConfig", () => {
     });
   });
 
+  it("rejects collection ids that normalize to the legacy blog surface", async () => {
+    const cwd = await createTempDir();
+
+    await writeFile(
+      join(cwd, "docsfn.config.mjs"),
+      serializeConfig({
+        schemaVersion: 1,
+        site: { title: "Reserved Collection", basePath: "/docs" },
+        compat: { preset: "none" },
+        content: { root: cwd, docsDir: "content/docs" },
+        collections: {
+          Blog: {
+            dir: "content/blog-v2",
+            routeBase: "/blog-v2",
+            feedPath: "/blog-v2/rss.xml",
+          },
+        },
+      })
+    );
+
+    await expect(loadDocsConfig({ cwd })).rejects.toThrowError(
+      /reserved for the legacy blog surface/
+    );
+  });
 
   it("returns deterministic defaults only when no config file exists", async () => {
     const cwd = await createTempDir();

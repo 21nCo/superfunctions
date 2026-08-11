@@ -7,6 +7,7 @@ import {
   createDocsError,
   type DocsError,
 } from "./diagnostics";
+import { normalizeDatedCollectionId } from "./provider";
 import type { DocsConfig } from "./types";
 
 export interface LoadDocsConfigInput {
@@ -164,6 +165,16 @@ const docsConfigSchema = z.object({
       respectDnt: z.boolean(),
     })
     .optional(),
+}).superRefine((value, context) => {
+  for (const collectionId of Object.keys(value.collections ?? {})) {
+    if (normalizeDatedCollectionId(collectionId) === "blog") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["collections", collectionId],
+        message: "collection id is reserved for the legacy blog surface",
+      });
+    }
+  }
 });
 
 export function createDefaultDocsConfig(input: { cwd: string }): DocsConfig {

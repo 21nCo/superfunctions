@@ -1,4 +1,5 @@
 import { assertValidBlogPublishMetadata, resolveBlogLastBuildDate } from "./blog";
+import { normalizeDatedCollectionId } from "./provider";
 import type { BlogPost, DocsManifest } from "./types";
 
 export interface RSSFeedOptions {
@@ -34,18 +35,28 @@ export function generateRSSFeed(
   const { title, description, link, language = "en" } = options;
 
   const normalizedLink = link.replace(/\/+$/, "");
-  const collectionSurface = options.collectionId
-    ? manifest.collections?.[options.collectionId]
+  const hasRequestedCollection = options.collectionId !== undefined;
+  const requestedCollectionId = hasRequestedCollection
+    ? normalizeDatedCollectionId(options.collectionId ?? "")
     : undefined;
-  const orderedIds = collectionSurface?.postOrder ?? manifest.blog?.postOrder ?? [];
+  const collectionSurface = requestedCollectionId
+    ? manifest.collections?.[requestedCollectionId]
+    : undefined;
+  const orderedIds = hasRequestedCollection
+    ? collectionSurface?.postOrder ?? []
+    : manifest.blog?.postOrder ?? [];
   const orderedPostsFromManifest = orderedIds
     .map((id) => manifest.posts[id])
     .filter((post): post is BlogPost => Boolean(post));
-  const posts =
-    orderedPostsFromManifest.length > 0
-      ? orderedPostsFromManifest
+  const fallbackPosts =
+    hasRequestedCollection && !collectionSurface
+      ? []
       : Object.values(manifest.posts)
-          .filter((post) => !options.collectionId || post.collectionId === options.collectionId)
+          .filter(
+            (post) =>
+              !hasRequestedCollection ||
+              normalizeDatedCollectionId(post.collectionId ?? "blog") === requestedCollectionId
+          )
           .sort((left, right) => {
             const leftDate = assertValidBlogPublishMetadata(left).timestamp;
             const rightDate = assertValidBlogPublishMetadata(right).timestamp;
@@ -57,6 +68,10 @@ export function generateRSSFeed(
               numeric: true,
             });
           });
+  const posts =
+    orderedPostsFromManifest.length > 0
+      ? orderedPostsFromManifest
+      : fallbackPosts;
 
   const items = posts
     .map((post) => {
@@ -79,7 +94,9 @@ export function generateRSSFeed(
     })
     .join("");
 
-  const feedPath = collectionSurface?.feedPath ?? manifest.blog?.feedPath ?? "/rss.xml";
+  const feedPath = hasRequestedCollection
+    ? collectionSurface?.feedPath ?? "/rss.xml"
+    : manifest.blog?.feedPath ?? "/rss.xml";
   const feedLink = options.feedHref ?? `${normalizedLink}${feedPath}`;
   const lastBuildDate = resolveBlogLastBuildDate(posts);
 

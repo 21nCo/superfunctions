@@ -50,12 +50,14 @@ const DEFAULT_COLLECTIONS: DocsCollection[] = [
 ];
 
 function getConfiguredDatedCollectionIds(config: DocsConfig): string[] {
-  return Object.keys(config.collections ?? {})
-    .map((collectionId) => normalizeDatedCollectionId(collectionId))
-    .filter((collectionId) => collectionId.length > 0)
-    .sort((left, right) =>
+  const normalizedIds = new Set(
+    Object.keys(config.collections ?? {})
+      .map((collectionId) => normalizeDatedCollectionId(collectionId))
+      .filter((collectionId) => collectionId.length > 0)
+  );
+  return [...normalizedIds].sort((left, right) =>
       left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
-    );
+  );
 }
 
 function getConfiguredDatedCollection(

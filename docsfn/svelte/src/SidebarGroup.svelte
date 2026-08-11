@@ -40,7 +40,11 @@
       return href;
     }
 
-    const url = new URL(href, "https://docsfn.local");
+    const localBase = new URL("https://docsfn.local");
+    const url = new URL(href, localBase);
+    if (url.origin !== localBase.origin) {
+      return href;
+    }
     for (const [param, value] of entries) {
       if (!url.searchParams.has(param)) {
         url.searchParams.set(param, value);

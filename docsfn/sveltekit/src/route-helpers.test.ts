@@ -223,12 +223,16 @@ describe("sveltekit route helper parity", () => {
   });
 
   it("resolves embed mode query params across SvelteKit and Next request shapes", () => {
+    expect(resolveEmbedMode(null)).toBe(false);
+    expect(resolveEmbedMode(undefined)).toBe(false);
     expect(resolveEmbedMode(new URL("https://example.com/docs?embed=1"))).toBe(true);
     expect(resolveEmbedMode(new URL("https://example.com/docs?embed=true"))).toBe(true);
     expect(resolveEmbedMode(new URL("https://example.com/docs?embed"))).toBe(true);
     expect(resolveEmbedMode(new URL("https://example.com/docs?embed=0"))).toBe(false);
     expect(resolveEmbedMode(new URL("https://example.com/docs"))).toBe(false);
 
+    expect(resolveNextEmbedMode(null)).toBe(false);
+    expect(resolveNextEmbedMode(undefined)).toBe(false);
     expect(resolveNextEmbedMode({ embed: "yes" })).toBe(true);
     expect(resolveNextEmbedMode({ searchParams: { embed: ["0", "1"] } })).toBe(true);
     expect(resolveNextEmbedMode({ searchParams: { embed: "false" } })).toBe(false);

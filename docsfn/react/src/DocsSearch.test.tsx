@@ -1,6 +1,6 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { vi } from "vitest";
+import { beforeEach, vi } from "vitest";
 import { buildSearchIndex, type DocsManifest } from "@docsfn/core";
 import { DocsSearch } from "./DocsSearch";
 import { navigateTo } from "./navigation";
@@ -8,6 +8,11 @@ import { navigateTo } from "./navigation";
 vi.mock("./navigation", () => ({
   navigateTo: vi.fn(),
 }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  window.history.replaceState({}, "", "/");
+});
 
 function createManifest(): DocsManifest {
   return {
@@ -86,6 +91,7 @@ describe("DocsSearch", () => {
     const input = await screen.findByRole("textbox", { name: "Search query" });
     const apiScope = screen.getByRole("button", { name: "API" });
     const allScope = screen.getByRole("button", { name: "All" });
+    expect(screen.queryByRole("button", { name: "Changelog" })).toBeNull();
     fireEvent.change(input, { target: { value: "search" } });
 
     await screen.findByText("Search API");
@@ -120,5 +126,27 @@ describe("DocsSearch", () => {
     fireEvent.keyDown(screen.getByLabelText("Search query"), { key: "Enter" });
 
     expect(navigateTo).toHaveBeenCalledWith(selectedPath);
+  });
+
+  it("does not copy embedded search params onto external result URLs", async () => {
+    const manifest = createManifest();
+    manifest.pages["docs:guide"].path = "https://external.example.com/search-guide";
+    const artifact = await buildSearchIndex(manifest, {
+      search: {
+        enabled: true,
+        scopes: ["docs"],
+      },
+    });
+    window.history.replaceState({}, "", "/docs?embed=1");
+
+    render(<DocsSearch searchArtifact={artifact} />);
+    fireEvent.click(screen.getByRole("button", { name: "Search documentation" }));
+    const input = await screen.findByRole("textbox", { name: "Search query" });
+    fireEvent.change(input, { target: { value: "search guide" } });
+    fireEvent.click(await screen.findByText("Search Guide"));
+
+    expect(navigateTo).toHaveBeenCalledWith(
+      "https://external.example.com/search-guide"
+    );
   });
 });

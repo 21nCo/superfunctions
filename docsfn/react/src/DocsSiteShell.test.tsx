@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { DocsSiteShell } from "./DocsSiteShell";
 
@@ -32,5 +32,20 @@ describe("DocsSiteShell", () => {
     expect(screen.queryByRole("banner")).toBeNull();
     expect(screen.queryByRole("contentinfo")).toBeNull();
     expect(document.querySelector(".docsfn-site-shell--embedded")).toBeTruthy();
+  });
+
+  it("preserves embedded sidebar params when the target already has embed mode", () => {
+    window.history.replaceState({}, "", "/docs?embed=1&showSidebar=1");
+    render(
+      <DocsSiteShell embedded>
+        <a href="/blog?embed=1">Blog</a>
+      </DocsSiteShell>
+    );
+
+    const link = screen.getByRole("link", { name: "Blog" });
+    link.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.click(link);
+
+    expect(link.getAttribute("href")).toBe("/blog?embed=1&showSidebar=1");
   });
 });

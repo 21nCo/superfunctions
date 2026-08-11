@@ -51,6 +51,17 @@ function normalizeAbsoluteRoute(value: string, fallback: string): string {
   return prefixed.length > 1 ? prefixed.replace(/\/+$/, "") : prefixed;
 }
 
+function appendRoute(basePath: string, suffix: string): string {
+  const normalizedBase = normalizeAbsoluteRoute(basePath, "/");
+  const normalizedSuffix = suffix.replace(/^\/+|\/+$/g, "");
+  if (!normalizedSuffix) {
+    return normalizedBase;
+  }
+  return normalizedBase === "/"
+    ? `/${normalizedSuffix}`
+    : `${normalizedBase}/${normalizedSuffix}`;
+}
+
 function stripMarkdown(source: string): string {
   return source
     .replace(/```[\s\S]*?```/g, " ")
@@ -196,7 +207,7 @@ function buildArchivePages(input: {
     const slice = input.orderedPosts.slice(start, start + input.pageSize);
     pages.push({
       page,
-      path: page === 1 ? input.listRoute : `${input.listRoute}/page/${page}`,
+      path: page === 1 ? input.listRoute : appendRoute(input.listRoute, `page/${page}`),
       postIds: slice.map((post) => post.id),
       totalPages,
       totalPosts,
@@ -223,7 +234,7 @@ function buildTagIndexes(input: {
       tagMap.set(tag, {
         tag,
         slug,
-        path: `${input.listRoute}/tags/${slug}`,
+        path: appendRoute(input.listRoute, `tags/${slug}`),
         postIds: [post.id],
       });
     }
@@ -272,14 +283,14 @@ export function buildCanonicalDatedCollectionRecords(
   const label = input.label ?? (collectionId === "blog" ? "Blog" : collectionId);
   const searchScope = input.searchScope ?? (collectionId === "blog" ? "blog" : collectionId);
   const basePath = normalizeBasePath(input.basePath);
-  const defaultRouteBase = `${basePath}/${collectionId}`;
+  const defaultRouteBase = appendRoute(basePath, collectionId);
   const listRoute = normalizeAbsoluteRoute(
-    input.routeBase ?? (collectionId === "blog" ? `${basePath}/blog` : defaultRouteBase),
-    collectionId === "blog" ? `${basePath}/blog` : defaultRouteBase
+    input.routeBase ?? (collectionId === "blog" ? appendRoute(basePath, "blog") : defaultRouteBase),
+    collectionId === "blog" ? appendRoute(basePath, "blog") : defaultRouteBase
   );
   const feedPath = normalizeAbsoluteRoute(
-    input.feedPath ?? `${listRoute}/rss.xml`,
-    `${listRoute}/rss.xml`
+    input.feedPath ?? appendRoute(listRoute, "rss.xml"),
+    appendRoute(listRoute, "rss.xml")
   );
   const includeDrafts = Boolean(input.preview);
   const pageSize = Math.max(1, Math.trunc(input.pageSize ?? 10));
@@ -322,7 +333,7 @@ export function buildCanonicalDatedCollectionRecords(
         collectionLabel: post.collectionLabel ?? label,
         searchScope: post.searchScope ?? searchScope,
         slug: post.slug,
-        path: post.slug ? `${listRoute}/${post.slug}` : listRoute,
+        path: post.slug ? appendRoute(listRoute, post.slug) : listRoute,
         title: post.title,
         date: publish.date,
         publishedAt: publish.publishedAt,

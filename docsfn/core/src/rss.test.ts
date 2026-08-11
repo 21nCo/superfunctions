@@ -168,7 +168,7 @@ describe("generateRSSFeed", () => {
     };
 
     const rss = generateRSSFeed(manifest, {
-      collectionId: "changelog",
+      collectionId: "ChangeLog",
       title: "Docs Changelog",
       description: "Product updates",
       link: "https://docs.example.com/changelog",
@@ -180,5 +180,20 @@ describe("generateRSSFeed", () => {
     expect(rss).toContain("https://docs.example.com/changelog/release");
     expect(rss).not.toContain("/docs/blog/alpha");
     expect(rss).not.toContain("/docs/blog/beta");
+  });
+
+  it("does not fall back to blog posts for an unknown named collection", () => {
+    const rss = generateRSSFeed(createManifest(), {
+      collectionId: "missing",
+      title: "Missing Collection",
+      description: "No updates",
+      link: "https://docs.example.com/missing",
+    });
+
+    expect(rss).not.toContain("/docs/blog/alpha");
+    expect(rss).not.toContain("/docs/blog/beta");
+    expect(rss).toContain(
+      '<atom:link href="https://docs.example.com/missing/rss.xml"'
+    );
   });
 });

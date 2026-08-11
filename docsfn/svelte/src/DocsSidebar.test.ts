@@ -14,7 +14,10 @@ const sidebar: Sidebar = {
     {
       type: "group",
       text: "Core Concepts",
-      items: [{ type: "link", text: "Configuration", link: "/docs/configuration" }],
+      items: [
+        { type: "link", text: "Configuration", link: "/docs/configuration" },
+        { type: "link", text: "Email support", link: "mailto:support@example.com" },
+      ],
     },
   ],
 };
@@ -39,5 +42,16 @@ describe("DocsSidebar", () => {
     groups = Array.from(document.querySelectorAll<HTMLDetailsElement>("details"));
     expect(groups[0]?.open).toBe(true);
     expect(groups[1]?.open).toBe(true);
+  });
+
+  it("does not append preserved params to non-http links", () => {
+    const view = render(DocsSidebar, {
+      sidebar,
+      preservedSearchParams: { embed: "1" },
+    });
+
+    expect(view.getByRole("link", { name: "Email support" }).getAttribute("href")).toBe(
+      "mailto:support@example.com"
+    );
   });
 });

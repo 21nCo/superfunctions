@@ -7,7 +7,11 @@ import {
   slugToSegments,
   stripSourceExtension,
 } from "./routing";
-import { getNamedCollectionId, isNamedCollection } from "./provider";
+import {
+  getNamedCollectionId,
+  isNamedCollection,
+  normalizeDatedCollectionId,
+} from "./provider";
 import type {
   DocsCollection,
   DocsConfig,
@@ -117,7 +121,9 @@ function resolveDatedCollectionMetadata(
   }
 
   const collectionId = getNamedCollectionId(collection) ?? "collection";
-  const collectionConfig = config.collections?.[collectionId];
+  const collectionConfig = Object.entries(config.collections ?? {}).find(
+    ([key]) => normalizeDatedCollectionId(key) === collectionId
+  )?.[1];
   return {
     collectionId,
     collectionLabel: collectionConfig?.label,

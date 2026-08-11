@@ -129,7 +129,9 @@ type EmbedModeInput =
   | URL
   | URLSearchParams
   | EmbedSearchParamsRecord
-  | { searchParams: URLSearchParams | EmbedSearchParamsRecord };
+  | { searchParams: URLSearchParams | EmbedSearchParamsRecord }
+  | null
+  | undefined;
 
 function compareStrings(left: string, right: string): number {
   return left.localeCompare(right, "en", {
@@ -196,6 +198,9 @@ function getEmbedSearchParamValue(
   input: EmbedModeInput,
   param: string
 ): string | string[] | readonly string[] | null | undefined {
+  if (!input) {
+    return undefined;
+  }
   if (input instanceof URL) {
     return input.searchParams.get(param);
   }

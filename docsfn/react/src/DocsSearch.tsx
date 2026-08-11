@@ -40,7 +40,7 @@ export interface DocsSearchProps {
 
 function normalizeScopes(input?: SearchScopeFilter[]): SearchScopeFilter[] {
   if (!input || input.length === 0) {
-    return ["all", "docs", "api", "blog", "changelog"];
+    return ["all", "docs", "api", "blog"];
   }
   return Array.from(new Set(input));
 }
@@ -164,13 +164,15 @@ export function DocsSearch({
     if (typeof window !== "undefined" && preserveSearchParams.length > 0) {
       const currentUrl = new URL(window.location.href);
       const targetUrl = new URL(result.path, currentUrl.origin);
-      for (const param of preserveSearchParams) {
-        const value = currentUrl.searchParams.get(param);
-        if (value !== null && !targetUrl.searchParams.has(param)) {
-          targetUrl.searchParams.set(param, value.length > 0 ? value : "1");
+      if (targetUrl.origin === currentUrl.origin) {
+        for (const param of preserveSearchParams) {
+          const value = currentUrl.searchParams.get(param);
+          if (value !== null && !targetUrl.searchParams.has(param)) {
+            targetUrl.searchParams.set(param, value.length > 0 ? value : "1");
+          }
         }
+        targetPath = `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
       }
-      targetPath = `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
     }
     maybeEmitAnalyticsEvent({
       enabled: Boolean(analytics?.enabled),

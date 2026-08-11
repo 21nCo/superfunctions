@@ -16,6 +16,7 @@ export interface DocsSiteShellProps {
   footerNote?: ReactNode;
   footerLinks?: DocsFooterLink[];
   preserveEmbedRoutes?: string[];
+  preserveEmbedParams?: string[];
 }
 
 export function DocsSiteShell({
@@ -31,6 +32,7 @@ export function DocsSiteShell({
   footerNote = "Built with docsfn",
   footerLinks = [],
   preserveEmbedRoutes = ["/docs", "/blog", "/changelog"],
+  preserveEmbedParams = ["showSidebar", "showsidebar", "sidebar"],
 }: DocsSiteShellProps) {
   useEffect(() => {
     if (!embedded) {
@@ -49,21 +51,28 @@ export function DocsSiteShell({
       const rawHref = anchor.getAttribute("href");
       if (!rawHref || rawHref.startsWith("#")) return;
 
+      const currentUrl = new URL(window.location.href);
       const nextUrl = new URL(anchor.href, window.location.href);
       const shouldPreserve =
         nextUrl.origin === window.location.origin &&
         preserveEmbedRoutes.some(
           (route) => nextUrl.pathname === route || nextUrl.pathname.startsWith(`${route}/`)
         );
-      if (!shouldPreserve || nextUrl.searchParams.get("embed") === "1") return;
+      if (!shouldPreserve) return;
 
       nextUrl.searchParams.set("embed", "1");
+      for (const param of preserveEmbedParams) {
+        const value = currentUrl.searchParams.get(param);
+        if (value !== null && !nextUrl.searchParams.has(param)) {
+          nextUrl.searchParams.set(param, value);
+        }
+      }
       anchor.href = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
     };
 
     document.addEventListener("click", handleClick, true);
     return () => document.removeEventListener("click", handleClick, true);
-  }, [embedded, preserveEmbedRoutes]);
+  }, [embedded, preserveEmbedRoutes, preserveEmbedParams]);
 
   return (
     <div className={`docsfn-site-shell ${embedded ? "docsfn-site-shell--embedded" : ""}`}>
