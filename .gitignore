@@ -58,6 +58,10 @@ __pycache__/
 .venv/
 .venv*/
 
+# RecFn local bot runtime artifacts
+recfn/server/runtime/
+!recfn/server/runtime/.gitkeep
+
 # Editors
 .vscode/
 .idea/

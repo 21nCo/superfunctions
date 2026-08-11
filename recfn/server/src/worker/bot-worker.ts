@@ -22,11 +22,14 @@ import {
 } from '../recording/capture.js';
 import { uploadRecording } from '../recording/storage.js';
 
+export type PlatformAdapterFactory = () => PlatformAdapter;
+
 export interface BotWorkerConfig {
   store: RecFnStore;
   queue: QueueAdapter;
   logger: Logger;
-  platformAdapters: Map<string, PlatformAdapter>;
+  platformAdapters?: Map<string, PlatformAdapter>;
+  platformAdapterFactories?: Map<string, PlatformAdapterFactory>;
   storage?: StorageAdapter;
   realtimePipeline?: RealtimeTranscriptionPipeline;
   streamManager?: TranscriptStreamManager;
@@ -43,6 +46,7 @@ interface ActiveBotSession {
   namespace: string;
   adapter: PlatformAdapter;
   capturePromise: Promise<CaptureResult>;
+  recordingRequired: boolean;
 }
 
 export function createBotWorker(config: BotWorkerConfig): BotWorker {
@@ -69,6 +73,15 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
   };
   const autoLeaveTimer = createAutoLeaveTimer(lifecycleDeps);
   const activeSessions = new Map<string, ActiveBotSession>();
+
+  function resolvePlatformAdapter(platform: string): PlatformAdapter | undefined {
+    const factory = config.platformAdapterFactories?.get(platform);
+    if (factory) {
+      return factory();
+    }
+
+    return config.platformAdapters?.get(platform);
+  }
 
   async function persistMetadataSnapshot(
     bot: Bot,
@@ -138,6 +151,22 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     });
   }
 
+  function setupChatMessagePersistence(
+    bot: Bot,
+    adapter: PlatformAdapter,
+    metadataStage: 'joined' | 'recording' = 'recording',
+  ): void {
+    adapter.onChatMessage(async (message) => {
+      const persistedMessage = {
+        participantId: message.participantId,
+        text: message.text,
+        timestamp: message.timestamp || new Date().toISOString(),
+      };
+      await store.addChatMessage(bot.id, persistedMessage, bot.namespace);
+      await persistMetadataSnapshot(bot, adapter, metadataStage);
+    });
+  }
+
   async function processFinalizeRecordingJob(payload: JobPayload): Promise<void> {
     const { botId, namespace } = payload.data as unknown as RecordingUploadJobData;
     const bot = await store.getBot(botId, namespace);
@@ -161,6 +190,33 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
         'error',
         `${ErrorCode.RECORDING_FINALIZATION_FAILED}: no active capture session found.`,
       );
+      return;
+    }
+
+    if (!session.recordingRequired) {
+      logger.info('bot.join_only.finalization.start', { botId, namespace });
+      try {
+        await persistMetadataSnapshot(bot, session.adapter, 'leaving');
+        await session.adapter.leave();
+        await persistMetadataSnapshot(bot, session.adapter, 'done');
+        await transitionBot(lifecycleDeps, botId, namespace, 'left');
+        logger.info('bot.join_only.finalization.complete', { botId, namespace });
+      } catch (error) {
+        logger.error('bot.join_only.finalization.failed', {
+          botId,
+          namespace,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await transitionBot(
+          lifecycleDeps,
+          botId,
+          namespace,
+          'error',
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        activeSessions.delete(botId);
+      }
       return;
     }
 
@@ -261,8 +317,8 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     // Transition to joining
     await transitionBot(lifecycleDeps, botId, namespace, 'joining');
 
-    // Get platform adapter
-    const adapter = config.platformAdapters.get(bot.platform);
+    // Create or resolve a platform adapter for this specific bot session.
+    const adapter = resolvePlatformAdapter(bot.platform);
     if (!adapter) {
       await transitionBot(
         lifecycleDeps,
@@ -286,7 +342,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error('Join timeout exceeded')),
-          joinTimeout,
+          joinTimeout + 5_000,
         ),
       );
 
@@ -308,6 +364,25 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     await transitionBot(lifecycleDeps, botId, namespace, 'joined');
     await persistMetadataSnapshot(bot, adapter, 'joined');
 
+    if (process.env.RECFN_POC_JOIN_ONLY === '1') {
+      logger.info('bot.join_only.active', { botId, namespace });
+      activeSessions.set(botId, {
+        botId,
+        namespace,
+        adapter,
+        capturePromise: Promise.resolve({
+          data: new Uint8Array(),
+          format: 'wav',
+          duration: 0,
+          size: 0,
+        }),
+        recordingRequired: false,
+      });
+      setupParticipantMonitoring(bot, adapter);
+      setupChatMessagePersistence(bot, adapter, 'joined');
+      return;
+    }
+
     // Send consent message before recording (BOT-008, SEC-006)
     const consentMsg =
       bot.config.consentMessage ?? 'This meeting is being recorded';
@@ -317,15 +392,29 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     await transitionBot(lifecycleDeps, botId, namespace, 'recording');
     await persistMetadataSnapshot(bot, adapter, 'recording');
     const capturePromise = startCaptureSession(bot, adapter);
+    void capturePromise.catch(async (error) => {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Could not start audio capture.';
+      logger.error('recording.capture.failed', {
+        botId,
+        namespace,
+        error: errorMessage,
+      });
+      await transitionBot(lifecycleDeps, botId, namespace, 'error', errorMessage);
+      await adapter.leave().catch(() => {});
+      activeSessions.delete(botId);
+    });
     activeSessions.set(botId, {
       botId,
       namespace,
       adapter,
       capturePromise,
+      recordingRequired: true,
     });
 
     // Set up participant monitoring for auto-leave
     setupParticipantMonitoring(bot, adapter);
+    setupChatMessagePersistence(bot, adapter, 'recording');
 
     // Broadcast participant events to websocket and fire webhooks
     const { buildParticipantJoinedPayload, buildParticipantLeftPayload } = await import('../webhooks/events.js');
@@ -351,15 +440,6 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       }
       webhookDeliverer.deliver(bot.namespace, 'participant.left', buildParticipantLeftPayload(botId, participantId)).catch(() => {});
     });
-    adapter.onChatMessage(async (message) => {
-      const persistedMessage = {
-        participantId: message.participantId,
-        text: message.text,
-        timestamp: message.timestamp || new Date().toISOString(),
-      };
-      await store.addChatMessage(botId, persistedMessage, bot.namespace);
-      await persistMetadataSnapshot(bot, adapter, 'recording');
-    });
   }
 
   function setupParticipantMonitoring(
@@ -377,7 +457,10 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       ).length;
       // Refetch bot to get latest state
       const currentBot = await store.getBot(bot.id, bot.namespace);
-      if (currentBot && currentBot.status === 'recording') {
+      if (
+        currentBot &&
+        (currentBot.status === 'recording' || currentBot.status === 'joined')
+      ) {
         autoLeaveTimer.onParticipantLeave(currentBot, nonBotCount);
       }
     });

@@ -48,6 +48,14 @@ let package = Package(
         .library(name: "SearchFnSQLiteAdapter", targets: ["SearchFnSQLiteAdapter"]),
         .library(name: "SearchFnClient", targets: ["SearchFnClient"]),
         .library(name: "SearchFnConvenience", targets: ["SearchFnConvenience"]),
+        .library(
+            name: "RecFnBotSDK",
+            targets: ["RecFnBotSDK"]
+        ),
+        .library(
+            name: "RecFnDesktopSDK",
+            targets: ["RecFnDesktopSDK"]
+        ),
     ],
     dependencies: [
         .package(
@@ -120,6 +128,38 @@ let package = Package(
                 "SearchFnSQLiteAdapter",
             ],
             path: "searchfn/swift/Sources/SearchFnConvenience"
+        ),
+        .target(
+            name: "RecFnWhisperCpp",
+            path: "recfn/desktop/macos/Sources/RecFnWhisperCpp",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("include")
+            ],
+            linkerSettings: [
+                .linkedFramework("Foundation")
+            ]
+        ),
+        .target(
+            name: "RecFnDesktopSDK",
+            dependencies: ["RecFnWhisperCpp"],
+            path: "recfn/desktop/macos/Sources/RecFnDesktopSDK",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("Foundation"),
+                .linkedFramework("ScreenCaptureKit"),
+                .linkedFramework("UniformTypeIdentifiers")
+            ]
+        ),
+        .target(
+            name: "RecFnBotSDK",
+            path: "recfn/bot/macos/Sources/RecFnBotSDK",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("Foundation")
+            ]
         ),
         .testTarget(
             name: "AuthFnClientTests",

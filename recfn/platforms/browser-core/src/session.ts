@@ -17,6 +17,9 @@ export interface BrowserAdapterConfig {
   testPage?: Page;
   userDataDir?: string;
   joinTimeout?: number;
+  headless?: boolean;
+  executablePath?: string;
+  browserArgs?: string[];
 }
 
 export interface BrowserSession {
@@ -51,7 +54,7 @@ export interface BrowserPlatformHooks<
   metadataId: string;
   defaultTitle: string;
   createSession: BrowserSessionFactory;
-  joinMeeting(page: Page, joinTimeout: number): Promise<void>;
+  joinMeeting(page: Page, joinTimeout: number, botConfig: BotConfig): Promise<void>;
   leaveMeeting(page: Page): Promise<void>;
   createParticipantTracker(page: Page, botId: string): P;
   createChatTracker(page: Page): C;
@@ -66,9 +69,8 @@ export async function createBrowserSession(
   config: BrowserSessionFactoryConfig,
   meetingUrl: string,
 ): Promise<BrowserSession> {
-  const { browser, userDataDir, joinTimeout = 30_000 } = config;
+  const { browser, joinTimeout = 30_000 } = config;
   const context = await browser.newContext({
-    ...(userDataDir ? { userDataDir } : {}),
     permissions: ['microphone', 'camera'],
   });
   const page = await context.newPage();
@@ -134,14 +136,41 @@ async function createManagedBrowserSession(
     };
   }
 
+  const launchArgs = [
+    '--use-fake-ui-for-media-stream',
+    '--autoplay-policy=no-user-gesture-required',
+    ...(config.browserArgs ?? []),
+  ];
+
+  if (!config.browser && config.userDataDir) {
+    const context = await chromium.launchPersistentContext(config.userDataDir, {
+      headless: config.headless ?? true,
+      executablePath: config.executablePath,
+      args: launchArgs,
+      permissions: ['microphone', 'camera'],
+    });
+    const page = context.pages()[0] ?? await context.newPage();
+
+    await page.goto(meetingUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: joinTimeout,
+    });
+
+    return {
+      page,
+      context,
+      async close() {
+        await context.close();
+      },
+    };
+  }
+
   const browser =
     config.browser ??
     (await chromium.launch({
-      headless: true,
-      args: [
-        '--use-fake-ui-for-media-stream',
-        '--autoplay-policy=no-user-gesture-required',
-      ],
+      headless: config.headless ?? true,
+      executablePath: config.executablePath,
+      args: launchArgs,
     }));
 
   return createSession(
@@ -192,7 +221,7 @@ export class BrowserAutomationAdapter<
       this.hooks.createSession,
     );
 
-    await this.hooks.joinMeeting(this.session.page, joinTimeout);
+    await this.hooks.joinMeeting(this.session.page, joinTimeout, botConfig);
 
     this.connected = true;
     this.participantTracker = this.hooks.createParticipantTracker(
