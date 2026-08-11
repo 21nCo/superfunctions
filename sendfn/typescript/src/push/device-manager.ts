@@ -6,8 +6,8 @@ export class DeviceTokenManager {
   constructor(private adapter: SendfnDatabaseAdapter) {}
 
   async registerDevice(params: RegisterDeviceParams): Promise<DeviceToken> {
-    // Upsert device token
-    // Assuming upsertDeviceToken in adapter handles uniqueness
+    this.validateRegistration(params);
+
     return await this.adapter.upsertDeviceToken({
         userId: params.userId,
         token: params.token,
@@ -35,6 +35,8 @@ export class DeviceTokenManager {
     userId: string,
     platform: Platform
   ): Promise<DeviceToken> {
+    this.validateRefresh(oldToken, newToken, userId, platform);
+
     const existingDevices = await this.adapter.findDeviceTokens({
       userId,
       platform,
@@ -72,5 +74,36 @@ export class DeviceTokenManager {
   // Not in spec specifically but useful
   async deleteToken(id: string): Promise<void> {
       await this.adapter.deleteDeviceToken(id);
+  }
+
+  private validateRegistration(params: RegisterDeviceParams): void {
+    if (typeof params.userId !== 'string' || !params.userId.trim()) {
+      throw new ValidationError('`userId` is required to register a device token');
+    }
+
+    if (typeof params.token !== 'string' || !params.token.trim()) {
+      throw new ValidationError('`token` is required to register a device');
+    }
+
+    if (params.platform !== 'ios' && params.platform !== 'android' && params.platform !== 'web') {
+      throw new ValidationError('`platform` must be ios, android, or web');
+    }
+  }
+
+  private validateRefresh(
+    oldToken: string,
+    newToken: string,
+    userId: string,
+    platform: Platform
+  ): void {
+    if (typeof oldToken !== 'string' || !oldToken.trim()) {
+      throw new ValidationError('`oldToken` is required to refresh a device token');
+    }
+
+    this.validateRegistration({
+      userId,
+      token: newToken,
+      platform,
+    });
   }
 }

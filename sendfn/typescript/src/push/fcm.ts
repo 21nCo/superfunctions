@@ -118,3 +118,7 @@ export class FcmProvider implements PushProvider {
     await this.app.delete();
   }
 }
+
+export function fcmAdapter(config: FcmConfig): FcmProvider {
+  return new FcmProvider(config);
+}

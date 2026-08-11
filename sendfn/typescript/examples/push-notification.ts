@@ -1,5 +1,5 @@
 import type { Adapter } from '@superfunctions/db';
-import { sendfn } from '../src';
+import { apnsAdapter, sendfn } from '../src';
 
 const database = {} as Adapter;
 const rawServiceAccountKey = process.env.FCM_SERVICE_ACCOUNT_JSON;
@@ -20,6 +20,17 @@ export async function main() {
         },
       },
     },
+    pushProviders: process.env.APNS_PRIVATE_KEY
+      ? {
+          ios: apnsAdapter({
+            bundleId: process.env.APNS_BUNDLE_ID,
+            key: process.env.APNS_PRIVATE_KEY,
+            keyId: process.env.APNS_KEY_ID!,
+            production: process.env.APNS_PRODUCTION === 'true',
+            teamId: process.env.APNS_TEAM_ID!,
+          }),
+        }
+      : undefined,
   });
 
   await client.registerDevice({
