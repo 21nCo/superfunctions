@@ -32,8 +32,6 @@ function upconvertNode(value: unknown): unknown {
       const merged = new Set(currentType as unknown[]);
       merged.add("null");
       output.type = Array.from(merged);
-    } else {
-      output.type = ["null"];
     }
   }
 

@@ -4,7 +4,7 @@ import type { RecFnServer } from '../src/index.js';
 import { MemoryQueueAdapter, QUEUE_NAMES, createMemoryStore, MemoryStorageAdapter } from '../src/index.js';
 import { createRecFnServer } from '../src/index.js';
 import type { RecFnStore } from '../src/store/types.js';
-import type { Transcript } from 'recfn';
+import type { Transcript } from '@recfn/core';
 
 describe('Transcript API routes', () => {
   let server: RecFnServer;

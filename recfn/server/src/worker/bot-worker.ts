@@ -1,4 +1,4 @@
-import { ErrorCode, RecFnError, type Bot, type PlatformAdapter } from 'recfn';
+import { ErrorCode, RecFnError, type Bot, type PlatformAdapter } from '@recfn/core';
 import type { RecFnStore } from '../store/types.js';
 import type {
   BotJoinJobData,

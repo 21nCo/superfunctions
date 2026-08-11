@@ -3,7 +3,7 @@ import {
   BrowserAutomationAdapter,
   joinBrowserMeeting,
   leaveBrowserMeeting,
-} from 'recfn-browser-core';
+} from '@recfn/browser-core';
 import { createTeamsBrowserSession } from './browser.js';
 import { createTeamsAudioStream } from './audio-capture.js';
 import {

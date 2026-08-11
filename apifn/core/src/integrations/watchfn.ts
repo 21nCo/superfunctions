@@ -62,6 +62,8 @@ export interface WatchFnMiddlewareOptions {
     fireAndForget?: boolean;
     /** Suppress console warnings on errors (default: false) */
     silent?: boolean;
+    /** Event POST timeout in ms (default: 2000) */
+    timeoutMs?: number;
 }
 
 // ─── Response parsing ─────────────────────────────────────────────────────────
@@ -207,6 +209,7 @@ export function apifnWatchMiddleware(
         apiKey,
         fireAndForget = true,
         silent = false,
+        timeoutMs = 2000,
     } = options;
 
     const eventUrl = `${baseUrl.replace(/\/$/, "")}/api/events`;
@@ -218,11 +221,19 @@ export function apifnWatchMiddleware(
 
     async function sendEvent(event: WatchFnEvent): Promise<void> {
         try {
-            const res = await fetch(eventUrl, {
-                method: "POST",
-                headers,
-                body: JSON.stringify(event),
-            });
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            let res: Response;
+            try {
+                res = await fetch(eventUrl, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(event),
+                    signal: controller.signal,
+                });
+            } finally {
+                clearTimeout(timer);
+            }
             if (!res.ok && !silent) {
                 console.warn(`[apifn/watchfn] Event POST returned HTTP ${res.status}`);
             }

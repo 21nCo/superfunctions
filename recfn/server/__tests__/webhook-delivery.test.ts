@@ -8,7 +8,7 @@ import {
   transitionBot,
 } from '../src/index.js';
 import type { RecFnStore } from '../src/store/types.js';
-import type { PlatformAdapter, Participant } from 'recfn';
+import type { PlatformAdapter, Participant } from '@recfn/core';
 
 function createMockPlatformAdapter(): PlatformAdapter {
   const participantJoinCbs: ((p: Participant) => void)[] = [];

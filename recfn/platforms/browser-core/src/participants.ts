@@ -1,4 +1,4 @@
-import type { Participant, ParticipantRole } from 'recfn';
+import type { Participant, ParticipantRole } from '@recfn/core';
 import type { Page } from 'playwright';
 
 export interface BrowserParticipantEntry {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { TRANSCRIPT_STREAM_FRAME_SCHEMA } from 'recfn';
+import { TRANSCRIPT_STREAM_FRAME_SCHEMA } from '@recfn/core';
 import { WebSocket } from 'ws';
 import {
   TranscriptStreamManager,

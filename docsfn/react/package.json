@@ -1,24 +1,40 @@
 {
   "name": "@docsfn/react",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "React components and helpers for docsfn",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "peerDependencies": {
+    "@searchfn/client": "^0.3.0",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0"
   },
+  "peerDependenciesMeta": {
+    "@searchfn/client": {
+      "optional": true
+    }
+  },
   "dependencies": {
-    "@docsfn/core": "0.0.1",
+    "@docsfn/core": "0.0.3",
     "@uifn/react": "0.0.1",
-    "searchfn": "*",
-    "markdown-to-jsx": "^7.3.2"
+    "markdown-to-jsx": "^7.3.2",
+    "searchfn": "*"
   },
   "devDependencies": {
+    "@searchfn/client": "0.3.0",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "15.0.7",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^24.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "tsup": "^8.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
   },
   "exports": {
     ".": {
@@ -60,5 +76,8 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

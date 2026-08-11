@@ -1,8 +1,8 @@
 # PlugFn Status
 
 **Version**: 0.0.1  
-**Date**: 2026-03-27  
-**Status**: Phase 08 release gating is in place; PlugFn readiness is matrix-bounded and only valid on commits where the repo-root gate passes.
+**Date**: 2026-05-19
+**Status**: Production-readiness hardening is in place for the TypeScript runtime, client package, provider package split, provider-specific gates, owner-scoped routes, webhook receipts, and core sync/sink primitives. Readiness remains matrix-bounded and only valid on commits where the repo-root gate passes.
 
 ## Readiness rule
 
@@ -19,7 +19,11 @@ PlugFn is the shared integration runtime for Superfunctions apps. Its default sc
 
 - provider registration
 - connection lifecycle
+- browser-safe integration install/status client
 - OAuth and webhook route exposure
+- owner-scoped sync jobs and checkpoints
+- webhook receipt/delivery tracking with failed verification receipts
+- optional persistence sinks over `@superfunctions/db`
 - workflow execution
 
 Mail-specific or app-specific modules remain optional vertical surfaces and are not the default production contract.
@@ -27,6 +31,8 @@ Mail-specific or app-specific modules remain optional vertical surfaces and are 
 ## Package contract
 
 - TypeScript runtime: `plugfn`
+- Browser client: `@plugfn/client`
+- First-party provider bundle: `@plugfn/providers`
 - CLI: `@plugfn/cli`
 - Python package: `plugfn` (experimental)
 
@@ -36,6 +42,7 @@ Mail-specific or app-specific modules remain optional vertical surfaces and are 
 - `linear`
 - `clickup`
 - `gmail`
+- `notion`
 
 See [../docs/provider-readiness-matrix.md](../docs/provider-readiness-matrix.md) for the current per-provider TypeScript and Python truth.
 

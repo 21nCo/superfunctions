@@ -2,7 +2,7 @@ import { createServer, type IncomingHttpHeaders } from 'node:http';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { MeetAdapter } from 'recfn-meet';
+import { MeetAdapter } from '@recfn/meet';
 import {
   createBotWorker,
   createConsoleLogger,

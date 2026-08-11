@@ -17,7 +17,7 @@ Self-hosted meeting recording SDK for the Superfunctions ecosystem. Record meeti
 ### Server
 
 ```ts
-import { createRecFnServer, createMemoryStore, MemoryStorageAdapter } from 'recfn-server';
+import { createRecFnServer, createMemoryStore, MemoryStorageAdapter } from '@recfn/server';
 
 const store = createMemoryStore();
 const storage = new MemoryStorageAdapter();
@@ -32,7 +32,7 @@ const server = createRecFnServer({
 ### Bot worker
 
 ```ts
-import { createBotWorker, MemoryQueueAdapter, QUEUE_NAMES } from 'recfn-server';
+import { createBotWorker, MemoryQueueAdapter, QUEUE_NAMES } from '@recfn/server';
 
 const worker = createBotWorker({
   store,

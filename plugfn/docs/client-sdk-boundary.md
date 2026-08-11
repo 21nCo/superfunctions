@@ -2,7 +2,7 @@
 
 ## Current status
 
-PlugFn does not currently publish a browser-first SDK.
+PlugFn publishes a thin browser-safe helper as `@plugfn/client`.
 
 The default contract is server-side:
 
@@ -11,14 +11,23 @@ The default contract is server-side:
 - webhook verification stays on the server
 - privileged provider actions stay on the server
 
-## If a thin browser helper is added later
+## Browser-safe operations
 
-Only the following operations are allowed in a browser-facing helper:
+Only the following operations are allowed in the browser-facing helper:
 
-- `getProviderCatalog`
+- `listProviders`
 - `startConnection`
+- `listConnections`
+- `getConnection`
+- `getConnectionStatus`
+- `disconnect`
+- `createSyncJob`
+- `listSyncJobs`
+- `getSyncJob`
+- `cancelSyncJob`
+- `upsertCheckpoint`
 
-These operations are intentionally limited to discovery and connection initiation.
+These operations intentionally call the server-side PlugFn routes. The browser package must not contain provider credentials, token exchange code, webhook verification code, or direct provider API clients.
 
 ## Server-only operations
 
@@ -26,7 +35,6 @@ The following operations remain server-only and must not move into a browser pac
 
 - token exchange
 - token refresh
-- disconnect
 - direct credentialed provider actions
 - workflow execution
 - webhook signature verification

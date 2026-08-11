@@ -3,6 +3,33 @@ import path from "node:path";
 import { stringify as toYaml } from "yaml";
 import type { Collection, CollectionItem } from "./types.js";
 
+function ensureSafeRelativePath(rootDir: string, relativePath: string, label: string): string {
+  if (!relativePath || path.isAbsolute(relativePath)) {
+    throw new Error(`${label} must be a relative path within the collection`);
+  }
+
+  const parts = relativePath.split(/[\\/]+/);
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error(`${label} contains an unsafe path segment: ${relativePath}`);
+  }
+
+  const root = path.resolve(rootDir);
+  const resolved = path.resolve(root, ...parts);
+  const relative = path.relative(root, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`${label} escapes the collection root: ${relativePath}`);
+  }
+
+  return resolved;
+}
+
+function ensureSafeFileStem(name: string, label: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(name) || name === "." || name === "..") {
+    throw new Error(`${label} contains unsafe characters: ${name}`);
+  }
+  return name;
+}
+
 async function ensureDir(dirPath: string): Promise<void> {
   await mkdir(dirPath, { recursive: true });
 }
@@ -14,7 +41,7 @@ async function writeYaml(filePath: string, value: unknown): Promise<void> {
 
 async function writeItem(rootDir: string, item: CollectionItem): Promise<void> {
   if (item.kind === "folder") {
-    const folderDir = path.join(rootDir, item.path);
+    const folderDir = ensureSafeRelativePath(rootDir, item.path, "Collection folder path");
     await ensureDir(folderDir);
     await writeYaml(path.join(folderDir, "folder.yml"), {
       name: item.name,
@@ -32,7 +59,7 @@ async function writeItem(rootDir: string, item: CollectionItem): Promise<void> {
     throw new Error(`Request item missing request payload: ${item.path}`);
   }
 
-  await writeYaml(path.join(rootDir, item.path), item.request);
+  await writeYaml(ensureSafeRelativePath(rootDir, item.path, "Collection request path"), item.request);
 }
 
 export async function writeCollection(collection: Collection): Promise<void> {
@@ -52,7 +79,8 @@ export async function writeCollection(collection: Collection): Promise<void> {
   await ensureDir(envDir);
 
   for (const [name, env] of Object.entries(collection.environments)) {
-    await writeYaml(path.join(envDir, `${name}.yml`), {
+    const safeName = ensureSafeFileStem(name, "Environment name");
+    await writeYaml(path.join(envDir, `${safeName}.yml`), {
       name: env.name,
       variables: env.variables,
     });

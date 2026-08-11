@@ -10,7 +10,7 @@ Headless browser adapter for joining Google Meet meetings, capturing audio, trac
 ## Usage
 
 ```typescript
-import { MeetAdapter } from 'recfn-meet';
+import { MeetAdapter } from '@recfn/meet';
 
 const adapter = new MeetAdapter();
 await adapter.join('https://meet.google.com/abc-defg-hij', botConfig);

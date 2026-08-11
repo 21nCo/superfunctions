@@ -1,4 +1,4 @@
-import type { Bot, Participant, Recording, Transcript } from 'recfn';
+import type { Bot, Participant, Recording, Transcript } from '@recfn/core';
 
 export const WEBHOOK_EVENTS = [
   'bot.joining',

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { program } from 'commander';
-import { RecFn } from 'recfn-client';
+import { RecFn } from '@recfn/client';
 import { loadConfig } from './config.js';
 import { registerBotCommands } from './commands/bot.js';
 import { registerRecordingCommands } from './commands/recording.js';

@@ -91,4 +91,36 @@ paths:
 
     await expect(validateOpenAPI(parsed)).resolves.toEqual([]);
   });
+
+  it("does not invent a null-only type for nullable schemas without explicit type", () => {
+    const input = {
+      openapi: "3.0.3",
+      info: { title: "Old API", version: "1.0.0" },
+      paths: {
+        "/items": {
+          get: {
+            responses: {
+              "200": {
+                description: "OK",
+                content: {
+                  "application/json": {
+                    schema: { nullable: true, description: "Untyped nullable schema" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    const parsed = parseOpenAPI(input);
+    const schema = parsed.paths["/items"]?.get?.responses?.["200"]?.content?.[
+      "application/json"
+    ]?.schema as { type?: unknown; nullable?: unknown; description?: unknown };
+
+    expect(schema.type).toBeUndefined();
+    expect(schema.nullable).toBeUndefined();
+    expect(schema.description).toBe("Untyped nullable schema");
+  });
 });

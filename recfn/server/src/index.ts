@@ -1,5 +1,5 @@
 import { createRouter, type Router, RouterError } from '@superfunctions/http';
-import { RecFnError } from 'recfn';
+import { RecFnError } from '@recfn/core';
 import type { RecFnStore } from './store/types.js';
 import { assertProductionStore } from './store/db.js';
 import type { ValidateApiKey } from './middleware/auth.js';

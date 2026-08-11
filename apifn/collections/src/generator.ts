@@ -100,6 +100,18 @@ function defaultFromSchema(schema: unknown): unknown {
   return undefined;
 }
 
+function explicitExampleValue(example: unknown): unknown {
+  if (!example || typeof example !== "object" || Array.isArray(example)) {
+    return example;
+  }
+
+  if ("value" in example) {
+    return (example as { value: unknown }).value;
+  }
+
+  return undefined;
+}
+
 function inferRequestBody(operation: OperationRecord["operation"]): OpenCollectionRequest["http"]["body"] | undefined {
   const media = operation.requestBody && "content" in operation.requestBody
     ? operation.requestBody.content["application/json"]
@@ -109,7 +121,8 @@ function inferRequestBody(operation: OperationRecord["operation"]): OpenCollecti
     return undefined;
   }
 
-  const explicitExample = media.example ?? (media.examples ? Object.values(media.examples)[0] : undefined);
+  const namedExample = media.examples ? explicitExampleValue(Object.values(media.examples)[0]) : undefined;
+  const explicitExample = media.example ?? namedExample;
   const payload = explicitExample !== undefined ? explicitExample : defaultFromSchema(media.schema);
 
   if (payload === undefined) {

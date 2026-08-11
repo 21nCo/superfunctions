@@ -125,6 +125,41 @@ describe("collection generator", () => {
     expect(folders).toEqual(["orders", "users"]);
   });
 
+  it("unwraps named OpenAPI examples when generating request bodies", () => {
+    const doc = {
+      openapi: "3.1.0" as const,
+      info: { title: "Example API", version: "1.0.0" },
+      paths: {
+        "/users": {
+          post: {
+            tags: ["users"],
+            summary: "Create user",
+            requestBody: {
+              content: {
+                "application/json": {
+                  examples: {
+                    named: {
+                      summary: "Named example",
+                      value: { name: "Alice" },
+                    },
+                  },
+                },
+              },
+            },
+            responses: { "201": { description: "Created" } },
+          },
+        },
+      },
+    };
+
+    const collection = openAPIToCollection(doc, { groupBy: "tag" });
+    const folder = collection.items.find((item) => item.kind === "folder" && item.path === "users");
+    const request = folder?.children?.find((item) => item.kind === "request");
+
+    expect(request?.request?.http.body?.data).toBe(JSON.stringify({ name: "Alice" }, null, 2));
+    expect(request?.request?.http.body?.data).not.toContain("\"value\"");
+  });
+
   it("TV-COLL-005: routerToCollection matches fromRouter + openAPIToCollection", () => {
     const router = createRouter({
       routes: [

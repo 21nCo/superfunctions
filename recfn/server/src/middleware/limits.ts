@@ -5,8 +5,8 @@
 
 import type { RecFnStore } from '../store/types.js';
 import type { RecFnLimitsConfig } from '../config.js';
-import { ErrorCode } from 'recfn';
-import { createError } from 'recfn';
+import { ErrorCode } from '@recfn/core';
+import { createError } from '@recfn/core';
 
 const NON_TERMINAL_BOT_STATUSES = [
   'creating',

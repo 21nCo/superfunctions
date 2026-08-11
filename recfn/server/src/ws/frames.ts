@@ -2,12 +2,12 @@ import type {
   TranscriptStreamErrorData,
   TranscriptStreamFrame,
   TranscriptStreamFrameType,
-} from 'recfn';
+} from '@recfn/core';
 import {
   TRANSCRIPT_STREAM_FRAME_SCHEMA,
   parseTranscriptStreamFrame,
   serializeTranscriptStreamFrame,
-} from 'recfn';
+} from '@recfn/core';
 
 export {
   TRANSCRIPT_STREAM_FRAME_SCHEMA,

@@ -1,5 +1,5 @@
 {
-  "name": "recfn-whisper",
+  "name": "@recfn/whisper",
   "version": "0.1.0",
   "description": "RecFn Whisper ASR adapter — local offline transcription via whisper.cpp",
   "type": "module",
@@ -41,7 +41,7 @@
     "access": "public"
   },
   "dependencies": {
-    "recfn": "0.1.0"
+    "@recfn/core": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

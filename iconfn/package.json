@@ -1,10 +1,10 @@
 {
-  "name": "iconfn",
+  "name": "@iconfn/core",
   "version": "0.0.1",
   "description": "Icon library",
   "type": "module",
   "scripts": {
-    "build": "tsup",
+    "build": "node -e \"console.log('No build configured')\"",
     "test": "node -e \"console.log('No tests configured')\""
   },
   "engines": {

@@ -1,8 +1,8 @@
 <!-- ApifnApiReference.svelte — Svelte API reference renderer (DOCS-003, DOCS-005) -->
 <script lang="ts">
-  import EndpointViewer from "@apifn/svelte/src/EndpointViewer.svelte";
-  import TryIt from "@apifn/svelte/src/TryIt.svelte";
-  import PerformanceOverlay from "@apifn/svelte/src/PerformanceOverlay.svelte";
+  import EndpointViewer from "@apifn/svelte/EndpointViewer.svelte";
+  import TryIt from "@apifn/svelte/TryIt.svelte";
+  import PerformanceOverlay from "@apifn/svelte/PerformanceOverlay.svelte";
   import type { ApifnApiReferenceProps, RawContentEntry, ApiEndpoint } from "../types.js";
 
   export let entry: RawContentEntry;

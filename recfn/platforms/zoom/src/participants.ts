@@ -1,4 +1,4 @@
-import type { Participant, ParticipantRole } from 'recfn';
+import type { Participant, ParticipantRole } from '@recfn/core';
 import type { ZoomMeetingSdk, ZoomParticipantInfo } from './meeting-sdk.js';
 
 export interface ParticipantTracker {

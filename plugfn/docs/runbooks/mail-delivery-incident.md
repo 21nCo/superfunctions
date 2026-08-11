@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Respond to outbound delivery failures in Fellotron and critical managed-mailbox delivery incidents affecting finance-related communications.
+Respond to outbound send governance failures and critical managed-mailbox delivery incidents affecting finance-related communications.
 
 ## Trigger Conditions
 

@@ -21,6 +21,8 @@ export * from "./rss";
 export * from "./blog";
 export * from "./security";
 export * from "./analytics";
+export * from "./llms";
+export * from "./links";
 export type {
   DocsSearchScope,
   DocsSearchRouteScopeOverride,

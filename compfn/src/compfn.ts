@@ -3,30 +3,37 @@
  */
 
 import type { CompFnAPI, CompFnConfig } from "./api.js";
+import { wrapWithSchema } from "@superfunctions/db";
 import { createControlsService } from "./controls/service.js";
 import { createFrameworksService } from "./frameworks/service.js";
 import { createEvidenceService } from "./evidence/service.js";
 import { createChecksService } from "./checks/service.js";
 import { createReadinessService } from "./readiness/service.js";
 import { createExportService } from "./export/service.js";
+import { getCompfnSchema } from "./storage/schema.js";
 
 /**
  * Create CompFn API instance. Returns API with controls.*, frameworks.*, and evidence.* (create, get, list) implemented.
  */
 export function compFn(config: CompFnConfig): CompFnAPI {
+  const database = wrapWithSchema(
+    config.database,
+    getCompfnSchema({ namespace: config.namespace })
+  );
+
   const controls = createControlsService({
-    database: config.database,
+    database,
     namespace: config.namespace,
   });
 
   const frameworks = createFrameworksService({
-    database: config.database,
+    database,
     namespace: config.namespace,
     existsControl: (controlId) => controls.get(controlId).then((r) => r.ok),
   });
 
   const evidence = createEvidenceService({
-    database: config.database,
+    database,
     namespace: config.namespace,
     evidencePayloadMaxBytes: config.evidencePayloadMaxBytes,
     existsControl: (controlId) => controls.get(controlId).then((r) => r.ok),
@@ -38,7 +45,7 @@ export function compFn(config: CompFnConfig): CompFnAPI {
   });
 
   const checks = createChecksService({
-    database: config.database,
+    database,
     namespace: config.namespace,
     existsControl: (controlId) => controls.get(controlId).then((r) => r.ok),
     getAdapter: (adapterName) => config.adapters?.[adapterName],

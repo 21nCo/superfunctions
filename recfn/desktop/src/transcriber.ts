@@ -3,7 +3,7 @@
  * Invokes Whisper ASR adapter on captured audio file.
  */
 
-import type { Segment, Transcript } from 'recfn';
+import type { Segment, Transcript } from '@recfn/core';
 
 export interface TranscriberOptions {
   language?: string;

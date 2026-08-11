@@ -1,7 +1,7 @@
 import { program } from 'commander';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
-import type { RecFn } from 'recfn-client';
+import type { RecFn } from '@recfn/client';
 import type { OutputFormat } from '../output.js';
 import { formatJson, formatRecordingList } from '../output.js';
 

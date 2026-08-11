@@ -53,6 +53,9 @@ def run_collection(collection: dict[str, Any], options: dict[str, Any] | None = 
     timeout = float(options.get("timeout", 30.0))
 
     envs = collection.get("environments") or {}
+    if env_name not in envs:
+        raise ValueError(f"Environment '{env_name}' not found")
+
     env = (envs.get(env_name) or {}).copy()
     variables = (env.get("variables") or {}).copy()
     variables.update(overrides)

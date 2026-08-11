@@ -516,6 +516,8 @@ export interface MockServerOptions {
   validateRequests?: boolean;
   /** Delay responses by ms (simulates latency) */
   delay?: number;
+  /** Maximum accepted request body size in bytes (default: 10 MiB) */
+  maxRequestBodyBytes?: number;
   /** CORS configuration */
   cors?: boolean | CorsOptions;
 }

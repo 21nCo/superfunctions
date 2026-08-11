@@ -1,4 +1,4 @@
-import type { CalendarEvent } from 'recfn';
+import type { CalendarEvent } from '@recfn/core';
 
 export interface OutlookCalendarEvent {
   id: string;

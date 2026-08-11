@@ -1,4 +1,4 @@
-import { ErrorCode, createError, type Recording, type RecordingFormat } from 'recfn';
+import { ErrorCode, createError, type Recording, type RecordingFormat } from '@recfn/core';
 import type { StorageAdapter } from '../integrations/storage.js';
 import type { RecFnStore } from '../store/types.js';
 import type { Logger } from '../integrations/logfn.js';

@@ -1,5 +1,5 @@
 {
-  "name": "recfn-client",
+  "name": "@recfn/client",
   "version": "0.1.0",
   "description": "RecFn TypeScript client SDK — wraps REST API and WebSocket endpoints",
   "type": "module",
@@ -41,7 +41,7 @@
     "access": "public"
   },
   "dependencies": {
-    "recfn": "0.1.0"
+    "@recfn/core": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

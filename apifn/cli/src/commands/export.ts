@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { stringify as toYaml } from "yaml";
 import { parseOpenAPI } from "@apifn/core";
@@ -25,6 +25,7 @@ export async function runExportCommand(options: {
 
   if (options.outputPath) {
     const resolvedOutput = path.resolve(cwd, options.outputPath);
+    await mkdir(path.dirname(resolvedOutput), { recursive: true });
     await writeFile(resolvedOutput, rendered, "utf8");
     options.output.success(`Exported ${format} spec -> ${resolvedOutput}`);
     return;

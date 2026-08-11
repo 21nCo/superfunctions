@@ -1,5 +1,5 @@
-import type { AudioChunk, RecordingFormat } from 'recfn';
-import { ErrorCode, createError } from 'recfn';
+import type { AudioChunk, RecordingFormat } from '@recfn/core';
+import { ErrorCode, createError } from '@recfn/core';
 
 export interface CaptureResult {
   data: Uint8Array;

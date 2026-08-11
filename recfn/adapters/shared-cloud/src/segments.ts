@@ -1,4 +1,4 @@
-import type { Segment } from 'recfn';
+import type { Segment } from '@recfn/core';
 
 export function normalizeSpeakerId(
   speaker: string | number | undefined | null,

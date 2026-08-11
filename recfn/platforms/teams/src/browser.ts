@@ -1,5 +1,5 @@
 import type { Browser, BrowserContext, Page } from 'playwright';
-import { createBrowserSession } from 'recfn-browser-core';
+import { createBrowserSession } from '@recfn/browser-core';
 
 export const TEAMS_AUDIO_CAPTURE_TIMESLICE_MS = 250;
 export const TEAMS_AUDIO_CAPTURE_POLL_INTERVAL_MS = 100;

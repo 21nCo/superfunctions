@@ -1,4 +1,4 @@
-import type { Bot } from 'recfn';
+import type { Bot } from '@recfn/core';
 import type { LifecycleDeps } from './lifecycle.js';
 import { transitionBot } from './lifecycle.js';
 

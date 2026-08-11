@@ -17,7 +17,7 @@ Headless browser adapter for joining Microsoft Teams meetings, capturing audio, 
 ## Usage
 
 ```typescript
-import { TeamsAdapter } from 'recfn-teams';
+import { TeamsAdapter } from '@recfn/teams';
 
 const adapter = new TeamsAdapter();
 await adapter.join('https://teams.microsoft.com/l/meetup-join/...', botConfig);

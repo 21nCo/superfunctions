@@ -20,8 +20,20 @@ function isRef(obj: unknown): obj is { $ref: string } {
     return typeof obj === "object" && obj !== null && "$ref" in obj;
 }
 
-function resolveParam(p: unknown): ParameterObject | null {
-    if (isRef(p)) return null; // $ref parameters are ignored in this diff (they'd need full schema resolution)
+function emitUnresolvedRef(opPath: string, location: string, ref: string, emit: Emit): void {
+    emit({
+        type: "modified",
+        breaking: true,
+        path: `${opPath}.${location}`,
+        description: `Parameter reference '${ref}' in ${opPath} could not be resolved; diff coverage is incomplete`,
+    });
+}
+
+function resolveParam(p: unknown, opPath: string, location: string, emit: Emit): ParameterObject | null {
+    if (isRef(p)) {
+        emitUnresolvedRef(opPath, location, p.$ref, emit);
+        return null;
+    }
     if (typeof p === "object" && p !== null && "name" in p && "in" in p) {
         return p as ParameterObject;
     }
@@ -60,8 +72,12 @@ export function diffParameters(
     after: OperationObject,
     emit: Emit
 ): void {
-    const beforeParams = (before.parameters ?? []).map(resolveParam).filter((p): p is ParameterObject => p !== null);
-    const afterParams = (after.parameters ?? []).map(resolveParam).filter((p): p is ParameterObject => p !== null);
+    const beforeParams = (before.parameters ?? [])
+        .map((param, index) => resolveParam(param, opPath, `parameters[${index}]`, emit))
+        .filter((p): p is ParameterObject => p !== null);
+    const afterParams = (after.parameters ?? [])
+        .map((param, index) => resolveParam(param, opPath, `parameters[${index}]`, emit))
+        .filter((p): p is ParameterObject => p !== null);
 
     const beforeMap = new Map<string, ParameterObject>();
     for (const p of beforeParams) {
@@ -170,6 +186,17 @@ export function diffRequestBody(
 
     if (!beforeBody || !afterBody) return;
 
+    if (!beforeBody.required && afterBody.required) {
+        emit({
+            type: "modified",
+            breaking: true,
+            path: `${opPath}.requestBody.required`,
+            description: `Request body became required in ${opPath}`,
+            before: false,
+            after: true,
+        });
+    }
+
     // Compare JSON schemas from application/json content
     const beforeSchema = (beforeBody.content?.["application/json"]?.schema ?? null) as Record<string, unknown> | null;
     const afterSchema = (afterBody.content?.["application/json"]?.schema ?? null) as Record<string, unknown> | null;
@@ -205,14 +232,16 @@ function diffObjectSchemaRequiredFields(
     const afterProps = (after.properties ?? {}) as Record<string, unknown>;
     const beforeProps = (before.properties ?? {}) as Record<string, unknown>;
 
-    // New required fields that weren't present before
+    // Required fields newly introduced or existing optional fields made required.
     for (const field of afterRequired) {
-        if (!beforeRequired.has(field) && !beforeProps[field]) {
+        if (!beforeRequired.has(field)) {
             emit({
                 type: "modified",
                 breaking: true,
                 path: `${opPath}.${schemaPath}.required`,
-                description: `New required field '${field}' added to request body in ${opPath}`,
+                description: beforeProps[field]
+                    ? `Existing request body field '${field}' became required in ${opPath}`
+                    : `New required field '${field}' added to request body in ${opPath}`,
             });
         }
     }
@@ -355,11 +384,14 @@ export function diffSecurity(
 
     for (const key of beforeKeys) {
         if (!afterKeys.has(key)) {
+            const removedAlternative = afterSec.length > 0;
             emit({
                 type: "removed",
-                breaking: false,
+                breaking: removedAlternative,
                 path: `${opPath}.security`,
-                description: `Security requirement removed from ${opPath}`,
+                description: removedAlternative
+                    ? `Security requirement alternative removed from ${opPath} — breaking`
+                    : `Security requirement removed from ${opPath}`,
                 before: beforeSec,
                 after: afterSec,
             });

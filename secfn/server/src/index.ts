@@ -1,5 +1,6 @@
 import { createStaticKeyProvider, getSecFnSchema } from "@secfn/core";
 import type { KeyProvider, SecurityScanner } from "@secfn/core";
+import { wrapWithSchema } from "@superfunctions/db";
 import { createSecurityScanner } from "@secfn/core";
 import { SecFnConfigError } from "@secfn/core";
 import { AuditService } from "./audit.js";
@@ -29,17 +30,19 @@ export interface SecFnServer<TContext extends SecFnRequestContext = SecFnRequest
 export function createSecFnServer<TContext extends SecFnRequestContext = SecFnRequestContext>(
   config: SecFnServerConfig<TContext>,
 ): SecFnServer<TContext> {
+  const db = wrapWithSchema(config.db, getSecFnSchema());
+  const resolvedConfig = { ...config, db };
   const keyProvider = resolveKeyProvider(config);
   const audit = new AuditService({
-    db: config.db,
+    db,
     logger: config.logger,
     sink: config.auditSink,
   });
-  const access = new AccessService(config.db);
-  const vault = new VaultService(config.db, keyProvider, audit);
+  const access = new AccessService(db);
+  const vault = new VaultService(db, keyProvider, audit);
   const rateLimit = new SecFnRateLimiter(config.rateLimit, audit);
   const scanner = createSecurityScanner();
-  const router = createSecFnRouter(config, {
+  const router = createSecFnRouter(resolvedConfig, {
     vault,
     audit,
     access,

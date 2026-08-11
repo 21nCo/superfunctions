@@ -217,7 +217,18 @@ function truncateBody(body: string): string {
     return body;
   }
 
-  return body.slice(0, MAX_CAPTURED_BODY_BYTES);
+  let low = 0;
+  let high = body.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(body.slice(0, mid), "utf8") <= MAX_CAPTURED_BODY_BYTES) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return body.slice(0, low);
 }
 
 async function executeRequest(
@@ -232,11 +243,13 @@ async function executeRequest(
     cookieJar?: CookieJar;
     redactHeaders: string[];
     reporter?: RunReporter;
+    isolateContext?: boolean;
   }
 ): Promise<RequestResult> {
   options.reporter?.onRequestStart?.(entry.item);
 
-  const interpolated = interpolateRequest(entry.request, options.context, options.processEnv);
+  const requestContext = options.isolateContext ? { ...options.context } : options.context;
+  const interpolated = interpolateRequest(entry.request, requestContext, options.processEnv);
   const mutableRequest: ScriptRequestContext = {
     method: interpolated.method,
     url: interpolated.url,
@@ -254,7 +267,7 @@ async function executeRequest(
     const preRequestResult = await executePreRequestScript({
       code: script.code,
       req: mutableRequest,
-      env: options.context,
+      env: requestContext,
       cookies: options.cookieJar,
     });
 
@@ -335,7 +348,7 @@ async function executeRequest(
           code: script.code,
           req: mutableRequest,
           res: responseForScripts,
-          env: options.context,
+          env: requestContext,
           cookies: options.cookieJar,
           assertionResults,
         });
@@ -540,6 +553,7 @@ export async function runCollection(
           cookieJar,
           redactHeaders: redactList,
           reporter,
+          isolateContext: true,
         });
 
         results[index] = result;

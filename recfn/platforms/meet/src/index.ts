@@ -4,7 +4,7 @@ import type { Browser, Page } from 'playwright';
 import {
   BrowserAutomationAdapter,
   leaveBrowserMeeting,
-} from 'recfn-browser-core';
+} from '@recfn/browser-core';
 import { createMeetBrowserSession } from './browser.js';
 import { createMeetAudioStream } from './audio-capture.js';
 import {

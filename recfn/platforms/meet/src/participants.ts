@@ -1,6 +1,6 @@
-import type { Participant } from 'recfn';
+import type { Participant } from '@recfn/core';
 import type { Page } from 'playwright';
-import { createBrowserParticipantTracker } from 'recfn-browser-core';
+import { createBrowserParticipantTracker } from '@recfn/browser-core';
 
 export interface MeetParticipantTracker {
   getAll(): Participant[];

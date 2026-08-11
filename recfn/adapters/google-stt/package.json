@@ -1,5 +1,5 @@
 {
-  "name": "recfn-google-stt",
+  "name": "@recfn/google-stt",
   "version": "0.1.0",
   "description": "RecFn Google Speech-to-Text ASR adapter — cloud transcription via Google Cloud",
   "type": "module",
@@ -41,8 +41,8 @@
     "access": "public"
   },
   "dependencies": {
-    "recfn-shared-cloud": "0.1.0",
-    "recfn": "0.1.0"
+    "@recfn/core": "0.1.0",
+    "@recfn/shared-cloud": "0.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

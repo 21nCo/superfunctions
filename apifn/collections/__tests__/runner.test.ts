@@ -124,6 +124,44 @@ describe("runCollection", () => {
     expect(maxActive).toBeLessThanOrEqual(2);
   });
 
+  it("parallel mode isolates script-mutated variables per request", async () => {
+    const collection = makeCollection();
+    collection.environments.development.variables.token = "env-token";
+    const first = collection.items[0]!.children![0]!;
+    const second = collection.items[0]!.children![1]!;
+    first.request!.http.url = "{{baseUrl}}/first";
+    second.request!.http.url = "{{baseUrl}}/{{token}}/second";
+    first.request!.runtime = {
+      scripts: [{ type: "pre-request", code: 'env.set("token", "first-token");' }],
+    };
+    second.request!.runtime = {
+      scripts: [{ type: "pre-request", code: 'env.set("token", "second-token");' }],
+    };
+    collection.items[0]!.children = [first, second];
+
+    const calls: string[] = [];
+    const httpClient: HttpClient = {
+      async send(request) {
+        calls.push(request.url);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return response(200);
+      },
+    };
+
+    const report = await runCollection(collection, {
+      environment: "development",
+      parallel: true,
+      concurrency: 1,
+      httpClient,
+    });
+
+    expect(report.summary.passed).toBe(2);
+    expect(calls).toEqual([
+      "http://localhost:3000/first",
+      "http://localhost:3000/env-token/second",
+    ]);
+  });
+
   it("RUN-003 + TV-RUN-003 + TV-RUN-004: resolves variables with precedence and warnings", async () => {
     const collection = makeCollection();
     collection.items[0]!.children![0]!.request!.http.url = "{{baseUrl}}/{{missing}}/first";
@@ -196,6 +234,28 @@ describe("runCollection", () => {
       { name: "should return 200", passed: true },
       { name: "should have items", passed: true },
     ]);
+  });
+
+  it("caps captured response bodies by UTF-8 byte length", async () => {
+    const collection = makeCollection();
+    collection.items[0]!.children = [collection.items[0]!.children![0]!];
+    const maxCapturedBodyBytes = 10 * 1024 * 1024;
+    const body = "界".repeat(Math.ceil(maxCapturedBodyBytes / 3) + 10);
+
+    const httpClient: HttpClient = {
+      async send() {
+        return response(200, body);
+      },
+    };
+
+    const report = await runCollection(collection, {
+      environment: "development",
+      httpClient,
+    });
+
+    const capturedBody = report.results[0]?.response?.body ?? "";
+    expect(Buffer.byteLength(capturedBody, "utf8")).toBeLessThanOrEqual(maxCapturedBodyBytes);
+    expect(capturedBody).not.toContain("\uFFFD");
   });
 
   it("RUN-006: bail stops after first failed request and skips remaining", async () => {

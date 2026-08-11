@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { uploadRecording } from '../src/uploader.js';
-import { RecFn } from 'recfn-client';
+import { RecFn } from '@recfn/client';
 
 describe('uploader', () => {
   it('uploadRecording delegates to client.recordings.upload', async () => {

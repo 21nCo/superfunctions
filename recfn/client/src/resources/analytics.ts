@@ -1,4 +1,4 @@
-import type { Analytics } from 'recfn';
+import type { Analytics } from '@recfn/core';
 import type { RecFnHttpClient } from '../client.js';
 import type { ApiResult } from '../client.js';
 

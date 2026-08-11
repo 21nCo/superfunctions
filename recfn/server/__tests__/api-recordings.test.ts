@@ -3,7 +3,7 @@ import { createTestServer, req, json } from './helpers.js';
 import type { RecFnServer } from '../src/index.js';
 import type { RecFnStore } from '../src/store/types.js';
 import type { MemoryStorageAdapter } from '../src/integrations/filefn.js';
-import type { Recording } from 'recfn';
+import type { Recording } from '@recfn/core';
 
 describe('Recording API routes', () => {
   let server: RecFnServer;

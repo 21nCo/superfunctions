@@ -16,6 +16,18 @@ describe('TypeScript package baseline', () => {
     expect(packageJson.name).toBe('sendfn');
   });
 
+  it('publishes the edge entrypoint used by Worker consumers', () => {
+    const packageJson = JSON.parse(
+      readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+    );
+
+    expect(packageJson.exports?.['./edge']).toMatchObject({
+      types: './dist/edge.d.ts',
+      import: './dist/edge.mjs',
+      require: './dist/edge.js',
+    });
+  });
+
   it('documents the shipped install and import instructions', () => {
     const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
 

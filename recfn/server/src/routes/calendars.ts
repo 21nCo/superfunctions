@@ -1,5 +1,5 @@
 import type { Route, RouteContext } from '@superfunctions/http';
-import { ErrorCode } from 'recfn';
+import { ErrorCode } from '@recfn/core';
 import type { RecFnStore } from '../store/types.js';
 import { checkCalendarCount } from '../middleware/limits.js';
 import type { ValidateApiKey } from '../middleware/auth.js';
@@ -49,7 +49,7 @@ export function createCalendarRoutes(deps: CalendarRouteDeps): Route[] {
           await checkCalendarCount(store, auth.namespace, limits);
         } catch (e) {
           return err(
-            (e as import('recfn').RecFnError).code,
+            (e as import('@recfn/core').RecFnError).code,
             (e as Error).message,
           );
         }
@@ -134,7 +134,7 @@ export function createCalendarRoutes(deps: CalendarRouteDeps): Route[] {
           return ok({ events });
         } catch (e) {
           return err(
-            (e as import('recfn').RecFnError).code ?? ErrorCode.CALENDAR_AUTH_FAILED,
+            (e as import('@recfn/core').RecFnError).code ?? ErrorCode.CALENDAR_AUTH_FAILED,
             e instanceof Error ? e.message : 'Failed to fetch calendar events.',
           );
         }

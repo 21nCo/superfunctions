@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AssemblyAIAdapter } from '../src/index.js';
-import type { Segment } from 'recfn';
+import type { Segment } from '@recfn/core';
 
 function createMockFetch(responses: unknown[]) {
   let callCount = 0;

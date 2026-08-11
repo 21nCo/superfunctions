@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DeepgramAdapter } from '../src/index.js';
-import type { Segment } from 'recfn';
+import type { Segment } from '@recfn/core';
 
 function createMockFetch(response: unknown) {
   return vi.fn().mockResolvedValue({

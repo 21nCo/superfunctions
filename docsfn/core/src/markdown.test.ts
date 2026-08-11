@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveMarkdownRelativeLinks } from "./links";
 import { compileMarkdown, extractHeadings } from "./markdown";
 
 describe("extractHeadings", () => {
@@ -205,5 +206,92 @@ describe("compileMarkdown – table blocks", () => {
     expect(types).toContain("heading");
     expect(types).toContain("paragraph");
     expect(types).toContain("table");
+  });
+});
+
+describe("resolveMarkdownRelativeLinks", () => {
+  it("resolves root index links against the docs route itself", () => {
+    const compiled = compileMarkdown({
+      source: "[Getting Started](./getting-started)",
+      sourcePath: "content/docs/index.md",
+    });
+
+    const resolved = resolveMarkdownRelativeLinks({
+      compiled,
+      route: "/docs",
+      sourcePath: "content/docs/index.md",
+    });
+
+    expect(resolved.blocks[0]).toMatchObject({
+      type: "paragraph",
+      html: '<a href="/docs/getting-started">Getting Started</a>',
+    });
+  });
+
+  it("resolves section index links against the section route", () => {
+    const compiled = compileMarkdown({
+      source: "[Node.js](./nodejs) and [Home](../getting-started)",
+      sourcePath: "content/docs/quickstart/index.md",
+    });
+
+    const resolved = resolveMarkdownRelativeLinks({
+      compiled,
+      route: "/docs/quickstart",
+      sourcePath: "content/docs/quickstart/index.md",
+    });
+
+    const block = resolved.blocks[0];
+    expect(block.type).toBe("paragraph");
+    if (block.type === "paragraph") {
+      expect(block.html).toContain('href="/docs/quickstart/nodejs"');
+      expect(block.html).toContain('href="/docs/getting-started"');
+    }
+  });
+
+  it("resolves leaf page links against the parent route", () => {
+    const compiled = compileMarkdown({
+      source: "[Errors](./errors) and [Concepts](../core-concepts)",
+      sourcePath: "content/docs/reference/envelopes.md",
+    });
+
+    const resolved = resolveMarkdownRelativeLinks({
+      compiled,
+      route: "/docs/reference/envelopes",
+      sourcePath: "content/docs/reference/envelopes.md",
+    });
+
+    const block = resolved.blocks[0];
+    expect(block.type).toBe("paragraph");
+    if (block.type === "paragraph") {
+      expect(block.html).toContain('href="/docs/reference/errors"');
+      expect(block.html).toContain('href="/docs/core-concepts"');
+    }
+  });
+
+  it("preserves absolute, hash, external, and special hrefs", () => {
+    const compiled = compileMarkdown({
+      source: [
+        "[Absolute](/docs)",
+        "[Hash](#intro)",
+        "[External](https://example.com/docs)",
+        "[Mail](mailto:hello@example.com)",
+      ].join(" "),
+      sourcePath: "content/docs/index.md",
+    });
+
+    const resolved = resolveMarkdownRelativeLinks({
+      compiled,
+      route: "/docs",
+      sourcePath: "content/docs/index.md",
+    });
+
+    const block = resolved.blocks[0];
+    expect(block.type).toBe("paragraph");
+    if (block.type === "paragraph") {
+      expect(block.html).toContain('href="/docs"');
+      expect(block.html).toContain('href="#intro"');
+      expect(block.html).toContain('href="https://example.com/docs"');
+      expect(block.html).toContain('href="mailto:hello@example.com"');
+    }
   });
 });

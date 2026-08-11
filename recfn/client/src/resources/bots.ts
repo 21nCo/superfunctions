@@ -1,4 +1,4 @@
-import type { Bot, BotConfig, Platform } from 'recfn';
+import type { Bot, BotConfig, Platform } from '@recfn/core';
 import type { RecFnHttpClient } from '../client.js';
 import type { ApiResult } from '../client.js';
 

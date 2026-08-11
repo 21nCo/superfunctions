@@ -1,5 +1,5 @@
 {
-  "name": "recfn-desktop",
+  "name": "@recfn/desktop",
   "version": "0.1.0",
   "description": "RecFn desktop capture SDK — system audio + screen capture, local Whisper transcription, server upload",
   "type": "module",
@@ -37,9 +37,9 @@
     "directory": "recfn/desktop"
   },
   "dependencies": {
-    "recfn": "0.1.0",
-    "recfn-client": "0.1.0",
-    "recfn-whisper": "0.1.0"
+    "@recfn/core": "0.1.0",
+    "@recfn/whisper": "0.1.0",
+    "@recfn/client": "0.1.0"
   },
   "optionalDependencies": {
     "electron": "^28.0.0"

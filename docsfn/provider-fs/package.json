@@ -1,6 +1,6 @@
 {
   "name": "@docsfn/provider-fs",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -18,15 +18,15 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@docsfn/core": "0.0.1",
+    "@docsfn/core": "0.0.3",
     "fast-glob": "^3.0.0",
     "gray-matter": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
-    "vitest": "^1.0.0",
-    "@types/node": "^20.0.0"
+    "vitest": "^1.0.0"
   },
   "author": "21n",
   "license": "MIT",
@@ -40,5 +40,8 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "files": [
+    "dist"
+  ]
 }

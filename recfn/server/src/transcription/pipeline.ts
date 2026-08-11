@@ -1,4 +1,4 @@
-import type { Transcript } from 'recfn';
+import type { Transcript } from '@recfn/core';
 import type { RecFnStore } from '../store/types.js';
 import type { Logger } from '../integrations/logfn.js';
 import type { AsrRegistry } from './registry.js';
@@ -10,7 +10,7 @@ import { indexTranscript } from '../search/indexer.js';
 import { checkTranscriptSegments } from '../middleware/limits.js';
 import { loadLimitsConfig } from '../config.js';
 import { emitAsrLatency } from '../observability/metrics.js';
-import { sortSegmentsDeterministically } from 'recfn-shared-cloud';
+import { sortSegmentsDeterministically } from '@recfn/shared-cloud';
 
 export function generateTranscriptId(): string {
   const ts = Date.now().toString(36);

@@ -1,4 +1,4 @@
-import type { PlatformAdapter } from 'recfn';
+import type { PlatformAdapter } from '@recfn/core';
 import type { Logger } from '../integrations/logfn.js';
 
 /**

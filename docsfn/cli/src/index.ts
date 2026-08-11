@@ -4,6 +4,7 @@ import cac from "cac";
 import chokidar from "chokidar";
 import pc from "picocolors";
 import {
+  buildLlmsTxtArtifacts,
   buildManifest,
   buildSearchIndex,
   createDiagnostic,
@@ -12,6 +13,7 @@ import {
   hasErrorDiagnostics,
   loadDocsConfig,
   redactDiagnostics,
+  type BuildLlmsFullTxtOptions,
   type DocsCompatPreset,
   type DocsConfig,
   type DocsDiagnostic,
@@ -28,6 +30,13 @@ interface BuildCommandOptions {
   out?: string;
   outDir?: string;
   config?: string;
+}
+
+interface LlmsCommandOptions extends BuildCommandOptions {
+  static?: string;
+  staticDir?: string;
+  embedOpenapi?: boolean;
+  noBlog?: boolean;
 }
 
 interface PipelineInput {
@@ -517,6 +526,65 @@ async function runDevCommand(
   });
 }
 
+async function runLlmsCommand(
+  rootArg: string | undefined,
+  options: LlmsCommandOptions
+): Promise<void> {
+  const rootValue = options.root ?? rootArg ?? ".";
+  const cwd = path.resolve(rootValue);
+  const staticDirValue = options.staticDir ?? options.static ?? "static";
+  const staticDir = path.isAbsolute(staticDirValue)
+    ? staticDirValue
+    : path.resolve(cwd, staticDirValue);
+
+  console.log(pc.blue("ℹ Generating llms.txt artifacts..."));
+  const start = Date.now();
+
+  const result = await runPipeline({
+    cwd,
+    configPath: options.config,
+  });
+
+  printDiagnostics(result.diagnostics);
+  printCommandSummary("llms", result);
+
+  if (hasErrorDiagnostics(result.diagnostics)) {
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!result.manifest) {
+    process.exitCode = 1;
+    return;
+  }
+
+  const llmsOptions: BuildLlmsFullTxtOptions = {
+    canonicalUrl: result.config?.site?.canonicalUrl,
+    embedOpenApiSpec: options.embedOpenapi === true,
+    includeBlog: options.noBlog ? false : true,
+  };
+
+  const artifacts = buildLlmsTxtArtifacts(result.manifest, llmsOptions);
+  await fs.mkdir(staticDir, { recursive: true });
+  await fs.writeFile(path.join(staticDir, "llms.txt"), artifacts.llmsTxt, "utf8");
+  await fs.writeFile(path.join(staticDir, "llms-full.txt"), artifacts.llmsFullTxt, "utf8");
+
+  const llmsTxtBytes = Buffer.byteLength(artifacts.llmsTxt, "utf8");
+  const llmsFullTxtBytes = Buffer.byteLength(artifacts.llmsFullTxt, "utf8");
+
+  console.log(
+    pc.green(
+      `✔ Wrote ${path.relative(cwd, path.join(staticDir, "llms.txt"))} (${llmsTxtBytes} bytes)`
+    )
+  );
+  console.log(
+    pc.green(
+      `✔ Wrote ${path.relative(cwd, path.join(staticDir, "llms-full.txt"))} (${llmsFullTxtBytes} bytes)`
+    )
+  );
+  console.log(pc.dim(`Generated in ${Date.now() - start}ms`));
+}
+
 cli
   .command("validate [root]", "Validate docs configuration and content")
   .option("--root <dir>", "Root directory")
@@ -543,6 +611,18 @@ cli
   .option("--out-dir <dir>", "Output directory", { default: ".docsfn" })
   .action(async (root, options) => {
     await runDevCommand(root, options as BuildCommandOptions);
+  });
+
+cli
+  .command("llms [root]", "Generate llms.txt and llms-full.txt for AI assistants")
+  .option("--root <dir>", "Root directory")
+  .option("--config <path>", "Explicit docsfn config path")
+  .option("--static <dir>", "Output directory for static assets (legacy)")
+  .option("--static-dir <dir>", "Output directory for static assets", { default: "static" })
+  .option("--embed-openapi", "Embed full OpenAPI JSON in llms-full.txt")
+  .option("--no-blog", "Exclude blog posts from generated artifacts")
+  .action(async (root, options) => {
+    await runLlmsCommand(root, options as LlmsCommandOptions);
   });
 
 cli.help();
