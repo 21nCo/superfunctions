@@ -1,6 +1,6 @@
 {
   "name": "drawfn",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Cross-framework drawing canvas library for brainstorming and simple sketching",
   "license": "MIT",
   "type": "module",

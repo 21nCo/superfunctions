@@ -3,6 +3,8 @@
  * Maps to PLAN.md tables; adapters (e.g. @superfunctions/db) implement DDL/CRUD.
  */
 
+import type { TableSchemaMap } from "@superfunctions/db";
+
 export const CONTENTFN_TABLE_NAMES = {
   datasets: "contentfn_datasets",
   schema: "contentfn_schema",
@@ -53,8 +55,9 @@ export const contentfnSchema: TableDef = {
 export const contentfnDocsPublished: TableDef = {
   name: CONTENTFN_TABLE_NAMES.docsPublished,
   columns: {
-    dataset: { type: "string", primaryKey: true },
     id: { type: "string", primaryKey: true },
+    dataset: { type: "string", nullable: false },
+    documentId: { type: "string", nullable: false },
     type: { type: "string", nullable: false },
     docJson: { type: "json", nullable: false },
     rev: { type: "string", nullable: false },
@@ -67,8 +70,9 @@ export const contentfnDocsPublished: TableDef = {
 export const contentfnDocsDrafts: TableDef = {
   name: CONTENTFN_TABLE_NAMES.docsDrafts,
   columns: {
-    dataset: { type: "string", primaryKey: true },
     id: { type: "string", primaryKey: true },
+    dataset: { type: "string", nullable: false },
+    documentId: { type: "string", nullable: false },
     type: { type: "string", nullable: false },
     docJson: { type: "json", nullable: false },
     rev: { type: "string", nullable: false },
@@ -163,3 +167,27 @@ export const ALL_TABLES: TableDef[] = [
   contentfnEvents,
   contentfnRtSessions,
 ];
+
+/** Runtime schema used to normalize values before they reach an app-supplied adapter. */
+export function getContentfnSchema(): TableSchemaMap {
+  return Object.fromEntries(
+    ALL_TABLES.map((table) => [
+      table.name,
+      {
+        modelName: table.name,
+        fields: Object.fromEntries(
+          Object.entries(table.columns).map(([name, column]) => [
+            name,
+            {
+              type: column.type === "datetime" ? "datetime" : column.type,
+              required: column.nullable !== true,
+              ...(column.type === "datetime"
+                ? { dateValueType: "iso-string" as const, dateStorageType: "iso-text" as const }
+                : {}),
+            },
+          ])
+        ),
+      },
+    ])
+  );
+}

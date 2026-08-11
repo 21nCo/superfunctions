@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback, useEffect } from "react";
-import type { CmsfnRelease, CmsfnReleasePublishResult } from "@cmsfn/core";
+import type { CmsfnRelease, CmsfnReleasePublishResult } from "cmsfn";
 
 export interface ReleasesPaneProps {
   cmsfnApiUrl: string;

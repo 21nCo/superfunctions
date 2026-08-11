@@ -76,9 +76,9 @@ describe("CLI Tests", () => {
     it("attest creates evidence", async () => {
       execSync(`node ${CLI_PATH} init --config ${CONFIG_PATH}`, { encoding: "utf-8" });
 
-      const { compFn } = await import("@superfunctions/compfn");
+      const { compFn } = await import("compfn");
       const { memoryAdapter } = await import("@superfunctions/db/adapters");
-      const { createSchemaIfSupported } = await import("@superfunctions/compfn");
+      const { createSchemaIfSupported } = await import("compfn");
 
       const adapter = memoryAdapter({});
       await createSchemaIfSupported(adapter, { namespace: "test" });

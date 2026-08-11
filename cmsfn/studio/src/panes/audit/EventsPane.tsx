@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback, useEffect } from "react";
-import type { CmsfnAuditEvent } from "@cmsfn/core";
+import type { CmsfnAuditEvent } from "cmsfn";
 
 export interface EventsPaneProps {
   cmsfnApiUrl: string;

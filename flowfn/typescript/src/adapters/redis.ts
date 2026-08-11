@@ -115,17 +115,18 @@ export class RedisAdapter implements FlowAdapter {
     // Simple polling for new messages from '$' (end)
     // Real impl might use blocking XREAD but that requires a dedicated connection or careful management
     // We'll use a polling loop with XREAD for simplicity on shared connection
-    let lastId = "$";
+    const latest = await this.redis.xrevrange(streamKey, "+", "-", "COUNT", 1);
+    let lastId = latest[0]?.[0] ?? "0-0";
 
     const poll = async () => {
       if (!active) return;
       try {
         const results = (await this.redis.xread(
+          "BLOCK",
+          1000,
           "STREAMS",
           streamKey,
-          lastId,
-          "BLOCK",
-          1000
+          lastId
         )) as any;
         if (results) {
           for (const [stream, messages] of results) {

@@ -1,7 +1,7 @@
 import type { RequestEvent } from "@sveltejs/kit";
-import { createHandler as createHttpHandler } from "@superfunctions/http-sveltekit";
+import { toSvelteKitHandlers } from "@superfunctions/http-sveltekit";
 import type { WatchFn } from "../core/watch-fn";
-import { createRoutes } from "../http/router";
+import { createWatchFnRouter } from "../http/router";
 
 export interface SvelteKitWatchFnOptions {
   trackRequests?: boolean;
@@ -14,8 +14,7 @@ export function createSvelteKitHandler(
   watchFn: WatchFn,
   options: SvelteKitWatchFnOptions = {}
 ) {
-  const routes = createRoutes(watchFn);
-  const { GET, POST, PUT, DELETE, PATCH } = createHttpHandler(routes);
+  const { GET, POST, PUT, DELETE, PATCH } = toSvelteKitHandlers(createWatchFnRouter(watchFn));
 
   // Wrap handlers with request tracking
   if (options.trackRequests) {

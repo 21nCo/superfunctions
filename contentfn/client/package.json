@@ -1,6 +1,6 @@
 {
   "name": "@contentfn/client",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "ContentFn client - types and API surface (types-only in initial phase)",
   "type": "module",
   "main": "dist/index.cjs",
@@ -46,7 +46,7 @@
   ],
   "sideEffects": false,
   "dependencies": {
-    "@contentfn/core": "0.0.1"
+    "@contentfn/core": "0.0.2"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

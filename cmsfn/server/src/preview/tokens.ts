@@ -3,7 +3,7 @@
  */
 
 import { createHmac } from "node:crypto";
-import type { CmsfnPreviewTokenResult } from "@cmsfn/core";
+import type { CmsfnPreviewTokenResult } from "cmsfn";
 
 const DEFAULT_TTL_SEC = 60 * 15; // 15 minutes
 const TOKEN_SEP = ".";

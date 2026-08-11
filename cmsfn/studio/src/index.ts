@@ -2,7 +2,7 @@
  * @cmsfn/studio — CmsFn Studio UI (desk, dataset selector, etc.).
  */
 
-import type { CmsfnStudioConfig } from "@cmsfn/core";
+import type { CmsfnStudioConfig } from "cmsfn";
 
 export { App } from "./app.js";
 export { DeskTree } from "./desk/DeskTree.js";

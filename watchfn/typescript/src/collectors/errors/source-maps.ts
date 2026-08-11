@@ -1,4 +1,4 @@
-"""Source map support for error tracking."""
+/** Source map support for error tracking. */
 
 export interface SourceMapPosition {
   source: string;

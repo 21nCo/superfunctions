@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
-import { createHandler as createHttpHandler } from "@superfunctions/http-next";
+import { toNextHandlers } from "@superfunctions/http-next";
 import type { WatchFn } from "../core/watch-fn";
-import { createRoutes } from "../http/router";
+import { createWatchFnRouter } from "../http/router";
 
 export interface NextWatchFnOptions {
   trackRequests?: boolean;
@@ -14,8 +14,7 @@ export function createNextHandler(
   watchFn: WatchFn,
   options: NextWatchFnOptions = {}
 ) {
-  const routes = createRoutes(watchFn);
-  const { GET, POST, PUT, DELETE, PATCH } = createHttpHandler(routes);
+  const { GET, POST, PUT, DELETE, PATCH } = toNextHandlers(createWatchFnRouter(watchFn));
 
   // Wrap handlers with request tracking
   if (options.trackRequests) {

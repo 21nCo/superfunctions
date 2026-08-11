@@ -1,7 +1,7 @@
 import type { Hono, Context, Next } from "hono";
-import { createRouter as createHttpRouter } from "@superfunctions/http-hono";
+import { toHono } from "@superfunctions/http-hono";
 import type { WatchFn } from "../core/watch-fn";
-import { createRoutes } from "../http/router";
+import { createWatchFnRouter } from "../http/router";
 
 export interface HonoWatchFnOptions {
   prefix?: string;
@@ -14,8 +14,7 @@ export function createHonoRouter(
   watchFn: WatchFn,
   options: HonoWatchFnOptions = {}
 ): Hono {
-  const routes = createRoutes(watchFn);
-  return createHttpRouter(routes, options);
+  return toHono(createWatchFnRouter(watchFn));
 }
 
 /**

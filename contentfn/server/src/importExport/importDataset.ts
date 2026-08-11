@@ -7,6 +7,7 @@ import { datasetCreate } from "../storage/datasets.js";
 import { schemaHash } from "../hash/schemaHash.js";
 import { nowISO } from "../time/clock.js";
 import { validateArtifact, type ContentfnExportArtifact } from "./format.js";
+import { documentStorageId } from "../storage/documentIdentity.js";
 
 export interface ImportConfig {
   db: Adapter;
@@ -76,7 +77,7 @@ export async function importDataset(
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "id", operator: "eq" as const, value: doc._id },
+        { field: "documentId", operator: "eq" as const, value: doc._id },
       ],
     });
     if (existing) {
@@ -84,7 +85,7 @@ export async function importDataset(
         model: CONTENTFN_TABLE_NAMES.docsPublished,
         where: [
           { field: "dataset", operator: "eq" as const, value: input.dataset },
-          { field: "id", operator: "eq" as const, value: doc._id },
+          { field: "documentId", operator: "eq" as const, value: doc._id },
         ],
         data: {
           type: doc._type,
@@ -99,7 +100,8 @@ export async function importDataset(
         model: CONTENTFN_TABLE_NAMES.docsPublished,
         data: {
           dataset: input.dataset,
-          id: doc._id,
+          id: documentStorageId(input.dataset, doc._id),
+          documentId: doc._id,
           type: doc._type,
           docJson: doc,
           rev: doc._rev,
@@ -116,7 +118,7 @@ export async function importDataset(
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "id", operator: "eq" as const, value: doc._id },
+        { field: "documentId", operator: "eq" as const, value: doc._id },
       ],
     });
     if (existing) {
@@ -124,7 +126,7 @@ export async function importDataset(
         model: CONTENTFN_TABLE_NAMES.docsDrafts,
         where: [
           { field: "dataset", operator: "eq" as const, value: input.dataset },
-          { field: "id", operator: "eq" as const, value: doc._id },
+          { field: "documentId", operator: "eq" as const, value: doc._id },
         ],
         data: {
           type: doc._type,
@@ -138,7 +140,8 @@ export async function importDataset(
         model: CONTENTFN_TABLE_NAMES.docsDrafts,
         data: {
           dataset: input.dataset,
-          id: doc._id,
+          id: documentStorageId(input.dataset, doc._id),
+          documentId: doc._id,
           type: doc._type,
           docJson: doc,
           rev: doc._rev,

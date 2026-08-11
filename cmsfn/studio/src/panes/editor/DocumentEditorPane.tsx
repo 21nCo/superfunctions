@@ -10,7 +10,7 @@ import { buildPatchOps } from "../../editor/save/buildPatchOps.js";
 import { checkRichtextLimits } from "../../limits/precheck.js";
 import { renderField } from "../../editor/renderField.js";
 import { ConflictBanner } from "../../editor/conflicts/ConflictBanner.js";
-import type { CmsfnWorkflowMetadata } from "@cmsfn/core";
+import type { CmsfnWorkflowMetadata } from "cmsfn";
 import { WorkflowControls } from "../../workflow/WorkflowControls.js";
 import { PublishButton } from "../../publish/PublishButton.js";
 import { PreviewPane } from "../preview/PreviewPane.js";

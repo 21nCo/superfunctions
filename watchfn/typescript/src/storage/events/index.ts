@@ -17,7 +17,7 @@ export interface EventIndex {
 export class EventStore {
   private events: Map<string, StoredEvent> = new Map();
   private indexes: Map<string, EventIndex> = new Map();
-  private indexedFields: Set<string>; = new Set();
+  private indexedFields: Set<string> = new Set();
 
   constructor(indexFields: string[] = []) {
     indexFields.forEach((field) => this.createIndex(field));

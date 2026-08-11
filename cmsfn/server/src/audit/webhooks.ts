@@ -3,7 +3,7 @@
  * Calls ContentFn POST /contentfn/audit/webhooks.
  */
 
-import type { CmsfnWebhookDeliveryStatus } from "@cmsfn/core";
+import type { CmsfnWebhookDeliveryStatus } from "cmsfn";
 
 export interface AuditWebhooksConfig {
   contentfnBaseUrl: string;

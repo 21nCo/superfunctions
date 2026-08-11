@@ -34,7 +34,7 @@ async function fetchDocument(
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
       { field: "dataset", operator: "eq" as const, value: dataset },
-      { field: "id", operator: "eq" as const, value: docId },
+      { field: "documentId", operator: "eq" as const, value: docId },
     ],
   });
 

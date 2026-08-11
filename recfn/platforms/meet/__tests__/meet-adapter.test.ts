@@ -12,17 +12,23 @@ function createMockPage(evaluateResults: unknown[] = []): Page {
   });
   const waitForSelector = vi.fn().mockRejectedValue(new Error('timeout'));
   const waitForTimeout = vi.fn().mockResolvedValue(undefined);
+  const waitForFunction = vi.fn().mockResolvedValue(undefined);
   const $ = vi.fn().mockResolvedValue({ fill: vi.fn().mockResolvedValue(undefined) });
   const title = vi.fn().mockResolvedValue('Test Meeting - Google Meet');
   const keyboard = { press: vi.fn().mockResolvedValue(undefined) };
+  const getByRole = vi.fn(() => ({
+    click: vi.fn().mockResolvedValue(undefined),
+  }));
 
   return {
     evaluate,
     waitForSelector,
     waitForTimeout,
+    waitForFunction,
     $,
     title,
     keyboard,
+    getByRole,
     goto: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
   } as unknown as Page;
@@ -33,7 +39,7 @@ describe('MeetAdapter (TV-PLAT-002, PLAT-003)', () => {
   let adapter: MeetAdapter;
 
   beforeEach(() => {
-    mockPage = createMockPage([false, [], []]);
+    mockPage = createMockPage([false, { ok: true, waiting: true }, [], true, []]);
     adapter = new MeetAdapter({ testPage: mockPage });
   });
 
@@ -76,7 +82,9 @@ describe('MeetAdapter (TV-PLAT-002, PLAT-003)', () => {
   it('getAudioStream yields non-empty audio chunks when prerequisites are satisfied', async () => {
     mockPage = createMockPage([
       false,
+      { ok: true, waiting: true },
       [],
+      true,
       [],
       {
         ok: true,
@@ -118,7 +126,9 @@ describe('MeetAdapter (TV-PLAT-002, PLAT-003)', () => {
   it('fails with PLATFORM_CAPTURE_UNAVAILABLE when Meet capture prerequisites are missing', async () => {
     mockPage = createMockPage([
       false,
+      { ok: true, waiting: true },
       [],
+      true,
       [],
       {
         ok: false,

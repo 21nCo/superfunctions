@@ -10,6 +10,7 @@ import { ok, err } from "@contentfn/core";
 import { nowISO } from "../time/clock.js";
 import { generateRev } from "../rev/rev.js";
 import { CONTENTFN_TABLE_NAMES } from "./schema.js";
+import { documentStorageId } from "./documentIdentity.js";
 
 export interface RevisionsStorageConfig {
   db: Adapter;
@@ -175,7 +176,7 @@ export async function restoreRevision(
     model: CONTENTFN_TABLE_NAMES.docsDrafts,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "id", operator: "eq" as const, value: draftId },
+      { field: "documentId", operator: "eq" as const, value: draftId },
     ],
   });
 
@@ -184,7 +185,7 @@ export async function restoreRevision(
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "id", operator: "eq" as const, value: draftId },
+        { field: "documentId", operator: "eq" as const, value: draftId },
       ],
       data: {
         docJson: draftDoc,
@@ -197,7 +198,8 @@ export async function restoreRevision(
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       data: {
         dataset: input.dataset,
-        id: draftId,
+        id: documentStorageId(input.dataset, draftId),
+        documentId: draftId,
         type: restoredDoc._type,
         docJson: draftDoc,
         rev: newRev,

@@ -48,7 +48,6 @@ describe('browser-core session helpers', () => {
     );
 
     expect(browser.newContext).toHaveBeenCalledWith({
-      userDataDir: '/tmp/recfn-browser-core-test',
       permissions: ['microphone', 'camera'],
     });
     expect(page.goto).toHaveBeenCalledWith('https://example.test/meeting', {

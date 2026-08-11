@@ -3,7 +3,7 @@
  * WF-001: in_review requires role override (doc.publish) to publish.
  */
 
-import type { CmsfnWorkflowState } from "@cmsfn/core";
+import type { CmsfnWorkflowState } from "cmsfn";
 
 /**
  * Allow publish only when state is approved or published, or in_review with override.

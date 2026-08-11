@@ -2,8 +2,8 @@
  * Register custom field widgets. Deterministic resolution: last registration wins (TV-PLUG-002).
  */
 
-import type { WidgetSelector } from "@cmsfn/core";
-import { createWidgetRegistry } from "@cmsfn/core";
+import type { WidgetSelector } from "cmsfn";
+import { createWidgetRegistry } from "cmsfn";
 import type { ReactNode } from "react";
 
 export interface CustomWidgetProps {

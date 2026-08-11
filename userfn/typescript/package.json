@@ -1,6 +1,6 @@
 {
   "name": "userfn",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "User engagement platform SDK (Feature flags, Messaging, Surveys, Feedback)",
   "type": "module",
   "main": "dist/index.cjs",

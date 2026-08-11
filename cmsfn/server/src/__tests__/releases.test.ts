@@ -6,7 +6,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { createCmsfnServer } from "../index.js";
 import type { CmsfnServerConfig } from "../index.js";
 import { memoryAdapter } from "@superfunctions/db/adapters";
-import type { CmsfnRole } from "@cmsfn/core";
+import type { CmsfnRole } from "cmsfn";
 
 const CONTENTFN_BASE = "http://contentfn.test";
 

@@ -10,7 +10,7 @@ import {
   DEFAULT_QUEUE_NAME,
   createApp,
   type PipelineSpec,
-} from 'cifn';
+} from '@cifn/control-plane';
 import { Runner } from './runner.js';
 import { MemoryLogFnClient } from './reporting/logfn-client.js';
 import { executeArtifactUpload } from './steps/artifact-upload.js';

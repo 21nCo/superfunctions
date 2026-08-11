@@ -1,4 +1,4 @@
-"""W3C Trace Context propagation for distributed tracing."""
+/** W3C Trace Context propagation for distributed tracing. */
 
 export interface TraceContext {
   traceId: string;

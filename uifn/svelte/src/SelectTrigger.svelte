@@ -50,6 +50,9 @@
     }
 
     e.preventDefault();
+    if (!ctx.open) {
+      ctx.setOpen(true);
+    }
     const nextItem = ctx.handleKeyDown(e.key, ctx.highlightedItem);
     if (nextItem) {
       queueMicrotask(() => {

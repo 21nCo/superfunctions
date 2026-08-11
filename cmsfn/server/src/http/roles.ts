@@ -4,7 +4,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "http";
-import type { CmsfnEnvelope } from "@cmsfn/core";
+import type { CmsfnEnvelope } from "cmsfn";
 import { rolesList, rolesUpsert, rolesDelete } from "../storage/roles.js";
 import type { RolesStorageConfig } from "../storage/roles.js";
 
@@ -33,7 +33,7 @@ async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
 export async function handleRolesList(
   config: RolesHandlerConfig,
   req: IncomingMessage
-): Promise<CmsfnEnvelope<{ roles: import("@cmsfn/core").CmsfnRole[] }>> {
+): Promise<CmsfnEnvelope<{ roles: import("cmsfn").CmsfnRole[] }>> {
   if (config.authorizeRoles) {
     const allowed = await config.authorizeRoles(req);
     if (!allowed) {
@@ -54,7 +54,7 @@ export async function handleRolesList(
 export async function handleRolesUpsert(
   config: RolesHandlerConfig,
   req: IncomingMessage
-): Promise<CmsfnEnvelope<{ role: import("@cmsfn/core").CmsfnRole }>> {
+): Promise<CmsfnEnvelope<{ role: import("cmsfn").CmsfnRole }>> {
   if (config.authorizeRoles) {
     const allowed = await config.authorizeRoles(req);
     if (!allowed) {
@@ -66,7 +66,7 @@ export async function handleRolesUpsert(
   if (role == null) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "role is required", details: { path: "role" } } };
   }
-  return rolesUpsert(config, { role: role as import("@cmsfn/core").CmsfnRole });
+  return rolesUpsert(config, { role: role as import("cmsfn").CmsfnRole });
 }
 
 /**

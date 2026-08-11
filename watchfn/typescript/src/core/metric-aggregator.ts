@@ -47,18 +47,19 @@ interface RollingWindow {
 
 export class MetricAggregator {
   private windows: Map<string, RollingWindow> = new Map();
-  private aggregations: Map<string, Map<number, AggregatedMetric>> = new Map();
+  private aggregations: Map<string, Map<string, AggregatedMetric>> = new Map();
 
   constructor(
     private options: {
       intervals?: AggregationInterval[];
       functions?: AggregationFunction[];
       windowSize?: number;
+      maxDataPoints?: number;
     } = {}
   ) {
     this.options.intervals = options.intervals || ["1m", "5m", "1h"];
     this.options.functions = options.functions || ["count", "avg", "p95"];
-    this.options.windowSize = options.windowSize || 1000;
+    this.options.windowSize = options.windowSize || options.maxDataPoints || 1000;
   }
 
   /**
@@ -104,7 +105,30 @@ export class MetricAggregator {
       function?: AggregationFunction;
       tags?: Record<string, string>;
     }
+  ): AggregatedMetric[];
+  get(
+    metric: string,
+    interval: AggregationInterval,
+    from: number,
+    to: number,
+    aggregationFunction?: AggregationFunction
+  ): AggregatedMetric[];
+  get(
+    metric: string,
+    optionsOrInterval: {
+      interval: AggregationInterval;
+      from: number;
+      to: number;
+      function?: AggregationFunction;
+      tags?: Record<string, string>;
+    } | AggregationInterval,
+    from?: number,
+    to?: number,
+    aggregationFunction?: AggregationFunction
   ): AggregatedMetric[] {
+    const options = typeof optionsOrInterval === "string"
+      ? { interval: optionsOrInterval, from: from!, to: to!, function: aggregationFunction }
+      : optionsOrInterval;
     const key = this.getAggregationKey(metric, options.interval, options.tags);
     const aggs = this.aggregations.get(key);
 
@@ -113,8 +137,9 @@ export class MetricAggregator {
     }
 
     const results: AggregatedMetric[] = [];
-    for (const [timestamp, agg] of aggs) {
-      if (timestamp >= options.from && timestamp <= options.to) {
+    for (const agg of aggs.values()) {
+      const bucketEnd = agg.timestamp + this.getIntervalMs(options.interval);
+      if (bucketEnd > options.from && agg.timestamp <= options.to) {
         if (!options.function || agg.function === options.function) {
           results.push(agg);
         }
@@ -124,6 +149,19 @@ export class MetricAggregator {
     return results.sort((a, b) => a.timestamp - b.timestamp);
   }
 
+  getStats(): { dataPoints: number; aggregations: number } {
+    return {
+      dataPoints: Array.from(this.windows.values()).reduce(
+        (total, window) => total + window.values.length,
+        0
+      ),
+      aggregations: Array.from(this.aggregations.values()).reduce(
+        (total, entries) => total + entries.size,
+        0
+      ),
+    };
+  }
+
   /**
    * Clear old aggregations based on retention
    */
@@ -131,13 +169,13 @@ export class MetricAggregator {
     const cutoff = Date.now() - retentionMs;
 
     for (const [key, aggs] of this.aggregations) {
-      const toDelete: number[] = [];
-      for (const [timestamp] of aggs) {
-        if (timestamp < cutoff) {
-          toDelete.push(timestamp);
+      const toDelete: string[] = [];
+      for (const [aggregationKey, aggregation] of aggs) {
+        if (aggregation.timestamp < cutoff) {
+          toDelete.push(aggregationKey);
         }
       }
-      toDelete.forEach((timestamp) => aggs.delete(timestamp));
+      toDelete.forEach((aggregationKey) => aggs.delete(aggregationKey));
 
       if (aggs.size === 0) {
         this.aggregations.delete(key);
@@ -200,7 +238,7 @@ export class MetricAggregator {
         this.aggregations.set(aggKey, aggs);
       }
 
-      aggs.set(bucketTimestamp, {
+      aggs.set(`${bucketTimestamp}:${func}`, {
         metric,
         interval,
         timestamp: bucketTimestamp,

@@ -1,5 +1,9 @@
 import { vi } from 'vitest';
 
+if (typeof globalThis.PointerEvent === 'undefined') {
+  globalThis.PointerEvent = MouseEvent as typeof PointerEvent;
+}
+
 const mockContext = {
   fillStyle: '',
   strokeStyle: '',

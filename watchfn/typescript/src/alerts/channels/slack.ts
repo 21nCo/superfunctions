@@ -1,4 +1,4 @@
-"""Slack notification channel."""
+/** Slack notification channel. */
 
 export interface SlackWebhookPayload {
   text?: string;

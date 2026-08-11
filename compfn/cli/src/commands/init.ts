@@ -1,5 +1,5 @@
 import { loadConfig } from "../config.js";
-import { compFn, createSchemaIfSupported } from "@superfunctions/compfn";
+import { compFn, createSchemaIfSupported } from "compfn";
 
 export async function initCommand(options: { config?: string }): Promise<void> {
   try {
