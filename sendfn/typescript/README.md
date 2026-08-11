@@ -1,11 +1,11 @@
 # Sendfn TypeScript SDK
 
-The `sendfn` SDK is a unified communications platform that provides email, SMS, and push notification capabilities. It follows the Superfunctions pattern, utilizing shared database and HTTP abstractions with a modular adapter system for providers.
+The `sendfn` SDK is a unified communications platform that provides email, SMS, WhatsApp, and push notification capabilities. It follows the Superfunctions pattern, utilizing shared database and HTTP abstractions with a modular adapter system for providers.
 
 ## Features
 
-- **Unified API**: Send emails, SMS, and push notifications through a single interface.
-- **Adapter-Based Providers**: Inject your preferred providers (for example AWS SES for email, APNS/FCM for push, and the shipped console SMS adapter for development).
+- **Unified API**: Send emails, SMS, WhatsApp messages, and push notifications through a single interface.
+- **Adapter-Based Providers**: Inject your preferred providers (for example AWS SES for email, Meta WhatsApp Cloud API for WhatsApp, APNS/FCM for push, and the shipped console SMS adapter for development).
 - **Built-in API Router**: Optional REST API endpoints for remote management.
 - **Template Engine**: Lightweight engine with default templates (Welcome, Password Reset, etc.).
 - **Suppression Management**: Built-in handling for email bounces and complaints.
@@ -37,12 +37,23 @@ npm run release:verify
 ### 1. Initialize the Client
 
 ```typescript
-import { sendfn, awsSesAdapter, apnsAdapter, consoleSmsAdapter } from 'sendfn';
+import { sendfn, awsSesAdapter, consoleSmsAdapter } from 'sendfn';
+import { apnsAdapter } from 'sendfn/adapters/apns';
+import { metaWhatsAppAdapter } from 'sendfn/adapters/meta-whatsapp';
 import type { Adapter } from '@superfunctions/db';
 
 // 1. Setup your shared database adapter.
 // Replace this placeholder with drizzle/prisma/kysely/etc from @superfunctions/db.
 const database = {} as Adapter;
+
+const whatsappAccessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+const whatsappPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+if (!whatsappAccessToken || !whatsappPhoneNumberId) {
+  throw new Error(
+    'WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID are required',
+  );
+}
 
 // 2. Initialize sendfn with desired providers
 const client = sendfn({
@@ -53,6 +64,10 @@ const client = sendfn({
     region: 'us-east-1',
   }),
   smsProvider: consoleSmsAdapter(), // Logs SMS to console for development
+  whatsappProvider: metaWhatsAppAdapter({
+    accessToken: whatsappAccessToken,
+    phoneNumberId: whatsappPhoneNumberId,
+  }),
   pushProviders: {
     ios: apnsAdapter({
       keyId: process.env.APNS_KEY_ID!,
@@ -86,6 +101,7 @@ app.listen(3000);
 // Endpoints (Requires 'Authorization: Bearer <adminKey>'):
 // POST /email - Send an email
 // POST /sms   - Send an SMS
+// POST /whatsapp - Send a WhatsApp message
 // POST /push             - Send a push notification
 // POST /devices          - Register a native/web device token
 // GET  /devices          - List active device tokens for a user
@@ -102,6 +118,7 @@ interface SendfnConfig {
   database: Adapter;           // From @superfunctions/db
   emailProvider?: EmailProvider; // e.g., awsSesAdapter()
   smsProvider?: SmsProvider;     // e.g., consoleSmsAdapter()
+  whatsappProvider?: WhatsAppProvider; // e.g., metaWhatsAppAdapter()
   email?: EmailConfig;         // Default settings (fromEmail, fromName)
   pushProviders?: Partial<Record<Platform, PushProvider>>; // APNS/FCM/custom adapters
   push?: PushConfig;           // Legacy credentials for FCM/APNS
@@ -136,6 +153,16 @@ await client.sms({
   userId: 'user-123',
   to: '+1234567890',
   message: 'Your verification code is 554433',
+});
+```
+
+### Sending WhatsApp Messages
+
+```typescript
+await client.whatsapp({
+  userId: 'user-123',
+  to: '+1234567890',
+  message: 'Your reminder is due',
 });
 ```
 
@@ -185,6 +212,7 @@ The database adapter expects the following models to be present in your database
 
 - `email_transactions`
 - `sms_transactions`
+- `whatsapp_transactions`
 - `push_notifications`
 - `device_tokens`
 - `suppression_list`

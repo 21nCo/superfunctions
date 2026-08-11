@@ -1,7 +1,13 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/edge.ts'],
+  entry: {
+    index: 'src/index.ts',
+    edge: 'src/edge.ts',
+    'adapters/meta-whatsapp': 'src/whatsapp/meta-cloud-adapter.ts',
+    'adapters/apns': 'src/push/apns.ts',
+    'adapters/fcm': 'src/push/fcm.ts',
+  },
   format: ['cjs', 'esm'],
   dts: true,
   splitting: false,

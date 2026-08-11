@@ -64,6 +64,28 @@ export function getSendFnSchema(_options: SendfnSchemaOptions = {}): TableSchema
       ],
     },
     {
+      modelName: 'whatsapp_transactions',
+      fields: {
+        id: { type: 'string', required: true },
+        userId: { type: 'string', required: true, fieldName: 'user_id' },
+        to: { type: 'string', required: true },
+        message: { type: 'string', required: true },
+        provider: { type: 'string', required: true },
+        providerMessageId: { type: 'string', required: false, fieldName: 'provider_message_id' },
+        status: { type: 'string', required: true },
+        sentAt: { type: 'date', required: false, fieldName: 'sent_at' },
+        metadata: { type: 'json', required: true },
+        createdAt: { type: 'date', required: true, fieldName: 'created_at' },
+        updatedAt: { type: 'date', required: true, fieldName: 'updated_at' },
+      },
+      indexes: [
+        { name: 'idx_sendfn_whatsapp_transactions_user', fields: ['userId'] },
+        { name: 'idx_sendfn_whatsapp_transactions_status', fields: ['status'] },
+        { name: 'idx_sendfn_whatsapp_transactions_provider_message', fields: ['providerMessageId'] },
+        { name: 'idx_sendfn_whatsapp_transactions_created', fields: ['createdAt'] },
+      ],
+    },
+    {
       modelName: 'push_notifications',
       fields: {
         id: { type: 'string', required: true },

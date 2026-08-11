@@ -56,6 +56,16 @@ export class SmsProviderError extends SendfnError {
   }
 }
 
+export class WhatsAppProviderError extends SendfnError {
+  constructor(message: string, options: SendfnErrorOptions = {}) {
+    super(message, {
+      code: 'SENDFN_WHATSAPP_PROVIDER_ERROR',
+      retryable: true,
+      ...options,
+    });
+  }
+}
+
 export class SuppressionError extends SendfnError {
   constructor(message: string, options: SendfnErrorOptions = {}) {
     super(message, {

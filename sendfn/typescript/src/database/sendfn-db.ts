@@ -6,6 +6,8 @@ import {
   CreateEmailTransaction,
   SmsTransaction,
   CreateSmsTransaction,
+  WhatsAppTransaction,
+  CreateWhatsAppTransaction,
   PushNotification,
   CreatePushNotification,
   DeviceToken,
@@ -32,6 +34,13 @@ export interface FindSmsParams {
   offset?: number;
 }
 
+export interface FindWhatsAppParams {
+  userId?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface FindPushParams {
   userId?: string;
   status?: string;
@@ -47,7 +56,7 @@ export interface FindSuppressionParams {
 
 export interface FindEventParams {
   referenceId?: string;
-  referenceType?: 'email' | 'push' | 'sms';
+  referenceType?: 'email' | 'push' | 'sms' | 'whatsapp';
   providerMessageId?: string;
   provider?: string;
   userId?: string;
@@ -100,12 +109,14 @@ export class SendfnDb {
 
   private async getReferenceRecord(
     event: Pick<CommunicationEvent, 'referenceId' | 'referenceType'>
-  ): Promise<EmailTransaction | SmsTransaction | PushNotification | null> {
+  ): Promise<EmailTransaction | SmsTransaction | WhatsAppTransaction | PushNotification | null> {
     switch (event.referenceType) {
       case 'email':
         return this.getEmailTransaction(event.referenceId);
       case 'sms':
         return this.getSmsTransaction(event.referenceId);
+      case 'whatsapp':
+        return this.getWhatsAppTransaction(event.referenceId);
       case 'push':
         return this.getPushNotification(event.referenceId);
       default:
@@ -208,6 +219,52 @@ export class SendfnDb {
 
     return this.adapter.findMany<SmsTransaction>({
       model: 'sms_transactions',
+      where,
+      limit: params.limit,
+      offset: params.offset,
+      orderBy: [{ field: 'createdAt', direction: 'desc' }]
+    });
+  }
+
+  // --- WhatsApp Transactions ---
+
+  async createWhatsAppTransaction(data: CreateWhatsAppTransaction): Promise<WhatsAppTransaction> {
+    return this.adapter.create<WhatsAppTransaction>({
+      model: 'whatsapp_transactions',
+      data: {
+        ...data,
+        id: uuidv4(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+    });
+  }
+
+  async updateWhatsAppTransaction(id: string, data: Partial<WhatsAppTransaction>): Promise<WhatsAppTransaction> {
+    return this.adapter.update<WhatsAppTransaction>({
+      model: 'whatsapp_transactions',
+      where: [{ field: 'id', operator: 'eq', value: id }],
+      data: {
+        ...data,
+        updatedAt: new Date(),
+      }
+    });
+  }
+
+  async getWhatsAppTransaction(id: string): Promise<WhatsAppTransaction | null> {
+    return this.adapter.findOne<WhatsAppTransaction>({
+      model: 'whatsapp_transactions',
+      where: [{ field: 'id', operator: 'eq', value: id }]
+    });
+  }
+
+  async findWhatsAppTransactions(params: FindWhatsAppParams): Promise<WhatsAppTransaction[]> {
+    const where: any[] = [];
+    if (params.userId) where.push({ field: 'userId', operator: 'eq', value: params.userId });
+    if (params.status) where.push({ field: 'status', operator: 'eq', value: params.status });
+
+    return this.adapter.findMany<WhatsAppTransaction>({
+      model: 'whatsapp_transactions',
       where,
       limit: params.limit,
       offset: params.offset,
@@ -425,7 +482,10 @@ export class SendfnDb {
     });
   }
 
-  async getEventsByReference(referenceId: string, referenceType: 'email' | 'push' | 'sms'): Promise<CommunicationEvent[]> {
+  async getEventsByReference(
+    referenceId: string,
+    referenceType: 'email' | 'push' | 'sms' | 'whatsapp'
+  ): Promise<CommunicationEvent[]> {
     return this.adapter.findMany<CommunicationEvent>({
       model: 'communication_events',
       where: [
