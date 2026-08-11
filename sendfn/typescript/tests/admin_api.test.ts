@@ -166,6 +166,17 @@ describe('admin API envelopes', () => {
     });
   });
 
+  it('rejects unsupported runtime push-provider keys', () => {
+    expect(() =>
+      sendfn({
+        database: new StrongMockAdapter() as any,
+        pushProviders: {
+          windows: new FakePushProvider(),
+        } as any,
+      } satisfies SendfnConfig)
+    ).toThrowError('Unsupported push provider platform: windows');
+  });
+
   it('exposes device-token admin routes used by native push clients', async () => {
     const client = sendfn({
       database: new StrongMockAdapter() as any,
@@ -229,6 +240,61 @@ describe('admin API envelopes', () => {
             platform: 'ios',
           },
         ],
+      },
+    });
+  });
+
+  it('returns validation envelopes for malformed device refresh and query inputs', async () => {
+    const client = sendfn({
+      database: new StrongMockAdapter() as any,
+      enableApi: true,
+      apiConfig: {
+        adminKey: 'top-secret',
+      },
+    } satisfies SendfnConfig);
+
+    const headers = {
+      authorization: 'Bearer top-secret',
+      'content-type': 'application/json',
+    };
+    const malformedRefresh = await (client.router as any).handle(
+      new Request('http://localhost/devices/refresh', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify([]),
+      }),
+    );
+    expect(malformedRefresh.status).toBe(400);
+    await expect(malformedRefresh.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'SENDFN_VALIDATION_ERROR',
+      },
+    });
+
+    const invalidPlatform = await (client.router as any).handle(
+      new Request('http://localhost/devices?userId=user-1&platform=windows', {
+        headers,
+      }),
+    );
+    expect(invalidPlatform.status).toBe(400);
+    await expect(invalidPlatform.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'SENDFN_VALIDATION_ERROR',
+      },
+    });
+
+    const blankUser = await (client.router as any).handle(
+      new Request('http://localhost/devices?userId=%20%20%20', {
+        headers,
+      }),
+    );
+    expect(blankUser.status).toBe(400);
+    await expect(blankUser.json()).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'SENDFN_VALIDATION_ERROR',
       },
     });
   });

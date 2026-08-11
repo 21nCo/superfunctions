@@ -191,6 +191,7 @@ describe('push and device phase 5 contracts', () => {
     const provider = Object.create(ApnsProvider.prototype) as ApnsProvider & {
       client: { send(notification: { deviceToken: string }): Promise<void> };
     };
+    (provider as any).config = { bundleId: 'org.example.app' };
     provider.client = {
       send: async () => {
         active += 1;
@@ -214,6 +215,18 @@ describe('push and device phase 5 contracts', () => {
       code: 'SENDFN_INTERNAL_ERROR',
       message: 'APNS concurrency cap exceeded',
     });
+  });
+
+  it('rejects APNS configuration without a non-empty bundle ID topic', () => {
+    expect(
+      () =>
+        new ApnsProvider({
+          bundleId: '   ',
+          keyId: 'key-id',
+          teamId: 'team-id',
+          key: 'signing-key',
+        })
+    ).toThrowError('APNS configuration requires a non-empty `bundleId` topic');
   });
 
   it('returns the first stable platform notification and deactivates invalid tokens before resolution', async () => {
@@ -331,6 +344,28 @@ describe('push and device phase 5 contracts', () => {
       code: 'SENDFN_VALIDATION_ERROR',
       message: '`token` is required to register a device',
     });
+
+    await expect(
+      deviceManager.registerDevice({
+        userId: 42,
+        token: 'token',
+        platform: 'ios',
+      } as any)
+    ).rejects.toMatchObject({
+      code: 'SENDFN_VALIDATION_ERROR',
+      message: '`userId` is required to register a device token',
+    });
+
+    await expect(
+      deviceManager.registerDevice({
+        userId: 'user-1',
+        token: false,
+        platform: 'ios',
+      } as any)
+    ).rejects.toMatchObject({
+      code: 'SENDFN_VALIDATION_ERROR',
+      message: '`token` is required to register a device',
+    });
   });
 
   it('refreshes device tokens by preserving metadata and rejects mismatched old tokens', async () => {
@@ -363,6 +398,29 @@ describe('push and device phase 5 contracts', () => {
       code: 'SENDFN_VALIDATION_ERROR',
       message: 'Old device token was not found for the supplied user and platform',
     });
+  });
+
+  it('validates refresh inputs before deactivating the old token', async () => {
+    await deviceManager.registerDevice({
+      userId: 'user-123',
+      token: 'old-token',
+      platform: 'android',
+    });
+
+    await expect(
+      deviceManager.refreshDeviceToken(
+        'old-token',
+        42 as any,
+        'user-123',
+        'android'
+      )
+    ).rejects.toMatchObject({
+      code: 'SENDFN_VALIDATION_ERROR',
+      message: '`token` is required to register a device',
+    });
+
+    const activeTokens = await deviceManager.getActiveDevices('user-123', 'android');
+    expect(activeTokens.map((device) => device.token)).toEqual(['old-token']);
   });
 
   it('reactivates existing tuples, cleans up inactive devices, and keeps bulk push bounded', async () => {

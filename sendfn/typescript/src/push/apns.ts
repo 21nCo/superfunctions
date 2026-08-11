@@ -20,11 +20,22 @@ export class ApnsProvider implements PushProvider {
   private client: ApnsClient;
 
   constructor(private config: ApnsConfig) {
+    const bundleId = config.bundleId?.trim();
+    if (!bundleId) {
+      throw new PushProviderError('APNS configuration requires a non-empty `bundleId` topic', {
+        retryable: false,
+      });
+    }
+
+    this.config = {
+      ...config,
+      bundleId,
+    };
     this.client = new ApnsClient({
       team: config.teamId,
       keyId: config.keyId,
       signingKey: config.key,
-      defaultTopic: config.bundleId,
+      defaultTopic: bundleId,
     });
   }
 
@@ -34,7 +45,7 @@ export class ApnsProvider implements PushProvider {
 
   async sendPush(params: SendPushRequest): Promise<SendPushResponse> {
     const invalidTokens: string[] = [];
-    const bundleId = this.config?.bundleId;
+    const bundleId = this.config.bundleId;
 
     const results = await mapWithConcurrency(
       params.deviceTokens,

@@ -56,7 +56,7 @@ export interface FcmConfig {
 }
 
 export interface ApnsConfig {
-  bundleId?: string;
+  bundleId: string;
   keyId: string;
   teamId: string;
   key: string;

@@ -55,6 +55,12 @@ interface CanonicalMeta {
   version: 'v0';
 }
 
+const SUPPORTED_PUSH_PLATFORMS = ['ios', 'android', 'web'] as const;
+
+function isPlatform(value: string): value is Platform {
+  return (SUPPORTED_PUSH_PLATFORMS as readonly string[]).includes(value);
+}
+
 function createRequestId(request: Request): string {
   return request.headers.get('x-request-id') ?? `req_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
 }
@@ -116,6 +122,16 @@ export class Sendfn implements SendfnClient {
   public router: any;
 
   constructor(private config: SendfnConfig) {
+    const configuredPushProviders = config.pushProviders ?? {};
+    const unsupportedPushPlatforms = Object.keys(configuredPushProviders).filter(
+      (platform) => !isPlatform(platform)
+    );
+    if (unsupportedPushPlatforms.length > 0) {
+      throw new ValidationError(
+        `Unsupported push provider platform${unsupportedPushPlatforms.length === 1 ? '' : 's'}: ${unsupportedPushPlatforms.join(', ')}`
+      );
+    }
+
     // Initialize Database Wrapper
     this.db = new SendfnDb(wrapWithSchema(config.database, getSchema()));
     
@@ -178,7 +194,8 @@ export class Sendfn implements SendfnClient {
     }
 
     // Initialize Push Providers
-    for (const [platform, provider] of Object.entries(config.pushProviders ?? {}) as Array<[Platform, PushProvider | undefined]>) {
+    for (const platform of SUPPORTED_PUSH_PLATFORMS) {
+        const provider = configuredPushProviders[platform];
         if (!provider) {
             continue;
         }
@@ -363,14 +380,18 @@ export class Sendfn implements SendfnClient {
                   handler: async (req: Request, ctx: any) =>
                     withEnvelope(req, async () => {
                       const userId = ctx.query.get('userId');
-                      const platform = ctx.query.get('platform') as Platform | null;
+                      const platform = ctx.query.get('platform');
 
-                      if (!userId) {
+                      if (!userId?.trim()) {
                         throw new ValidationError('`userId` query parameter is required');
                       }
 
+                      if (platform !== null && !isPlatform(platform)) {
+                        throw new ValidationError('`platform` must be ios, android, or web');
+                      }
+
                       return {
-                        devices: await this.getDevices(userId, platform ?? undefined),
+                        devices: await this.getDevices(userId.trim(), platform ?? undefined),
                       };
                     }, { validationMessage: 'Request query failed validation' })
               },
@@ -383,8 +404,24 @@ export class Sendfn implements SendfnClient {
                     withEnvelope(
                       req,
                       async () => {
-                        const body = await ctx.json();
-                        return this.refreshDeviceToken(body.oldToken, body.newToken, body.userId, body.platform);
+                        let body: unknown;
+                        try {
+                          body = await ctx.json();
+                        } catch {
+                          throw new ValidationError('Request body must be valid JSON');
+                        }
+
+                        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+                          throw new ValidationError('Request body must be a JSON object');
+                        }
+
+                        const refresh = body as Record<string, unknown>;
+                        return this.refreshDeviceToken(
+                          refresh.oldToken as string,
+                          refresh.newToken as string,
+                          refresh.userId as string,
+                          refresh.platform as Platform
+                        );
                       },
                       { validationMessage: 'Request body failed validation' }
                     )
