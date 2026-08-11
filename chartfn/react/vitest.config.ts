@@ -9,7 +9,6 @@ const reactDomRoot = path.dirname(require.resolve("react-dom/package.json"));
 export default defineConfig({
   resolve: {
     alias: {
-      chartfn: path.resolve(__dirname, "..", "src", "index.ts"),
       react: reactRoot,
       "react-dom": reactDomRoot,
       "react/jsx-runtime": path.join(reactRoot, "jsx-runtime.js"),
