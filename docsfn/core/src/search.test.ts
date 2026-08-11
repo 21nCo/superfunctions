@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { buildManifest } from "./manifest";
 import { createSourceEntryId } from "./provider";
 import { buildSearchIndex, resolveSearchScopeForRoute } from "./search";
+import type { DocsSearchEngineAdapter } from "./search-adapter";
 import type {
   DocsCollection,
   DocsContentProvider,
@@ -256,6 +257,51 @@ describe("buildSearchIndex", () => {
     ]);
   });
 
+  it("can build through a custom search adapter boundary", async () => {
+    const indexedIds: Array<string | number> = [];
+    const adapter: DocsSearchEngineAdapter = {
+      name: "test-static",
+      async createIndexEngine() {
+        return {
+          add(input) {
+            indexedIds.push(input.id);
+          },
+          exportSnapshot() {
+            return {
+              postings: [],
+              stats: [],
+              documents: indexedIds.map((docId) => ({ docId, payload: {} })),
+              vocabulary: [],
+            };
+          },
+        };
+      },
+      async createRuntime() {
+        return {
+          async query() {
+            return [];
+          },
+        };
+      },
+    };
+
+    const artifact = await buildSearchIndex(createManifest(), {
+      search: {
+        enabled: true,
+        scopes: ["docs", "api", "blog"],
+      },
+      searchAdapter: adapter,
+    });
+
+    expect(artifact.engine).toBe("test-static");
+    expect(indexedIds).toEqual([
+      "api:search",
+      "blog:release",
+      "docs:adapter",
+      "docs:index",
+    ]);
+  });
+
   it("is deterministic even when manifest object insertion order changes (DET-001)", async () => {
     const manifestA = createManifest();
     const manifestB = createManifest();
@@ -429,11 +475,11 @@ describe("buildSearchIndex", () => {
           enabled: true,
           scopes: ["docs", "api", "blog"],
           routeScopeOverrides: [
-            { pattern: "/docs/api/**", scope: "guides" as unknown as "docs" },
+            { pattern: "/docs/api/**", scope: "" as unknown as "docs" },
           ],
         },
       })
-    ).rejects.toThrowError(/DOCS_SEARCH_SCOPE_INVALID|must be one of docs, api, blog/);
+    ).rejects.toThrowError(/DOCS_SEARCH_SCOPE_INVALID|scope is required/);
   });
 
   it("throws DOCS_SEARCH_SCOPE_INVALID for invalid override patterns even when search is disabled", async () => {

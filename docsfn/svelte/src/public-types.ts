@@ -58,16 +58,50 @@ export interface TopBarDropdown {
 
 export type TopBarItem = TopBarLink | TopBarDropdown;
 
+export interface DocsFooterLink {
+  label: string;
+  href: string;
+  external?: boolean;
+}
+
+export type PageFeedbackValue = "helpful" | "not-helpful";
+
+export interface DatedCollectionListProps {
+  posts: unknown[];
+  title?: string;
+  description?: string;
+  embedded?: boolean;
+  emptyLabel?: string;
+  ariaLabel?: string;
+  getPostHref?: (post: unknown) => string;
+}
+
+export interface DatedCollectionEntryProps {
+  post: unknown;
+  collectionLabel?: string;
+  collectionHref?: string;
+  embedded?: boolean;
+  showBackLink?: boolean;
+}
+
 export const DocsLayout: ComponentType;
+export const DocsSiteShell: ComponentType;
+export const DocsFooter: ComponentType;
 export const DocsContent: ComponentType;
 export const DocsSidebar: ComponentType;
 export const SidebarGroup: ComponentType;
 export const DocsToc: ComponentType;
 export const DocsSearch: ComponentType;
 export const TopBar: ComponentType;
+export const DatedCollectionList: ComponentType;
+export const DatedCollectionEntry: ComponentType;
+export const ChangelogList: ComponentType;
+export const ChangelogEntry: ComponentType;
 export const Pagination: ComponentType;
 export const Breadcrumbs: ComponentType;
 export const VersionSwitcher: ComponentType;
 export const ApiReferenceRenderer: ComponentType;
 export const EmbeddedPage: ComponentType;
+export const PageActions: ComponentType;
+export const YouTubeEmbed: ComponentType;
 `;

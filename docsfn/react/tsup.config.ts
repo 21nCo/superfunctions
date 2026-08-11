@@ -11,6 +11,7 @@ export default defineConfig({
     "src/DocsContent.tsx",
     "src/ApiReferenceRenderer.tsx",
     "src/EmbeddedPage.tsx",
+    "src/YouTubeEmbed.tsx",
   ],
   format: ["cjs", "esm"],
   dts: true,

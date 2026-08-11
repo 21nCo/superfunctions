@@ -236,7 +236,7 @@ All paths are resolved relative to **`content.root`** unless already absolute.
 | **Type** | `string` |
 | **Required** | no |
 | **Default** | `"blog"` |
-| **Description** | Blog Markdown directory. |
+| **Description** | Legacy blog Markdown directory. For changelog or other first-class dated sections, prefer `collections.<id>.dir`. |
 
 ### `content.apiDir`
 
@@ -307,6 +307,107 @@ sidebars: {
 
 ---
 
+## `collections`
+
+Named collections let docsfn reuse the dated Markdown engine for product sections that are not blogs, such as changelog.
+
+Each key becomes a collection id. For example, `collections.changelog` creates `manifest.collections.changelog`, reads from its own folder, and can use the `changelog` search scope.
+
+### `collections.<id>.dir`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | yes |
+| **Description** | Folder containing one `.md` / `.mdx` file per dated update. |
+
+### `collections.<id>.routeBase`
+
+| | |
+| --- | --- |
+| **Type** | `string` starting with `/` |
+| **Required** | yes |
+| **Description** | Public list/post/tag route base for this collection. |
+
+### `collections.<id>.feedPath`
+
+| | |
+| --- | --- |
+| **Type** | `string` starting with `/` |
+| **Required** | no |
+| **Default** | `${routeBase}/rss.xml` |
+| **Description** | Public RSS feed path for this collection. |
+
+### `collections.<id>.label`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Description** | Display label such as `"Changelog"`. |
+
+### `collections.<id>.scope`
+
+| | |
+| --- | --- |
+| **Type** | `string` |
+| **Required** | no |
+| **Default** | collection id |
+| **Description** | Search scope used by posts in this collection. |
+
+**Changelog example**
+
+```typescript
+collections: {
+  changelog: {
+    dir: "content/changelog",
+    routeBase: "/changelog",
+    feedPath: "/changelog/rss.xml",
+    label: "Changelog",
+    scope: "changelog",
+  },
+},
+```
+
+---
+
+## `blog`
+
+The blog section controls the legacy blog route surface for dated Markdown posts. It remains supported for existing docs sites. For changelog, use `collections.changelog`.
+
+### `blog.routeBase`
+
+| | |
+| --- | --- |
+| **Type** | `string` starting with `/` |
+| **Required** | no |
+| **Default** | `${site.basePath}/blog` |
+| **Description** | Public list/post/tag route base for the dated post collection. |
+
+### `blog.feedPath`
+
+| | |
+| --- | --- |
+| **Type** | `string` starting with `/` |
+| **Required** | no |
+| **Default** | `${blog.routeBase}/rss.xml` |
+| **Description** | Public RSS feed path. |
+
+**Blog example**
+
+```typescript
+content: {
+  root: ".",
+  docsDir: "content/docs",
+  blogDir: "content/blog",
+},
+blog: {
+  routeBase: "/docs/blog",
+},
+```
+
+---
+
 ## `search`
 
 ### `search.enabled`
@@ -359,9 +460,9 @@ sidebars: {
 ```typescript
 search: {
   enabled: true,
-  scopes: ["docs", "api"],
+  scopes: ["docs", "api", "changelog"],
   routeScopeOverrides: [
-    { pattern: "docs/api/**", scope: "api" },
+    { pattern: "/docs/api/**", scope: "api" },
   ],
 },
 ```
@@ -424,9 +525,20 @@ const config: DocsConfig = {
       docs: { title: "Docs", include: ["docs/**"] },
     },
   },
+  blog: {
+    routeBase: "/docs/blog",
+  },
+  collections: {
+    changelog: {
+      dir: "content/changelog",
+      routeBase: "/changelog",
+      label: "Changelog",
+      scope: "changelog",
+    },
+  },
   search: {
     enabled: true,
-    scopes: ["docs", "api", "blog"],
+    scopes: ["docs", "api", "blog", "changelog"],
     bodyIndexing: "summary",
   },
   auth: { enabled: false, mode: "public" },

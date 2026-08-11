@@ -22,6 +22,7 @@ import {
 import type { DocsProviderWatchMetadata } from "@docsfn/core";
 import type { DocsSearchArtifact } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
+import { migrateDocusaurus } from "./migrate-docusaurus";
 
 const cli = cac("docsfn");
 
@@ -37,6 +38,28 @@ interface LlmsCommandOptions extends BuildCommandOptions {
   staticDir?: string;
   embedOpenapi?: boolean;
   noBlog?: boolean;
+}
+
+interface DocusaurusMigrateCommandOptions {
+  source?: string;
+  out?: string;
+  outDir?: string;
+  docsDir?: string;
+  pagesDir?: string;
+  changelogDir?: string;
+  staticDir?: string;
+  sidebars?: string;
+  sidebarId?: string;
+  docsBasePath?: string;
+  pagesBasePath?: string;
+  changelogBasePath?: string;
+  oldDocsBasePath?: string;
+  oldPagesBasePath?: string;
+  oldChangelogBasePath?: string;
+  fromOrigin?: string;
+  toOrigin?: string;
+  onlySidebarDocs?: boolean;
+  dryRun?: boolean;
 }
 
 interface PipelineInput {
@@ -107,14 +130,18 @@ async function loadConfig(cwd: string, configPath?: string): Promise<DocsConfig>
   });
 }
 
-function resolveCollectionDirectories(config: DocsConfig): Record<string, string> {
+function resolveCollectionDirectories(config: DocsConfig): Record<string, string[]> {
   const root = path.resolve(config.content.root);
+  const directories = (value: string | string[] | undefined, fallback: string): string[] =>
+    (Array.isArray(value) ? value : [value ?? fallback]).map((directory) =>
+      path.resolve(root, directory)
+    );
   return {
-    docs: path.resolve(root, config.content.docsDir ?? "content/docs"),
-    pages: path.resolve(root, config.content.pagesDir ?? "pages"),
-    blog: path.resolve(root, config.content.blogDir ?? "blog"),
-    api: path.resolve(root, config.content.apiDir ?? "api"),
-    assets: path.resolve(root, config.content.assetsDir ?? "public"),
+    docs: directories(config.content.docsDir, "content/docs"),
+    pages: directories(config.content.pagesDir, "pages"),
+    blog: directories(config.content.blogDir, "blog"),
+    api: directories(config.content.apiDir, "api"),
+    assets: directories(config.content.assetsDir, "public"),
   };
 }
 
@@ -146,15 +173,20 @@ function computeInvalidatedPaths(input: {
     }
 
     let matchedCollection = false;
-    for (const [collection, directory] of Object.entries(directories)) {
-      const absoluteDirectory = path.resolve(directory);
-      if (
-        absolutePath === absoluteDirectory ||
-        absolutePath.startsWith(`${absoluteDirectory}${path.sep}`)
-      ) {
-        const relative = normalizePath(path.relative(absoluteDirectory, absolutePath));
-        invalidated.add(`${collection}:${relative || "*"}`);
-        matchedCollection = true;
+    for (const [collection, collectionDirectories] of Object.entries(directories)) {
+      for (const directory of collectionDirectories) {
+        const absoluteDirectory = path.resolve(directory);
+        if (
+          absolutePath === absoluteDirectory ||
+          absolutePath.startsWith(`${absoluteDirectory}${path.sep}`)
+        ) {
+          const relative = normalizePath(path.relative(absoluteDirectory, absolutePath));
+          invalidated.add(`${collection}:${relative || "*"}`);
+          matchedCollection = true;
+          break;
+        }
+      }
+      if (matchedCollection) {
         break;
       }
     }
@@ -375,7 +407,7 @@ function resolveWatchTargets(input: {
     }
   } else {
     const directories = resolveCollectionDirectories(input.config);
-    for (const directory of Object.values(directories)) {
+    for (const directory of Object.values(directories).flat()) {
       const resolved = path.resolve(directory);
       if (resolved === outDir || resolved.startsWith(`${outDir}${path.sep}`)) {
         continue;
@@ -585,6 +617,76 @@ async function runLlmsCommand(
   console.log(pc.dim(`Generated in ${Date.now() - start}ms`));
 }
 
+async function runDocusaurusMigrateCommand(
+  sourceArg: string | undefined,
+  options: DocusaurusMigrateCommandOptions
+): Promise<void> {
+  const source = path.resolve(options.source ?? sourceArg ?? ".");
+  const targetValue = options.outDir ?? options.out ?? "docsfn-migration";
+  const target = path.isAbsolute(targetValue) ? targetValue : path.resolve(process.cwd(), targetValue);
+
+  console.log(pc.blue("ℹ Migrating Docusaurus content to docsfn..."));
+  const start = Date.now();
+
+  const result = await migrateDocusaurus({
+    source,
+    target,
+    docsDir: options.docsDir,
+    pagesDir: options.pagesDir,
+    changelogDir: options.changelogDir,
+    staticDir: options.staticDir,
+    sidebarsPath: options.sidebars,
+    sidebarId: options.sidebarId,
+    docsBasePath: options.docsBasePath,
+    pagesBasePath: options.pagesBasePath,
+    changelogBasePath: options.changelogBasePath,
+    oldDocsBasePath: options.oldDocsBasePath,
+    oldPagesBasePath: options.oldPagesBasePath,
+    oldChangelogBasePath: options.oldChangelogBasePath,
+    fromOrigin: options.fromOrigin,
+    toOrigin: options.toOrigin,
+    onlySidebarDocs: options.onlySidebarDocs === true,
+    dryRun: options.dryRun === true,
+  });
+
+  console.log(pc.green(`✔ Docs copied: ${result.docsCopied}`));
+  console.log(pc.green(`✔ Pages copied: ${result.pagesCopied}`));
+  console.log(pc.green(`✔ Changelog entries copied: ${result.changelogCopied}`));
+  console.log(pc.green(`✔ Static assets copied: ${result.staticAssetsCopied}`));
+  console.log(pc.green(`✔ Docs-local assets copied: ${result.docAssetsCopied}`));
+  console.log(pc.green(`✔ meta.json files written: ${result.metaFilesWritten}`));
+  console.log(pc.green(`✔ Redirects prepared: ${result.redirectsWritten}`));
+
+  if (result.warnings.length > 0) {
+    for (const warning of result.warnings) {
+      console.log(pc.yellow(`⚠ ${warning}`));
+    }
+  }
+
+  if (options.dryRun) {
+    console.log(pc.dim("Dry run only; no files were written."));
+  } else {
+    console.log(pc.cyan(`ℹ Report: ${path.relative(process.cwd(), result.reportPath)}`));
+  }
+
+  console.log(pc.dim(`Migrated in ${Date.now() - start}ms`));
+}
+
+async function runMigrateCommand(
+  kind: string | undefined,
+  sourceArg: string | undefined,
+  options: DocusaurusMigrateCommandOptions
+): Promise<void> {
+  if (kind !== "docusaurus") {
+    console.error(pc.red(`Unknown migration kind: ${kind ?? "(missing)"}`));
+    console.error(pc.dim("Supported migration kinds: docusaurus"));
+    process.exitCode = 1;
+    return;
+  }
+
+  await runDocusaurusMigrateCommand(sourceArg, options);
+}
+
 cli
   .command("validate [root]", "Validate docs configuration and content")
   .option("--root <dir>", "Root directory")
@@ -623,6 +725,31 @@ cli
   .option("--no-blog", "Exclude blog posts from generated artifacts")
   .action(async (root, options) => {
     await runLlmsCommand(root, options as LlmsCommandOptions);
+  });
+
+cli
+  .command("migrate <kind> [source]", "Migrate an existing docs site into docsfn content")
+  .option("--source <dir>", "Docusaurus site root")
+  .option("--out <dir>", "Target output directory (legacy option)")
+  .option("--out-dir <dir>", "Target output directory")
+  .option("--docs-dir <dir>", "Docusaurus docs directory", { default: "docs" })
+  .option("--pages-dir <dir>", "Docusaurus product pages directory, e.g. src/pages/memotron")
+  .option("--changelog-dir <dir>", "Docusaurus changelog/blog directory", { default: "blog" })
+  .option("--static-dir <dir>", "Docusaurus static assets directory", { default: "static" })
+  .option("--sidebars <path>", "Explicit Docusaurus sidebars.js/ts path")
+  .option("--sidebar-id <id>", "Sidebar id to convert when multiple sidebars exist")
+  .option("--docs-base-path <path>", "New docs route base", { default: "/docs" })
+  .option("--pages-base-path <path>", "New pages route base, defaults to docs route base")
+  .option("--changelog-base-path <path>", "New changelog route base", { default: "/changelog" })
+  .option("--old-docs-base-path <path>", "Old Docusaurus docs route base", { default: "/" })
+  .option("--old-pages-base-path <path>", "Old Docusaurus product pages route base")
+  .option("--old-changelog-base-path <path>", "Old Docusaurus changelog/blog route base", { default: "/changelog" })
+  .option("--from-origin <url>", "Old docs origin, e.g. https://docs.memotron.app")
+  .option("--to-origin <url>", "New product origin, e.g. https://memotron.app")
+  .option("--only-sidebar-docs", "Copy only docs referenced by the selected Docusaurus sidebar")
+  .option("--dry-run", "Print summary without writing files")
+  .action(async (kind, source, options) => {
+    await runMigrateCommand(kind, source, options as DocusaurusMigrateCommandOptions);
   });
 
 cli.help();

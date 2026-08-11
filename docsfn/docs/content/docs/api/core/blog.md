@@ -1,17 +1,41 @@
 ---
 title: core — Blog
-description: Blog canonicalization types and buildCanonicalBlogRecords in @docsfn/core.
+description: Dated collection canonicalization types and helpers in @docsfn/core.
 ---
 
 # Blog (`@docsfn/core`)
 
+## `buildCanonicalDatedCollectionRecords(input)`
+
+Generic dated-content canonicalizer for blog, changelog, release notes, and similar one-file-per-update collections.
+
+**`BuildCanonicalDatedCollectionRecordsInput`:**
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `posts` | `NormalizedPostRecord[]` | Normalized dated sources from manifest pipeline. |
+| `collectionId?` | `string` | Collection id such as `blog` or `changelog`. |
+| `label?` | `string` | Display label such as `Blog` or `Changelog`. |
+| `searchScope?` | `string` | Search scope assigned to this collection. |
+| `routeBase?` | `string` | Public list/post/tag route base. |
+| `feedPath?` | `string` | Public RSS route. |
+| `basePath?` | `string` | Defaults to `/docs` normalization for list routes. |
+| `preview?` | `boolean` | When true, **draft** posts are retained. |
+| `pageSize?` | `number` | Archive size (minimum **1**, default **10**). |
+
+**Returns:** `CanonicalDatedCollectionBuildResult` — `{ id, label, scope, posts, listRoute, feedPath, postOrder, tags, archives }`.
+
 ## `buildCanonicalBlogRecords(input)`
+
+Compatibility wrapper around **`buildCanonicalDatedCollectionRecords`** for the legacy blog surface.
 
 **`BuildCanonicalBlogRecordsInput`:**
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `posts` | `NormalizedPostRecord[]` | Normalized blog sources from manifest pipeline. |
+| `routeBase?` | `string` | Public blog route base. |
+| `feedPath?` | `string` | Public blog RSS route. |
 | `basePath?` | `string` | Defaults to `/docs` normalization for list routes. |
 | `preview?` | `boolean` | When true, **draft** posts are retained. |
 | `pageSize?` | `number` | Archive size (minimum **1**, default **10**). |

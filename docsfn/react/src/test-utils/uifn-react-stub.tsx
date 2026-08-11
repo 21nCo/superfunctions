@@ -9,6 +9,10 @@ const TabsContext = React.createContext<{
 });
 
 const DialogContext = React.createContext<{ open: boolean }>({ open: false });
+const CollapsibleContext = React.createContext<{
+  open: boolean;
+  setOpen: (open: boolean) => void;
+}>({ open: false, setOpen: () => {} });
 
 export function ScrollArea(props: React.HTMLAttributes<HTMLDivElement>) {
   return <div {...props} />;
@@ -16,6 +20,61 @@ export function ScrollArea(props: React.HTMLAttributes<HTMLDivElement>) {
 
 export function ScrollAreaViewport(props: React.HTMLAttributes<HTMLDivElement>) {
   return <div {...props} />;
+}
+
+export function Collapsible({
+  open,
+  defaultOpen = false,
+  onOpenChange,
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & {
+  open?: boolean;
+  defaultOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  const [internalOpen, setInternalOpen] = React.useState(defaultOpen);
+  const resolvedOpen = open ?? internalOpen;
+  const setOpen = (nextOpen: boolean) => {
+    if (open === undefined) {
+      setInternalOpen(nextOpen);
+    }
+    onOpenChange?.(nextOpen);
+  };
+
+  return (
+    <CollapsibleContext.Provider value={{ open: resolvedOpen, setOpen }}>
+      <div data-state={resolvedOpen ? "open" : "closed"} {...props}>
+        {children}
+      </div>
+    </CollapsibleContext.Provider>
+  );
+}
+
+export function CollapsibleTrigger(
+  props: React.ButtonHTMLAttributes<HTMLButtonElement>
+) {
+  const context = React.useContext(CollapsibleContext);
+  return (
+    <button
+      type="button"
+      aria-expanded={context.open}
+      data-state={context.open ? "open" : "closed"}
+      onClick={() => context.setOpen(!context.open)}
+      {...props}
+    />
+  );
+}
+
+export function CollapsibleContent(props: React.HTMLAttributes<HTMLDivElement>) {
+  const context = React.useContext(CollapsibleContext);
+  return (
+    <div
+      data-state={context.open ? "open" : "closed"}
+      hidden={!context.open}
+      {...props}
+    />
+  );
 }
 
 export function Tabs({

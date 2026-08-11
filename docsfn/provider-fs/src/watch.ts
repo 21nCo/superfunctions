@@ -8,7 +8,7 @@ import type {
 
 export interface FsWatchMetadataInput {
   root: string;
-  collectionDirectories: Partial<Record<DocsCollection, string>>;
+  collectionDirectories: Partial<Record<DocsCollection, string[]>>;
   entries: DocsSourceEntry[];
 }
 
@@ -31,21 +31,21 @@ export function buildFsWatchMetadata(
   const watchedDirectories = uniqueSorted([
     resolve(input.root),
     ...Object.values(input.collectionDirectories)
-      .filter((value): value is string => Boolean(value))
+      .flatMap((value) => value ?? [])
       .map((value) => resolve(value)),
     ...watchedFiles.map((value) => dirname(value)),
   ]);
 
   const collectionGlobs: Partial<Record<DocsCollection, string[]>> = {};
-  for (const [collection, directory] of Object.entries(input.collectionDirectories)) {
-    if (!directory) {
+  for (const [collection, directories] of Object.entries(input.collectionDirectories)) {
+    if (!directories || directories.length === 0) {
       continue;
     }
 
-    collectionGlobs[collection as DocsCollection] = [
+    collectionGlobs[collection as DocsCollection] = directories.flatMap((directory) => [
       `${resolve(directory)}/**/*`,
       `${resolve(directory)}/**/meta.json`,
-    ];
+    ]);
   }
 
   return {

@@ -50,6 +50,21 @@ const config: DocsConfig = {
     assetsDir: "static",
     metaFileName: "meta.json",
   },
+  // Optional: configure the legacy blog surface.
+  blog: {
+    routeBase: "/docs/blog",
+    feedPath: "/docs/blog/rss.xml",
+  },
+  // Optional: add first-class dated collections such as changelog.
+  collections: {
+    changelog: {
+      dir: "content/changelog",
+      routeBase: "/changelog",
+      feedPath: "/changelog/rss.xml",
+      label: "Changelog",
+      scope: "changelog",
+    },
+  },
   search: {
     enabled: true,
     scopes: ["docs", "api", "blog"],
@@ -71,6 +86,20 @@ const config: DocsConfig = {
 };
 
 export default config;
+```
+
+For a product changelog, keep one Markdown/MDX file per update and configure it as a first-class dated collection:
+
+```ts
+collections: {
+  changelog: {
+    dir: "content/changelog",
+    routeBase: "/changelog",
+    feedPath: "/changelog/rss.xml",
+    label: "Changelog",
+    scope: "changelog",
+  },
+},
 ```
 
 ## CLI Commands

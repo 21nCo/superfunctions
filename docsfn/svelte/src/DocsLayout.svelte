@@ -2,6 +2,7 @@
   import type { DocHeading, DocsTopNavItem, Sidebar, Version } from "@docsfn/core/browser";
   import DocsSidebar from "./DocsSidebar.svelte";
   import DocsToc from "./DocsToc.svelte";
+  import Icon from "./Icon.svelte";
 
   export interface DocsPageLink {
     title: string;
@@ -41,22 +42,31 @@
   export let sidebar: Sidebar | undefined = undefined;
   export let headings: DocHeading[] | undefined = undefined;
   export let activePath: string | undefined = undefined;
+  export let embedded = false;
+  export let showSidebar: boolean | undefined = undefined;
+  export let preservedSearchParams: Record<string, string> = {};
 
   $: resolvedSidebar = sidebar ?? surface?.sidebar;
   $: resolvedHeadings = headings ?? surface?.headings ?? [];
   $: resolvedActivePath = activePath ?? surface?.route;
+  $: sidebarVisible = (showSidebar ?? !embedded) && Boolean(resolvedSidebar);
+  $: showToc = !embedded && resolvedHeadings.length > 0;
 
   let sidebarOpen = false;
 </script>
 
-<div class="docsfn-layout">
-  {#if $$slots.topbar}
-    <header class="docsfn-topbar">
+<div
+  class="docsfn-layout"
+  class:docsfn-layout--embedded={embedded}
+  class:docsfn-layout--sidebar-visible={sidebarVisible}
+>
+  {#if !embedded && $$slots.topbar}
+    <div class="docsfn-layout-topbar">
       <slot name="topbar" />
-    </header>
+    </div>
   {/if}
 
-  {#if resolvedSidebar}
+  {#if sidebarVisible}
     <div class="docsfn-mobile-toolbar">
       <button
         type="button"
@@ -65,7 +75,13 @@
         aria-controls="docsfn-sidebar-panel"
         on:click={() => (sidebarOpen = !sidebarOpen)}
       >
-        Menu
+        {#if sidebarOpen}
+          <Icon name="x" size={17} strokeWidth={1.8} />
+          Close
+        {:else}
+          <Icon name="menu" size={17} strokeWidth={1.8} />
+          Menu
+        {/if}
       </button>
     </div>
 
@@ -80,13 +96,18 @@
   {/if}
 
   <div class="docsfn-container">
-    {#if resolvedSidebar}
+    {#if sidebarVisible && resolvedSidebar}
       <aside
         id="docsfn-sidebar-panel"
         class="docsfn-sidebar-col"
         class:docsfn-sidebar-col--open={sidebarOpen}
       >
-        <DocsSidebar surface={surface} sidebar={resolvedSidebar} activePath={resolvedActivePath} />
+        <DocsSidebar
+          surface={surface}
+          sidebar={resolvedSidebar}
+          activePath={resolvedActivePath}
+          {preservedSearchParams}
+        />
       </aside>
     {/if}
 
@@ -94,7 +115,7 @@
       <slot />
     </main>
 
-    {#if resolvedHeadings.length > 0}
+    {#if showToc}
       <aside class="docsfn-toc-col">
         <DocsToc surface={surface} headings={resolvedHeadings} />
       </aside>
@@ -103,6 +124,31 @@
 </div>
 
 <style>
+  .docsfn-layout--embedded {
+    min-height: auto;
+    background: transparent;
+  }
+
+  .docsfn-layout--embedded .docsfn-container {
+    display: block;
+    max-width: none;
+    margin: 0;
+  }
+
+  .docsfn-layout--embedded .docsfn-main {
+    max-width: min(100%, var(--docsfn-embed-main-max-width, 56rem));
+    justify-self: start;
+    padding:
+      var(--docsfn-embed-padding-block, 1.25rem)
+      var(--docsfn-embed-padding-inline, clamp(1rem, 3vw, 2rem));
+  }
+
+  .docsfn-layout--embedded .docsfn-sidebar-col {
+    top: 0;
+    height: 100vh;
+    max-height: 100vh;
+  }
+
   .docsfn-mobile-toolbar {
     display: block;
     padding: 0.5rem 1rem;
@@ -111,6 +157,15 @@
   }
 
   @media (min-width: 1024px) {
+    .docsfn-layout--embedded.docsfn-layout--sidebar-visible .docsfn-container {
+      display: grid;
+      grid-template-columns: var(--docsfn-sidebar-width) minmax(0, 1fr);
+    }
+
+    .docsfn-layout--embedded.docsfn-layout--sidebar-visible .docsfn-main {
+      padding-left: var(--docsfn-embed-sidebar-gap, clamp(1.25rem, 2.4vw, 2rem));
+    }
+
     /* Remove from layout flow entirely (avoids stray gap above .docsfn-container). */
     .docsfn-mobile-toolbar {
       display: none !important;
@@ -146,6 +201,7 @@
 
   @media (max-width: 1023px) {
     .docsfn-sidebar-col {
+      display: block;
       position: fixed;
       top: 0;
       left: 0;

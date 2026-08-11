@@ -88,6 +88,23 @@ describe("DocsContent", () => {
     expect(within(demoCard as HTMLElement).getByText("Child body")).toBeTruthy();
   });
 
+  it("renders built-in YouTube embeds without custom component wiring", () => {
+    const compiled = compileReactContent({
+      source: `<YouTube id="SeWdndc7y4A" title="Intro video" />`,
+      sourcePath: "content/docs/quickstart.mdx",
+      compatPreset: "none",
+    });
+
+    render(<DocsContent compiled={compiled} />);
+
+    const iframe = document.querySelector(
+      "[data-docsfn-youtube-embed='true'] iframe"
+    ) as HTMLIFrameElement | null;
+    expect(iframe).toBeTruthy();
+    expect(iframe?.src).toContain("youtube-nocookie.com/embed/SeWdndc7y4A");
+    expect(iframe?.title).toBe("Intro video");
+  });
+
   it("fails closed on unresolved component mappings", () => {
     const compiled = compileReactContent({
       source: `import { DemoCard } from "./DemoCard";\n\n<DemoCard>\nChild body\n</DemoCard>`,

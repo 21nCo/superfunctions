@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Search, X } from "lucide-react";
 import {
   createDocsSearchRuntime,
   maybeEmitAnalyticsEvent,
@@ -28,6 +29,7 @@ export interface DocsSearchProps {
   placeholder?: string;
   initialScope?: SearchScopeFilter;
   scopes?: SearchScopeFilter[];
+  preserveSearchParams?: string[];
   analytics?: {
     enabled?: boolean;
     respectDnt?: boolean;
@@ -40,10 +42,18 @@ function normalizeScopes(input?: SearchScopeFilter[]): SearchScopeFilter[] {
   if (!input || input.length === 0) {
     return ["all", "docs", "api", "blog"];
   }
-  const unique = Array.from(new Set(input));
-  return unique.sort((left, right) =>
-    left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
-  );
+  return Array.from(new Set(input));
+}
+
+function getScopeLabel(value: string): string {
+  if (value.toLowerCase() === "api") {
+    return "API";
+  }
+  return value
+    .split(/[-_\s]+/g)
+    .filter(Boolean)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function createTimestamp(): string {
@@ -57,6 +67,7 @@ export function DocsSearch({
   placeholder = "Search docs...",
   initialScope = "all",
   scopes: scopeInput,
+  preserveSearchParams = ["embed"],
   analytics,
 }: DocsSearchProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -149,6 +160,20 @@ export function DocsSearch({
   };
 
   const handleResultClick = (result: DocsSearchRuntimeResultItem) => {
+    let targetPath = result.path;
+    if (typeof window !== "undefined" && preserveSearchParams.length > 0) {
+      const currentUrl = new URL(window.location.href);
+      const targetUrl = new URL(result.path, currentUrl.origin);
+      if (targetUrl.origin === currentUrl.origin) {
+        for (const param of preserveSearchParams) {
+          const value = currentUrl.searchParams.get(param);
+          if (value !== null && !targetUrl.searchParams.has(param)) {
+            targetUrl.searchParams.set(param, value.length > 0 ? value : "1");
+          }
+        }
+        targetPath = `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`;
+      }
+    }
     maybeEmitAnalyticsEvent({
       enabled: Boolean(analytics?.enabled),
       respectDnt: analytics?.respectDnt ?? true,
@@ -157,11 +182,11 @@ export function DocsSearch({
         timestamp: createTimestamp(),
         route: analytics?.route ?? window.location.pathname,
         searchScope: result.scope,
-        targetUrl: result.path,
+        targetUrl: targetPath,
       },
       emit: (event) => analytics?.onEvent?.(event),
     });
-    navigateTo(result.path);
+    navigateTo(targetPath);
     setIsOpen(false);
   };
 
@@ -189,7 +214,7 @@ export function DocsSearch({
         aria-label="Search documentation"
       >
         <span className="docsfn-search-icon" aria-hidden="true">
-          🔍
+          <Search size={16} strokeWidth={1.8} />
         </span>
         <span className="docsfn-search-placeholder">{placeholder}</span>
         <kbd className="docsfn-search-kbd">
@@ -203,7 +228,7 @@ export function DocsSearch({
         <DialogContent className="docsfn-search-content" onKeyDown={handleKeyDown}>
           <div className="docsfn-search-header">
             <span className="docsfn-search-icon" aria-hidden="true">
-              🔍
+              <Search size={18} strokeWidth={1.8} />
             </span>
             <input
               ref={inputRef}
@@ -214,26 +239,29 @@ export function DocsSearch({
               onChange={(event) => setQuery(event.target.value)}
               aria-label="Search query"
             />
-            <select
-              value={scope}
-              onChange={(event) => setScope(event.target.value as SearchScopeFilter)}
-              aria-label="Search scope"
-            >
-              {supportedScopes.map((option) => (
-                <option value={option} key={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
             {query ? (
               <button
                 onClick={() => setQuery("")}
                 className="docsfn-search-clear"
                 aria-label="Clear search"
               >
-                ✕
+                <X size={17} strokeWidth={1.8} aria-hidden="true" />
               </button>
             ) : null}
+          </div>
+
+          <div className="docsfn-search-scopes" role="group" aria-label="Search scope">
+            {supportedScopes.map((option) => (
+              <button
+                type="button"
+                key={option}
+                className={scope === option ? "docsfn-search-scope-active" : ""}
+                aria-pressed={scope === option}
+                onClick={() => setScope(option)}
+              >
+                {getScopeLabel(option)}
+              </button>
+            ))}
           </div>
 
           <ScrollArea className="docsfn-search-results">
@@ -257,9 +285,7 @@ export function DocsSearch({
                     data-selected={index === selectedIndex}
                   >
                     <div className="docsfn-search-item-header">
-                      <span className="docsfn-search-item-kind">
-                        {result.kind === "page" ? "📄" : result.kind === "post" ? "📝" : "🔧"}
-                      </span>
+                      <span className="docsfn-search-item-scope">{getScopeLabel(result.scope)}</span>
                       <span className="docsfn-search-item-title">{result.title}</span>
                     </div>
                     {result.summary ? (

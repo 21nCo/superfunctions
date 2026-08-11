@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import type { Sidebar, SidebarItem } from "@docsfn/core";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -8,6 +9,7 @@ import {
   ScrollAreaViewport,
 } from "@uifn/react";
 import type { DocsPageSurface } from "./DocsLayout";
+import { SidebarIcon } from "./SidebarIcon";
 
 export interface DocsSidebarProps {
   surface?: DocsPageSurface;
@@ -30,7 +32,7 @@ export function DocsSidebar({
   return (
     <ScrollArea className="docsfn-sidebar">
       <ScrollAreaViewport className="docsfn-sidebar-viewport">
-        <nav className="docsfn-sidebar-nav">
+        <nav className="docsfn-sidebar-nav" aria-label="Documentation navigation">
           {resolvedSidebar.items.map((item, index) => (
             <SidebarGroup
               key={`${item.type}:${index}`}
@@ -55,28 +57,35 @@ function SidebarGroup({
   activePath,
   depth = 0,
 }: SidebarGroupProps) {
+  const hasActiveChild = item.type === "group" && hasActiveLink(item, activePath);
+  const [open, setOpen] = useState(
+    item.type === "group" && (item.expanded === true || hasActiveChild)
+  );
+
+  useEffect(() => {
+    if (hasActiveChild) {
+      setOpen(true);
+    }
+  }, [hasActiveChild]);
+
   if (item.type === "separator") {
     return <hr className="docsfn-sidebar-separator" />;
   }
 
   if (item.type === "group") {
-    const hasActiveChild = hasActiveLink(item, activePath);
-    const defaultOpen = item.expanded === true || hasActiveChild;
-
     return (
-      <Collapsible className="docsfn-sidebar-group" data-depth={depth} defaultOpen={defaultOpen}>
+      <Collapsible
+        className="docsfn-sidebar-group"
+        data-depth={depth}
+        open={open}
+        onOpenChange={setOpen}
+      >
         <CollapsibleTrigger className="docsfn-sidebar-group-trigger">
-          <span className="docsfn-sidebar-group-text">{item.text}</span>
+          {item.icon ? <span className="docsfn-sidebar-item-icon"><SidebarIcon name={item.icon} /></span> : null}
+          <span className="docsfn-sidebar-group-text" title={item.description}>{item.text}</span>
+          {item.badge ? <span className="docsfn-sidebar-badge">{item.badge}</span> : null}
           <span className="docsfn-sidebar-group-icon" aria-hidden="true">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path
-                d="M4 3L7 6L4 9"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            <ChevronRight size={13} strokeWidth={1.8} />
           </span>
         </CollapsibleTrigger>
 
@@ -95,6 +104,7 @@ function SidebarGroup({
   }
 
   const isActive = activePath === item.link;
+  const isExternal = Boolean(item.link?.startsWith("http"));
   return (
     <a
       href={item.link}
@@ -102,8 +112,14 @@ function SidebarGroup({
       data-active={isActive}
       data-depth={depth}
       aria-current={isActive ? "page" : undefined}
+      title={item.description}
+      target={isExternal ? "_blank" : undefined}
+      rel={isExternal ? "noreferrer noopener" : undefined}
     >
-      {item.text}
+      {item.icon ? <span className="docsfn-sidebar-item-icon"><SidebarIcon name={item.icon} /></span> : null}
+      <span className="docsfn-sidebar-link-text">{item.text}</span>
+      {item.badge ? <span className="docsfn-sidebar-badge">{item.badge}</span> : null}
+      {isExternal ? <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" /> : null}
     </a>
   );
 }

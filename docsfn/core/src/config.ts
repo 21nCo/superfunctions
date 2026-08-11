@@ -7,6 +7,7 @@ import {
   createDocsError,
   type DocsError,
 } from "./diagnostics";
+import { normalizeDatedCollectionId } from "./provider";
 import type { DocsConfig } from "./types";
 
 export interface LoadDocsConfigInput {
@@ -53,6 +54,27 @@ const docsTopNavItemSchema: z.ZodType<any> = z.lazy(() =>
   })
 );
 
+const absoluteRouteSchema = (pathLabel: string) =>
+  z
+    .string()
+    .optional()
+    .refine(
+      (value) => value === undefined || value.startsWith("/"),
+      `${pathLabel} must start with '/'`
+    );
+
+const datedCollectionConfigSchema = z.object({
+  type: z.literal("dated").optional(),
+  dir: z.string().min(1, "collections.*.dir is required"),
+  routeBase: z
+    .string()
+    .min(1, "collections.*.routeBase is required")
+    .refine((value) => value.startsWith("/"), "collections.*.routeBase must start with '/'"),
+  feedPath: absoluteRouteSchema("collections.*.feedPath"),
+  label: z.string().min(1).optional(),
+  scope: z.string().min(1).optional(),
+});
+
 const docsConfigSchema = z.object({
   schemaVersion: z.literal(1, {
     errorMap: () => ({ message: "schemaVersion must be 1" }),
@@ -84,7 +106,9 @@ const docsConfigSchema = z.object({
   versions: docsVersionsSchema.optional(),
   content: z.object({
     root: z.string().min(1, "content.root is required"),
-    docsDir: z.string().min(1).optional(),
+    docsDir: z
+      .union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+      .optional(),
     pagesDir: z.string().min(1).optional(),
     blogDir: z.string().min(1).optional(),
     apiDir: z.string().min(1).optional(),
@@ -105,10 +129,17 @@ const docsConfigSchema = z.object({
         .optional(),
     })
     .optional(),
+  blog: z
+    .object({
+      routeBase: absoluteRouteSchema("blog.routeBase"),
+      feedPath: absoluteRouteSchema("blog.feedPath"),
+    })
+    .optional(),
+  collections: z.record(datedCollectionConfigSchema).optional(),
   search: z
     .object({
       enabled: z.boolean(),
-      scopes: z.array(z.enum(["docs", "api", "blog"])),
+      scopes: z.array(z.string().min(1)),
       bodyIndexing: z.enum(["full", "summary", "disabled"]).optional(),
       maxArtifactBytes: z.number().int().positive().optional(),
       routeScopeOverrides: z
@@ -134,6 +165,16 @@ const docsConfigSchema = z.object({
       respectDnt: z.boolean(),
     })
     .optional(),
+}).superRefine((value, context) => {
+  for (const collectionId of Object.keys(value.collections ?? {})) {
+    if (normalizeDatedCollectionId(collectionId) === "blog") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["collections", collectionId],
+        message: "collection id is reserved for the legacy blog surface",
+      });
+    }
+  }
 });
 
 export function createDefaultDocsConfig(input: { cwd: string }): DocsConfig {

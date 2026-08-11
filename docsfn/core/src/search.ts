@@ -1,4 +1,9 @@
 import { createDiagnostic, createDocsError } from "./diagnostics";
+import {
+  getDefaultDocsSearchEngineAdapter,
+  type DocsSearchEngineAdapter,
+  type DocsSearchEngineName,
+} from "./search-adapter";
 import { redactSensitiveText, resolveDocsAuthMode } from "./security";
 import type {
   DocsConfig,
@@ -39,7 +44,7 @@ export interface DocsSearchDocument {
 
 export interface DocsSearchArtifact {
   schemaVersion: 1;
-  engine: "searchfn";
+  engine: DocsSearchEngineName;
   fields: DocsSearchField[];
   scopes: DocsSearchScope[];
   bodyIndexing: DocsSearchBodyIndexing;
@@ -52,53 +57,16 @@ export interface DocsSearchArtifact {
 export interface BuildSearchIndexOptions {
   search?: DocsConfig["search"];
   auth?: DocsConfig["auth"];
+  searchAdapter?: DocsSearchEngineAdapter;
 }
 
 const DEFAULT_SCOPES: DocsSearchScope[] = ["docs", "api", "blog"];
+const SEARCH_FIELDS: DocsSearchField[] = ["title", "summary", "headings", "tags", "body"];
 
 interface NormalizedRouteScopeOverride {
   pattern: string;
   scope: DocsSearchScope;
   regex: RegExp;
-}
-
-interface SearchIndexEngine {
-  add(input: {
-    id: string | number;
-    fields: Record<string, string>;
-    store?: Record<string, unknown>;
-  }): void;
-  exportSnapshot(): DocsSearchSnapshot;
-}
-
-interface SearchFnClientModule {
-  InMemorySearchFn: new (options: {
-    fields: string[];
-    pipeline?: {
-      enableEdgeNGrams?: boolean;
-      edgeNGramMinLength?: number;
-    };
-  }) => SearchIndexEngine;
-}
-
-async function loadSearchFnClient(): Promise<SearchFnClientModule> {
-  try {
-    return (await import("@searchfn/client")) as unknown as SearchFnClientModule;
-  } catch (error) {
-    throw createDocsError({
-      code: "DOCS_SEARCH_BUILD_FAILED",
-      message: "@searchfn/client is required to build a docs search index",
-      diagnostics: [
-        createDiagnostic({
-          code: "DOCS_SEARCH_BUILD_FAILED",
-          message: "@searchfn/client is required to build a docs search index",
-          suggestion:
-            "Install @searchfn/client, disable docs search, or provide a prebuilt search artifact.",
-        }),
-      ],
-      cause: error,
-    });
-  }
 }
 
 function normalizeWhitespace(value: string): string {
@@ -125,7 +93,10 @@ function summarizeBody(value: string, maxLength = 220): string {
   return redactSensitiveText(`${normalized.slice(0, maxLength - 1).trimEnd()}…`);
 }
 
-function normalizeScopes(searchConfig: DocsConfig["search"]): DocsSearchScope[] {
+function normalizeScopes(
+  searchConfig: DocsConfig["search"],
+  manifest?: DocsManifest
+): DocsSearchScope[] {
   const explicitScopes = searchConfig?.scopes;
   if (Array.isArray(explicitScopes) && explicitScopes.length === 0) {
     throw createDocsError({
@@ -139,8 +110,14 @@ function normalizeScopes(searchConfig: DocsConfig["search"]): DocsSearchScope[] 
       ],
     });
   }
-  const scopes = (explicitScopes ?? DEFAULT_SCOPES) as DocsSearchScope[];
-  return [...scopes].sort((left, right) =>
+  const manifestCollectionScopes = Object.values(manifest?.collections ?? {}).map(
+    (collection) => collection.scope
+  );
+  const scopes = (explicitScopes ?? [
+    ...DEFAULT_SCOPES,
+    ...manifestCollectionScopes,
+  ]) as DocsSearchScope[];
+  return [...new Set(scopes)].sort((left, right) =>
     left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
   );
 }
@@ -206,14 +183,14 @@ function normalizeRouteScopeOverrides(
   return [...overrides]
     .map((override) => {
       const pattern = normalizeRoutePattern(override.pattern);
-      if (override.scope !== "docs" && override.scope !== "api" && override.scope !== "blog") {
+      if (typeof override.scope !== "string" || override.scope.trim().length === 0) {
         throw createDocsError({
           code: "DOCS_SEARCH_SCOPE_INVALID",
-          message: `search.routeScopeOverrides scope must be one of docs, api, blog: ${String(override.scope)}`,
+          message: `search.routeScopeOverrides scope is required: ${String(override.scope)}`,
           diagnostics: [
             createDiagnostic({
               code: "DOCS_SEARCH_SCOPE_INVALID",
-              message: `search.routeScopeOverrides scope must be one of docs, api, blog: ${String(override.scope)}`,
+              message: `search.routeScopeOverrides scope is required: ${String(override.scope)}`,
               details: {
                 pattern,
                 scope: override.scope,
@@ -245,10 +222,11 @@ function defaultScopeForDocumentKind(kind: DocsSearchDocumentKind): DocsSearchSc
 export function resolveSearchScopeForRoute(input: {
   route: string;
   kind: DocsSearchDocumentKind;
+  defaultScope?: DocsSearchScope;
   routeScopeOverrides?: DocsSearchRouteScopeOverride[];
 }): DocsSearchScope {
   const normalizedRoute = normalizeRouteForMatch(input.route);
-  const defaultScope = defaultScopeForDocumentKind(input.kind);
+  const defaultScope = input.defaultScope ?? defaultScopeForDocumentKind(input.kind);
   const overrides = normalizeRouteScopeOverrides(input.routeScopeOverrides);
   const matches = overrides.filter((override) => override.regex.test(normalizedRoute));
 
@@ -291,17 +269,6 @@ function createEmptySnapshot(): DocsSearchSnapshot {
     documents: [],
     vocabulary: [],
   };
-}
-
-async function createSearchEngine(): Promise<SearchIndexEngine> {
-  const { InMemorySearchFn } = await loadSearchFnClient();
-  return new InMemorySearchFn({
-    fields: ["title", "summary", "headings", "tags", "body"],
-    pipeline: {
-      enableEdgeNGrams: true,
-      edgeNGramMinLength: 2,
-    },
-  });
 }
 
 function resolveBodyField(input: {
@@ -427,6 +394,7 @@ function collectSearchDocuments(input: {
     const scope = resolveSearchScopeForRoute({
       route: post.path,
       kind: "post",
+      defaultScope: post.searchScope ?? post.collectionId ?? "blog",
       routeScopeOverrides: input.routeScopeOverrides,
     });
     if (!input.scopes.includes(scope)) {
@@ -503,16 +471,17 @@ export async function buildSearchIndex(
 ): Promise<DocsSearchArtifact> {
   const searchConfig = options.search;
   const enabled = searchConfig?.enabled ?? true;
-  const scopes = normalizeScopes(searchConfig);
+  const scopes = normalizeScopes(searchConfig, manifest);
   const bodyIndexing = resolveBodyIndexing(searchConfig);
+  const searchAdapter = options.searchAdapter ?? getDefaultDocsSearchEngineAdapter();
   normalizeRouteScopeOverrides(searchConfig?.routeScopeOverrides);
   const diagnostics: DocsDiagnostic[] = [];
 
   if (!enabled) {
     const emptyArtifact: DocsSearchArtifact = {
       schemaVersion: 1,
-      engine: "searchfn",
-      fields: ["title", "summary", "headings", "tags", "body"],
+      engine: searchAdapter.name,
+      fields: SEARCH_FIELDS,
       scopes,
       bodyIndexing,
       documents: [],
@@ -536,7 +505,7 @@ export async function buildSearchIndex(
   });
   assertUniqueSearchDocumentIds(documents);
 
-  const engine = await createSearchEngine();
+  const engine = await searchAdapter.createIndexEngine({ fields: SEARCH_FIELDS });
   for (const document of documents) {
     engine.add({
       id: document.id,
@@ -561,8 +530,8 @@ export async function buildSearchIndex(
   const snapshot = engine.exportSnapshot();
   const artifactBase: Omit<DocsSearchArtifact, "bytes"> = {
     schemaVersion: 1,
-    engine: "searchfn",
-    fields: ["title", "summary", "headings", "tags", "body"],
+    engine: searchAdapter.name,
+    fields: SEARCH_FIELDS,
     scopes,
     bodyIndexing,
     documents,

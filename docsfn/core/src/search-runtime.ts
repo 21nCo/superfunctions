@@ -1,5 +1,10 @@
 import { createDiagnostic, createDocsError } from "./diagnostics";
 import type { DocsSearchArtifact, DocsSearchDocument, DocsSearchScope } from "./search";
+import {
+  resolveDocsSearchEngineAdapter,
+  type DocsSearchEngineAdapter,
+  type DocsSearchRuntimeBackend,
+} from "./search-adapter";
 
 export type DocsSearchScopeFilter = DocsSearchScope | "all";
 
@@ -28,99 +33,20 @@ export interface DocsSearchRuntime {
 export interface CreateDocsSearchRuntimeInput {
   artifact?: DocsSearchArtifact;
   loadArtifact?: () => Promise<DocsSearchArtifact>;
+  searchAdapters?: DocsSearchEngineAdapter[];
 }
 
 interface ValidatedArtifact {
   artifact: DocsSearchArtifact;
-  client: SearchClient | null;
-  engine: SnapshotSearchEngine | null;
-  documents: Map<string, DocsSearchDocument>;
-}
-
-interface SearchHit {
-  id: string | number;
-  score: number;
-}
-
-interface SearchClient {
-  initialize?(params: {
-    resources: Array<{
-      name: string;
-      searchFields: string[];
-    }>;
-  }): Promise<void>;
-  index(params: {
-    resource: string;
-    documents: Array<{
-      id: string | number;
-      fields: Record<string, string>;
-    }>;
-  }): Promise<void>;
-  searchAll(params: {
-    query: string;
-    resources: string[];
-    limit: number;
-    limitPerResource: number;
-    prefix: boolean;
-  }): Promise<SearchHit[]>;
-}
-
-interface SnapshotSearchEngine {
-  importSnapshot(snapshot: DocsSearchArtifact["snapshot"]): void;
-  searchDetailed(
-    query: string,
-    options: {
-      fields?: string[];
-      limit?: number;
-    }
-  ): Array<{ docId: string | number; score: number }>;
-}
-
-interface SearchFnClientModule {
-  InMemorySearchFn: new (options: {
-    fields: string[];
-    pipeline?: {
-      enableEdgeNGrams?: boolean;
-      edgeNGramMinLength?: number;
-    };
-  }) => SnapshotSearchEngine;
-  createMemorySearchClient(config?: {
-    adapterConfig?: {
-      pipeline?: {
-        enableEdgeNGrams?: boolean;
-        edgeNGramMinLength?: number;
-      };
-    };
-    defaults?: {
-      prefix?: boolean;
-      limit?: number;
-      limitPerResource?: number;
-    };
-  }): SearchClient;
-}
-
-async function loadSearchFnClient(): Promise<SearchFnClientModule> {
-  try {
-    return (await import("@searchfn/client")) as unknown as SearchFnClientModule;
-  } catch (error) {
-    throw createDocsError({
-      code: "DOCS_ARTIFACT_INVALID",
-      message: "@searchfn/client is required to query a docs search artifact",
-      diagnostics: [
-        createDiagnostic({
-          code: "DOCS_ARTIFACT_INVALID",
-          message: "@searchfn/client is required to query a docs search artifact",
-          suggestion:
-            "Install @searchfn/client or avoid creating the docs search runtime on pages that do not use search.",
-        }),
-      ],
-      cause: error,
-    });
-  }
+  backend: DocsSearchRuntimeBackend;
 }
 
 function assertValidArtifact(artifact: DocsSearchArtifact): void {
-  if (artifact.schemaVersion !== 1 || artifact.engine !== "searchfn") {
+  if (
+    artifact.schemaVersion !== 1 ||
+    typeof artifact.engine !== "string" ||
+    artifact.engine.trim().length === 0
+  ) {
     throw createDocsError({
       code: "DOCS_ARTIFACT_INVALID",
       message: "search artifact schema is invalid",
@@ -145,36 +71,6 @@ function assertValidArtifact(artifact: DocsSearchArtifact): void {
       ],
     });
   }
-}
-
-async function createSearchClientForArtifact(): Promise<SearchClient> {
-  const { createMemorySearchClient } = await loadSearchFnClient();
-  return createMemorySearchClient({
-    adapterConfig: {
-      pipeline: {
-        enableEdgeNGrams: true,
-        edgeNGramMinLength: 2,
-      },
-    },
-    defaults: {
-      prefix: true,
-      limit: 20,
-      limitPerResource: 20,
-    },
-  });
-}
-
-async function createSnapshotSearchEngine(artifact: DocsSearchArtifact): Promise<SnapshotSearchEngine> {
-  const { InMemorySearchFn } = await loadSearchFnClient();
-  const engine = new InMemorySearchFn({
-    fields: artifact.fields,
-    pipeline: {
-      enableEdgeNGrams: true,
-      edgeNGramMinLength: 2,
-    },
-  });
-  engine.importSnapshot(artifact.snapshot);
-  return engine;
 }
 
 function sortResults(
@@ -244,45 +140,14 @@ export function createDocsSearchRuntime(
         documents.set(document.id, document);
       }
 
-      if (artifact.schemaVersion === 1 && artifact.snapshot) {
-        validated = {
-          artifact,
-          client: null,
-          engine: await createSnapshotSearchEngine(artifact),
-          documents,
-        };
-        return validated;
-      }
-
-      const client = await createSearchClientForArtifact();
-      await client.initialize?.({
-        resources: artifact.scopes.map((scope) => ({
-          name: scope,
-          searchFields: artifact.fields,
-        })),
-      });
-
-      for (const scope of artifact.scopes) {
-        const scopedDocuments = artifact.documents.filter((document) => document.scope === scope);
-        if (scopedDocuments.length === 0) {
-          continue;
-        }
-        await client.index({
-          resource: scope,
-          documents: scopedDocuments.map((document) => ({
-            id: document.id,
-            fields: {
-              title: document.title,
-              summary: document.summary,
-              headings: document.headings.join(" "),
-              tags: document.tags.join(" "),
-              body: document.body,
-            },
-          })),
-        });
-      }
-
-      validated = { artifact, client, engine: null, documents };
+      const adapter = resolveDocsSearchEngineAdapter(
+        artifact.engine,
+        input.searchAdapters
+      );
+      validated = {
+        artifact,
+        backend: await adapter.createRuntime({ artifact, documents }),
+      };
       return validated;
     })();
 
@@ -322,76 +187,13 @@ export function createDocsSearchRuntime(
         });
       }
 
-      if (loaded.engine) {
-        const engineResults = loaded.engine.searchDetailed(normalizedQuery, {
-          fields: loaded.artifact.fields,
-          limit: loaded.artifact.documents.length || Math.max(queryInput.limit ?? 20, 20),
-        });
-        const mapped = engineResults
-          .map((hit) => {
-            const document = loaded.documents.get(String(hit.docId));
-            if (!document) {
-              return null;
-            }
-            return {
-              id: document.id,
-              score: hit.score,
-              scope: document.scope,
-              kind: document.kind,
-              path: document.path,
-              title: document.title,
-              summary: document.summary,
-            };
-          })
-          .filter((item): item is DocsSearchRuntimeResultItem => item !== null)
-          .filter((item) => item.path.length > 0 && item.title.length > 0)
-          .filter((item) => scope === "all" || item.scope === scope);
-
-        return sortResults(mapped, queryInput.limit ?? 20);
-      }
-
-      if (!loaded.client) {
-        throw createDocsError({
-          code: "DOCS_ARTIFACT_INVALID",
-          message: "search runtime backend is unavailable",
-          diagnostics: [
-            createDiagnostic({
-              code: "DOCS_ARTIFACT_INVALID",
-              message: "search runtime backend is unavailable",
-            }),
-          ],
-        });
-      }
-
-      const resources = scope === "all" ? loaded.artifact.scopes : [scope];
-      const hits = await loaded.client.searchAll({
+      const results = await loaded.backend.query({
         query: normalizedQuery,
-        resources,
+        scope,
         limit: Math.max(queryInput.limit ?? 20, 20),
-        limitPerResource: Math.max(queryInput.limit ?? 20, 20),
-        prefix: true,
       });
-      const mapped = hits
-        .map((hit) => {
-          const document = loaded.documents.get(String(hit.id));
-          if (!document) {
-            return null;
-          }
-          return {
-            id: document.id,
-            score: hit.score,
-            scope: document.scope,
-            kind: document.kind,
-            path: document.path,
-            title: document.title,
-            summary: document.summary,
-          };
-        })
-        .filter((item): item is DocsSearchRuntimeResultItem => item !== null)
-        .filter((item) => item.path.length > 0 && item.title.length > 0)
-        .filter((item) => scope === "all" || item.scope === scope);
 
-      return sortResults(mapped, queryInput.limit ?? 20);
+      return sortResults(results, queryInput.limit ?? 20);
     },
   };
 }

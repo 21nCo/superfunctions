@@ -4,6 +4,7 @@ import type { Sidebar } from "@docsfn/core";
 import {
   resolveDocsPageSurface,
   resolveDocsRouteDataOrThrow,
+  resolveEmbedMode,
   type SvelteDocsPageSurface,
 } from "@docsfn/sveltekit";
 import { getCompiledDocsPage } from "$lib/server/docs-site-source";
@@ -27,8 +28,9 @@ function isRouteNotFoundError(input: unknown): input is { message: string } {
   );
 }
 
-export const load: PageServerLoad = async ({ params, parent }) => {
+export const load: PageServerLoad = async ({ params, parent, url }) => {
   const { source } = await parent();
+  const embed = resolveEmbedMode(url);
 
   let routeEntry;
   try {
@@ -98,6 +100,7 @@ export const load: PageServerLoad = async ({ params, parent }) => {
       : undefined;
 
   return {
+    embed,
     routeEntry,
     surface,
     sidebar,
