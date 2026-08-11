@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  metaWhatsAppAdapter,
   sendfn,
   type SendfnConfig,
 } from '../src';
 import { createSendFn as createEdgeSendFn } from '../src/edge';
+import { WhatsAppTransactionSchema } from '../src/types';
+import { metaWhatsAppAdapter } from '../src/whatsapp/meta-cloud-adapter';
 import { StrongMockAdapter } from './mock-adapter';
 
 describe('WhatsApp channel', () => {
@@ -117,6 +118,111 @@ describe('WhatsApp channel', () => {
     });
   });
 
+  it('rejects a successful Meta response without a message ID', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ messages: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const adapter = metaWhatsAppAdapter({
+      accessToken: 'test-token',
+      phoneNumberId: 'phone-number-id',
+    });
+
+    const response = await adapter.sendWhatsApp({
+      to: '+15551234567',
+      message: 'Hello',
+    });
+
+    expect(response).toMatchObject({
+      success: false,
+      error: {
+        code: 'META_WHATSAPP_INVALID_RESPONSE',
+        message: 'Meta WhatsApp response did not include a message ID',
+        retryable: false,
+      },
+      raw: { messages: [] },
+    });
+  });
+
+  it('does not record success or failure events when tracking is disabled', async () => {
+    const successAdapter = new StrongMockAdapter();
+    const successClient = sendfn({
+      database: successAdapter as any,
+      whatsappProvider: metaWhatsAppAdapter({
+        accessToken: 'test-token',
+        phoneNumberId: 'phone-number-id',
+      }),
+      options: { eventTracking: false },
+    } satisfies SendfnConfig);
+
+    await successClient.whatsapp({
+      userId: 'user-1',
+      to: '+15551234567',
+      message: 'Hello without events',
+    });
+
+    expect(successAdapter.records('communication_events')).toHaveLength(0);
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ error: { code: 131000, message: 'Failed' } }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    );
+
+    const failureAdapter = new StrongMockAdapter();
+    const failureClient = sendfn({
+      database: failureAdapter as any,
+      whatsappProvider: metaWhatsAppAdapter({
+        accessToken: 'test-token',
+        phoneNumberId: 'phone-number-id',
+      }),
+      options: { eventTracking: false },
+    } satisfies SendfnConfig);
+
+    const failedTransaction = await failureClient.whatsapp({
+      userId: 'user-1',
+      to: '+15551234567',
+      message: 'Hello without failure events',
+    });
+
+    expect(failedTransaction.status).toBe('failed');
+    expect(failureAdapter.records('communication_events')).toHaveLength(0);
+  });
+
+  it('throws when the updated transaction cannot be loaded', async () => {
+    class MissingWhatsAppReadAdapter extends StrongMockAdapter {
+      override async findOne<T = any>(params: any): Promise<T | null> {
+        if (params.model === 'whatsapp_transactions') {
+          return null;
+        }
+        return super.findOne<T>(params);
+      }
+    }
+
+    const client = sendfn({
+      database: new MissingWhatsAppReadAdapter() as any,
+      whatsappProvider: metaWhatsAppAdapter({
+        accessToken: 'test-token',
+        phoneNumberId: 'phone-number-id',
+      }),
+    } satisfies SendfnConfig);
+
+    await expect(
+      client.whatsapp({
+        userId: 'user-1',
+        to: '+15551234567',
+        message: 'Hello missing transaction',
+      })
+    ).rejects.toThrow(/Could not find WhatsApp transaction .* after creation/);
+  });
+
   it('supports the edge client without a database adapter', async () => {
     const client = createEdgeSendFn({
       whatsappProvider: metaWhatsAppAdapter({
@@ -139,5 +245,7 @@ describe('WhatsApp channel', () => {
       providerMessageId: 'wamid.123',
       status: 'sent',
     });
+    expect(() => WhatsAppTransactionSchema.parse(transaction)).not.toThrow();
+    expect(transaction.id).not.toBe('wamid.123');
   });
 });

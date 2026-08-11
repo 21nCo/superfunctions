@@ -1,6 +1,5 @@
 import { resendAdapter } from './email/resend-adapter';
 import type { EmailProvider } from './email/provider';
-import { metaWhatsAppAdapter } from './whatsapp/meta-cloud-adapter';
 import type { WhatsAppProvider } from './whatsapp/provider';
 import type {
   EmailTransaction,
@@ -9,7 +8,7 @@ import type {
   WhatsAppTransaction,
 } from './types';
 
-export { metaWhatsAppAdapter, resendAdapter };
+export { resendAdapter };
 
 export interface SendFnEdgeConfig {
   emailProvider?: EmailProvider;
@@ -119,7 +118,7 @@ export function createSendFn(config: SendFnEdgeConfig): SendFnEdgeClient {
       }
 
       return {
-        id: response.messageId ?? response.providerMessageId ?? crypto.randomUUID(),
+        id: crypto.randomUUID(),
         userId: params.userId,
         to: params.to,
         message: params.message,

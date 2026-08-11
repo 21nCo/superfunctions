@@ -34,6 +34,13 @@ export interface FindSmsParams {
   offset?: number;
 }
 
+export interface FindWhatsAppParams {
+  userId?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface FindPushParams {
   userId?: string;
   status?: string;
@@ -251,7 +258,7 @@ export class SendfnDb {
     });
   }
 
-  async findWhatsAppTransactions(params: FindSmsParams): Promise<WhatsAppTransaction[]> {
+  async findWhatsAppTransactions(params: FindWhatsAppParams): Promise<WhatsAppTransaction[]> {
     const where: any[] = [];
     if (params.userId) where.push({ field: 'userId', operator: 'eq', value: params.userId });
     if (params.status) where.push({ field: 'status', operator: 'eq', value: params.status });

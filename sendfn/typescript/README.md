@@ -37,12 +37,22 @@ npm run release:verify
 ### 1. Initialize the Client
 
 ```typescript
-import { sendfn, awsSesAdapter, consoleSmsAdapter, metaWhatsAppAdapter } from 'sendfn';
+import { sendfn, awsSesAdapter, consoleSmsAdapter } from 'sendfn';
+import { metaWhatsAppAdapter } from 'sendfn/adapters/meta-whatsapp';
 import type { Adapter } from '@superfunctions/db';
 
 // 1. Setup your shared database adapter.
 // Replace this placeholder with drizzle/prisma/kysely/etc from @superfunctions/db.
 const database = {} as Adapter;
+
+const whatsappAccessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+const whatsappPhoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+if (!whatsappAccessToken || !whatsappPhoneNumberId) {
+  throw new Error(
+    'WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID are required',
+  );
+}
 
 // 2. Initialize sendfn with desired providers
 const client = sendfn({
@@ -54,8 +64,8 @@ const client = sendfn({
   }),
   smsProvider: consoleSmsAdapter(), // Logs SMS to console for development
   whatsappProvider: metaWhatsAppAdapter({
-    accessToken: process.env.WHATSAPP_ACCESS_TOKEN!,
-    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID!,
+    accessToken: whatsappAccessToken,
+    phoneNumberId: whatsappPhoneNumberId,
   }),
   email: {
     fromEmail: 'noreply@yourdomain.com',

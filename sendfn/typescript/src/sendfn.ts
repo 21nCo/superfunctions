@@ -195,29 +195,29 @@ export class Sendfn implements SendfnClient {
     }
 
     // Initialize Push Providers
+    const pushProvidersToInitialize = new Map<Platform, PushProvider>();
+
     for (const [platform, provider] of Object.entries(config.pushProviders ?? {}) as Array<[Platform, PushProvider | undefined]>) {
-        if (!provider) {
-            continue;
+        if (provider) {
+            pushProvidersToInitialize.set(platform, provider);
         }
+    }
+
+    if (config.push?.providers.fcm) {
+        if (!pushProvidersToInitialize.has('android')) {
+          pushProvidersToInitialize.set('android', new FcmProvider(config.push.providers.fcm));
+        }
+        if (!pushProvidersToInitialize.has('web')) {
+          pushProvidersToInitialize.set('web', new FcmProvider(config.push.providers.fcm));
+        }
+    }
+    if (!pushProvidersToInitialize.has('ios') && config.push?.providers.apns) {
+        pushProvidersToInitialize.set('ios', new ApnsProvider(config.push.providers.apns));
+    }
+
+    for (const [platform, provider] of pushProvidersToInitialize) {
         this.pushProviders.set(platform, provider);
         provider.initialize().catch(err => console.error(`Failed to init ${platform} push provider`, err));
-    }
-    if (config.push?.providers.fcm) {
-        if (!this.pushProviders.has('android')) {
-          const provider = new FcmProvider(config.push.providers.fcm);
-          this.pushProviders.set('android', provider);
-          provider.initialize().catch(err => console.error("Failed to init android push provider", err));
-        }
-        if (!this.pushProviders.has('web')) {
-          const provider = new FcmProvider(config.push.providers.fcm);
-          this.pushProviders.set('web', provider);
-          provider.initialize().catch(err => console.error("Failed to init web push provider", err));
-        }
-    }
-    if (!this.pushProviders.has('ios') && config.push?.providers.apns) {
-        const provider = new ApnsProvider(config.push.providers.apns);
-        this.pushProviders.set('ios', provider);
-        provider.initialize().catch(err => console.error("Failed to init ios push provider", err));
     }
     
     this.pushService = new PushService(

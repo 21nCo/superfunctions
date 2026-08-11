@@ -69,6 +69,19 @@ export class MetaWhatsAppAdapter implements WhatsAppProvider {
         };
       }
 
+      if (!providerMessageId) {
+        return {
+          success: false,
+          timestamp,
+          raw: payload,
+          error: {
+            code: 'META_WHATSAPP_INVALID_RESPONSE',
+            message: 'Meta WhatsApp response did not include a message ID',
+            retryable: false,
+          },
+        };
+      }
+
       return {
         success: true,
         messageId: providerMessageId,
