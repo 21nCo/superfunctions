@@ -3,7 +3,7 @@
  * Calls ContentFn POST /contentfn/audit/events; strips any raw doc fields.
  */
 
-import type { CmsfnAuditEvent } from "@cmsfn/core";
+import type { CmsfnAuditEvent } from "cmsfn";
 
 export interface AuditEventsConfig {
   contentfnBaseUrl: string;

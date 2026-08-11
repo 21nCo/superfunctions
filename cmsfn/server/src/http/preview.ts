@@ -3,8 +3,8 @@
  */
 
 import type { IncomingMessage } from "http";
-import type { CmsfnEnvelope, CmsfnPreviewTokenResult } from "@cmsfn/core";
-import { ok, err } from "@cmsfn/core";
+import type { CmsfnEnvelope, CmsfnPreviewTokenResult } from "cmsfn";
+import { ok, err } from "cmsfn";
 import { authorize } from "../auth/authorize.js";
 import type { AuthorizeConfig } from "../auth/authorize.js";
 import { mintPreviewToken } from "../preview/tokens.js";

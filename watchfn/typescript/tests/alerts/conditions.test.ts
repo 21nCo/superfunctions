@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ConditionEvaluator } from "../src/alerts/conditions";
+import { ConditionEvaluator } from "../../src/alerts/conditions";
 
 describe("ConditionEvaluator", () => {
   const evaluator = new ConditionEvaluator();

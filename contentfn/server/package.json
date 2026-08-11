@@ -1,6 +1,6 @@
 {
   "name": "@contentfn/server",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "ContentFn server - HTTP endpoints and storage",
   "type": "module",
   "main": "dist/index.cjs",
@@ -49,7 +49,7 @@
   ],
   "sideEffects": false,
   "dependencies": {
-    "@contentfn/core": "0.0.1",
+    "@contentfn/core": "0.0.2",
     "@superfunctions/db": "0.1.4",
     "@superfunctions/http": "0.1.3"
   },

@@ -4,7 +4,7 @@
  */
 
 import type { IncomingMessage } from "http";
-import type { CmsfnEnvelope } from "@cmsfn/core";
+import type { CmsfnEnvelope } from "cmsfn";
 import { authorize } from "../auth/authorize.js";
 import type { AuthorizeConfig } from "../auth/authorize.js";
 import { contentfnAuditEvents } from "../audit/events.js";
@@ -57,7 +57,7 @@ async function requireAuditRead(
 export async function handleAuditEvents(
   config: AuditHandlerConfig,
   req: IncomingMessage
-): Promise<CmsfnEnvelope<{ events: import("@cmsfn/core").CmsfnAuditEvent[]; nextCursor: string | null }>> {
+): Promise<CmsfnEnvelope<{ events: import("cmsfn").CmsfnAuditEvent[]; nextCursor: string | null }>> {
   const body = (await parseJsonBody(req)) as Record<string, unknown>;
   const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
   const limit = typeof body?.limit === "number" ? body.limit : undefined;
@@ -87,7 +87,7 @@ export async function handleAuditEvents(
 export async function handleAuditWebhooks(
   config: AuditHandlerConfig,
   req: IncomingMessage
-): Promise<CmsfnEnvelope<{ deliveries: import("@cmsfn/core").CmsfnWebhookDeliveryStatus[]; nextCursor: string | null }>> {
+): Promise<CmsfnEnvelope<{ deliveries: import("cmsfn").CmsfnWebhookDeliveryStatus[]; nextCursor: string | null }>> {
   const body = (await parseJsonBody(req)) as Record<string, unknown>;
   const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
   const limit = typeof body?.limit === "number" ? body.limit : undefined;

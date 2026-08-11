@@ -8,7 +8,7 @@ import type {
 
 export interface FsWatchMetadataInput {
   root: string;
-  collectionDirectories: Partial<Record<DocsCollection, string[]>>;
+  collectionDirectories: Partial<Record<DocsCollection, string | string[]>>;
   entries: DocsSourceEntry[];
 }
 
@@ -16,6 +16,11 @@ function uniqueSorted(values: string[]): string[] {
   return Array.from(new Set(values)).sort((left, right) =>
     left.localeCompare(right, "en", { sensitivity: "variant", numeric: true })
   );
+}
+
+function asDirectories(value: string | string[] | undefined): string[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
 }
 
 export function buildFsWatchMetadata(
@@ -31,18 +36,19 @@ export function buildFsWatchMetadata(
   const watchedDirectories = uniqueSorted([
     resolve(input.root),
     ...Object.values(input.collectionDirectories)
-      .flatMap((value) => value ?? [])
+      .flatMap(asDirectories)
       .map((value) => resolve(value)),
     ...watchedFiles.map((value) => dirname(value)),
   ]);
 
   const collectionGlobs: Partial<Record<DocsCollection, string[]>> = {};
   for (const [collection, directories] of Object.entries(input.collectionDirectories)) {
-    if (!directories || directories.length === 0) {
+    const normalizedDirectories = asDirectories(directories);
+    if (normalizedDirectories.length === 0) {
       continue;
     }
 
-    collectionGlobs[collection as DocsCollection] = directories.flatMap((directory) => [
+    collectionGlobs[collection as DocsCollection] = normalizedDirectories.flatMap((directory) => [
       `${resolve(directory)}/**/*`,
       `${resolve(directory)}/**/meta.json`,
     ]);

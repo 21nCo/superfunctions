@@ -5,8 +5,8 @@
  */
 
 import type { Adapter } from "@superfunctions/db";
-import type { CmsfnEnvelope, CmsfnRelease } from "@cmsfn/core";
-import { ok, err } from "@cmsfn/core";
+import type { CmsfnEnvelope, CmsfnRelease } from "cmsfn";
+import { ok, err } from "cmsfn";
 import { randomUUID } from "node:crypto";
 import { MAX_DOCS_PER_RELEASE } from "../limits/limits.js";
 

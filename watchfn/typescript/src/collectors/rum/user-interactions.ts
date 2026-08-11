@@ -1,4 +1,4 @@
-"""User interaction tracking for RUM."""
+/** User interaction tracking for RUM. */
 
 export type InteractionType = "click" | "submit" | "change" | "focus" | "blur" | "scroll" | "resize";
 

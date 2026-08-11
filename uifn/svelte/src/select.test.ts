@@ -27,7 +27,7 @@ describe('Select (Svelte)', () => {
     await Promise.resolve();
 
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByRole('listbox', { hidden: true })).not.toBeVisible();
+    expect(screen.queryByRole('listbox', { hidden: true })).not.toBeInTheDocument();
     expect(screen.getByText('item2')).toBeVisible();
     expect(screen.queryByText('Select an item')).not.toBeInTheDocument();
   });

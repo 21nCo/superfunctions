@@ -1,6 +1,6 @@
 {
   "name": "@contentfn/cli",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "ContentFn CLI - schema validation/upsert, dataset export/import, document operations",
   "type": "module",
   "main": "dist/index.js",
@@ -43,8 +43,8 @@
   ],
   "sideEffects": false,
   "dependencies": {
-    "@contentfn/core": "0.0.1",
-    "@contentfn/client": "0.0.1",
+    "@contentfn/core": "0.0.2",
+    "@contentfn/client": "0.0.2",
     "commander": "^12.0.0"
   },
   "devDependencies": {

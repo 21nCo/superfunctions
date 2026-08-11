@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { ContextManager, Context } from "../src/core/context-manager";
+import { ContextManager, Context } from "../../src/core/context-manager";
 
 describe("ContextManager", () => {
   let contextManager: ContextManager;

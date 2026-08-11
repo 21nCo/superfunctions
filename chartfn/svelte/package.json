@@ -1,6 +1,6 @@
 {
   "name": "@chartfn/svelte",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Svelte bindings for chartfn",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -20,7 +20,7 @@
     "lint": "echo 'lint not configured'"
   },
   "dependencies": {
-    "chartfn": "0.0.1"
+    "chartfn": "0.0.2"
   },
   "peerDependencies": {
     "svelte": ">=5.0.0"

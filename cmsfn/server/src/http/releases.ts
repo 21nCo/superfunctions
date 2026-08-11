@@ -4,7 +4,7 @@
  */
 
 import type { IncomingMessage } from "http";
-import type { CmsfnEnvelope } from "@cmsfn/core";
+import type { CmsfnEnvelope } from "cmsfn";
 import { createRelease, listReleases, addDocToRelease, getRelease } from "../storage/releases.js";
 import type { ReleasesStorageConfig } from "../storage/releases.js";
 import { publishRelease } from "../releases/publishRelease.js";
@@ -80,7 +80,7 @@ export async function handleReleasesCreate(
 export async function handleReleasesList(
   config: ReleasesHandlerConfig,
   req: IncomingMessage
-): Promise<CmsfnEnvelope<{ releases: import("@cmsfn/core").CmsfnRelease[] }>> {
+): Promise<CmsfnEnvelope<{ releases: import("cmsfn").CmsfnRelease[] }>> {
   const body = (await parseJsonBody(req)) as Record<string, unknown>;
   const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
   if (!dataset) {
@@ -122,7 +122,7 @@ export async function handleReleasesAdd(
 export async function handleReleasesPublish(
   config: ReleasesHandlerConfig,
   req: IncomingMessage
-): Promise<CmsfnEnvelope<import("@cmsfn/core").CmsfnReleasePublishResult>> {
+): Promise<CmsfnEnvelope<import("cmsfn").CmsfnReleasePublishResult>> {
   const body = (await parseJsonBody(req)) as Record<string, unknown>;
   const dataset = typeof body?.dataset === "string" ? body.dataset.trim() : "";
   const releaseId = typeof body?.releaseId === "string" ? body.releaseId.trim() : "";

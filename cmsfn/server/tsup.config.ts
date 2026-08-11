@@ -10,5 +10,5 @@ export default defineConfig({
   minify: false,
   splitting: false,
   outDir: "dist",
-  external: ["@cmsfn/core"],
+  external: ["cmsfn"],
 });

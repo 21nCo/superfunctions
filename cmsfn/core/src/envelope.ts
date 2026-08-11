@@ -25,7 +25,11 @@ const cmsErrorRegistry = createErrorRegistry([
 
 export function ok<T>(result: T): { ok: true; result: T } {
   const canonical = createEnvelopeSuccess(result);
-  return toLegacyResultEnvelope(canonical);
+  const legacy = toLegacyResultEnvelope(canonical);
+  if (!legacy.ok) {
+    throw new Error("Expected a successful CMS envelope");
+  }
+  return legacy;
 }
 
 export function err<T = never>(

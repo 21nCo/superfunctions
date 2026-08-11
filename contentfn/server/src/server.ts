@@ -2,7 +2,7 @@
  * Create ContentFn server: programmatic API + HTTP handler.
  */
 
-import type { Adapter } from "@superfunctions/db";
+import { wrapWithSchema, type Adapter } from "@superfunctions/db";
 import { datasetCreate, datasetList, datasetDelete } from "./storage/datasets.js";
 import { schemaUpsert, schemaGet } from "./storage/schemaStorage.js";
 import { docCreate, docGet, docDelete, docPatch } from "./storage/docs.js";
@@ -18,6 +18,7 @@ import { RealtimeServer, type AuthorizeFn } from "./realtime/server.js";
 import type { ContentfnEvent } from "./storage/events.js";
 import { resolveLimits, type ContentfnLimits } from "./limits/limits.js";
 import { createLogger, type ContentfnLogSink } from "./logging/logger.js";
+import { getContentfnSchema } from "./storage/schema.js";
 
 export interface ContentfnServerConfig {
   db: Adapter;
@@ -119,9 +120,10 @@ export interface ContentfnServer {
 export function createContentfnServer(config: ContentfnServerConfig): ContentfnServer {
   const limits = resolveLimits(config.limits);
   const logger = createLogger(config.logSink);
+  const db = wrapWithSchema(config.db, getContentfnSchema());
 
   const storage = {
-    db: config.db,
+    db,
     storage: config.storage,
     maxPayloadBytes: config.maxPayloadBytes ?? limits.maxPayloadBytes,
   };
@@ -140,7 +142,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
     type: string,
     docId: string
   ): Promise<ContentfnEvent | null> {
-    const events = await config.db.findMany({
+    const events = await db.findMany({
       model: "contentfn_events",
       where: [
         { field: "dataset", operator: "eq" as const, value: dataset },
@@ -161,7 +163,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
     if (result.ok) {
       const event = await getLatestEvent(input.dataset, "doc.published", result.result._id);
       if (event) {
-        await enqueueForEvent({ db: config.db }, event);
+        await enqueueForEvent({ db }, event);
         realtimeServer.broadcast(event);
       }
     }
@@ -178,7 +180,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
       const publishedId = input.id.startsWith("drafts.") ? input.id.substring(7) : input.id;
       const event = await getLatestEvent(input.dataset, "doc.unpublished", publishedId);
       if (event) {
-        await enqueueForEvent({ db: config.db }, event);
+        await enqueueForEvent({ db }, event);
         realtimeServer.broadcast(event);
       }
     }
@@ -230,7 +232,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
         delete: (input) => webhookDelete(storage, input),
       },
     },
-    processWebhookQueue: () => processWebhookQueue({ db: config.db }),
+    processWebhookQueue: () => processWebhookQueue({ db }),
     realtime: realtimeServer,
     handler: createRouter(routerConfig),
   };

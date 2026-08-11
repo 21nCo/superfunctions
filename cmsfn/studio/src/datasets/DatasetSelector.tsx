@@ -3,7 +3,7 @@
  * Propagates selected dataset downstream via onDatasetChange.
  */
 
-import type { CmsfnStudioConfig } from "@cmsfn/core";
+import type { CmsfnStudioConfig } from "cmsfn";
 import { getInitialDataset } from "../config/loadConfig.js";
 
 export interface DatasetSelectorProps {

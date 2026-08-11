@@ -1,4 +1,4 @@
-"""Webhook notification channel."""
+/** Webhook notification channel. */
 
 export interface WebhookPayload {
   alert: {

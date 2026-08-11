@@ -8,4 +8,11 @@ export default defineConfig({
   minify: false,
   sourcemap: true,
   treeshake: true,
+  noExternal: [
+    "@superfunctions/http-express",
+    "@superfunctions/http-fastify",
+    "@superfunctions/http-hono",
+    "@superfunctions/http-next",
+    "@superfunctions/http-sveltekit",
+  ],
 });

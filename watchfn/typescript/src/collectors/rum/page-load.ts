@@ -1,4 +1,4 @@
-"""Page load performance tracking for RUM."""
+/** Page load performance tracking for RUM. */
 
 export interface PageLoadMetrics {
   url: string;

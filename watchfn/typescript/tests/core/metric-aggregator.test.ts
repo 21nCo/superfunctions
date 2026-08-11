@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { MetricAggregator, MetricPoint } from "../src/core/metric-aggregator";
+import { MetricAggregator, MetricPoint } from "../../src/core/metric-aggregator";
 
 describe("MetricAggregator", () => {
   let aggregator: MetricAggregator;

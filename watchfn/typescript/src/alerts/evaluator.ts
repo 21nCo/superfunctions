@@ -1,4 +1,4 @@
-"""Alert evaluator engine."""
+/** Alert evaluator engine. */
 
 import { AlertCondition, ConditionEvaluator } from "./conditions";
 

@@ -1,4 +1,4 @@
-"""Email notification channel (placeholder - requires email service)."""
+/** Email notification channel (placeholder - requires email service). */
 
 export interface EmailOptions {
   from: string;

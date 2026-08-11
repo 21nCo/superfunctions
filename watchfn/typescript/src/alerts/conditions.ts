@@ -1,4 +1,4 @@
-"""Alert condition types and evaluation."""
+/** Alert condition types and evaluation. */
 
 export type ConditionOperator = "gt" | "gte" | "lt" | "lte" | "eq" | "ne";
 
@@ -91,7 +91,17 @@ export class ConditionEvaluator {
   }
 
   private evaluateComposite(condition: CompositeCondition, data: any[]): boolean {
-    const results = condition.conditions.map((c) => this.evaluate(c, data));
+    const results = condition.conditions.map((child, index) => {
+      const matchingData = "metric" in child
+        ? data.filter((point) => point?.metric === child.metric)
+        : [];
+      const childData = matchingData.length > 0
+        ? matchingData
+        : data.length === condition.conditions.length
+          ? [data[index]]
+          : data;
+      return this.evaluate(child, childData);
+    });
 
     if (condition.operator === "and") {
       return results.every((r) => r);

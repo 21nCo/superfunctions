@@ -3,7 +3,7 @@
  * In browser: typically from window.__CMSFN_CONFIG__ or fetched from an endpoint.
  */
 
-import type { CmsfnStudioConfig } from "@cmsfn/core";
+import type { CmsfnStudioConfig } from "cmsfn";
 
 declare global {
   interface Window {

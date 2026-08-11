@@ -1,6 +1,6 @@
 {
   "name": "@cmsfn/server",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "cmsfn server API types and runtime (types-only in this phase)",
   "type": "module",
   "main": "dist/index.cjs",
@@ -43,7 +43,7 @@
     "node": ">=18.18.0"
   },
   "dependencies": {
-    "@cmsfn/core": "*",
+    "cmsfn": "0.0.2",
     "@superfunctions/db": "0.1.4",
     "@superfunctions/http": "0.1.3"
   },

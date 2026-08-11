@@ -1,6 +1,6 @@
 {
   "name": "@docsfn/provider-fs",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -18,7 +18,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@docsfn/core": "*",
+    "@docsfn/core": "0.0.6",
     "fast-glob": "^3.0.0",
     "gray-matter": "^4.0.0"
   },

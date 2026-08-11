@@ -3,10 +3,10 @@
  */
 
 import type { IncomingMessage } from "http";
-import type { CmsfnEnvelope } from "@cmsfn/core";
-import { err } from "@cmsfn/core";
-import type { CmsfnWorkflowState, CmsfnWorkflowMetadata } from "@cmsfn/core";
-import { CMS_RESERVED_FIELD } from "@cmsfn/core";
+import type { CmsfnEnvelope } from "cmsfn";
+import { err } from "cmsfn";
+import type { CmsfnWorkflowState, CmsfnWorkflowMetadata } from "cmsfn";
+import { CMS_RESERVED_FIELD } from "cmsfn";
 import { authorize } from "../auth/authorize.js";
 import type { AuthorizeConfig } from "../auth/authorize.js";
 import { canPublish } from "../publish/gates.js";

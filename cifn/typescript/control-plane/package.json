@@ -1,6 +1,6 @@
 {
   "name": "@cifn/control-plane",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Self-hosted CI/CD pipeline runner for the superfunctions ecosystem",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

@@ -3,7 +3,7 @@
  */
 
 import type { ComponentType } from "react";
-import { createPaneRegistry } from "@cmsfn/core";
+import { createPaneRegistry } from "cmsfn";
 
 const paneRegistry = createPaneRegistry();
 const components = new Map<string, ComponentType<unknown>>();

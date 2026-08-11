@@ -1,6 +1,6 @@
 {
   "name": "cmsfn",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Core types, permission evaluation, and desk model for cmsfn",
   "type": "module",
   "main": "dist/index.cjs",

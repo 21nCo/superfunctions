@@ -1,6 +1,6 @@
 {
   "name": "@uifn/vue",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Experimental Vue adapter components for uifn primitives",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -28,6 +28,8 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.3",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/vue": "^8.1.0",
     "@vue/test-utils": "^2.4.6",
     "jsdom": "^27.0.1",
     "tsup": "^8.0.0",

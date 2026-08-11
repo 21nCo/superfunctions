@@ -1,6 +1,6 @@
 {
   "name": "@recfn/meet",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "RecFn Google Meet platform adapter — join Meet via headless browser, capture audio, track participants, capture chat",
   "type": "module",
   "main": "./dist/index.js",
@@ -42,8 +42,8 @@
   },
   "dependencies": {
     "playwright": "^1.49.0",
-    "@recfn/core": "0.1.0",
-    "@recfn/browser-core": "0.1.1"
+    "@recfn/core": "0.1.1",
+    "@recfn/browser-core": "0.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

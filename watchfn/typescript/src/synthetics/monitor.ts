@@ -1,10 +1,11 @@
-"""Synthetic monitor manager."""
+/** Synthetic monitor manager. */
 
-import { HttpCheck, HttpCheckConfig } from "./http-check";
-import { MonitorScheduler } from "./scheduler";
+import { HttpCheckRunner } from "./http-check";
+import type { SyntheticCheck } from "./types";
 
 export type MonitorType = "http" | "browser";
 export type MonitorStatus = "active" | "paused" | "error";
+export type HttpCheckConfig = Omit<SyntheticCheck, "id" | "name" | "type" | "interval">;
 
 export interface Monitor {
   id: string;
@@ -24,11 +25,8 @@ export interface Monitor {
 
 export class MonitorManager {
   private monitors: Map<string, Monitor> = new Map();
-  private scheduler: MonitorScheduler;
-
-  constructor() {
-    this.scheduler = new MonitorScheduler();
-  }
+  private timers: Map<string, ReturnType<typeof setInterval>> = new Map();
+  private httpRunner = new HttpCheckRunner();
 
   /**
    * Create a new monitor
@@ -79,7 +77,7 @@ export class MonitorManager {
     const monitor = this.monitors.get(id);
     if (monitor) {
       monitor.status = "paused";
-      this.scheduler.cancel(id);
+      this.cancel(id);
     }
   }
 
@@ -101,7 +99,7 @@ export class MonitorManager {
    * Delete a monitor
    */
   delete(id: string): void {
-    this.scheduler.cancel(id);
+    this.cancel(id);
     this.monitors.delete(id);
   }
 
@@ -115,11 +113,16 @@ export class MonitorManager {
   }
 
   private scheduleHttpMonitor(monitor: Monitor): void {
-    const check = new HttpCheck(monitor.config);
-
-    this.scheduler.schedule(monitor.id, monitor.interval, async () => {
+    this.cancel(monitor.id);
+    const run = async () => {
       try {
-        const result = await check.execute();
+        const result = await this.httpRunner.run({
+          ...monitor.config,
+          id: monitor.id,
+          name: monitor.name,
+          type: "http",
+          interval: monitor.interval,
+        });
         
         monitor.lastRun = Date.now();
         monitor.lastResult = {
@@ -135,7 +138,6 @@ export class MonitorManager {
           monitor.status = "active";
         }
 
-        return result;
       } catch (error) {
         monitor.status = "error";
         monitor.lastResult = {
@@ -144,9 +146,19 @@ export class MonitorManager {
           timestamp: Date.now(),
           error: (error as Error).message,
         };
-        throw error;
       }
-    });
+    };
+
+    this.timers.set(monitor.id, setInterval(() => void run(), monitor.interval));
+    void run();
+  }
+
+  private cancel(id: string): void {
+    const timer = this.timers.get(id);
+    if (timer) {
+      clearInterval(timer);
+      this.timers.delete(id);
+    }
   }
 
   private generateId(): string {

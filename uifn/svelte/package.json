@@ -1,6 +1,6 @@
 {
   "name": "@uifn/svelte",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "GA Svelte adapter for uifn primitives",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

@@ -3,6 +3,8 @@
  */
 
 import type { RecFn } from '@recfn/client';
+import type { ApiResult } from '@recfn/client';
+import type { Recording } from '@recfn/core';
 
 export interface UploadOptions {
   botId: string;
@@ -18,7 +20,7 @@ export async function uploadRecording(
   client: RecFn,
   file: UploadableRecording,
   options: UploadOptions,
-) {
+): Promise<ApiResult<Recording & { downloadUrl?: string }>> {
   const payload =
     file instanceof ArrayBuffer ? new Uint8Array(file) : file;
   return client.recordings.upload(payload, {
