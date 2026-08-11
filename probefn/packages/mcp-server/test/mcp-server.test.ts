@@ -1,7 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 
@@ -320,160 +321,62 @@ describe.sequential('mcp server', () => {
 });
 
 class McpTestClient {
-  private readonly child: ChildProcessWithoutNullStreams;
-  private buffer = Buffer.alloc(0);
-  private nextId = 1;
-  private readonly pending = new Map<number, {
-    resolve: (value: JsonRpcResponse) => void;
-    reject: (reason?: unknown) => void;
-  }>();
-
-  private constructor(child: ChildProcessWithoutNullStreams) {
-    this.child = child;
-    child.stdout.on('data', (chunk) => {
-      this.onStdout(chunk);
-    });
-    child.stderr.on('data', () => {
-      // Startup metadata is expected on stderr.
-    });
-    child.once('exit', () => {
-      for (const pendingRequest of this.pending.values()) {
-        pendingRequest.reject(new Error('MCP server exited before responding.'));
-      }
-      this.pending.clear();
-    });
-  }
+  private constructor(private readonly client: Client) {}
 
   public static async start(): Promise<McpTestClient> {
-    const child = spawn(
-      'pnpm',
-      [
-        'exec',
-        'jiti',
+    const transport = new StdioClientTransport({
+      command: path.resolve(projectRoot, '../node_modules/.bin/jiti'),
+      args: [
         'apps/cli/src/index.ts',
         'mcp',
         'serve',
       ],
-      {
-        cwd: projectRoot,
-        env: {
-          ...process.env,
-          PROBEFN_VITE_CONSOLE_ERROR_PORT: '4276',
-        },
-        stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: projectRoot,
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+        ),
+        PROBEFN_VITE_CONSOLE_ERROR_PORT: '4276',
       },
-    );
-
-    const client = new McpTestClient(child);
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error('MCP server did not start in time.'));
-      }, 5000);
-      child.stderr.once('data', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      child.once('error', reject);
+      stderr: 'pipe',
     });
-    return client;
+    transport.stderr?.on('data', () => {
+      // Startup metadata is expected on stderr.
+    });
+    const client = new Client(
+      { name: 'probefn-vitest', version: '1.0.0' },
+      { capabilities: {} },
+    );
+    await client.connect(transport);
+    return new McpTestClient(client);
   }
 
   public async initialize(): Promise<void> {
-    await this.request('initialize', {
-      protocolVersion: '2025-03-26',
-      capabilities: {},
-      clientInfo: {
-        name: 'vitest',
-        version: '1.0.0',
-      },
-    });
-    this.notify('notifications/initialized');
+    // Client.connect performs the official initialize/initialized handshake.
   }
 
   public async request(method: string, params: JsonObject): Promise<JsonRpcResponse> {
-    const id = this.nextId++;
-    const payload = {
-      jsonrpc: '2.0',
-      id,
-      method,
-      params,
-    };
-
-    const promise = new Promise<JsonRpcResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-    });
-    await this.write(payload);
-    return promise;
-  }
-
-  public notify(method: string, params: JsonObject = {}): void {
-    void this.write({
-      jsonrpc: '2.0',
-      method,
-      params,
-    });
+    if (method === 'tools/list') {
+      return {
+        jsonrpc: '2.0',
+        result: await this.client.listTools() as unknown as JsonObject,
+      };
+    }
+    if (method === 'tools/call') {
+      const name = typeof params.name === 'string' ? params.name : '';
+      const arguments_ = params.arguments && typeof params.arguments === 'object'
+        ? params.arguments as JsonObject
+        : {};
+      return {
+        jsonrpc: '2.0',
+        result: await this.client.callTool({ name, arguments: arguments_ }) as unknown as JsonObject,
+      };
+    }
+    throw new Error(`Unsupported test request ${method}.`);
   }
 
   public async close(): Promise<void> {
-    if (this.child.exitCode !== null || this.child.signalCode !== null) {
-      return;
-    }
-
-    this.child.kill('SIGTERM');
-    await new Promise<void>((resolve) => {
-      this.child.once('exit', () => resolve());
-    });
-  }
-
-  private async write(payload: Record<string, unknown>): Promise<void> {
-    const message = Buffer.from(JSON.stringify(payload), 'utf8');
-    const header = Buffer.from(`Content-Length: ${message.byteLength}\r\n\r\n`, 'utf8');
-    await new Promise<void>((resolve, reject) => {
-      this.child.stdin.write(Buffer.concat([header, message]), (error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve();
-      });
-    });
-  }
-
-  private onStdout(chunk: Buffer): void {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
-    while (true) {
-      const headerEnd = this.buffer.indexOf('\r\n\r\n');
-      if (headerEnd === -1) {
-        return;
-      }
-
-      const header = this.buffer.subarray(0, headerEnd).toString('utf8');
-      const lengthMatch = header.match(/Content-Length:\s*(\d+)/i);
-      if (!lengthMatch) {
-        this.buffer = Buffer.alloc(0);
-        return;
-      }
-
-      const contentLength = Number.parseInt(lengthMatch[1] ?? '0', 10);
-      const bodyStart = headerEnd + 4;
-      if (this.buffer.length < bodyStart + contentLength) {
-        return;
-      }
-
-      const body = this.buffer.subarray(bodyStart, bodyStart + contentLength);
-      this.buffer = this.buffer.subarray(bodyStart + contentLength);
-      const response = JSON.parse(body.toString('utf8')) as JsonRpcResponse;
-      if (response.id === undefined || response.id === null) {
-        continue;
-      }
-
-      const pendingRequest = this.pending.get(Number(response.id));
-      if (pendingRequest) {
-        this.pending.delete(Number(response.id));
-        pendingRequest.resolve(response);
-      }
-    }
+    await this.client.close();
   }
 }
 

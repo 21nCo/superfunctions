@@ -1,4 +1,5 @@
 import { PassThrough } from "node:stream";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { describe, expect, it } from "vitest";
 
@@ -39,7 +40,7 @@ describe("mcp and evaluation parity", () => {
     const clientToServer = new PassThrough();
     const serverToClient = new PassThrough();
     const server = new MCPServer([addTool]);
-    const serverLoop = serveOverStreams(server, clientToServer, serverToClient);
+    await server.connect(new StdioServerTransport(clientToServer, serverToClient));
     const transport = new StdioMCPTransport({
       streams: {
         input: serverToClient,
@@ -47,7 +48,6 @@ describe("mcp and evaluation parity", () => {
         close: async () => {
           clientToServer.end();
           serverToClient.end();
-          await serverLoop;
         }
       }
     });
@@ -59,13 +59,14 @@ describe("mcp and evaluation parity", () => {
 
     await expect(client.callTool("add", { a: 2, b: 3 })).resolves.toBe(5);
     await client.close();
+    await server.close();
   });
 
-  it("normalizes unknown methods and shutdown hangs to canonical MCP errors", async () => {
+  it("normalizes unknown tools and shutdown hangs to canonical MCP errors", async () => {
     const clientToServer = new PassThrough();
     const serverToClient = new PassThrough();
     const server = new MCPServer([addTool]);
-    const serverLoop = serveOverStreams(server, clientToServer, serverToClient);
+    await server.connect(new StdioServerTransport(clientToServer, serverToClient));
     const transport = new StdioMCPTransport({
       streams: {
         input: serverToClient,
@@ -73,13 +74,14 @@ describe("mcp and evaluation parity", () => {
         close: async () => {
           clientToServer.end();
           serverToClient.end();
-          await serverLoop;
         }
       }
     });
+    const client = new MCPClient(transport);
 
-    await expect(transport.request("tools/unknown", {})).rejects.toBeInstanceOf(MCPProtocolError);
-    await transport.close();
+    await expect(client.callTool("missing", {})).rejects.toBeInstanceOf(MCPProtocolError);
+    await client.close();
+    await server.close();
 
     const hangingTransport = new StdioMCPTransport({
       closeTimeoutMs: 10,
@@ -96,15 +98,12 @@ describe("mcp and evaluation parity", () => {
 
   it("round-trips tools over the SSE transport", async () => {
     const server = new MCPServer([addTool]);
+    const handler = await server.createWebStandardHandler();
     const transport = new SSEMCPTransport({
       url: "http://langfn.test/mcp",
-      fetchImpl: async (_input, init) => {
-        const request = new Request("http://langfn.test/mcp", {
-          method: "POST",
-          headers: init?.headers,
-          body: String(init?.body ?? "")
-        });
-        return await server.handleSSERequest(request);
+      fetchImpl: async (input, init) => {
+        const request = new Request(input, init);
+        return await handler(request);
       }
     });
     const client = new MCPClient(transport);
@@ -112,6 +111,7 @@ describe("mcp and evaluation parity", () => {
     await expect(client.listTools()).resolves.toMatchObject([{ name: "add" }]);
     await expect(client.callTool("add", { a: 2, b: 3 })).resolves.toBe(5);
     await client.close();
+    await server.close();
   });
 
   it("supports compare flows, custom metrics, and testfn export hooks", async () => {
@@ -150,18 +150,3 @@ describe("mcp and evaluation parity", () => {
     await expect(evaluator.run([])).rejects.toBeInstanceOf(ValidationError);
   });
 });
-
-async function serveOverStreams(server: MCPServer, input: PassThrough, output: PassThrough): Promise<void> {
-  for await (const chunk of input) {
-    const lines = chunk
-      .toString("utf-8")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    for (const line of lines) {
-      const request = JSON.parse(line) as { jsonrpc: "2.0"; id: number; method: string; params?: Record<string, unknown> };
-      const response = await server.handle(request);
-      output.write(`${JSON.stringify(response)}\n`);
-    }
-  }
-}

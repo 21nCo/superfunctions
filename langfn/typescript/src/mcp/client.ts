@@ -1,30 +1,57 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+
 import { MCPProtocolError } from "../core/errors.js";
-import type { MCPTool, MCPTransport, ListToolsResult } from "./types.js";
+import type { MCPTool, MCPTransport } from "./types.js";
 
 export class MCPClient {
+  private readonly client = new Client(
+    { name: "langfn-mcp-client", version: "0.1.0" },
+    { capabilities: {} }
+  );
+  private connected = false;
+
   constructor(readonly transport: MCPTransport) {}
 
   async listTools(): Promise<MCPTool[]> {
-    const result = await this.transport.request<ListToolsResult | MCPTool[]>("tools/list", {});
-    if (Array.isArray(result)) {
-      return result;
-    }
-    if (result && Array.isArray(result.tools)) {
-      return result.tools;
-    }
-    throw new MCPProtocolError("Invalid MCP tools/list response", {
-      metadata: { result }
-    });
+    await this.ensureConnected();
+    const result = await this.client.listTools();
+    return result.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description ?? "",
+      input_schema: tool.inputSchema as Record<string, unknown>
+    }));
   }
 
   async callTool<T = unknown>(name: string, arguments_: Record<string, unknown> = {}): Promise<T> {
-    return await this.transport.request<T>("tools/call", {
-      name,
-      arguments: arguments_
-    });
+    await this.ensureConnected();
+    const result = await this.client.callTool({ name, arguments: arguments_ }) as CallToolResult;
+    if (result.isError) {
+      const message = result.content
+        .filter((entry): entry is { type: "text"; text: string } => entry.type === "text")
+        .map((entry) => entry.text)
+        .join("\n") || `MCP tool ${name} failed`;
+      throw new MCPProtocolError(message, { metadata: { result } });
+    }
+    if (
+      result.structuredContent &&
+      typeof result.structuredContent === "object" &&
+      "result" in result.structuredContent
+    ) {
+      return result.structuredContent.result as T;
+    }
+    return result.structuredContent as T;
   }
 
   async close(): Promise<void> {
-    await this.transport.close();
+    if (!this.connected) return;
+    await this.client.close();
+    this.connected = false;
+  }
+
+  private async ensureConnected(): Promise<void> {
+    if (this.connected) return;
+    await this.client.connect(this.transport);
+    this.connected = true;
   }
 }
