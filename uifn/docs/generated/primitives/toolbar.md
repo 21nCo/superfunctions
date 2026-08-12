@@ -71,7 +71,7 @@ Control mode: `none`. Controlled inputs: none. Uncontrolled defaults: none. Chan
 
 Profile: `menu-navigation`. Native semantic basis: Choose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.
 
-Accessible name required: yes; accepted sources: visible-label, aria-label, aria-labelledby. WCAG mapping: 1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2. Normative basis: native-html, wai-aria-apg-menu, wai-aria-apg-tabs, wai-aria-apg-treeview. Phase 18 owns the final manual review. Automated and current manual evidence does not include JAWS, which remains explicitly user-deferred.
+Accessible name required: yes; accepted sources: visible-label, aria-label, aria-labelledby. WCAG mapping: 1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2. Normative basis: native-html, wai-aria-apg-menu, wai-aria-apg-tabs, wai-aria-apg-treeview. Final manual accessibility review remains outstanding. Automated and current manual evidence does not include JAWS, which remains explicitly user-deferred.
 
 ## Keyboard, pointer, and touch
 
@@ -216,7 +216,7 @@ Use `uifn add toolbar --framework <react|svelte|solid>` through `@uifn/registry`
 
 <a id="known-constraints"></a>
 
-Required release channel: `stable-1.0`. Catalog status: `ga-required`. Compatibility certification is still pending external runner/device-lab evidence; this page is Phase 17 documentation evidence, not a 10/10 release declaration. Declared exceptions: none.
+Required release channel: `stable-1.0`. Catalog status: `ga-required`. Compatibility certification is still pending external runner/device-lab evidence; this page documents current generated compatibility evidence and is not a complete release certification. Declared exceptions: none.
 
 Explicit limitations:
 

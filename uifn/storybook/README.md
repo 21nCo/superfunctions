@@ -6,11 +6,11 @@ Status: `ga-candidate`. Storybook is optional at application runtime and mandato
 
 ## What is proven
 
-The Phase 17 generator derives the story inventory from the canonical 69-primitive catalog. React, Svelte, and Solid each build a real Storybook with their native renderer and import every primitive from the corresponding public styled-package subpath.
+The delivery generator derives the story inventory from the canonical 69-primitive catalog. React, Svelte, and Solid each build a real Storybook with their native renderer and import every primitive from the corresponding public styled-package subpath.
 
 The canonical matrix contains 2,115 stories: 705 for each framework. It covers every declared primitive scenario plus an explicit anatomy story, including controlled/uncontrolled behavior where supported, semantic variants, disabled/read-only/invalid states, keyboard/focus operation, RTL, forced colors, reduced motion, responsive layouts, and edge cases.
 
-The browser gate visits and operates every built story. Console, page, network, serious/critical axe, missing-export, and static-test-double failures block the phase. Each passing result carries semantic DOM and screenshot hashes.
+The browser gate visits and operates every built story. Console, page, network, serious/critical axe, missing-export, and static-test-double failures block release validation. Each passing result carries semantic DOM and screenshot hashes.
 
 ## Preset
 

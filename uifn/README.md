@@ -7,7 +7,7 @@
 | Package | Layer | Current role |
 | --- | --- | --- |
 | `@uifn/core` | core | Framework-agnostic controllers and pure logic |
-| `@uifn/dom` | DOM | Owned browser-service boundary; implementation begins in PHASE_05 |
+| `@uifn/dom` | DOM | Owned browser-service boundary |
 | `@uifn/adapter-kit` | adapters | Shared binding and conformance contract |
 | `@uifn/react` | adapters | React headless package |
 | `@uifn/svelte` | adapters | Svelte headless package |
@@ -31,15 +31,15 @@ The authoritative machine-readable DAG is `uifn/package-graph.json`. React, Svel
 
 ## Verification
 
-Run PHASE_01 package-surface checks from the repository root:
+Run package-surface checks from the repository root:
 
 ```bash
-npm run verify:uifn-phase-01
+npm run verify:uifn-package-graph
 npm run verify:uifn-stable
 npm run verify:uifn-lanes
 ```
 
-`verify:uifn-stable` covers only the stable lane and proves it can execute with the experimental workspaces absent. `verify:uifn-lanes` always reports experimental results separately. The full 1.0 release remains fail-closed until the later architecture, behavior, accessibility, compatibility, performance, security, and release phases are complete.
+`verify:uifn-stable` covers only the stable lane and proves it can execute with the experimental workspaces absent. `verify:uifn-lanes` always reports experimental results separately. The full 1.0 release remains fail-closed until the architecture, behavior, accessibility, compatibility, performance, security, and release gates are complete.
 
 Private React, Svelte, and Solid Workbench apps live under `uifn/examples`. Integrated pattern and Superfunction panels are experimental-demo surfaces and are excluded from the stable package result.
 

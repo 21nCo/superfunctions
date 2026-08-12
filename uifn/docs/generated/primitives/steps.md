@@ -77,7 +77,7 @@ Control mode: `single`. Controlled inputs: `step`. Uncontrolled defaults: `defau
 
 Profile: `status-feedback`. Native semantic basis: Use meter, progressbar, status, timer, step, or alert semantics only as declared for each state.
 
-Accessible name required: yes; accepted sources: visible-label, aria-label, aria-labelledby. WCAG mapping: 1.3.1, 2.1.1, 2.2.1, 2.4.3, 3.2.2, 4.1.2, 4.1.3. Normative basis: native-html, wai-aria-live-regions. Phase 18 owns the final manual review. Automated and current manual evidence does not include JAWS, which remains explicitly user-deferred.
+Accessible name required: yes; accepted sources: visible-label, aria-label, aria-labelledby. WCAG mapping: 1.3.1, 2.1.1, 2.2.1, 2.4.3, 3.2.2, 4.1.2, 4.1.3. Normative basis: native-html, wai-aria-live-regions. Final manual accessibility review remains outstanding. Automated and current manual evidence does not include JAWS, which remains explicitly user-deferred.
 
 ## Keyboard, pointer, and touch
 
@@ -220,7 +220,7 @@ Use `uifn add steps --framework <react|svelte|solid>` through `@uifn/registry`. 
 
 <a id="known-constraints"></a>
 
-Required release channel: `stable-1.0`. Catalog status: `ga-required`. Compatibility certification is still pending external runner/device-lab evidence; this page is Phase 17 documentation evidence, not a 10/10 release declaration. Declared exceptions: none.
+Required release channel: `stable-1.0`. Catalog status: `ga-required`. Compatibility certification is still pending external runner/device-lab evidence; this page documents current generated compatibility evidence and is not a complete release certification. Declared exceptions: none.
 
 Explicit limitations:
 

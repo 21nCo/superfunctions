@@ -81,7 +81,7 @@ Control mode: `single`. Controlled inputs: `open`. Uncontrolled defaults: `defau
 
 Profile: `modal-overlay`. Native semantic basis: Use dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.
 
-Accessible name required: yes; accepted sources: title-part, aria-label, aria-labelledby. WCAG mapping: 1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2. Normative basis: native-html, wai-aria-apg-dialog-modal, wai-aria-apg-tooltip. Phase 18 owns the final manual review. Automated and current manual evidence does not include JAWS, which remains explicitly user-deferred.
+Accessible name required: yes; accepted sources: title-part, aria-label, aria-labelledby. WCAG mapping: 1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2. Normative basis: native-html, wai-aria-apg-dialog-modal, wai-aria-apg-tooltip. Final manual accessibility review remains outstanding. Automated and current manual evidence does not include JAWS, which remains explicitly user-deferred.
 
 ## Keyboard, pointer, and touch
 
@@ -224,7 +224,7 @@ Use `uifn add alert-dialog --framework <react|svelte|solid>` through `@uifn/regi
 
 <a id="known-constraints"></a>
 
-Required release channel: `stable-1.0`. Catalog status: `ga-required`. Compatibility certification is still pending external runner/device-lab evidence; this page is Phase 17 documentation evidence, not a 10/10 release declaration. Declared exceptions: none.
+Required release channel: `stable-1.0`. Catalog status: `ga-required`. Compatibility certification is still pending external runner/device-lab evidence; this page documents current generated compatibility evidence and is not a complete release certification. Declared exceptions: none.
 
 Explicit limitations:
 

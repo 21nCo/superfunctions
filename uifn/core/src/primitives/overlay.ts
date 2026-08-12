@@ -71,7 +71,7 @@ function policy(value: UIFnOverlayPolicy): Readonly<UIFnOverlayPolicy> {
 }
 
 /**
- * The reviewed behavior contract for the eight Phase 07 overlay families.
+ * The reviewed behavior contract for the eight overlay families.
  * These values are intentionally not normalized: an AlertDialog, Tooltip,
  * HoverCard, and movable FloatingPanel have materially different contracts.
  */

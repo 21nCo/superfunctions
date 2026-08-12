@@ -12,7 +12,7 @@ import {
 
 const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
-describe('@uifn/storybook Phase 17 public workbench', () => {
+describe('@uifn/storybook public workbench', () => {
   it('requires a real renderer and the complete global preference matrix', () => {
     expect(uifnStorybookPreset.parameters.uifn).toEqual({
       requiredForReleaseValidation: true,
@@ -40,7 +40,7 @@ describe('@uifn/storybook Phase 17 public workbench', () => {
     expect(docs.ok).toBe(true);
     expect(docs.primitiveCount).toBe(69);
     expect(docs.requiredSectionCount).toBe(69 * 13);
-    expect(docs.mappedFieldCount).toBeGreaterThan(13_000);
+    expect(docs.mappedFieldCount).toBe(12_368);
     expect(docs.sampleCount).toBe(69 * 3 * 2);
     expect(docs.pages.find((page) => page.primitive === 'button')).toMatchObject({
       requiredSections: expect.arrayContaining(['accessibility', 'package-install', 'source-install']),

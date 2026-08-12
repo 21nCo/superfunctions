@@ -6,13 +6,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const node = process.env.UIFN_NODE_PATH ?? '/opt/homebrew/bin/node';
-const npm = process.env.UIFN_NPM_PATH ?? '/opt/homebrew/bin/npm';
+const node = process.env.UIFN_NODE_PATH ?? process.execPath;
+const npm = process.env.UIFN_NPM_PATH ?? (process.platform === 'win32' ? 'npm.cmd' : 'npm');
 const evidenceRoot = process.env.UIFN_PHASE17_EVIDENCE_DIR ? path.resolve(process.env.UIFN_PHASE17_EVIDENCE_DIR) : null;
 const staticOnly = process.argv.includes('--static-only');
 
 function run(command, args, env = {}) {
-  const result = spawnSync(command, args, { cwd: root, env: { ...process.env, ...env, PATH: '/opt/homebrew/bin:/usr/bin:/bin' }, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  const result = spawnSync(command, args, { cwd: root, env: { ...process.env, ...env }, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   return { command: [command, ...args].join(' '), passed: result.status === 0, status: result.status, stdoutTail: (result.stdout ?? '').split('\n').slice(-40).join('\n'), stderrTail: (result.stderr ?? '').split('\n').slice(-40).join('\n') };
 }
 

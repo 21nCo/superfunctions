@@ -48,4 +48,4 @@ npm test
 npm run build
 ```
 
-The repository-wide Phase 16 gate also creates independent package/source consumers for React, Svelte, and Solid and verifies type checking, production build, SSR, hydration, browser semantics, accessibility, and semantic-trace equivalence.
+The repository-wide delivery gate also creates independent package/source consumers for React, Svelte, and Solid and verifies type checking, production build, SSR, hydration, browser semantics, accessibility, and semantic-trace equivalence.

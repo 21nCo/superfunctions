@@ -70,7 +70,7 @@ Control mode: `single`. Controlled inputs: `open`. Uncontrolled defaults: `defau
 
 Profile: `disclosure`. Native semantic basis: Use a native button for each trigger and a related region only when the content warrants a landmark.
 
-Accessible name required: yes; accepted sources: trigger-text, aria-label, aria-labelledby. WCAG mapping: 1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 4.1.2. Normative basis: native-html, wai-aria-apg-disclosure. Phase 18 owns the final manual review. Automated and current manual evidence does not include JAWS, which remains explicitly user-deferred.
+Accessible name required: yes; accepted sources: trigger-text, aria-label, aria-labelledby. WCAG mapping: 1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 4.1.2. Normative basis: native-html, wai-aria-apg-disclosure. Final manual accessibility review remains outstanding. Automated and current manual evidence does not include JAWS, which remains explicitly user-deferred.
 
 ## Keyboard, pointer, and touch
 
@@ -213,7 +213,7 @@ Use `uifn add collapsible --framework <react|svelte|solid>` through `@uifn/regis
 
 <a id="known-constraints"></a>
 
-Required release channel: `stable-1.0`. Catalog status: `ga-required`. Compatibility certification is still pending external runner/device-lab evidence; this page is Phase 17 documentation evidence, not a 10/10 release declaration. Declared exceptions: none.
+Required release channel: `stable-1.0`. Catalog status: `ga-required`. Compatibility certification is still pending external runner/device-lab evidence; this page documents current generated compatibility evidence and is not a complete release certification. Declared exceptions: none.
 
 Explicit limitations:
 

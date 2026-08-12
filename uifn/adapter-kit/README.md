@@ -20,8 +20,8 @@ normalizes only framework-generated identifiers and transaction version
 numbers. Callback order, focus targets, ARIA values, state, styles, and cleanup
 remain comparison-significant.
 
-Phase 14 mounts all 69 actual exported public compounds in React, Svelte, and
-Solid in both workspace-source and clean packed-tarball consumers. Every trace
+The public-parity gate mounts all 69 actual exported public compounds in React,
+Svelte, and Solid in both workspace-source and clean packed-tarball consumers. Every trace
 must match a reviewed golden; seeded ARIA, callback-order, and focus mutations
 must fail at their exact semantic paths.
 
