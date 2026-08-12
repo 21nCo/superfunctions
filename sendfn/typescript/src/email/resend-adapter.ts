@@ -15,6 +15,7 @@ interface ResendEmailResponse {
 export class ResendAdapter implements EmailProvider {
   readonly name = 'resend';
   readonly capabilities: EmailProviderCapabilities = {
+    supportsIdempotency: true,
     supportsTemplates: false,
     supportsAttachments: true,
     supportsBulkSend: true,
@@ -42,6 +43,7 @@ export class ResendAdapter implements EmailProvider {
         headers: {
           Authorization: `Bearer ${this.config.apiKey}`,
           'Content-Type': 'application/json',
+          ...(params.idempotencyKey ? { 'Idempotency-Key': params.idempotencyKey } : {}),
         },
         body: JSON.stringify({
           from: params.from,
@@ -63,11 +65,10 @@ export class ResendAdapter implements EmailProvider {
           tags: params.tags
             ? Object.entries(params.tags).map(([name, value]) => ({ name, value }))
             : undefined,
-          headers: params.metadata
-            ? {
-                'X-Sendfn-Metadata': Buffer.from(JSON.stringify(params.metadata)).toString('base64url'),
-              }
-            : undefined,
+          headers: {
+            ...(params.headers ?? {}),
+            ...(params.metadata ? { 'X-Sendfn-Metadata': Buffer.from(JSON.stringify(params.metadata)).toString('base64url') } : {}),
+          },
         }),
       });
 

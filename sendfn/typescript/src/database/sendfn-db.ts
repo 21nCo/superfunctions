@@ -126,12 +126,12 @@ export class SendfnDb {
 
   // --- Email Transactions ---
 
-  async createEmailTransaction(data: CreateEmailTransaction): Promise<EmailTransaction> {
+  async createEmailTransaction(data: CreateEmailTransaction, id = uuidv4()): Promise<EmailTransaction> {
     return this.adapter.create<EmailTransaction>({
       model: 'email_transactions',
       data: {
         ...data,
-        id: uuidv4(),
+        id,
         createdAt: new Date(),
         updatedAt: new Date(),
       }
@@ -147,6 +147,22 @@ export class SendfnDb {
         updatedAt: new Date(),
       }
     });
+  }
+
+  async claimStalePendingEmailTransaction(
+    id: string,
+    staleBefore: Date,
+  ): Promise<EmailTransaction | null> {
+    const claimed = await this.adapter.updateMany({
+      model: 'email_transactions',
+      where: [
+        { field: 'id', operator: 'eq', value: id },
+        { field: 'status', operator: 'eq', value: 'pending' },
+        { field: 'updatedAt', operator: 'lte', value: staleBefore },
+      ],
+      data: { updatedAt: new Date() },
+    });
+    return claimed === 1 ? this.getEmailTransaction(id) : null;
   }
 
   async getEmailTransaction(id: string): Promise<EmailTransaction | null> {

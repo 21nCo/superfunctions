@@ -16,6 +16,7 @@ import {
 export class AwsSesAdapter implements EmailProvider {
   readonly name = 'aws-ses';
   readonly capabilities: EmailProviderCapabilities = {
+    supportsIdempotency: false,
     supportsTemplates: true,
     supportsAttachments: true,
     supportsBulkSend: true,
@@ -42,7 +43,7 @@ export class AwsSesAdapter implements EmailProvider {
 
   async sendEmail(params: SendEmailRequest): Promise<SendEmailResponse> {
     try {
-      if (params.attachments && params.attachments.length > 0) {
+      if ((params.attachments && params.attachments.length > 0) || Object.keys(params.headers ?? {}).length > 0 || params.idempotencyKey) {
         return await this.sendRawEmail(params);
       } else {
         return await this.sendSimpleEmail(params);
@@ -63,7 +64,7 @@ export class AwsSesAdapter implements EmailProvider {
       Message: {
         Subject: { Data: params.subject },
         Body: {
-          Html: { Data: params.html },
+          Html: params.html ? { Data: params.html } : undefined,
           Text: params.text ? { Data: params.text } : undefined,
         },
       },
@@ -91,6 +92,11 @@ export class AwsSesAdapter implements EmailProvider {
     if (params.cc?.length) rawMessage += `Cc: ${params.cc.join(', ')}\n`;
     rawMessage += `Subject: ${params.subject}\n`;
     if (params.replyTo) rawMessage += `Reply-To: ${params.replyTo}\n`;
+    for (const [name, value] of Object.entries(params.headers ?? {})) {
+      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value)) throw new Error('Invalid custom email header');
+      rawMessage += `${name}: ${value}\n`;
+    }
+    if (params.idempotencyKey) rawMessage += `X-Sendfn-Idempotency-Key: ${params.idempotencyKey.replace(/[\r\n]/g, '')}\n`;
     rawMessage += `MIME-Version: 1.0\n`;
     rawMessage += `Content-Type: multipart/mixed; boundary="${boundary}"\n\n`;
     
@@ -107,9 +113,11 @@ export class AwsSesAdapter implements EmailProvider {
     }
     
     // HTML Part
-    rawMessage += `--${altBoundary}\n`;
-    rawMessage += `Content-Type: text/html; charset=UTF-8\n\n`;
-    rawMessage += `${params.html}\n\n`;
+    if (params.html) {
+      rawMessage += `--${altBoundary}\n`;
+      rawMessage += `Content-Type: text/html; charset=UTF-8\n\n`;
+      rawMessage += `${params.html}\n\n`;
+    }
     
     rawMessage += `--${altBoundary}--
 
@@ -118,10 +126,11 @@ export class AwsSesAdapter implements EmailProvider {
     // Attachments
     if (params.attachments) {
       for (const att of params.attachments) {
+        const filename = sanitizeMimeParameter(att.filename);
         rawMessage += `--${boundary}\n`;
-        rawMessage += `Content-Type: ${att.contentType || 'application/octet-stream'}; name="${att.filename}"\n`;
+        rawMessage += `Content-Type: ${att.contentType || 'application/octet-stream'}; name="${filename}"\n`;
         rawMessage += `Content-Transfer-Encoding: base64\n`;
-        rawMessage += `Content-Disposition: attachment; filename="${att.filename}"\n\n`;
+        rawMessage += `Content-Disposition: attachment; filename="${filename}"\n\n`;
         
         const content = typeof att.content === 'string' 
           ? Buffer.from(att.content).toString('base64') 
@@ -137,6 +146,7 @@ export class AwsSesAdapter implements EmailProvider {
 
     const command = new SendRawEmailCommand({
       RawMessage: { Data: Buffer.from(rawMessage) },
+      Destinations: [...params.to, ...(params.cc ?? []), ...(params.bcc ?? [])],
       ConfigurationSetName: this.config.configurationSetName,
     });
 
@@ -199,6 +209,10 @@ export class AwsSesAdapter implements EmailProvider {
       },
     };
   }
+}
+
+function sanitizeMimeParameter(value: string): string {
+  return value.normalize('NFKC').replace(/[\u0000-\u001f\u007f"\\/;]/g, '_').slice(0, 255) || 'attachment';
 }
 
 export function awsSesAdapter(config: AwsSesConfig): AwsSesAdapter {

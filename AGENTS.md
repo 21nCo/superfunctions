@@ -30,6 +30,7 @@ Individual superfunction packages, each providing specific developer capabilitie
 - **`flowfn/`** - Flow control (queues, streams, workflows)
 - **`iconfn/`** - Icon utilities
 - **`logfn/`** - Logging utilities
+- **`mailfn/`** - Programmable real inboxes for products, agents, and tests
 - **`sendfn/`** - Email/messaging utilities
 
 ### Shared Packages (`packages/`)
@@ -248,6 +249,14 @@ npm run lint
 - FlexSearch-compatible API
 - Worker-ready with snapshot export/import
 
+### MailFn
+
+- Stable and expiring programmable inboxes
+- Cloudflare Email Workers, D1, R2, and Queues deployment adapter
+- Raw MIME and attachment evidence, waits, OTP/link extraction, threads, labels, and search
+- Typed client, test helpers, CLI, MCP server, custom domains, webhooks, and SendFn composition
+- Scoped credentials, retention, audit, quotas, and explicitly gated public-platform controls
+
 ### CacheFn
 
 - Multi-tier caching (memory, IndexedDB, external)
@@ -417,7 +426,7 @@ superfunctions/
 
 ---
 
-**Last Updated**: 2026-01-12
+**Last Updated**: 2026-08-10
 **Monorepo Version**: 0.1.0
 **Package Manager**: npm@10.2.0
 **Build Tool**: Turbo v2.0.0

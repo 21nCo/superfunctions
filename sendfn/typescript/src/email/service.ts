@@ -16,10 +16,18 @@ import { SendfnDatabaseAdapter } from '../database/adapter';
 import { EmailProvider, SendEmailRequest, SendEmailResponse } from './provider';
 import { TemplateEngine, TemplateRegistry } from '../templates/engine';
 import { mapWithConcurrency, resolveConcurrency } from '../utils/concurrency';
+import { v5 as uuidv5 } from 'uuid';
 
 const DEFAULT_MAX_RECIPIENTS = 50;
 const DEFAULT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const DEFAULT_BULK_CONCURRENCY = 5;
+const IDEMPOTENCY_NAMESPACE = 'f6ff2eac-697c-4df6-8d11-e5c37f652f53';
+const IDEMPOTENCY_PENDING_RECLAIM_MS = 5 * 60 * 1000;
+const RESERVED_CUSTOM_HEADERS = new Set([
+  'bcc', 'cc', 'content-disposition', 'content-transfer-encoding', 'content-type', 'date',
+  'dkim-signature', 'from', 'message-id', 'mime-version', 'reply-to', 'return-path',
+  'sender', 'subject', 'to', 'x-sendfn-idempotency-key',
+]);
 
 export class EmailService {
   constructor(
@@ -32,17 +40,47 @@ export class EmailService {
   ) {}
 
   async sendEmail(params: SendEmailParams): Promise<EmailTransaction> {
+    const transactionId = params.idempotencyKey
+      ? uuidv5(JSON.stringify([params.userId, params.idempotencyKey]), IDEMPOTENCY_NAMESPACE)
+      : undefined;
+    let transaction: EmailTransaction | undefined;
+    if (transactionId) {
+      const existing = await this.adapter.getEmailTransaction(transactionId);
+      if (existing && existing.status !== 'pending') return existing;
+      if (existing && Date.now() - existing.updatedAt.getTime() < IDEMPOTENCY_PENDING_RECLAIM_MS) return existing;
+      if (existing) {
+        if (!this.provider.capabilities.supportsIdempotency) {
+          return this.adapter.updateEmailTransaction(existing.id, {
+            status: 'failed',
+            metadata: {
+              ...(existing.metadata || {}),
+              idempotencyState: 'ambiguous',
+              failureCode: 'SENDFN_AMBIGUOUS_PENDING',
+            },
+          });
+        }
+        transaction = await this.adapter.claimStalePendingEmailTransaction(
+          existing.id,
+          new Date(Date.now() - IDEMPOTENCY_PENDING_RECLAIM_MS),
+        ) ?? undefined;
+        if (!transaction) return (await this.adapter.getEmailTransaction(existing.id)) ?? existing;
+      }
+    }
+
     const recipients = this.normalizeRecipients(params);
-    await this.assertRecipientsNotSuppressed(recipients.to);
-
     const rendered = this.resolveContent(params);
-    this.assertResolvedContent(rendered.subject, rendered.html);
-    this.assertProviderLimits(recipients, params.attachments);
+    this.assertTransportHeaders(params, recipients, rendered.subject);
+    if (!transaction) {
+      await this.assertRecipientsNotSuppressed(recipients.to);
+      this.assertResolvedContent(rendered.subject, rendered.html, rendered.text);
+      this.assertProviderLimits(recipients, params.attachments);
+    }
 
-    const transaction = await this.adapter.createEmailTransaction({
+    if (!transaction) try {
+      transaction = await this.adapter.createEmailTransaction({
       userId: params.userId,
       to: recipients.to.join(','),
-      from: this.config.fromEmail,
+      from: params.from ?? this.config.fromEmail,
       subject: rendered.subject,
       templateId: params.templateId || null,
       templateData: params.templateData || null,
@@ -53,12 +91,19 @@ export class EmailService {
       deliveredAt: null,
       bouncedAt: null,
       complainedAt: null,
-      metadata: params.metadata || {},
-    });
+      metadata: { ...(params.metadata || {}), ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}) },
+      }, transactionId);
+    } catch (error) {
+      if (!transactionId) throw error;
+      const existing = await this.adapter.getEmailTransaction(transactionId);
+      if (!existing) throw error;
+      return existing;
+    }
 
     try {
       const response = await this.sendWithRetry({
-        from: this.config.fromEmail,
+        idempotencyKey: params.idempotencyKey,
+        from: params.from ?? this.config.fromEmail,
         to: recipients.to,
         cc: recipients.cc,
         bcc: recipients.bcc,
@@ -66,7 +111,8 @@ export class EmailService {
         html: rendered.html,
         text: rendered.text,
         attachments: params.attachments,
-        replyTo: this.config.replyTo,
+        replyTo: params.replyTo ?? this.config.replyTo,
+        headers: params.headers,
       });
 
       await this.adapter.updateEmailTransaction(transaction.id, {
@@ -153,9 +199,45 @@ export class EmailService {
     };
   }
 
+  private assertTransportHeaders(
+    params: SendEmailParams,
+    recipients: { to: string[]; cc: string[]; bcc: string[] },
+    subject: string,
+  ): void {
+    const addresses = [
+      params.from ?? this.config.fromEmail,
+      ...(params.replyTo ?? this.config.replyTo ? [params.replyTo ?? this.config.replyTo!] : []),
+      ...recipients.to,
+      ...recipients.cc,
+      ...recipients.bcc,
+    ];
+    if (addresses.some((address) => /[\r\n,]/.test(address) || !this.provider.validateEmail(address))) {
+      throw new ValidationError('Email addresses must be single valid mailboxes without control characters', {
+        code: 'SENDFN_VALIDATION_ERROR', retryable: false,
+      });
+    }
+    if (/[\r\n]/.test(subject) || (params.idempotencyKey !== undefined && /[\r\n]/.test(params.idempotencyKey))) {
+      throw new ValidationError('Email header values cannot contain line breaks', {
+        code: 'SENDFN_VALIDATION_ERROR', retryable: false,
+      });
+    }
+    for (const [name, value] of Object.entries(params.headers ?? {})) {
+      const normalized = name.toLowerCase();
+      if (
+        !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || /[\r\n]/.test(value) ||
+        RESERVED_CUSTOM_HEADERS.has(normalized) || normalized.startsWith('content-') ||
+        normalized.startsWith('resent-') || normalized === 'received'
+      ) {
+        throw new ValidationError(`Custom email header ${name} is not allowed`, {
+          code: 'SENDFN_VALIDATION_ERROR', retryable: false,
+        });
+      }
+    }
+  }
+
   private resolveContent(params: SendEmailParams): {
     subject: string;
-    html: string;
+    html?: string;
     text?: string;
   } {
     let subject = params.subject;
@@ -194,14 +276,14 @@ export class EmailService {
 
     return {
       subject: subject?.trim() || '',
-      html: html?.trim() || '',
+      html: html?.trim() || undefined,
       text,
     };
   }
 
-  private assertResolvedContent(subject: string, html: string): void {
-    if (!subject || !html) {
-      throw new ValidationError('Email must include a subject and HTML body', {
+  private assertResolvedContent(subject: string, html?: string, text?: string): void {
+    if (!subject || (!html && !text?.trim())) {
+      throw new ValidationError('Email must include a subject and HTML or text body', {
         code: 'SENDFN_VALIDATION_ERROR',
         retryable: false,
       });
