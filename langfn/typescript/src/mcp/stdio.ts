@@ -1,9 +1,13 @@
-import readline from "node:readline";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
+import type {
+  Transport,
+  TransportSendOptions
+} from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/sdk/types.js";
 
-import { MCPProtocolError, MCPTransportError } from "../core/errors.js";
-import type { JSONRPCRequest, JSONRPCResponse, MCPStreamEndpoint, MCPTransport } from "./types.js";
-import { isJSONRPCResponse } from "./types.js";
+import { MCPTransportError } from "../core/errors.js";
+import type { MCPStreamEndpoint } from "./types.js";
 
 export interface StdioMCPTransportOptions {
   command?: string;
@@ -13,147 +17,131 @@ export interface StdioMCPTransportOptions {
   closeTimeoutMs?: number;
 }
 
-export class StdioMCPTransport implements MCPTransport {
-  private readonly closeTimeoutMs: number;
-  private readonly options: StdioMCPTransportOptions;
-  private child?: ChildProcessWithoutNullStreams;
-  private endpoint?: MCPStreamEndpoint;
-  private reader?: {
-    on(event: "line", listener: (line: string) => void): void;
-    on(event: "close", listener: () => void): void;
-    close(): void;
-  };
-  private started = false;
-  private nextId = 1;
-  private readonly pending = new Map<number, { resolve(value: unknown): void; reject(error: unknown): void }>();
+/**
+ * Official SDK transport for spawned processes, with an SDK-compatible stream
+ * adapter retained for embedded LangFn tests and hosts.
+ */
+export class StdioMCPTransport implements Transport {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void;
 
-  constructor(options: StdioMCPTransportOptions) {
-    this.options = options;
-    this.closeTimeoutMs = options.closeTimeoutMs ?? 250;
+  private readonly readBuffer = new ReadBuffer();
+  private delegate?: StdioClientTransport;
+  private started = false;
+  private closed = false;
+
+  constructor(private readonly options: StdioMCPTransportOptions) {}
+
+  async start(): Promise<void> {
+    if (this.started) throw new MCPTransportError("MCP stdio transport is already started");
+    this.started = true;
+
+    const endpoint = this.options.streams;
+    if (endpoint) {
+      endpoint.input.on("data", this.handleData);
+      endpoint.input.on("error", this.handleError);
+      endpoint.input.on("end", this.handleClose);
+      endpoint.input.on("close", this.handleClose);
+      return;
+    }
+
+    if (this.options.command) {
+      this.delegate = new StdioClientTransport({
+        command: this.options.command,
+        ...(this.options.args ? { args: this.options.args } : {}),
+        ...(this.options.env ? { env: this.options.env } : {}),
+        stderr: "inherit"
+      });
+      this.delegate.onmessage = (message: JSONRPCMessage) => this.onmessage?.(message);
+      this.delegate.onerror = (error) => this.onerror?.(error);
+      this.delegate.onclose = () => this.notifyClosed();
+      await this.delegate.start();
+      return;
+    }
+
+    throw new MCPTransportError("StdioMCPTransport requires command or streams");
   }
 
-  async request<TResult = unknown>(method: string, params: Record<string, unknown> = {}): Promise<TResult> {
-    await this.start();
-    const endpoint = this.endpoint;
+  async send(message: JSONRPCMessage, _options?: TransportSendOptions): Promise<void> {
+    if (!this.started || this.closed) {
+      throw new MCPTransportError("MCP stdio transport is not started or is closed");
+    }
+    if (this.delegate) {
+      await this.delegate.send(message);
+      return;
+    }
+    const endpoint = this.options.streams;
     if (!endpoint) {
       throw new MCPTransportError("MCP stdio transport is not started");
     }
-
-    const id = this.nextId++;
-    const payload: JSONRPCRequest = { jsonrpc: "2.0", id, method, params };
-    const body = `${JSON.stringify(payload)}\n`;
-    const writable = endpoint.output;
-
-    return await new Promise<TResult>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      writable.write(body, (error?: Error | null) => {
-        if (error) {
-          this.pending.delete(id);
-          reject(new MCPTransportError("Failed to write MCP stdio request", { cause: error }));
-        }
+    await new Promise<void>((resolve, reject) => {
+      endpoint.output.write(serializeMessage(message), (error?: Error | null) => {
+        if (error) reject(new MCPTransportError("Failed to write MCP stdio message", { cause: error }));
+        else resolve();
       });
     });
   }
 
   async close(): Promise<void> {
-    const endpoint = this.endpoint ?? this.options.streams;
-    const child = this.child;
-    this.reader?.close();
-    this.reader = undefined;
-
-    for (const pending of this.pending.values()) {
-      pending.reject(new MCPTransportError("MCP transport closed before a response was received"));
-    }
-    this.pending.clear();
-
-    try {
-      if (endpoint?.close) {
-        await withTimeout(Promise.resolve(endpoint.close()), this.closeTimeoutMs, "MCP stream shutdown timed out");
-      } else if (endpoint?.output && "end" in endpoint.output && typeof endpoint.output.end === "function") {
-        await new Promise<void>((resolve) => {
-          endpoint.output.end?.(resolve);
-        });
-      }
-
-      if (child) {
-        child.kill("SIGTERM");
+    if (this.closed) return;
+    if (this.delegate) {
+      try {
         await withTimeout(
-          new Promise<void>((resolve, reject) => {
-            child.once("exit", () => resolve());
-            child.once("error", reject);
-          }),
-          this.closeTimeoutMs,
-          "MCP process shutdown timed out"
+          this.delegate.close(),
+          this.options.closeTimeoutMs ?? 250,
+          "MCP stdio process shutdown timed out"
         );
+      } finally {
+        this.notifyClosed();
       }
-    } finally {
-      this.child = undefined;
-      this.endpoint = undefined;
-      this.started = false;
-    }
-  }
-
-  private async start(): Promise<void> {
-    if (this.started) {
       return;
     }
-    if (this.options.streams) {
-      this.endpoint = this.options.streams;
-    } else if (this.options.command) {
-      this.child = spawn(this.options.command, this.options.args ?? [], {
-        env: this.options.env,
-        stdio: ["pipe", "pipe", "pipe"]
-      });
-      this.endpoint = {
-        input: this.child.stdout,
-        output: this.child.stdin,
-        close: async () => {
-          this.child?.kill("SIGTERM");
-        }
-      };
-    } else {
-      throw new MCPTransportError("StdioMCPTransport requires command or streams");
-    }
 
-    this.reader = readline.createInterface({
-      input: this.endpoint.input
-    });
-    this.reader.on("line", (line: string) => {
-      this.handleLine(line);
-    });
-    this.reader.on("close", () => {
-      for (const pending of this.pending.values()) {
-        pending.reject(new MCPTransportError("MCP transport closed"));
+    const endpoint = this.options.streams;
+    if (endpoint) {
+      endpoint.input.off("data", this.handleData);
+      endpoint.input.off("error", this.handleError);
+      endpoint.input.off("end", this.handleClose);
+      endpoint.input.off("close", this.handleClose);
+      if (endpoint.close) {
+        await withTimeout(
+          Promise.resolve(endpoint.close()),
+          this.options.closeTimeoutMs ?? 250,
+          "MCP stream shutdown timed out"
+        );
+      } else if (!endpoint.output.destroyed) {
+        endpoint.output.end();
       }
-      this.pending.clear();
-    });
-    this.started = true;
+    }
+    this.notifyClosed();
   }
 
-  private handleLine(line: string): void {
-    let response: unknown;
+  private readonly handleData = (chunk: Buffer | string): void => {
+    this.readBuffer.append(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
     try {
-      response = JSON.parse(line);
-    } catch {
-      return;
+      let message = this.readBuffer.readMessage();
+      while (message) {
+        this.onmessage?.(message);
+        message = this.readBuffer.readMessage();
+      }
+    } catch (error) {
+      this.handleError(error instanceof Error ? error : new Error(String(error)));
     }
-    if (!isJSONRPCResponse(response)) {
-      return;
-    }
-    const pending = this.pending.get(Number(response.id));
-    if (!pending) {
-      return;
-    }
-    this.pending.delete(Number(response.id));
-    if (response.error) {
-      pending.reject(
-        new MCPProtocolError(response.error.message, {
-          metadata: { error: response.error }
-        })
-      );
-      return;
-    }
-    pending.resolve(response.result);
+  };
+
+  private readonly handleError = (error: Error): void => {
+    this.onerror?.(error);
+  };
+
+  private readonly handleClose = (): void => {
+    this.notifyClosed();
+  };
+
+  private notifyClosed(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.onclose?.();
   }
 }
 
@@ -167,8 +155,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
       })
     ]);
   } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
+    if (timer) clearTimeout(timer);
   }
 }

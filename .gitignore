@@ -101,6 +101,7 @@ venv
 # Sub-package lock files (keep root only)
 **/package-lock.json
 !/package-lock.json
+!/memoryfn/typescript/package-lock.json
 .vercel
 
 .next/

@@ -1,6 +1,8 @@
 // Re-export server factory and types
 export { createDatafnServer } from "./server.js";
 export type { DatafnServerConfig, DatafnServer } from "./server.js";
+export { DatafnExecutorError } from "./executor.js";
+export type { DatafnExecutor, DatafnExecutorAction } from "./executor.js";
 
 // Re-export SearchProvider for consumer use
 export type { SearchProvider } from "./search-provider.js";

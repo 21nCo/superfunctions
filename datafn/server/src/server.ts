@@ -3,7 +3,7 @@
  * Creates a Router with datafn endpoints
  */
 
-import type { RetentionConfig, RateLimitConfig, ObservabilityConfig } from "./core-types.js";
+import type { DatafnError, RetentionConfig, RateLimitConfig, ObservabilityConfig } from "./core-types.js";
 import type { DatafnPlugin, DatafnResourceSchema, DatafnSchema } from "@datafn/core/types";
 import type { SearchProvider } from "./search-provider.js";
 import { validateSchema, ensureBuiltinKv, isNamespaced } from "@datafn/core";
@@ -46,6 +46,7 @@ import {
 import { createTimingEmitter, type TimingEmitter } from "./middleware/timing.js";
 import { createDefaultLogger, type DatafnLogger } from "./logger.js";
 import { DatafnExecutionError } from "./execution/errors.js";
+import { DatafnExecutorError, type DatafnExecutor } from "./executor.js";
 import {
   setSpv2MigrationRuntimeConfig,
   type Spv2MigrationRuntimeConfig,
@@ -246,6 +247,10 @@ export interface DatafnServerConfig<TContext = any> {
  */
 export interface DatafnServer<TContext = any> {
   router: Router<TContext>;
+  /** Validated schema used by both HTTP and in-process execution. */
+  readonly schema: DatafnSchema;
+  /** Transport-neutral execution surface for trusted adapters such as McpFn. */
+  readonly executor: DatafnExecutor<TContext>;
   search(
     params: import("./execution/search/cross-resource.js").CrossResourceSearchParams & {
       namespace?: string;
@@ -818,6 +823,123 @@ export async function createDatafnServer<TContext = any>(
     };
   };
 
+  const executeInProcess = async <TResult>(
+    action: "query" | "mutation" | "transact" | "search",
+    handler: (
+      req: Request,
+      ctx: TContext & { parsedBody?: unknown },
+    ) => Promise<Response> | Response,
+    payload: unknown,
+    ctx?: TContext,
+  ): Promise<TResult> => {
+    if (shuttingDown) {
+      throw new DatafnExecutorError(
+        { code: "SERVICE_UNAVAILABLE", message: "Server is shutting down" },
+        503,
+      );
+    }
+
+    const enrichedCtx = createEnrichedContext(ctx as TContext);
+    inFlightCount++;
+    try {
+      if (rateLimitMiddleware) {
+        const rateLimitResponse = await rateLimitMiddleware(action, enrichedCtx);
+        if (rateLimitResponse) {
+          const envelope = await rateLimitResponse.json() as {
+            error?: { code: string; message: string; details?: unknown };
+          };
+          throw new DatafnExecutorError(
+            envelope.error ?? {
+              code: "LIMIT_EXCEEDED",
+              message: "Rate limit exceeded",
+            },
+            rateLimitResponse.status,
+          );
+        }
+      }
+
+      enrichedCtx.parsedBody = payload;
+
+      if (limits.maxPayloadBytes) {
+        let payloadBytes: number;
+        try {
+          payloadBytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+        } catch {
+          throw new DatafnExecutorError({
+            code: "DFQL_INVALID",
+            message: "Payload must be JSON serializable",
+            details: { path: "$" },
+          });
+        }
+        if (payloadBytes > limits.maxPayloadBytes) {
+          throw new DatafnExecutorError(
+            {
+              code: "LIMIT_EXCEEDED",
+              message: "Payload exceeds maximum size",
+              details: { path: "$", maxPayloadBytes: limits.maxPayloadBytes },
+            },
+            413,
+          );
+        }
+      }
+
+      if (config.authorize) {
+        const authorized = await config.authorize(enrichedCtx, action, payload);
+        if (!authorized) {
+          throw new DatafnExecutorError(
+            {
+              code: "FORBIDDEN",
+              message: "Authorization denied",
+              details: { path: "$" },
+            },
+            403,
+          );
+        }
+      }
+
+      const signal = action === "search" && payload && typeof payload === "object" &&
+        (payload as { signal?: unknown }).signal instanceof AbortSignal
+        ? (payload as { signal: AbortSignal }).signal
+        : undefined;
+      const internalRequest = new Request(
+        `http://datafn.internal/datafn/${action}`,
+        { method: "POST", signal },
+      );
+      const response = await handler(internalRequest, enrichedCtx);
+      const envelope = await response.json() as {
+        ok: boolean;
+        result?: TResult;
+        error?: DatafnError;
+      };
+      if (!envelope.ok || !Object.prototype.hasOwnProperty.call(envelope, "result")) {
+        throw new DatafnExecutorError(
+          envelope.error ?? { code: "INTERNAL", message: "DataFn execution failed" },
+          response.status,
+        );
+      }
+      return envelope.result as TResult;
+    } finally {
+      inFlightCount--;
+      if (shuttingDown && inFlightCount === 0 && shutdownResolve) {
+        const resolve = shutdownResolve;
+        shutdownResolve = null;
+        if (shutdownTimer) {
+          clearTimeout(shutdownTimer);
+          shutdownTimer = null;
+        }
+        resolve();
+      }
+    }
+  };
+
+  const executor: DatafnExecutor<TContext> = {
+    schema: validatedSchema,
+    query: (payload, ctx) => executeInProcess("query", queryHandler, payload, ctx),
+    mutate: (payload, ctx) => executeInProcess("mutation", mutationHandler, payload, ctx),
+    transact: (payload, ctx) => executeInProcess("transact", transactHandler, payload, ctx),
+    search: (payload, ctx) => executeInProcess("search", searchHandler, payload, ctx),
+  };
+
   // Define routes
   const routes: Route<TContext>[] = [
     {
@@ -1049,6 +1171,8 @@ export async function createDatafnServer<TContext = any>(
 
   return {
     router,
+    schema: validatedSchema,
+    executor,
     search: serverSearch,
     websocketHandler: {
       addClient: (client, authContext) => wsManager.addClient(client, authContext),

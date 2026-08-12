@@ -1,6 +1,6 @@
 {
   "name": "@drawfn/react",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "React adapter for drawfn drawing canvas library",
   "license": "MIT",
   "type": "module",

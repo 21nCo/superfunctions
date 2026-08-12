@@ -20,5 +20,13 @@ export default {
   dts: false,
   clean: true,
   sourcemap: true,
-  external: ["@superfunctions/auth", "@superfunctions/db", "@superfunctions/http", "zod", "zod-to-json-schema"]
+  external: [
+    "@mcpfn/core",
+    "@modelcontextprotocol/sdk",
+    "@superfunctions/auth",
+    "@superfunctions/db",
+    "@superfunctions/http",
+    "zod",
+    "zod-to-json-schema"
+  ]
 };
