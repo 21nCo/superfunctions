@@ -79,6 +79,14 @@ class FailingAtomicInboxStore extends MemoryMailFnStore {
   }
 }
 
+class FailingAtomicProjectStore extends MemoryMailFnStore {
+  public failProjectCreation = true;
+  override async createProjectWithCredential(...args: Parameters<MemoryMailFnStore['createProjectWithCredential']>): Promise<void> {
+    if (this.failProjectCreation) throw new Error('atomic project transaction failed');
+    await super.createProjectWithCredential(...args);
+  }
+}
+
 class FailingActiveDomainStore extends MemoryMailFnStore {
   override async saveDomain(domain: Parameters<MemoryMailFnStore['saveDomain']>[0]): Promise<void> {
     if (domain.status === 'active') throw new Error('domain state unavailable');
@@ -180,6 +188,44 @@ function raw(input: Partial<ParsedMessage> = {}): Uint8Array {
 }
 
 describe('MailFn domain service', () => {
+  it('creates the bootstrap audit atomically and permits a clean retry after transaction failure', async () => {
+    const store = new FailingAtomicProjectStore();
+    const mailfn = new MailFn({
+      store,
+      objects: new MemoryMailFnObjectStore(),
+      defaultDomain: 'inbound.example.com',
+    });
+    const input = { slug: 'atomic-bootstrap', displayName: 'Atomic Bootstrap' };
+    await expect(mailfn.bootstrapProject(input)).rejects.toMatchObject({
+      code: 'MAILFN_STORAGE_FAILED', retryable: true,
+    });
+    await expect(store.getProjectBySlug(input.slug)).resolves.toBeNull();
+
+    store.failProjectCreation = false;
+    const bootstrap = await mailfn.bootstrapProject(input);
+    await expect(store.listAudits(bootstrap.project.id)).resolves.toMatchObject([{
+      action: 'project.created', resourceId: bootstrap.project.id,
+    }]);
+    await expect(mailfn.authenticate(bootstrap.credential.token)).resolves.toMatchObject({
+      projectId: bootstrap.project.id,
+    });
+  });
+
+  it('rechecks the active-inbox quota before reactivation', async () => {
+    const context = await setup({ quota: { maxActiveInboxes: 1 } });
+    const first = await createInbox(context, 'reactivate-first');
+    await context.mailfn.updateInbox(context.admin, first.inbox.id, { status: 'disabled' });
+    const second = await createInbox(context, 'reactivate-second');
+
+    await expect(context.mailfn.updateInbox(context.admin, first.inbox.id, { status: 'active' }))
+      .rejects.toMatchObject({ code: 'MAILFN_QUOTA_EXCEEDED' });
+    await expect(context.store.getInbox(first.inbox.id)).resolves.toMatchObject({ status: 'disabled' });
+
+    await context.mailfn.updateInbox(context.admin, second.inbox.id, { status: 'disabled' });
+    await expect(context.mailfn.updateInbox(context.admin, first.inbox.id, { status: 'active' }))
+      .resolves.toMatchObject({ status: 'active' });
+  });
+
   it('creates stable and expiring inboxes with replayable one-time scoped credentials', async () => {
     const context = await setup();
     const first = await createInbox(context);
@@ -331,6 +377,31 @@ describe('MailFn domain service', () => {
     expect(await context.mailfn.retryPendingMessages(context.project.id)).toBe(1);
     expect(jobs).toHaveLength(1);
     expect((await context.store.getMessage(stored!.id))?.status).toBe('pending');
+  });
+
+  it('does not requeue permanent MIME parse failures', async () => {
+    const jobs: ParseJob[] = [];
+    const context = await setup({
+      quota: { maxAttachmentBytes: 4 },
+      queue: { async enqueue(job) { jobs.push(job); } },
+    });
+    const created = await createInbox(context, 'permanent-parse-failure');
+    const value = raw({
+      attachments: [{ filename: 'oversized.txt', contentType: 'text/plain', content: '12345' } as never],
+    });
+    await context.mailfn.receiveInbound({
+      providerDeliveryId: 'permanent-parse-failure', envelopeFrom: 'sender@example.com',
+      envelopeTo: created.inbox.address, raw: value, rawSize: value.byteLength,
+    });
+    await expect(context.mailfn.parseMessage(jobs[0]!)).rejects.toMatchObject({
+      code: 'MAILFN_ATTACHMENT_TOO_LARGE', retryable: false,
+    });
+    const [stored] = await context.store.listMessages(context.project.id, created.inbox.id);
+    expect(stored).toMatchObject({
+      status: 'parse_failed', parseErrorCode: 'MAILFN_ATTACHMENT_TOO_LARGE', parseRetryable: false,
+    });
+    await expect(context.mailfn.retryPendingMessages(context.project.id)).resolves.toBe(0);
+    expect(jobs).toHaveLength(1);
   });
 
   it('queues accepted mail even when non-critical event and usage writes fail', async () => {
@@ -557,6 +628,21 @@ describe('MailFn domain service', () => {
     })).rejects.toMatchObject({ code: 'MAILFN_INBOX_INACTIVE' });
     objects.failDeletes = false;
     await expect(context.mailfn.deleteInbox(context.admin, created.inbox.id)).resolves.toMatchObject({ status: 'deleted' });
+  });
+
+  it('blocks draft writes while deleting and erases drafts with the inbox', async () => {
+    const context = await setup();
+    const created = await createInbox(context, 'draft-erasure');
+    const draft = await context.mailfn.createDraft(context.admin, {
+      inboxId: created.inbox.id, to: ['recipient@example.com'], subject: 'Erase me', text: 'sensitive body',
+    });
+    await context.store.saveInbox({ ...created.inbox, status: 'deleting', updatedAt: new Date().toISOString() });
+
+    await expect(context.mailfn.getDraft(context.admin, draft.id)).rejects.toMatchObject({ code: 'MAILFN_CONFLICT' });
+    await expect(context.store.saveDraftIfInboxWritable({ ...draft, subject: 'Racing update' })).resolves.toBe(false);
+    await expect(context.mailfn.deleteInbox(context.admin, created.inbox.id)).resolves.toMatchObject({ status: 'deleted' });
+    await expect(context.store.listDrafts(context.project.id, created.inbox.id)).resolves.toHaveLength(0);
+    await expect(context.mailfn.getDraft(context.admin, draft.id)).rejects.toMatchObject({ code: 'MAILFN_NOT_FOUND' });
   });
 
   it('atomically blocks inbound metadata writes after an inbox starts deleting', async () => {

@@ -51,13 +51,14 @@ export class D1MailFnStore implements MailFnStore {
       [value.id, value.slug, value.displayName, value.status, JSON.stringify(value.defaultRetentionPolicy), value.dataRegion, value.createdAt, value.updatedAt, json(value)],
     );
   }
-  async createProjectWithCredential(project: Project, credential: Credential): Promise<void> {
+  async createProjectWithCredential(project: Project, credential: Credential, audit: AuditEvent): Promise<void> {
     const results = await this.database.batch([
       bind(this.database.prepare(
         `INSERT INTO mailfn_projects(id, slug, display_name, status, default_retention_policy, data_region, created_at, updated_at, data_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ), [project.id, project.slug, project.displayName, project.status, JSON.stringify(project.defaultRetentionPolicy), project.dataRegion, project.createdAt, project.updatedAt, json(project)]),
       credentialInsert(this.database, credential),
+      auditInsert(this.database, audit),
     ]);
     if (results.some((result) => !result.success)) throw new Error('MAILFN_D1_WRITE_FAILED');
   }
@@ -79,6 +80,22 @@ export class D1MailFnStore implements MailFnStore {
        expires_at=excluded.expires_at, updated_at=excluded.updated_at, data_json=excluded.data_json`,
       [value.id, value.projectId, value.address, value.kind, value.status, value.expiresAt ?? null, value.createdAt, value.updatedAt, json(value)],
     );
+  }
+  async saveInboxWithActiveQuota(value: Inbox, maxActiveInboxes: number): Promise<boolean> {
+    const result = await bind(this.database.prepare(
+      `UPDATE mailfn_inboxes
+       SET address = ?, kind = ?, status = ?, expires_at = ?, updated_at = ?, data_json = ?
+       WHERE id = ? AND project_id = ? AND status NOT IN ('deleting', 'deleted')
+         AND (status = 'active' OR (
+           SELECT COUNT(*) FROM mailfn_inboxes
+           WHERE project_id = ? AND id <> ? AND status = 'active'
+         ) < ?)`,
+    ), [
+      value.address, value.kind, value.status, value.expiresAt ?? null, value.updatedAt, json(value),
+      value.id, value.projectId, value.projectId, value.id, maxActiveInboxes,
+    ]).run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return Number(result.meta?.changes ?? 0) === 1;
   }
   async createInboxWithCredential(
     inbox: Inbox,
@@ -474,13 +491,39 @@ export class D1MailFnStore implements MailFnStore {
       [value.id, value.projectId, value.inboxId, value.threadId ?? null, value.status, value.createdAt, value.updatedAt, json(value)],
     );
   }
+  async saveDraftIfInboxWritable(value: Draft): Promise<boolean> {
+    const result = await bind(this.database.prepare(
+      `INSERT INTO mailfn_drafts(id, project_id, inbox_id, thread_id, status, created_at, updated_at, data_json)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (
+         SELECT 1 FROM mailfn_inboxes
+         WHERE id = ? AND project_id = ? AND status NOT IN ('deleting', 'deleted')
+       )
+       ON CONFLICT(id) DO UPDATE SET thread_id=excluded.thread_id, status=excluded.status,
+       updated_at=excluded.updated_at, data_json=excluded.data_json`,
+    ), [
+      value.id, value.projectId, value.inboxId, value.threadId ?? null, value.status,
+      value.createdAt, value.updatedAt, json(value), value.inboxId, value.projectId,
+    ]).run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return Number(result.meta?.changes ?? 0) === 1;
+  }
   async claimDraft(draftId: string, expectedStatus: Draft['status'], value: Draft): Promise<boolean> {
     const result = await bind(
-      this.database.prepare('UPDATE mailfn_drafts SET status = ?, updated_at = ?, data_json = ? WHERE id = ? AND status = ?'),
-      [value.status, value.updatedAt, json(value), draftId, expectedStatus],
+      this.database.prepare(
+        `UPDATE mailfn_drafts SET status = ?, updated_at = ?, data_json = ?
+         WHERE id = ? AND status = ? AND EXISTS (
+           SELECT 1 FROM mailfn_inboxes
+           WHERE id = ? AND project_id = ? AND status NOT IN ('deleting', 'deleted')
+         )`,
+      ),
+      [value.status, value.updatedAt, json(value), draftId, expectedStatus, value.inboxId, value.projectId],
     ).run();
     if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
     return Number(result.meta?.changes ?? 0) === 1;
+  }
+  async deleteDrafts(projectId: string, inboxId: string): Promise<void> {
+    await this.run('DELETE FROM mailfn_drafts WHERE project_id = ? AND inbox_id = ?', [projectId, inboxId]);
   }
 
   async getDomain(id: string): Promise<MailDomain | null> {
@@ -523,11 +566,8 @@ export class D1MailFnStore implements MailFnStore {
       : this.many('SELECT data_json FROM mailfn_events WHERE project_id = ? ORDER BY occurred_at', [projectId]);
   }
   async appendAudit(value: AuditEvent): Promise<void> {
-    await this.run(
-      `INSERT OR IGNORE INTO mailfn_audits(id, project_id, actor_type, actor_id, action, resource_type, resource_id, created_at, retention_expires_at, data_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [value.id, value.projectId, value.actorType, value.actorId, value.action, value.resourceType, value.resourceId, value.createdAt, value.retentionExpiresAt, json(value)],
-    );
+    const result = await auditInsert(this.database, value, true).run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
   }
   async listAudits(projectId: string, after?: string): Promise<AuditEvent[]> {
     return after
@@ -718,6 +758,17 @@ function credentialInsert(database: D1Database, value: Credential): D1PreparedSt
     `INSERT INTO mailfn_credentials(id, project_id, inbox_id, token_hash, token_prefix, permissions, status, expires_at, revoked_at, created_at, data_json)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ), [value.id, value.projectId, value.inboxId ?? null, value.tokenHash, value.tokenPrefix, JSON.stringify(value.permissions), value.status, value.expiresAt ?? null, value.revokedAt ?? null, value.createdAt, json(value)]);
+}
+
+function auditInsert(database: D1Database, value: AuditEvent, ignoreDuplicate = false): D1PreparedStatement {
+  return bind(database.prepare(
+    `INSERT ${ignoreDuplicate ? 'OR IGNORE ' : ''}INTO mailfn_audits(
+       id, project_id, actor_type, actor_id, action, resource_type, resource_id, created_at, retention_expires_at, data_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ), [
+    value.id, value.projectId, value.actorType, value.actorId, value.action, value.resourceType,
+    value.resourceId, value.createdAt, value.retentionExpiresAt, json(value),
+  ]);
 }
 
 function json(value: unknown): string {

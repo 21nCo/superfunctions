@@ -87,6 +87,9 @@ describe('MailFn in workerd', () => {
     expect(jobs).toHaveLength(1);
 
     const store = new D1MailFnStore(env.MAILFN_DB);
+    expect(await store.listAudits(bootstrap.project.id)).toContainEqual(expect.objectContaining({
+      action: 'project.created', resourceId: bootstrap.project.id,
+    }));
     const pending = await store.getMessageByDelivery(
       created.inbox.id,
       await deriveCloudflareDeliveryId('sender@example.com', created.inbox.address, new TextEncoder().encode(raw)),
@@ -217,6 +220,49 @@ describe('MailFn in workerd', () => {
       reason: { code: 'MAILFN_QUOTA_EXCEEDED' },
     }]);
     expect(await new D1MailFnStore(env.MAILFN_DB).listInboxes(bootstrap.project.id)).toHaveLength(1);
+  });
+
+  it('enforces the active-inbox quota during concurrent D1 reactivation', async () => {
+    const mailfn = await createCloudflareMailFn(env, { migrate: false });
+    const bootstrap = await mailfn.bootstrapProject({
+      slug: 'inbox-reactivation-workerd', displayName: 'Inbox Reactivation Workerd', quota: { maxActiveInboxes: 1 },
+    });
+    const admin = await mailfn.authenticate(bootstrap.credential.token);
+    const first = await mailfn.createInbox(admin, {
+      projectId: bootstrap.project.id, kind: 'expiring', requestedLocalPart: 'reactivate-a', expirySeconds: 3_600,
+    });
+    await mailfn.updateInbox(admin, first.inbox.id, { status: 'disabled' });
+    const second = await mailfn.createInbox(admin, {
+      projectId: bootstrap.project.id, kind: 'expiring', requestedLocalPart: 'reactivate-b', expirySeconds: 3_600,
+    });
+    await mailfn.updateInbox(admin, second.inbox.id, { status: 'disabled' });
+
+    const results = await Promise.allSettled([
+      mailfn.updateInbox(admin, first.inbox.id, { status: 'active' }),
+      mailfn.updateInbox(admin, second.inbox.id, { status: 'active' }),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toMatchObject([{
+      reason: { code: 'MAILFN_QUOTA_EXCEEDED' },
+    }]);
+    expect((await new D1MailFnStore(env.MAILFN_DB).listInboxes(bootstrap.project.id))
+      .filter((inbox) => inbox.status === 'active')).toHaveLength(1);
+  });
+
+  it('erases D1 drafts when deleting their inbox', async () => {
+    const mailfn = await createCloudflareMailFn(env, { migrate: false });
+    const bootstrap = await mailfn.bootstrapProject({ slug: 'draft-erasure-workerd', displayName: 'Draft Erasure Workerd' });
+    const admin = await mailfn.authenticate(bootstrap.credential.token);
+    const created = await mailfn.createInbox(admin, {
+      projectId: bootstrap.project.id, kind: 'expiring', requestedLocalPart: 'draft-erasure', expirySeconds: 3_600,
+    });
+    const draft = await mailfn.createDraft(admin, {
+      inboxId: created.inbox.id, to: ['recipient@example.com'], subject: 'Erase me', text: 'sensitive body',
+    });
+    await expect(mailfn.deleteInbox(admin, created.inbox.id)).resolves.toMatchObject({ status: 'deleted' });
+    const store = new D1MailFnStore(env.MAILFN_DB);
+    await expect(store.getDraft(draft.id)).resolves.toBeNull();
+    await expect(store.listDrafts(bootstrap.project.id, created.inbox.id)).resolves.toHaveLength(0);
   });
 
   it('atomically rejects a repeated webhook delivery identifier in D1', async () => {

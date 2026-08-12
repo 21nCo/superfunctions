@@ -66,12 +66,13 @@ export class MemoryMailFnStore implements MailFnStore {
   async saveProject(project: Project): Promise<void> {
     this.projects.set(project.id, copy(project));
   }
-  async createProjectWithCredential(project: Project, credential: Credential): Promise<void> {
-    if (values(this.projects).some((entry) => entry.slug === project.slug) || this.projects.has(project.id) || this.credentials.has(credential.id)) {
+  async createProjectWithCredential(project: Project, credential: Credential, audit: AuditEvent): Promise<void> {
+    if (values(this.projects).some((entry) => entry.slug === project.slug) || this.projects.has(project.id) || this.credentials.has(credential.id) || this.audits.has(audit.id)) {
       throw new Error('MAILFN_UNIQUE_CONSTRAINT');
     }
     this.projects.set(project.id, copy(project));
     this.credentials.set(credential.id, copy(credential));
+    this.audits.set(audit.id, copy(audit));
   }
 
   async getInbox(id: string): Promise<Inbox | null> {
@@ -85,6 +86,16 @@ export class MemoryMailFnStore implements MailFnStore {
   }
   async saveInbox(inbox: Inbox): Promise<void> {
     this.inboxes.set(inbox.id, copy(inbox));
+  }
+  async saveInboxWithActiveQuota(inbox: Inbox, maxActiveInboxes: number): Promise<boolean> {
+    const current = this.inboxes.get(inbox.id);
+    if (!current || current.projectId !== inbox.projectId) return false;
+    if (current.status === 'deleting' || current.status === 'deleted') return false;
+    if (current.status !== 'active' && values(this.inboxes).filter(
+      (entry) => entry.projectId === inbox.projectId && entry.id !== inbox.id && entry.status === 'active',
+    ).length >= maxActiveInboxes) return false;
+    this.inboxes.set(inbox.id, copy(inbox));
+    return true;
   }
   async createInboxWithCredential(
     inbox: Inbox,
@@ -298,10 +309,23 @@ export class MemoryMailFnStore implements MailFnStore {
   async saveDraft(draft: Draft): Promise<void> {
     this.drafts.set(draft.id, copy(draft));
   }
+  async saveDraftIfInboxWritable(draft: Draft): Promise<boolean> {
+    const inbox = this.inboxes.get(draft.inboxId);
+    if (!inbox || inbox.projectId !== draft.projectId || inbox.status === 'deleting' || inbox.status === 'deleted') return false;
+    this.drafts.set(draft.id, copy(draft));
+    return true;
+  }
   async claimDraft(draftId: string, expectedStatus: Draft['status'], draft: Draft): Promise<boolean> {
+    const inbox = this.inboxes.get(draft.inboxId);
+    if (!inbox || inbox.projectId !== draft.projectId || inbox.status === 'deleting' || inbox.status === 'deleted') return false;
     if (this.drafts.get(draftId)?.status !== expectedStatus) return false;
     this.drafts.set(draftId, copy(draft));
     return true;
+  }
+  async deleteDrafts(projectId: string, inboxId: string): Promise<void> {
+    for (const [id, draft] of this.drafts) {
+      if (draft.projectId === projectId && draft.inboxId === inboxId) this.drafts.delete(id);
+    }
   }
 
   async getDomain(id: string): Promise<MailDomain | null> {

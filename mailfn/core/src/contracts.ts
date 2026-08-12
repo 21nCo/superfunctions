@@ -33,12 +33,13 @@ export interface MailFnStore {
   getProjectBySlug(slug: string): Promise<Project | null>;
   listProjects(): Promise<Project[]>;
   saveProject(project: Project): Promise<void>;
-  createProjectWithCredential(project: Project, credential: Credential): Promise<void>;
+  createProjectWithCredential(project: Project, credential: Credential, audit: AuditEvent): Promise<void>;
 
   getInbox(id: string): Promise<Inbox | null>;
   getInboxByAddress(address: string): Promise<Inbox | null>;
   listInboxes(projectId: string): Promise<Inbox[]>;
   saveInbox(inbox: Inbox): Promise<void>;
+  saveInboxWithActiveQuota(inbox: Inbox, maxActiveInboxes: number): Promise<boolean>;
   createInboxWithCredential(
     inbox: Inbox,
     credential: Credential,
@@ -96,7 +97,9 @@ export interface MailFnStore {
   getDraft(id: string): Promise<Draft | null>;
   listDrafts(projectId: string, inboxId: string): Promise<Draft[]>;
   saveDraft(draft: Draft): Promise<void>;
+  saveDraftIfInboxWritable(draft: Draft): Promise<boolean>;
   claimDraft(draftId: string, expectedStatus: Draft['status'], draft: Draft): Promise<boolean>;
+  deleteDrafts(projectId: string, inboxId: string): Promise<void>;
 
   getDomain(id: string): Promise<MailDomain | null>;
   getDomainByName(projectId: string, domain: string): Promise<MailDomain | null>;

@@ -143,6 +143,8 @@ export interface Message {
   readAt?: string;
   retentionExpiresAt: string;
   parseErrorCode?: string;
+  /** Whether a reconciliation worker may safely enqueue this parse failure again. */
+  parseRetryable?: boolean;
   /** Durable lease used to serialize at-least-once MIME parse deliveries. */
   parseLeaseExpiresAt?: string;
   createdAt: string;

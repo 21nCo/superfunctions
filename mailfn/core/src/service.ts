@@ -172,8 +172,21 @@ export class MailFn {
       projectId: project.id,
       permissions: [...MAILFN_SCOPES],
     });
+    const audit = await this.buildAuditEvent(
+      {
+        actorType: 'system',
+        actorId: 'bootstrap',
+        projectId: project.id,
+        scopes: [...MAILFN_SCOPES],
+      },
+      'project.created',
+      'project',
+      project.id,
+      { environment: project.environment, dataRegion: project.dataRegion },
+      project,
+    );
     try {
-      await this.store.createProjectWithCredential(project, credential.credential);
+      await this.store.createProjectWithCredential(project, credential.credential, audit);
     } catch (cause) {
       if (await this.store.getProjectBySlug(project.slug)) {
         throw new MailFnError({ code: 'MAILFN_CONFLICT', message: 'Project slug already exists', status: 409, cause });
@@ -186,18 +199,6 @@ export class MailFn {
         cause,
       });
     }
-    await this.audit(
-      {
-        actorType: 'system',
-        actorId: 'bootstrap',
-        projectId: project.id,
-        scopes: [...MAILFN_SCOPES],
-      },
-      'project.created',
-      'project',
-      project.id,
-      { environment: project.environment, dataRegion: project.dataRegion },
-    );
     return { project, credential };
   }
 
@@ -407,7 +408,19 @@ export class MailFn {
       expiresAt,
       updatedAt: this.now(),
     };
-    await this.store.saveInbox(updated);
+    if (updated.status === 'active') {
+      const project = await this.requireProject(inbox.projectId);
+      if (!(await this.store.saveInboxWithActiveQuota(updated, project.quota.maxActiveInboxes))) {
+        const latest = await this.store.getInbox(inbox.id);
+        if (!latest || latest.status === 'deleted') throw notFound('Inbox');
+        assertMailFn(latest.status !== 'deleting', {
+          code: 'MAILFN_CONFLICT', message: 'Inbox deletion is already in progress', status: 409,
+        });
+        throw quotaExceeded('active inboxes');
+      }
+    } else {
+      await this.store.saveInbox(updated);
+    }
     await this.audit(actor, 'inbox.updated', 'inbox', inbox.id, { status: updated.status });
     return updated;
   }
@@ -434,6 +447,7 @@ export class MailFn {
     // Quiesce before cleanup so new inbound writes cannot race past the message
     // listing. The deleting state remains retryable when object cleanup fails.
     await this.deleteInboxMessages(quiesced);
+    await this.store.deleteDrafts(quiesced.projectId, quiesced.id);
     const completedAt = this.now();
     const updated: Inbox = { ...quiesced, status: 'deleted', updatedAt: completedAt };
     await this.store.saveInbox(updated);
@@ -834,6 +848,7 @@ export class MailFn {
         parsedAt: now,
         status: 'ready',
         parseErrorCode: undefined,
+        parseRetryable: undefined,
         parseLeaseExpiresAt: undefined,
         updatedAt: now,
       };
@@ -872,20 +887,7 @@ export class MailFn {
       for (const attachmentId of reservedAttachmentIds) {
         await this.store.releaseStorage(attachmentId).catch(() => undefined);
       }
-      const failed: Message = {
-        ...message,
-        status: 'parse_failed',
-        parseErrorCode: error instanceof MailFnError ? error.code : 'MAILFN_PARSE_FAILED',
-        parseLeaseExpiresAt: undefined,
-        updatedAt: this.now(),
-      };
-      await this.store.saveMessage(failed);
-      await this.event('message.parse_failed', message.projectId, {
-        inboxId: message.inboxId,
-        messageId: message.id,
-        payload: { errorCode: failed.parseErrorCode ?? 'MAILFN_PARSE_FAILED', retryable: true },
-      });
-      throw error instanceof MailFnError
+      const normalizedError = error instanceof MailFnError
         ? error
         : new MailFnError({
             code: 'MAILFN_PARSE_FAILED',
@@ -894,6 +896,21 @@ export class MailFn {
             retryable: true,
             cause: error,
           });
+      const failed: Message = {
+        ...message,
+        status: 'parse_failed',
+        parseErrorCode: normalizedError.code,
+        parseRetryable: normalizedError.retryable,
+        parseLeaseExpiresAt: undefined,
+        updatedAt: this.now(),
+      };
+      await this.store.saveMessage(failed);
+      await this.event('message.parse_failed', message.projectId, {
+        inboxId: message.inboxId,
+        messageId: message.id,
+        payload: { errorCode: failed.parseErrorCode ?? 'MAILFN_PARSE_FAILED', retryable: normalizedError.retryable },
+      });
+      throw normalizedError;
     }
   }
 
@@ -911,7 +928,11 @@ export class MailFn {
         const messages = await this.store.listMessages(project.id, inbox.id);
         for (const message of messages) {
           if (queued >= limit) return queued;
-          if (message.status === 'pending' || message.status === 'queue_failed' || message.status === 'parse_failed') {
+          if (
+            message.status === 'pending' ||
+            message.status === 'queue_failed' ||
+            (message.status === 'parse_failed' && message.parseRetryable !== false)
+          ) {
             await this.enqueueParse(message);
             queued += 1;
           }
@@ -1127,7 +1148,7 @@ export class MailFn {
 
   public async createDraft(actor: Actor, input: Omit<CreateDraftInput, 'projectId'>): Promise<Draft> {
     await this.authorize(actor, 'draft:write', actor.projectId, input.inboxId);
-    await this.requireInbox(actor.projectId, input.inboxId);
+    await this.requireDraftInbox(actor.projectId, input.inboxId);
     if (input.threadId) {
       const thread = await this.store.getThread(input.threadId);
       if (!thread || thread.projectId !== actor.projectId || thread.inboxId !== input.inboxId) throw notFound('Thread');
@@ -1159,14 +1180,14 @@ export class MailFn {
       createdAt: now,
       updatedAt: now,
     };
-    await this.store.saveDraft(draft);
+    if (!(await this.store.saveDraftIfInboxWritable(draft))) throw notFound('Inbox');
     await this.audit(actor, 'draft.created', 'draft', draft.id, { inboxId: draft.inboxId });
     return draft;
   }
 
   public async listDrafts(actor: Actor, inboxId: string): Promise<Draft[]> {
     await this.authorize(actor, 'draft:write', actor.projectId, inboxId);
-    await this.requireInbox(actor.projectId, inboxId);
+    await this.requireDraftInbox(actor.projectId, inboxId);
     return this.store.listDrafts(actor.projectId, inboxId);
   }
 
@@ -1174,6 +1195,7 @@ export class MailFn {
     const draft = await this.store.getDraft(draftId);
     if (!draft) throw notFound('Draft');
     await this.authorize(actor, 'draft:write', draft.projectId, draft.inboxId);
+    await this.requireDraftInbox(draft.projectId, draft.inboxId);
     return draft;
   }
 
@@ -1198,7 +1220,7 @@ export class MailFn {
       attachmentIds: [...attachmentIds],
       updatedAt: this.now(),
     };
-    await this.store.saveDraft(updated);
+    if (!(await this.store.saveDraftIfInboxWritable(updated))) throw notFound('Inbox');
     return updated;
   }
 
@@ -1208,7 +1230,7 @@ export class MailFn {
       code: 'MAILFN_CONFLICT', message: 'Only draft messages can be discarded', status: 409,
     });
     const discarded = { ...draft, status: 'discarded' as const, updatedAt: this.now() };
-    await this.store.saveDraft(discarded);
+    if (!(await this.store.saveDraftIfInboxWritable(discarded))) throw notFound('Inbox');
     return discarded;
   }
 
@@ -1259,6 +1281,7 @@ export class MailFn {
     const draft = await this.store.getDraft(draftId);
     if (!draft) throw notFound('Draft');
     await this.authorize(actor, 'send:write', draft.projectId, draft.inboxId);
+    const inbox = await this.requireDraftInbox(draft.projectId, draft.inboxId);
     if (draft.status === 'sent') return draft;
     assertMailFn(draft.status === 'draft' || draft.status === 'sending', {
       code: 'MAILFN_CONFLICT',
@@ -1270,7 +1293,6 @@ export class MailFn {
       message: 'SendFn adapter is not configured',
       status: 501,
     });
-    const inbox = await this.requireInbox(draft.projectId, draft.inboxId);
     await this.assertOutboundAllowed(inbox);
     const project = await this.requireProject(draft.projectId);
     const period = this.now().slice(0, 10);
@@ -1325,9 +1347,12 @@ export class MailFn {
       const claimed = await this.store.claimDraft(draft.id, 'draft', { ...draft, status: 'sending', updatedAt: this.now() });
       if (!claimed) {
         const latest = await this.store.getDraft(draft.id);
-        assertMailFn(latest?.status === 'sending' || latest?.status === 'sent', {
-          code: 'MAILFN_CONFLICT', message: 'Draft could not be claimed for sending', status: 409,
-        });
+        if (latest?.status !== 'sending' && latest?.status !== 'sent') {
+          if (outboundReservation === 'created') await this.store.releaseUsage(outboundUsage.id).catch(() => undefined);
+          throw new MailFnError({
+            code: 'MAILFN_CONFLICT', message: 'Draft could not be claimed for sending', status: 409,
+          });
+        }
         if (latest.status === 'sent') return latest;
       }
     }
@@ -1338,7 +1363,7 @@ export class MailFn {
       if (outboundReservation === 'created') await this.store.releaseUsage(outboundUsage.id).catch(() => undefined);
       const latest = await this.store.getDraft(draft.id).catch(() => null);
       if (latest?.status === 'sending') {
-        await this.store.saveDraft({ ...draft, status: 'draft', updatedAt: this.now() }).catch(() => undefined);
+        await this.store.saveDraftIfInboxWritable({ ...draft, status: 'draft', updatedAt: this.now() }).catch(() => undefined);
       }
       throw error;
     }
@@ -1348,7 +1373,7 @@ export class MailFn {
       providerMessageId: result.providerMessageId,
       updatedAt: this.now(),
     };
-    await this.store.saveDraft(updated);
+    if (!(await this.store.saveDraftIfInboxWritable(updated))) return updated;
     if (result.status === 'queued') return updated;
     await this.event('draft.sent', project.id, {
       inboxId: draft.inboxId,
@@ -1951,7 +1976,13 @@ export class MailFn {
     try {
       await this.queue.enqueue(this.parseJob(message));
       if (message.status === 'queue_failed' || message.status === 'parse_failed') {
-        await this.store.saveMessage({ ...message, status: 'pending', parseErrorCode: undefined, updatedAt: this.now() });
+        await this.store.saveMessage({
+          ...message,
+          status: 'pending',
+          parseErrorCode: undefined,
+          parseRetryable: undefined,
+          updatedAt: this.now(),
+        });
       }
     } catch (error) {
       await this.store.saveMessage({ ...message, status: 'queue_failed', updatedAt: this.now() });
@@ -2103,6 +2134,14 @@ export class MailFn {
     return inbox;
   }
 
+  private async requireDraftInbox(projectId: string, inboxId: string): Promise<Inbox> {
+    const inbox = await this.requireInbox(projectId, inboxId);
+    assertMailFn(inbox.status !== 'deleting', {
+      code: 'MAILFN_CONFLICT', message: 'Inbox deletion is already in progress', status: 409,
+    });
+    return inbox;
+  }
+
   private async requireCredential(id: string): Promise<Credential> {
     const credential = await this.store.getCredential(id);
     if (!credential) throw notFound('Credential');
@@ -2122,6 +2161,17 @@ export class MailFn {
     resourceId: string,
     metadata: Record<string, string | number | boolean | null>,
   ): Promise<void> {
+    await this.store.appendAudit(await this.buildAuditEvent(actor, action, resourceType, resourceId, metadata));
+  }
+
+  private async buildAuditEvent(
+    actor: Actor,
+    action: string,
+    resourceType: string,
+    resourceId: string,
+    metadata: Record<string, string | number | boolean | null>,
+    projectOverride?: Project,
+  ): Promise<AuditEvent> {
     const forbidden = /body|code|otp|link|token|secret|credential|password|content/i;
     const safeMetadata = Object.fromEntries(Object.entries(metadata).filter(([key]) => !forbidden.test(key)));
     let inboxId = actor.inboxId ?? (typeof metadata.inboxId === 'string' ? metadata.inboxId : undefined);
@@ -2130,13 +2180,13 @@ export class MailFn {
     if (!inboxId && resourceType === 'attachment') inboxId = (await this.store.getAttachment(resourceId))?.inboxId;
     if (!inboxId && resourceType === 'draft') inboxId = (await this.store.getDraft(resourceId))?.inboxId;
     if (!inboxId && resourceType === 'thread') inboxId = (await this.store.getThread(resourceId))?.inboxId;
-    const project = await this.store.getProject(actor.projectId);
+    const project = projectOverride ?? await this.store.getProject(actor.projectId);
     const inbox = inboxId ? await this.store.getInbox(inboxId) : null;
     const retention = inbox?.kind === 'expiring'
       ? DEFAULT_EXPIRING_RETENTION
       : project?.defaultRetentionPolicy ?? DEFAULT_STABLE_RETENTION;
     const createdAt = this.now();
-    await this.store.appendAudit({
+    return {
       id: this.ids.generate('aud'),
       projectId: actor.projectId,
       actorType: actor.actorType,
@@ -2147,7 +2197,7 @@ export class MailFn {
       metadata: safeMetadata,
       createdAt,
       retentionExpiresAt: new Date(Date.parse(createdAt) + retention.auditTtlSeconds * 1000).toISOString(),
-    });
+    };
   }
 
   private systemAudit(
