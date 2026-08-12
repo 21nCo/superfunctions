@@ -36,6 +36,21 @@ const DOCS_PATTERNS = [
   /^scripts\/docs-coverage-check\.mjs$/,
 ];
 
+const MCPFN_PATTERNS = [
+  /^mcpfn\//,
+  /^datafn\/server\/src\/(?:executor|server|index)\.ts$/,
+  /^datafn\/server\/src\/__tests__\/executor\.test\.ts$/,
+  /^langfn\/typescript\/(?:package\.json|tsconfig\.json|tsup\.config\.ts|src\/mcp\/|tests\/mcp-and-eval\.test\.ts|tests\/release-gate\.test\.ts)/,
+  /^memoryfn\/typescript\/(?:package\.json|src\/mcp\/|tests\/mcp\.test\.ts)/,
+  /^probefn\/packages\/mcp-server\//,
+  /^scripts\/(?:gate|test)-mcpfn.*\.mjs$/,
+];
+
+const MCPFN_SUPPORT_PATTERNS = [
+  /^README\.md$/,
+  /^release-packages\.json$/,
+];
+
 function git(args, options = {}) {
   return execFileSync("git", args, {
     cwd: repoRoot,
@@ -250,6 +265,7 @@ let runDocs = false;
 
 const changedJsDirs = new Set();
 const changedPythonNames = new Set();
+const runMcpfn = changedPaths.some((changedPath) => matchesAny(MCPFN_PATTERNS, changedPath));
 
 for (const entry of changedEntries) {
   for (const changedPath of entry.paths) {
@@ -289,6 +305,13 @@ for (const entry of changedEntries) {
   }
 }
 
+const mcpfnOnly =
+  runMcpfn &&
+  !fullJs &&
+  changedPaths.every((changedPath) =>
+    matchesAny(MCPFN_PATTERNS, changedPath) ||
+    matchesAny(MCPFN_SUPPORT_PATTERNS, changedPath));
+
 const selectedJsPackages = fullJs
   ? jsPackages
   : [...changedJsDirs].map((dir) => jsByDir.get(dir)).filter(Boolean);
@@ -322,6 +345,8 @@ const summary = {
   fullJs,
   fullPython,
   runDocs,
+  runMcpfn,
+  mcpfnOnly,
   jsPackages: selectedJsPackages.map((manifest) => manifest.name).sort(),
   pythonPackages: pythonMatrix,
 };
@@ -344,3 +369,5 @@ writeOutput("run_python", String(fullPython || pythonMatrix.length > 0));
 writeOutput("full_python", String(fullPython));
 writeOutput("python_matrix", JSON.stringify(pythonMatrix));
 writeOutput("run_docs", String(runDocs));
+writeOutput("run_mcpfn", String(runMcpfn));
+writeOutput("mcpfn_only", String(mcpfnOnly));

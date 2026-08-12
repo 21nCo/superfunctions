@@ -1,9 +1,19 @@
 import { createServer, type Server as NetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
+import type { Readable, Writable } from 'node:stream';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { z, type ZodType } from 'zod';
 import YAML from 'yaml';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { CallToolResult, JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import {
+  McpFnRegistry,
+  createMcpFnServer,
+  type McpFnManifest,
+  type McpFnObjectSchema,
+} from '@mcpfn/core';
 
 import {
   auditDesignBundle,
@@ -54,8 +64,12 @@ import { getPageTools } from './tools/page.js';
 import { getReportTools } from './tools/report.js';
 import { getSessionTools } from './tools/session.js';
 
-const DEFAULT_PROTOCOL_VERSION = '2025-03-26';
 const SERVER_VERSION = '0.0.0';
+const MCP_SERVER_INFO = {
+  name: 'probefn',
+  version: SERVER_VERSION,
+  instructions: 'Run deterministic browser probes and inspect their regression artifacts.',
+};
 const FALLBACK_ARTIFACT_ROOT = '.artifacts';
 
 export interface ServeMcpServerOptions {
@@ -86,23 +100,6 @@ export interface ToolDefinition<TArgs extends JsonObject = JsonObject> {
   inputSchema: JsonObject;
   schema: ZodType<TArgs>;
   execute(args: TArgs, context: ToolContext): Promise<ProbefnEnvelope<JsonValue>>;
-}
-
-interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  id?: string | number | null;
-  method: string;
-  params?: JsonObject;
-}
-
-interface JsonRpcResponse {
-  jsonrpc: '2.0';
-  id: string | number | null;
-  result?: JsonObject;
-  error?: {
-    code: number;
-    message: string;
-  };
 }
 
 interface RegisteredSessionScope {
@@ -148,12 +145,6 @@ interface FlowStep {
 interface FlowDocument {
   version: number;
   steps: FlowStep[];
-}
-
-interface FramedTransport {
-  close(): void;
-  onMessage(listener: (request: JsonRpcRequest) => Promise<void> | void): void;
-  send(response: JsonRpcResponse): Promise<void>;
 }
 
 export class ProbefnRuntime {
@@ -402,8 +393,7 @@ export async function serveMcpServer(options: ServeMcpServerOptions): Promise<vo
 
   if (options.transport === 'stdio') {
     process.stderr.write(`probefn mcp stdio ready: ${toolNames.join(', ')}\n`);
-    const transport = createStreamTransport(process.stdin, process.stdout);
-    await server.serveTransport(transport, options.signal);
+    await server.serveTransport(new StdioServerTransport(), options.signal);
     return;
   }
 
@@ -426,7 +416,12 @@ export async function serveMcpServer(options: ServeMcpServerOptions): Promise<vo
       netServer.close(() => resolve());
     };
     if (options.signal) {
-      options.signal.addEventListener('abort', cleanup, { once: true });
+      if (options.signal.aborted) {
+        cleanup();
+      } else {
+        options.signal.addEventListener('abort', cleanup, { once: true });
+        netServer.once('close', () => options.signal?.removeEventListener('abort', cleanup));
+      }
     }
   });
 }
@@ -434,10 +429,25 @@ export async function serveMcpServer(options: ServeMcpServerOptions): Promise<vo
 export class ProbefnMcpServer {
   private readonly runtime: ProbefnRuntime;
   private readonly tools: ToolDefinition[];
+  readonly registry: McpFnRegistry;
 
   public constructor(runtime: ProbefnRuntime) {
     this.runtime = runtime;
     this.tools = runtime.listTools();
+    this.registry = new McpFnRegistry();
+    for (const tool of this.tools) {
+      this.registry.register({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema as unknown as McpFnObjectSchema,
+        annotations: { openWorldHint: false },
+        metadata: { 'mcpfn/source': 'probefn' },
+        handler: async (args) =>
+          await this.runtime.callTool(tool.name, args) as unknown as CallToolResult,
+        handleInvalidArguments: async (args) =>
+          await this.runtime.callTool(tool.name, args) as unknown as CallToolResult,
+      });
+    }
   }
 
   public listTools(): ToolDefinition[] {
@@ -445,106 +455,53 @@ export class ProbefnMcpServer {
   }
 
   public async serveTransport(
-    transport: FramedTransport,
+    transport: Transport,
     signal?: AbortSignal,
   ): Promise<void> {
-    transport.onMessage(async (request) => {
-      const response = await this.handleRequest(request);
-      if (response) {
-        await transport.send(response);
-      }
+    const server = createMcpFnServer({
+      info: MCP_SERVER_INFO,
+      registry: this.registry,
+      transports: ['stdio'],
     });
+    await server.connect(transport);
 
+    let abortCleanup: (() => void) | undefined;
     await new Promise<void>((resolve) => {
-      const cleanup = () => {
-        transport.close();
+      let closed = false;
+      const finish = () => {
+        if (closed) return;
+        closed = true;
+        if (signal && abortCleanup) {
+          signal.removeEventListener('abort', abortCleanup);
+        }
         resolve();
       };
+
+      const protocolClose = transport.onclose;
+      transport.onclose = () => {
+        protocolClose?.();
+        finish();
+      };
+
+      abortCleanup = () => {
+        void server.close().finally(finish);
+      };
       if (signal) {
-        signal.addEventListener('abort', cleanup, { once: true });
+        if (signal.aborted) {
+          abortCleanup();
+          return;
+        }
+        signal.addEventListener('abort', abortCleanup, { once: true });
       }
     });
   }
 
-  public async handleRequest(request: JsonRpcRequest): Promise<JsonRpcResponse | null> {
-    if (request.method === 'notifications/initialized') {
-      return null;
-    }
-
-    if (request.method === 'initialize') {
-      return {
-        jsonrpc: '2.0',
-        id: request.id ?? null,
-        result: {
-          protocolVersion:
-            typeof request.params?.protocolVersion === 'string'
-              ? request.params.protocolVersion
-              : DEFAULT_PROTOCOL_VERSION,
-          capabilities: {
-            tools: {},
-          },
-          serverInfo: {
-            name: 'probefn',
-            version: SERVER_VERSION,
-          },
-        },
-      };
-    }
-
-    if (request.method === 'ping') {
-      return {
-        jsonrpc: '2.0',
-        id: request.id ?? null,
-        result: {},
-      };
-    }
-
-    if (request.method === 'tools/list') {
-      return {
-        jsonrpc: '2.0',
-        id: request.id ?? null,
-        result: {
-          tools: this.tools.map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
-          })),
-        },
-      };
-    }
-
-    if (request.method === 'tools/call') {
-      const toolName = typeof request.params?.name === 'string' ? request.params.name : null;
-      if (!toolName) {
-        return {
-          jsonrpc: '2.0',
-          id: request.id ?? null,
-          error: {
-            code: -32602,
-            message: 'Missing required field name.',
-          },
-        };
-      }
-
-      const toolResult = await this.runtime.callTool(
-        toolName,
-        request.params?.arguments,
-      );
-      return {
-        jsonrpc: '2.0',
-        id: request.id ?? null,
-        result: toolResult as unknown as JsonObject,
-      };
-    }
-
-    return {
-      jsonrpc: '2.0',
-      id: request.id ?? null,
-      error: {
-        code: -32601,
-        message: `Method ${request.method} is not supported.`,
-      },
-    };
+  public manifest(): McpFnManifest {
+    return createMcpFnServer({
+      info: MCP_SERVER_INFO,
+      registry: this.registry,
+      transports: ['stdio'],
+    }).manifest();
   }
 }
 
@@ -884,7 +841,7 @@ export async function createCheckpointFromSession(
         screenshot: async () => page.screenshot({ fullPage: true }),
         domSnapshot: async () => ({ html: await page.content() }),
         accessibilitySnapshot: async () => ({
-          snapshot: await page.locator('body').ariaSnapshot({ mode: 'ai' }),
+          snapshot: await page.locator('body').ariaSnapshot({ mode: 'ai' } as never),
         }),
         layoutSnapshot: async () => captureLayoutMetadata(page),
         ...(input.includeStyles
@@ -1350,11 +1307,12 @@ function countRedactedPlaceholders(value: string): number {
 export const errorCodeEnum = z.enum(ERROR_CODES);
 
 function createStreamTransport(
-  input: NodeJS.ReadableStream,
-  output: NodeJS.WritableStream,
-): FramedTransport {
+  input: Readable,
+  output: Writable,
+): Transport {
   let buffer = Buffer.alloc(0);
-  let messageListener: ((request: JsonRpcRequest) => Promise<void> | void) | null = null;
+  let started = false;
+  let closed = false;
 
   const onData = (chunk: Buffer | string) => {
     buffer = Buffer.concat([
@@ -1371,6 +1329,7 @@ function createStreamTransport(
       const lengthMatch = header.match(/Content-Length:\s*(\d+)/i);
       if (!lengthMatch) {
         buffer = Buffer.alloc(0);
+        transport.onerror?.(new Error('MCP TCP frame is missing Content-Length.'));
         return;
       }
 
@@ -1382,30 +1341,45 @@ function createStreamTransport(
 
       const body = buffer.subarray(bodyStart, bodyStart + contentLength);
       buffer = buffer.subarray(bodyStart + contentLength);
-      const request = JSON.parse(body.toString('utf8')) as JsonRpcRequest;
-      if (messageListener) {
-        void messageListener(request);
+      try {
+        const message = JSON.parse(body.toString('utf8')) as JSONRPCMessage;
+        transport.onmessage?.(message);
+      } catch (error) {
+        transport.onerror?.(error instanceof Error ? error : new Error(String(error)));
       }
     }
   };
 
-  input.on('data', onData);
+  const onError = (error: Error) => transport.onerror?.(error);
+  const onClose = () => {
+    if (closed) return;
+    closed = true;
+    transport.onclose?.();
+  };
 
-  return {
-    close(): void {
+  const transport: Transport = {
+    async start(): Promise<void> {
+      if (started) throw new Error('MCP TCP transport is already started.');
+      started = true;
+      input.on('data', onData);
+      input.on('error', onError);
+      input.on('end', onClose);
+      input.on('close', onClose);
+    },
+    async close(): Promise<void> {
       input.off('data', onData);
-      if ('end' in input && typeof input.end === 'function') {
-        input.end();
-      }
+      input.off('error', onError);
+      input.off('end', onClose);
+      input.off('close', onClose);
+      if (!input.destroyed) input.destroy();
+      if (!output.destroyed) output.end();
+      onClose();
     },
-    onMessage(listener: (request: JsonRpcRequest) => Promise<void> | void): void {
-      messageListener = listener;
-    },
-    async send(response: JsonRpcResponse): Promise<void> {
-      const payload = Buffer.from(JSON.stringify(response), 'utf8');
+    async send(message: JSONRPCMessage): Promise<void> {
+      const payload = Buffer.from(JSON.stringify(message), 'utf8');
       const header = Buffer.from(`Content-Length: ${payload.byteLength}\r\n\r\n`, 'utf8');
       await new Promise<void>((resolve, reject) => {
-        output.write(Buffer.concat([header, payload]), (error) => {
+        output.write(Buffer.concat([header, payload]), (error?: Error | null) => {
           if (error) {
             reject(error);
             return;
@@ -1416,4 +1390,5 @@ function createStreamTransport(
       });
     },
   };
+  return transport;
 }

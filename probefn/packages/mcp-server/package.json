@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@mcpfn/core": "file:../../../mcpfn/core",
+    "@modelcontextprotocol/sdk": "1.25.2",
     "@probefn/analyzers": "*",
     "@probefn/browser-runner": "*",
     "@probefn/contracts": "*",

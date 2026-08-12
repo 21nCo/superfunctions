@@ -106,6 +106,8 @@
     "namespace": "langfn"
   },
   "dependencies": {
+    "@mcpfn/core": "0.0.1",
+    "@modelcontextprotocol/sdk": "1.25.2",
     "@superfunctions/auth": "0.1.2",
     "@superfunctions/db": "0.1.4",
     "@superfunctions/http": "0.1.3",
