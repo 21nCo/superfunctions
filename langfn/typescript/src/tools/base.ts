@@ -1,5 +1,6 @@
 import { LangFnError, ToolExecutionError, ToolSchemaError } from "../core/errors.js";
 import { ToolPolicy } from "./policy.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
 export interface ToolSchema<TArgs = unknown> {
   parse(data: unknown): TArgs;
@@ -15,6 +16,7 @@ export interface ToolConfig<TArgs, TResult> {
   name: string;
   description: string;
   schema: ToolSchema<TArgs>;
+  annotations?: ToolAnnotations;
   execute: (args: TArgs, context: ToolContext) => Promise<TResult> | TResult;
 }
 
@@ -28,12 +30,14 @@ export class Tool<TArgs = unknown, TResult = unknown> {
   readonly name: string;
   readonly description: string;
   readonly schema: ToolSchema<TArgs>;
+  readonly annotations?: ToolAnnotations;
   private readonly executeHandler: ToolConfig<TArgs, TResult>["execute"];
 
   constructor(config: ToolConfig<TArgs, TResult>) {
     this.name = config.name;
     this.description = config.description;
     this.schema = config.schema;
+    this.annotations = config.annotations;
     this.executeHandler = config.execute;
   }
 

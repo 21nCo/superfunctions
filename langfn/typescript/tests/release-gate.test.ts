@@ -232,9 +232,7 @@ describe("release gate contract", () => {
       execute: async () => "pong"
     });
     const server = new MCPServer([pingTool]);
-    await expect(server.handle({ jsonrpc: "2.0", id: "1", method: "tools/list" } as any)).resolves.toMatchObject({
-      result: { tools: [{ name: "ping" }] }
-    });
+    expect(server.listTools()).toMatchObject([{ name: "ping" }]);
   });
 });
 

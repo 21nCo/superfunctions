@@ -1,6 +1,6 @@
 {
   "name": "@plugfn/providers",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "First-party provider implementations for PlugFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -35,9 +35,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "npm --prefix ../core run build && tsc",
+    "build": "tsc",
     "test": "vitest run",
-    "typecheck": "npm --prefix ../core run build && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "author": "21n",

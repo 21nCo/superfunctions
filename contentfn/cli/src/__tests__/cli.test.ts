@@ -5,10 +5,11 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 
 const CLI_PATH = resolve(__dirname, "../index.ts");
 const TMP_DIR = join(tmpdir(), "contentfn-cli-test-" + Date.now());
-const TSX_PATH = resolve(__dirname, "../../../../node_modules/.bin/tsx");
+const TSX_PATH = createRequire(import.meta.url).resolve("tsx/cli");
 
 function normalizeSchema(schema: any): any {
   const documentTypes = [...schema.documentTypes].sort((a: any, b: any) =>

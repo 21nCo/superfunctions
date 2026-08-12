@@ -1,6 +1,6 @@
 {
   "name": "@contentfn/cli",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "ContentFn CLI - schema validation/upsert, dataset export/import, document operations",
   "type": "module",
   "main": "dist/index.js",
@@ -50,6 +50,7 @@
   "devDependencies": {
     "@types/node": "^24.9.1",
     "tsup": "^8.5.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   }
