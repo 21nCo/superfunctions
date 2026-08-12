@@ -1,4 +1,5 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { UriTemplate } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import type { McpFnManifest } from "@mcpfn/core";
 
 import type { McpFnTestClient } from "./client.js";
@@ -80,9 +81,20 @@ export async function assertManifestContract(
     ...resource,
     metadata: _meta,
   }));
-  if (stableJson(manifest.resources ?? []) !== stableJson(comparableResources)) {
+  const staticResourceUris = new Set(
+    (manifest.resources ?? []).map((resource) => resource.uri),
+  );
+  const resourceTemplates = (manifest.resourceTemplates ?? []).map(
+    (template) => new UriTemplate(template.uriTemplate),
+  );
+  const comparableStaticResources = comparableResources.filter(
+    (resource) =>
+      staticResourceUris.has(resource.uri) ||
+      !resourceTemplates.some((template) => template.match(resource.uri)),
+  );
+  if (stableJson(manifest.resources ?? []) !== stableJson(comparableStaticResources)) {
     throw new McpFnAssertionError(
-      `Resource inventory mismatch\nexpected: ${stableJson(manifest.resources ?? [])}\nactual:   ${stableJson(comparableResources)}`,
+      `Resource inventory mismatch\nexpected: ${stableJson(manifest.resources ?? [])}\nactual:   ${stableJson(comparableStaticResources)}`,
     );
   }
 

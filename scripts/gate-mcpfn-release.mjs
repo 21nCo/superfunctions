@@ -137,6 +137,29 @@ function verifyPackage(packagePath) {
   }
 }
 
+function verifyMemoryFnDependency() {
+  const coreManifest = JSON.parse(
+    readFileSync(path.join(repoRoot, "mcpfn/core/package.json"), "utf8"),
+  );
+  const memoryManifest = JSON.parse(
+    readFileSync(path.join(repoRoot, "memoryfn/typescript/package.json"), "utf8"),
+  );
+  const actual = memoryManifest.dependencies?.["@mcpfn/core"];
+  const expected = coreManifest.version;
+  const ok = actual === expected;
+  results.push({
+    name: "memoryfn:published-mcpfn-dependency",
+    command: "internal package dependency check",
+    ok,
+    status: ok ? 0 : 1,
+    stdout: JSON.stringify({ expected, actual }),
+    stderr: "",
+  });
+  if (!ok) {
+    throw new Error(`MemoryFn must depend on published @mcpfn/core ${expected}`);
+  }
+}
+
 try {
   npmStep("core:typecheck", ["run", "typecheck", "--workspace", "@mcpfn/core"]);
   npmStep("core:test", ["run", "test", "--workspace", "@mcpfn/core"]);
@@ -185,8 +208,19 @@ try {
   npmStep("langfn:typecheck", ["--prefix", "langfn/typescript", "run", "typecheck"]);
   npmStep("langfn:test", ["--prefix", "langfn/typescript", "run", "test", "--", "--run"]);
   npmStep("langfn:build", ["--prefix", "langfn/typescript", "run", "build"]);
+  verifyMemoryFnDependency();
+  const packedCore = npmStep(
+    "memoryfn:pack-core",
+    ["pack", "--json", "--pack-destination", temporaryRoot],
+    { cwd: path.join(repoRoot, "mcpfn/core") },
+  );
+  const corePackage = path.join(
+    temporaryRoot,
+    JSON.parse(packedCore.stdout)[0].filename,
+  );
   npmStep("memoryfn:install", [
-    "--prefix", "memoryfn/typescript", "ci", "--ignore-scripts",
+    "--prefix", "memoryfn/typescript", "install", "--ignore-scripts",
+    "--no-save", "--no-package-lock", corePackage,
   ]);
   npmStep("memoryfn:mcp-test", [
     "--prefix", "memoryfn/typescript", "run", "test", "--", "--run", "tests/mcp.test.ts",

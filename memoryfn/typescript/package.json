@@ -38,7 +38,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@mcpfn/core": "file:../../mcpfn/core",
+    "@mcpfn/core": "0.0.1",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "@superfunctions/db": "0.1.4",
     "@superfunctions/http": "0.1.3",

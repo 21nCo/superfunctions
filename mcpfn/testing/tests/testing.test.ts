@@ -102,6 +102,48 @@ describe("McpFn testing", () => {
     }
   });
 
+  it("excludes resources listed by templates from static manifest equality", async () => {
+    const registry = new McpFnRegistry()
+      .register({
+        name: "echo",
+        description: "Echo.",
+        inputSchema: { type: "object" },
+        handler: async () => structuredResult({ value: "ok" }),
+      })
+      .registerResource({
+        uri: "docs://guide",
+        name: "guide",
+        read: async () => ({
+          contents: [{ uri: "docs://guide", text: "Guide" }],
+        }),
+      })
+      .registerResourceTemplate({
+        uriTemplate: "docs://users/{id}",
+        name: "user",
+        list: async () => ({
+          resources: [{ uri: "docs://users/42", name: "Ada" }],
+        }),
+        read: async (uri) => ({
+          contents: [{ uri: uri.toString(), text: "Ada" }],
+        }),
+      });
+    const server = createMcpFnServer({
+      info: { name: "dynamic-resources", version: "1.0.0" },
+      registry,
+    });
+    const client = await McpFnTestClient.connect(server);
+    try {
+      const manifest = server.manifest();
+      await expect(assertManifestContract(client, manifest)).resolves.toHaveLength(1);
+      await expect(assertManifestContract(client, {
+        ...manifest,
+        resources: [],
+      })).rejects.toThrow(/Resource inventory mismatch/);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("pins the official conformance runner and its supported server flags", () => {
     expect(buildOfficialConformanceArgs({
       url: "http://127.0.0.1:3000/mcp",
