@@ -7,9 +7,9 @@ describe('Toolbar', () => {
   it('renders correctly', () => {
     render(
       <Toolbar>
-        <ToolbarButton>Cut</ToolbarButton>
-        <ToolbarButton>Copy</ToolbarButton>
-        <ToolbarButton>Paste</ToolbarButton>
+        <ToolbarButton value="cut">Cut</ToolbarButton>
+        <ToolbarButton value="copy">Copy</ToolbarButton>
+        <ToolbarButton value="paste">Paste</ToolbarButton>
       </Toolbar>
     );
 

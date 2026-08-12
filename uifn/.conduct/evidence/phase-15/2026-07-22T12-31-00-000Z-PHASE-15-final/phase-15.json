@@ -1,0 +1,324 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_15",
+  "status": "failed",
+  "requirements": {
+    "COMP-001": "passed",
+    "STYLE-001": "passed",
+    "HOOK-001": "passed"
+  },
+  "vectors": {
+    "TV-COMP-001-P/N": {
+      "react": 419,
+      "svelte": 419,
+      "solid": 419
+    },
+    "TV-STYLE-001-P/N": {
+      "cssSha256": "99dd6404751ffe4c9323cb40730d435e01aab60b39ae3996efe038fa1ad3cae8",
+      "mutations": [
+        {
+          "id": "low-contrast",
+          "code": "UIFN_CONTRAST_BUDGET",
+          "killed": true
+        },
+        {
+          "id": "required-motion",
+          "code": "UIFN_REDUCED_MOTION_VIOLATION",
+          "killed": true
+        }
+      ]
+    },
+    "TV-HOOK-001-P/N": {
+      "hookFiles": 12,
+      "capabilityCount": 8
+    }
+  },
+  "mutations": [
+    {
+      "id": "styled-cross-framework-peer",
+      "code": "UIFN_STYLED_FRAMEWORK_COUPLING",
+      "killed": true
+    },
+    {
+      "id": "product-content",
+      "code": "UIFN_COMPONENT_PRODUCT_CONTENT",
+      "killed": true
+    },
+    {
+      "id": "styled-behavior",
+      "code": "UIFN_STYLED_BEHAVIOR_FORK",
+      "killed": true
+    },
+    {
+      "id": "low-contrast",
+      "code": "UIFN_CONTRAST_BUDGET",
+      "killed": true
+    },
+    {
+      "id": "required-motion",
+      "code": "UIFN_REDUCED_MOTION_VIOLATION",
+      "killed": true
+    },
+    {
+      "id": "hook-outside",
+      "code": "UIFN_HOOK_BEHAVIOR_FORK",
+      "killed": true
+    },
+    {
+      "id": "hook-ssr-global",
+      "code": "UIFN_SSR_BROWSER_GLOBAL",
+      "killed": true
+    }
+  ],
+  "checks": [
+    {
+      "command": "/opt/homebrew/bin/node scripts/generate-uifn-phase-15.mjs --check",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "{\n  \"ok\": true,\n  \"command\": \"generate:uifn-phase-15:check\",\n  \"componentCount\": 61,\n  \"partCount\": 419\n}\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/react run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "ESM dist/generated/alert-dialog.mjs.map    77.00 B\nESM dist/generated/autocomplete.mjs.map    77.00 B\nESM dist/chunk-544UHVCX.mjs.map            5.27 KB\nESM dist/chunk-6PEAV5EW.mjs.map            8.41 KB\nESM dist/generated/button.mjs.map          71.00 B\nESM dist/generated/avatar.mjs.map          71.00 B\nESM dist/chunk-UEPRRUI6.mjs.map            9.93 KB\nESM dist/chunk-DDWJTVA2.mjs.map            5.42 KB\nESM dist/chunk-WZADJ4AI.mjs.map            4.33 KB\nESM dist/chunk-EZ7UAHZF.mjs.map            7.44 KB\nESM dist/generated/carousel.mjs.map        73.00 B\nESM dist/chunk-NDH7EFHY.mjs.map            10.09 KB\nESM dist/chunk-VF7VHW7K.mjs.map            3.63 KB\nESM dist/chunk-YGC7K4FQ.mjs.map            70.21 KB\nESM ⚡️ Build success in 418ms\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/tokens run typecheck",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/tokens@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/tokens run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/tokens@0.0.1 test\n> vitest run --config vitest.config.ts\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/tokens\n\n ✓ src/__tests__/tokens.test.ts  (8 tests) 5ms\n\n Test Files  1 passed (1)\n      Tests  8 passed (8)\n   Start at  17:54:57\n   Duration  206ms (transform 31ms, setup 0ms, collect 33ms, tests 5ms, environment 0ms, prepare 56ms)\n\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/tokens run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nESM dist/index.mjs 13.62 KB\nESM ⚡️ Build success in 12ms\nCJS dist/index.js 15.48 KB\nCJS ⚡️ Build success in 12ms\nDTS Build start\nDTS ⚡️ Build success in 738ms\nDTS dist/index.d.mts 4.56 KB\nDTS dist/index.d.ts  4.56 KB\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/theme run typecheck",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/theme@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/theme run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/theme@0.0.1 test\n> vitest run --config vitest.config.ts\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/theme\n\n ✓ src/__tests__/preferences.test.ts  (2 tests) 2ms\n ✓ src/__tests__/theme.test.ts  (6 tests) 5ms\n\n Test Files  2 passed (2)\n      Tests  8 passed (8)\n   Start at  17:55:00\n   Duration  261ms (transform 65ms, setup 0ms, collect 85ms, tests 7ms, environment 0ms, prepare 117ms)\n\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/theme run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/index.js 26.62 KB\nCJS ⚡️ Build success in 20ms\nESM dist/index.mjs 24.92 KB\nESM ⚡️ Build success in 20ms\nDTS Build start\nDTS ⚡️ Build success in 735ms\nDTS dist/index.d.mts 4.83 KB\nDTS dist/index.d.ts  4.83 KB\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/recipes run typecheck",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/recipes@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/recipes run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/recipes@0.0.1 test\n> vitest run --config vitest.config.ts\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/recipes\n\n ✓ src/__tests__/recipes.test.ts  (7 tests) 3ms\n\n Test Files  1 passed (1)\n      Tests  7 passed (7)\n   Start at  17:55:03\n   Duration  175ms (transform 23ms, setup 0ms, collect 24ms, tests 3ms, environment 0ms, prepare 43ms)\n\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/recipes run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nESM dist/index.mjs 4.37 KB\nESM ⚡️ Build success in 12ms\nCJS dist/index.js 5.57 KB\nCJS ⚡️ Build success in 12ms\nDTS Build start\nDTS ⚡️ Build success in 805ms\nDTS dist/index.d.mts 1.98 KB\nDTS dist/index.d.ts  1.98 KB\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components run typecheck",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/components@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/components@0.0.1 test\n> vitest run --config vitest.config.mts\n\n\n RUN  v3.2.4 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components\n\n ✓ src/__tests__/neutral-boundary.test.ts (3 tests) 2ms\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Start at  17:55:06\n   Duration  290ms (transform 54ms, setup 0ms, collect 56ms, tests 2ms, environment 0ms, prepare 91ms)\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "CLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nCLI Cleaning output folder\nESM Build start\nCJS Build start\nESM dist/index.mjs 63.58 KB\nESM ⚡️ Build success in 13ms\nCJS dist/index.js 64.97 KB\nCJS ⚡️ Build success in 13ms\nDTS Build start\nDTS ⚡️ Build success in 895ms\nDTS dist/index.d.mts 144.94 KB\nDTS dist/index.d.ts  144.94 KB\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/theme-tailwind run typecheck",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/theme-tailwind@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/theme-tailwind run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/theme-tailwind@0.0.1 test\n> vitest run --config vitest.config.ts\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/theme-tailwind\n\n ✓ src/__tests__/theme-tailwind.test.ts  (2 tests) 2ms\n\n Test Files  1 passed (1)\n      Tests  2 passed (2)\n   Start at  17:55:09\n   Duration  200ms (transform 43ms, setup 0ms, collect 44ms, tests 2ms, environment 0ms, prepare 67ms)\n\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/theme-tailwind run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nESM Build start\nCJS Build start\nCJS dist/index.js 5.53 KB\nCJS ⚡️ Build success in 11ms\nESM dist/index.mjs 4.27 KB\nESM ⚡️ Build success in 11ms\nDTS Build start\nDTS ⚡️ Build success in 693ms\nDTS dist/index.d.mts 1.34 KB\nDTS dist/index.d.ts  1.34 KB\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-react run typecheck",
+      "passed": false,
+      "status": 2,
+      "stdoutTail": "\n> @uifn/components-react@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\nsrc/index.ts(1761,10): error TS2305: Module '\"@uifn/react\"' has no exported member 'useMediaQuery'.\nsrc/index.ts(1761,25): error TS2724: '\"@uifn/react\"' has no exported member named 'useCopyToClipboard'. Did you mean 'useClipboard'?\nsrc/index.ts(1761,45): error TS2305: Module '\"@uifn/react\"' has no exported member 'useController'.\nsrc/index.ts(1761,60): error TS2305: Module '\"@uifn/react\"' has no exported member 'useId'.\nsrc/index.ts(1761,67): error TS2305: Module '\"@uifn/react\"' has no exported member 'useComposedRefs'.\n",
+      "stderrTail": "npm error Lifecycle script `typecheck` failed with error:\nnpm error code 2\nnpm error path /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error workspace @uifn/components-react@0.0.1\nnpm error location /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error command failed\nnpm error command sh -c tsc --noEmit -p tsconfig.json\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-react run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/components-react@0.0.1 test\n> vitest run --config vitest.config.ts\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\n\n ✓ src/index.test.tsx  (1 test) 4ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  17:55:12\n   Duration  495ms (transform 255ms, setup 0ms, collect 374ms, tests 4ms, environment 0ms, prepare 33ms)\n\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-react run build",
+      "passed": false,
+      "status": 1,
+      "stdoutTail": "> @uifn/components-react@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts --clean\n\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nCLI Cleaning output folder\nESM Build start\nCJS Build start\nCJS dist/index.js 82.90 KB\nCJS ⚡️ Build success in 14ms\nESM dist/index.mjs 78.95 KB\nESM ⚡️ Build success in 15ms\nDTS Build start\n",
+      "stderrTail": "\nError: error occurred in dts build\n    at Worker.<anonymous> (/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/node_modules/tsup/dist/index.js:1545:26)\n    at Worker.emit (node:events:524:28)\n    at MessagePort.<anonymous> (node:internal/worker:268:53)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:831:20)\n    at MessagePort.<anonymous> (node:internal/per_context/messageport:23:28)\nDTS Build error\nnpm error Lifecycle script `build` failed with error:\nnpm error code 1\nnpm error path /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error workspace @uifn/components-react@0.0.1\nnpm error location /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error command failed\nnpm error command sh -c tsup src/index.ts --format esm,cjs --dts --clean\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-svelte run typecheck",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/components-svelte@0.0.1 typecheck\n> svelte-check --tsconfig ./tsconfig.json\n\n\n====================================\nLoading svelte-check in workspace: /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-svelte\nGetting Svelte diagnostics...\n\n====================================\nsvelte-check found 0 errors and 0 warnings\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-svelte run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/components-svelte@0.0.1 test\n> vitest run --passWithNoTests\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-svelte\n\nNo test files found, exiting with code 0\n\n",
+      "stderrTail": "include: **/*.{test,spec}.?(c|m)[jt]s?(x)\nexclude:  **/node_modules/**, **/dist/**, **/cypress/**, **/.{idea,git,cache,output,temp}/**, **/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*\nwatch exclude:  **/node_modules/**, **/dist/**\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-svelte run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/components-svelte@0.0.1 build\n> svelte-package -i src -o dist --tsconfig ./tsconfig.json\n\nsrc -> dist\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-solid run typecheck",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/components-solid@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-solid run test",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "\n> @uifn/components-solid@0.0.1 test\n> vitest run --config vitest.config.ts\n\n\n RUN  v1.6.1 /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-solid\n\n ✓ src/index.test.tsx  (1 test) 1ms\n\n Test Files  1 passed (1)\n      Tests  1 passed (1)\n   Start at  17:55:25\n   Duration  560ms (transform 350ms, setup 0ms, collect 441ms, tests 1ms, environment 0ms, prepare 40ms)\n\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-solid run build",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "CLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nCLI Cleaning output folder\nESM Build start\nCJS Build start\nCJS dist/index.js 82.26 KB\nCJS ⚡️ Build success in 31ms\nESM dist/index.mjs 78.89 KB\nESM ⚡️ Build success in 31ms\nDTS Build start\nDTS ⚡️ Build success in 1262ms\nDTS dist/index.d.mts 67.66 KB\nDTS dist/index.d.ts  67.66 KB\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/verify-uifn-hooks.mjs",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "      \"id\": \"solid-hooks\",\n      \"framework\": \"solid\",\n      \"command\": \"npm --workspace @uifn/solid exec -- vitest run --config vitest.config.ts src/__tests__/hooks.behavior.test.tsx\",\n      \"passed\": true,\n      \"status\": 0\n    }\n  ],\n  \"ssrValue\": false,\n  \"subscribesOnClient\": true,\n  \"cleansUp\": true,\n  \"clipboardFailureBehavior\": [\n    \"clipboard-unavailable\",\n    \"clipboard-write-failed\"\n  ]\n}\n",
+      "stderrTail": "\u001b[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.\u001b[39m\n"
+    },
+    {
+      "command": "/opt/homebrew/bin/node scripts/verify-uifn-phase-14-parity.mjs --trace-dir /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/phase-14/2026-07-22T05-30-00-000Z-PHASE-14-canonical-35-cell-contract/traces",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "      \"caught\": true,\n      \"issue\": {\n        \"code\": \"UIFN_SEMANTIC_TRACE_DIVERGED\",\n        \"path\": \"/focus/1/part\",\n        \"message\": \"Trace value differs.\",\n        \"expected\": \"content\",\n        \"actual\": \"trigger\",\n        \"framework\": \"react\",\n        \"primitive\": \"AlertDialog\",\n        \"vectorId\": \"phase-14-alert-dialog-public-tree\"\n      }\n    }\n  ],\n  \"issues\": []\n}\n",
+      "stderrTail": ""
+    },
+    {
+      "command": "/opt/homebrew/bin/npm pack --workspace @uifn/components --json --dry-run",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "      {\n        \"path\": \"package.json\",\n        \"size\": 1612,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"styles.css\",\n        \"size\": 2472,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 7,\n    \"bundled\": []\n  }\n]\n",
+      "stderrTail": "> @uifn/components@0.0.1 prepack\n> npm run build\n\n\n> @uifn/components@0.0.1 prebuild\n> npm run clean\n\n\n> @uifn/components@0.0.1 clean\n> node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"\n\n\n> @uifn/components@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts --clean\n\n",
+      "id": "pack-neutral"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm pack --workspace @uifn/components-react --json --dry-run",
+      "passed": false,
+      "status": 1,
+      "stdoutTail": "CLI Cleaning output folder\nESM Build start\nCJS Build start\nCJS dist/index.js 82.90 KB\nCJS ⚡️ Build success in 14ms\nESM dist/index.mjs 78.95 KB\nESM ⚡️ Build success in 14ms\nDTS Build start\n{\n  \"error\": {\n    \"code\": 1,\n    \"summary\": \"command failed\",\n    \"detail\": \"sh -c npm run generate:check && npm run build\"\n  }\n}\n",
+      "stderrTail": "    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:831:20)\n    at MessagePort.<anonymous> (node:internal/per_context/messageport:23:28)\nDTS Build error\nnpm error Lifecycle script `build` failed with error:\nnpm error code 1\nnpm error path /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error workspace @uifn/components-react@0.0.1\nnpm error location /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error command failed\nnpm error command sh -c tsup src/index.ts --format esm,cjs --dts --clean\nnpm error code 1\nnpm error path /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error command failed\nnpm error command sh -c npm run generate:check && npm run build\nnpm error A complete log of this run can be found in: /Users/serro/.npm/_logs/2026-07-22T12_25_34_623Z-debug-0.log\n",
+      "id": "pack-react"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm pack --workspace @uifn/components-svelte --json --dry-run",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "      {\n        \"path\": \"dist/index.js\",\n        \"size\": 74835,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 1739,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 842,\n    \"bundled\": []\n  }\n]\n",
+      "stderrTail": "\n> @uifn/components-svelte@0.0.1 prepack\n> npm run generate:check && npm run build\n\n\n> @uifn/components-svelte@0.0.1 generate:check\n> node ../../scripts/generate-uifn-phase-15.mjs --check\n\n\n> @uifn/components-svelte@0.0.1 build\n> svelte-package -i src -o dist --tsconfig ./tsconfig.json\n\n",
+      "id": "pack-svelte"
+    },
+    {
+      "command": "/opt/homebrew/bin/npm pack --workspace @uifn/components-solid --json --dry-run",
+      "passed": true,
+      "status": 0,
+      "stdoutTail": "      {\n        \"path\": \"dist/index.mjs\",\n        \"size\": 80783,\n        \"mode\": 420\n      },\n      {\n        \"path\": \"package.json\",\n        \"size\": 1573,\n        \"mode\": 420\n      }\n    ],\n    \"entryCount\": 6,\n    \"bundled\": []\n  }\n]\n",
+      "stderrTail": "\n> @uifn/components-solid@0.0.1 prepack\n> npm run generate:check && npm run build\n\n\n> @uifn/components-solid@0.0.1 generate:check\n> node ../../scripts/generate-uifn-phase-15.mjs --check\n\n\n> @uifn/components-solid@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts --clean\n\n",
+      "id": "pack-solid"
+    }
+  ],
+  "failures": [
+    {
+      "code": "UIFN_PHASE15_COMMAND_FAILED",
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-react run typecheck",
+      "status": 2,
+      "stderrTail": "npm error Lifecycle script `typecheck` failed with error:\nnpm error code 2\nnpm error path /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error workspace @uifn/components-react@0.0.1\nnpm error location /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error command failed\nnpm error command sh -c tsc --noEmit -p tsconfig.json\n",
+      "stdoutTail": "\n> @uifn/components-react@0.0.1 typecheck\n> tsc --noEmit -p tsconfig.json\n\nsrc/index.ts(1761,10): error TS2305: Module '\"@uifn/react\"' has no exported member 'useMediaQuery'.\nsrc/index.ts(1761,25): error TS2724: '\"@uifn/react\"' has no exported member named 'useCopyToClipboard'. Did you mean 'useClipboard'?\nsrc/index.ts(1761,45): error TS2305: Module '\"@uifn/react\"' has no exported member 'useController'.\nsrc/index.ts(1761,60): error TS2305: Module '\"@uifn/react\"' has no exported member 'useId'.\nsrc/index.ts(1761,67): error TS2305: Module '\"@uifn/react\"' has no exported member 'useComposedRefs'.\n"
+    },
+    {
+      "code": "UIFN_PHASE15_COMMAND_FAILED",
+      "command": "/opt/homebrew/bin/npm --workspace @uifn/components-react run build",
+      "status": 1,
+      "stderrTail": "\nError: error occurred in dts build\n    at Worker.<anonymous> (/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/node_modules/tsup/dist/index.js:1545:26)\n    at Worker.emit (node:events:524:28)\n    at MessagePort.<anonymous> (node:internal/worker:268:53)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:831:20)\n    at MessagePort.<anonymous> (node:internal/per_context/messageport:23:28)\nDTS Build error\nnpm error Lifecycle script `build` failed with error:\nnpm error code 1\nnpm error path /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error workspace @uifn/components-react@0.0.1\nnpm error location /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error command failed\nnpm error command sh -c tsup src/index.ts --format esm,cjs --dts --clean\n",
+      "stdoutTail": "> @uifn/components-react@0.0.1 build\n> tsup src/index.ts --format esm,cjs --dts --clean\n\nCLI Building entry: src/index.ts\nCLI Using tsconfig: tsconfig.json\nCLI tsup v8.5.1\nCLI Target: es2022\nCLI Cleaning output folder\nESM Build start\nCJS Build start\nCJS dist/index.js 82.90 KB\nCJS ⚡️ Build success in 14ms\nESM dist/index.mjs 78.95 KB\nESM ⚡️ Build success in 15ms\nDTS Build start\n"
+    },
+    {
+      "code": "UIFN_PHASE15_PACK_FAILED",
+      "package": "@uifn/components-react",
+      "stderrTail": "    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:831:20)\n    at MessagePort.<anonymous> (node:internal/per_context/messageport:23:28)\nDTS Build error\nnpm error Lifecycle script `build` failed with error:\nnpm error code 1\nnpm error path /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error workspace @uifn/components-react@0.0.1\nnpm error location /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error command failed\nnpm error command sh -c tsup src/index.ts --format esm,cjs --dts --clean\nnpm error code 1\nnpm error path /Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/components-react\nnpm error command failed\nnpm error command sh -c npm run generate:check && npm run build\nnpm error A complete log of this run can be found in: /Users/serro/.npm/_logs/2026-07-22T12_25_34_623Z-debug-0.log\n"
+    }
+  ]
+}

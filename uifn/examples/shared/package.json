@@ -2,7 +2,7 @@
   "name": "@uifn/examples-shared",
   "private": true,
   "version": "0.0.0",
-  "description": "Shared scenarios, capability metadata, and fixtures for uifn examples",
+  "description": "Shared Workbench inventories, QA contracts, routes, fixtures, and reporting for uifn examples",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,9 +16,18 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "prebuild": "node ../../../scripts/generate-uifn-catalog-accessibility.mjs",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@uifn/components": "*",
+    "@uifn/theme": "*",
+    "@uifn/patterns": "*",
+    "@uifn/sf": "*"
   },
   "devDependencies": {
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^3.2.4"
   }
 }

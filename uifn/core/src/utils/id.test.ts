@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { UIFnError } from '../errors';
 import {
   assertUniquePublicId,
@@ -7,22 +7,14 @@ import {
   createIdFactory,
   createIdScope,
   createPublicIdRegistry,
-  generateId,
-  getIdCounterSnapshot,
-  getPublicIdSnapshot,
-  resetIdCounters,
-  reusePublicId,
 } from './id';
 
 describe('id utilities', () => {
-  beforeEach(() => {
-    resetIdCounters();
-  });
-
   it('generates deterministic ids per token', () => {
-    expect(generateId('dialog-title')).toBe('uifn-dialog-title-1');
-    expect(generateId('dialog-description')).toBe('uifn-dialog-description-1');
-    expect(generateId('dialog-title')).toBe('uifn-dialog-title-2');
+    const factory = createDeterministicIdFactory();
+    expect(factory.create('dialog-title')).toBe('uifn-dialog-title-1');
+    expect(factory.create('dialog-description')).toBe('uifn-dialog-description-1');
+    expect(factory.create('dialog-title')).toBe('uifn-dialog-title-2');
   });
 
   it('supports per-instance prefixes and slot suffixes', () => {
@@ -80,25 +72,27 @@ describe('id utilities', () => {
     }
   });
 
-  it('keeps global counters namespaced and resettable', () => {
-    expect(generateId()).toBe('uifn-id-1');
-    expect(generateId('uifn-dialog-title')).toBe('uifn-dialog-title-1');
-    expect(getIdCounterSnapshot()).toEqual({
+  it('keeps owned counters namespaced and resettable', () => {
+    const factory = createDeterministicIdFactory();
+    expect(factory.create()).toBe('uifn-id-1');
+    expect(factory.create('uifn-dialog-title')).toBe('uifn-dialog-title-1');
+    expect(factory.snapshot().counters).toEqual({
       'uifn-dialog-title': 1,
       'uifn-id': 1,
     });
 
-    resetIdCounters('uifn-dialog-title');
-    expect(generateId('dialog-title')).toBe('uifn-dialog-title-1');
+    factory.reset('uifn-dialog-title');
+    expect(factory.create('dialog-title')).toBe('uifn-dialog-title-1');
   });
 
-  it('tracks issued ids and supports public helpers through the global scope', () => {
-    const first = reusePublicId(undefined, { prefix: 'popover-instance-1', slot: 'content' });
-    const second = reusePublicId(undefined, { prefix: 'popover-instance-1', slot: 'title' });
+  it('tracks issued ids inside an explicit factory scope', () => {
+    const factory = createDeterministicIdFactory();
+    const first = factory.reuse(undefined, { prefix: 'popover-instance-1', slot: 'content' });
+    const second = factory.reuse(undefined, { prefix: 'popover-instance-1', slot: 'title' });
 
     expect(first).toBe('uifn-popover-instance-1-content-1');
     expect(second).toBe('uifn-popover-instance-1-title-1');
-    expect(getPublicIdSnapshot()).toEqual({
+    expect(factory.snapshot()).toEqual({
       counters: {
         'uifn-popover-instance-1-content': 1,
         'uifn-popover-instance-1-title': 1,

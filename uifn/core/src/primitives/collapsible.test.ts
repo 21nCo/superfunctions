@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createCollapsible } from './collapsible';
+import { createCollapsibleRuntime } from './collapsible';
 
 describe('collapsible primitive', () => {
   it('supports open/close transitions', () => {
-    const collapsible = createCollapsible({ defaultOpen: false });
+    const collapsible = createCollapsibleRuntime({ defaultOpen: false });
     expect(collapsible.state.open).toBe(false);
 
     collapsible.actions.toggle();
@@ -14,7 +14,7 @@ describe('collapsible primitive', () => {
   });
 
   it('ignores interactions when disabled', () => {
-    const collapsible = createCollapsible({ defaultOpen: false, disabled: true });
+    const collapsible = createCollapsibleRuntime({ defaultOpen: false, disabled: true });
     collapsible.actions.toggle();
 
     expect(collapsible.state.open).toBe(false);
@@ -23,7 +23,7 @@ describe('collapsible primitive', () => {
 
   it('keeps controlled open state stable until syncOpen is applied', () => {
     const onOpenChange = vi.fn();
-    const collapsible = createCollapsible({
+    const collapsible = createCollapsibleRuntime({
       open: false,
       onOpenChange,
     });

@@ -1,0 +1,1971 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7578,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 3136,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 11
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "cancel": 1,
+          "action": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-modal-keyboard",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true,
+        "title": "Example title"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/angle-slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Angle Slider",
+      "bodyLength": 2996,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "min",
+          "max",
+          "step",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "track": 1,
+          "thumb": 1,
+          "valueText": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "angle-slider-range-gesture-adapter-contract",
+        "behaviorFamily": "range-gesture",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 5,
+        "interactiveCount": 1,
+        "focusWorked": true,
+        "accessibleName": "Angle",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "0"
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "1"
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 151.609375,
+          "y": 500.171875,
+          "width": 86.78125,
+          "height": 180.296875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/avatar",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 2406,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "propNames": [
+          "className",
+          "children",
+          "src",
+          "alt",
+          "fallbackDelay"
+        ],
+        "anatomyParts": 3
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "image": 1,
+          "fallback": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-fallback-render",
+        "box": {
+          "x": 824,
+          "y": 496.796875,
+          "width": 64,
+          "height": 64
+        },
+        "imageAlt": "Example",
+        "imageHidden": "",
+        "borderRadius": "999px",
+        "fallback": "UI"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 163,
+          "y": 558.328125,
+          "width": 64,
+          "height": 64
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2625,
+      "componentCount": 4,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "type",
+          "disabled",
+          "loading",
+          "pressed"
+        ],
+        "anatomyParts": 4
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "icon": 1,
+          "label": 1,
+          "spinner": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes publishedYour changes are now live.UndoClose",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 84.921875,
+          "y": 541.828125,
+          "width": 220.15625,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 2983,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "className",
+          "children",
+          "checked",
+          "defaultChecked",
+          "name",
+          "value",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "control": 1,
+          "indicator": 1,
+          "label": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "true",
+        "after": "false"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 134.796875,
+          "y": 542.28125,
+          "width": 120.390625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3163,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "dir",
+          "loop"
+        ],
+        "anatomyParts": 11
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": false,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/drawer",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Drawer",
+      "bodyLength": 3079,
+      "componentCount": 10,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "side",
+          "modal",
+          "dismissThreshold"
+        ],
+        "anatomyParts": 10
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "handle": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "drawer-modal-overlay-adapter-contract",
+        "behaviorFamily": "modal-overlay",
+        "rootVisible": true,
+        "expectedPartCount": 10,
+        "partCount": 10,
+        "interactiveCount": 3,
+        "focusWorked": true,
+        "accessibleName": "Open example",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "closed",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "open",
+            "expanded": "true",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/form",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 2361,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "propNames": [
+          "className",
+          "children",
+          "noValidate",
+          "disabled"
+        ],
+        "anatomyParts": 3
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "errorSummary": 1,
+          "actions": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-static-contract",
+        "tagName": "FORM",
+        "state": "valid",
+        "errorHidden": "",
+        "actionsDisabled": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 580.171875,
+          "width": 316,
+          "height": 20.296875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 2822,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "openDelay",
+          "closeDelay",
+          "placement"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "arrow": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" data-uifn-catalog-anatomy=\"content\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/image-cropper",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Image Cropper",
+      "bodyLength": 3139,
+      "componentCount": 10,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "className",
+          "children",
+          "src",
+          "crop",
+          "defaultCrop",
+          "aspectRatio",
+          "minSize",
+          "maxSize",
+          "disabled"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "viewport": 1,
+          "image": 1,
+          "cropArea": 1,
+          "handle": 4,
+          "zoomControl": 1,
+          "status": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "image-cropper-range-gesture-adapter-contract",
+        "behaviorFamily": "range-gesture",
+        "rootVisible": true,
+        "expectedPartCount": 7,
+        "partCount": 10,
+        "interactiveCount": 5,
+        "focusWorked": true,
+        "accessibleName": "Resize crop se",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "100"
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "100"
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 127.5,
+          "y": 507.375,
+          "width": 135,
+          "height": 165.890625
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3181,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "loop",
+          "dir"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "menu": 2,
+          "trigger": 2,
+          "content": 2,
+          "item": 2,
+          "submenuTrigger": 2,
+          "submenuContent": 2
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[id=\"menubar-root-menubar-r-0-content-item-2\"]') to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" role=\"menu\" tabindex=\"-1\" data-state=\"closed\" data-uifn-part=\"content\" data-uifn-component=\"menubar\" data-uifn-catalog-anatomy=\"content\" class=\"uifn-menubar uifn-menubar__content\" id=\"menubar-root-menubar-r-0-content-item-2\" aria-labelledby=\"menubar-root-menubar-r-0-trigger-item-2\">…</div>\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 550.03125,
+          "width": 316,
+          "height": 80.59375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/meter",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Meter",
+      "bodyLength": 2895,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "min",
+          "max",
+          "low",
+          "high",
+          "optimum",
+          "formatValue"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "track": 1,
+          "range": 1,
+          "valueText": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "meter-status-feedback-adapter-contract",
+        "behaviorFamily": "status-feedback",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 5,
+        "interactiveCount": 0,
+        "focusWorked": true,
+        "accessibleName": "",
+        "keyboardProbe": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 150.796875,
+          "y": 566.03125,
+          "width": 88.390625,
+          "height": 48.59375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 3102,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "page",
+          "defaultPage",
+          "count",
+          "pageSize",
+          "siblingCount",
+          "disabled"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "list": 1,
+          "item": 3,
+          "pageTrigger": 3,
+          "ellipsis": 3,
+          "previous": 1,
+          "next": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "triggerCount": 3,
+        "before": "2",
+        "after": "3",
+        "current": "page"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 529.734375,
+          "width": 316,
+          "height": 121.1875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 3172,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "placement",
+          "closeOnEscape",
+          "closeOnInteractOutside"
+        ],
+        "anatomyParts": 9
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "anchor": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "arrow": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-keyboard-open-escape",
+        "portalled": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 560.171875,
+          "width": 118.703125,
+          "height": 60.296875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 2855,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "min",
+          "max",
+          "indeterminate",
+          "formatValue"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "track": 1,
+          "range": 1,
+          "circle": 1,
+          "valueText": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7199928977272727,
+        "trackBox": {
+          "x": 662.609375,
+          "y": 485.34375,
+          "width": 352,
+          "height": 8
+        },
+        "rangeBox": {
+          "x": 662.609375,
+          "y": 485.34375,
+          "width": 253.4375,
+          "height": 8
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 488.375,
+          "width": 316,
+          "height": 203.890625
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 3437,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "type",
+          "scrollHideDelay",
+          "orientation",
+          "dir"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "viewport": 1,
+          "content": 1,
+          "scrollbar": 1,
+          "thumb": 1,
+          "corner": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 190,
+        "scrollHeight": 276,
+        "scrollTop": 86
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 494.328125,
+          "width": 316,
+          "height": 192
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 2270,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "propNames": [
+          "className",
+          "children",
+          "orientation",
+          "decorative"
+        ],
+        "anatomyParts": 1
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "DIV",
+        "role": "separator",
+        "box": {
+          "x": 632,
+          "y": 556.34375,
+          "width": 448,
+          "height": 1
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 589.828125,
+          "width": 316,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 3511,
+      "componentCount": 8,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "min",
+          "max",
+          "step",
+          "minStepsBetweenThumbs",
+          "orientation",
+          "dir",
+          "name",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 8
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "track": 1,
+          "range": 1,
+          "thumb": 1,
+          "valueText": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-keyboard-change",
+        "before": 64,
+        "after": 65,
+        "hiddenValue": "65",
+        "valueText": "Current value"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 143.46875,
+          "y": 545.875,
+          "width": 103.046875,
+          "height": 88.890625
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 2977,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "className",
+          "children",
+          "checked",
+          "defaultChecked",
+          "name",
+          "value",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "control": 1,
+          "thumb": 1,
+          "label": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "true",
+        "after": "false"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 123.796875,
+          "y": 570.328125,
+          "width": 142.390625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 772,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 394,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 503,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 531,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/avatar",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "avatar-fallback-render",
+        "box": {
+          "x": 824,
+          "y": 496.796875,
+          "width": 64,
+          "height": 64
+        },
+        "imageAlt": "Example",
+        "imageHidden": "",
+        "borderRadius": "999px",
+        "fallback": "UI"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": false,
+        "focusReturned": true
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/form",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "form-static-contract",
+        "tagName": "FORM",
+        "state": "valid",
+        "errorHidden": "",
+        "actionsDisabled": null
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "hover-card",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" data-uifn-catalog-anatomy=\"content\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "menubar",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[id=\"menubar-root-menubar-r-0-content-item-2\"]') to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" role=\"menu\" tabindex=\"-1\" data-state=\"closed\" data-uifn-part=\"content\" data-uifn-component=\"menubar\" data-uifn-catalog-anatomy=\"content\" class=\"uifn-menubar uifn-menubar__content\" id=\"menubar-root-menubar-r-0-content-item-2\" aria-labelledby=\"menubar-root-menubar-r-0-trigger-item-2\">…</div>\u001b[22m\n"
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/avatar",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "avatar-fallback-render",
+        "box": {
+          "x": 824,
+          "y": 496.796875,
+          "width": 64,
+          "height": 64
+        },
+        "imageAlt": "Example",
+        "imageHidden": "",
+        "borderRadius": "999px",
+        "fallback": "UI"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": false,
+        "focusReturned": true
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/form",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "form-static-contract",
+        "tagName": "FORM",
+        "state": "valid",
+        "errorHidden": "",
+        "actionsDisabled": null
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "hover-card",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" data-uifn-catalog-anatomy=\"content\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "menubar",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[id=\"menubar-root-menubar-r-0-content-item-2\"]') to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" role=\"menu\" tabindex=\"-1\" data-state=\"closed\" data-uifn-part=\"content\" data-uifn-component=\"menubar\" data-uifn-catalog-anatomy=\"content\" class=\"uifn-menubar uifn-menubar__content\" id=\"menubar-root-menubar-r-0-content-item-2\" aria-labelledby=\"menubar-root-menubar-r-0-trigger-item-2\">…</div>\u001b[22m\n"
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "react",
+      "route": "/components/react/components/avatar",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 2406,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "propNames": [
+          "className",
+          "children",
+          "src",
+          "alt",
+          "fallbackDelay"
+        ],
+        "anatomyParts": 3
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "image": 1,
+          "fallback": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-fallback-render",
+        "box": {
+          "x": 824,
+          "y": 496.796875,
+          "width": 64,
+          "height": 64
+        },
+        "imageAlt": "Example",
+        "imageHidden": "",
+        "borderRadius": "999px",
+        "fallback": "UI"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 163,
+          "y": 558.328125,
+          "width": 64,
+          "height": 64
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3163,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "dir",
+          "loop"
+        ],
+        "anatomyParts": 11
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": false,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/form",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 2361,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "propNames": [
+          "className",
+          "children",
+          "noValidate",
+          "disabled"
+        ],
+        "anatomyParts": 3
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "errorSummary": 1,
+          "actions": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-static-contract",
+        "tagName": "FORM",
+        "state": "valid",
+        "errorHidden": "",
+        "actionsDisabled": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 580.171875,
+          "width": 316,
+          "height": 20.296875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 2822,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "openDelay",
+          "closeDelay",
+          "placement"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "arrow": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" data-uifn-catalog-anatomy=\"content\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3181,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "loop",
+          "dir"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "menu": 2,
+          "trigger": 2,
+          "content": 2,
+          "item": 2,
+          "submenuTrigger": 2,
+          "submenuContent": 2
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[id=\"menubar-root-menubar-r-0-content-item-2\"]') to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" role=\"menu\" tabindex=\"-1\" data-state=\"closed\" data-uifn-part=\"content\" data-uifn-component=\"menubar\" data-uifn-catalog-anatomy=\"content\" class=\"uifn-menubar uifn-menubar__content\" id=\"menubar-root-menubar-r-0-content-item-2\" aria-labelledby=\"menubar-root-menubar-r-0-trigger-item-2\">…</div>\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 550.03125,
+          "width": 316,
+          "height": 80.59375
+        }
+      }
+    }
+  ],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-react-regression-chromium"
+}

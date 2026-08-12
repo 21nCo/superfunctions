@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_15",
+  "vector": "TV-COMP-001-P",
+  "status": "passed",
+  "tarballs": {
+    "@uifn/core": {
+      "filename": "uifn-core-0.0.1.tgz",
+      "sha256": "10152e19d974347ee260a410aefe813828cd3dcecfa8591588b94d6432a9d60f",
+      "fileCount": 135
+    },
+    "@uifn/dom": {
+      "filename": "uifn-dom-0.0.1.tgz",
+      "sha256": "85f8f38d626981d8ef0b165e872b5e1725736162995309578340d4c33650e148",
+      "fileCount": 9
+    },
+    "@uifn/adapter-kit": {
+      "filename": "uifn-adapter-kit-0.0.1.tgz",
+      "sha256": "cecc040efc9d8282c66459104d4de75ca69dac9ae187adb0b95c3e73c163c90a",
+      "fileCount": 6
+    },
+    "@uifn/tokens": {
+      "filename": "uifn-tokens-0.0.1.tgz",
+      "sha256": "dd19c55fd7c58b09e3d5c944b2762544bdcb929a15d86a397f706dc077feb645",
+      "fileCount": 6
+    },
+    "@uifn/theme": {
+      "filename": "uifn-theme-0.0.1.tgz",
+      "sha256": "79227833ea903372041c6c5695743e7b83aff1548fa729cfc08f0389696ce476",
+      "fileCount": 6
+    },
+    "@uifn/recipes": {
+      "filename": "uifn-recipes-0.0.1.tgz",
+      "sha256": "33a3477be240a03b6d79e65c3c42e135ca03c04a2406f00353c093cd393f5d24",
+      "fileCount": 6
+    },
+    "@uifn/components": {
+      "filename": "uifn-components-0.0.1.tgz",
+      "sha256": "05590c5d726f6edbb82d450f772446e3a8d5179fe1382b5996d67b17a32b6631",
+      "fileCount": 7
+    },
+    "@uifn/react": {
+      "filename": "uifn-react-0.0.1.tgz",
+      "sha256": "df2bb66edd34aff6876e71552bb2becbe6387775bcbac7417b0dca1cecbfeef7",
+      "fileCount": 701
+    },
+    "@uifn/components-react": {
+      "filename": "uifn-components-react-0.0.1.tgz",
+      "sha256": "064b1e094866caff330d1ee429a09fddad9300231d8252fa689685c35cbb0647",
+      "fileCount": 6
+    },
+    "@uifn/svelte": {
+      "filename": "uifn-svelte-0.0.1.tgz",
+      "sha256": "b91fbe698efac2f8507a27feca28f79df80d00274e5d589d8ca29d43a06f42b9",
+      "fileCount": 1656
+    },
+    "@uifn/components-svelte": {
+      "filename": "uifn-components-svelte-0.0.1.tgz",
+      "sha256": "64e250fc2d73aa9011bc2b39624e7f7945b924f608689112903bb4a58b9bb9d3",
+      "fileCount": 842
+    },
+    "@uifn/solid": {
+      "filename": "uifn-solid-0.0.1.tgz",
+      "sha256": "2782d959d4c2e778e9909d6fe13cb37bc90f5e208ee72d9d769767cbe71e8ef0",
+      "fileCount": 275
+    },
+    "@uifn/components-solid": {
+      "filename": "uifn-components-solid-0.0.1.tgz",
+      "sha256": "66bc71141034d014b315d02e171970014702e1527a84c47952d3654628cb9757",
+      "fileCount": 6
+    }
+  },
+  "consumers": [
+    {
+      "framework": "react",
+      "package": "@uifn/components-react",
+      "installedUifnPackages": [
+        "@uifn/adapter-kit",
+        "@uifn/components",
+        "@uifn/components-react",
+        "@uifn/core",
+        "@uifn/dom",
+        "@uifn/react",
+        "@uifn/recipes",
+        "@uifn/theme",
+        "@uifn/tokens"
+      ],
+      "forbiddenInstalled": [],
+      "smokeImport": "passed",
+      "lockfileSha256": "0d41bd44db407ace6784c29318389ad30629e38253fa391caf75c727286efcff"
+    },
+    {
+      "framework": "svelte",
+      "package": "@uifn/components-svelte",
+      "installedUifnPackages": [
+        "@uifn/adapter-kit",
+        "@uifn/components",
+        "@uifn/components-svelte",
+        "@uifn/core",
+        "@uifn/dom",
+        "@uifn/recipes",
+        "@uifn/svelte",
+        "@uifn/theme",
+        "@uifn/tokens"
+      ],
+      "forbiddenInstalled": [],
+      "smokeImport": "compiled-svelte-entry-validated",
+      "lockfileSha256": "47e4bcd12869f694b87fcc2534d914a0948ad7a18c8c2301fe2bff130ef5fedb"
+    },
+    {
+      "framework": "solid",
+      "package": "@uifn/components-solid",
+      "installedUifnPackages": [
+        "@uifn/adapter-kit",
+        "@uifn/components",
+        "@uifn/components-solid",
+        "@uifn/core",
+        "@uifn/dom",
+        "@uifn/recipes",
+        "@uifn/solid",
+        "@uifn/theme",
+        "@uifn/tokens"
+      ],
+      "forbiddenInstalled": [],
+      "smokeImport": "compiled-solid-entry-validated",
+      "lockfileSha256": "3bddfdd6279cf476bf0c1a27a675a0a96f13ae11fd62452a6422f9401bafe01a"
+    }
+  ]
+}

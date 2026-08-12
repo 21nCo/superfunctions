@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "button",
+  "framework": "solid",
+  "deliveryMode": "package",
+  "browser": "chromium",
+  "version": "143.0.7499.4",
+  "sourceHash": "c95d6a6f3715b4f9916d0a524e75c95f9631d814956662dfc08ce7cb545393ad",
+  "dom": "<section data-uifn-story-framework=\"solid\" data-uifn-story-id=\"button--forced-colors\" data-uifn-story-scenario=\"forced-colors\" data-uifn-theme=\"high-contrast\" data-uifn-forced-colors=\"true\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><button type=\"button\" id=\"button-uifn-cl-0-button-root\" class=\"uifn-button uifn-button__root\" aria-busy=\"false\" aria-disabled=\"false\" data-state=\"idle\" data-uifn-component=\"button\" data-uifn-part=\"root\"><span class=\"uifn-button uifn-button__icon\" aria-hidden=\"true\" data-uifn-story-anatomy=\"icon\" data-uifn-component=\"button\" data-uifn-part=\"icon\">icon fixture</span><span class=\"uifn-button uifn-button__label\" data-state=\"idle\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"button\" data-uifn-part=\"label\">label fixture</span><span hidden=\"\" class=\"uifn-button uifn-button__spinner\" aria-hidden=\"true\" data-state=\"hidden\" data-uifn-story-anatomy=\"spinner\" data-uifn-component=\"button\" data-uifn-part=\"spinner\">spinner fixture</span></button></section>",
+  "semanticTrace": [
+    {
+      "part": "icon",
+      "tag": "span",
+      "role": null,
+      "aria": [
+        [
+          "aria-hidden",
+          "true"
+        ]
+      ],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "icon"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "button",
+      "role": null,
+      "aria": [
+        [
+          "aria-busy",
+          "false"
+        ],
+        [
+          "aria-disabled",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ]
+      ]
+    },
+    {
+      "part": "spinner",
+      "tag": "span",
+      "role": null,
+      "aria": [
+        [
+          "aria-hidden",
+          "true"
+        ]
+      ],
+      "data": [
+        [
+          "data-state",
+          "hidden"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "spinner"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "e77b64f5f7bcb7c71e2fa07bc1b400c4ce4298596fb4770b7471f8a53c75141d"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "e77b64f5f7bcb7c71e2fa07bc1b400c4ce4298596fb4770b7471f8a53c75141d"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "e77b64f5f7bcb7c71e2fa07bc1b400c4ce4298596fb4770b7471f8a53c75141d"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "e77b64f5f7bcb7c71e2fa07bc1b400c4ce4298596fb4770b7471f8a53c75141d"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "e77b64f5f7bcb7c71e2fa07bc1b400c4ce4298596fb4770b7471f8a53c75141d"
+    }
+  ],
+  "focusPath": [
+    "root",
+    "root",
+    "root",
+    "root",
+    "root",
+    "root"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:37:16.724Z",
+  "expiresAt": "2026-08-06T16:37:16.724Z"
+}

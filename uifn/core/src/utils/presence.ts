@@ -7,11 +7,9 @@ export interface PresenceSnapshot {
 
 export type PresenceState = 'mounted' | 'unmount-suspended' | 'unmounted';
 
-export interface MotionInfo {
+export interface PresenceMotion {
   hasAnimation: boolean;
   hasTransition: boolean;
-  animationDurationMs: number;
-  transitionDurationMs: number;
 }
 
 export interface PresenceManagerState {
@@ -27,71 +25,18 @@ export interface PresenceManager {
   getState: () => PresenceManagerState;
   setPresent: (
     present: boolean,
-    motion?: Pick<MotionInfo, 'hasAnimation' | 'hasTransition'>
+    motion?: PresenceMotion
   ) => PresenceManagerState;
   registerTimer: () => PresenceManagerState;
   clearTimer: () => PresenceManagerState;
   registerListener: () => PresenceManagerState;
   clearListener: () => PresenceManagerState;
   cleanup: () => PresenceManagerState;
+  destroy: () => void;
 }
 
 export interface PresenceManagerOptions {
   reducedMotion?: boolean;
-}
-
-function parseTimeListMs(value: string): number {
-  const tokens = value
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-  if (tokens.length === 0) {
-    return 0;
-  }
-
-  return tokens.reduce((max, token) => {
-    const duration = token.endsWith('ms')
-      ? Number.parseFloat(token)
-      : Number.parseFloat(token) * 1000;
-    return Number.isFinite(duration) ? Math.max(max, duration) : max;
-  }, 0);
-}
-
-export function detectMotionFromStyles(
-  styles: Pick<
-    CSSStyleDeclaration,
-    'animationName' | 'animationDuration' | 'transitionDuration'
-  >
-): MotionInfo {
-  const animationDurationMs = parseTimeListMs(styles.animationDuration || '0s');
-  const transitionDurationMs = parseTimeListMs(styles.transitionDuration || '0s');
-
-  const hasAnimation =
-    styles.animationName !== 'none' &&
-    styles.animationName !== '' &&
-    animationDurationMs > 0;
-  const hasTransition = transitionDurationMs > 0;
-
-  return {
-    hasAnimation,
-    hasTransition,
-    animationDurationMs,
-    transitionDurationMs,
-  };
-}
-
-export function detectNodeMotion(node: HTMLElement): MotionInfo {
-  const ownerWindow = node.ownerDocument.defaultView;
-  if (!ownerWindow) {
-    return {
-      hasAnimation: false,
-      hasTransition: false,
-      animationDurationMs: 0,
-      transitionDurationMs: 0,
-    };
-  }
-
-  return detectMotionFromStyles(ownerWindow.getComputedStyle(node));
 }
 
 export function shouldSuspendUnmount(snapshot: PresenceSnapshot): boolean {
@@ -118,7 +63,12 @@ export function createPresenceManager(
   present: boolean,
   options: PresenceManagerOptions = {}
 ): PresenceManager {
-  let state: PresenceManagerState = {
+  type PresenceEvent = RuntimeEvent & {
+    type: 'SET_PRESENT' | 'REGISTER_TIMER' | 'CLEAR_TIMER' | 'REGISTER_LISTENER' | 'CLEAR_LISTENER' | 'CLEANUP';
+    present?: boolean;
+    motion?: PresenceMotion;
+  };
+  const initialContext: PresenceManagerState = {
     present,
     state: present ? 'mounted' : 'unmounted',
     reducedMotion: options.reducedMotion ?? false,
@@ -126,83 +76,86 @@ export function createPresenceManager(
     listeners: 0,
     cleanupComplete: !present,
   };
-
-  const getState = (): PresenceManagerState => ({ ...state });
-
-  const updateCleanupState = () => {
-    state = {
-      ...state,
-      cleanupComplete: !state.present && state.timers === 0 && state.listeners === 0,
-    };
+  const withCleanup = (state: PresenceManagerState): PresenceManagerState => ({
+    ...state,
+    cleanupComplete: !state.present && state.timers === 0 && state.listeners === 0,
+  });
+  const definition: RuntimeDefinition<Record<string, never>, PresenceManagerState, 'active', PresenceEvent> = {
+    id: 'presence-manager',
+    initialState: 'active',
+    initialContext,
+    transitions: {
+      SET_PRESENT: {
+        reduce: ({ context, event }) => {
+          const nextPresent = event.present ?? false;
+          const hasAnimation = context.reducedMotion ? false : event.motion?.hasAnimation ?? false;
+          const hasTransition = context.reducedMotion ? false : event.motion?.hasTransition ?? false;
+          return {
+            context: withCleanup({
+              ...context,
+              present: nextPresent,
+              state: resolvePresenceState({ present: nextPresent, wasPresent: context.present, hasAnimation, hasTransition }),
+            }),
+            reason: 'presence-updated',
+            action: 'set-present',
+          };
+        },
+      },
+      REGISTER_TIMER: {
+        reduce: ({ context }) => ({ context: withCleanup({ ...context, timers: context.timers + 1 }), reason: 'timer-registered', action: 'register-timer' }),
+      },
+      CLEAR_TIMER: {
+        reduce: ({ context }) => ({ context: withCleanup({ ...context, timers: Math.max(0, context.timers - 1) }), reason: 'timer-cleared', action: 'clear-timer' }),
+      },
+      REGISTER_LISTENER: {
+        reduce: ({ context }) => ({ context: withCleanup({ ...context, listeners: context.listeners + 1 }), reason: 'listener-registered', action: 'register-listener' }),
+      },
+      CLEAR_LISTENER: {
+        reduce: ({ context }) => ({ context: withCleanup({ ...context, listeners: Math.max(0, context.listeners - 1) }), reason: 'listener-cleared', action: 'clear-listener' }),
+      },
+      CLEANUP: {
+        reduce: ({ context }) => ({
+          context: withCleanup({ ...context, timers: 0, listeners: 0, state: context.present ? 'mounted' : 'unmounted' }),
+          reason: 'presence-cleanup',
+          action: 'cleanup',
+        }),
+      },
+    },
+  };
+  const service = createRuntimeService(definition, {}, {
+    scope: createRuntimeScope({ id: 'presence-manager', mode: 'production' }),
+  });
+  const getState = (): PresenceManagerState => ({ ...service.getSnapshot().context });
+  const send = (event: PresenceEvent) => {
+    service.send(event, { source: 'programmatic', reason: event.type.toLowerCase().replace(/_/g, '-') });
+    return getState();
   };
 
   return {
     getState,
     setPresent(nextPresent, motion) {
-      const hasAnimation = state.reducedMotion ? false : motion?.hasAnimation ?? false;
-      const hasTransition = state.reducedMotion ? false : motion?.hasTransition ?? false;
-      const nextPresenceState = resolvePresenceState({
-        present: nextPresent,
-        wasPresent: state.present,
-        hasAnimation,
-        hasTransition,
-      });
-
-      state = {
-        ...state,
-        present: nextPresent,
-        state: nextPresenceState,
-      };
-
-      updateCleanupState();
-      return getState();
+      return send({ type: 'SET_PRESENT', present: nextPresent, motion });
     },
     registerTimer() {
-      state = {
-        ...state,
-        timers: state.timers + 1,
-      };
-
-      updateCleanupState();
-      return getState();
+      return send({ type: 'REGISTER_TIMER' });
     },
     clearTimer() {
-      state = {
-        ...state,
-        timers: Math.max(0, state.timers - 1),
-      };
-
-      updateCleanupState();
-      return getState();
+      return send({ type: 'CLEAR_TIMER' });
     },
     registerListener() {
-      state = {
-        ...state,
-        listeners: state.listeners + 1,
-      };
-
-      updateCleanupState();
-      return getState();
+      return send({ type: 'REGISTER_LISTENER' });
     },
     clearListener() {
-      state = {
-        ...state,
-        listeners: Math.max(0, state.listeners - 1),
-      };
-
-      updateCleanupState();
-      return getState();
+      return send({ type: 'CLEAR_LISTENER' });
     },
     cleanup() {
-      state = {
-        ...state,
-        timers: 0,
-        listeners: 0,
-        state: state.present ? 'mounted' : 'unmounted',
-      };
-
-      updateCleanupState();
-      return getState();
+      return send({ type: 'CLEANUP' });
+    },
+    destroy() {
+      service.destroy();
     },
   };
 }
+import { createRuntimeService } from '../internal/runtime/service';
+import { createRuntimeScope } from '../internal/runtime/scope';
+import type { RuntimeDefinition, RuntimeEvent } from '../internal/runtime/types';

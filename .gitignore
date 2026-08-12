@@ -6,6 +6,7 @@ node_modules/
 
 # Build outputs
 dist/
+storybook-static/
 build/
 *.tsbuildinfo
 **/*.js
@@ -44,6 +45,7 @@ lerna-debug.log*
 
 # Security
 *.pem
+!uifn/registry/trust/registry-ed25519-public.pem
 *.p12
 *.key
 *-key.pem
@@ -51,6 +53,7 @@ lerna-debug.log*
 # Testing
 coverage/
 .nyc_output
+.vite-vitest/
 test-results/
 .pytest_cache/
 __pycache__/

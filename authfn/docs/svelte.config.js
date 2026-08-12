@@ -28,7 +28,7 @@ const config = {
       "@docsfn/provider-fs": fromDocsRoot("../../docsfn/provider-fs/src/index.ts"),
       "@docsfn/sveltekit": fromDocsRoot("../../docsfn/sveltekit/src/index.ts"),
       "@docsfn/svelte": fromDocsRoot("../../docsfn/svelte/src/index.ts"),
-      "@uifn/svelte": fromDocsRoot("../../uifn/svelte/src/index.ts"),
+      "@uifn/svelte": fromDocsRoot("../../uifn/svelte/lib/index.ts"),
       "@uifn/core": fromDocsRoot("../../uifn/core/src/index.ts"),
       "@uifn/core/*": fromDocsRoot("../../uifn/core/src/*"),
       "@searchfn/client": fromDocsRoot("../../searchfn/client/src/index.ts"),

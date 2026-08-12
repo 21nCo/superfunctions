@@ -1,9 +1,13 @@
+import { createStateChannel } from '../internal/runtime/state-channel';
 import { createUIFnError, type UIFnError } from '../errors';
-import { clamp, type ChangeMeta, createStore } from './shared';
+import { clamp, type ChangeMeta } from './shared';
 
 export interface ScrollAreaProps {
   type?: 'auto' | 'always' | 'scroll' | 'hover';
   scrollHideDelay?: number;
+  orientation?: 'vertical' | 'horizontal' | 'both';
+  dir?: 'ltr' | 'rtl';
+  ariaLabel?: string;
 }
 
 export interface ScrollMetrics {
@@ -22,7 +26,10 @@ export interface ScrollAxisState {
 }
 
 export interface ScrollAreaState {
+  status: 'idle' | 'scrolling' | 'dragging';
   type: 'auto' | 'always' | 'scroll' | 'hover';
+  orientation: 'vertical' | 'horizontal' | 'both';
+  dir: 'ltr' | 'rtl';
   scrollHideDelay: number;
   viewport: ScrollMetrics;
   vertical: ScrollAxisState;
@@ -39,15 +46,18 @@ export interface ScrollAreaActions {
   scrollTo: (position: { top?: number; left?: number }) => void;
   dragVerticalThumb: (positionPercent: number) => void;
   dragHorizontalThumb: (positionPercent: number) => void;
+  handleKeyDown: (axis: 'vertical' | 'horizontal', key: string) => void;
+  endInteraction: () => void;
 }
 
-export interface ScrollAreaMachine {
+export interface ScrollAreaRuntime {
   readonly state: ScrollAreaState;
   readonly actions: ScrollAreaActions;
   getState: () => ScrollAreaState;
   subscribe: (
     callback: (state: ScrollAreaState, meta?: ChangeMeta<number>) => void
   ) => () => void;
+  destroy: () => void;
 }
 
 function createDefaultViewport(): ScrollMetrics {
@@ -124,11 +134,14 @@ function clampViewport(viewport: ScrollMetrics): ScrollMetrics {
   };
 }
 
-export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
+export function createScrollAreaRuntime(props: ScrollAreaProps): ScrollAreaRuntime {
   const viewport = createDefaultViewport();
   const computed = resolveStateFromViewport(viewport);
-  const store = createStore<ScrollAreaState, number>({
+  const store = createStateChannel<ScrollAreaState, number>({
+    status: 'idle',
     type: props.type ?? 'hover',
+    orientation: props.orientation ?? 'both',
+    dir: props.dir ?? 'ltr',
     scrollHideDelay: props.scrollHideDelay ?? 600,
     viewport,
     vertical: computed.vertical,
@@ -175,6 +188,7 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
           horizontal: nextComputed.horizontal,
           cornerVisible: nextComputed.cornerVisible,
           lastInteraction: 'viewport',
+          status: 'scrolling',
           lastChangeMeta: meta,
           lastError: null,
         },
@@ -202,6 +216,7 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
           horizontal: nextComputed.horizontal,
           cornerVisible: nextComputed.cornerVisible,
           lastInteraction: 'viewport',
+          status: 'scrolling',
           lastChangeMeta: meta,
           lastError: null,
         },
@@ -250,6 +265,7 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
           horizontal: nextComputed.horizontal,
           cornerVisible: nextComputed.cornerVisible,
           lastInteraction: 'vertical-thumb',
+          status: 'dragging',
           lastChangeMeta: meta,
           lastError: null,
         },
@@ -298,11 +314,32 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
           vertical: nextComputed.vertical,
           cornerVisible: nextComputed.cornerVisible,
           lastInteraction: 'horizontal-thumb',
+          status: 'dragging',
           lastChangeMeta: meta,
           lastError: null,
         },
         meta
       );
+    },
+    handleKeyDown(axis, key) {
+      const state = store.getState();
+      const viewport = state.viewport;
+      const current = axis === 'vertical' ? viewport.scrollTop : viewport.scrollLeft;
+      const max = axis === 'vertical'
+        ? Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+        : Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      let next = current;
+      if (key === 'Home') next = 0;
+      else if (key === 'End') next = max;
+      else if (key === 'PageUp') next -= axis === 'vertical' ? viewport.clientHeight : viewport.clientWidth;
+      else if (key === 'PageDown') next += axis === 'vertical' ? viewport.clientHeight : viewport.clientWidth;
+      else if (key === 'ArrowUp' || key === 'ArrowLeft') next -= 40;
+      else if (key === 'ArrowDown' || key === 'ArrowRight') next += 40;
+      else return;
+      actions.scrollTo(axis === 'vertical' ? { top: next } : { left: next });
+    },
+    endInteraction() {
+      store.patchState({ status: 'idle' });
     },
   };
 
@@ -313,5 +350,6 @@ export function createScrollArea(props: ScrollAreaProps): ScrollAreaMachine {
     actions,
     getState: store.getState,
     subscribe: store.subscribe,
+    destroy: store.destroy,
   };
 }

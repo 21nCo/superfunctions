@@ -1,7 +1,7 @@
 {
   "name": "@uifn/react",
   "version": "0.0.2",
-  "description": "GA React adapter for uifn primitives",
+  "description": "Permanently headless React adapter for uifn primitives",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -10,10 +10,25 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
+    },
+    "./hooks/use-copy-to-clipboard": {
+      "types": "./dist/hooks/use-copy-to-clipboard.d.ts",
+      "import": "./dist/hooks/use-copy-to-clipboard.mjs",
+      "require": "./dist/hooks/use-copy-to-clipboard.js"
+    },
+    "./hooks/use-media-query": {
+      "types": "./dist/hooks/use-media-query.d.ts",
+      "import": "./dist/hooks/use-media-query.mjs",
+      "require": "./dist/hooks/use-media-query.js"
+    },
+    "./*": {
+      "types": "./dist/generated/*.d.ts",
+      "import": "./dist/generated/*.mjs",
+      "require": "./dist/generated/*.js"
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc --emitDeclarationOnly -p tsconfig.json",
     "dev": "tsup --watch",
     "test": "vitest run",
     "lint": "tsc --noEmit -p tsconfig.json",
@@ -21,11 +36,13 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@uifn/core": "0.0.1"
+    "@uifn/adapter-kit": "0.0.1",
+    "@uifn/core": "0.0.1",
+    "@uifn/dom": "0.0.1"
   },
   "peerDependencies": {
-    "react": ">=18.2.0 <20",
-    "react-dom": ">=18.2.0 <20"
+    "react": ">=18.3.0 <20",
+    "react-dom": ">=18.3.0 <20"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
@@ -36,6 +53,7 @@
     "jsdom": "^27.0.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "redent": "^3.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
     "vitest": "^1.0.0",
@@ -57,7 +75,7 @@
   "author": "21n",
   "license": "MIT",
   "engines": {
-    "node": ">=18 <23"
+    "node": ">=20 <25"
   },
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"
@@ -69,5 +87,12 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "uifn": {
+    "status": "ga-candidate",
+    "layer": "adapter",
+    "styling": "permanently-headless",
+    "schemaVersion": 1,
+    "sourcePolicy": "clean-room"
   }
 }

@@ -1,0 +1,227 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_17",
+  "vector": "TV-DOCS-001-P",
+  "status": "passed",
+  "counts": {
+    "primitives": 61,
+    "sections": 793,
+    "mappedFields": 11626,
+    "samples": 366,
+    "consumers": 6
+  },
+  "tarballs": {
+    "@uifn/core": {
+      "filename": "uifn-core-0.0.1.tgz",
+      "sha256": "c465db576b898c2d3777cbee5f9f2fd2597a9ddc4cd2a9a3dd68dba1b44e0b0b",
+      "fileCount": 135
+    },
+    "@uifn/dom": {
+      "filename": "uifn-dom-0.0.1.tgz",
+      "sha256": "85f8f38d626981d8ef0b165e872b5e1725736162995309578340d4c33650e148",
+      "fileCount": 9
+    },
+    "@uifn/adapter-kit": {
+      "filename": "uifn-adapter-kit-0.0.1.tgz",
+      "sha256": "cecc040efc9d8282c66459104d4de75ca69dac9ae187adb0b95c3e73c163c90a",
+      "fileCount": 6
+    },
+    "@uifn/tokens": {
+      "filename": "uifn-tokens-0.0.1.tgz",
+      "sha256": "c011ee2d5ef4276800c3f0a06942a7e3136437885f5c0b43c3ab183f0680a3b6",
+      "fileCount": 6
+    },
+    "@uifn/theme": {
+      "filename": "uifn-theme-0.0.1.tgz",
+      "sha256": "81a83ff3569b7e1e1c1862d67371cb295ba83828ff06cfe6f6c835a68a4020d7",
+      "fileCount": 6
+    },
+    "@uifn/recipes": {
+      "filename": "uifn-recipes-0.0.1.tgz",
+      "sha256": "33a3477be240a03b6d79e65c3c42e135ca03c04a2406f00353c093cd393f5d24",
+      "fileCount": 6
+    },
+    "@uifn/components": {
+      "filename": "uifn-components-0.0.1.tgz",
+      "sha256": "883aaef361504ab23ffa31a7d7e4e15a0035a42acd3db65997f903553d6e11a1",
+      "fileCount": 7
+    },
+    "@uifn/react": {
+      "filename": "uifn-react-0.0.1.tgz",
+      "sha256": "1ff328c59cac5615807d42e6c27bd30b3577c181e57b786f87e485efa4bc9282",
+      "fileCount": 701
+    },
+    "@uifn/svelte": {
+      "filename": "uifn-svelte-0.0.1.tgz",
+      "sha256": "b91fbe698efac2f8507a27feca28f79df80d00274e5d589d8ca29d43a06f42b9",
+      "fileCount": 1656
+    },
+    "@uifn/solid": {
+      "filename": "uifn-solid-0.0.1.tgz",
+      "sha256": "2782d959d4c2e778e9909d6fe13cb37bc90f5e208ee72d9d769767cbe71e8ef0",
+      "fileCount": 275
+    },
+    "@uifn/components-react": {
+      "filename": "uifn-components-react-0.0.1.tgz",
+      "sha256": "1ac52f372fd5c247c3d1d3845b734936efcf5ab1cd6a155e907963a9c994a4ef",
+      "fileCount": 311
+    },
+    "@uifn/components-svelte": {
+      "filename": "uifn-components-svelte-0.0.1.tgz",
+      "sha256": "4b4e219486133990e999e2130d6451a45573b3c9776fd25f5556409214600de5",
+      "fileCount": 964
+    },
+    "@uifn/components-solid": {
+      "filename": "uifn-components-solid-0.0.1.tgz",
+      "sha256": "c97aecdb94159b2eeb2dba0ce462594b74bff6d487f82df5637d41c00f885029",
+      "fileCount": 311
+    },
+    "@uifn/registry": {
+      "filename": "uifn-registry-0.0.1.tgz",
+      "sha256": "9003612ba4d843b9f9ee3a055fe81c3aec0b848a0c59cb13ba1d48aeb5d313bb",
+      "fileCount": 8
+    }
+  },
+  "consumers": [
+    {
+      "framework": "react",
+      "deliveryMode": "package",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "6475ef6277a8ee709216924740e7600fef5eeb16a110a61c58df89203eebd122",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "26ba9efaf1a1ddb9914fb30974dba5fe2743b8a4ceb68d12538300b91473e53b"
+      },
+      "browser": {
+        "status": "passed",
+        "errors": []
+      }
+    },
+    {
+      "framework": "react",
+      "deliveryMode": "source",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "7e94730ac99d242d494801cb4fd1c0abd52d7010ad46bbaac5c03252fc3ba812",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "313feaad98a59fbca18dbe74d987ae3ae8846950ab012ea236f3f42cedc4d678"
+      },
+      "browser": {
+        "status": "passed",
+        "errors": []
+      }
+    },
+    {
+      "framework": "svelte",
+      "deliveryMode": "package",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "7bf2b90cb7d086dbaad4ac55fe869a85d4f197bc72c15f1e79a32d588d5c12f9",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/svelte-check --tsconfig ./tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "92eb8314d039bc68e6e8a82637971f502f76ce597c3b3cd28ab7617cae5d56dd"
+      },
+      "browser": {
+        "status": "passed",
+        "errors": []
+      }
+    },
+    {
+      "framework": "svelte",
+      "deliveryMode": "source",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "2502ee592bf025c2c2906e414f9cdb8251a82768793682b1c28173ba733ef870",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/svelte-check --tsconfig ./tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "3b7982401f08cdb21f8faa314f33e8d86a2fa5e809fa23ce9410a7d212bf245f"
+      },
+      "browser": {
+        "status": "passed",
+        "errors": []
+      }
+    },
+    {
+      "framework": "solid",
+      "deliveryMode": "package",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "bac252419dabd8868039ce206fa0a4a06589f62fa3b8c97e9184a11053e51c54",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "1cdfe6283e4c6d542b1e637bb26a2e5f99e0fe5fd76b0f054e0cf8405380951c"
+      },
+      "browser": {
+        "status": "passed",
+        "errors": []
+      }
+    },
+    {
+      "framework": "solid",
+      "deliveryMode": "source",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "de3996be4ed94e4300d71e4c38ddb867ee5fe94418fed824c36fa3ee1ca98a82",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "25417f6d85f916914e1fe1e3270b42508e940db1084d7bfb68a71905ebc7ba4e"
+      },
+      "browser": {
+        "status": "passed",
+        "errors": []
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "mutation": "vue-support-claim",
+      "expected": "UIFN_DOCS_UNSUPPORTED_CLAIM",
+      "observed": "UIFN_DOCS_UNSUPPORTED_CLAIM"
+    },
+    {
+      "mutation": "legacy-state-machine-sample",
+      "expected": "UIFN_DOCS_REMOVED_API",
+      "observed": "UIFN_DOCS_REMOVED_API"
+    }
+  ],
+  "failures": [],
+  "provisionalUntilSignedPhase14Compatibility": true
+}

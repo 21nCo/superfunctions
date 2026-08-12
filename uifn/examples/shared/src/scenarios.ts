@@ -1,4 +1,4 @@
-export type ExampleAdapterId = "react" | "svelte" | "vue";
+export type ExampleAdapterId = "react" | "svelte" | "solid";
 
 export type ExampleScenarioId =
   | "settings-console"
@@ -42,7 +42,7 @@ export interface ExampleScenarioDefinition {
 export const exampleDevPorts = {
   react: 6111,
   svelte: 6112,
-  vue: 6113,
+  solid: 6114,
 } as const;
 
 export const defaultExampleRoute: ExampleRouteHash = "#/settings-console";
@@ -61,7 +61,7 @@ export const scenarios: ExampleScenarioDefinition[] = [
     title: "Settings Console",
     description:
       "Dialog-driven preferences flow with tabs, toggles, checkboxes, and toast feedback.",
-    supportedAdapters: ["react", "svelte", "vue"],
+    supportedAdapters: ["react", "svelte", "solid"],
     requiredCapabilities: ["dialog", "tabs", "switch", "checkbox", "toast"],
     fixtureKey: "settings",
   },
@@ -71,7 +71,7 @@ export const scenarios: ExampleScenarioDefinition[] = [
     title: "Team Directory",
     description:
       "Profile and actions flow using avatar, badge, menu, popover, and hover-card primitives.",
-    supportedAdapters: ["react", "svelte", "vue"],
+    supportedAdapters: ["react", "svelte", "solid"],
     requiredCapabilities: ["avatar", "badge", "dropdown-menu", "popover", "hover-card"],
     fixtureKey: "team",
   },
@@ -81,7 +81,7 @@ export const scenarios: ExampleScenarioDefinition[] = [
     title: "Command Center",
     description:
       "Filtering and command execution flow using combobox, select, scroll-area, and context-menu primitives.",
-    supportedAdapters: ["react", "svelte", "vue"],
+    supportedAdapters: ["react", "svelte", "solid"],
     requiredCapabilities: ["combobox", "select", "scroll-area", "context-menu"],
     fixtureKey: "commands",
   },
@@ -91,7 +91,7 @@ export const scenarios: ExampleScenarioDefinition[] = [
     title: "Virtualized Results",
     description:
       "Large-result browsing flow proving adapter-level virtualized rendering behavior.",
-    supportedAdapters: ["react", "svelte"],
+    supportedAdapters: ["react", "svelte", "solid"],
     requiredCapabilities: ["virtualized-list", "scroll-area"],
     fixtureKey: "results",
   },

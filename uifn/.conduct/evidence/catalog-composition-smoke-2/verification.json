@@ -1,0 +1,1055 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6311",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7578,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 4197,
+      "componentCount": 14,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "anatomyParts": 14
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "trigger": 1,
+          "valueText": 1,
+          "clear": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 1,
+          "itemText": 1,
+          "itemIndicator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select",
+        "framework": "react",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[role=\"listbox\"]').last().getByRole('option').nth(1)\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 548.609375,
+          "width": 316,
+          "height": 83.4375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/date-picker",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 3661,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 15
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "input": 1,
+          "segment": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "header": 1,
+          "previous": 1,
+          "next": 1,
+          "grid": 1,
+          "gridLabel": 1,
+          "cell": 1,
+          "cellTrigger": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "ownedByRoot": true,
+        "value": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 119.75,
+          "y": 540.171875,
+          "width": 150.5,
+          "height": 100.296875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/combobox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Combobox",
+      "bodyLength": 3563,
+      "componentCount": 12,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "anatomyParts": 12
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 1,
+          "trigger": 1,
+          "clear": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 1,
+          "itemIndicator": 1,
+          "empty": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "combobox-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 12,
+        "partCount": 12,
+        "interactiveCount": 4,
+        "focusWorked": true,
+        "accessibleName": "Example label",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "idle",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          },
+          "after": {
+            "state": "idle",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 548.609375,
+          "width": 316,
+          "height": 83.4375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/color-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Color Picker",
+      "bodyLength": 3669,
+      "componentCount": 12,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "anatomyParts": 12
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "trigger": 1,
+          "swatch": 1,
+          "positioner": 1,
+          "content": 1,
+          "area": 1,
+          "areaThumb": 1,
+          "channelSlider": 1,
+          "channelInput": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "color-picker-date-color-adapter-contract",
+        "behaviorFamily": "date-color",
+        "rootVisible": true,
+        "expectedPartCount": 12,
+        "partCount": 12,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "accessibleName": "Example label",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": null,
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": null,
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 550.03125,
+          "width": 118.703125,
+          "height": 80.59375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/file-upload",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "File Upload",
+      "bodyLength": 3401,
+      "componentCount": 12,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "anatomyParts": 12
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "dropzone": 1,
+          "trigger": 1,
+          "input": 1,
+          "itemGroup": 1,
+          "item": 1,
+          "itemName": 1,
+          "itemSize": 1,
+          "itemDelete": 1,
+          "error": 1,
+          "status": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "file-upload-forms-input-adapter-contract",
+        "behaviorFamily": "forms-input",
+        "rootVisible": true,
+        "expectedPartCount": 12,
+        "partCount": 12,
+        "interactiveCount": 4,
+        "focusWorked": true,
+        "accessibleName": "Drop files",
+        "keyboardProbe": {
+          "key": "ArrowDown",
+          "before": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 43.9375,
+          "y": 462.578125,
+          "width": 302.109375,
+          "height": 175.484375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tour",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Tour",
+      "bodyLength": 3047,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 13
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "backdrop": 1,
+          "spotlight": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "previous": 1,
+          "next": 1,
+          "close": 1,
+          "skip": 1,
+          "progress": 1,
+          "portal": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tour-modal-overlay-adapter-contract",
+        "behaviorFamily": "modal-overlay",
+        "rootVisible": true,
+        "expectedPartCount": 13,
+        "partCount": 13,
+        "interactiveCount": 4,
+        "focusWorked": false,
+        "accessibleName": "Previous",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "closed",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "closed",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 137.734375,
+          "y": 556.875,
+          "width": 114.53125,
+          "height": 66.890625
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 3110,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "item": 1,
+          "header": 1,
+          "trigger": 1,
+          "indicator": 1,
+          "content": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Headless behavior and styled composition remain separate package layers."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 486.6875,
+          "width": 316,
+          "height": 151.1875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 3229,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 9
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 493,
+      "componentCount": 18,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 394,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 503,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 531,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "select",
+        "framework": "react",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[role=\"listbox\"]').last().getByRole('option').nth(1)\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/date-picker",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "date-picker-select",
+        "ownedByRoot": true,
+        "value": null
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tour",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "tour-modal-overlay-adapter-contract",
+        "behaviorFamily": "modal-overlay",
+        "rootVisible": true,
+        "expectedPartCount": 13,
+        "partCount": 13,
+        "interactiveCount": 4,
+        "focusWorked": false,
+        "accessibleName": "Previous",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "closed",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "closed",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "select",
+        "framework": "react",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[role=\"listbox\"]').last().getByRole('option').nth(1)\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/date-picker",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "date-picker-select",
+        "ownedByRoot": true,
+        "value": null
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/tour",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "tour-modal-overlay-adapter-contract",
+        "behaviorFamily": "modal-overlay",
+        "rootVisible": true,
+        "expectedPartCount": 13,
+        "partCount": 13,
+        "interactiveCount": 4,
+        "focusWorked": false,
+        "accessibleName": "Previous",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "closed",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "closed",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 4197,
+      "componentCount": 14,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "anatomyParts": 14
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "trigger": 1,
+          "valueText": 1,
+          "clear": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 1,
+          "itemText": 1,
+          "itemIndicator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select",
+        "framework": "react",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[role=\"listbox\"]').last().getByRole('option').nth(1)\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 548.609375,
+          "width": 316,
+          "height": 83.4375
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/date-picker",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 3661,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "anatomyParts": 15
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "input": 1,
+          "segment": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "header": 1,
+          "previous": 1,
+          "next": 1,
+          "grid": 1,
+          "gridLabel": 1,
+          "cell": 1,
+          "cellTrigger": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "ownedByRoot": true,
+        "value": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 119.75,
+          "y": 540.171875,
+          "width": 150.5,
+          "height": 100.296875
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tour",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Tour",
+      "bodyLength": 3047,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "anatomyParts": 13
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "backdrop": 1,
+          "spotlight": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "previous": 1,
+          "next": 1,
+          "close": 1,
+          "skip": 1,
+          "progress": 1,
+          "portal": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tour-modal-overlay-adapter-contract",
+        "behaviorFamily": "modal-overlay",
+        "rootVisible": true,
+        "expectedPartCount": 13,
+        "partCount": 13,
+        "interactiveCount": 4,
+        "focusWorked": false,
+        "accessibleName": "Previous",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "closed",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "closed",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 137.734375,
+          "y": 556.875,
+          "width": 114.53125,
+          "height": 66.890625
+        }
+      }
+    }
+  ],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-composition-smoke-2"
+}

@@ -1,0 +1,203 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7593,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/angle-slider",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "",
+      "bodyLength": 33,
+      "componentCount": 0,
+      "consoleErrorCount": 3
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "",
+      "bodyLength": 33,
+      "componentCount": 0,
+      "consoleErrorCount": 4
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "solid",
+      "route": "/components/solid/components/angle-slider",
+      "code": "UIFN_CATALOG_SHELL_NOT_LOADED",
+      "evidence": {
+        "message": "page.waitForSelector: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#route-title') to be visible\u001b[22m\n",
+        "consoleErrors": [
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "TypeError: AngleSlider.hiddenInput MUST be rendered inside AngleSlider.Root.\n    at Or (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:5:94366)\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8560\n    at pe (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:2945)\n    at T (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8553)\n    at C (http://127.0.0.1:6310/components/solid/_build/assets/angle-slider-De5WOCZT.js:1:1155)\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8560\n    at pe (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:2945)\n    at T (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8553)\n    at http://127.0.0.1:6310/components/solid/_build/assets/angle-slider-De5WOCZT.js:1:1270\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:22602"
+        ],
+        "bodyText": "Error | Uncaught Client Exception"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "code": "UIFN_CATALOG_SHELL_NOT_LOADED",
+      "evidence": {
+        "message": "page.waitForSelector: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#route-title') to be visible\u001b[22m\n",
+        "consoleErrors": [
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "TypeError: Accordion.item MUST be rendered inside Accordion.Root.\n    at Or (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:5:94366)\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8560\n    at pe (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:2945)\n    at T (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8553)\n    at S (http://127.0.0.1:6310/components/solid/_build/assets/accordion-BhlLnDUw.js:1:693)\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8560\n    at pe (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:2945)\n    at T (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8553)\n    at http://127.0.0.1:6310/components/solid/_build/assets/accordion-BhlLnDUw.js:1:1459\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:22602"
+        ],
+        "bodyText": "Error | Uncaught Client Exception"
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "solid",
+      "route": "/components/solid/components/angle-slider",
+      "code": "UIFN_CATALOG_SHELL_NOT_LOADED",
+      "evidence": {
+        "message": "page.waitForSelector: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#route-title') to be visible\u001b[22m\n",
+        "consoleErrors": [
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "TypeError: AngleSlider.hiddenInput MUST be rendered inside AngleSlider.Root.\n    at Or (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:5:94366)\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8560\n    at pe (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:2945)\n    at T (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8553)\n    at C (http://127.0.0.1:6310/components/solid/_build/assets/angle-slider-De5WOCZT.js:1:1155)\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8560\n    at pe (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:2945)\n    at T (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8553)\n    at http://127.0.0.1:6310/components/solid/_build/assets/angle-slider-De5WOCZT.js:1:1270\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:22602"
+        ],
+        "bodyText": "Error | Uncaught Client Exception"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "code": "UIFN_CATALOG_SHELL_NOT_LOADED",
+      "evidence": {
+        "message": "page.waitForSelector: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#route-title') to be visible\u001b[22m\n",
+        "consoleErrors": [
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.",
+          "TypeError: Accordion.item MUST be rendered inside Accordion.Root.\n    at Or (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:5:94366)\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8560\n    at pe (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:2945)\n    at T (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8553)\n    at S (http://127.0.0.1:6310/components/solid/_build/assets/accordion-BhlLnDUw.js:1:693)\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8560\n    at pe (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:2945)\n    at T (http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:8553)\n    at http://127.0.0.1:6310/components/solid/_build/assets/accordion-BhlLnDUw.js:1:1459\n    at http://127.0.0.1:6310/components/solid/_build/assets/client-DD3QCxvN.js:2:22602"
+        ],
+        "bodyText": "Error | Uncaught Client Exception"
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/angle-slider",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "",
+      "bodyLength": 33,
+      "componentCount": 0,
+      "consoleErrorCount": 3
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "",
+      "bodyLength": 33,
+      "componentCount": 0,
+      "consoleErrorCount": 4
+    }
+  ],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/debug-solid-angle"
+}

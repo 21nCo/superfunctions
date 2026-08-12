@@ -1,0 +1,4279 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6312",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "delivery-contract",
+      "status": "passed",
+      "evidence": {
+        "manifest": {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-29T09:46:29.792Z",
+          "basePath": "/components",
+          "frameworks": [
+            {
+              "id": "react",
+              "path": "/components/react/"
+            },
+            {
+              "id": "svelte",
+              "path": "/components/svelte/"
+            },
+            {
+              "id": "solid",
+              "path": "/components/solid/"
+            }
+          ],
+          "inventory": {
+            "components": 61,
+            "hooks": 2,
+            "patterns": 14,
+            "sfPanels": 14
+          },
+          "routes": {
+            "perFramework": 935,
+            "publicPerFramework": 104,
+            "staticallyAddressable": 2805
+          },
+          "resources": [
+            "/robots.txt",
+            "/sitemap.xml",
+            "/components/llms.txt",
+            "/components/llms-full.txt",
+            "/components/og.png",
+            "/components/crop-landscape.svg"
+          ]
+        },
+        "resources": {
+          "/robots.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 61
+          },
+          "/sitemap.xml": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 25131
+          },
+          "/components/llms.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 11872
+          },
+          "/components/llms-full.txt": {
+            "status": 200,
+            "contentType": "application/octet-stream",
+            "bodyLength": 19637
+          },
+          "/components/og.png": {
+            "status": 200,
+            "contentType": "image/png",
+            "byteLength": 876600
+          },
+          "/catalog-manifest.json": {
+            "status": 200,
+            "inventory": {
+              "components": 61,
+              "hooks": 2,
+              "patterns": 14,
+              "sfPanels": 14
+            },
+            "routes": {
+              "perFramework": 935,
+              "publicPerFramework": 104,
+              "staticallyAddressable": 2805
+            }
+          }
+        },
+        "metadata": {
+          "react": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "svelte": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          },
+          "solid": {
+            "status": 200,
+            "hasTitle": true,
+            "hasCanonical": true,
+            "hasIndexRobots": true,
+            "hasOpenGraphImage": true,
+            "hasJsonLd": true
+          }
+        },
+        "redirects": {
+          "components": {
+            "status": 308,
+            "location": "/components/"
+          }
+        },
+        "notFound": {
+          "status": 404,
+          "hasNoindex": true,
+          "hasRecoveryLink": true
+        },
+        "security": {}
+      }
+    },
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 831,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 9387,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/getting-started",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Getting started",
+      "bodyLength": 2832,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/styling",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Styling",
+      "bodyLength": 2535,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/accessibility",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accessibility",
+      "bodyLength": 2958,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/registry",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Registry and source installation",
+      "bodyLength": 2481,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": {
+        "count": 1,
+        "sectionCount": 5,
+        "headingCount": 5
+      },
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 5864,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 11,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Alert Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  AlertDialogRoot,\n  AlertDialogTrigger,\n  AlertDialogPortal,\n  AlertDialogBackdrop,\n  AlertDialogPositioner,\n  AlertDialogContent,\n  AlertDialogTitle,\n  AlertDialogDescription,\n  AlertDialogCancel,\n  AlertDialogAction,\n  AlertDialogClose,\n} from '@uifn/components-react/alert-dialog'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <AlertDialogRoot>\n      <AlertDialogTrigger type=\"button\">Delete project</AlertDialogTrigger>\n      <AlertDialogPortal>\n        <AlertDialogBackdrop />\n        <AlertDialogPositioner>\n          <AlertDialogContent>\n            <AlertDialogTitle>Delete this project?</AlertDialogTitle>\n            <AlertDialogDescription>This action cannot be undone. All project data will be permanently removed.</AlertDialogDescription>\n            <AlertDialogCancel type=\"button\">Cancel</AlertDialogCancel>\n            <AlertDialogAction type=\"button\">Delete project</AlertDialogAction>\n            <AlertDialogClose type=\"button\" aria-label=\"Close\">×</AlertDialogClose>\n          </AlertDialogContent>\n        </AlertDialogPositioner>\n      </AlertDialogPortal>\n    </AlertDialogRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "cancel": 1,
+          "action": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 804.90625,
+            "y": 597.84375,
+            "width": 126.171875,
+            "height": 44
+          },
+          "visibleText": "Delete project",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 405.65625,
+            "width": 512,
+            "height": 188.6875
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 405.65625,
+            "right": 464,
+            "bottom": 405.65625
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Delete this project?This action cannot be undone. All project data will be permanently removed.CancelDelete project×",
+          "accessibleLabelText": "Close alert dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 3,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 804.90625,
+            "y": 597.84375,
+            "width": 126.171875,
+            "height": 44
+          },
+          "horizontalIntersection": 126.171875,
+          "verticalGap": 3.5,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-alert-dialog-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-modal-keyboard",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true,
+        "title": "Delete this project?"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 131.90625,
+          "y": 535.28125,
+          "width": 126.171875,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/color-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Color Picker",
+      "bodyLength": 6531,
+      "componentCount": 18,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 11,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "open",
+          "defaultOpen",
+          "colorSpace",
+          "alpha",
+          "name",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 12,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nExpose structured locale-aware segments, grids, or channels rather than display-string identity.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Escape\n\nFOCUS\n\nSegment Focus, Grid Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Color Picker catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  ColorPickerRoot,\n  ColorPickerLabel,\n  ColorPickerControl,\n  ColorPickerTrigger,\n  ColorPickerPositioner,\n  ColorPickerContent,\n  ColorPickerArea,\n  ColorPickerAreaThumb,\n  ColorPickerChannelSlider,\n  ColorPickerChannelInput,\n  ColorPickerSwatch,\n  ColorPickerHiddenInput,\n} from '@uifn/components-react/color-picker'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <ColorPickerRoot name=\"brand-color\" defaultValue=\"#635bff\" alpha messages={{\"channels\":{\"r\":\"Red\",\"g\":\"Green\",\"b\":\"Blue\",\"alpha\":\"Alpha\"}}}>\n      <ColorPickerLabel>Brand color</ColorPickerLabel>\n      <ColorPickerControl>\n        <ColorPickerTrigger type=\"button\">Choose color</ColorPickerTrigger>\n        <ColorPickerSwatch />\n      </ColorPickerControl>\n      <ColorPickerPositioner>\n        <ColorPickerContent>\n          <ColorPickerArea>\n            <ColorPickerAreaThumb />\n          </ColorPickerArea>\n          <ColorPickerChannelSlider value=\"r\" />\n          <ColorPickerChannelInput value=\"r\" />\n        </ColorPickerContent>\n      </ColorPickerPositioner>\n      <ColorPickerHiddenInput />\n    </ColorPickerRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "trigger": 1,
+          "swatch": 1,
+          "hiddenInput": 1,
+          "positioner": 1,
+          "content": 1,
+          "area": 1,
+          "areaThumb": 1,
+          "channelSlider": 4,
+          "channelInput": 4
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 692,
+            "y": 577.421875,
+            "width": 352,
+            "height": 84.84375
+          },
+          "visibleText": "Brand color #635BFF",
+          "placeholderMatches": [],
+          "visibleParts": 5
+        },
+        "component": {
+          "ok": true,
+          "contentBox": {
+            "width": 320,
+            "height": 393.375
+          },
+          "areaBox": {
+            "width": 294,
+            "height": 165.375
+          },
+          "swatchBox": {
+            "width": 40,
+            "height": 40
+          },
+          "channelInputCount": 4
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 692,
+            "y": 535.265625,
+            "width": 320,
+            "height": 393.375
+          },
+          "minimumSize": [
+            280,
+            220
+          ],
+          "viewportInset": {
+            "left": 692,
+            "top": 535.265625,
+            "right": 428,
+            "bottom": 71.359375
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "RedGreenBlueAlpha",
+          "accessibleLabelText": "100%, 63% Red Red Green Green Blue Blue Alpha Alpha",
+          "placeholderMatches": [],
+          "interactiveCount": 10,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 692,
+            "y": 471.265625,
+            "width": 352,
+            "height": 58
+          },
+          "horizontalIntersection": 320,
+          "verticalGap": 6,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-color-picker-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "color-picker-channel-change-dismiss",
+        "before": "#635bff",
+        "after": "#405bff",
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 514.859375,
+          "width": 320,
+          "height": 84.84375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/combobox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Combobox",
+      "bodyLength": 6960,
+      "componentCount": 16,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 11,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "inputValue",
+          "items",
+          "multiple",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 12,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse the declared listbox, combobox, radio, checkbox, switch, tag, or tree selection model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Space, Escape, typeahead\n\nFOCUS\n\nActive Item, Selected Item, Dynamic Collection Focus Repair\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Combobox catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  ComboboxRoot,\n  ComboboxLabel,\n  ComboboxControl,\n  ComboboxInput,\n  ComboboxTrigger,\n  ComboboxClear,\n  ComboboxPositioner,\n  ComboboxContent,\n  ComboboxItem,\n  ComboboxItemIndicator,\n  ComboboxEmpty,\n  ComboboxHiddenInput,\n} from '@uifn/components-react/combobox'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <ComboboxRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"Alex Morgan\",\"textValue\":\"Alex Morgan\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Sam Rivera\",\"textValue\":\"Sam Rivera\"},{\"id\":\"item-3\",\"value\":\"item-3\",\"label\":\"Taylor Kim\",\"textValue\":\"Taylor Kim\",\"disabled\":true}]} defaultValue=\"item-1\" name=\"combobox\">\n      <ComboboxLabel>Assign teammate</ComboboxLabel>\n      <ComboboxControl>\n        <ComboboxInput placeholder=\"Search teammates…\" />\n        <ComboboxTrigger type=\"button\">⌄</ComboboxTrigger>\n        <ComboboxClear type=\"button\">×</ComboboxClear>\n      </ComboboxControl>\n      <ComboboxPositioner>\n        <ComboboxContent>\n          <ComboboxItem value=\"item-1\">\n            Alex Morgan\n            <ComboboxItemIndicator value=\"item-1\">✓</ComboboxItemIndicator>\n          </ComboboxItem>\n          <ComboboxItem value=\"item-2\">\n            Sam Rivera\n            <ComboboxItemIndicator value=\"item-2\">✓</ComboboxItemIndicator>\n          </ComboboxItem>\n          <ComboboxItem value=\"item-3\">\n            Taylor Kim\n            <ComboboxItemIndicator value=\"item-3\">✓</ComboboxItemIndicator>\n          </ComboboxItem>\n          <ComboboxEmpty>No teammates found</ComboboxEmpty>\n        </ComboboxContent>\n      </ComboboxPositioner>\n      <ComboboxHiddenInput />\n    </ComboboxRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 1,
+          "trigger": 1,
+          "clear": 1,
+          "hiddenInput": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "empty": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 692,
+            "y": 587.421875,
+            "width": 352,
+            "height": 64.84375
+          },
+          "visibleText": "Assign teammate ⌄ ×",
+          "placeholderMatches": [],
+          "visibleParts": 6
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 692,
+            "y": 658.265625,
+            "width": 352,
+            "height": 154.296875
+          },
+          "minimumSize": [
+            220,
+            90
+          ],
+          "viewportInset": {
+            "left": 692,
+            "top": 658.265625,
+            "right": 396,
+            "bottom": 187.4375
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Alex Morgan✓Sam Rivera✓Taylor Kim✓No teammates found",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 3,
+          "minimumInteractiveCount": 3,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 692,
+            "y": 612.265625,
+            "width": 352,
+            "height": 40
+          },
+          "horizontalIntersection": 352,
+          "verticalGap": 6,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-combobox-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "combobox-pointer-select",
+        "value": "item-2",
+        "selected": "true",
+        "inputValue": "Sam Rivera"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 524.859375,
+          "width": 320,
+          "height": 64.84375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 6517,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "dir",
+          "loop"
+        ],
+        "anatomyParts": 11,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nChoose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, Enter, Space, Escape, typeahead\n\nFOCUS\n\nRoving Tabindex Or Activedescendant, Deterministic Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2\n\nThese requirements come from the canonical Context Menu catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  ContextMenuRoot,\n  ContextMenuTrigger,\n  ContextMenuPositioner,\n  ContextMenuContent,\n  ContextMenuItem,\n  ContextMenuItemIndicator,\n  ContextMenuSeparator,\n  ContextMenuGroup,\n  ContextMenuGroupLabel,\n  ContextMenuSubmenuTrigger,\n  ContextMenuSubmenuContent,\n} from '@uifn/components-react/context-menu'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <ContextMenuRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"Duplicate project\",\"textValue\":\"Duplicate project\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Rename project\",\"textValue\":\"Rename project\"},{\"id\":\"item-3\",\"value\":\"item-3\",\"label\":\"Archive project\",\"textValue\":\"Archive project\",\"disabled\":true}]}>\n      <ContextMenuTrigger>Right-click this project</ContextMenuTrigger>\n      <ContextMenuPositioner>\n        <ContextMenuContent>\n          <ContextMenuItem value=\"item-1\">\n            Duplicate project\n            <ContextMenuItemIndicator value=\"item-1\" />\n          </ContextMenuItem>\n          <ContextMenuItem value=\"item-2\">\n            Rename project\n            <ContextMenuItemIndicator value=\"item-2\" />\n          </ContextMenuItem>\n          <ContextMenuItem value=\"item-3\">\n            Archive project\n            <ContextMenuItemIndicator value=\"item-3\" />\n          </ContextMenuItem>\n          <ContextMenuSeparator value=\"item-1\" />\n          <ContextMenuGroup value=\"item-1\">\n            <ContextMenuGroupLabel value=\"item-1\">Project actions</ContextMenuGroupLabel>\n          </ContextMenuGroup>\n          <ContextMenuSubmenuTrigger value=\"item-1\">Move to</ContextMenuSubmenuTrigger>\n          <ContextMenuSubmenuContent value=\"item-1\" />\n        </ContextMenuContent>\n      </ContextMenuPositioner>\n    </ContextMenuRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 608,
+            "y": 476.796875,
+            "width": 520,
+            "height": 230
+          },
+          "visibleText": "Right-click this project",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": false,
+        "metrics": {
+          "ok": false,
+          "box": {
+            "x": 629,
+            "y": 497,
+            "width": 152.265625,
+            "height": 212.9375
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 629,
+            "top": 497,
+            "right": 658.734375,
+            "bottom": 290.0625
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Duplicate projectRename projectArchive projectProject actionsMove to",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 608,
+            "y": 476.796875,
+            "width": 185.5,
+            "height": 44
+          },
+          "horizontalIntersection": 152.265625,
+          "verticalGap": 23.796875,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-context-menu-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": true,
+        "activeAfterEscape": {
+          "tag": "DIV",
+          "component": "context-menu",
+          "part": "trigger",
+          "id": "context-menu-root-context-menu-r-0-trigger"
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 417.53125,
+          "width": 320,
+          "height": 230
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 8416,
+      "componentCount": 99,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 12,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "open",
+          "defaultOpen",
+          "locale",
+          "timeZone",
+          "min",
+          "max",
+          "unavailable",
+          "name"
+        ],
+        "anatomyParts": 15,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nExpose structured locale-aware segments, grids, or channels rather than display-string identity.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Escape\n\nFOCUS\n\nSegment Focus, Grid Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Date Picker catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DatePickerRoot,\n  DatePickerLabel,\n  DatePickerInput,\n  DatePickerSegment,\n  DatePickerTrigger,\n  DatePickerPositioner,\n  DatePickerContent,\n  DatePickerHeader,\n  DatePickerPrevious,\n  DatePickerNext,\n  DatePickerGrid,\n  DatePickerGridLabel,\n  DatePickerCell,\n  DatePickerCellTrigger,\n  DatePickerHiddenInput,\n} from '@uifn/components-react/date-picker'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DatePickerRoot defaultValue={{\"year\":2026,\"month\":7,\"day\":22}} locale=\"en-US\" timeZone=\"UTC\" name=\"date-picker\">\n      <DatePickerLabel>Due date</DatePickerLabel>\n      <DatePickerInput>\n        <DatePickerSegment value=\"month\">07</DatePickerSegment>\n        <DatePickerSegment value=\"day\">22</DatePickerSegment>\n        <DatePickerSegment value=\"year\">2026</DatePickerSegment>\n      </DatePickerInput>\n      <DatePickerTrigger type=\"button\">Open calendar</DatePickerTrigger>\n      <DatePickerPositioner>\n        <DatePickerContent>\n          <DatePickerHeader>\n            <DatePickerPrevious type=\"button\">Previous month</DatePickerPrevious>\n            <DatePickerNext type=\"button\">Next month</DatePickerNext>\n          </DatePickerHeader>\n          <DatePickerGrid>\n            <DatePickerGridLabel>July 2026</DatePickerGridLabel>\n            <tbody>\n              <tr>\n                <DatePickerCell value=\"2026-07-19\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-19\">19</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-20\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-20\">20</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-21\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-21\">21</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-22\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-22\">22</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-23\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-23\">23</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-24\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-24\">24</DatePickerCellTrigger>\n                </DatePickerCell>\n                <DatePickerCell value=\"2026-07-25\">\n                  <DatePickerCellTrigger type=\"button\" value=\"2026-07-25\">25</DatePickerCellTrigger>\n                </DatePickerCell>\n              </tr>\n            </tbody>\n          </DatePickerGrid>\n        </DatePickerContent>\n      </DatePickerPositioner>\n      <DatePickerHiddenInput />\n    </DatePickerRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "input": 1,
+          "segment": 3,
+          "trigger": 1,
+          "hiddenInput": 1,
+          "positioner": 1,
+          "content": 1,
+          "header": 1,
+          "previous": 1,
+          "next": 1,
+          "grid": 1,
+          "gridLabel": 1,
+          "cell": 42,
+          "cellTrigger": 42
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 528,
+            "y": 556.421875,
+            "width": 680,
+            "height": 126.84375
+          },
+          "visibleText": "Due date 07 / 22 / 2026 Calendar",
+          "placeholderMatches": [],
+          "visibleParts": 7
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 549,
+            "y": 244.265625,
+            "width": 310,
+            "height": 354
+          },
+          "minimumSize": [
+            280,
+            240
+          ],
+          "viewportInset": {
+            "left": 549,
+            "top": 244.265625,
+            "right": 581,
+            "bottom": 401.734375
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "‹July 2026›July 2026SunMonTueWedThuFriSat2829301234567891011121314151617181920212223242526272829303112345678",
+          "accessibleLabelText": "Previous month Next month June 28, 2026 June 29, 2026 June 30, 2026 July 1, 2026 July 2, 2026 July 3, 2026 July 4, 2026 July 5, 2026 July 6, 2026 July 7, 2026 July 8, 2026 July 9, 2026 July 10, 2026 July 11, 2026 July 12, 2026 July 13, 2026 July 14, 2026 July 15, 2026 July 16, 2026 July 17, 2026 July 18, 2026 July 19, 2026 July 20, 2026 July 21, 2026 July 22, 2026 July 23, 2026 July 24, 2026 July 25, 2026 July 26, 2026 July 27, 2026 July 28, 2026 July 29, 2026 July 30, 2026 July 31, 2026 August 1, 2026 August 2, 2026 August 3, 2026 August 4, 2026 August 5, 2026 August 6, 2026 August 7, 2026 August 8, 2026",
+          "placeholderMatches": [],
+          "interactiveCount": 44,
+          "minimumInteractiveCount": 20,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 549,
+            "y": 604.265625,
+            "width": 546.078125,
+            "height": 58
+          },
+          "horizontalIntersection": 310,
+          "verticalGap": 6,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-date-picker-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-06-28"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 493.859375,
+          "width": 320,
+          "height": 126.84375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/dialog",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5369,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DialogRoot,\n  DialogTrigger,\n  DialogPortal,\n  DialogBackdrop,\n  DialogPositioner,\n  DialogContent,\n  DialogTitle,\n  DialogDescription,\n  DialogClose,\n} from '@uifn/components-react/dialog'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DialogRoot>\n      <DialogTrigger type=\"button\">Edit profile</DialogTrigger>\n      <DialogPortal>\n        <DialogBackdrop />\n        <DialogPositioner>\n          <DialogContent>\n            <DialogTitle>Edit profile</DialogTitle>\n            <DialogDescription>Update your display name and contact information.</DialogDescription>\n            <DialogClose type=\"button\" aria-label=\"Close\">×</DialogClose>\n          </DialogContent>\n        </DialogPositioner>\n      </DialogPortal>\n    </DialogRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "visibleText": "Edit profile",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": false,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(31, 41, 55)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profileUpdate the details teammates see across your workspace.Display nameWork emailCancelSave changes×",
+          "accessibleLabelText": "Close Dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 477.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 195.890625,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": false,
+          "violations": [
+            {
+              "id": "color-contrast",
+              "impact": "serious",
+              "help": "Elements must meet minimum color contrast ratio thresholds",
+              "nodes": [
+                {
+                  "target": [
+                    ".catalog-primary-action"
+                  ],
+                  "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.54 (foreground color: #ffffff, background color: #60a5fa, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                }
+              ]
+            }
+          ]
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-dialog-open.png"
+      },
+      "catalogChrome": {
+        "ok": true,
+        "codeState": {
+          "codeSelected": "true",
+          "previewSelected": "false",
+          "codeVisible": true,
+          "previewVisible": false
+        },
+        "previewState": {
+          "codeSelected": "false",
+          "previewSelected": "true",
+          "codeVisible": false,
+          "previewVisible": true
+        },
+        "sourcePanelVisible": true,
+        "sourceCommand": "pnpm dlx @uifn/registry add dialog --framework react --cwd .",
+        "visibleSearchResults": 1,
+        "searchResultText": "Tree View\n      Selection",
+        "searchClosed": true,
+        "themeBefore": "light",
+        "themeAfter": "dark"
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 142.796875,
+          "y": 535.28125,
+          "width": 104.40625,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/drawer",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Drawer",
+      "bodyLength": 5471,
+      "componentCount": 10,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "side",
+          "modal",
+          "dismissThreshold"
+        ],
+        "anatomyParts": 10,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Drawer catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DrawerRoot,\n  DrawerTrigger,\n  DrawerPortal,\n  DrawerBackdrop,\n  DrawerPositioner,\n  DrawerContent,\n  DrawerHandle,\n  DrawerTitle,\n  DrawerDescription,\n  DrawerClose,\n} from '@uifn/components-react/drawer'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DrawerRoot>\n      <DrawerTrigger type=\"button\">Open filters</DrawerTrigger>\n      <DrawerPortal>\n        <DrawerBackdrop />\n        <DrawerPositioner>\n          <DrawerContent>\n            <DrawerHandle />\n            <DrawerTitle>Filter activity</DrawerTitle>\n            <DrawerDescription>Narrow activity by member, type, and date.</DrawerDescription>\n            <DrawerClose type=\"button\" aria-label=\"Close\">×</DrawerClose>\n          </DrawerContent>\n        </DrawerPositioner>\n      </DrawerPortal>\n    </DrawerRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "handle": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 817.390625,
+            "y": 599.84375,
+            "width": 101.21875,
+            "height": 40
+          },
+          "visibleText": "Open filters",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 1056,
+            "y": 0,
+            "width": 384,
+            "height": 1000
+          },
+          "minimumSize": [
+            320,
+            180
+          ],
+          "viewportInset": {
+            "left": 1056,
+            "top": 0,
+            "right": 0,
+            "bottom": 0
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "0px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Filter activityNarrow the workspace feed without leaving the page.Activity type Deployments Pull requests Team updatesMemberAnyoneAlex MorganSam RiveraApply filters×",
+          "accessibleLabelText": "Drag right drawer      Close drawer",
+          "placeholderMatches": [],
+          "interactiveCount": 7,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 817.390625,
+            "y": 599.84375,
+            "width": 101.21875,
+            "height": 40
+          },
+          "horizontalIntersection": 0,
+          "verticalGap": 400.15625,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-drawer-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "drawer-modal-open-escape",
+        "modal": "true",
+        "focusInside": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 144.390625,
+          "y": 537.28125,
+          "width": 101.21875,
+          "height": 40
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/floating-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Floating Panel",
+      "bodyLength": 5907,
+      "componentCount": 10,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "placement",
+          "draggable",
+          "resizable"
+        ],
+        "anatomyParts": 10,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Floating Panel catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  FloatingPanelRoot,\n  FloatingPanelTrigger,\n  FloatingPanelPositioner,\n  FloatingPanelContent,\n  FloatingPanelHeader,\n  FloatingPanelTitle,\n  FloatingPanelDescription,\n  FloatingPanelDragHandle,\n  FloatingPanelResizeHandle,\n  FloatingPanelClose,\n} from '@uifn/components-react/floating-panel'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <FloatingPanelRoot>\n      <FloatingPanelTrigger type=\"button\">Open inspector</FloatingPanelTrigger>\n      <FloatingPanelPositioner>\n        <FloatingPanelContent>\n          <FloatingPanelHeader>\n            <FloatingPanelTitle>Layout inspector</FloatingPanelTitle>\n            <FloatingPanelDescription>Review and resize the selected region.</FloatingPanelDescription>\n            <FloatingPanelDragHandle />\n          </FloatingPanelHeader>\n          <FloatingPanelResizeHandle value=\"south-east\" />\n          <FloatingPanelClose type=\"button\" aria-label=\"Close\">Close</FloatingPanelClose>\n        </FloatingPanelContent>\n      </FloatingPanelPositioner>\n    </FloatingPanelRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "header": 1,
+          "title": 1,
+          "description": 1,
+          "dragHandle": 1,
+          "resizeHandle": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 805.296875,
+            "y": 599.84375,
+            "width": 125.40625,
+            "height": 40
+          },
+          "visibleText": "Open inspector",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 805.296875,
+            "y": 639.84375,
+            "width": 321,
+            "height": 240
+          },
+          "minimumSize": [
+            280,
+            140
+          ],
+          "viewportInset": {
+            "left": 805.296875,
+            "top": 639.84375,
+            "right": 313.703125,
+            "bottom": 120.15625
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Layout inspectorReview and resize the selected region.Close",
+          "accessibleLabelText": "Resize panel south-east Close panel",
+          "placeholderMatches": [],
+          "interactiveCount": 2,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 805.296875,
+            "y": 599.84375,
+            "width": 125.40625,
+            "height": 40
+          },
+          "horizontalIntersection": 125.40625,
+          "verticalGap": 0,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-floating-panel-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "floating-panel-open-resize-close",
+        "before": 320,
+        "after": 321,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 132.296875,
+          "y": 537.28125,
+          "width": 125.40625,
+          "height": 40
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 4927,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "openDelay",
+          "closeDelay",
+          "placement"
+        ],
+        "anatomyParts": 5,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Hover Card catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  HoverCardRoot,\n  HoverCardTrigger,\n  HoverCardPositioner,\n  HoverCardContent,\n  HoverCardArrow,\n} from '@uifn/components-react/hover-card'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <HoverCardRoot>\n      <HoverCardTrigger href=\"#preview\">@alex</HoverCardTrigger>\n      <HoverCardPositioner>\n        <HoverCardContent>\n          Alex Morgan · Frontend infrastructure · 42 shared projects\n          <HoverCardArrow />\n        </HoverCardContent>\n      </HoverCardPositioner>\n    </HoverCardRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "arrow": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 832.765625,
+            "y": 597.84375,
+            "width": 70.453125,
+            "height": 44
+          },
+          "visibleText": "@alex",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": false,
+        "error": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n",
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-hover-card-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 159.765625,
+          "y": 535.28125,
+          "width": 70.453125,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/menu",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Menu",
+      "bodyLength": 6282,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "orientation",
+          "loop",
+          "dir"
+        ],
+        "anatomyParts": 11,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nChoose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, Enter, Space, Escape, typeahead\n\nFOCUS\n\nRoving Tabindex Or Activedescendant, Deterministic Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2\n\nThese requirements come from the canonical Menu catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  MenuRoot,\n  MenuTrigger,\n  MenuPositioner,\n  MenuContent,\n  MenuItem,\n  MenuItemIndicator,\n  MenuSeparator,\n  MenuGroup,\n  MenuGroupLabel,\n  MenuSubmenuTrigger,\n  MenuSubmenuContent,\n} from '@uifn/components-react/menu'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <MenuRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"Duplicate project\",\"textValue\":\"Duplicate project\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Rename project\",\"textValue\":\"Rename project\"},{\"id\":\"item-3\",\"value\":\"item-3\",\"label\":\"Archive project\",\"textValue\":\"Archive project\",\"disabled\":true}]}>\n      <MenuTrigger type=\"button\">Project actions</MenuTrigger>\n      <MenuPositioner>\n        <MenuContent>\n          <MenuItem value=\"item-1\">\n            Duplicate project\n            <MenuItemIndicator value=\"item-1\" />\n          </MenuItem>\n          <MenuItem value=\"item-2\">\n            Rename project\n            <MenuItemIndicator value=\"item-2\" />\n          </MenuItem>\n          <MenuItem value=\"item-3\">\n            Archive project\n            <MenuItemIndicator value=\"item-3\" />\n          </MenuItem>\n          <MenuSeparator value=\"item-1\" />\n          <MenuGroup value=\"item-1\">\n            <MenuGroupLabel value=\"item-1\">Actions</MenuGroupLabel>\n          </MenuGroup>\n          <MenuSubmenuTrigger value=\"item-1\">Move to</MenuSubmenuTrigger>\n          <MenuSubmenuContent value=\"item-1\" />\n        </MenuContent>\n      </MenuPositioner>\n    </MenuRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 806.75,
+            "y": 599.84375,
+            "width": 122.5,
+            "height": 40
+          },
+          "visibleText": "Project actions",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": false,
+        "metrics": {
+          "ok": false,
+          "box": {
+            "x": 806.75,
+            "y": 639.84375,
+            "width": 144.265625,
+            "height": 212.9375
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 806.75,
+            "top": 639.84375,
+            "right": 488.984375,
+            "bottom": 147.21875
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Duplicate projectRename projectArchive projectActionsMove to",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 806.75,
+            "y": 599.84375,
+            "width": 122.5,
+            "height": 40
+          },
+          "horizontalIntersection": 122.5,
+          "verticalGap": 0,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-menu-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menu-keyboard-open-escape",
+        "itemCount": 4,
+        "itemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 133.75,
+          "y": 537.28125,
+          "width": 122.5,
+          "height": 40
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 6475,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "loop",
+          "dir"
+        ],
+        "anatomyParts": 7,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nChoose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, Enter, Space, Escape, typeahead\n\nFOCUS\n\nRoving Tabindex Or Activedescendant, Deterministic Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2\n\nThese requirements come from the canonical Menubar catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  MenubarRoot,\n  MenubarMenu,\n  MenubarTrigger,\n  MenubarContent,\n  MenubarItem,\n  MenubarSubmenuTrigger,\n  MenubarSubmenuContent,\n} from '@uifn/components-react/menubar'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <MenubarRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"File\",\"textValue\":\"File\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Edit\",\"textValue\":\"Edit\"},{\"id\":\"item-1-action\",\"value\":\"item-1-action\",\"label\":\"New project\",\"textValue\":\"New project\",\"parentId\":\"item-1\"},{\"id\":\"item-2-action\",\"value\":\"item-2-action\",\"label\":\"Undo change\",\"textValue\":\"Undo change\",\"parentId\":\"item-2\"},{\"id\":\"item-1-submenu\",\"value\":\"item-1-submenu\",\"label\":\"Recent\",\"textValue\":\"Recent\",\"parentId\":\"item-1\"},{\"id\":\"item-2-submenu\",\"value\":\"item-2-submenu\",\"label\":\"Transform\",\"textValue\":\"Transform\",\"parentId\":\"item-2\"},{\"id\":\"item-1-submenu-action\",\"value\":\"item-1-submenu-action\",\"label\":\"Roadmap\",\"textValue\":\"Roadmap\",\"parentId\":\"item-1-submenu\"},{\"id\":\"item-2-submenu-action\",\"value\":\"item-2-submenu-action\",\"label\":\"Uppercase\",\"textValue\":\"Uppercase\",\"parentId\":\"item-2-submenu\"}]} aria-label=\"Menubar example\">\n      <MenubarMenu value=\"item-1\">\n        <MenubarTrigger type=\"button\" value=\"item-1\">File</MenubarTrigger>\n        <MenubarContent value=\"item-1\">\n          <MenubarItem value=\"item-1-action\">New project</MenubarItem>\n          <MenubarSubmenuTrigger value=\"item-1-submenu\">Export</MenubarSubmenuTrigger>\n          <MenubarSubmenuContent value=\"item-1-submenu\" />\n        </MenubarContent>\n      </MenubarMenu>\n      <MenubarMenu value=\"item-2\">\n        <MenubarTrigger type=\"button\" value=\"item-2\">Edit</MenubarTrigger>\n        <MenubarContent value=\"item-2\">\n          <MenubarItem value=\"item-2-action\">New project</MenubarItem>\n          <MenubarSubmenuTrigger value=\"item-2-submenu\">Export</MenubarSubmenuTrigger>\n          <MenubarSubmenuContent value=\"item-2-submenu\" />\n        </MenubarContent>\n      </MenubarMenu>\n    </MenubarRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "menu": 2,
+          "trigger": 2,
+          "content": 2,
+          "item": 2,
+          "submenuTrigger": 2,
+          "submenuContent": 2
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 796.65625,
+            "y": 590.84375,
+            "width": 142.6875,
+            "height": 58
+          },
+          "visibleText": "File Edit",
+          "placeholderMatches": [],
+          "visibleParts": 5
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 802.65625,
+            "y": 650.84375,
+            "width": 224,
+            "height": 90.59375
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 802.65625,
+            "top": 650.84375,
+            "right": 413.34375,
+            "bottom": 258.5625
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(23, 30, 50, 0.08) 0px 18px 50px 0px",
+          "treatedSurface": true,
+          "text": "New projectExport",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 2,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 806.65625,
+            "y": 600.84375,
+            "width": 54.015625,
+            "height": 38
+          },
+          "horizontalIntersection": 54.015625,
+          "verticalGap": 12,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-menubar-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-roving-open-escape",
+        "triggerCount": 2,
+        "rovingFocusWorked": true,
+        "itemCount": 2,
+        "contentOwnedByRoot": true,
+        "itemFocused": true,
+        "focusReturned": true,
+        "activeBeforeEscape": {
+          "component": "menubar",
+          "part": "item",
+          "role": "menuitem",
+          "text": "New project"
+        },
+        "itemFocusEvidence": []
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 123.65625,
+          "y": 528.28125,
+          "width": 142.6875,
+          "height": 58
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/navigation-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Navigation Menu",
+      "bodyLength": 6531,
+      "componentCount": 16,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "orientation",
+          "delayDuration",
+          "skipDelayDuration",
+          "dir"
+        ],
+        "anatomyParts": 8,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nChoose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, Enter, Space, Escape, typeahead\n\nFOCUS\n\nRoving Tabindex Or Activedescendant, Deterministic Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2\n\nThese requirements come from the canonical Navigation Menu catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  NavigationMenuRoot,\n  NavigationMenuList,\n  NavigationMenuItem,\n  NavigationMenuTrigger,\n  NavigationMenuContent,\n  NavigationMenuLink,\n  NavigationMenuViewport,\n  NavigationMenuIndicator,\n} from '@uifn/components-react/navigation-menu'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <NavigationMenuRoot items={[\n      { id: 'products', textValue: 'Products' },\n      { id: 'resources', textValue: 'Resources' },\n      { id: 'company', textValue: 'Company' },\n    ]}>\n      <NavigationMenuList>\n        <NavigationMenuItem value=\"products\">\n          <NavigationMenuTrigger type=\"button\" value=\"products\">Products</NavigationMenuTrigger>\n          <NavigationMenuContent value=\"products\">\n            <NavigationMenuLink value=\"products\" href=\"#products\">Product overview</NavigationMenuLink>\n          </NavigationMenuContent>\n        </NavigationMenuItem>\n        <NavigationMenuItem value=\"resources\">\n          <NavigationMenuTrigger type=\"button\" value=\"resources\">Resources</NavigationMenuTrigger>\n          <NavigationMenuContent value=\"resources\">\n            <NavigationMenuLink value=\"resources\" href=\"#documentation\">Documentation</NavigationMenuLink>\n          </NavigationMenuContent>\n        </NavigationMenuItem>\n        <NavigationMenuItem value=\"company\">\n          <NavigationMenuTrigger type=\"button\" value=\"company\">Company</NavigationMenuTrigger>\n          <NavigationMenuContent value=\"company\">\n            <NavigationMenuLink value=\"company\" href=\"#company\">About uifn</NavigationMenuLink>\n          </NavigationMenuContent>\n        </NavigationMenuItem>\n      </NavigationMenuList>\n      <NavigationMenuViewport />\n      <NavigationMenuIndicator />\n    </NavigationMenuRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "list": 1,
+          "item": 3,
+          "trigger": 3,
+          "content": 3,
+          "link": 3,
+          "viewport": 1,
+          "indicator": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 548,
+            "y": 594.84375,
+            "width": 640,
+            "height": 50
+          },
+          "visibleText": "Products Resources Company",
+          "placeholderMatches": [],
+          "visibleParts": 8
+        },
+        "component": {
+          "ok": true,
+          "listBox": {
+            "width": 336.671875,
+            "height": 50
+          },
+          "contentCount": 3,
+          "linkCount": 3,
+          "linksNestedInContent": true,
+          "closedContentHidden": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 553,
+            "y": 655.84375,
+            "width": 240,
+            "height": 100
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 553,
+            "top": 655.84375,
+            "right": 647,
+            "bottom": 244.15625
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Product overviewExplore primitives, recipes, and production-ready components.",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 1,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 553,
+            "y": 599.84375,
+            "width": 103.34375,
+            "height": 40
+          },
+          "horizontalIntersection": 103.34375,
+          "verticalGap": 16,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-navigation-menu-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "navigation-menu-roving-open-escape",
+        "triggerCount": 3,
+        "secondFocused": true,
+        "expanded": "true",
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 532.28125,
+          "width": 320,
+          "height": 50
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 5511,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "placement",
+          "closeOnEscape",
+          "closeOnInteractOutside"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Popover catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  PopoverRoot,\n  PopoverAnchor,\n  PopoverTrigger,\n  PopoverPositioner,\n  PopoverContent,\n  PopoverTitle,\n  PopoverDescription,\n  PopoverArrow,\n  PopoverClose,\n} from '@uifn/components-react/popover'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <PopoverRoot>\n      <PopoverAnchor />\n      <PopoverTrigger type=\"button\">Invite member</PopoverTrigger>\n      <PopoverPositioner>\n        <PopoverContent>\n          <PopoverTitle>Invite a teammate</PopoverTitle>\n          <PopoverDescription>Send an invitation and choose their workspace role.</PopoverDescription>\n          <PopoverArrow />\n          <PopoverClose type=\"button\" aria-label=\"Close\">Close</PopoverClose>\n        </PopoverContent>\n      </PopoverPositioner>\n    </PopoverRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "anchor": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "arrow": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 804.03125,
+            "y": 597.84375,
+            "width": 127.9375,
+            "height": 44
+          },
+          "visibleText": "Invite member",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 694.875,
+            "y": 641.84375,
+            "width": 346.25,
+            "height": 157.8125
+          },
+          "minimumSize": [
+            220,
+            90
+          ],
+          "viewportInset": {
+            "left": 694.875,
+            "top": 641.84375,
+            "right": 398.875,
+            "bottom": 200.34375
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Invite a teammateSend an invitation and choose their workspace role.Close",
+          "accessibleLabelText": "Close popover",
+          "placeholderMatches": [],
+          "interactiveCount": 1,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 804.03125,
+            "y": 597.84375,
+            "width": 127.9375,
+            "height": 44
+          },
+          "horizontalIntersection": 127.9375,
+          "verticalGap": 0,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-popover-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-keyboard-open-escape",
+        "portalled": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 131.03125,
+          "y": 535.28125,
+          "width": 127.9375,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 7091,
+      "componentCount": 20,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 10,
+        "propNames": [
+          "className",
+          "children",
+          "value",
+          "defaultValue",
+          "items",
+          "multiple",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 14,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse the declared listbox, combobox, radio, checkbox, switch, tag, or tree selection model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Enter, Space, Escape, typeahead\n\nFOCUS\n\nActive Item, Selected Item, Dynamic Collection Focus Repair\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 3.3.1, 3.3.2, 4.1.2, 4.1.3\n\nThese requirements come from the canonical Select catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  SelectRoot,\n  SelectLabel,\n  SelectControl,\n  SelectTrigger,\n  SelectValueText,\n  SelectClear,\n  SelectPositioner,\n  SelectContent,\n  SelectItem,\n  SelectItemText,\n  SelectItemIndicator,\n  SelectGroup,\n  SelectGroupLabel,\n  SelectHiddenInput,\n} from '@uifn/components-react/select'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <SelectRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"Member\",\"textValue\":\"Member\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Administrator\",\"textValue\":\"Administrator\"},{\"id\":\"item-3\",\"value\":\"item-3\",\"label\":\"Viewer\",\"textValue\":\"Viewer\",\"disabled\":true}]} defaultValue=\"item-1\" name=\"select\">\n      <SelectLabel>Workspace role</SelectLabel>\n      <SelectControl>\n        <SelectTrigger type=\"button\">\n          <SelectValueText />\n        </SelectTrigger>\n        <SelectClear type=\"button\">×</SelectClear>\n      </SelectControl>\n      <SelectPositioner>\n        <SelectContent>\n          <SelectItem value=\"item-1\">\n            <SelectItemText value=\"item-1\">Member</SelectItemText>\n            <SelectItemIndicator value=\"item-1\">✓</SelectItemIndicator>\n          </SelectItem>\n          <SelectItem value=\"item-2\">\n            <SelectItemText value=\"item-2\">Administrator</SelectItemText>\n            <SelectItemIndicator value=\"item-2\">✓</SelectItemIndicator>\n          </SelectItem>\n          <SelectItem value=\"item-3\">\n            <SelectItemText value=\"item-3\">Viewer</SelectItemText>\n            <SelectItemIndicator value=\"item-3\">✓</SelectItemIndicator>\n          </SelectItem>\n          <SelectGroup value=\"item-1\">\n            <SelectGroupLabel value=\"item-1\">Available roles</SelectGroupLabel>\n          </SelectGroup>\n        </SelectContent>\n      </SelectPositioner>\n      <SelectHiddenInput />\n    </SelectRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "trigger": 1,
+          "valueText": 1,
+          "clear": 1,
+          "hiddenInput": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemText": 3,
+          "itemIndicator": 3,
+          "group": 1,
+          "groupLabel": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 692,
+            "y": 555.875,
+            "width": 352,
+            "height": 71.84375
+          },
+          "visibleText": "Workspace role Member ×",
+          "placeholderMatches": [],
+          "visibleParts": 6
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 692,
+            "y": 633.71875,
+            "width": 352,
+            "height": 159.9375
+          },
+          "minimumSize": [
+            220,
+            90
+          ],
+          "viewportInset": {
+            "left": 692,
+            "top": 633.71875,
+            "right": 396,
+            "bottom": 206.34375
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Member✓Administrator✓Viewer✓Available roles",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 3,
+          "minimumInteractiveCount": 3,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 692,
+            "y": 583.71875,
+            "width": 352,
+            "height": 44
+          },
+          "horizontalIntersection": 352,
+          "verticalGap": 6,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-select-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-keyboard-dismiss-and-pointer-select",
+        "portalled": true,
+        "optionActive": true,
+        "focusReturned": true,
+        "selectedText": "Administrator✓",
+        "triggerText": "Administrator",
+        "activeBeforeEscape": {
+          "component": "select",
+          "part": "trigger",
+          "role": "combobox",
+          "text": "Member"
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 496.609375,
+          "width": 320,
+          "height": 71.84375
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 4888,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 8,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "openDelay",
+          "closeDelay",
+          "placement",
+          "disabled"
+        ],
+        "anatomyParts": 5,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Tooltip catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  TooltipRoot,\n  TooltipTrigger,\n  TooltipPositioner,\n  TooltipContent,\n  TooltipArrow,\n} from '@uifn/components-react/tooltip'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <TooltipRoot>\n      <TooltipTrigger type=\"button\">Copy link</TooltipTrigger>\n      <TooltipPositioner>\n        <TooltipContent>\n          Copy project link\n          <TooltipArrow />\n        </TooltipContent>\n      </TooltipPositioner>\n    </TooltipRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "arrow": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 821.453125,
+            "y": 569.796875,
+            "width": 93.078125,
+            "height": 44
+          },
+          "visibleText": "Copy link",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 806.625,
+            "y": 613.796875,
+            "width": 122.71875,
+            "height": 38.296875
+          },
+          "minimumSize": [
+            80,
+            24
+          ],
+          "viewportInset": {
+            "left": 806.625,
+            "top": 613.796875,
+            "right": 510.65625,
+            "bottom": 347.90625
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Copy project link",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 0,
+          "minimumInteractiveCount": 0,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 821.453125,
+            "y": 569.796875,
+            "width": 93.078125,
+            "height": 44
+          },
+          "horizontalIntersection": 93.078125,
+          "verticalGap": 0,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-tooltip-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-focus-and-hover",
+        "portalled": true,
+        "focusOpened": true,
+        "hoverOpened": true,
+        "dismissed": true,
+        "text": "Copy project link"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 148.453125,
+          "y": 510.53125,
+          "width": 93.078125,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/dialog/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5369,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DialogRoot,\n  DialogTrigger,\n  DialogPortal,\n  DialogBackdrop,\n  DialogPositioner,\n  DialogContent,\n  DialogTitle,\n  DialogDescription,\n  DialogClose,\n} from '@uifn/components-react/dialog'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DialogRoot>\n      <DialogTrigger type=\"button\">Edit profile</DialogTrigger>\n      <DialogPortal>\n        <DialogBackdrop />\n        <DialogPositioner>\n          <DialogContent>\n            <DialogTitle>Edit profile</DialogTitle>\n            <DialogDescription>Update your display name and contact information.</DialogDescription>\n            <DialogClose type=\"button\" aria-label=\"Close\">×</DialogClose>\n          </DialogContent>\n        </DialogPositioner>\n      </DialogPortal>\n    </DialogRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "visibleText": "Edit profile",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": true,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profileUpdate the details teammates see across your workspace.Display nameWork emailCancelSave changes×",
+          "accessibleLabelText": "Close Dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 76.1875,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-dialog-trailing-slash-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 142.796875,
+          "y": 535.28125,
+          "width": 104.40625,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 1414,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 1272,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 1381,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 1409,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": null,
+      "composition": null,
+      "visualQuality": null,
+      "openStateVisual": null,
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "code": "UIFN_PUBLIC_COMPONENT_OPEN_STATE_VISUAL_QUALITY_FAILED",
+      "evidence": {
+        "ok": false,
+        "metrics": {
+          "ok": false,
+          "box": {
+            "x": 629,
+            "y": 497,
+            "width": 152.265625,
+            "height": 212.9375
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 629,
+            "top": 497,
+            "right": 658.734375,
+            "bottom": 290.0625
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Duplicate projectRename projectArchive projectProject actionsMove to",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 608,
+            "y": 476.796875,
+            "width": 185.5,
+            "height": 44
+          },
+          "horizontalIntersection": 152.265625,
+          "verticalGap": 23.796875,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-context-menu-open.png"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/dialog",
+      "code": "UIFN_PUBLIC_COMPONENT_OPEN_STATE_VISUAL_QUALITY_FAILED",
+      "evidence": {
+        "ok": false,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(31, 41, 55)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profileUpdate the details teammates see across your workspace.Display nameWork emailCancelSave changes×",
+          "accessibleLabelText": "Close Dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 477.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 195.890625,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": false,
+          "violations": [
+            {
+              "id": "color-contrast",
+              "impact": "serious",
+              "help": "Elements must meet minimum color contrast ratio thresholds",
+              "nodes": [
+                {
+                  "target": [
+                    ".catalog-primary-action"
+                  ],
+                  "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.54 (foreground color: #ffffff, background color: #60a5fa, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                }
+              ]
+            }
+          ]
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-dialog-open.png"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "hover-card",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "code": "UIFN_PUBLIC_COMPONENT_OPEN_STATE_VISUAL_QUALITY_FAILED",
+      "evidence": {
+        "ok": false,
+        "error": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n",
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-hover-card-open.png"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/menu",
+      "code": "UIFN_PUBLIC_COMPONENT_OPEN_STATE_VISUAL_QUALITY_FAILED",
+      "evidence": {
+        "ok": false,
+        "metrics": {
+          "ok": false,
+          "box": {
+            "x": 806.75,
+            "y": 639.84375,
+            "width": 144.265625,
+            "height": 212.9375
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 806.75,
+            "top": 639.84375,
+            "right": 488.984375,
+            "bottom": 147.21875
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Duplicate projectRename projectArchive projectActionsMove to",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 806.75,
+            "y": 599.84375,
+            "width": 122.5,
+            "height": 40
+          },
+          "horizontalIntersection": 122.5,
+          "verticalGap": 0,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-menu-open.png"
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "code": "UIFN_PUBLIC_COMPONENT_OPEN_STATE_VISUAL_QUALITY_FAILED",
+      "evidence": {
+        "ok": false,
+        "metrics": {
+          "ok": false,
+          "box": {
+            "x": 629,
+            "y": 497,
+            "width": 152.265625,
+            "height": 212.9375
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 629,
+            "top": 497,
+            "right": 658.734375,
+            "bottom": 290.0625
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Duplicate projectRename projectArchive projectProject actionsMove to",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 608,
+            "y": 476.796875,
+            "width": 185.5,
+            "height": 44
+          },
+          "horizontalIntersection": 152.265625,
+          "verticalGap": 23.796875,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-context-menu-open.png"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/dialog",
+      "code": "UIFN_PUBLIC_COMPONENT_OPEN_STATE_VISUAL_QUALITY_FAILED",
+      "evidence": {
+        "ok": false,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(31, 41, 55)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profileUpdate the details teammates see across your workspace.Display nameWork emailCancelSave changes×",
+          "accessibleLabelText": "Close Dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 477.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 195.890625,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": false,
+          "violations": [
+            {
+              "id": "color-contrast",
+              "impact": "serious",
+              "help": "Elements must meet minimum color contrast ratio thresholds",
+              "nodes": [
+                {
+                  "target": [
+                    ".catalog-primary-action"
+                  ],
+                  "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.54 (foreground color: #ffffff, background color: #60a5fa, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                }
+              ]
+            }
+          ]
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-dialog-open.png"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "hover-card",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "code": "UIFN_PUBLIC_COMPONENT_OPEN_STATE_VISUAL_QUALITY_FAILED",
+      "evidence": {
+        "ok": false,
+        "error": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n",
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-hover-card-open.png"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/menu",
+      "code": "UIFN_PUBLIC_COMPONENT_OPEN_STATE_VISUAL_QUALITY_FAILED",
+      "evidence": {
+        "ok": false,
+        "metrics": {
+          "ok": false,
+          "box": {
+            "x": 806.75,
+            "y": 639.84375,
+            "width": 144.265625,
+            "height": 212.9375
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 806.75,
+            "top": 639.84375,
+            "right": 488.984375,
+            "bottom": 147.21875
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Duplicate projectRename projectArchive projectActionsMove to",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 806.75,
+            "y": 599.84375,
+            "width": 122.5,
+            "height": 40
+          },
+          "horizontalIntersection": 122.5,
+          "verticalGap": 0,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-menu-open.png"
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 6517,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 6,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "dir",
+          "loop"
+        ],
+        "anatomyParts": 11,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nChoose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, Enter, Space, Escape, typeahead\n\nFOCUS\n\nRoving Tabindex Or Activedescendant, Deterministic Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2\n\nThese requirements come from the canonical Context Menu catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  ContextMenuRoot,\n  ContextMenuTrigger,\n  ContextMenuPositioner,\n  ContextMenuContent,\n  ContextMenuItem,\n  ContextMenuItemIndicator,\n  ContextMenuSeparator,\n  ContextMenuGroup,\n  ContextMenuGroupLabel,\n  ContextMenuSubmenuTrigger,\n  ContextMenuSubmenuContent,\n} from '@uifn/components-react/context-menu'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <ContextMenuRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"Duplicate project\",\"textValue\":\"Duplicate project\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Rename project\",\"textValue\":\"Rename project\"},{\"id\":\"item-3\",\"value\":\"item-3\",\"label\":\"Archive project\",\"textValue\":\"Archive project\",\"disabled\":true}]}>\n      <ContextMenuTrigger>Right-click this project</ContextMenuTrigger>\n      <ContextMenuPositioner>\n        <ContextMenuContent>\n          <ContextMenuItem value=\"item-1\">\n            Duplicate project\n            <ContextMenuItemIndicator value=\"item-1\" />\n          </ContextMenuItem>\n          <ContextMenuItem value=\"item-2\">\n            Rename project\n            <ContextMenuItemIndicator value=\"item-2\" />\n          </ContextMenuItem>\n          <ContextMenuItem value=\"item-3\">\n            Archive project\n            <ContextMenuItemIndicator value=\"item-3\" />\n          </ContextMenuItem>\n          <ContextMenuSeparator value=\"item-1\" />\n          <ContextMenuGroup value=\"item-1\">\n            <ContextMenuGroupLabel value=\"item-1\">Project actions</ContextMenuGroupLabel>\n          </ContextMenuGroup>\n          <ContextMenuSubmenuTrigger value=\"item-1\">Move to</ContextMenuSubmenuTrigger>\n          <ContextMenuSubmenuContent value=\"item-1\" />\n        </ContextMenuContent>\n      </ContextMenuPositioner>\n    </ContextMenuRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 608,
+            "y": 476.796875,
+            "width": 520,
+            "height": 230
+          },
+          "visibleText": "Right-click this project",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": false,
+        "metrics": {
+          "ok": false,
+          "box": {
+            "x": 629,
+            "y": 497,
+            "width": 152.265625,
+            "height": 212.9375
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 629,
+            "top": 497,
+            "right": 658.734375,
+            "bottom": 290.0625
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Duplicate projectRename projectArchive projectProject actionsMove to",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 608,
+            "y": 476.796875,
+            "width": 185.5,
+            "height": 44
+          },
+          "horizontalIntersection": 152.265625,
+          "verticalGap": 23.796875,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-context-menu-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": true,
+        "activeAfterEscape": {
+          "tag": "DIV",
+          "component": "context-menu",
+          "part": "trigger",
+          "id": "context-menu-root-context-menu-r-0-trigger"
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 35,
+          "y": 417.53125,
+          "width": 320,
+          "height": 230
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/dialog",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 5369,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Dialog catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  DialogRoot,\n  DialogTrigger,\n  DialogPortal,\n  DialogBackdrop,\n  DialogPositioner,\n  DialogContent,\n  DialogTitle,\n  DialogDescription,\n  DialogClose,\n} from '@uifn/components-react/dialog'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <DialogRoot>\n      <DialogTrigger type=\"button\">Edit profile</DialogTrigger>\n      <DialogPortal>\n        <DialogBackdrop />\n        <DialogPositioner>\n          <DialogContent>\n            <DialogTitle>Edit profile</DialogTitle>\n            <DialogDescription>Update your display name and contact information.</DialogDescription>\n            <DialogClose type=\"button\" aria-label=\"Close\">×</DialogClose>\n          </DialogContent>\n        </DialogPositioner>\n      </DialogPortal>\n    </DialogRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 815.796875,
+            "y": 597.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "visibleText": "Edit profile",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": false,
+        "metrics": {
+          "ok": true,
+          "box": {
+            "x": 464,
+            "y": 325.953125,
+            "width": 512,
+            "height": 348.078125
+          },
+          "minimumSize": [
+            360,
+            150
+          ],
+          "viewportInset": {
+            "left": 464,
+            "top": 325.953125,
+            "right": 464,
+            "bottom": 325.96875
+          },
+          "background": "rgb(31, 41, 55)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Edit profileUpdate the details teammates see across your workspace.Display nameWork emailCancelSave changes×",
+          "accessibleLabelText": "Close Dialog",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 1,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 815.796875,
+            "y": 477.84375,
+            "width": 104.40625,
+            "height": 44
+          },
+          "horizontalIntersection": 104.40625,
+          "verticalGap": 195.890625,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": false,
+          "violations": [
+            {
+              "id": "color-contrast",
+              "impact": "serious",
+              "help": "Elements must meet minimum color contrast ratio thresholds",
+              "nodes": [
+                {
+                  "target": [
+                    ".catalog-primary-action"
+                  ],
+                  "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.54 (foreground color: #ffffff, background color: #60a5fa, font size: 10.5pt (14px), font weight: bold). Expected contrast ratio of 4.5:1"
+                }
+              ]
+            }
+          ]
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-dialog-open.png"
+      },
+      "catalogChrome": {
+        "ok": true,
+        "codeState": {
+          "codeSelected": "true",
+          "previewSelected": "false",
+          "codeVisible": true,
+          "previewVisible": false
+        },
+        "previewState": {
+          "codeSelected": "false",
+          "previewSelected": "true",
+          "codeVisible": false,
+          "previewVisible": true
+        },
+        "sourcePanelVisible": true,
+        "sourceCommand": "pnpm dlx @uifn/registry add dialog --framework react --cwd .",
+        "visibleSearchResults": 1,
+        "searchResultText": "Tree View\n      Selection",
+        "searchClosed": true,
+        "themeBefore": "light",
+        "themeAfter": "dark"
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 142.796875,
+          "y": 535.28125,
+          "width": 104.40625,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 4927,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "openDelay",
+          "closeDelay",
+          "placement"
+        ],
+        "anatomyParts": 5,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nUse dialog or tooltip semantics appropriate to the primitive and never apply one generic overlay role.\n\nKEYBOARD\n\nTab, Shift+Tab, Escape, Enter, Space\n\nFOCUS\n\nInitial Focus, Containment When Modal, Restore Focus, Nested Scope Arbitration\n\nWCAG REFERENCES\n\n1.3.1, 1.4.13, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 4.1.2\n\nThese requirements come from the canonical Hover Card catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  HoverCardRoot,\n  HoverCardTrigger,\n  HoverCardPositioner,\n  HoverCardContent,\n  HoverCardArrow,\n} from '@uifn/components-react/hover-card'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <HoverCardRoot>\n      <HoverCardTrigger href=\"#preview\">@alex</HoverCardTrigger>\n      <HoverCardPositioner>\n        <HoverCardContent>\n          Alex Morgan · Frontend infrastructure · 42 shared projects\n          <HoverCardArrow />\n        </HoverCardContent>\n      </HoverCardPositioner>\n    </HoverCardRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "arrow": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 832.765625,
+            "y": 597.84375,
+            "width": 70.453125,
+            "height": 44
+          },
+          "visibleText": "@alex",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": false,
+        "error": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n",
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-hover-card-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card",
+        "framework": "react",
+        "message": "locator.waitFor: Timeout 3000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"hover-card\"][data-uifn-part=\"content\"]').last() to be visible\u001b[22m\n\u001b[2m    11 × locator resolved to hidden <div hidden=\"\" data-state=\"closed\" data-placement=\"bottom\" data-uifn-part=\"content\" data-uifn-presence=\"unmounted\" data-uifn-component=\"hover-card\" id=\"hover-card-content-hover-card-r-0\" class=\"uifn-hover-card uifn-hover-card__content\" aria-labelledby=\"hover-card-trigger-hover-card-r-0\">…</div>\u001b[22m\n"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 159.765625,
+          "y": 535.28125,
+          "width": 70.453125,
+          "height": 44
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/menu",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Menu",
+      "bodyLength": 6282,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "shell": {
+        "sidebarCount": 1,
+        "componentNavCount": 61,
+        "topbarCount": 1,
+        "searchCount": 1,
+        "themeToggleCount": 1,
+        "desktopNavButtonVisible": false
+      },
+      "guide": null,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "accessibility": 1,
+        "examples": 1,
+        "installTabs": 1,
+        "previewTabs": 1,
+        "snippetSource": 1,
+        "pagination": 1,
+        "propRows": 7,
+        "propNames": [
+          "className",
+          "children",
+          "open",
+          "defaultOpen",
+          "orientation",
+          "loop",
+          "dir"
+        ],
+        "anatomyParts": 11,
+        "accessibilityText": "CANONICAL REQUIREMENTS\n\nAccessibility contract\nRun component QA →\nNATIVE SEMANTICS\n\nChoose the primitive-specific menu, tab, toolbar, navigation, pagination, or tree model.\n\nKEYBOARD\n\nTab, Shift+Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Home, End, Enter, Space, Escape, typeahead\n\nFOCUS\n\nRoving Tabindex Or Activedescendant, Deterministic Focus Repair, Restore Focus\n\nWCAG REFERENCES\n\n1.3.1, 2.1.1, 2.1.2, 2.4.3, 2.4.7, 2.4.11, 2.5.7, 4.1.2\n\nThese requirements come from the canonical Menu catalog entry. Application copy, labels, custom styling, and composed workflows still require product-level testing.",
+        "usageCode": "import {\n  MenuRoot,\n  MenuTrigger,\n  MenuPositioner,\n  MenuContent,\n  MenuItem,\n  MenuItemIndicator,\n  MenuSeparator,\n  MenuGroup,\n  MenuGroupLabel,\n  MenuSubmenuTrigger,\n  MenuSubmenuContent,\n} from '@uifn/components-react/menu'\nimport '@uifn/components/styles.css'\n\nexport function Example() {\n  return (\n    <MenuRoot items={[{\"id\":\"item-1\",\"value\":\"item-1\",\"label\":\"Duplicate project\",\"textValue\":\"Duplicate project\"},{\"id\":\"item-2\",\"value\":\"item-2\",\"label\":\"Rename project\",\"textValue\":\"Rename project\"},{\"id\":\"item-3\",\"value\":\"item-3\",\"label\":\"Archive project\",\"textValue\":\"Archive project\",\"disabled\":true}]}>\n      <MenuTrigger type=\"button\">Project actions</MenuTrigger>\n      <MenuPositioner>\n        <MenuContent>\n          <MenuItem value=\"item-1\">\n            Duplicate project\n            <MenuItemIndicator value=\"item-1\" />\n          </MenuItem>\n          <MenuItem value=\"item-2\">\n            Rename project\n            <MenuItemIndicator value=\"item-2\" />\n          </MenuItem>\n          <MenuItem value=\"item-3\">\n            Archive project\n            <MenuItemIndicator value=\"item-3\" />\n          </MenuItem>\n          <MenuSeparator value=\"item-1\" />\n          <MenuGroup value=\"item-1\">\n            <MenuGroupLabel value=\"item-1\">Actions</MenuGroupLabel>\n          </MenuGroup>\n          <MenuSubmenuTrigger value=\"item-1\">Move to</MenuSubmenuTrigger>\n          <MenuSubmenuContent value=\"item-1\" />\n        </MenuContent>\n      </MenuPositioner>\n    </MenuRoot>\n  )\n}"
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "visualQuality": {
+        "ok": true,
+        "generic": {
+          "ok": true,
+          "rootBox": {
+            "x": 806.75,
+            "y": 599.84375,
+            "width": 122.5,
+            "height": 40
+          },
+          "visibleText": "Project actions",
+          "placeholderMatches": [],
+          "visibleParts": 2
+        },
+        "component": {
+          "ok": true
+        }
+      },
+      "openStateVisual": {
+        "ok": false,
+        "metrics": {
+          "ok": false,
+          "box": {
+            "x": 806.75,
+            "y": 639.84375,
+            "width": 144.265625,
+            "height": 212.9375
+          },
+          "minimumSize": [
+            180,
+            70
+          ],
+          "viewportInset": {
+            "left": 806.75,
+            "top": 639.84375,
+            "right": 488.984375,
+            "bottom": 147.21875
+          },
+          "background": "rgb(255, 255, 255)",
+          "borderWidth": "1px",
+          "boxShadow": "rgba(15, 23, 42, 0.14) 0px 12px 32px 0px",
+          "treatedSurface": true,
+          "text": "Duplicate projectRename projectArchive projectActionsMove to",
+          "accessibleLabelText": "",
+          "placeholderMatches": [],
+          "interactiveCount": 5,
+          "minimumInteractiveCount": 2,
+          "overlapPairs": [],
+          "referenceBox": {
+            "x": 806.75,
+            "y": 599.84375,
+            "width": 122.5,
+            "height": 40
+          },
+          "horizontalIntersection": 122.5,
+          "verticalGap": 0,
+          "anchored": true,
+          "drawerEdgeAligned": true
+        },
+        "accessibility": {
+          "ok": true,
+          "violations": []
+        },
+        "screenshotPath": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24/react-menu-open.png"
+      },
+      "catalogChrome": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menu-keyboard-open-escape",
+        "itemCount": 4,
+        "itemFocused": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "visible": true,
+        "rootBox": {
+          "x": 133.75,
+          "y": 537.28125,
+          "width": 122.5,
+          "height": 40
+        },
+        "openButtonVisible": true,
+        "drawer": {
+          "opened": true,
+          "sidebarVisible": true,
+          "closed": true,
+          "focusReturned": true,
+          "activeElement": {
+            "id": "",
+            "component": null,
+            "part": null,
+            "catalogControl": "data-catalog-nav-open",
+            "text": "☰"
+          },
+          "blockedByOpenModal": false
+        }
+      }
+    }
+  ],
+  "navigationRetries": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-open-react-24"
+}

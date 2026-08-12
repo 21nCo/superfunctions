@@ -1,7 +1,8 @@
+import { createStateChannel } from '../internal/runtime/state-channel';
 import { createUIFnError, type UIFnError } from '../errors';
 import { K } from '../aria/keys';
-import { createControllableStateController } from '../state/machine';
-import { type ChangeMeta, createStore } from './shared';
+import { createControlledValue } from '../internal/runtime/controlled';
+import { type ChangeMeta } from './shared';
 
 export interface SwitchProps {
   checked?: boolean;
@@ -35,11 +36,12 @@ export interface SwitchActions {
   getFormValue: () => Record<string, string>;
 }
 
-export interface SwitchMachine {
+export interface SwitchRuntime {
   readonly state: SwitchState;
   readonly actions: SwitchActions;
   getState: () => SwitchState;
   subscribe: (callback: (state: SwitchState, meta?: ChangeMeta<boolean>) => void) => () => void;
+  destroy: () => void;
 }
 
 function getFormValue(name: string | undefined, value: string, checked: boolean): Record<string, string> {
@@ -52,19 +54,19 @@ function getFormValue(name: string | undefined, value: string, checked: boolean)
   };
 }
 
-export function createSwitch(props: SwitchProps): SwitchMachine {
+export function createSwitchRuntime(props: SwitchProps): SwitchRuntime {
   const initialChecked = props.checked ?? props.defaultChecked ?? false;
   const disabled = props.disabled ?? false;
   const required = props.required ?? false;
   const value = props.value ?? 'on';
   const name = props.name;
-  const controlledState = createControllableStateController<boolean>({
+  const controlledState = createControlledValue<boolean>({
     value: props.checked,
     defaultValue: props.defaultChecked ?? false,
     onChange: props.onCheckedChange,
   });
 
-  const store = createStore<SwitchState, boolean>({
+  const store = createStateChannel<SwitchState, boolean>({
     checked: controlledState.getValue(),
     controlled: controlledState.isControlled(),
     disabled,
@@ -189,5 +191,9 @@ export function createSwitch(props: SwitchProps): SwitchMachine {
     actions,
     getState: store.getState,
     subscribe: store.subscribe,
+    destroy() {
+      controlledState.destroy();
+      store.destroy();
+    },
   };
 }

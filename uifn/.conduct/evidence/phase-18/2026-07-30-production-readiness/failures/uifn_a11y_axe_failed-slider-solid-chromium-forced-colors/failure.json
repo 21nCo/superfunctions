@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "slider",
+  "framework": "solid",
+  "deliveryMode": "package",
+  "browser": "chromium",
+  "version": "143.0.7499.4",
+  "sourceHash": "9b758213846896c4e204ec099eebfd06eb425a1355e144fe1060d2a3f714a9ca",
+  "dom": "<section data-uifn-story-framework=\"solid\" data-uifn-story-id=\"slider--forced-colors\" data-uifn-story-scenario=\"forced-colors\" data-uifn-theme=\"high-contrast\" data-uifn-forced-colors=\"true\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><div role=\"group\" id=\"slider-root-slider-uifn-cl-0-root\" class=\"uifn-slider uifn-slider__root\" aria-disabled=\"false\" data-orientation=\"horizontal\" data-dir=\"ltr\" data-state=\"idle\" data-uifn-component=\"slider\" data-uifn-part=\"root\"><label for=\"slider-control-slider-uifn-cl-0-control\" id=\"slider-label-slider-uifn-cl-0-label\" class=\"uifn-slider uifn-slider__label\" data-uifn-story-anatomy=\"label\" data-uifn-component=\"slider\" data-uifn-part=\"label\">label fixture</label><div id=\"slider-control-slider-uifn-cl-0-control\" class=\"uifn-slider uifn-slider__control\" data-orientation=\"horizontal\" data-uifn-story-anatomy=\"control\" data-uifn-component=\"slider\" data-uifn-part=\"control\" style=\"touch-action: pan-y;\"><div id=\"slider-track-slider-uifn-cl-0-track\" class=\"uifn-slider uifn-slider__track\" data-orientation=\"horizontal\" data-state=\"idle\" data-uifn-story-anatomy=\"track\" data-uifn-component=\"slider\" data-uifn-part=\"track\"><div id=\"slider-range-slider-uifn-cl-0-range\" class=\"uifn-slider uifn-slider__range\" data-orientation=\"horizontal\" data-uifn-story-anatomy=\"range\" data-uifn-component=\"slider\" data-uifn-part=\"range\" style=\"inset-inline-start: 0%; width: 0%;\">range fixture</div></div><div role=\"slider\" id=\"slider-thumb-slider-uifn-cl-0-thumb-0\" tabindex=\"0\" class=\"uifn-slider uifn-slider__thumb\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"0\" aria-valuetext=\"0\" aria-orientation=\"horizontal\" aria-disabled=\"false\" aria-readonly=\"false\" aria-labelledby=\"slider-label-slider-uifn-cl-0-label\" data-index=\"0\" data-state=\"active\" data-orientation=\"horizontal\" data-uifn-story-anatomy=\"thumb\" data-uifn-component=\"slider\" data-uifn-part=\"thumb\" style=\"inset-inline-start: 0%;\">thumb fixture</div></div><span id=\"slider-value-text-slider-uifn-cl-0-value-text-0\" class=\"uifn-slider uifn-slider__valueText\" data-value=\"0\" data-uifn-story-anatomy=\"valueText\" data-uifn-component=\"slider\" data-uifn-part=\"valueText\">valueText fixture</span><input type=\"hidden\" value=\"0\" id=\"slider-input-slider-uifn-cl-0-input-0\" class=\"uifn-slider uifn-slider__hiddenInput\" data-uifn-story-anatomy=\"hiddenInput\" data-uifn-component=\"slider\" data-uifn-part=\"hiddenInput\"></div></section>",
+  "semanticTrace": [
+    {
+      "part": "control",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-orientation",
+          "horizontal"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "control"
+        ]
+      ]
+    },
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ]
+      ]
+    },
+    {
+      "part": "label",
+      "tag": "label",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "label"
+        ]
+      ]
+    },
+    {
+      "part": "range",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-orientation",
+          "horizontal"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "range"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": "group",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ]
+      ],
+      "data": [
+        [
+          "data-dir",
+          "ltr"
+        ],
+        [
+          "data-orientation",
+          "horizontal"
+        ],
+        [
+          "data-state",
+          "idle"
+        ]
+      ]
+    },
+    {
+      "part": "thumb",
+      "tag": "div",
+      "role": "slider",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-labelledby",
+          "slider-label-slider-uifn-cl-0-label"
+        ],
+        [
+          "aria-orientation",
+          "horizontal"
+        ],
+        [
+          "aria-readonly",
+          "false"
+        ],
+        [
+          "aria-valuemax",
+          "100"
+        ],
+        [
+          "aria-valuemin",
+          "0"
+        ],
+        [
+          "aria-valuenow",
+          "0"
+        ],
+        [
+          "aria-valuetext",
+          "0"
+        ]
+      ],
+      "data": [
+        [
+          "data-index",
+          "0"
+        ],
+        [
+          "data-orientation",
+          "horizontal"
+        ],
+        [
+          "data-state",
+          "active"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "thumb"
+        ]
+      ]
+    },
+    {
+      "part": "track",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-orientation",
+          "horizontal"
+        ],
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "track"
+        ]
+      ]
+    },
+    {
+      "part": "valueText",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "valueText"
+        ],
+        [
+          "data-value",
+          "0"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "d3c2d4f8ccd46f11f7dc4b37dbab8ce54adf8eaa8210e2cd09288c18e81efa26"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "5a52d5b50c9b08eb8c45ebfee0d44ec80177758d8ee8714b2f79eb996967aba8"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "d3c2d4f8ccd46f11f7dc4b37dbab8ce54adf8eaa8210e2cd09288c18e81efa26"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "d3c2d4f8ccd46f11f7dc4b37dbab8ce54adf8eaa8210e2cd09288c18e81efa26"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "d3c2d4f8ccd46f11f7dc4b37dbab8ce54adf8eaa8210e2cd09288c18e81efa26"
+    }
+  ],
+  "focusPath": [
+    "thumb",
+    "thumb",
+    "thumb",
+    "thumb",
+    "thumb",
+    "thumb"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:30:17.081Z",
+  "expiresAt": "2026-08-06T16:30:17.081Z"
+}

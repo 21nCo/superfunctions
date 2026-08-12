@@ -1,0 +1,4684 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 908,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5783,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 1014,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Manage access and responsibilities for this workspace."
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 994,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-open-cancel",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "title": "Delete this project?"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/aspect-ratio",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Aspect Ratio",
+      "bodyLength": 1002,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "aspect-ratio-layout",
+        "box": {
+          "x": 556,
+          "y": 388.09375,
+          "width": 600,
+          "height": 337.5
+        },
+        "ratio": 1.7777777777777777,
+        "contentCount": 1
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/avatar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 922,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-render",
+        "box": {
+          "x": 818,
+          "y": 490.796875,
+          "width": 76,
+          "height": 76
+        },
+        "role": "img",
+        "borderRadius": "50%",
+        "fallback": "AM"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/badge",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Badge",
+      "bodyLength": 924,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "badge-render",
+        "label": "Active",
+        "dotCount": 1
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/breadcrumb",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Breadcrumb",
+      "bodyLength": 1003,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "breadcrumb-render",
+        "tagName": "NAV",
+        "linkCount": 2,
+        "current": "Settings"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 987,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour changes are now live.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/calendar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Calendar",
+      "bodyLength": 1054,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "calendar-select",
+        "before": "2026-07-16",
+        "after": "2026-07-01",
+        "previousLabel": true
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1060,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "react",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 946,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/collapsible",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Collapsible",
+      "bodyLength": 999,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "collapsible-toggle",
+        "expanded": "true",
+        "content": "Configure retention, regional routing, and audit log exports."
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/command",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Command",
+      "bodyLength": 1011,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "command-filter-select",
+        "optionCount": 1,
+        "output": "Deploy production selected"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 1012,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/data-table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Data Table",
+      "bodyLength": 1064,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "data-table-filter-select",
+        "resultText": "1 results",
+        "selected": "true"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 967,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-07-01"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 957,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-open-close",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/dropdown-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dropdown Menu",
+      "bodyLength": 991,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dropdown-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 1008,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-submit",
+        "value": "team@example.com",
+        "output": "Member saved."
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 968,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input",
+      "bodyLength": 913,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "input-entry",
+        "value": "hello@uifn.dev"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/input-otp",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input OTP",
+      "bodyLength": 975,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "otp-entry",
+        "slotCount": 6,
+        "value": "123456",
+        "renderedValue": "123456"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/label",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Label",
+      "bodyLength": 938,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "label-render",
+        "tagName": "LABEL",
+        "text": "Email address",
+        "requiredCount": 1
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 945,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 971,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "before": "2",
+        "after": "3"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 964,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-open",
+        "portalled": true
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 984,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7199728260869566,
+        "trackBox": {
+          "x": 626,
+          "y": 584.640625,
+          "width": 460,
+          "height": 9
+        },
+        "indicatorBox": {
+          "x": 626,
+          "y": 584.640625,
+          "width": 331.1875,
+          "height": 9
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/radio-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Radio Group",
+      "bodyLength": 979,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "radio-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/resizable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Resizable",
+      "bodyLength": 1029,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "resizable-keyboard",
+        "before": 38,
+        "after": 40
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 2274,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1482,
+        "scrollTop": 1214
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 954,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-option",
+        "portalled": true,
+        "triggerText": "Administrator⌄"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 943,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "HR",
+        "box": {
+          "x": 576,
+          "y": 556.34375,
+          "width": 560,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/sheet",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sheet",
+      "bodyLength": 953,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sheet-open",
+        "portalled": true,
+        "edgeAligned": true,
+        "box": {
+          "x": 1000,
+          "y": 0,
+          "width": 440,
+          "height": 1000
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/sidebar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sidebar",
+      "bodyLength": 1005,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sidebar-select-collapse",
+        "active": "page",
+        "collapsed": "true"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/skeleton",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Skeleton",
+      "bodyLength": 938,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "skeleton-render",
+        "lineCount": 3,
+        "avatarCount": 1,
+        "ariaHidden": "true"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 932,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-change",
+        "value": "82",
+        "output": "82%"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/sonner",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sonner",
+      "bodyLength": 951,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Deployment completeChanges savedUndo×"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 982,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Table",
+      "bodyLength": 1035,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "table-render",
+        "caption": "Recent invoices",
+        "headerCount": 3,
+        "rowCount": 3,
+        "statusCount": 3
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tabs",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tabs",
+      "bodyLength": 968,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tabs-change",
+        "selected": "true",
+        "panel": "Recent deployments, comments, and member changes."
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/textarea",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Textarea",
+      "bodyLength": 953,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "textarea-entry",
+        "value": "A production-ready component catalog."
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toast",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 938,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Changes savedProject createdUndo×"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 923,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/toggle-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 965,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 939,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/typography",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Typography",
+      "bodyLength": 1119,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "typography-render",
+        "heading": "Build products people love",
+        "paragraphCount": 2,
+        "box": {
+          "x": 516,
+          "y": 483.328125,
+          "width": 680,
+          "height": 147.03125
+        }
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 428,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 394,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 503,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "react",
+      "route": "/components/react/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 531,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5798,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 1001,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Manage access and responsibilities for this workspace."
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 981,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-open-cancel",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "title": "Delete this project?"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/aspect-ratio",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Aspect Ratio",
+      "bodyLength": 989,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "aspect-ratio-layout",
+        "box": {
+          "x": 556,
+          "y": 388.09375,
+          "width": 600,
+          "height": 337.5
+        },
+        "ratio": 1.7777777777777777,
+        "contentCount": 1
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/avatar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 909,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-render",
+        "box": {
+          "x": 818,
+          "y": 490.796875,
+          "width": 76,
+          "height": 76
+        },
+        "role": "img",
+        "borderRadius": "50%",
+        "fallback": "AM"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/badge",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Badge",
+      "bodyLength": 911,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "badge-render",
+        "label": "Active",
+        "dotCount": 1
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/breadcrumb",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Breadcrumb",
+      "bodyLength": 990,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "breadcrumb-render",
+        "tagName": "NAV",
+        "linkCount": 2,
+        "current": "Settings"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 974,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes saved Your changes are now live.  Undo ×",
+        "portalled": true,
+        "hoverChanged": true
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/calendar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Calendar",
+      "bodyLength": 1041,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "calendar-select",
+        "before": "2026-07-16",
+        "after": "2026-07-01",
+        "previousLabel": true
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1047,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "svelte",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 938,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/collapsible",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Collapsible",
+      "bodyLength": 986,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "collapsible-toggle",
+        "expanded": "true",
+        "content": "Configure retention, regional routing, and audit log exports."
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/command",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Command",
+      "bodyLength": 998,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "command-filter-select",
+        "optionCount": 1,
+        "output": "Deploy production selected"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 999,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/data-table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Data Table",
+      "bodyLength": 1051,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "data-table-filter-select",
+        "resultText": "1 results",
+        "selected": "true"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 954,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-07-01"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 944,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-open-close",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/dropdown-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dropdown Menu",
+      "bodyLength": 978,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dropdown-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 995,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-submit",
+        "value": "team@example.com",
+        "output": "Member saved."
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 955,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input",
+      "bodyLength": 900,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "input-entry",
+        "value": "hello@uifn.dev"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/input-otp",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input OTP",
+      "bodyLength": 962,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "otp-entry",
+        "slotCount": 6,
+        "value": "123456",
+        "renderedValue": "123456"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/label",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Label",
+      "bodyLength": 925,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "label-render",
+        "tagName": "LABEL",
+        "text": "Email address",
+        "requiredCount": 1
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 932,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 958,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "before": "2",
+        "after": "3"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 953,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-open",
+        "portalled": true
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 971,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7199728260869566,
+        "trackBox": {
+          "x": 626,
+          "y": 584.640625,
+          "width": 460,
+          "height": 9
+        },
+        "indicatorBox": {
+          "x": 626,
+          "y": 584.640625,
+          "width": 331.1875,
+          "height": 9
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/radio-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Radio Group",
+      "bodyLength": 966,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "radio-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/resizable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Resizable",
+      "bodyLength": 1016,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "resizable-keyboard",
+        "before": 38,
+        "after": 40
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 2261,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1482,
+        "scrollTop": 1214
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 941,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-option",
+        "portalled": true,
+        "triggerText": "Administrator⌄"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 930,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "HR",
+        "box": {
+          "x": 576,
+          "y": 556.34375,
+          "width": 560,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/sheet",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sheet",
+      "bodyLength": 940,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sheet-open",
+        "portalled": true,
+        "edgeAligned": true,
+        "box": {
+          "x": 960,
+          "y": 0,
+          "width": 480,
+          "height": 1000
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/sidebar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sidebar",
+      "bodyLength": 992,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sidebar-select-collapse",
+        "active": "page",
+        "collapsed": "true"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/skeleton",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Skeleton",
+      "bodyLength": 925,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "skeleton-render",
+        "lineCount": 3,
+        "avatarCount": 1,
+        "ariaHidden": "true"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 919,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-change",
+        "value": "82",
+        "output": "82%"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/sonner",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sonner",
+      "bodyLength": 938,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Deployment complete Changes saved  Undo ×"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 969,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Table",
+      "bodyLength": 1022,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "table-render",
+        "caption": "Recent invoices",
+        "headerCount": 3,
+        "rowCount": 3,
+        "statusCount": 3
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/tabs",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tabs",
+      "bodyLength": 955,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tabs-change",
+        "selected": "true",
+        "panel": "Recent deployments, comments, and member changes."
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/textarea",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Textarea",
+      "bodyLength": 940,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "textarea-entry",
+        "value": "A production-ready component catalog."
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/toast",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 925,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Changes saved Project created  Undo ×"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 910,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/toggle-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 952,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 926,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/typography",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Typography",
+      "bodyLength": 1106,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "typography-render",
+        "heading": "Build products people love",
+        "paragraphCount": 2,
+        "box": {
+          "x": 516,
+          "y": 483.328125,
+          "width": 680,
+          "height": 147.03125
+        }
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 434,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5758,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 999,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Manage access and responsibilities for this workspace."
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 979,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-open-cancel",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "title": "Delete this project?"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/aspect-ratio",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Aspect Ratio",
+      "bodyLength": 987,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "aspect-ratio-layout",
+        "box": {
+          "x": 556,
+          "y": 388.09375,
+          "width": 600,
+          "height": 337.5
+        },
+        "ratio": 1.7777777777777777,
+        "contentCount": 1
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/avatar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 907,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-render",
+        "box": {
+          "x": 818,
+          "y": 490.796875,
+          "width": 76,
+          "height": 76
+        },
+        "role": "img",
+        "borderRadius": "50%",
+        "fallback": "AM"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/badge",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Badge",
+      "bodyLength": 909,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "badge-render",
+        "label": "Active",
+        "dotCount": 1
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/breadcrumb",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Breadcrumb",
+      "bodyLength": 988,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "breadcrumb-render",
+        "tagName": "NAV",
+        "linkCount": 2,
+        "current": "Settings"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 972,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour changes are now live.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/calendar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Calendar",
+      "bodyLength": 1039,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "calendar-select",
+        "before": "2026-07-16",
+        "after": "2026-07-01",
+        "previousLabel": true
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1045,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "vue",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 934,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/collapsible",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Collapsible",
+      "bodyLength": 984,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "collapsible-toggle",
+        "expanded": "true",
+        "content": "Configure retention, regional routing, and audit log exports."
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/command",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Command",
+      "bodyLength": 996,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "command-filter-select",
+        "optionCount": 1,
+        "output": "Deploy production selected"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 997,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/data-table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Data Table",
+      "bodyLength": 1049,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "data-table-filter-select",
+        "resultText": "1 results",
+        "selected": "true"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 952,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-07-01"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 942,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-open-close",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/dropdown-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dropdown Menu",
+      "bodyLength": 976,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dropdown-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 993,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-submit",
+        "value": "team@example.com",
+        "output": "Member saved."
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 953,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input",
+      "bodyLength": 898,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "input-entry",
+        "value": "hello@uifn.dev"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/input-otp",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input OTP",
+      "bodyLength": 960,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "otp-entry",
+        "slotCount": 6,
+        "value": "123456",
+        "renderedValue": "123456"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/label",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Label",
+      "bodyLength": 923,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "label-render",
+        "tagName": "LABEL",
+        "text": "Email address",
+        "requiredCount": 1
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 930,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 956,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "before": "2",
+        "after": "3"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 951,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-open",
+        "portalled": true
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 969,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7199728260869566,
+        "trackBox": {
+          "x": 626,
+          "y": 584.640625,
+          "width": 460,
+          "height": 9
+        },
+        "indicatorBox": {
+          "x": 626,
+          "y": 584.640625,
+          "width": 331.1875,
+          "height": 9
+        }
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/radio-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Radio Group",
+      "bodyLength": 964,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "radio-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/resizable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Resizable",
+      "bodyLength": 1014,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "resizable-keyboard",
+        "before": 38,
+        "after": 40
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 2259,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1482,
+        "scrollTop": 1214
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 939,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-option",
+        "portalled": true,
+        "triggerText": "Administrator⌄"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 928,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "HR",
+        "box": {
+          "x": 576,
+          "y": 556.34375,
+          "width": 560,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/sheet",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sheet",
+      "bodyLength": 938,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sheet-open",
+        "portalled": true,
+        "edgeAligned": true,
+        "box": {
+          "x": 1000,
+          "y": 0,
+          "width": 440,
+          "height": 1000
+        }
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/sidebar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sidebar",
+      "bodyLength": 990,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sidebar-select-collapse",
+        "active": "page",
+        "collapsed": "true"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/skeleton",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Skeleton",
+      "bodyLength": 923,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "skeleton-render",
+        "lineCount": 3,
+        "avatarCount": 1,
+        "ariaHidden": "true"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 917,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-change",
+        "value": "82",
+        "output": "82%"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/sonner",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sonner",
+      "bodyLength": 936,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Deployment completeChanges savedUndo×"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 967,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Table",
+      "bodyLength": 1020,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "table-render",
+        "caption": "Recent invoices",
+        "headerCount": 3,
+        "rowCount": 3,
+        "statusCount": 3
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/tabs",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tabs",
+      "bodyLength": 953,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tabs-change",
+        "selected": "true",
+        "panel": "Recent deployments, comments, and member changes."
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/textarea",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Textarea",
+      "bodyLength": 938,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "textarea-entry",
+        "value": "A production-ready component catalog."
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/toast",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 923,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Changes savedProject createdUndo×"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 908,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/toggle-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 950,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 924,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/typography",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Typography",
+      "bodyLength": 1104,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "typography-render",
+        "heading": "Build products people love",
+        "paragraphCount": 2,
+        "box": {
+          "x": 516,
+          "y": 483.328125,
+          "width": 680,
+          "height": 147.03125
+        }
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 418,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 379,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 493,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 521,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5798,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 1026,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Manage access and responsibilities for this workspace."
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 1006,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-open-cancel",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "title": "Delete this project?"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/aspect-ratio",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Aspect Ratio",
+      "bodyLength": 1014,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "aspect-ratio-layout",
+        "box": {
+          "x": 556,
+          "y": 388.09375,
+          "width": 600,
+          "height": 337.5
+        },
+        "ratio": 1.7777777777777777,
+        "contentCount": 1
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/avatar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 934,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-render",
+        "box": {
+          "x": 818,
+          "y": 490.796875,
+          "width": 76,
+          "height": 76
+        },
+        "role": "img",
+        "borderRadius": "50%",
+        "fallback": "AM"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/badge",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Badge",
+      "bodyLength": 936,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "badge-render",
+        "label": "Active",
+        "dotCount": 1
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/breadcrumb",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Breadcrumb",
+      "bodyLength": 1015,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "breadcrumb-render",
+        "tagName": "NAV",
+        "linkCount": 2,
+        "current": "Settings"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 999,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour changes are now live.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/calendar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Calendar",
+      "bodyLength": 1066,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "calendar-select",
+        "before": "2026-07-16",
+        "after": "2026-07-01",
+        "previousLabel": true
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1072,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "solid",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 961,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/collapsible",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Collapsible",
+      "bodyLength": 1011,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "collapsible-toggle",
+        "expanded": "true",
+        "content": "Configure retention, regional routing, and audit log exports."
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/command",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Command",
+      "bodyLength": 1023,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "command-filter-select",
+        "optionCount": 1,
+        "output": "Deploy production selected"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 1024,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/data-table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Data Table",
+      "bodyLength": 1076,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "data-table-filter-select",
+        "resultText": "1 results",
+        "selected": "true"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 979,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-07-01"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 969,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-open-close",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/dropdown-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dropdown Menu",
+      "bodyLength": 1003,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dropdown-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 1020,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-submit",
+        "value": "team@example.com",
+        "output": "Member saved."
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 980,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input",
+      "bodyLength": 925,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "input-entry",
+        "value": "hello@uifn.dev"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/input-otp",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input OTP",
+      "bodyLength": 987,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "otp-entry",
+        "slotCount": 6,
+        "value": "123456",
+        "renderedValue": "123456"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/label",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Label",
+      "bodyLength": 950,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "label-render",
+        "tagName": "LABEL",
+        "text": "Email address",
+        "requiredCount": 1
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 957,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 983,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "before": "2",
+        "after": "3"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 978,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-open",
+        "portalled": true
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 996,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7199728260869566,
+        "trackBox": {
+          "x": 626,
+          "y": 584.640625,
+          "width": 460,
+          "height": 9
+        },
+        "indicatorBox": {
+          "x": 626,
+          "y": 584.640625,
+          "width": 331.1875,
+          "height": 9
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/radio-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Radio Group",
+      "bodyLength": 991,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "radio-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/resizable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Resizable",
+      "bodyLength": 1041,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "resizable-keyboard",
+        "before": 38,
+        "after": 40
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 2286,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1482,
+        "scrollTop": 1214
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 966,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-option",
+        "portalled": true,
+        "triggerText": "Administrator⌄"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 955,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "HR",
+        "box": {
+          "x": 576,
+          "y": 556.34375,
+          "width": 560,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/sheet",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sheet",
+      "bodyLength": 965,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sheet-open",
+        "portalled": true,
+        "edgeAligned": true,
+        "box": {
+          "x": 1000,
+          "y": 0,
+          "width": 440,
+          "height": 1000
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/sidebar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sidebar",
+      "bodyLength": 1017,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sidebar-select-collapse",
+        "active": "page",
+        "collapsed": "true"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/skeleton",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Skeleton",
+      "bodyLength": 950,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "skeleton-render",
+        "lineCount": 3,
+        "avatarCount": 1,
+        "ariaHidden": "true"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 944,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-change",
+        "value": "82",
+        "output": "82%"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/sonner",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sonner",
+      "bodyLength": 963,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Deployment completeChanges savedUndo×"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 994,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Table",
+      "bodyLength": 1047,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "table-render",
+        "caption": "Recent invoices",
+        "headerCount": 3,
+        "rowCount": 3,
+        "statusCount": 3
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tabs",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tabs",
+      "bodyLength": 980,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tabs-change",
+        "selected": "true",
+        "panel": "Recent deployments, comments, and member changes."
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/textarea",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Textarea",
+      "bodyLength": 965,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "textarea-entry",
+        "value": "A production-ready component catalog."
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toast",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 950,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Changes savedProject createdUndo×"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 935,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toggle-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 977,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 951,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/typography",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Typography",
+      "bodyLength": 1131,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "typography-render",
+        "heading": "Build products people love",
+        "paragraphCount": 2,
+        "box": {
+          "x": 516,
+          "y": 483.328125,
+          "width": 680,
+          "height": 147.03125
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 434,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 5743,
+      "componentCount": 0,
+      "catalogCardCount": 45,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 1035,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Manage access and responsibilities for this workspace."
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 1019,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-open-cancel",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "title": "Delete this project?"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/aspect-ratio",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Aspect Ratio",
+      "bodyLength": 1039,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "aspect-ratio-layout",
+        "box": {
+          "x": 569,
+          "y": 395.40625,
+          "width": 574,
+          "height": 322.875
+        },
+        "ratio": 1.7777777777777777,
+        "contentCount": 1
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/avatar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 952,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-render",
+        "box": {
+          "x": 818,
+          "y": 490.796875,
+          "width": 76,
+          "height": 76
+        },
+        "role": "img",
+        "borderRadius": "50%",
+        "fallback": "AM"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/badge",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Badge",
+      "bodyLength": 953,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "badge-render",
+        "label": "Active",
+        "dotCount": 1
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/breadcrumb",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Breadcrumb",
+      "bodyLength": 1037,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "breadcrumb-render",
+        "tagName": "NAV",
+        "linkCount": 2,
+        "current": "Settings"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 975,
+      "componentCount": 2,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes savedYour project settings were updated successfully.Undo×",
+        "portalled": true,
+        "hoverChanged": true
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/calendar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Calendar",
+      "bodyLength": 1086,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "calendar-select",
+        "before": "2026-07-16",
+        "after": "2026-07-01",
+        "previousLabel": true
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1088,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "angular",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 981,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/collapsible",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Collapsible",
+      "bodyLength": 1022,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "collapsible-toggle",
+        "expanded": "true",
+        "content": "Configure retention, regional routing, and audit log exports."
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/command",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Command",
+      "bodyLength": 1042,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "command-filter-select",
+        "optionCount": 1,
+        "output": "Deploy production selected"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/context-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 1037,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-opens-menu",
+        "menuItemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/data-table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Data Table",
+      "bodyLength": 1099,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "data-table-filter-select",
+        "resultText": "1 results",
+        "selected": "true"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 1003,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "portalled": true,
+        "value": "2026-07-01"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 975,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-open-close",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/dropdown-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dropdown Menu",
+      "bodyLength": 1017,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dropdown-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 1036,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-submit",
+        "value": "team@example.com",
+        "output": "Member saved."
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 991,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-open",
+        "portalled": true,
+        "text": "AMAlex MorganDesign systems engineer building accessible product foundations."
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input",
+      "bodyLength": 942,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "input-entry",
+        "value": "hello@uifn.dev"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/input-otp",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input OTP",
+      "bodyLength": 1009,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "otp-entry",
+        "slotCount": 6,
+        "value": "123456",
+        "renderedValue": "123456"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/label",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Label",
+      "bodyLength": 967,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "label-render",
+        "tagName": "LABEL",
+        "text": "Email address",
+        "requiredCount": 1
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 976,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-open-escape",
+        "itemCount": 3,
+        "portalled": true
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 1005,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "before": "2",
+        "after": "3"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 983,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-open",
+        "portalled": true
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 1038,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7199352139290053,
+        "trackBox": {
+          "x": 740.234375,
+          "y": 575.84375,
+          "width": 231.53125,
+          "height": 9
+        },
+        "indicatorBox": {
+          "x": 740.234375,
+          "y": 575.84375,
+          "width": 166.6875,
+          "height": 9
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/radio-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Radio Group",
+      "bodyLength": 1015,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "radio-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/resizable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Resizable",
+      "bodyLength": 1064,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "resizable-keyboard",
+        "before": 38,
+        "after": 40
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 2310,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 268,
+        "scrollHeight": 1372,
+        "scrollTop": 1104
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 972,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-option",
+        "portalled": true,
+        "triggerText": "Administrator⌄"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 976,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "HR",
+        "box": {
+          "x": 589,
+          "y": 556.34375,
+          "width": 534,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/sheet",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sheet",
+      "bodyLength": 970,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sheet-open",
+        "portalled": true,
+        "edgeAligned": true,
+        "box": {
+          "x": 960,
+          "y": 0,
+          "width": 480,
+          "height": 1000
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/sidebar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sidebar",
+      "bodyLength": 1036,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "sidebar-select-collapse",
+        "active": "page",
+        "collapsed": "true"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/skeleton",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Skeleton",
+      "bodyLength": 970,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "skeleton-render",
+        "lineCount": 3,
+        "avatarCount": 1,
+        "ariaHidden": "true"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 962,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-change",
+        "value": "82",
+        "output": "82%"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/sonner",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Sonner",
+      "bodyLength": 981,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Deployment completeProduction is now running the latest version.View×"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 1012,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/table",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Table",
+      "bodyLength": 1064,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "table-render",
+        "caption": "Recent invoices",
+        "headerCount": 3,
+        "rowCount": 3,
+        "statusCount": 3
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/tabs",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tabs",
+      "bodyLength": 996,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tabs-change",
+        "selected": "true",
+        "panel": "Recent deployments, comments, and member changes."
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/textarea",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Textarea",
+      "bodyLength": 985,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "textarea-entry",
+        "value": "A production-ready component catalog."
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/toast",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 967,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "feedback-open-dismiss",
+        "portalled": true,
+        "statusText": "Changes savedYour project settings were updated successfully.Undo×"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 953,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/toggle-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 1002,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group-select",
+        "count": 3,
+        "checked": "true"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 958,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-hover",
+        "portalled": true,
+        "text": "Add to library"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/typography",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Typography",
+      "bodyLength": 1154,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "typography-render",
+        "heading": "Build products people love.",
+        "paragraphCount": 2,
+        "box": {
+          "x": 562.375,
+          "y": 484.796875,
+          "width": 587.25,
+          "height": 144.09375
+        }
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 412,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 370,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 487,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 515,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "route-render"
+      }
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "react",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "svelte",
+      "route": "/components/svelte/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "svelte",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "vue",
+      "route": "/components/vue/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "vue",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "solid",
+      "route": "/components/solid/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "solid",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "angular",
+      "route": "/components/angular/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "angular",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "react",
+      "route": "/components/react/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "react",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "svelte",
+      "route": "/components/svelte/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "svelte",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "vue",
+      "route": "/components/vue/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "vue",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "solid",
+      "route": "/components/solid/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "solid",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "severity": "high",
+      "framework": "angular",
+      "route": "/components/angular/components/card",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "card",
+        "framework": "angular",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "react",
+      "route": "/components/react/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1060,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "react",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1047,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "svelte",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "framework": "vue",
+      "route": "/components/vue/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1045,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "vue",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1072,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "solid",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    },
+    {
+      "framework": "angular",
+      "route": "/components/angular/components/card",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Card",
+      "bodyLength": 1088,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "card",
+        "framework": "angular",
+        "message": "locator.textContent: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('[data-uifn-component=\"card\"]').first().locator('h3')\u001b[22m\n"
+      }
+    }
+  ],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-final-current"
+}

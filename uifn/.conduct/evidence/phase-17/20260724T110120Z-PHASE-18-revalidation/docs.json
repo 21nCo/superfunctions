@@ -1,0 +1,3623 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_17",
+  "vector": "TV-DOCS-001-P",
+  "status": "passed",
+  "counts": {
+    "primitives": 61,
+    "sections": 793,
+    "mappedFields": 11809,
+    "samples": 366,
+    "consumers": 6
+  },
+  "tarballs": {
+    "@uifn/core": {
+      "filename": "uifn-core-0.0.1.tgz",
+      "sha256": "4b6ac3c85b6dc20fe0de4209b69992f8d68835704bd11a4e2e884d111cf072e3",
+      "fileCount": 135
+    },
+    "@uifn/dom": {
+      "filename": "uifn-dom-0.0.1.tgz",
+      "sha256": "85f8f38d626981d8ef0b165e872b5e1725736162995309578340d4c33650e148",
+      "fileCount": 9
+    },
+    "@uifn/adapter-kit": {
+      "filename": "uifn-adapter-kit-0.0.1.tgz",
+      "sha256": "cecc040efc9d8282c66459104d4de75ca69dac9ae187adb0b95c3e73c163c90a",
+      "fileCount": 6
+    },
+    "@uifn/tokens": {
+      "filename": "uifn-tokens-0.0.1.tgz",
+      "sha256": "c011ee2d5ef4276800c3f0a06942a7e3136437885f5c0b43c3ab183f0680a3b6",
+      "fileCount": 6
+    },
+    "@uifn/theme": {
+      "filename": "uifn-theme-0.0.1.tgz",
+      "sha256": "81a83ff3569b7e1e1c1862d67371cb295ba83828ff06cfe6f6c835a68a4020d7",
+      "fileCount": 6
+    },
+    "@uifn/recipes": {
+      "filename": "uifn-recipes-0.0.1.tgz",
+      "sha256": "33a3477be240a03b6d79e65c3c42e135ca03c04a2406f00353c093cd393f5d24",
+      "fileCount": 6
+    },
+    "@uifn/components": {
+      "filename": "uifn-components-0.0.1.tgz",
+      "sha256": "97030bd26a23b9bcc3f21f29d89ea71d42dfa3474370ad24bfcea38898d463a3",
+      "fileCount": 7
+    },
+    "@uifn/react": {
+      "filename": "uifn-react-0.0.1.tgz",
+      "sha256": "1ff328c59cac5615807d42e6c27bd30b3577c181e57b786f87e485efa4bc9282",
+      "fileCount": 701
+    },
+    "@uifn/svelte": {
+      "filename": "uifn-svelte-0.0.1.tgz",
+      "sha256": "b91fbe698efac2f8507a27feca28f79df80d00274e5d589d8ca29d43a06f42b9",
+      "fileCount": 1656
+    },
+    "@uifn/solid": {
+      "filename": "uifn-solid-0.0.1.tgz",
+      "sha256": "2782d959d4c2e778e9909d6fe13cb37bc90f5e208ee72d9d769767cbe71e8ef0",
+      "fileCount": 275
+    },
+    "@uifn/components-react": {
+      "filename": "uifn-components-react-0.0.1.tgz",
+      "sha256": "1ac52f372fd5c247c3d1d3845b734936efcf5ab1cd6a155e907963a9c994a4ef",
+      "fileCount": 311
+    },
+    "@uifn/components-svelte": {
+      "filename": "uifn-components-svelte-0.0.1.tgz",
+      "sha256": "4b4e219486133990e999e2130d6451a45573b3c9776fd25f5556409214600de5",
+      "fileCount": 964
+    },
+    "@uifn/components-solid": {
+      "filename": "uifn-components-solid-0.0.1.tgz",
+      "sha256": "c97aecdb94159b2eeb2dba0ce462594b74bff6d487f82df5637d41c00f885029",
+      "fileCount": 311
+    },
+    "@uifn/registry": {
+      "filename": "uifn-registry-0.0.1.tgz",
+      "sha256": "9003612ba4d843b9f9ee3a055fe81c3aec0b848a0c59cb13ba1d48aeb5d313bb",
+      "fileCount": 8
+    }
+  },
+  "consumers": [
+    {
+      "framework": "react",
+      "deliveryMode": "package",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "28b14dbdc5d8cfd0299a813a134baeb9c27a658610e35c286816948cddc7e7ab",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "75a5759e54bda8e57b1b4ab4f0fb99c9c10b5b17150544ae3cc2f0ff6ba523c7"
+      },
+      "browser": {
+        "status": "passed",
+        "explicitAssertions": [
+          {
+            "primitive": "accordion",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "accordion",
+            "part": "root",
+            "beforeSha256Input": "DIV:accordion:root:"
+          },
+          {
+            "primitive": "alert-dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "alert-dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:alert-dialog:root:"
+          },
+          {
+            "primitive": "angle-slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "angle-slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:angle-slider:root:"
+          },
+          {
+            "primitive": "autocomplete",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "autocomplete",
+            "part": "root",
+            "beforeSha256Input": "DIV:autocomplete:root:"
+          },
+          {
+            "primitive": "avatar",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "avatar",
+            "part": "root",
+            "beforeSha256Input": "SPAN:avatar:root:"
+          },
+          {
+            "primitive": "button",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "button",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:button:root:"
+          },
+          {
+            "primitive": "carousel",
+            "observed": true,
+            "expectedTag": "section",
+            "actualTag": "section",
+            "component": "carousel",
+            "part": "root",
+            "beforeSha256Input": "SECTION:carousel:root:region"
+          },
+          {
+            "primitive": "checkbox",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "checkbox",
+            "part": "root",
+            "beforeSha256Input": "LABEL:checkbox:root:"
+          },
+          {
+            "primitive": "checkbox-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "checkbox-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:checkbox-group:root:"
+          },
+          {
+            "primitive": "clipboard",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "clipboard",
+            "part": "root",
+            "beforeSha256Input": "DIV:clipboard:root:"
+          },
+          {
+            "primitive": "collapsible",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "collapsible",
+            "part": "root",
+            "beforeSha256Input": "DIV:collapsible:root:presentation"
+          },
+          {
+            "primitive": "color-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "color-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:color-picker:root:"
+          },
+          {
+            "primitive": "combobox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "combobox",
+            "part": "root",
+            "beforeSha256Input": "DIV:combobox:root:"
+          },
+          {
+            "primitive": "context-menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "context-menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:context-menu:root:"
+          },
+          {
+            "primitive": "date-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-input:root:group"
+          },
+          {
+            "primitive": "date-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-picker:root:"
+          },
+          {
+            "primitive": "dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:dialog:root:"
+          },
+          {
+            "primitive": "drawer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "drawer",
+            "part": "root",
+            "beforeSha256Input": "DIV:drawer:root:"
+          },
+          {
+            "primitive": "editable",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "editable",
+            "part": "root",
+            "beforeSha256Input": "DIV:editable:root:"
+          },
+          {
+            "primitive": "field",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "field",
+            "part": "root",
+            "beforeSha256Input": "DIV:field:root:"
+          },
+          {
+            "primitive": "fieldset",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "fieldset",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:fieldset:root:"
+          },
+          {
+            "primitive": "file-upload",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "file-upload",
+            "part": "root",
+            "beforeSha256Input": "DIV:file-upload:root:"
+          },
+          {
+            "primitive": "floating-panel",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "floating-panel",
+            "part": "root",
+            "beforeSha256Input": "DIV:floating-panel:root:"
+          },
+          {
+            "primitive": "form",
+            "observed": true,
+            "expectedTag": "form",
+            "actualTag": "form",
+            "component": "form",
+            "part": "root",
+            "beforeSha256Input": "FORM:form:root:"
+          },
+          {
+            "primitive": "hover-card",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "hover-card",
+            "part": "root",
+            "beforeSha256Input": "DIV:hover-card:root:"
+          },
+          {
+            "primitive": "image-cropper",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "image-cropper",
+            "part": "root",
+            "beforeSha256Input": "DIV:image-cropper:root:"
+          },
+          {
+            "primitive": "input",
+            "observed": true,
+            "expectedTag": "input",
+            "actualTag": "input",
+            "component": "input",
+            "part": "root",
+            "beforeSha256Input": "INPUT:input:root:"
+          },
+          {
+            "primitive": "listbox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "listbox",
+            "part": "root",
+            "beforeSha256Input": "DIV:listbox:root:"
+          },
+          {
+            "primitive": "marquee",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "marquee",
+            "part": "root",
+            "beforeSha256Input": "DIV:marquee:root:"
+          },
+          {
+            "primitive": "menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:menu:root:"
+          },
+          {
+            "primitive": "menubar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menubar",
+            "part": "root",
+            "beforeSha256Input": "DIV:menubar:root:menubar"
+          },
+          {
+            "primitive": "meter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "meter",
+            "part": "root",
+            "beforeSha256Input": "DIV:meter:root:meter"
+          },
+          {
+            "primitive": "navigation-menu",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "navigation-menu",
+            "part": "root",
+            "beforeSha256Input": "NAV:navigation-menu:root:navigation"
+          },
+          {
+            "primitive": "number-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "number-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:number-input:root:"
+          },
+          {
+            "primitive": "pagination",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "pagination",
+            "part": "root",
+            "beforeSha256Input": "NAV:pagination:root:navigation"
+          },
+          {
+            "primitive": "password-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "password-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:password-input:root:"
+          },
+          {
+            "primitive": "pin-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "pin-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:pin-input:root:"
+          },
+          {
+            "primitive": "popover",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "popover",
+            "part": "root",
+            "beforeSha256Input": "DIV:popover:root:"
+          },
+          {
+            "primitive": "progress",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "progress",
+            "part": "root",
+            "beforeSha256Input": "DIV:progress:root:progressbar"
+          },
+          {
+            "primitive": "qr-code",
+            "observed": true,
+            "expectedTag": "figure",
+            "actualTag": "figure",
+            "component": "qr-code",
+            "part": "root",
+            "beforeSha256Input": "FIGURE:qr-code:root:"
+          },
+          {
+            "primitive": "radio-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "radio-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:radio-group:root:radiogroup"
+          },
+          {
+            "primitive": "rating-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "rating-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:rating-group:root:radiogroup"
+          },
+          {
+            "primitive": "scroll-area",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "scroll-area",
+            "part": "root",
+            "beforeSha256Input": "DIV:scroll-area:root:presentation"
+          },
+          {
+            "primitive": "segment-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "segment-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:segment-group:root:radiogroup"
+          },
+          {
+            "primitive": "select",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "select",
+            "part": "root",
+            "beforeSha256Input": "DIV:select:root:"
+          },
+          {
+            "primitive": "separator",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "separator",
+            "part": "root",
+            "beforeSha256Input": "DIV:separator:root:separator"
+          },
+          {
+            "primitive": "signature-pad",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "signature-pad",
+            "part": "root",
+            "beforeSha256Input": "DIV:signature-pad:root:"
+          },
+          {
+            "primitive": "slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:slider:root:group"
+          },
+          {
+            "primitive": "splitter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "splitter",
+            "part": "root",
+            "beforeSha256Input": "DIV:splitter:root:group"
+          },
+          {
+            "primitive": "steps",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "steps",
+            "part": "root",
+            "beforeSha256Input": "NAV:steps:root:navigation"
+          },
+          {
+            "primitive": "switch",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "switch",
+            "part": "root",
+            "beforeSha256Input": "LABEL:switch:root:"
+          },
+          {
+            "primitive": "tabs",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tabs",
+            "part": "root",
+            "beforeSha256Input": "DIV:tabs:root:"
+          },
+          {
+            "primitive": "tags-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tags-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:tags-input:root:"
+          },
+          {
+            "primitive": "timer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "timer",
+            "part": "root",
+            "beforeSha256Input": "DIV:timer:root:group"
+          },
+          {
+            "primitive": "toast",
+            "observed": true,
+            "expectedTag": "ol",
+            "actualTag": "ol",
+            "component": "toast",
+            "part": "viewport",
+            "beforeSha256Input": "OL:toast:viewport:region"
+          },
+          {
+            "primitive": "toggle",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "toggle",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:toggle:root:"
+          },
+          {
+            "primitive": "toggle-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toggle-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:toggle-group:root:group"
+          },
+          {
+            "primitive": "toolbar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toolbar",
+            "part": "root",
+            "beforeSha256Input": "DIV:toolbar:root:toolbar"
+          },
+          {
+            "primitive": "tooltip",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "tooltip",
+            "part": "root",
+            "beforeSha256Input": "SPAN:tooltip:root:"
+          },
+          {
+            "primitive": "tour",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tour",
+            "part": "root",
+            "beforeSha256Input": "DIV:tour:root:"
+          },
+          {
+            "primitive": "tree-view",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tree-view",
+            "part": "root",
+            "beforeSha256Input": "DIV:tree-view:root:"
+          }
+        ],
+        "axeSeriousCritical": {
+          "violations": [],
+          "incompletes": [
+            {
+              "id": "aria-required-children",
+              "impact": "critical",
+              "nodeCount": 1
+            },
+            {
+              "id": "aria-valid-attr-value",
+              "impact": "critical",
+              "nodeCount": 7
+            }
+          ]
+        },
+        "errors": []
+      }
+    },
+    {
+      "framework": "react",
+      "deliveryMode": "source",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "ffe0cf010dbf46c6bec622583c7ddba31d9ec57d59dc0d790eedd07042f7eb65",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "8e95bff7c48072cd3edfddbbf0f012e449904817428ff357c75b8646b799b8cb"
+      },
+      "browser": {
+        "status": "passed",
+        "explicitAssertions": [
+          {
+            "primitive": "accordion",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "accordion",
+            "part": "root",
+            "beforeSha256Input": "DIV:accordion:root:"
+          },
+          {
+            "primitive": "alert-dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "alert-dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:alert-dialog:root:"
+          },
+          {
+            "primitive": "angle-slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "angle-slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:angle-slider:root:"
+          },
+          {
+            "primitive": "autocomplete",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "autocomplete",
+            "part": "root",
+            "beforeSha256Input": "DIV:autocomplete:root:"
+          },
+          {
+            "primitive": "avatar",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "avatar",
+            "part": "root",
+            "beforeSha256Input": "SPAN:avatar:root:"
+          },
+          {
+            "primitive": "button",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "button",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:button:root:"
+          },
+          {
+            "primitive": "carousel",
+            "observed": true,
+            "expectedTag": "section",
+            "actualTag": "section",
+            "component": "carousel",
+            "part": "root",
+            "beforeSha256Input": "SECTION:carousel:root:region"
+          },
+          {
+            "primitive": "checkbox",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "checkbox",
+            "part": "root",
+            "beforeSha256Input": "LABEL:checkbox:root:"
+          },
+          {
+            "primitive": "checkbox-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "checkbox-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:checkbox-group:root:"
+          },
+          {
+            "primitive": "clipboard",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "clipboard",
+            "part": "root",
+            "beforeSha256Input": "DIV:clipboard:root:"
+          },
+          {
+            "primitive": "collapsible",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "collapsible",
+            "part": "root",
+            "beforeSha256Input": "DIV:collapsible:root:presentation"
+          },
+          {
+            "primitive": "color-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "color-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:color-picker:root:"
+          },
+          {
+            "primitive": "combobox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "combobox",
+            "part": "root",
+            "beforeSha256Input": "DIV:combobox:root:"
+          },
+          {
+            "primitive": "context-menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "context-menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:context-menu:root:"
+          },
+          {
+            "primitive": "date-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-input:root:group"
+          },
+          {
+            "primitive": "date-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-picker:root:"
+          },
+          {
+            "primitive": "dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:dialog:root:"
+          },
+          {
+            "primitive": "drawer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "drawer",
+            "part": "root",
+            "beforeSha256Input": "DIV:drawer:root:"
+          },
+          {
+            "primitive": "editable",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "editable",
+            "part": "root",
+            "beforeSha256Input": "DIV:editable:root:"
+          },
+          {
+            "primitive": "field",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "field",
+            "part": "root",
+            "beforeSha256Input": "DIV:field:root:"
+          },
+          {
+            "primitive": "fieldset",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "fieldset",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:fieldset:root:"
+          },
+          {
+            "primitive": "file-upload",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "file-upload",
+            "part": "root",
+            "beforeSha256Input": "DIV:file-upload:root:"
+          },
+          {
+            "primitive": "floating-panel",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "floating-panel",
+            "part": "root",
+            "beforeSha256Input": "DIV:floating-panel:root:"
+          },
+          {
+            "primitive": "form",
+            "observed": true,
+            "expectedTag": "form",
+            "actualTag": "form",
+            "component": "form",
+            "part": "root",
+            "beforeSha256Input": "FORM:form:root:"
+          },
+          {
+            "primitive": "hover-card",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "hover-card",
+            "part": "root",
+            "beforeSha256Input": "DIV:hover-card:root:"
+          },
+          {
+            "primitive": "image-cropper",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "image-cropper",
+            "part": "root",
+            "beforeSha256Input": "DIV:image-cropper:root:"
+          },
+          {
+            "primitive": "input",
+            "observed": true,
+            "expectedTag": "input",
+            "actualTag": "input",
+            "component": "input",
+            "part": "root",
+            "beforeSha256Input": "INPUT:input:root:"
+          },
+          {
+            "primitive": "listbox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "listbox",
+            "part": "root",
+            "beforeSha256Input": "DIV:listbox:root:"
+          },
+          {
+            "primitive": "marquee",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "marquee",
+            "part": "root",
+            "beforeSha256Input": "DIV:marquee:root:"
+          },
+          {
+            "primitive": "menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:menu:root:"
+          },
+          {
+            "primitive": "menubar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menubar",
+            "part": "root",
+            "beforeSha256Input": "DIV:menubar:root:menubar"
+          },
+          {
+            "primitive": "meter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "meter",
+            "part": "root",
+            "beforeSha256Input": "DIV:meter:root:meter"
+          },
+          {
+            "primitive": "navigation-menu",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "navigation-menu",
+            "part": "root",
+            "beforeSha256Input": "NAV:navigation-menu:root:navigation"
+          },
+          {
+            "primitive": "number-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "number-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:number-input:root:"
+          },
+          {
+            "primitive": "pagination",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "pagination",
+            "part": "root",
+            "beforeSha256Input": "NAV:pagination:root:navigation"
+          },
+          {
+            "primitive": "password-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "password-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:password-input:root:"
+          },
+          {
+            "primitive": "pin-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "pin-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:pin-input:root:"
+          },
+          {
+            "primitive": "popover",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "popover",
+            "part": "root",
+            "beforeSha256Input": "DIV:popover:root:"
+          },
+          {
+            "primitive": "progress",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "progress",
+            "part": "root",
+            "beforeSha256Input": "DIV:progress:root:progressbar"
+          },
+          {
+            "primitive": "qr-code",
+            "observed": true,
+            "expectedTag": "figure",
+            "actualTag": "figure",
+            "component": "qr-code",
+            "part": "root",
+            "beforeSha256Input": "FIGURE:qr-code:root:"
+          },
+          {
+            "primitive": "radio-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "radio-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:radio-group:root:radiogroup"
+          },
+          {
+            "primitive": "rating-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "rating-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:rating-group:root:radiogroup"
+          },
+          {
+            "primitive": "scroll-area",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "scroll-area",
+            "part": "root",
+            "beforeSha256Input": "DIV:scroll-area:root:presentation"
+          },
+          {
+            "primitive": "segment-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "segment-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:segment-group:root:radiogroup"
+          },
+          {
+            "primitive": "select",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "select",
+            "part": "root",
+            "beforeSha256Input": "DIV:select:root:"
+          },
+          {
+            "primitive": "separator",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "separator",
+            "part": "root",
+            "beforeSha256Input": "DIV:separator:root:separator"
+          },
+          {
+            "primitive": "signature-pad",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "signature-pad",
+            "part": "root",
+            "beforeSha256Input": "DIV:signature-pad:root:"
+          },
+          {
+            "primitive": "slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:slider:root:group"
+          },
+          {
+            "primitive": "splitter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "splitter",
+            "part": "root",
+            "beforeSha256Input": "DIV:splitter:root:group"
+          },
+          {
+            "primitive": "steps",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "steps",
+            "part": "root",
+            "beforeSha256Input": "NAV:steps:root:navigation"
+          },
+          {
+            "primitive": "switch",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "switch",
+            "part": "root",
+            "beforeSha256Input": "LABEL:switch:root:"
+          },
+          {
+            "primitive": "tabs",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tabs",
+            "part": "root",
+            "beforeSha256Input": "DIV:tabs:root:"
+          },
+          {
+            "primitive": "tags-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tags-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:tags-input:root:"
+          },
+          {
+            "primitive": "timer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "timer",
+            "part": "root",
+            "beforeSha256Input": "DIV:timer:root:group"
+          },
+          {
+            "primitive": "toast",
+            "observed": true,
+            "expectedTag": "ol",
+            "actualTag": "ol",
+            "component": "toast",
+            "part": "viewport",
+            "beforeSha256Input": "OL:toast:viewport:region"
+          },
+          {
+            "primitive": "toggle",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "toggle",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:toggle:root:"
+          },
+          {
+            "primitive": "toggle-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toggle-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:toggle-group:root:group"
+          },
+          {
+            "primitive": "toolbar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toolbar",
+            "part": "root",
+            "beforeSha256Input": "DIV:toolbar:root:toolbar"
+          },
+          {
+            "primitive": "tooltip",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "tooltip",
+            "part": "root",
+            "beforeSha256Input": "SPAN:tooltip:root:"
+          },
+          {
+            "primitive": "tour",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tour",
+            "part": "root",
+            "beforeSha256Input": "DIV:tour:root:"
+          },
+          {
+            "primitive": "tree-view",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tree-view",
+            "part": "root",
+            "beforeSha256Input": "DIV:tree-view:root:"
+          }
+        ],
+        "axeSeriousCritical": {
+          "violations": [],
+          "incompletes": [
+            {
+              "id": "aria-required-children",
+              "impact": "critical",
+              "nodeCount": 1
+            },
+            {
+              "id": "aria-valid-attr-value",
+              "impact": "critical",
+              "nodeCount": 7
+            }
+          ]
+        },
+        "errors": []
+      }
+    },
+    {
+      "framework": "svelte",
+      "deliveryMode": "package",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "715384de9fe3d6224cd07d125fcc65b1e83e0587b77bf47d770012ff193dae2b",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/svelte-check --tsconfig ./tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "522bf154b96f0e0db541dcccc0703cca16010529fc1bcca424996936b017079b"
+      },
+      "browser": {
+        "status": "passed",
+        "explicitAssertions": [
+          {
+            "primitive": "accordion",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "accordion",
+            "part": "root",
+            "beforeSha256Input": "DIV:accordion:root:"
+          },
+          {
+            "primitive": "alert-dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "alert-dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:alert-dialog:root:"
+          },
+          {
+            "primitive": "angle-slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "angle-slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:angle-slider:root:"
+          },
+          {
+            "primitive": "autocomplete",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "autocomplete",
+            "part": "root",
+            "beforeSha256Input": "DIV:autocomplete:root:"
+          },
+          {
+            "primitive": "avatar",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "avatar",
+            "part": "root",
+            "beforeSha256Input": "SPAN:avatar:root:"
+          },
+          {
+            "primitive": "button",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "button",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:button:root:"
+          },
+          {
+            "primitive": "carousel",
+            "observed": true,
+            "expectedTag": "section",
+            "actualTag": "section",
+            "component": "carousel",
+            "part": "root",
+            "beforeSha256Input": "SECTION:carousel:root:region"
+          },
+          {
+            "primitive": "checkbox",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "checkbox",
+            "part": "root",
+            "beforeSha256Input": "LABEL:checkbox:root:"
+          },
+          {
+            "primitive": "checkbox-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "checkbox-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:checkbox-group:root:"
+          },
+          {
+            "primitive": "clipboard",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "clipboard",
+            "part": "root",
+            "beforeSha256Input": "DIV:clipboard:root:"
+          },
+          {
+            "primitive": "collapsible",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "collapsible",
+            "part": "root",
+            "beforeSha256Input": "DIV:collapsible:root:presentation"
+          },
+          {
+            "primitive": "color-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "color-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:color-picker:root:"
+          },
+          {
+            "primitive": "combobox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "combobox",
+            "part": "root",
+            "beforeSha256Input": "DIV:combobox:root:"
+          },
+          {
+            "primitive": "context-menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "context-menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:context-menu:root:"
+          },
+          {
+            "primitive": "date-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-input:root:group"
+          },
+          {
+            "primitive": "date-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-picker:root:"
+          },
+          {
+            "primitive": "dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:dialog:root:"
+          },
+          {
+            "primitive": "drawer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "drawer",
+            "part": "root",
+            "beforeSha256Input": "DIV:drawer:root:"
+          },
+          {
+            "primitive": "editable",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "editable",
+            "part": "root",
+            "beforeSha256Input": "DIV:editable:root:"
+          },
+          {
+            "primitive": "field",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "field",
+            "part": "root",
+            "beforeSha256Input": "DIV:field:root:"
+          },
+          {
+            "primitive": "fieldset",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "fieldset",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:fieldset:root:"
+          },
+          {
+            "primitive": "file-upload",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "file-upload",
+            "part": "root",
+            "beforeSha256Input": "DIV:file-upload:root:"
+          },
+          {
+            "primitive": "floating-panel",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "floating-panel",
+            "part": "root",
+            "beforeSha256Input": "DIV:floating-panel:root:"
+          },
+          {
+            "primitive": "form",
+            "observed": true,
+            "expectedTag": "form",
+            "actualTag": "form",
+            "component": "form",
+            "part": "root",
+            "beforeSha256Input": "FORM:form:root:"
+          },
+          {
+            "primitive": "hover-card",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "hover-card",
+            "part": "root",
+            "beforeSha256Input": "DIV:hover-card:root:"
+          },
+          {
+            "primitive": "image-cropper",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "image-cropper",
+            "part": "root",
+            "beforeSha256Input": "DIV:image-cropper:root:"
+          },
+          {
+            "primitive": "input",
+            "observed": true,
+            "expectedTag": "input",
+            "actualTag": "input",
+            "component": "input",
+            "part": "root",
+            "beforeSha256Input": "INPUT:input:root:"
+          },
+          {
+            "primitive": "listbox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "listbox",
+            "part": "root",
+            "beforeSha256Input": "DIV:listbox:root:"
+          },
+          {
+            "primitive": "marquee",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "marquee",
+            "part": "root",
+            "beforeSha256Input": "DIV:marquee:root:"
+          },
+          {
+            "primitive": "menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:menu:root:"
+          },
+          {
+            "primitive": "menubar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menubar",
+            "part": "root",
+            "beforeSha256Input": "DIV:menubar:root:menubar"
+          },
+          {
+            "primitive": "meter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "meter",
+            "part": "root",
+            "beforeSha256Input": "DIV:meter:root:meter"
+          },
+          {
+            "primitive": "navigation-menu",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "navigation-menu",
+            "part": "root",
+            "beforeSha256Input": "NAV:navigation-menu:root:navigation"
+          },
+          {
+            "primitive": "number-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "number-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:number-input:root:"
+          },
+          {
+            "primitive": "pagination",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "pagination",
+            "part": "root",
+            "beforeSha256Input": "NAV:pagination:root:navigation"
+          },
+          {
+            "primitive": "password-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "password-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:password-input:root:"
+          },
+          {
+            "primitive": "pin-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "pin-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:pin-input:root:"
+          },
+          {
+            "primitive": "popover",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "popover",
+            "part": "root",
+            "beforeSha256Input": "DIV:popover:root:"
+          },
+          {
+            "primitive": "progress",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "progress",
+            "part": "root",
+            "beforeSha256Input": "DIV:progress:root:progressbar"
+          },
+          {
+            "primitive": "qr-code",
+            "observed": true,
+            "expectedTag": "figure",
+            "actualTag": "figure",
+            "component": "qr-code",
+            "part": "root",
+            "beforeSha256Input": "FIGURE:qr-code:root:"
+          },
+          {
+            "primitive": "radio-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "radio-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:radio-group:root:radiogroup"
+          },
+          {
+            "primitive": "rating-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "rating-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:rating-group:root:radiogroup"
+          },
+          {
+            "primitive": "scroll-area",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "scroll-area",
+            "part": "root",
+            "beforeSha256Input": "DIV:scroll-area:root:presentation"
+          },
+          {
+            "primitive": "segment-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "segment-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:segment-group:root:radiogroup"
+          },
+          {
+            "primitive": "select",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "select",
+            "part": "root",
+            "beforeSha256Input": "DIV:select:root:"
+          },
+          {
+            "primitive": "separator",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "separator",
+            "part": "root",
+            "beforeSha256Input": "DIV:separator:root:separator"
+          },
+          {
+            "primitive": "signature-pad",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "signature-pad",
+            "part": "root",
+            "beforeSha256Input": "DIV:signature-pad:root:"
+          },
+          {
+            "primitive": "slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:slider:root:group"
+          },
+          {
+            "primitive": "splitter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "splitter",
+            "part": "root",
+            "beforeSha256Input": "DIV:splitter:root:group"
+          },
+          {
+            "primitive": "steps",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "steps",
+            "part": "root",
+            "beforeSha256Input": "NAV:steps:root:navigation"
+          },
+          {
+            "primitive": "switch",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "switch",
+            "part": "root",
+            "beforeSha256Input": "LABEL:switch:root:"
+          },
+          {
+            "primitive": "tabs",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tabs",
+            "part": "root",
+            "beforeSha256Input": "DIV:tabs:root:"
+          },
+          {
+            "primitive": "tags-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tags-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:tags-input:root:"
+          },
+          {
+            "primitive": "timer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "timer",
+            "part": "root",
+            "beforeSha256Input": "DIV:timer:root:group"
+          },
+          {
+            "primitive": "toast",
+            "observed": true,
+            "expectedTag": "ol",
+            "actualTag": "ol",
+            "component": "toast",
+            "part": "viewport",
+            "beforeSha256Input": "OL:toast:viewport:region"
+          },
+          {
+            "primitive": "toggle",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "toggle",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:toggle:root:"
+          },
+          {
+            "primitive": "toggle-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toggle-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:toggle-group:root:group"
+          },
+          {
+            "primitive": "toolbar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toolbar",
+            "part": "root",
+            "beforeSha256Input": "DIV:toolbar:root:toolbar"
+          },
+          {
+            "primitive": "tooltip",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "tooltip",
+            "part": "root",
+            "beforeSha256Input": "SPAN:tooltip:root:"
+          },
+          {
+            "primitive": "tour",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tour",
+            "part": "root",
+            "beforeSha256Input": "DIV:tour:root:"
+          },
+          {
+            "primitive": "tree-view",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tree-view",
+            "part": "root",
+            "beforeSha256Input": "DIV:tree-view:root:"
+          }
+        ],
+        "axeSeriousCritical": {
+          "violations": [],
+          "incompletes": [
+            {
+              "id": "aria-required-children",
+              "impact": "critical",
+              "nodeCount": 1
+            },
+            {
+              "id": "aria-valid-attr-value",
+              "impact": "critical",
+              "nodeCount": 7
+            }
+          ]
+        },
+        "errors": []
+      }
+    },
+    {
+      "framework": "svelte",
+      "deliveryMode": "source",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "47103d325ea33bd2f953b432d5c16a4748122406244eb2d495d79f0f4009602b",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/svelte-check --tsconfig ./tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "88fe284568084b76da02506e69817b43e66a82292104f2a468979bbbc0e28771"
+      },
+      "browser": {
+        "status": "passed",
+        "explicitAssertions": [
+          {
+            "primitive": "accordion",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "accordion",
+            "part": "root",
+            "beforeSha256Input": "DIV:accordion:root:"
+          },
+          {
+            "primitive": "alert-dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "alert-dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:alert-dialog:root:"
+          },
+          {
+            "primitive": "angle-slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "angle-slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:angle-slider:root:"
+          },
+          {
+            "primitive": "autocomplete",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "autocomplete",
+            "part": "root",
+            "beforeSha256Input": "DIV:autocomplete:root:"
+          },
+          {
+            "primitive": "avatar",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "avatar",
+            "part": "root",
+            "beforeSha256Input": "SPAN:avatar:root:"
+          },
+          {
+            "primitive": "button",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "button",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:button:root:"
+          },
+          {
+            "primitive": "carousel",
+            "observed": true,
+            "expectedTag": "section",
+            "actualTag": "section",
+            "component": "carousel",
+            "part": "root",
+            "beforeSha256Input": "SECTION:carousel:root:region"
+          },
+          {
+            "primitive": "checkbox",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "checkbox",
+            "part": "root",
+            "beforeSha256Input": "LABEL:checkbox:root:"
+          },
+          {
+            "primitive": "checkbox-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "checkbox-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:checkbox-group:root:"
+          },
+          {
+            "primitive": "clipboard",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "clipboard",
+            "part": "root",
+            "beforeSha256Input": "DIV:clipboard:root:"
+          },
+          {
+            "primitive": "collapsible",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "collapsible",
+            "part": "root",
+            "beforeSha256Input": "DIV:collapsible:root:presentation"
+          },
+          {
+            "primitive": "color-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "color-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:color-picker:root:"
+          },
+          {
+            "primitive": "combobox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "combobox",
+            "part": "root",
+            "beforeSha256Input": "DIV:combobox:root:"
+          },
+          {
+            "primitive": "context-menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "context-menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:context-menu:root:"
+          },
+          {
+            "primitive": "date-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-input:root:group"
+          },
+          {
+            "primitive": "date-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-picker:root:"
+          },
+          {
+            "primitive": "dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:dialog:root:"
+          },
+          {
+            "primitive": "drawer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "drawer",
+            "part": "root",
+            "beforeSha256Input": "DIV:drawer:root:"
+          },
+          {
+            "primitive": "editable",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "editable",
+            "part": "root",
+            "beforeSha256Input": "DIV:editable:root:"
+          },
+          {
+            "primitive": "field",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "field",
+            "part": "root",
+            "beforeSha256Input": "DIV:field:root:"
+          },
+          {
+            "primitive": "fieldset",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "fieldset",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:fieldset:root:"
+          },
+          {
+            "primitive": "file-upload",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "file-upload",
+            "part": "root",
+            "beforeSha256Input": "DIV:file-upload:root:"
+          },
+          {
+            "primitive": "floating-panel",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "floating-panel",
+            "part": "root",
+            "beforeSha256Input": "DIV:floating-panel:root:"
+          },
+          {
+            "primitive": "form",
+            "observed": true,
+            "expectedTag": "form",
+            "actualTag": "form",
+            "component": "form",
+            "part": "root",
+            "beforeSha256Input": "FORM:form:root:"
+          },
+          {
+            "primitive": "hover-card",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "hover-card",
+            "part": "root",
+            "beforeSha256Input": "DIV:hover-card:root:"
+          },
+          {
+            "primitive": "image-cropper",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "image-cropper",
+            "part": "root",
+            "beforeSha256Input": "DIV:image-cropper:root:"
+          },
+          {
+            "primitive": "input",
+            "observed": true,
+            "expectedTag": "input",
+            "actualTag": "input",
+            "component": "input",
+            "part": "root",
+            "beforeSha256Input": "INPUT:input:root:"
+          },
+          {
+            "primitive": "listbox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "listbox",
+            "part": "root",
+            "beforeSha256Input": "DIV:listbox:root:"
+          },
+          {
+            "primitive": "marquee",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "marquee",
+            "part": "root",
+            "beforeSha256Input": "DIV:marquee:root:"
+          },
+          {
+            "primitive": "menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:menu:root:"
+          },
+          {
+            "primitive": "menubar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menubar",
+            "part": "root",
+            "beforeSha256Input": "DIV:menubar:root:menubar"
+          },
+          {
+            "primitive": "meter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "meter",
+            "part": "root",
+            "beforeSha256Input": "DIV:meter:root:meter"
+          },
+          {
+            "primitive": "navigation-menu",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "navigation-menu",
+            "part": "root",
+            "beforeSha256Input": "NAV:navigation-menu:root:navigation"
+          },
+          {
+            "primitive": "number-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "number-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:number-input:root:"
+          },
+          {
+            "primitive": "pagination",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "pagination",
+            "part": "root",
+            "beforeSha256Input": "NAV:pagination:root:navigation"
+          },
+          {
+            "primitive": "password-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "password-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:password-input:root:"
+          },
+          {
+            "primitive": "pin-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "pin-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:pin-input:root:"
+          },
+          {
+            "primitive": "popover",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "popover",
+            "part": "root",
+            "beforeSha256Input": "DIV:popover:root:"
+          },
+          {
+            "primitive": "progress",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "progress",
+            "part": "root",
+            "beforeSha256Input": "DIV:progress:root:progressbar"
+          },
+          {
+            "primitive": "qr-code",
+            "observed": true,
+            "expectedTag": "figure",
+            "actualTag": "figure",
+            "component": "qr-code",
+            "part": "root",
+            "beforeSha256Input": "FIGURE:qr-code:root:"
+          },
+          {
+            "primitive": "radio-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "radio-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:radio-group:root:radiogroup"
+          },
+          {
+            "primitive": "rating-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "rating-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:rating-group:root:radiogroup"
+          },
+          {
+            "primitive": "scroll-area",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "scroll-area",
+            "part": "root",
+            "beforeSha256Input": "DIV:scroll-area:root:presentation"
+          },
+          {
+            "primitive": "segment-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "segment-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:segment-group:root:radiogroup"
+          },
+          {
+            "primitive": "select",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "select",
+            "part": "root",
+            "beforeSha256Input": "DIV:select:root:"
+          },
+          {
+            "primitive": "separator",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "separator",
+            "part": "root",
+            "beforeSha256Input": "DIV:separator:root:separator"
+          },
+          {
+            "primitive": "signature-pad",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "signature-pad",
+            "part": "root",
+            "beforeSha256Input": "DIV:signature-pad:root:"
+          },
+          {
+            "primitive": "slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:slider:root:group"
+          },
+          {
+            "primitive": "splitter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "splitter",
+            "part": "root",
+            "beforeSha256Input": "DIV:splitter:root:group"
+          },
+          {
+            "primitive": "steps",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "steps",
+            "part": "root",
+            "beforeSha256Input": "NAV:steps:root:navigation"
+          },
+          {
+            "primitive": "switch",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "switch",
+            "part": "root",
+            "beforeSha256Input": "LABEL:switch:root:"
+          },
+          {
+            "primitive": "tabs",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tabs",
+            "part": "root",
+            "beforeSha256Input": "DIV:tabs:root:"
+          },
+          {
+            "primitive": "tags-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tags-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:tags-input:root:"
+          },
+          {
+            "primitive": "timer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "timer",
+            "part": "root",
+            "beforeSha256Input": "DIV:timer:root:group"
+          },
+          {
+            "primitive": "toast",
+            "observed": true,
+            "expectedTag": "ol",
+            "actualTag": "ol",
+            "component": "toast",
+            "part": "viewport",
+            "beforeSha256Input": "OL:toast:viewport:region"
+          },
+          {
+            "primitive": "toggle",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "toggle",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:toggle:root:"
+          },
+          {
+            "primitive": "toggle-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toggle-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:toggle-group:root:group"
+          },
+          {
+            "primitive": "toolbar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toolbar",
+            "part": "root",
+            "beforeSha256Input": "DIV:toolbar:root:toolbar"
+          },
+          {
+            "primitive": "tooltip",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "tooltip",
+            "part": "root",
+            "beforeSha256Input": "SPAN:tooltip:root:"
+          },
+          {
+            "primitive": "tour",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tour",
+            "part": "root",
+            "beforeSha256Input": "DIV:tour:root:"
+          },
+          {
+            "primitive": "tree-view",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tree-view",
+            "part": "root",
+            "beforeSha256Input": "DIV:tree-view:root:"
+          }
+        ],
+        "axeSeriousCritical": {
+          "violations": [],
+          "incompletes": [
+            {
+              "id": "aria-required-children",
+              "impact": "critical",
+              "nodeCount": 1
+            },
+            {
+              "id": "aria-valid-attr-value",
+              "impact": "critical",
+              "nodeCount": 7
+            }
+          ]
+        },
+        "errors": []
+      }
+    },
+    {
+      "framework": "solid",
+      "deliveryMode": "package",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "3f336f090946f11b8fb620b52208a90472e102344f383ccabda569d3fa315f63",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "24ac85afa402c880978a7dcdef59a9fdcf97836d514ef9b7cd0f7f6d79640656"
+      },
+      "browser": {
+        "status": "passed",
+        "explicitAssertions": [
+          {
+            "primitive": "accordion",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "accordion",
+            "part": "root",
+            "beforeSha256Input": "DIV:accordion:root:"
+          },
+          {
+            "primitive": "alert-dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "alert-dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:alert-dialog:root:"
+          },
+          {
+            "primitive": "angle-slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "angle-slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:angle-slider:root:"
+          },
+          {
+            "primitive": "autocomplete",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "autocomplete",
+            "part": "root",
+            "beforeSha256Input": "DIV:autocomplete:root:"
+          },
+          {
+            "primitive": "avatar",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "avatar",
+            "part": "root",
+            "beforeSha256Input": "SPAN:avatar:root:"
+          },
+          {
+            "primitive": "button",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "button",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:button:root:"
+          },
+          {
+            "primitive": "carousel",
+            "observed": true,
+            "expectedTag": "section",
+            "actualTag": "section",
+            "component": "carousel",
+            "part": "root",
+            "beforeSha256Input": "SECTION:carousel:root:region"
+          },
+          {
+            "primitive": "checkbox",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "checkbox",
+            "part": "root",
+            "beforeSha256Input": "LABEL:checkbox:root:"
+          },
+          {
+            "primitive": "checkbox-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "checkbox-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:checkbox-group:root:"
+          },
+          {
+            "primitive": "clipboard",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "clipboard",
+            "part": "root",
+            "beforeSha256Input": "DIV:clipboard:root:"
+          },
+          {
+            "primitive": "collapsible",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "collapsible",
+            "part": "root",
+            "beforeSha256Input": "DIV:collapsible:root:presentation"
+          },
+          {
+            "primitive": "color-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "color-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:color-picker:root:"
+          },
+          {
+            "primitive": "combobox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "combobox",
+            "part": "root",
+            "beforeSha256Input": "DIV:combobox:root:"
+          },
+          {
+            "primitive": "context-menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "context-menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:context-menu:root:"
+          },
+          {
+            "primitive": "date-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-input:root:group"
+          },
+          {
+            "primitive": "date-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-picker:root:"
+          },
+          {
+            "primitive": "dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:dialog:root:"
+          },
+          {
+            "primitive": "drawer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "drawer",
+            "part": "root",
+            "beforeSha256Input": "DIV:drawer:root:"
+          },
+          {
+            "primitive": "editable",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "editable",
+            "part": "root",
+            "beforeSha256Input": "DIV:editable:root:"
+          },
+          {
+            "primitive": "field",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "field",
+            "part": "root",
+            "beforeSha256Input": "DIV:field:root:"
+          },
+          {
+            "primitive": "fieldset",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "fieldset",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:fieldset:root:"
+          },
+          {
+            "primitive": "file-upload",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "file-upload",
+            "part": "root",
+            "beforeSha256Input": "DIV:file-upload:root:"
+          },
+          {
+            "primitive": "floating-panel",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "floating-panel",
+            "part": "root",
+            "beforeSha256Input": "DIV:floating-panel:root:"
+          },
+          {
+            "primitive": "form",
+            "observed": true,
+            "expectedTag": "form",
+            "actualTag": "form",
+            "component": "form",
+            "part": "root",
+            "beforeSha256Input": "FORM:form:root:"
+          },
+          {
+            "primitive": "hover-card",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "hover-card",
+            "part": "root",
+            "beforeSha256Input": "DIV:hover-card:root:"
+          },
+          {
+            "primitive": "image-cropper",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "image-cropper",
+            "part": "root",
+            "beforeSha256Input": "DIV:image-cropper:root:"
+          },
+          {
+            "primitive": "input",
+            "observed": true,
+            "expectedTag": "input",
+            "actualTag": "input",
+            "component": "input",
+            "part": "root",
+            "beforeSha256Input": "INPUT:input:root:"
+          },
+          {
+            "primitive": "listbox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "listbox",
+            "part": "root",
+            "beforeSha256Input": "DIV:listbox:root:"
+          },
+          {
+            "primitive": "marquee",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "marquee",
+            "part": "root",
+            "beforeSha256Input": "DIV:marquee:root:"
+          },
+          {
+            "primitive": "menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:menu:root:"
+          },
+          {
+            "primitive": "menubar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menubar",
+            "part": "root",
+            "beforeSha256Input": "DIV:menubar:root:menubar"
+          },
+          {
+            "primitive": "meter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "meter",
+            "part": "root",
+            "beforeSha256Input": "DIV:meter:root:meter"
+          },
+          {
+            "primitive": "navigation-menu",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "navigation-menu",
+            "part": "root",
+            "beforeSha256Input": "NAV:navigation-menu:root:navigation"
+          },
+          {
+            "primitive": "number-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "number-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:number-input:root:"
+          },
+          {
+            "primitive": "pagination",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "pagination",
+            "part": "root",
+            "beforeSha256Input": "NAV:pagination:root:navigation"
+          },
+          {
+            "primitive": "password-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "password-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:password-input:root:"
+          },
+          {
+            "primitive": "pin-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "pin-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:pin-input:root:"
+          },
+          {
+            "primitive": "popover",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "popover",
+            "part": "root",
+            "beforeSha256Input": "DIV:popover:root:"
+          },
+          {
+            "primitive": "progress",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "progress",
+            "part": "root",
+            "beforeSha256Input": "DIV:progress:root:progressbar"
+          },
+          {
+            "primitive": "qr-code",
+            "observed": true,
+            "expectedTag": "figure",
+            "actualTag": "figure",
+            "component": "qr-code",
+            "part": "root",
+            "beforeSha256Input": "FIGURE:qr-code:root:"
+          },
+          {
+            "primitive": "radio-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "radio-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:radio-group:root:radiogroup"
+          },
+          {
+            "primitive": "rating-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "rating-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:rating-group:root:radiogroup"
+          },
+          {
+            "primitive": "scroll-area",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "scroll-area",
+            "part": "root",
+            "beforeSha256Input": "DIV:scroll-area:root:presentation"
+          },
+          {
+            "primitive": "segment-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "segment-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:segment-group:root:radiogroup"
+          },
+          {
+            "primitive": "select",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "select",
+            "part": "root",
+            "beforeSha256Input": "DIV:select:root:"
+          },
+          {
+            "primitive": "separator",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "separator",
+            "part": "root",
+            "beforeSha256Input": "DIV:separator:root:separator"
+          },
+          {
+            "primitive": "signature-pad",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "signature-pad",
+            "part": "root",
+            "beforeSha256Input": "DIV:signature-pad:root:"
+          },
+          {
+            "primitive": "slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:slider:root:group"
+          },
+          {
+            "primitive": "splitter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "splitter",
+            "part": "root",
+            "beforeSha256Input": "DIV:splitter:root:group"
+          },
+          {
+            "primitive": "steps",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "steps",
+            "part": "root",
+            "beforeSha256Input": "NAV:steps:root:navigation"
+          },
+          {
+            "primitive": "switch",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "switch",
+            "part": "root",
+            "beforeSha256Input": "LABEL:switch:root:"
+          },
+          {
+            "primitive": "tabs",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tabs",
+            "part": "root",
+            "beforeSha256Input": "DIV:tabs:root:"
+          },
+          {
+            "primitive": "tags-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tags-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:tags-input:root:"
+          },
+          {
+            "primitive": "timer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "timer",
+            "part": "root",
+            "beforeSha256Input": "DIV:timer:root:group"
+          },
+          {
+            "primitive": "toast",
+            "observed": true,
+            "expectedTag": "ol",
+            "actualTag": "ol",
+            "component": "toast",
+            "part": "viewport",
+            "beforeSha256Input": "OL:toast:viewport:region"
+          },
+          {
+            "primitive": "toggle",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "toggle",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:toggle:root:"
+          },
+          {
+            "primitive": "toggle-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toggle-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:toggle-group:root:group"
+          },
+          {
+            "primitive": "toolbar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toolbar",
+            "part": "root",
+            "beforeSha256Input": "DIV:toolbar:root:toolbar"
+          },
+          {
+            "primitive": "tooltip",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "tooltip",
+            "part": "root",
+            "beforeSha256Input": "SPAN:tooltip:root:"
+          },
+          {
+            "primitive": "tour",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tour",
+            "part": "root",
+            "beforeSha256Input": "DIV:tour:root:"
+          },
+          {
+            "primitive": "tree-view",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tree-view",
+            "part": "root",
+            "beforeSha256Input": "DIV:tree-view:root:"
+          }
+        ],
+        "axeSeriousCritical": {
+          "violations": [],
+          "incompletes": [
+            {
+              "id": "aria-required-children",
+              "impact": "critical",
+              "nodeCount": 1
+            },
+            {
+              "id": "aria-valid-attr-value",
+              "impact": "critical",
+              "nodeCount": 7
+            }
+          ]
+        },
+        "errors": []
+      }
+    },
+    {
+      "framework": "solid",
+      "deliveryMode": "source",
+      "status": "passed",
+      "sampleCount": 61,
+      "componentCount": 61,
+      "packageLockSha256": "e08997fe4656aebec3ad899e1df07484b8e68c2f0afedeccb92ade45c4ef02ff",
+      "typecheck": {
+        "status": "passed",
+        "command": "node_modules/.bin/tsc --project tsconfig.json"
+      },
+      "build": {
+        "status": "passed",
+        "command": "node_modules/.bin/vite build",
+        "stdoutSha256": "bb6af413c2f30757a57d005bde6cbd3faf76c8b68e8d8e904c1652f14fda73cc"
+      },
+      "browser": {
+        "status": "passed",
+        "explicitAssertions": [
+          {
+            "primitive": "accordion",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "accordion",
+            "part": "root",
+            "beforeSha256Input": "DIV:accordion:root:"
+          },
+          {
+            "primitive": "alert-dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "alert-dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:alert-dialog:root:"
+          },
+          {
+            "primitive": "angle-slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "angle-slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:angle-slider:root:"
+          },
+          {
+            "primitive": "autocomplete",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "autocomplete",
+            "part": "root",
+            "beforeSha256Input": "DIV:autocomplete:root:"
+          },
+          {
+            "primitive": "avatar",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "avatar",
+            "part": "root",
+            "beforeSha256Input": "SPAN:avatar:root:"
+          },
+          {
+            "primitive": "button",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "button",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:button:root:"
+          },
+          {
+            "primitive": "carousel",
+            "observed": true,
+            "expectedTag": "section",
+            "actualTag": "section",
+            "component": "carousel",
+            "part": "root",
+            "beforeSha256Input": "SECTION:carousel:root:region"
+          },
+          {
+            "primitive": "checkbox",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "checkbox",
+            "part": "root",
+            "beforeSha256Input": "LABEL:checkbox:root:"
+          },
+          {
+            "primitive": "checkbox-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "checkbox-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:checkbox-group:root:"
+          },
+          {
+            "primitive": "clipboard",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "clipboard",
+            "part": "root",
+            "beforeSha256Input": "DIV:clipboard:root:"
+          },
+          {
+            "primitive": "collapsible",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "collapsible",
+            "part": "root",
+            "beforeSha256Input": "DIV:collapsible:root:presentation"
+          },
+          {
+            "primitive": "color-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "color-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:color-picker:root:"
+          },
+          {
+            "primitive": "combobox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "combobox",
+            "part": "root",
+            "beforeSha256Input": "DIV:combobox:root:"
+          },
+          {
+            "primitive": "context-menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "context-menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:context-menu:root:"
+          },
+          {
+            "primitive": "date-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-input:root:group"
+          },
+          {
+            "primitive": "date-picker",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "date-picker",
+            "part": "root",
+            "beforeSha256Input": "DIV:date-picker:root:"
+          },
+          {
+            "primitive": "dialog",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "dialog",
+            "part": "root",
+            "beforeSha256Input": "DIV:dialog:root:"
+          },
+          {
+            "primitive": "drawer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "drawer",
+            "part": "root",
+            "beforeSha256Input": "DIV:drawer:root:"
+          },
+          {
+            "primitive": "editable",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "editable",
+            "part": "root",
+            "beforeSha256Input": "DIV:editable:root:"
+          },
+          {
+            "primitive": "field",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "field",
+            "part": "root",
+            "beforeSha256Input": "DIV:field:root:"
+          },
+          {
+            "primitive": "fieldset",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "fieldset",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:fieldset:root:"
+          },
+          {
+            "primitive": "file-upload",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "file-upload",
+            "part": "root",
+            "beforeSha256Input": "DIV:file-upload:root:"
+          },
+          {
+            "primitive": "floating-panel",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "floating-panel",
+            "part": "root",
+            "beforeSha256Input": "DIV:floating-panel:root:"
+          },
+          {
+            "primitive": "form",
+            "observed": true,
+            "expectedTag": "form",
+            "actualTag": "form",
+            "component": "form",
+            "part": "root",
+            "beforeSha256Input": "FORM:form:root:"
+          },
+          {
+            "primitive": "hover-card",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "hover-card",
+            "part": "root",
+            "beforeSha256Input": "DIV:hover-card:root:"
+          },
+          {
+            "primitive": "image-cropper",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "image-cropper",
+            "part": "root",
+            "beforeSha256Input": "DIV:image-cropper:root:"
+          },
+          {
+            "primitive": "input",
+            "observed": true,
+            "expectedTag": "input",
+            "actualTag": "input",
+            "component": "input",
+            "part": "root",
+            "beforeSha256Input": "INPUT:input:root:"
+          },
+          {
+            "primitive": "listbox",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "listbox",
+            "part": "root",
+            "beforeSha256Input": "DIV:listbox:root:"
+          },
+          {
+            "primitive": "marquee",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "marquee",
+            "part": "root",
+            "beforeSha256Input": "DIV:marquee:root:"
+          },
+          {
+            "primitive": "menu",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menu",
+            "part": "root",
+            "beforeSha256Input": "DIV:menu:root:"
+          },
+          {
+            "primitive": "menubar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "menubar",
+            "part": "root",
+            "beforeSha256Input": "DIV:menubar:root:menubar"
+          },
+          {
+            "primitive": "meter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "meter",
+            "part": "root",
+            "beforeSha256Input": "DIV:meter:root:meter"
+          },
+          {
+            "primitive": "navigation-menu",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "navigation-menu",
+            "part": "root",
+            "beforeSha256Input": "NAV:navigation-menu:root:navigation"
+          },
+          {
+            "primitive": "number-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "number-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:number-input:root:"
+          },
+          {
+            "primitive": "pagination",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "pagination",
+            "part": "root",
+            "beforeSha256Input": "NAV:pagination:root:navigation"
+          },
+          {
+            "primitive": "password-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "password-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:password-input:root:"
+          },
+          {
+            "primitive": "pin-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "pin-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:pin-input:root:"
+          },
+          {
+            "primitive": "popover",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "popover",
+            "part": "root",
+            "beforeSha256Input": "DIV:popover:root:"
+          },
+          {
+            "primitive": "progress",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "progress",
+            "part": "root",
+            "beforeSha256Input": "DIV:progress:root:progressbar"
+          },
+          {
+            "primitive": "qr-code",
+            "observed": true,
+            "expectedTag": "figure",
+            "actualTag": "figure",
+            "component": "qr-code",
+            "part": "root",
+            "beforeSha256Input": "FIGURE:qr-code:root:"
+          },
+          {
+            "primitive": "radio-group",
+            "observed": true,
+            "expectedTag": "fieldset",
+            "actualTag": "fieldset",
+            "component": "radio-group",
+            "part": "root",
+            "beforeSha256Input": "FIELDSET:radio-group:root:radiogroup"
+          },
+          {
+            "primitive": "rating-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "rating-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:rating-group:root:radiogroup"
+          },
+          {
+            "primitive": "scroll-area",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "scroll-area",
+            "part": "root",
+            "beforeSha256Input": "DIV:scroll-area:root:presentation"
+          },
+          {
+            "primitive": "segment-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "segment-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:segment-group:root:radiogroup"
+          },
+          {
+            "primitive": "select",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "select",
+            "part": "root",
+            "beforeSha256Input": "DIV:select:root:"
+          },
+          {
+            "primitive": "separator",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "separator",
+            "part": "root",
+            "beforeSha256Input": "DIV:separator:root:separator"
+          },
+          {
+            "primitive": "signature-pad",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "signature-pad",
+            "part": "root",
+            "beforeSha256Input": "DIV:signature-pad:root:"
+          },
+          {
+            "primitive": "slider",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "slider",
+            "part": "root",
+            "beforeSha256Input": "DIV:slider:root:group"
+          },
+          {
+            "primitive": "splitter",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "splitter",
+            "part": "root",
+            "beforeSha256Input": "DIV:splitter:root:group"
+          },
+          {
+            "primitive": "steps",
+            "observed": true,
+            "expectedTag": "nav",
+            "actualTag": "nav",
+            "component": "steps",
+            "part": "root",
+            "beforeSha256Input": "NAV:steps:root:navigation"
+          },
+          {
+            "primitive": "switch",
+            "observed": true,
+            "expectedTag": "label",
+            "actualTag": "label",
+            "component": "switch",
+            "part": "root",
+            "beforeSha256Input": "LABEL:switch:root:"
+          },
+          {
+            "primitive": "tabs",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tabs",
+            "part": "root",
+            "beforeSha256Input": "DIV:tabs:root:"
+          },
+          {
+            "primitive": "tags-input",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tags-input",
+            "part": "root",
+            "beforeSha256Input": "DIV:tags-input:root:"
+          },
+          {
+            "primitive": "timer",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "timer",
+            "part": "root",
+            "beforeSha256Input": "DIV:timer:root:group"
+          },
+          {
+            "primitive": "toast",
+            "observed": true,
+            "expectedTag": "ol",
+            "actualTag": "ol",
+            "component": "toast",
+            "part": "viewport",
+            "beforeSha256Input": "OL:toast:viewport:region"
+          },
+          {
+            "primitive": "toggle",
+            "observed": true,
+            "expectedTag": "button",
+            "actualTag": "button",
+            "component": "toggle",
+            "part": "root",
+            "beforeSha256Input": "BUTTON:toggle:root:"
+          },
+          {
+            "primitive": "toggle-group",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toggle-group",
+            "part": "root",
+            "beforeSha256Input": "DIV:toggle-group:root:group"
+          },
+          {
+            "primitive": "toolbar",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "toolbar",
+            "part": "root",
+            "beforeSha256Input": "DIV:toolbar:root:toolbar"
+          },
+          {
+            "primitive": "tooltip",
+            "observed": true,
+            "expectedTag": "span",
+            "actualTag": "span",
+            "component": "tooltip",
+            "part": "root",
+            "beforeSha256Input": "SPAN:tooltip:root:"
+          },
+          {
+            "primitive": "tour",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tour",
+            "part": "root",
+            "beforeSha256Input": "DIV:tour:root:"
+          },
+          {
+            "primitive": "tree-view",
+            "observed": true,
+            "expectedTag": "div",
+            "actualTag": "div",
+            "component": "tree-view",
+            "part": "root",
+            "beforeSha256Input": "DIV:tree-view:root:"
+          }
+        ],
+        "axeSeriousCritical": {
+          "violations": [],
+          "incompletes": [
+            {
+              "id": "aria-required-children",
+              "impact": "critical",
+              "nodeCount": 1
+            },
+            {
+              "id": "aria-valid-attr-value",
+              "impact": "critical",
+              "nodeCount": 7
+            }
+          ]
+        },
+        "errors": []
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "mutation": "vue-support-claim",
+      "expected": "UIFN_DOCS_UNSUPPORTED_CLAIM",
+      "observed": "UIFN_DOCS_UNSUPPORTED_CLAIM"
+    },
+    {
+      "mutation": "legacy-state-machine-sample",
+      "expected": "UIFN_DOCS_REMOVED_API",
+      "observed": "UIFN_DOCS_REMOVED_API"
+    }
+  ],
+  "failures": [],
+  "provisionalUntilSignedPhase14Compatibility": true
+}

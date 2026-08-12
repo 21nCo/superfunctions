@@ -1,0 +1,448 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://uifn.dev/schemas/phase-19/independent-review.schema.json",
+  "title": "uifn Phase 19 independent accessibility assessment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "evidenceId",
+    "evidenceClass",
+    "status",
+    "source",
+    "reviewer",
+    "independence",
+    "scope",
+    "methods",
+    "familySamples",
+    "manualEvidenceSetSha256",
+    "defectSetSha256",
+    "matrixDefinitionSha256",
+    "findings",
+    "retests",
+    "defectDispositions",
+    "assessment",
+    "supportStatement",
+    "timing",
+    "signature"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "evidenceId": {
+      "type": "string",
+      "pattern": "^EVID-P19-INDEPENDENT-"
+    },
+    "evidenceClass": {
+      "const": "independentAccessibilityReview"
+    },
+    "status": {
+      "const": "passed"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "dirty",
+        "definitionSha256",
+        "artifactSetSha256",
+        "phase18EvidenceSha256",
+        "matrixDefinitionSha256",
+        "artifacts"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "dirty": {
+          "const": false
+        },
+        "definitionSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "artifactSetSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "phase18EvidenceSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "matrixDefinitionSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "package",
+              "filename",
+              "sha256"
+            ],
+            "properties": {
+              "package": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "participantId"
+      ],
+      "properties": {
+        "participantId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "independence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementedRelevantWave",
+        "reviewerIsImplementationOwner",
+        "conflicts",
+        "statement"
+      ],
+      "properties": {
+        "implementedRelevantWave": {
+          "const": false
+        },
+        "reviewerIsImplementationOwner": {
+          "const": false
+        },
+        "conflicts": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 20
+        }
+      }
+    },
+    "scope": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "normative-ledger",
+          "representative-code-every-family",
+          "automation-and-negative-mutations",
+          "manual-scripts-and-signed-evidence",
+          "matrix-completeness",
+          "defect-disposition-and-retests",
+          "support-claims",
+          "jaws-deferment"
+        ]
+      }
+    },
+    "methods": {
+      "type": "array",
+      "minItems": 4,
+      "items": {
+        "type": "string",
+        "minLength": 20
+      }
+    },
+    "familySamples": {
+      "type": "array",
+      "minItems": 9,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "behaviorFamily",
+          "primitive",
+          "codeReviewed",
+          "evidenceReviewed"
+        ],
+        "properties": {
+          "behaviorFamily": {
+            "type": "string",
+            "minLength": 1
+          },
+          "primitive": {
+            "type": "string",
+            "minLength": 1
+          },
+          "codeReviewed": {
+            "const": true
+          },
+          "evidenceReviewed": {
+            "const": true
+          }
+        }
+      }
+    },
+    "manualEvidenceSetSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "defectSetSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "matrixDefinitionSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "defectId",
+          "status"
+        ],
+        "properties": {
+          "defectId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "verified",
+              "closed"
+            ]
+          }
+        }
+      }
+    },
+    "retests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "defectId",
+          "result",
+          "completedAt",
+          "humanObserved",
+          "automationInferred"
+        ],
+        "properties": {
+          "defectId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "result": {
+            "const": "passed"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "humanObserved": {
+            "const": true
+          },
+          "automationInferred": {
+            "const": false
+          }
+        }
+      }
+    },
+    "defectDispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "defectId",
+          "severity",
+          "status",
+          "reviewed",
+          "decision"
+        ],
+        "properties": {
+          "defectId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "status": {
+            "enum": [
+              "new",
+              "triaged",
+              "mitigated",
+              "resolved",
+              "verified",
+              "closed"
+            ]
+          },
+          "reviewed": {
+            "const": true
+          },
+          "decision": {
+            "type": "string",
+            "minLength": 10
+          }
+        }
+      }
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qualification",
+        "score",
+        "claim",
+        "confidenceGates"
+      ],
+      "properties": {
+        "qualification": {
+          "const": "unqualified"
+        },
+        "score": {
+          "const": 10
+        },
+        "claim": {
+          "const": "accessibility-confidence-10-of-10"
+        },
+        "confidenceGates": {
+          "type": "array",
+          "minItems": 10,
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "status",
+              "evidence"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10
+              },
+              "status": {
+                "const": "passed"
+              },
+              "evidence": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "supportStatement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jaws",
+        "claimsUntestedSupport",
+        "requiredAssistiveTechnologiesPassed"
+      ],
+      "properties": {
+        "jaws": {
+          "const": "not-tested-user-deferred"
+        },
+        "claimsUntestedSupport": {
+          "const": false
+        },
+        "requiredAssistiveTechnologiesPassed": {
+          "const": true
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startedAt",
+        "completedAt",
+        "expiresAt"
+      ],
+      "properties": {
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scheme",
+        "keyId",
+        "signedBy",
+        "signedAt",
+        "payloadSha256",
+        "value"
+      ],
+      "properties": {
+        "scheme": {
+          "const": "ed25519"
+        },
+        "keyId": {
+          "type": "string",
+          "pattern": "^ed25519:[a-f0-9]{64}$"
+        },
+        "signedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payloadSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 40
+        }
+      }
+    }
+  }
+}

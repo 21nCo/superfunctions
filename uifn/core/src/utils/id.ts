@@ -1,9 +1,8 @@
 import { createUIFnError, type UIFnPackageName } from '../errors';
+import { normalizeUIFnToken } from '../algorithms/id';
 
 const DEFAULT_NAMESPACE = 'uifn';
 const DEFAULT_PREFIX = 'id';
-const TOKEN_SANITIZER = /[^a-z0-9-]+/g;
-const REPEATED_DASHES = /-+/g;
 
 export interface IdFactoryOptions {
   namespace?: string;
@@ -49,12 +48,7 @@ export interface DeterministicIdFactory {
 }
 
 function normalizeToken(token: string): string {
-  return token
-    .trim()
-    .toLowerCase()
-    .replace(TOKEN_SANITIZER, '-')
-    .replace(REPEATED_DASHES, '-')
-    .replace(/^-|-$/g, '');
+  return normalizeUIFnToken(token);
 }
 
 function normalizeNamespace(namespace?: string): string {
@@ -234,38 +228,3 @@ export function createIdFactory(options: IdFactoryOptions = {}): IdFactory {
 }
 
 export const createIdScope = createIdFactory;
-
-const globalIdRegistry = createPublicIdRegistry();
-const globalIdFactory = createDeterministicIdFactory({
-  registry: globalIdRegistry,
-});
-
-export function generateId(token = DEFAULT_PREFIX): string {
-  return globalIdFactory.create(token);
-}
-
-export function reusePublicId(
-  existingId: string | null | undefined,
-  input?: string | PublicIdInput
-): string {
-  return globalIdFactory.reuse(existingId, input);
-}
-
-export function registerPublicId(
-  id: string,
-  options: PublicIdAssertionOptions = {}
-): string {
-  return globalIdFactory.register(id, options);
-}
-
-export function resetIdCounters(token?: string): void {
-  globalIdFactory.reset(token);
-}
-
-export function getIdCounterSnapshot(): Record<string, number> {
-  return globalIdFactory.snapshot().counters;
-}
-
-export function getPublicIdSnapshot(): PublicIdSnapshot {
-  return globalIdFactory.snapshot();
-}

@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "PHASE-01-2026-07-18-e7952f1c",
+  "evidenceClass": "automated-unit-contract",
+  "requirementIds": ["SCOPE-001", "CLEAN-001", "EXP-001"],
+  "vectorIds": [
+    "TV-SCOPE-001-P",
+    "TV-SCOPE-001-N",
+    "TV-CLEAN-001-P",
+    "TV-CLEAN-001-N",
+    "TV-EXP-001-P",
+    "TV-EXP-001-N"
+  ],
+  "status": "passed",
+  "source": {
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "dirty": true,
+    "dirtyReason": "Phase implementation is present in an uncommitted working tree; this phase record is not immutable release-candidate evidence.",
+    "lockfileSha256": "949f429eb144479e048a480f74c6be018a1d0a74c3e90578ba27b8dc705fa613",
+    "definitionSha256": "e7952f1c2fc54b14030799c377f89ec54d5ad44dbae8c51efc3e6f045f24521f",
+    "artifactHashes": [
+      {
+        "path": "uifn/package-graph.json",
+        "sha256": "75753613705cb9a4f573c3c91bd153a9e623f99804392d38014a76032ef8e687"
+      },
+      {
+        "path": "uifn/package-graph.schema.json",
+        "sha256": "dc4b4c17c853376ec29478425dee5b41d47af4ca99df51e93dfadfc103d6f299"
+      },
+      {
+        "path": "uifn/release-lanes.json",
+        "sha256": "d1aff8f7c5b4e8d290a5a009635892506c6417a92da059bf060b1bea1a1c041b"
+      },
+      {
+        "path": "scripts/verify-uifn-package-graph.mjs",
+        "sha256": "90e2ea1006b8617d980341ee473262c22fe0282840a666507cc56281daccccca"
+      },
+      {
+        "path": "scripts/verify-uifn-clean.mjs",
+        "sha256": "0af1f3ab076e9adc22c30bb0d0bcd6c6239509033cb97da56aa2b28dbb46246e"
+      },
+      {
+        "path": "scripts/verify-uifn-clean.test.mjs",
+        "sha256": "c5db25ba64d50593a5294fd4a1b00ce8bbd721a6f312215cf3ee2b8c1ae200bf"
+      },
+      {
+        "path": "scripts/verify-uifn-consumers.mjs",
+        "sha256": "b43ff5d1fe51bcdcd0f3ad0d1f26f1f8cffdc2b66ec5dd23c81272076e2a1633"
+      },
+      {
+        "path": "scripts/verify-uifn-stable.mjs",
+        "sha256": "d3616f5a5b9d0223591e81769abf2e6b36e834e444e55a530d9daee18fe0b807"
+      },
+      {
+        "path": "scripts/verify-uifn-experimental.mjs",
+        "sha256": "478bce2e7c69d54ac49d97479a3ac7ca326306b8fd632f2e0f93b32540843a7b"
+      },
+      {
+        "path": "scripts/verify-uifn-lanes.mjs",
+        "sha256": "72b47d3a61c1f168296391aa94c00c6cf871913125e5afaae6a4d81b0e50f872"
+      },
+      {
+        "path": "scripts/verify-uifn-phase-01.mjs",
+        "sha256": "4a521dc04b249c4c1be02f8720c7c53263710761c2ba9baa20d974bb724f5f98"
+      },
+      {
+        "path": "uifn/components/package.json",
+        "sha256": "a914c4351dd4485c233bafd2e96969f0fef73ac7da665a2844cfb780fa45d458"
+      },
+      {
+        "path": "uifn/examples/shared/src/qa-contract.ts",
+        "sha256": "3dba39b242ee649f1400640988760e6b104b8507fcfdfda722a0de87ac9e2a12"
+      },
+      {
+        "path": "uifn/registry/catalog/components/button.json",
+        "sha256": "63bea9d27bf9cf73f64eb49fb0f46bfe6d917165870f76d3885d048cebc13876"
+      }
+    ]
+  },
+  "environment": {
+    "os": "Darwin",
+    "arch": "arm64",
+    "runtime": "Node v20.20.0",
+    "tools": {
+      "npm": "10.8.2",
+      "packageGraphVerifier": "1",
+      "stableLaneVerifier": "1",
+      "experimentalLaneVerifier": "1"
+    },
+    "framework": "React, Svelte, Solid",
+    "browser": null,
+    "assistiveTechnology": null
+  },
+  "timing": {
+    "startedAt": "2026-07-18T05:00:00Z",
+    "completedAt": "2026-07-18T05:19:19Z",
+    "durationMs": 1159000
+  },
+  "counts": {
+    "total": 6,
+    "executed": 6,
+    "passed": 6,
+    "failed": 0,
+    "blocked": 0,
+    "skipped": 0,
+    "notApplicable": 0
+  },
+  "artifacts": [
+    "uifn/package-graph.json",
+    "uifn/package-graph.schema.json",
+    "uifn/release-lanes.json",
+    "uifn/MIGRATION_REMOVED_FRAMEWORKS.md",
+    "scripts/verify-uifn-package-graph.mjs",
+    "scripts/verify-uifn-clean.mjs",
+    "scripts/verify-uifn-clean.test.mjs",
+    "scripts/verify-uifn-consumers.mjs",
+    "scripts/verify-uifn-stable.mjs",
+    "scripts/verify-uifn-experimental.mjs",
+    "scripts/verify-uifn-lanes.mjs",
+    "scripts/verify-uifn-phase-01.mjs",
+    "uifn/components/package.json",
+    "uifn/examples/shared/src/qa-contract.ts",
+    "uifn/registry/catalog/components/button.json"
+  ],
+  "defects": [],
+  "signatures": [
+    {
+      "kind": "automation",
+      "signer": "scripts/verify-uifn-lanes.mjs",
+      "signedAt": "2026-07-18T05:19:19Z",
+      "attestation": "All six PHASE_01 contract vectors passed; the stable lane passed independently and the experimental lane remained non-blocking."
+    }
+  ],
+  "expiresAt": "2026-08-17T05:19:19Z",
+  "supersedes": null
+}

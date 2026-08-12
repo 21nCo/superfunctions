@@ -1,0 +1,271 @@
+{
+  "ok": true,
+  "command": "verify:uifn-catalog-performance",
+  "budgets": {
+    "htmlBytes": 20000,
+    "jsCssRequests": 25,
+    "decodedJsCssBytes": 1500000,
+    "brotliJsCssBytes": 350000,
+    "largestBrotliAssetBytes": 120000
+  },
+  "checks": [
+    {
+      "framework": "react",
+      "route": "/components/react/components/dialog",
+      "status": "passed",
+      "problems": [],
+      "evidence": {
+        "htmlBytes": 9203,
+        "jsCssRequests": 13,
+        "decodedJsCssBytes": 1475683,
+        "brotliJsCssBytes": 274284,
+        "largestBrotliAssetBytes": 73409,
+        "missingAssets": [],
+        "consoleErrors": [],
+        "metrics": {
+          "domContentLoadedMs": 23,
+          "loadMs": 104,
+          "firstContentfulPaintMs": 44
+        },
+        "assets": [
+          {
+            "path": "components/react/_next/static/chunks/13xc1cwf4xa63.css",
+            "decodedBytes": 4821,
+            "brotliBytes": 1255
+          },
+          {
+            "path": "components/react/_next/static/chunks/3fmn0cmx3yt2a.css",
+            "decodedBytes": 73762,
+            "brotliBytes": 8575
+          },
+          {
+            "path": "components/react/_next/static/chunks/25jsubijn5jtg.css",
+            "decodedBytes": 58645,
+            "brotliBytes": 9128
+          },
+          {
+            "path": "components/react/_next/static/chunks/3kkpr3o1m5qw5.js",
+            "decodedBytes": 21080,
+            "brotliBytes": 6244
+          },
+          {
+            "path": "components/react/_next/static/chunks/1g364dj452c15.js",
+            "decodedBytes": 24267,
+            "brotliBytes": 6350
+          },
+          {
+            "path": "components/react/_next/static/chunks/2d08d87trqlak.js",
+            "decodedBytes": 196979,
+            "brotliBytes": 41708
+          },
+          {
+            "path": "components/react/_next/static/chunks/turbopack-1xdz27laui5qz.js",
+            "decodedBytes": 10597,
+            "brotliBytes": 3742
+          },
+          {
+            "path": "components/react/_next/static/chunks/0qsu4ybzqs8ph.js",
+            "decodedBytes": 203384,
+            "brotliBytes": 54741
+          },
+          {
+            "path": "components/react/_next/static/chunks/3wv3kj7ptqn12.js",
+            "decodedBytes": 57898,
+            "brotliBytes": 12089
+          },
+          {
+            "path": "components/react/_next/static/chunks/3riez39dqmeqz.js",
+            "decodedBytes": 6960,
+            "brotliBytes": 1274
+          },
+          {
+            "path": "components/react/_next/static/chunks/2se17gjogwv-b.js",
+            "decodedBytes": 159824,
+            "brotliBytes": 39085
+          },
+          {
+            "path": "components/react/_next/static/chunks/281dls_xxztv0.js",
+            "decodedBytes": 591917,
+            "brotliBytes": 73409
+          },
+          {
+            "path": "components/react/_next/static/chunks/2l556aotlxlvs.js",
+            "decodedBytes": 65549,
+            "brotliBytes": 16684
+          }
+        ]
+      }
+    },
+    {
+      "framework": "svelte",
+      "route": "/components/svelte/components/dialog",
+      "status": "passed",
+      "problems": [],
+      "evidence": {
+        "htmlBytes": 3584,
+        "jsCssRequests": 19,
+        "decodedJsCssBytes": 1086775,
+        "brotliJsCssBytes": 188585,
+        "largestBrotliAssetBytes": 72250,
+        "missingAssets": [],
+        "consoleErrors": [],
+        "metrics": {
+          "domContentLoadedMs": 6,
+          "loadMs": 6,
+          "firstContentfulPaintMs": 116
+        },
+        "assets": [
+          {
+            "path": "components/svelte/_app/immutable/entry/start.B53TPwyO.js",
+            "decodedBytes": 83,
+            "brotliBytes": 87
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/Cj_T0y3E.js",
+            "decodedBytes": 27129,
+            "brotliBytes": 9547
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/C3ehGCV8.js",
+            "decodedBytes": 943,
+            "brotliBytes": 476
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/-qruY114.js",
+            "decodedBytes": 21688,
+            "brotliBytes": 7718
+          },
+          {
+            "path": "components/svelte/_app/immutable/entry/app.CmlmgEaP.js",
+            "decodedBytes": 4892,
+            "brotliBytes": 1807
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/CO8euXg2.js",
+            "decodedBytes": 4685,
+            "brotliBytes": 1990
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/NhMxZ3Ta.js",
+            "decodedBytes": 1528,
+            "brotliBytes": 592
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/DFgazpd3.js",
+            "decodedBytes": 7054,
+            "brotliBytes": 2813
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/BN-Y5p4m.js",
+            "decodedBytes": 1495,
+            "brotliBytes": 690
+          },
+          {
+            "path": "components/svelte/_app/immutable/nodes/2.BoncPIlQ.js",
+            "decodedBytes": 425,
+            "brotliBytes": 233
+          },
+          {
+            "path": "components/svelte/_app/immutable/nodes/0.BgEmp7LE.js",
+            "decodedBytes": 354,
+            "brotliBytes": 225
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/Bt8Geaor.js",
+            "decodedBytes": 186,
+            "brotliBytes": 180
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/CXFMMiZP.js",
+            "decodedBytes": 309045,
+            "brotliBytes": 72250
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/F48hdYIc.js",
+            "decodedBytes": 260951,
+            "brotliBytes": 37899
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/BvHI1ipV.js",
+            "decodedBytes": 233527,
+            "brotliBytes": 16374
+          },
+          {
+            "path": "components/svelte/_app/immutable/assets/0.DplhlZUf.css",
+            "decodedBytes": 138138,
+            "brotliBytes": 17659
+          },
+          {
+            "path": "components/svelte/_app/immutable/nodes/1.D0VsG51F.js",
+            "decodedBytes": 510,
+            "brotliBytes": 282
+          },
+          {
+            "path": "components/svelte/_app/immutable/nodes/3.Ym32pjpT.js",
+            "decodedBytes": 562,
+            "brotliBytes": 308
+          },
+          {
+            "path": "components/svelte/_app/immutable/chunks/CKIvN6H6.js",
+            "decodedBytes": 73580,
+            "brotliBytes": 17455
+          }
+        ]
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/dialog",
+      "status": "passed",
+      "problems": [],
+      "evidence": {
+        "htmlBytes": 3260,
+        "jsCssRequests": 6,
+        "decodedJsCssBytes": 1030722,
+        "brotliJsCssBytes": 160946,
+        "largestBrotliAssetBytes": 71908,
+        "missingAssets": [],
+        "consoleErrors": [],
+        "metrics": {
+          "domContentLoadedMs": 33,
+          "loadMs": 77,
+          "firstContentfulPaintMs": 100
+        },
+        "assets": [
+          {
+            "path": "components/solid/_build/assets/client-DphjH25G.css",
+            "decodedBytes": 137854,
+            "brotliBytes": 17619
+          },
+          {
+            "path": "components/solid/_build/assets/uifn-component-catalog-uT0hG-4I.js",
+            "decodedBytes": 232760,
+            "brotliBytes": 16122
+          },
+          {
+            "path": "components/solid/_build/assets/uifn-catalog-presentation-58XLN13V.js",
+            "decodedBytes": 260940,
+            "brotliBytes": 37961
+          },
+          {
+            "path": "components/solid/_build/assets/client-BollNzKG.js",
+            "decodedBytes": 156,
+            "brotliBytes": 105
+          },
+          {
+            "path": "components/solid/_build/assets/client-CrCt-ryF.js",
+            "decodedBytes": 331776,
+            "brotliBytes": 71908
+          },
+          {
+            "path": "components/solid/_build/assets/dialog-WKcfCQYv.js",
+            "decodedBytes": 67236,
+            "brotliBytes": 17231
+          }
+        ]
+      }
+    }
+  ],
+  "findings": [],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-sites-performance"
+}

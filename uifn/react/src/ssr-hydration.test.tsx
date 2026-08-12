@@ -5,6 +5,7 @@ import { renderToString } from 'react-dom/server';
 import { Combobox, ComboboxContent, ComboboxInput, ComboboxItem } from './combobox';
 import { Dialog, DialogContent, DialogPortal, DialogTitle, DialogTrigger } from './dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './select';
+import { Portal } from './portal';
 
 const INSTANCE_COUNT = 3;
 
@@ -95,6 +96,39 @@ describe('SSR and hydration safety', () => {
     });
 
     errorSpy.mockRestore();
+    document.body.removeChild(container);
+  });
+
+  it('mounts portal descendants only once during hydration', async () => {
+    const lifecycle = vi.fn();
+    function Probe() {
+      React.useEffect(() => {
+        lifecycle('mount');
+        return () => lifecycle('unmount');
+      }, []);
+      return <div data-portal-probe />;
+    }
+
+    const fixture = <Portal><Probe /></Portal>;
+    const container = document.createElement('div');
+    container.innerHTML = renderToString(fixture);
+    document.body.appendChild(container);
+
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+    await React.act(async () => {
+      root = hydrateRoot(container, fixture);
+      await Promise.resolve();
+    });
+
+    expect(lifecycle.mock.calls).toEqual([['mount']]);
+    expect(container.querySelector('[data-portal-probe]')).toBeNull();
+    expect(document.body.querySelector('[data-portal-probe]')).not.toBeNull();
+
+    await React.act(async () => {
+      root?.unmount();
+      await Promise.resolve();
+    });
+    expect(lifecycle.mock.calls).toEqual([['mount'], ['unmount']]);
     document.body.removeChild(container);
   });
 });

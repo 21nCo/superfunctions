@@ -1,0 +1,3289 @@
+{
+  "capturedAt": "2026-07-30T20:00:00+05:30",
+  "scope": {
+    "components": 69,
+    "frameworks": [
+      "react",
+      "svelte",
+      "solid"
+    ],
+    "themes": [
+      "dark",
+      "light (React representative and full route sweep)"
+    ]
+  },
+  "routeAudits": {
+    "reactDark": [
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgb(31, 41, 55)",
+            "contrast": 1.43,
+            "fg": "rgba(0, 0, 0, 0)",
+            "part": "valueText",
+            "tag": "span",
+            "text": "225°"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "angle-slider"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "badge"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "breadcrumb"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "button"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "card"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "command"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "image-cropper"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "input-group"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "skeleton"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.43,
+            "fg": "rgba(0, 0, 0, 0)",
+            "part": "valueText",
+            "tag": "span",
+            "text": "64"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "slider"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "splitter"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "table"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "textarea"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "color-picker"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "date-input"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "label",
+            "tag": "label",
+            "text": "Due date"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "date-picker"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "editable"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "field"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "fieldset"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "file-upload"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "form"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "input"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "number-input"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "password-input"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "pin-input"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "signature-pad"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "autocomplete"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "checkbox"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "checkbox-group"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "combobox"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "listbox"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 2.54,
+            "fg": "rgb(255, 255, 255)",
+            "part": "itemIndicator",
+            "tag": "span",
+            "text": "●"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "radio-group"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "rating-group"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "segment-group"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "select"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "switch"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "tags-input"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "toggle"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgb(30, 58, 138)",
+            "contrast": 1.53,
+            "fg": "rgb(76, 66, 219)",
+            "part": "item",
+            "tag": "button",
+            "text": "Left"
+          },
+          {
+            "bg": "rgb(30, 58, 138)",
+            "contrast": 1.53,
+            "fg": "rgb(76, 66, 219)",
+            "part": "item",
+            "tag": "button",
+            "text": "Center"
+          },
+          {
+            "bg": "rgb(30, 58, 138)",
+            "contrast": 1.53,
+            "fg": "rgb(76, 66, 219)",
+            "part": "item",
+            "tag": "button",
+            "text": "Right"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "toggle-group"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "tree-view"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgb(255, 255, 255)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "trigger",
+            "tag": "button",
+            "text": "Account and security⌄"
+          },
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "indicator",
+            "tag": "span",
+            "text": "⌄"
+          },
+          {
+            "bg": "rgb(255, 255, 255)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "trigger",
+            "tag": "button",
+            "text": "Notifications⌄"
+          },
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "indicator",
+            "tag": "span",
+            "text": "⌄"
+          },
+          {
+            "bg": "rgb(255, 255, 255)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "trigger",
+            "tag": "button",
+            "text": "Billing and plans⌄"
+          },
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "indicator",
+            "tag": "span",
+            "text": "⌄"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "accordion"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "carousel"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgb(255, 255, 255)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "trigger",
+            "tag": "button",
+            "text": "Advanced settings"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "collapsible"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "context-menu"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "menu"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "trigger",
+            "tag": "button",
+            "text": "File"
+          },
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "trigger",
+            "tag": "button",
+            "text": "Edit"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "menubar"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "navigation-menu"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "pagination"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "steps"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgb(255, 255, 255)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "trigger",
+            "tag": "button",
+            "text": "Overview"
+          },
+          {
+            "bg": "rgb(255, 255, 255)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "trigger",
+            "tag": "button",
+            "text": "Activity"
+          },
+          {
+            "bg": "rgb(255, 255, 255)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "trigger",
+            "tag": "button",
+            "text": "Deployments"
+          },
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.23,
+            "fg": "rgb(226, 232, 240)",
+            "part": "content",
+            "tag": "div",
+            "text": "Project status and recent activity."
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "tabs"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "toolbar"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "alert-dialog"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "dialog"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "drawer"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "floating-panel"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "hover-card"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "popover"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "tooltip"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "tour"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "clipboard"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "meter"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "progress"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "timer"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "toast"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "avatar"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "marquee"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "caption",
+            "tag": "figcaption",
+            "text": "Scan to open the uifn documentation"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "qr-code"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [
+          {
+            "bg": "rgba(0, 0, 0, 0)",
+            "contrast": 1.05,
+            "fg": "rgb(249, 250, 251)",
+            "part": "content",
+            "tag": "div",
+            "text": "Scrollable production content row 1. Scrollable production content row 2. Scroll"
+          }
+        ],
+        "root": true,
+        "scrollX": false,
+        "slug": "scroll-area"
+      },
+      {
+        "dup": [],
+        "errors": [],
+        "invalid": [],
+        "low": [],
+        "root": true,
+        "scrollX": false,
+        "slug": "separator"
+      }
+    ],
+    "reactLight": [
+      {
+        "slug": "angle-slider",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "badge",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "breadcrumb",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "button",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "card",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "command",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "image-cropper",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "input-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "skeleton",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "slider",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "splitter",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "table",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "textarea",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "color-picker",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "date-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "date-picker",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "editable",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "field",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "fieldset",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "file-upload",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "form",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "number-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "password-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "pin-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "signature-pad",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "autocomplete",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "checkbox",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "checkbox-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "combobox",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "listbox",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "radio-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "rating-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "segment-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "select",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "switch",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "tags-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "toggle",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "toggle-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "tree-view",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "accordion",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "carousel",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "collapsible",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "context-menu",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "menu",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "menubar",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "navigation-menu",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "pagination",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "steps",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "tabs",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "toolbar",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "alert-dialog",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "dialog",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "drawer",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "floating-panel",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "hover-card",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "popover",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "tooltip",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "tour",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "clipboard",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "meter",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "progress",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "timer",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "toast",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "avatar",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "marquee",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "qr-code",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "scroll-area",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      },
+      {
+        "slug": "separator",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false,
+        "theme": "light"
+      }
+    ],
+    "svelteDark": [
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "angle-slider",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "badge",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "breadcrumb",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "button",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "card",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "command",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "image-cropper",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "input-group",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "skeleton",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "slider",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "splitter",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "table",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "textarea",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "color-picker",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "date-input",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "date-picker",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "editable",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "field",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "fieldset",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "file-upload",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "form",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "input",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "number-input",
+        "unsupported": false
+      },
+      {
+        "blank": false,
+        "dup": [],
+        "invalid": [],
+        "overflow": false,
+        "root": true,
+        "slug": "password-input",
+        "unsupported": false
+      },
+      {
+        "slug": "pin-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "signature-pad",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "autocomplete",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "checkbox",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "checkbox-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "combobox",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "listbox",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "radio-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "rating-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "segment-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "select",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "switch",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tags-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "toggle",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "toggle-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tree-view",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "accordion",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "carousel",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "collapsible",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "context-menu",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "menu",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "menubar",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "navigation-menu",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "pagination",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "steps",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tabs",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "toolbar",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "alert-dialog",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "dialog",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "drawer",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "floating-panel",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "hover-card",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "popover",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tooltip",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tour",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "clipboard",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "meter",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "progress",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "timer",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "toast",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "avatar",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "marquee",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "qr-code",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "scroll-area",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "separator",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      }
+    ],
+    "solidDark": [
+      {
+        "slug": "angle-slider",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "badge",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "breadcrumb",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "button",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "card",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "command",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "image-cropper",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "input-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "skeleton",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "slider",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "splitter",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "table",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "textarea",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "color-picker",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "date-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "date-picker",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "editable",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "field",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "fieldset",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "file-upload",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "form",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "number-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "password-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "pin-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "signature-pad",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "autocomplete",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "checkbox",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "checkbox-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "combobox",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "listbox",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "radio-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "rating-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "segment-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "select",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "switch",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tags-input",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "toggle",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "toggle-group",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tree-view",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "accordion",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "carousel",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "collapsible",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "context-menu",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "menu",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "menubar",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "navigation-menu",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "pagination",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "steps",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tabs",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "toolbar",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "alert-dialog",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "dialog",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "drawer",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "floating-panel",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "hover-card",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "popover",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tooltip",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "tour",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "clipboard",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "meter",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "progress",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "timer",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "toast",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "avatar",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "marquee",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "qr-code",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "scroll-area",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      },
+      {
+        "slug": "separator",
+        "blank": false,
+        "duplicateIds": [],
+        "invalidListItems": 0,
+        "invalidNestedButtons": 0,
+        "invalidRows": 0,
+        "missing": false,
+        "overflow": false,
+        "runtimeError": false
+      }
+    ]
+  },
+  "interactions": {
+    "react": {
+      "textarea": {
+        "aria": "Team note",
+        "value": "Production-ready catalog note"
+      },
+      "inputGroup": {
+        "duplicateIds": [],
+        "order": [
+          "addon",
+          "control",
+          "addon"
+        ],
+        "value": "production"
+      },
+      "tabs": {
+        "selected": [
+          "Activity"
+        ],
+        "visiblePanels": [
+          "Recent deployments and audit events."
+        ]
+      }
+    },
+    "commandKeyboardSelection": [
+      {
+        "framework": "react",
+        "formValue": "item-3",
+        "hiddenCount": 4,
+        "query": "Open settings",
+        "selected": [
+          "Open settings✓⌘ ,"
+        ],
+        "visible": [
+          "Open settings✓⌘ ,"
+        ]
+      },
+      {
+        "framework": "svelte",
+        "formValue": "item-3",
+        "hiddenCount": 4,
+        "query": "Open settings",
+        "selected": [
+          "Open settings ✓    ⌘ ,"
+        ],
+        "visible": [
+          "Open settings ✓    ⌘ ,"
+        ]
+      },
+      {
+        "framework": "solid",
+        "formValue": "item-3",
+        "hiddenCount": 4,
+        "query": "Open settings",
+        "selected": [
+          "Open settings✓⌘ ,"
+        ],
+        "visible": [
+          "Open settings✓⌘ ,"
+        ]
+      }
+    ],
+    "paginationBounds": [
+      {
+        "framework": "react",
+        "current": "3",
+        "nextDisabled": true,
+        "renderedPages": [
+          "1",
+          "2",
+          "3"
+        ]
+      },
+      {
+        "framework": "svelte",
+        "current": "3",
+        "nextDisabled": true,
+        "renderedPages": [
+          "1",
+          "2",
+          "3"
+        ]
+      },
+      {
+        "framework": "solid",
+        "current": "3",
+        "nextDisabled": true,
+        "renderedPages": [
+          "1",
+          "2",
+          "3"
+        ]
+      }
+    ],
+    "dialog": {
+      "open": {
+        "activeLabel": "",
+        "activeTag": "INPUT",
+        "display": "grid",
+        "hidden": false,
+        "state": "open",
+        "title": "Edit profile"
+      },
+      "afterEscape": {
+        "display": "none",
+        "focusText": "Edit profile",
+        "hidden": true,
+        "state": "closed"
+      }
+    }
+  },
+  "screenshots": {
+    "reactDark": [
+      "react-card.png",
+      "react-badge.png",
+      "react-breadcrumb.png",
+      "react-command.png",
+      "react-input-group.png",
+      "react-skeleton.png",
+      "react-table.png",
+      "react-textarea.png"
+    ],
+    "svelteDark": [
+      "svelte-badge.png",
+      "svelte-breadcrumb.png",
+      "svelte-card.png",
+      "svelte-command.png",
+      "svelte-input-group.png",
+      "svelte-skeleton.png",
+      "svelte-table.png",
+      "svelte-textarea.png"
+    ],
+    "solidDark": [
+      "solid-badge.png",
+      "solid-breadcrumb.png",
+      "solid-card.png",
+      "solid-command.png",
+      "solid-input-group.png",
+      "solid-skeleton.png",
+      "solid-table.png",
+      "solid-textarea.png"
+    ],
+    "reactLight": [
+      "react-light-badge.png",
+      "react-light-breadcrumb.png",
+      "react-light-card.png",
+      "react-light-command.png",
+      "react-light-input-group.png",
+      "react-light-skeleton.png",
+      "react-light-table.png",
+      "react-light-textarea.png"
+    ]
+  },
+  "result": {
+    "routeCount": 276,
+    "failures": 0,
+    "screenshotCount": 32
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "phase18-a11y-20260726T043544053Z",
+  "evidenceClass": "browser-compatibility",
+  "requirementIds": [
+    "A11Y-001",
+    "A11Y-002"
+  ],
+  "vectorIds": [
+    "TV-A11Y-001-P",
+    "TV-A11Y-001-N",
+    "TV-A11Y-002-P",
+    "TV-A11Y-002-N"
+  ],
+  "status": "passed",
+  "source": {
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "dirty": true,
+    "dirtyReason": "Phase 18 automated evidence is provisional because no clean commit was authorized. Phase 19, Phase 20, release, and any 10/10 claim require a clean committed source identity plus signed external compatibility and assistive-technology evidence.",
+    "lockfileSha256": "b6eb7085aaa93040ccc2d1290683d4d4670b7340166c1495523002a78b0abfeb",
+    "definitionSha256": "08ce41a343610565ed728b45afb1ec9c32f16c7a0af9b7c55fb54287a2daface",
+    "artifactHashes": [
+      {
+        "path": "uifn/.conduct/evidence/phase-18/20260726T042653Z-PHASE-18-final/browser.json",
+        "sha256": "89653c9f13f75034b91af23c3c48ab28b7e2e28599ba24d9ab7c009ac8f63add"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-18/20260726T042653Z-PHASE-18-final/ledger.json",
+        "sha256": "25700d6a5169105d97233e2fc29c7bda812bc454e554ef3ec7db0bd22f6ee82f"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-17/20260724T110120Z-PHASE-18-revalidation/storybook.json",
+        "sha256": "6867b67055105be051840d77e5073e27ff1f311f9e947aae653d4203af59c239"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-17/20260724T110120Z-PHASE-18-revalidation/docs.json",
+        "sha256": "c63e5d03ac6b3aba29f55e209aac4480f459dc8130a0ea719fecf1b0f2ab3aa7"
+      },
+      {
+        "path": "uifn/accessibility/generated/normative-ledger.json",
+        "sha256": "40748c6a2a353499208cb065b52fffcbc9a81bd84b1e6878771cd148441037a1"
+      },
+      {
+        "path": "uifn/accessibility/generated/automation-manifest.json",
+        "sha256": "7d79474f718e6b45abebc96b893391edac667de187c3f5da4a910f367d23a739"
+      },
+      {
+        "path": "uifn/accessibility/generated/manual-handoff.json",
+        "sha256": "2a58759ca58ab21e0779949d62a3b83ad6a057e2c7c848eb8566bd00de561328"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/package-react.json",
+        "sha256": "07d99d8b41fb7ed0e49d0d9147bf765cd2c35ec0d0f9d1222da9326901d8dd75"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/package-svelte.json",
+        "sha256": "6141dc3dd1b9f26aa49f15c908f616a0ba2497a3d63af134ff07cbd06284b548"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/package-solid.json",
+        "sha256": "5c2a51eda9864b08e14a685d8ddad1ca280c97e0a5ad76abd4546e37c2bf6a47"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/source-react.json",
+        "sha256": "6eefd73eabc3e83008fe8c3d07feed292a75e9ff709bd3f5cac0c628ee1764b5"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/source-svelte.json",
+        "sha256": "6dfe9087df97e54a174d622f11f05991e0cf72f67d838230923b2df89ef4077d"
+      },
+      {
+        "path": "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/source-solid.json",
+        "sha256": "855937abfa9a76fb5275eb9a12b9bf231064b5f5613fba4f4204c933cdd60a61"
+      }
+    ]
+  },
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "runtime": "v20.20.0",
+    "tools": {
+      "phase18Verifier": "18.0.0",
+      "playwright": "1.57.0",
+      "axeCore": "4.11.1"
+    },
+    "framework": "React, Svelte, Solid",
+    "browser": "chromium 143.0.7499.4, firefox 144.0.2, webkit 26.0",
+    "assistiveTechnology": null
+  },
+  "timing": {
+    "startedAt": "2026-07-26T04:35:34.378Z",
+    "completedAt": "2026-07-26T04:35:44.053Z",
+    "durationMs": 9675
+  },
+  "counts": {
+    "total": 1598,
+    "executed": 1598,
+    "passed": 1598,
+    "failed": 0,
+    "blocked": 0,
+    "skipped": 0,
+    "notApplicable": 0
+  },
+  "artifacts": [
+    "uifn/.conduct/evidence/phase-18/20260726T042653Z-PHASE-18-final/browser.json",
+    "uifn/.conduct/evidence/phase-18/20260726T042653Z-PHASE-18-final/ledger.json",
+    "uifn/.conduct/evidence/phase-17/20260724T110120Z-PHASE-18-revalidation/storybook.json",
+    "uifn/.conduct/evidence/phase-17/20260724T110120Z-PHASE-18-revalidation/docs.json",
+    "uifn/accessibility/generated/normative-ledger.json",
+    "uifn/accessibility/generated/automation-manifest.json",
+    "uifn/accessibility/generated/manual-handoff.json",
+    "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/package-react.json",
+    "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/package-svelte.json",
+    "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/package-solid.json",
+    "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/source-react.json",
+    "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/source-svelte.json",
+    "uifn/.conduct/evidence/phase-14/20260724T110120Z-PHASE-18-a11y-root-semantics/source-solid.json"
+  ],
+  "defects": [],
+  "signatures": [
+    {
+      "kind": "automation",
+      "signer": "scripts/verify-uifn-phase-18.mjs",
+      "signedAt": "2026-07-26T04:35:44.053Z",
+      "attestation": "Normative rule mappings, package/source/framework semantic parity, clean-package stories, clean package/source consumers, browser accessibility assertions, reviewed axe incompletes, failure artifacts, and negative mutations were verified. This automation signature is provisional and is not an assistive-technology or independent-review signature."
+    }
+  ],
+  "expiresAt": "2026-08-02T04:35:44.053Z",
+  "supersedes": null
+}

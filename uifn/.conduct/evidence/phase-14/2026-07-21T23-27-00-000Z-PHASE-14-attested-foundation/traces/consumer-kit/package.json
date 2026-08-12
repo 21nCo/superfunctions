@@ -1,0 +1,24 @@
+{
+  "name": "uifn-phase-14-frozen-consumer-kit",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@uifn/core": "file:../tarballs/uifn-core-0.0.1.tgz",
+    "@uifn/dom": "file:../tarballs/uifn-dom-0.0.1.tgz",
+    "@uifn/adapter-kit": "file:../tarballs/uifn-adapter-kit-0.0.1.tgz",
+    "@uifn/react": "file:../tarballs/uifn-react-0.0.1.tgz",
+    "@uifn/svelte": "file:../tarballs/uifn-svelte-0.0.1.tgz",
+    "@uifn/solid": "file:../tarballs/uifn-solid-0.0.1.tgz",
+    "@sveltejs/vite-plugin-svelte": "4.0.4",
+    "@testing-library/react": "15.0.7",
+    "@testing-library/svelte": "5.3.1",
+    "jsdom": "27.0.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "solid-js": "1.9.13",
+    "svelte": "5.46.1",
+    "vite": "5.4.21",
+    "vite-plugin-solid": "2.11.12",
+    "vitest": "3.2.4"
+  }
+}

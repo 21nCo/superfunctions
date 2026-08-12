@@ -1,6 +1,7 @@
+import { createStateChannel } from '../internal/runtime/state-channel';
 import { createUIFnError, type UIFnError } from '../errors';
-import { getNextRovingFocusIndex } from '../utils/roving-focus';
-import { createStore } from './shared';
+import { createListCollection, reconcileCollectionKey } from '../algorithms/collection';
+import { getNextCollectionKey } from '../algorithms/navigation';
 
 export interface ToolbarItem {
   id: string;
@@ -11,10 +12,17 @@ export interface ToolbarItem {
 export interface ToolbarProps {
   orientation?: 'horizontal' | 'vertical';
   items?: ToolbarItem[];
+  loop?: boolean;
+  dir?: 'ltr' | 'rtl';
+  disabled?: boolean;
+  ariaLabel?: string;
 }
 
 export interface ToolbarState {
   orientation: 'horizontal' | 'vertical';
+  loop: boolean;
+  dir: 'ltr' | 'rtl';
+  disabled: boolean;
   items: ToolbarItem[];
   focusedItem: string | null;
   groups: Record<string, string[]>;
@@ -29,20 +37,21 @@ export interface ToolbarActions {
   getGroupItems: (group: string) => string[];
 }
 
-export interface ToolbarMachine {
+export interface ToolbarRuntime {
   readonly state: ToolbarState;
   readonly actions: ToolbarActions;
   getState: () => ToolbarState;
   subscribe: (callback: (state: ToolbarState) => void) => () => void;
+  destroy: () => void;
 }
 
-function normalizeItems(items: ToolbarItem[] | undefined): ToolbarItem[] {
-  const dedupe = new Map<string, ToolbarItem>();
-  (items ?? []).forEach((item) => {
-    dedupe.set(item.id, item);
+function collection(items: readonly ToolbarItem[] | undefined, disabled = false) {
+  return createListCollection({
+    items: items ?? [],
+    getKey: (item: ToolbarItem) => item.id,
+    getTextValue: (item: ToolbarItem) => item.id,
+    isDisabled: (item: ToolbarItem) => disabled || Boolean(item.disabled),
   });
-
-  return Array.from(dedupe.values());
 }
 
 function resolveGroups(items: ToolbarItem[]): Record<string, string[]> {
@@ -57,15 +66,15 @@ function resolveGroups(items: ToolbarItem[]): Record<string, string[]> {
   }, {});
 }
 
-function getEnabledItemIds(items: ToolbarItem[]): string[] {
-  return items.filter((item) => !item.disabled).map((item) => item.id);
-}
-
-export function createToolbar(props: ToolbarProps): ToolbarMachine {
-  const items = normalizeItems(props.items);
-  const enabledItems = getEnabledItemIds(items);
-  const store = createStore<ToolbarState>({
+export function createToolbarRuntime(props: ToolbarProps): ToolbarRuntime {
+  const initialCollection = collection(props.items, props.disabled);
+  const items = [...initialCollection.items];
+  const enabledItems = [...initialCollection.enabledKeys];
+  const store = createStateChannel<ToolbarState>({
     orientation: props.orientation ?? 'horizontal',
+    loop: props.loop ?? true,
+    dir: props.dir ?? 'ltr',
+    disabled: props.disabled ?? false,
     items,
     focusedItem: enabledItems[0] ?? null,
     groups: resolveGroups(items),
@@ -80,7 +89,7 @@ export function createToolbar(props: ToolbarProps): ToolbarMachine {
       }
 
       const nextItems = [...state.items, item];
-      const nextEnabled = getEnabledItemIds(nextItems);
+      const nextEnabled = [...collection(nextItems, state.disabled).enabledKeys];
       store.patchState({
         items: nextItems,
         groups: resolveGroups(nextItems),
@@ -88,15 +97,15 @@ export function createToolbar(props: ToolbarProps): ToolbarMachine {
       });
     },
     setItems(nextItems) {
-      const normalized = normalizeItems(nextItems);
-      const nextEnabled = getEnabledItemIds(normalized);
       const state = store.getState();
+      const previousIndex = state.focusedItem ? state.items.findIndex((item) => item.id === state.focusedItem) : 0;
+      const nextCollection = collection(nextItems, state.disabled);
+      const normalized = [...nextCollection.items];
+      const nextFocused = reconcileCollectionKey(nextCollection, { previousKey: state.focusedItem, previousIndex });
       store.patchState({
         items: normalized,
         groups: resolveGroups(normalized),
-        focusedItem: nextEnabled.includes(state.focusedItem ?? '')
-          ? state.focusedItem
-          : nextEnabled[0] ?? null,
+        focusedItem: nextFocused,
       });
     },
     focusItem(itemId) {
@@ -108,7 +117,7 @@ export function createToolbar(props: ToolbarProps): ToolbarMachine {
         return;
       }
 
-      if (!getEnabledItemIds(state.items).includes(itemId)) {
+      if (!collection(state.items, state.disabled).enabledKeys.includes(itemId)) {
         return;
       }
 
@@ -118,25 +127,19 @@ export function createToolbar(props: ToolbarProps): ToolbarMachine {
     },
     handleKeyDown(key, currentItem) {
       const state = store.getState();
-      const enabled = getEnabledItemIds(state.items);
-      if (enabled.length === 0) {
+      const currentCollection = collection(state.items, state.disabled);
+      if (currentCollection.enabledKeys.length === 0) {
         return null;
       }
-
-      const current = currentItem ?? state.focusedItem ?? enabled[0];
-      const currentIndex = Math.max(0, enabled.indexOf(current));
-      const nextIndex = getNextRovingFocusIndex({
+      const current = currentItem ?? state.focusedItem ?? currentCollection.enabledKeys[0] ?? null;
+      const nextItem = getNextCollectionKey({
+        collection: currentCollection,
         key,
-        itemCount: enabled.length,
-        currentIndex,
+        currentKey: current,
         orientation: state.orientation,
+        direction: state.dir,
+        loop: state.loop,
       });
-
-      if (nextIndex < 0) {
-        return null;
-      }
-
-      const nextItem = enabled[nextIndex] ?? null;
       if (!nextItem) {
         return null;
       }
@@ -176,5 +179,6 @@ export function createToolbar(props: ToolbarProps): ToolbarMachine {
     actions,
     getState: store.getState,
     subscribe: store.subscribe,
+    destroy: store.destroy,
   };
 }

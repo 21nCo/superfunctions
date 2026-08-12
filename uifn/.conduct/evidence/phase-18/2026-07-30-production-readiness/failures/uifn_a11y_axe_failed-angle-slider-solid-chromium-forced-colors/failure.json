@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "code": "UIFN_A11Y_AXE_FAILED",
+  "primitive": "angle-slider",
+  "framework": "solid",
+  "deliveryMode": "package",
+  "browser": "chromium",
+  "version": "143.0.7499.4",
+  "sourceHash": "9b758213846896c4e204ec099eebfd06eb425a1355e144fe1060d2a3f714a9ca",
+  "dom": "<section data-uifn-story-framework=\"solid\" data-uifn-story-id=\"angle-slider--forced-colors\" data-uifn-story-scenario=\"forced-colors\" data-uifn-theme=\"high-contrast\" data-uifn-forced-colors=\"true\" data-uifn-reduced-motion=\"false\" dir=\"ltr\"><div id=\"angle-slider-root-angle-slider-uifn-cl-0-root\" class=\"uifn-angle-slider uifn-angle-slider__root\" data-state=\"idle\" data-uifn-component=\"angle-slider\" data-uifn-part=\"root\"><div id=\"angle-slider-track-angle-slider-uifn-cl-0-track\" class=\"uifn-angle-slider uifn-angle-slider__track\" data-state=\"idle\" data-uifn-story-anatomy=\"track\" data-uifn-component=\"angle-slider\" data-uifn-part=\"track\" style=\"touch-action: none;\">track fixture</div><div role=\"slider\" id=\"angle-slider-thumb-angle-slider-uifn-cl-0-thumb\" tabindex=\"0\" class=\"uifn-angle-slider uifn-angle-slider__thumb\" aria-label=\"Angle\" aria-valuemin=\"0\" aria-valuemax=\"360\" aria-valuenow=\"0\" aria-valuetext=\"0 deg\" aria-orientation=\"horizontal\" aria-disabled=\"false\" aria-readonly=\"false\" data-uifn-story-anatomy=\"thumb\" data-uifn-component=\"angle-slider\" data-uifn-part=\"thumb\" style=\"transform: rotate(0deg);\">thumb fixture</div><span id=\"angle-slider-value-text-angle-slider-uifn-cl-0-value-text\" class=\"uifn-angle-slider uifn-angle-slider__valueText\" data-value=\"0 deg\" data-uifn-story-anatomy=\"valueText\" data-uifn-component=\"angle-slider\" data-uifn-part=\"valueText\">valueText fixture</span><input type=\"hidden\" value=\"0\" id=\"angle-slider-input-angle-slider-uifn-cl-0-input\" class=\"uifn-angle-slider uifn-angle-slider__hiddenInput\" data-uifn-story-anatomy=\"hiddenInput\" data-uifn-component=\"angle-slider\" data-uifn-part=\"hiddenInput\"></div></section>",
+  "semanticTrace": [
+    {
+      "part": "hiddenInput",
+      "tag": "input",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "hiddenInput"
+        ]
+      ]
+    },
+    {
+      "part": "root",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ]
+      ]
+    },
+    {
+      "part": "thumb",
+      "tag": "div",
+      "role": "slider",
+      "aria": [
+        [
+          "aria-disabled",
+          "false"
+        ],
+        [
+          "aria-label",
+          "Angle"
+        ],
+        [
+          "aria-orientation",
+          "horizontal"
+        ],
+        [
+          "aria-readonly",
+          "false"
+        ],
+        [
+          "aria-valuemax",
+          "360"
+        ],
+        [
+          "aria-valuemin",
+          "0"
+        ],
+        [
+          "aria-valuenow",
+          "0"
+        ],
+        [
+          "aria-valuetext",
+          "0 deg"
+        ]
+      ],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "thumb"
+        ]
+      ]
+    },
+    {
+      "part": "track",
+      "tag": "div",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-state",
+          "idle"
+        ],
+        [
+          "data-uifn-story-anatomy",
+          "track"
+        ]
+      ]
+    },
+    {
+      "part": "valueText",
+      "tag": "span",
+      "role": null,
+      "aria": [],
+      "data": [
+        [
+          "data-uifn-story-anatomy",
+          "valueText"
+        ],
+        [
+          "data-value",
+          "0 deg"
+        ]
+      ]
+    }
+  ],
+  "eventTrace": [
+    {
+      "action": {
+        "type": "click"
+      },
+      "stateHash": "9bf00a4788d2467ba0e34d229b24988a0c87333f6ce654746de136bb236d6a23"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowDown"
+      },
+      "stateHash": "9bf00a4788d2467ba0e34d229b24988a0c87333f6ce654746de136bb236d6a23"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "ArrowRight"
+      },
+      "stateHash": "28d93bbdd9df90e4db78f40b621cf266cd4df843bba1bde6e8e918bbe30f8d56"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": " "
+      },
+      "stateHash": "28d93bbdd9df90e4db78f40b621cf266cd4df843bba1bde6e8e918bbe30f8d56"
+    },
+    {
+      "action": {
+        "type": "key",
+        "value": "Enter"
+      },
+      "stateHash": "28d93bbdd9df90e4db78f40b621cf266cd4df843bba1bde6e8e918bbe30f8d56"
+    }
+  ],
+  "focusPath": [
+    "thumb",
+    "thumb",
+    "thumb",
+    "thumb",
+    "thumb",
+    "thumb"
+  ],
+  "screenshot": "screenshot.png",
+  "capturedAt": "2026-07-30T16:30:15.273Z",
+  "expiresAt": "2026-08-06T16:30:15.273Z"
+}

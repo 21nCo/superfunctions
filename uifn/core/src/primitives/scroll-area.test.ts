@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createScrollArea } from './scroll-area';
+import { createScrollAreaRuntime } from './scroll-area';
 
 describe('scroll-area primitive', () => {
   it('keeps viewport and vertical thumb synchronized', () => {
-    const scrollArea = createScrollArea({});
+    const scrollArea = createScrollAreaRuntime({});
     scrollArea.actions.setViewportMetrics({
       scrollHeight: 2000,
       clientHeight: 200,
@@ -21,7 +21,7 @@ describe('scroll-area primitive', () => {
   });
 
   it('shows corner only when both axes overflow', () => {
-    const scrollArea = createScrollArea({});
+    const scrollArea = createScrollAreaRuntime({});
     scrollArea.actions.setViewportMetrics({
       scrollHeight: 1000,
       clientHeight: 200,
@@ -35,7 +35,7 @@ describe('scroll-area primitive', () => {
   });
 
   it('keeps programmatic scroll paths consistent with thumb sync', () => {
-    const scrollArea = createScrollArea({});
+    const scrollArea = createScrollAreaRuntime({});
     scrollArea.actions.setViewportMetrics({
       scrollHeight: 2000,
       clientHeight: 200,

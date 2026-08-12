@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_07",
+  "status": "PASS",
+  "timestamp": "2026-07-18T10:34:33Z",
+  "requirement": "PRIM-002",
+  "vectors": [
+    "TV-PRIM-002-P",
+    "TV-PRIM-002-N",
+    "TV-DOM-002-P/N",
+    "TV-DOM-003-P/N",
+    "TV-DOM-004-P/N",
+    "TV-DOM-005-P/N",
+    "TV-DOM-006-P/N"
+  ],
+  "revision": {
+    "branch": "SFN-15",
+    "commit": "9cf381238d1d8a11c899d6808ffb0bb73dfe839a",
+    "workingTree": "dirty",
+    "phaseDefinitionSha256": "8bca3c5b8575bab1220ad2d3c6b55ec60caf3e1fb1edc525845b02144edc367f",
+    "lockfileSha256": "9a78346e07fc1dcc9418d2adb7172ceb81c0dde7cbac9112045f8d3a9d85b6c7"
+  },
+  "authoritativeGate": {
+    "command": "npm run verify:uifn-phase-07",
+    "ok": true,
+    "checkCount": 21,
+    "failedChecks": 0
+  },
+  "core": {
+    "typecheck": "pass",
+    "build": "pass",
+    "testFiles": 37,
+    "tests": 155,
+    "failedTests": 0,
+    "primitiveCount": 8,
+    "controllerCount": 27,
+    "generatedOutputs": 4,
+    "contractMutationTests": 3,
+    "contractIssues": 0
+  },
+  "browser": {
+    "result": "pass",
+    "testCount": 26,
+    "unexpected": 0,
+    "flaky": 0,
+    "skipped": 0,
+    "projects": {
+      "chromium": 8,
+      "firefox": 8,
+      "webkit": 8,
+      "mobile-chromium": 1,
+      "mobile-webkit": 1
+    },
+    "resultFile": ".conduct/evidence/phase-07/20260718T103209Z-authoritative/browser/results.json",
+    "artifactFileCount": 54,
+    "traceKinds": [
+      "dom-layer",
+      "dom-focus-scope",
+      "dom-modal",
+      "dom-portal",
+      "dom-position",
+      "dom-presence"
+    ],
+    "nestedDismissal": [
+      "menu:pointer-outside",
+      "popover:pointer-outside",
+      "dialog:pointer-outside"
+    ],
+    "resourceTotals": "all-zero"
+  },
+  "packageAndSource": {
+    "command": "node scripts/verify-uifn-overlay-pack.mjs",
+    "ok": true,
+    "primitives": 8,
+    "frameworkLabels": [
+      "react",
+      "svelte",
+      "solid"
+    ],
+    "packageExercises": 24,
+    "sourceExercises": 24,
+    "byteIdentical": true,
+    "distSha256": {
+      "core": "1591b8d4688d87a49be487d627eb1cdd43702c80fdea38dc096d42adff2247a2",
+      "dom": "f0c61398ba649ba3b50d583fba01f4080d534d22ea8487d47a06aa2dc822b1b4"
+    },
+    "tarballSha256": {
+      "uifn-core-0.0.1.tgz": "3463803986c40f038751047b57f9429a610072ed3a4f946868882efdd4d61d33",
+      "uifn-dom-0.0.1.tgz": "d8d0be79a5d86fc5487d0a18c8c922bbe75eac5afd365e63ff40f975550c7cfe"
+    }
+  },
+  "architecture": {
+    "domPlatformScannedFiles": 212,
+    "domPlatformViolations": 0,
+    "runtimeArchitectureIssues": 0,
+    "productionTracePayloads": 0,
+    "nodeMajors": [
+      20,
+      22,
+      24
+    ],
+    "nodeDomGlobals": "throw-on-read",
+    "adapterTypechecks": [
+      "adapter-kit",
+      "react",
+      "svelte",
+      "solid"
+    ],
+    "stableAggregate": "pass"
+  },
+  "negativeCodes": [
+    "UIFN_ALERT_DIALOG_DISMISSAL",
+    "UIFN_ACCESSIBLE_NAME_MISSING",
+    "UIFN_OVERLAY_POLICY_FORK",
+    "UIFN_OVERLAY_RESOURCE_LEAK",
+    "UIFN_TOOLTIP_INTERACTION_INVALID"
+  ],
+  "notes": [
+    "Browser evidence is produced by the shared DOM platform harness, not axe-only assertions.",
+    "React, Svelte, and Solid package/source labels prove neutral controller and DOM consumability; public compound adapters remain assigned to PHASE_11 through PHASE_13.",
+    "This is development evidence from a dirty working tree and is not immutable release-candidate evidence."
+  ]
+}

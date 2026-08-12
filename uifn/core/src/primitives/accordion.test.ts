@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { UIFnError } from '../errors';
-import { createAccordion } from './accordion';
+import { createAccordionRuntime } from './accordion';
 
 describe('accordion primitive', () => {
   it('supports deterministic disclosure transitions and roving focus', () => {
-    const accordion = createAccordion({
+    const accordion = createAccordionRuntime({
       type: 'single',
       defaultValue: 'item-1',
       collapsible: true,
@@ -31,7 +31,7 @@ describe('accordion primitive', () => {
   it('throws deterministic invalid value errors for unknown controlled values', () => {
     expect(
       () =>
-        createAccordion({
+        createAccordionRuntime({
           type: 'single',
           value: 'item-9',
           items: ['item-1', 'item-2'],
@@ -41,7 +41,7 @@ describe('accordion primitive', () => {
 
   it('keeps controlled accordion value stable until syncValue runs', () => {
     const onValueChange = vi.fn();
-    const accordion = createAccordion({
+    const accordion = createAccordionRuntime({
       type: 'single',
       value: 'item-1',
       onValueChange,

@@ -1,0 +1,5371 @@
+{
+  "ok": false,
+  "command": "verify:uifn-catalog-sites",
+  "browser": "chromium",
+  "baseUrl": "http://127.0.0.1:6310",
+  "checks": [
+    {
+      "framework": "all",
+      "route": "/components/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "uifn component catalogs",
+      "bodyLength": 709,
+      "componentCount": 0,
+      "consoleErrorCount": 0
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Components",
+      "bodyLength": 7593,
+      "componentCount": 0,
+      "catalogCardCount": 61,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion",
+      "bodyLength": 3310,
+      "componentCount": 16,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "multiple",
+          "collapsible",
+          "disabled"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "item": 3,
+          "header": 3,
+          "trigger": 3,
+          "indicator": 3,
+          "content": 3
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "accordion-toggle",
+        "expanded": "true",
+        "content": "Headless behavior and styled composition remain separate package layers."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 414.28125,
+          "width": 316,
+          "height": 314.375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/alert-dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Alert Dialog",
+      "bodyLength": 3147,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 11
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "cancel": 1,
+          "action": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "alert-dialog-modal-keyboard",
+        "portalled": true,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true,
+        "title": "Example title"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/angle-slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Angle Slider",
+      "bodyLength": 3007,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "min",
+          "max",
+          "step",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "track": 1,
+          "thumb": 1,
+          "valueText": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "angle-slider-range-gesture-adapter-contract",
+        "behaviorFamily": "range-gesture",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 5,
+        "interactiveCount": 1,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "DIV",
+          "component": "angle-slider",
+          "part": "thumb",
+          "id": "angle-slider-thumb-angle-slider-uifn-cl-0-thumb"
+        },
+        "accessibleName": "Angle",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "0"
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "1"
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 151.609375,
+          "y": 500.171875,
+          "width": 86.78125,
+          "height": 180.296875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/autocomplete",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Autocomplete",
+      "bodyLength": 3237,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "items",
+          "filter",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 9
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 1,
+          "clear": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "empty": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "autocomplete-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 9,
+        "partCount": 11,
+        "interactiveCount": 3,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "INPUT",
+          "component": "autocomplete",
+          "part": "input",
+          "id": "autocomplete-input-autocomplete-uifn-cl-0"
+        },
+        "accessibleName": "Example label",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "idle",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          },
+          "after": {
+            "state": "idle",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 557.90625,
+          "width": 316,
+          "height": 64.84375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/avatar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Avatar",
+      "bodyLength": 2417,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "propNames": [
+          "class",
+          "children",
+          "src",
+          "alt",
+          "fallbackDelay"
+        ],
+        "anatomyParts": 3
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "image": 1,
+          "fallback": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "avatar-fallback-render",
+        "box": {
+          "x": 824,
+          "y": 496.796875,
+          "width": 64,
+          "height": 64
+        },
+        "imageAlt": "Example",
+        "imageHidden": "",
+        "borderRadius": "999px",
+        "fallback": "UI"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 163,
+          "y": 558.328125,
+          "width": 64,
+          "height": 64
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/button",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Button",
+      "bodyLength": 2636,
+      "componentCount": 4,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "class",
+          "children",
+          "type",
+          "disabled",
+          "loading",
+          "pressed"
+        ],
+        "anatomyParts": 4
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "icon": 1,
+          "label": 1,
+          "spinner": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "button-opens-toast",
+        "statusText": "Changes publishedYour changes are now live.UndoClose",
+        "portalled": true,
+        "hoverChanged": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 84.921875,
+          "y": 541.828125,
+          "width": 220.15625,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/carousel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Carousel",
+      "bodyLength": 3163,
+      "componentCount": 12,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "index",
+          "defaultIndex",
+          "itemCount",
+          "loop",
+          "orientation",
+          "autoplayDelay"
+        ],
+        "anatomyParts": 8
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "viewport": 1,
+          "item": 3,
+          "previous": 1,
+          "next": 1,
+          "indicatorGroup": 1,
+          "indicator": 3,
+          "liveRegion": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "carousel-range-gesture-adapter-contract",
+        "behaviorFamily": "range-gesture",
+        "rootVisible": true,
+        "expectedPartCount": 8,
+        "partCount": 12,
+        "interactiveCount": 4,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "carousel",
+          "part": "next",
+          "id": "carousel-next-carousel-uifn-cl-0-next"
+        },
+        "accessibleName": "Next",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 502.578125,
+          "width": 316,
+          "height": 175.484375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/checkbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox",
+      "bodyLength": 2994,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "checked",
+          "defaultChecked",
+          "name",
+          "value",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "control": 1,
+          "indicator": 1,
+          "label": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-toggle",
+        "before": "true",
+        "after": "false"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 134.796875,
+          "y": 542.28125,
+          "width": 120.390625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/checkbox-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Checkbox Group",
+      "bodyLength": 3195,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "item": 3,
+          "itemControl": 3,
+          "itemIndicator": 3,
+          "hiddenInput": 3,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "checkbox-group-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 7,
+        "partCount": 15,
+        "interactiveCount": 5,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "checkbox-group",
+          "part": "itemControl",
+          "id": "checkbox-group-root-checkbox-group-uifn-cl-0-itemControl-item-1"
+        },
+        "accessibleName": "item control example✓",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "checked",
+            "expanded": null,
+            "checked": "true",
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "checked",
+            "expanded": null,
+            "checked": "true",
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 107.046875,
+          "y": 532.078125,
+          "width": 175.890625,
+          "height": 116.484375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/clipboard",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Clipboard",
+      "bodyLength": 2487,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "timeout",
+          "disabled"
+        ],
+        "anatomyParts": 3
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "status": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "clipboard-status-feedback-adapter-contract",
+        "behaviorFamily": "status-feedback",
+        "rootVisible": true,
+        "expectedPartCount": 3,
+        "partCount": 3,
+        "interactiveCount": 1,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "clipboard",
+          "part": "trigger",
+          "id": "clipboard-trigger-clipboard-uifn-cl-0"
+        },
+        "accessibleName": "Open example",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 556.171875,
+          "width": 316,
+          "height": 68.296875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/collapsible",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Collapsible",
+      "bodyLength": 2521,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "disabled"
+        ],
+        "anatomyParts": 3
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "content": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "collapsible-toggle",
+        "expanded": "true",
+        "content": "Headless behavior and styled composition remain separate package layers."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 535.03125,
+          "width": 316,
+          "height": 110.59375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/color-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Color Picker",
+      "bodyLength": 3834,
+      "componentCount": 12,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "open",
+          "defaultOpen",
+          "colorSpace",
+          "alpha",
+          "name",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 12
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "trigger": 1,
+          "swatch": 1,
+          "positioner": 1,
+          "content": 1,
+          "area": 1,
+          "areaThumb": 1,
+          "channelSlider": 1,
+          "channelInput": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "color-picker-date-color-adapter-contract",
+        "behaviorFamily": "date-color",
+        "rootVisible": true,
+        "expectedPartCount": 12,
+        "partCount": 12,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "color-picker",
+          "part": "trigger",
+          "id": "color-picker-trigger-color-picker-uifn-cl-0-trigger"
+        },
+        "accessibleName": "Example label",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": null,
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": null,
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 556.90625,
+          "width": 316,
+          "height": 66.84375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/combobox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Combobox",
+      "bodyLength": 3696,
+      "componentCount": 16,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "inputValue",
+          "items",
+          "multiple",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 12
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 1,
+          "trigger": 1,
+          "clear": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "empty": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "combobox-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 12,
+        "partCount": 16,
+        "interactiveCount": 4,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "INPUT",
+          "component": "combobox",
+          "part": "input",
+          "id": "combobox-input-combobox-uifn-cl-0"
+        },
+        "accessibleName": "Example label",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "idle",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          },
+          "after": {
+            "state": "idle",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 548.609375,
+          "width": 316,
+          "height": 83.4375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/context-menu",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3174,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "dir",
+          "loop"
+        ],
+        "anatomyParts": 11
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": false,
+        "activeAfterEscape": {
+          "tag": "BODY",
+          "component": null,
+          "part": null,
+          "id": ""
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/date-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Input",
+      "bodyLength": 3195,
+      "componentCount": 7,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "locale",
+          "timeZone",
+          "min",
+          "max",
+          "name",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "segment": 3,
+          "hiddenInput": 1,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-input-date-color-adapter-contract",
+        "behaviorFamily": "date-color",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 7,
+        "interactiveCount": 1,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "SPAN",
+          "component": "date-input",
+          "part": "segment",
+          "id": "date-input-segment-date-input-uifn-cl-0-segment-day"
+        },
+        "accessibleName": "day",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "focused",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "22"
+          },
+          "after": {
+            "state": "focused",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "22"
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 570.328125,
+          "width": 316,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/date-picker",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Date Picker",
+      "bodyLength": 4038,
+      "componentCount": 29,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "open",
+          "defaultOpen",
+          "locale",
+          "timeZone",
+          "min",
+          "max",
+          "unavailable",
+          "name"
+        ],
+        "anatomyParts": 15
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "input": 1,
+          "segment": 3,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "header": 1,
+          "previous": 1,
+          "next": 1,
+          "grid": 1,
+          "gridLabel": 1,
+          "cell": 7,
+          "cellTrigger": 7,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "date-picker-select",
+        "ownedByRoot": true,
+        "value": "2026-07-19"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 523.90625,
+          "width": 316,
+          "height": 132.84375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/dialog",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Dialog",
+      "bodyLength": 3460,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "initialFocus",
+          "restoreFocus"
+        ],
+        "anatomyParts": 9
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "dialog-modal-keyboard",
+        "overlayCount": 1,
+        "bodyLocked": true,
+        "bodyUnlocked": true,
+        "portalled": true,
+        "focusInside": true,
+        "trapped": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/drawer",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Drawer",
+      "bodyLength": 3090,
+      "componentCount": 10,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "side",
+          "modal",
+          "dismissThreshold"
+        ],
+        "anatomyParts": 10
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "portal": 1,
+          "backdrop": 1,
+          "positioner": 1,
+          "content": 1,
+          "handle": 1,
+          "title": 1,
+          "description": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "drawer-modal-overlay-adapter-contract",
+        "behaviorFamily": "modal-overlay",
+        "rootVisible": true,
+        "expectedPartCount": 10,
+        "partCount": 10,
+        "interactiveCount": 3,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "drawer",
+          "part": "trigger",
+          "id": "drawer-trigger-drawer-uifn-cl-0"
+        },
+        "accessibleName": "Open example",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "closed",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "open",
+            "expanded": "true",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/editable",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Editable",
+      "bodyLength": 3347,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "editing",
+          "defaultEditing",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 9
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "preview": 1,
+          "control": 1,
+          "input": 1,
+          "submit": 1,
+          "cancel": 1,
+          "error": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "editable-forms-input-adapter-contract",
+        "behaviorFamily": "forms-input",
+        "rootVisible": true,
+        "expectedPartCount": 9,
+        "partCount": 9,
+        "interactiveCount": 4,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "editable",
+          "part": "preview",
+          "id": "editable-preview-editable-uifn-cl-0"
+        },
+        "accessibleName": "Editable value",
+        "keyboardProbe": {
+          "key": "ArrowDown",
+          "before": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 499.75,
+          "width": 316,
+          "height": 101.140625
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/field",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Field",
+      "bodyLength": 2895,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "name",
+          "disabled",
+          "readOnly",
+          "required",
+          "invalid"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "description": 1,
+          "error": 1,
+          "requiredIndicator": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "field-forms-input-adapter-contract",
+        "behaviorFamily": "forms-input",
+        "rootVisible": true,
+        "expectedPartCount": 6,
+        "partCount": 6,
+        "interactiveCount": 0,
+        "focusWorked": true,
+        "focusTarget": null,
+        "accessibleName": "",
+        "keyboardProbe": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 543.90625,
+          "width": 316,
+          "height": 92.828125
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/fieldset",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Fieldset",
+      "bodyLength": 2588,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "propNames": [
+          "class",
+          "children",
+          "disabled",
+          "invalid"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "legend": 1,
+          "content": 1,
+          "description": 1,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "fieldset-forms-input-adapter-contract",
+        "behaviorFamily": "forms-input",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 5,
+        "interactiveCount": 0,
+        "focusWorked": true,
+        "focusTarget": null,
+        "accessibleName": "",
+        "keyboardProbe": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 39,
+          "y": 543.359375,
+          "width": 312,
+          "height": 93.921875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/file-upload",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "File Upload",
+      "bodyLength": 3803,
+      "componentCount": 16,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "class",
+          "children",
+          "files",
+          "defaultFiles",
+          "accept",
+          "multiple",
+          "maxFiles",
+          "maxSize",
+          "name",
+          "disabled",
+          "required"
+        ],
+        "anatomyParts": 12
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "dropzone": 1,
+          "trigger": 1,
+          "input": 1,
+          "itemGroup": 1,
+          "item": 2,
+          "itemName": 2,
+          "itemSize": 2,
+          "itemDelete": 2,
+          "error": 1,
+          "status": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "file-upload-forms-input-adapter-contract",
+        "behaviorFamily": "forms-input",
+        "rootVisible": true,
+        "expectedPartCount": 12,
+        "partCount": 16,
+        "interactiveCount": 5,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "DIV",
+          "component": "file-upload",
+          "part": "dropzone",
+          "id": "file-upload-dropzone-file-upload-uifn-cl-0"
+        },
+        "accessibleName": "Drop files",
+        "keyboardProbe": {
+          "key": "ArrowDown",
+          "before": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 402.328125,
+          "width": 316,
+          "height": 430.625
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/floating-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Floating Panel",
+      "bodyLength": 3304,
+      "componentCount": 10,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "placement",
+          "draggable",
+          "resizable"
+        ],
+        "anatomyParts": 10
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "header": 1,
+          "title": 1,
+          "description": 1,
+          "dragHandle": 1,
+          "resizeHandle": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "floating-panel-modal-overlay-adapter-contract",
+        "behaviorFamily": "modal-overlay",
+        "rootVisible": true,
+        "expectedPartCount": 10,
+        "partCount": 10,
+        "interactiveCount": 4,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "floating-panel",
+          "part": "trigger",
+          "id": "floating-panel-trigger-floating-panel-uifn-cl-0"
+        },
+        "accessibleName": "Open example",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "closed",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "open",
+            "expanded": "true",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/form",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Form",
+      "bodyLength": 2372,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "propNames": [
+          "class",
+          "children",
+          "noValidate",
+          "disabled"
+        ],
+        "anatomyParts": 3
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "errorSummary": 1,
+          "actions": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "form-static-contract",
+        "tagName": "FORM",
+        "state": "valid",
+        "errorHidden": "",
+        "actionsDisabled": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 580.171875,
+          "width": 316,
+          "height": 20.296875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/hover-card",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Hover Card",
+      "bodyLength": 2833,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "openDelay",
+          "closeDelay",
+          "placement"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "arrow": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "hover-card-focus-and-hover",
+        "href": "#preview",
+        "portalled": true,
+        "focusOpened": true,
+        "hoverOpened": true,
+        "dismissed": true,
+        "text": "Alex Morgan · Frontend infrastructure"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/image-cropper",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Image Cropper",
+      "bodyLength": 3150,
+      "componentCount": 10,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "src",
+          "crop",
+          "defaultCrop",
+          "aspectRatio",
+          "minSize",
+          "maxSize",
+          "disabled"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "viewport": 1,
+          "image": 1,
+          "cropArea": 1,
+          "handle": 4,
+          "zoomControl": 1,
+          "status": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "image-cropper-range-gesture-adapter-contract",
+        "behaviorFamily": "range-gesture",
+        "rootVisible": true,
+        "expectedPartCount": 7,
+        "partCount": 10,
+        "interactiveCount": 5,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "DIV",
+          "component": "image-cropper",
+          "part": "handle",
+          "id": "image-cropper-handle-se-image-cropper-uifn-cl-0"
+        },
+        "accessibleName": "Resize crop se",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "100"
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "100"
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 127.5,
+          "y": 507.375,
+          "width": 135,
+          "height": 165.890625
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Input",
+      "bodyLength": 2716,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "propNames": [
+          "class",
+          "children",
+          "type",
+          "value",
+          "defaultValue",
+          "name",
+          "disabled",
+          "readOnly",
+          "required",
+          "invalid"
+        ],
+        "anatomyParts": 1
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "input-entry",
+        "value": "hello@uifn.dev"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 541.28125,
+          "width": 316,
+          "height": 42
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/listbox",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Listbox",
+      "bodyLength": 3428,
+      "componentCount": 12,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "items",
+          "multiple",
+          "orientation",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 8
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "group": 1,
+          "groupLabel": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "listbox-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 8,
+        "partCount": 12,
+        "interactiveCount": 1,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "DIV",
+          "component": "listbox",
+          "part": "item",
+          "id": "listbox-root-listbox-uifn-cl-0-item-item-1"
+        },
+        "accessibleName": "First option✓",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "checked",
+            "expanded": null,
+            "checked": null,
+            "selected": "true",
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "checked",
+            "expanded": null,
+            "checked": null,
+            "selected": "true",
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 125.546875,
+          "y": 495.734375,
+          "width": 138.890625,
+          "height": 189.1875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/marquee",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Marquee",
+      "bodyLength": 2762,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "direction",
+          "speed",
+          "pauseOnHover",
+          "pauseOnFocus",
+          "reducedMotionBehavior"
+        ],
+        "anatomyParts": 4
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "viewport": 1,
+          "track": 1,
+          "item": 3
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "marquee-static-foundation-adapter-contract",
+        "behaviorFamily": "static-foundation",
+        "rootVisible": true,
+        "expectedPartCount": 4,
+        "partCount": 6,
+        "interactiveCount": 0,
+        "focusWorked": true,
+        "focusTarget": null,
+        "accessibleName": "",
+        "keyboardProbe": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.546875,
+          "y": 549.734375,
+          "width": 118.890625,
+          "height": 81.1875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menu",
+      "bodyLength": 3189,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "orientation",
+          "loop",
+          "dir"
+        ],
+        "anatomyParts": 11
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menu-menu-navigation-adapter-contract",
+        "behaviorFamily": "menu-navigation",
+        "rootVisible": true,
+        "expectedPartCount": 11,
+        "partCount": 15,
+        "interactiveCount": 1,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "menu",
+          "part": "trigger",
+          "id": "menu-root-menu-uifn-cl-0-trigger"
+        },
+        "accessibleName": "Open example",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "closed",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "closed",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/menubar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Menubar",
+      "bodyLength": 3192,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "loop",
+          "dir"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "menu": 2,
+          "trigger": 2,
+          "content": 2,
+          "item": 2,
+          "submenuTrigger": 2,
+          "submenuContent": 2
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "menubar-roving-open-escape",
+        "triggerCount": 2,
+        "rovingFocusWorked": true,
+        "itemCount": 2,
+        "contentOwnedByRoot": true,
+        "itemFocused": true,
+        "focusReturned": true,
+        "activeBeforeEscape": {
+          "component": "menubar",
+          "part": "item",
+          "role": "menuitem",
+          "text": "Second option"
+        },
+        "itemFocusEvidence": []
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 49.625,
+          "y": 560.328125,
+          "width": 290.75,
+          "height": 60
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/meter",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Meter",
+      "bodyLength": 2906,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "min",
+          "max",
+          "low",
+          "high",
+          "optimum",
+          "formatValue"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "track": 1,
+          "range": 1,
+          "valueText": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "meter-status-feedback-adapter-contract",
+        "behaviorFamily": "status-feedback",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 5,
+        "interactiveCount": 0,
+        "focusWorked": true,
+        "focusTarget": null,
+        "accessibleName": "",
+        "keyboardProbe": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 150.796875,
+          "y": 566.03125,
+          "width": 88.390625,
+          "height": 48.59375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/navigation-menu",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Navigation Menu",
+      "bodyLength": 3309,
+      "componentCount": 16,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "orientation",
+          "delayDuration",
+          "skipDelayDuration",
+          "dir"
+        ],
+        "anatomyParts": 8
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "list": 1,
+          "item": 3,
+          "trigger": 3,
+          "content": 3,
+          "link": 3,
+          "viewport": 1,
+          "indicator": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "navigation-menu-menu-navigation-adapter-contract",
+        "behaviorFamily": "menu-navigation",
+        "rootVisible": true,
+        "expectedPartCount": 8,
+        "partCount": 16,
+        "interactiveCount": 3,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "navigation-menu",
+          "part": "trigger",
+          "id": "navigation-menu-root-navigation-menu-uifn-cl-0-trigger-item-1"
+        },
+        "accessibleName": "Open example",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "closed",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "closed",
+            "expanded": "false",
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 115.546875,
+          "y": 445.28125,
+          "width": 158.890625,
+          "height": 290.078125
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/number-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Number Input",
+      "bodyLength": 3566,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 12,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "min",
+          "max",
+          "step",
+          "locale",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 9
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 1,
+          "increment": 1,
+          "decrement": 1,
+          "scrubber": 1,
+          "hiddenInput": 1,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "number-input-forms-input-adapter-contract",
+        "behaviorFamily": "forms-input",
+        "rootVisible": true,
+        "expectedPartCount": 9,
+        "partCount": 9,
+        "interactiveCount": 4,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "INPUT",
+          "component": "number-input",
+          "part": "input",
+          "id": "number-input-input-number-input-uifn-cl-0"
+        },
+        "accessibleName": "Example label",
+        "keyboardProbe": {
+          "key": "ArrowDown",
+          "before": {
+            "state": "editing",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          },
+          "after": {
+            "state": "editing",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 527.609375,
+          "width": 316,
+          "height": 125.4375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/pagination",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pagination",
+      "bodyLength": 3113,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "page",
+          "defaultPage",
+          "count",
+          "pageSize",
+          "siblingCount",
+          "disabled"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "list": 1,
+          "item": 3,
+          "pageTrigger": 3,
+          "ellipsis": 3,
+          "previous": 1,
+          "next": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pagination-change",
+        "triggerCount": 3,
+        "before": "2",
+        "after": "3",
+        "current": "page"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 529.734375,
+          "width": 316,
+          "height": 121.1875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/password-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Password Input",
+      "bodyLength": 3255,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "visible",
+          "name",
+          "autocomplete",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "input": 1,
+          "visibilityTrigger": 1,
+          "strength": 1,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "password-input-forms-input-adapter-contract",
+        "behaviorFamily": "forms-input",
+        "rootVisible": true,
+        "expectedPartCount": 6,
+        "partCount": 6,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "INPUT",
+          "component": "password-input",
+          "part": "input",
+          "id": "password-input-input-password-input-uifn-cl-0"
+        },
+        "accessibleName": "Example label",
+        "keyboardProbe": {
+          "key": "ArrowDown",
+          "before": {
+            "state": "editing",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          },
+          "after": {
+            "state": "editing",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 525.609375,
+          "width": 316,
+          "height": 129.4375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/pin-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Pin Input",
+      "bodyLength": 3213,
+      "componentCount": 11,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "length",
+          "mask",
+          "otp",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "input": 6,
+          "hiddenInput": 1,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "pin-input-forms-input-adapter-contract",
+        "behaviorFamily": "forms-input",
+        "rootVisible": true,
+        "expectedPartCount": 6,
+        "partCount": 11,
+        "interactiveCount": 6,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "INPUT",
+          "component": "pin-input",
+          "part": "input",
+          "id": "pin-input-input-pin-input-uifn-cl-0-0"
+        },
+        "accessibleName": "Example label",
+        "keyboardProbe": {
+          "key": "ArrowDown",
+          "before": {
+            "state": "editing",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          },
+          "after": {
+            "state": "editing",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": ""
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 533.90625,
+          "width": 316,
+          "height": 112.84375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/popover",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Popover",
+      "bodyLength": 3183,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "modal",
+          "placement",
+          "closeOnEscape",
+          "closeOnInteractOutside"
+        ],
+        "anatomyParts": 9
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "anchor": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "arrow": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "popover-keyboard-open-escape",
+        "portalled": true,
+        "focusReturned": true
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 560.171875,
+          "width": 118.703125,
+          "height": 60.296875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/progress",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Progress",
+      "bodyLength": 2866,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "min",
+          "max",
+          "indeterminate",
+          "formatValue"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "track": 1,
+          "range": 1,
+          "circle": 1,
+          "valueText": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "progress-render",
+        "role": "progressbar",
+        "valueNow": "72",
+        "fillRatio": 0.7199928977272727,
+        "trackBox": {
+          "x": 662.609375,
+          "y": 485.34375,
+          "width": 352,
+          "height": 8
+        },
+        "rangeBox": {
+          "x": 662.609375,
+          "y": 485.34375,
+          "width": 253.4375,
+          "height": 8
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 488.375,
+          "width": 316,
+          "height": 203.890625
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/qr-code",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Qr Code",
+      "bodyLength": 2565,
+      "componentCount": 3,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "errorCorrection",
+          "size",
+          "label"
+        ],
+        "anatomyParts": 3
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "image": 1,
+          "caption": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "qr-code-static-foundation-adapter-contract",
+        "behaviorFamily": "static-foundation",
+        "rootVisible": true,
+        "expectedPartCount": 3,
+        "partCount": 3,
+        "interactiveCount": 0,
+        "focusWorked": true,
+        "focusTarget": null,
+        "accessibleName": "",
+        "keyboardProbe": null
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 77,
+          "y": 469.03125,
+          "width": 236,
+          "height": 242.59375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/radio-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Radio Group",
+      "bodyLength": 3331,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "name",
+          "orientation",
+          "loop",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "item": 3,
+          "itemControl": 3,
+          "itemIndicator": 3,
+          "hiddenInput": 3,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "radio-select",
+        "count": 3,
+        "checked": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 136.296875,
+          "y": 532.078125,
+          "width": 117.390625,
+          "height": 116.484375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/rating-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Rating Group",
+      "bodyLength": 3334,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "count",
+          "allowHalf",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "item": 5,
+          "itemIndicator": 5,
+          "hiddenInput": 1,
+          "valueText": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "rating-group-range-gesture-adapter-contract",
+        "behaviorFamily": "range-gesture",
+        "rootVisible": true,
+        "expectedPartCount": 7,
+        "partCount": 15,
+        "interactiveCount": 5,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "rating-group",
+          "part": "item",
+          "id": "rating-group-item-rating-group-uifn-cl-0-item-0"
+        },
+        "accessibleName": "0 / 5",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "highlighted",
+            "expanded": null,
+            "checked": "false",
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "highlighted",
+            "expanded": null,
+            "checked": "false",
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 570.03125,
+          "width": 316,
+          "height": 40.59375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/scroll-area",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Scroll Area",
+      "bodyLength": 3448,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "class",
+          "children",
+          "type",
+          "scrollHideDelay",
+          "orientation",
+          "dir"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "viewport": 1,
+          "content": 1,
+          "scrollbar": 1,
+          "thumb": 1,
+          "corner": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "scroll-area-scroll",
+        "clientHeight": 190,
+        "scrollHeight": 276,
+        "scrollTop": 86
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 494.328125,
+          "width": 316,
+          "height": 192
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/segment-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Segment Group",
+      "bodyLength": 3139,
+      "componentCount": 8,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "name",
+          "orientation",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "item": 3,
+          "itemText": 1,
+          "indicator": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "segment-group-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 6,
+        "partCount": 8,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "segment-group",
+          "part": "item",
+          "id": "segment-group-root-segment-group-uifn-cl-0-item-item-1"
+        },
+        "accessibleName": "First option",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "checked",
+            "expanded": null,
+            "checked": "true",
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "checked",
+            "expanded": null,
+            "checked": "true",
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 117.546875,
+          "y": 489.75,
+          "width": 154.890625,
+          "height": 201.140625
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/select",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Select",
+      "bodyLength": 4221,
+      "componentCount": 20,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 10,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "items",
+          "multiple",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 14
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "trigger": 1,
+          "valueText": 1,
+          "clear": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemText": 3,
+          "itemIndicator": 3,
+          "group": 1,
+          "groupLabel": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "select-keyboard-dismiss-and-pointer-select",
+        "contentOwnedByRoot": true,
+        "optionActive": true,
+        "focusReturned": true,
+        "selectedText": "Second optionSecond option✓",
+        "triggerText": "Open exampleSecond option",
+        "activeBeforeEscape": {
+          "component": "select",
+          "part": "trigger",
+          "role": "combobox",
+          "text": "Open exampleFirst option"
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 548.609375,
+          "width": 316,
+          "height": 83.4375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/separator",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Separator",
+      "bodyLength": 2281,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 4,
+        "propNames": [
+          "class",
+          "children",
+          "orientation",
+          "decorative"
+        ],
+        "anatomyParts": 1
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "separator-render",
+        "tagName": "DIV",
+        "role": "separator",
+        "box": {
+          "x": 632,
+          "y": 556.34375,
+          "width": 448,
+          "height": 1
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 589.828125,
+          "width": 316,
+          "height": 1
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/signature-pad",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Signature Pad",
+      "bodyLength": 3069,
+      "componentCount": 7,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 7
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "canvas": 1,
+          "clear": 1,
+          "undo": 1,
+          "status": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "signature-pad-range-gesture-adapter-contract",
+        "behaviorFamily": "range-gesture",
+        "rootVisible": true,
+        "expectedPartCount": 7,
+        "partCount": 7,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "CANVAS",
+          "component": "signature-pad",
+          "part": "canvas",
+          "id": "signature-pad-canvas-signature-pad-uifn-cl-0-canvas"
+        },
+        "accessibleName": "Example label",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "empty",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "empty",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 442.328125,
+          "width": 316,
+          "height": 297.4375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/slider",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Slider",
+      "bodyLength": 3522,
+      "componentCount": 8,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 13,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "min",
+          "max",
+          "step",
+          "minStepsBetweenThumbs",
+          "orientation",
+          "dir",
+          "name",
+          "disabled",
+          "readOnly"
+        ],
+        "anatomyParts": 8
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "track": 1,
+          "range": 1,
+          "thumb": 1,
+          "valueText": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "slider-keyboard-change",
+        "before": 64,
+        "after": 65,
+        "hiddenValue": "65",
+        "valueText": "Current value"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 143.46875,
+          "y": 545.875,
+          "width": 103.046875,
+          "height": 88.890625
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/splitter",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Splitter",
+      "bodyLength": 2934,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "sizes",
+          "defaultSizes",
+          "minSizes",
+          "maxSizes",
+          "orientation",
+          "dir",
+          "disabled"
+        ],
+        "anatomyParts": 4
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "panel": 2,
+          "resizeTrigger": 1,
+          "resizeHandle": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "splitter-range-gesture-adapter-contract",
+        "behaviorFamily": "range-gesture",
+        "rootVisible": true,
+        "expectedPartCount": 4,
+        "partCount": 5,
+        "interactiveCount": 1,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "DIV",
+          "component": "splitter",
+          "part": "resizeTrigger",
+          "id": "splitter-trigger-splitter-uifn-cl-0-trigger-0"
+        },
+        "accessibleName": "resize trigger example",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "40"
+          },
+          "after": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": "41"
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 494.328125,
+          "width": 316,
+          "height": 192
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/steps",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Steps",
+      "bodyLength": 3022,
+      "componentCount": 18,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 7,
+        "propNames": [
+          "class",
+          "children",
+          "step",
+          "defaultStep",
+          "count",
+          "orientation",
+          "linear"
+        ],
+        "anatomyParts": 8
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "list": 1,
+          "item": 3,
+          "trigger": 3,
+          "indicator": 3,
+          "separator": 3,
+          "content": 3,
+          "completed": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "steps-status-feedback-adapter-contract",
+        "behaviorFamily": "status-feedback",
+        "rootVisible": true,
+        "expectedPartCount": 8,
+        "partCount": 18,
+        "interactiveCount": 3,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "steps",
+          "part": "trigger",
+          "id": "steps-trigger-steps-uifn-cl-0-trigger-0"
+        },
+        "accessibleName": "Open example",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "complete",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "current",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 542.875,
+          "width": 316,
+          "height": 94.890625
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/switch",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Switch",
+      "bodyLength": 2988,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "checked",
+          "defaultChecked",
+          "name",
+          "value",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "control": 1,
+          "thumb": 1,
+          "label": 1,
+          "hiddenInput": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "switch-toggle",
+        "before": "true",
+        "after": "false"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 123.796875,
+          "y": 570.328125,
+          "width": 142.390625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tabs",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tabs",
+      "bodyLength": 2849,
+      "componentCount": 9,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "activationMode",
+          "orientation",
+          "loop",
+          "dir"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "list": 1,
+          "trigger": 3,
+          "indicator": 1,
+          "content": 3
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tabs-change",
+        "count": 3,
+        "selected": "true",
+        "label": "Activity",
+        "panel": "Recent deployments and audit events."
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 510.828125,
+          "width": 316,
+          "height": 102.890625
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tags-input",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tags Input",
+      "bodyLength": 3631,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 11,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "allowDuplicates",
+          "max",
+          "delimiter",
+          "name",
+          "disabled",
+          "readOnly",
+          "required"
+        ],
+        "anatomyParts": 10
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "control": 1,
+          "item": 2,
+          "itemText": 2,
+          "itemDelete": 2,
+          "input": 1,
+          "clear": 1,
+          "hiddenInput": 1,
+          "error": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tags-input-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 10,
+        "partCount": 13,
+        "interactiveCount": 4,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "tags-input",
+          "part": "itemDelete",
+          "id": "tags-input-root-tags-input-uifn-cl-0-itemDelete-item-1"
+        },
+        "accessibleName": "Remove",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "idle",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 488.453125,
+          "width": 316,
+          "height": 203.734375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/timer",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Timer",
+      "bodyLength": 2930,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "duration",
+          "remaining",
+          "defaultRemaining",
+          "direction",
+          "autoStart",
+          "announceInterval"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "value": 1,
+          "start": 1,
+          "pause": 1,
+          "reset": 1,
+          "status": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "timer-status-feedback-adapter-contract",
+        "behaviorFamily": "status-feedback",
+        "rootVisible": true,
+        "expectedPartCount": 6,
+        "partCount": 6,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "timer",
+          "part": "start",
+          "id": "timer-start-timer-uifn-cl-0-start"
+        },
+        "accessibleName": "Start",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": null,
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 514.578125,
+          "width": 316,
+          "height": 151.484375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toast",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toast",
+      "bodyLength": 2992,
+      "componentCount": 6,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "toasts",
+          "limit",
+          "duration",
+          "placement",
+          "pauseOnHover",
+          "pauseOnFocus"
+        ],
+        "anatomyParts": 6
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "viewport": 1,
+          "root": 1,
+          "title": 1,
+          "description": 1,
+          "action": 1,
+          "close": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toast-dismiss",
+        "stateBefore": "visible",
+        "stateAfter": null,
+        "statusText": "root exampleExample titleA production composition rendered from the public styled package.ConfirmClose"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 512.734375,
+          "width": 316,
+          "height": 155.1875
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toggle",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle",
+      "bodyLength": 2352,
+      "componentCount": 1,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 5,
+        "propNames": [
+          "class",
+          "children",
+          "pressed",
+          "defaultPressed",
+          "disabled"
+        ],
+        "anatomyParts": 1
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-press",
+        "before": "false",
+        "after": "true"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 126.546875,
+          "y": 570.328125,
+          "width": 136.890625,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toggle-group",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toggle Group",
+      "bodyLength": 2734,
+      "componentCount": 4,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "value",
+          "defaultValue",
+          "type",
+          "orientation",
+          "loop",
+          "disabled"
+        ],
+        "anatomyParts": 2
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "item": 3
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toggle-group-select",
+        "count": 3,
+        "pressed": "true",
+        "text": "Second option"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 556.03125,
+          "width": 316,
+          "height": 68.59375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/toolbar",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Toolbar",
+      "bodyLength": 2694,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "class",
+          "children",
+          "orientation",
+          "loop",
+          "dir",
+          "disabled"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "button": 1,
+          "link": 1,
+          "toggleGroup": 1,
+          "separator": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "toolbar-menu-navigation-adapter-contract",
+        "behaviorFamily": "menu-navigation",
+        "rootVisible": true,
+        "expectedPartCount": 5,
+        "partCount": 5,
+        "interactiveCount": 2,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "toolbar",
+          "part": "button",
+          "id": "toolbar-root-toolbar-uifn-cl-0-button-item-1"
+        },
+        "accessibleName": "button example",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "active",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "inactive",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 37,
+          "y": 562.03125,
+          "width": 316,
+          "height": 56.59375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tooltip",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tooltip",
+      "bodyLength": 2887,
+      "componentCount": 5,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "openDelay",
+          "closeDelay",
+          "placement",
+          "disabled"
+        ],
+        "anatomyParts": 5
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "arrow": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tooltip-focus-and-hover",
+        "portalled": true,
+        "focusOpened": true,
+        "hoverOpened": true,
+        "dismissed": true,
+        "text": "Component content"
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 542.28125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tour",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tour",
+      "bodyLength": 3443,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 8,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "step",
+          "defaultStep",
+          "steps",
+          "modal"
+        ],
+        "anatomyParts": 13
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "backdrop": 1,
+          "spotlight": 1,
+          "positioner": 1,
+          "content": 1,
+          "title": 1,
+          "description": 1,
+          "previous": 1,
+          "next": 1,
+          "close": 1,
+          "skip": 1,
+          "progress": 1,
+          "portal": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tour-modal-overlay-adapter-contract",
+        "behaviorFamily": "modal-overlay",
+        "rootVisible": true,
+        "expectedPartCount": 13,
+        "partCount": 13,
+        "interactiveCount": 3,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "BUTTON",
+          "component": "tour",
+          "part": "next",
+          "id": "tour-content-tour-uifn-cl-0-next"
+        },
+        "accessibleName": "Next",
+        "keyboardProbe": {
+          "key": "Enter",
+          "before": {
+            "state": "open",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "open",
+            "expanded": null,
+            "checked": null,
+            "selected": null,
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 211.921875,
+          "y": 567.03125,
+          "width": 73.875,
+          "height": 46.59375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/tree-view",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Tree View",
+      "bodyLength": 3330,
+      "componentCount": 13,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 9,
+        "propNames": [
+          "class",
+          "children",
+          "expanded",
+          "defaultExpanded",
+          "selection",
+          "defaultSelection",
+          "items",
+          "selectionMode",
+          "dir"
+        ],
+        "anatomyParts": 8
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "label": 1,
+          "tree": 1,
+          "item": 2,
+          "itemTrigger": 2,
+          "itemText": 2,
+          "branch": 2,
+          "indicator": 2
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "tree-view-selection-collection-adapter-contract",
+        "behaviorFamily": "selection-collection",
+        "rootVisible": true,
+        "expectedPartCount": 8,
+        "partCount": 13,
+        "interactiveCount": 3,
+        "focusWorked": true,
+        "focusTarget": {
+          "tag": "DIV",
+          "component": "tree-view",
+          "part": "item",
+          "id": "tree-view-root-tree-view-uifn-cl-0-item-item-1"
+        },
+        "accessibleName": "First optionitem trigger exampleFirst optionbranch example✓",
+        "keyboardProbe": {
+          "key": "ArrowRight",
+          "before": {
+            "state": "leaf",
+            "expanded": null,
+            "checked": null,
+            "selected": "false",
+            "pressed": null,
+            "value": null
+          },
+          "after": {
+            "state": "leaf",
+            "expanded": null,
+            "checked": null,
+            "selected": "false",
+            "pressed": null,
+            "value": null
+          }
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 114.078125,
+          "y": 499.140625,
+          "width": 161.828125,
+          "height": 182.375
+        }
+      }
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/accordion/qa",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Accordion QA",
+      "bodyLength": 778,
+      "componentCount": 48,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/hooks/use-media-query",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "useMediaQuery",
+      "bodyLength": 403,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/patterns/auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Auth Panel",
+      "bodyLength": 509,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    },
+    {
+      "framework": "solid",
+      "route": "/components/solid/sf/authfn-auth-panel",
+      "status": "passed",
+      "statusCode": 200,
+      "title": "Authfn Auth Panel",
+      "bodyLength": 537,
+      "componentCount": 0,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 0,
+      "documentation": null,
+      "composition": null,
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "non-component-route-render"
+      },
+      "accessibility": null,
+      "responsive": null
+    }
+  ],
+  "findings": [
+    {
+      "severity": "high",
+      "framework": "solid",
+      "route": "/components/solid/components/context-menu",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": false,
+        "activeAfterEscape": {
+          "tag": "BODY",
+          "component": null,
+          "part": null,
+          "id": ""
+        }
+      }
+    }
+  ],
+  "blockingFindings": [
+    {
+      "severity": "high",
+      "framework": "solid",
+      "route": "/components/solid/components/context-menu",
+      "code": "UIFN_PUBLIC_COMPONENT_INTERACTION_FAILED",
+      "evidence": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": false,
+        "activeAfterEscape": {
+          "tag": "BODY",
+          "component": null,
+          "part": null,
+          "id": ""
+        }
+      }
+    }
+  ],
+  "failures": [
+    {
+      "framework": "solid",
+      "route": "/components/solid/components/context-menu",
+      "status": "failed",
+      "statusCode": 200,
+      "title": "Context Menu",
+      "bodyLength": 3174,
+      "componentCount": 15,
+      "catalogCardCount": 0,
+      "componentDetailsCount": 1,
+      "documentation": {
+        "installation": 1,
+        "usage": 1,
+        "api": 1,
+        "examples": 1,
+        "propRows": 6,
+        "propNames": [
+          "class",
+          "children",
+          "open",
+          "defaultOpen",
+          "dir",
+          "loop"
+        ],
+        "anatomyParts": 11
+      },
+      "composition": {
+        "ok": true,
+        "rootCount": 1,
+        "compositionMarkerCount": 1,
+        "missingParts": [],
+        "unexpectedParts": [],
+        "missingExports": [],
+        "partCounts": {
+          "root": 1,
+          "trigger": 1,
+          "positioner": 1,
+          "content": 1,
+          "item": 3,
+          "itemIndicator": 3,
+          "separator": 1,
+          "group": 1,
+          "groupLabel": 1,
+          "submenuTrigger": 1,
+          "submenuContent": 1
+        }
+      },
+      "consoleErrorCount": 0,
+      "behavior": {
+        "action": "contextmenu-keyboard-and-pointer",
+        "menuItemCount": 4,
+        "portalled": true,
+        "keyboardItemFocused": true,
+        "focusReturned": false,
+        "activeAfterEscape": {
+          "tag": "BODY",
+          "component": null,
+          "part": null,
+          "id": ""
+        }
+      },
+      "accessibility": {
+        "ok": true,
+        "violations": []
+      },
+      "responsive": {
+        "ok": true,
+        "viewportWidth": 390,
+        "documentWidth": 390,
+        "horizontalOverflow": 0,
+        "rootBox": {
+          "x": 135.640625,
+          "y": 570.328125,
+          "width": 118.703125,
+          "height": 40
+        }
+      }
+    }
+  ],
+  "evidenceRoot": "/Users/serro/Documents/dev/n/superfunctions-SFN-15-uifn/uifn/.conduct/evidence/catalog-solid-all-chromium-3"
+}

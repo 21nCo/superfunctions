@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "phase": "PHASE_17",
+  "vector": "TV-STORY-001-P",
+  "status": "traversal-complete",
+  "storiesExpected": 2115,
+  "storiesVisited": 2115,
+  "storiesPassed": 2115,
+  "failureCount": 0
+}

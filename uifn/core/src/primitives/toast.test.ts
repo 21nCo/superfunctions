@@ -1,48 +1,25 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createToast } from './toast';
+import { describe, expect, it } from 'vitest';
+import { createManualRuntimeScheduler } from '../internal/runtime/scheduler';
+import { createToastController } from './toast';
 
 describe('toast primitive', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  it('pauses absolute-deadline timers and promotes its bounded queue', () => {
+    const scheduler = createManualRuntimeScheduler();
+    const toast = createToastController({ limit: 1, duration: 100, toasts: [{ id: 'a' }, { id: 'b' }] }, { scheduler, now: scheduler.now });
+    expect(toast.state.visible.map((item) => item.id)).toEqual(['a']);
+    toast.actions.pause('hover');
+    scheduler.advanceBy(300);
+    expect(toast.state.visible.map((item) => item.id)).toEqual(['a']);
+    toast.actions.resume('hover');
+    scheduler.advanceBy(100);
+    expect(toast.state.visible.map((item) => item.id)).toEqual(['b']);
+    toast.destroy();
+    expect(scheduler.pending().timeout).toBe(0);
 
-  it('auto-dismisses after duration and notifies subscribers', () => {
-    vi.useFakeTimers();
-
-    const toast = createToast({
-      defaultOpen: true,
-      duration: 50,
-    });
-
-    const states: boolean[] = [];
-    toast.subscribe((next) => {
-      states.push(next.open);
-    });
-
-    vi.advanceTimersByTime(50);
-
-    expect(states).toEqual([false]);
-  });
-
-  it('does not auto-dismiss while paused, then dismisses after resume', () => {
-    vi.useFakeTimers();
-
-    const toast = createToast({
-      defaultOpen: true,
-      duration: 100,
-    });
-
-    const states: boolean[] = [];
-    toast.subscribe((next) => {
-      states.push(next.open);
-    });
-
-    toast.actions.pauseTimer();
-    vi.advanceTimersByTime(300);
-    expect(states).toEqual([]);
-
-    toast.actions.resumeTimer();
-    vi.advanceTimersByTime(100);
-    expect(states).toEqual([false]);
+    const route = createToastController({ limit: 1, duration: 100, toasts: [{ id: 'visible' }, { id: 'queued' }] }, { scheduler, now: scheduler.now });
+    route.actions.routeChange();
+    expect(route.state.visible).toEqual([]);
+    expect(route.state.queued).toEqual([]);
+    route.destroy();
   });
 });

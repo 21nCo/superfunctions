@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createSwitch } from './switch';
+import { createSwitchRuntime } from './switch';
 
 describe('switch primitive', () => {
   it('toggles checked state and serializes form values', () => {
-    const machine = createSwitch({
+    const machine = createSwitchRuntime({
       name: 'alerts',
       defaultChecked: false,
       value: 'on',
@@ -17,7 +17,7 @@ describe('switch primitive', () => {
   });
 
   it('ignores disabled interactions', () => {
-    const machine = createSwitch({
+    const machine = createSwitchRuntime({
       disabled: true,
       defaultChecked: false,
     });
@@ -29,7 +29,7 @@ describe('switch primitive', () => {
 
   it('keeps controlled checked state stable until syncChecked is applied', () => {
     const onCheckedChange = vi.fn();
-    const machine = createSwitch({
+    const machine = createSwitchRuntime({
       checked: false,
       name: 'alerts',
       onCheckedChange,
