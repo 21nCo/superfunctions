@@ -37,5 +37,6 @@ export const ecosystemCatalog: readonly EcosystemEntry[] = [
   createEntry("flowfn", "FlowFn", "Queues, streams, and workflow control utilities for asynchronous systems."),
   createEntry("iconfn", "IconFn", "Icon libraries and asset tooling for design systems and apps."),
   createEntry("logfn", "LogFn", "Logging primitives and pipelines for application and integration telemetry."),
+  createEntry("mailfn", "MailFn", "Programmable real inboxes for products, agents, and deterministic email testing."),
   createEntry("sendfn", "SendFn", "Email and messaging delivery helpers for notifications and campaigns."),
 ];

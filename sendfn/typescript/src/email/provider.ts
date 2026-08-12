@@ -18,6 +18,8 @@ export interface EmailProvider {
 }
 
 export interface EmailProviderCapabilities {
+  /** Provider enforces the supplied idempotency key across retried API calls. */
+  supportsIdempotency?: boolean;
   supportsTemplates: boolean;
   supportsAttachments: boolean;
   supportsBulkSend: boolean;
@@ -27,15 +29,17 @@ export interface EmailProviderCapabilities {
 }
 
 export interface SendEmailRequest {
+  idempotencyKey?: string;
   from: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
   subject: string;
-  html: string;
+  html?: string;
   text?: string;
   attachments?: Attachment[];
   replyTo?: string;
+  headers?: Record<string, string>;
   tags?: Record<string, string>;
   metadata?: Record<string, any>;
 }
