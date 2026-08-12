@@ -49,4 +49,18 @@ describe("validateSchema", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.result.documentTypes).toHaveLength(2);
   });
+
+  it("validates the explicit Markdown field contract", () => {
+    const valid = validateSchema({
+      version: 1,
+      documentTypes: [{ name: "page", fields: [{ name: "body", type: { kind: "markdown", dialect: "gfm", allowRawHtml: false } }] }],
+    });
+    expect(valid.ok).toBe(true);
+    const invalid = validateSchema({
+      version: 1,
+      documentTypes: [{ name: "page", fields: [{ name: "body", type: { kind: "markdown", dialect: "unknown" } }] }],
+    });
+    expect(invalid.ok).toBe(false);
+    if (!invalid.ok) expect(invalid.error.details.path).toContain("dialect");
+  });
 });

@@ -44,6 +44,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@mdfn/extensions": "0.1.0",
+    "@mdfn/markdown": "0.1.0",
+    "@mdfn/render": "0.1.0",
     "marked": "^12.0.0",
     "yaml": "^2.8.1",
     "zod": "^3.0.0"

@@ -22,6 +22,7 @@ import { schemaGet } from "./schemaStorage.js";
 import { applyPatch } from "../patch/applyPatch.js";
 import { appendRevision } from "./revisions.js";
 import { documentStorageId } from "./documentIdentity.js";
+import { parseMarkdown } from "@mdfn/markdown";
 
 export interface DocsStorageConfig {
   db: Adapter;
@@ -133,6 +134,15 @@ function validateFieldType(
         return { ok: false, error: `expected richtext array, got ${typeof value}` };
       }
       return { ok: true };
+    }
+    case "markdown": {
+      if (typeof value !== "string") return { ok: false, error: `expected markdown string, got ${typeof value}` };
+      try {
+        parseMarkdown(value, { dialect: fieldType.dialect ?? "gfm", allowRawHtml: fieldType.allowRawHtml ?? false });
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: `invalid markdown: ${error instanceof Error ? error.message : String(error)}` };
+      }
     }
     default:
       return { ok: false, error: `unknown field kind` };

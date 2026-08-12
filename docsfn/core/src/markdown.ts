@@ -1,4 +1,7 @@
 import { marked } from "marked";
+import { parseMarkdown } from "@mdfn/markdown";
+import { extractDocument } from "@mdfn/render";
+import { defaultExtensions } from "@mdfn/extensions";
 import { transformFumadocsV15 } from "./compat/fumadocs";
 import { createDiagnostic, createDocsError, type DocsError } from "./diagnostics";
 import { assertSafeSource } from "./sanitize";
@@ -695,36 +698,9 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
 }
 
 export function extractHeadings(markdown: string): DocHeading[] {
-  const lines = markdown.split(/\r?\n/);
-  const headings: DocHeading[] = [];
+  const canonical = extractDocument(parseMarkdown(markdown, { extensions: defaultExtensions }).document);
   const createSlug = createSlugger();
-  let insideCodeFence = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (CODE_FENCE_REGEX.test(trimmed)) {
-      insideCodeFence = !insideCodeFence;
-      continue;
-    }
-
-    if (insideCodeFence) {
-      continue;
-    }
-
-    const match = trimmed.match(HEADING_REGEX);
-    if (!match) {
-      continue;
-    }
-
-    const text = match[2].trim();
-    headings.push({
-      level: match[1].length,
-      text,
-      slug: createSlug(text),
-    });
-  }
-
-  return headings;
+  return canonical.headings.map((heading) => ({ level: heading.level, text: heading.text, slug: createSlug(heading.text) }));
 }
 
 export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArtifact {
@@ -750,6 +726,15 @@ export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArt
       source: transformedSource,
       sourcePath: input.sourcePath,
       allowRawHtml: input.allowRawHtml,
+    });
+
+    // mdfn is the canonical Markdown syntax and source-preservation pass. DocsFn
+    // projects that document into its existing render model and adds its own
+    // documentation-only component semantics below.
+    parseMarkdown(transformedSource, {
+      dialect: "gfm",
+      allowRawHtml: input.allowRawHtml ?? false,
+      extensions: defaultExtensions,
     });
 
     const blocks = parseBlocks({

@@ -212,6 +212,14 @@ function validateFieldType(
       return { ok: true, result: undefined };
     case "richtext":
       return { ok: true, result: undefined };
+    case "markdown":
+      if (ft.dialect !== undefined && ft.dialect !== "commonmark" && ft.dialect !== "gfm") {
+        return err("SCHEMA_INVALID", "markdown dialect must be commonmark or gfm", { path: `${path}.dialect` });
+      }
+      if (ft.allowRawHtml !== undefined && typeof ft.allowRawHtml !== "boolean") {
+        return err("SCHEMA_INVALID", "markdown allowRawHtml must be boolean", { path: `${path}.allowRawHtml` });
+      }
+      return { ok: true, result: undefined };
     case "asset":
       if (ft.assetType !== "file" && ft.assetType !== "image") {
         return err("SCHEMA_INVALID", "assetType must be file or image", {

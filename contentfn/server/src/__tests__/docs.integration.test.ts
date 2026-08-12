@@ -25,6 +25,7 @@ const schemaV1 = {
         { name: "views", type: { kind: "primitive" as const, type: "number" as const }, required: false },
         { name: "author", type: { kind: "reference" as const, to: ["author"] }, required: false },
         { name: "body", type: { kind: "richtext" as const }, required: false },
+        { name: "markdownBody", type: { kind: "markdown" as const, dialect: "gfm" as const, allowRawHtml: false }, required: false },
         { name: "heroImage", type: { kind: "asset" as const, assetType: "image" as const }, required: false },
       ],
     },
@@ -83,6 +84,17 @@ describe("PHASE_02 docs create/get/delete + perspectives", () => {
         expect(res.error.code).toBe("VALIDATION_FAILED");
         expect(res.error.details.path).toContain("title");
       }
+    });
+  });
+
+  describe("Markdown field validation", () => {
+    it("stores Markdown source and rejects non-string values", async () => {
+      const accepted = await api.docs.create({ dataset: "prod", id: "markdown-1", type: "post", doc: { title: "Markdown", markdownBody: "# Heading\n" } });
+      expect(accepted.ok).toBe(true);
+      if (accepted.ok) expect(accepted.result.markdownBody).toBe("# Heading\n");
+      const rejected = await api.docs.create({ dataset: "prod", id: "markdown-2", type: "post", doc: { title: "Invalid", markdownBody: ["not source"] } });
+      expect(rejected.ok).toBe(false);
+      if (!rejected.ok) expect(rejected.error).toMatchObject({ code: "VALIDATION_FAILED", details: { path: "markdownBody" } });
     });
   });
 

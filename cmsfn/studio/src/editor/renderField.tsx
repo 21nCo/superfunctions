@@ -14,6 +14,7 @@ import {
   ObjectWidget,
   ArrayWidget,
   RichtextWidget,
+  MarkdownWidget,
   ReferenceWidget,
   ReferenceField,
   AssetWidget,
@@ -171,6 +172,16 @@ export function renderField(
     case "richtext":
       return (
         <RichtextWidget
+          data-field-path={path}
+          value={value}
+          onChange={(v) => onChange(v)}
+          required={required}
+          disabled={false}
+        />
+      );
+    case "markdown":
+      return (
+        <MarkdownWidget
           data-field-path={path}
           value={value}
           onChange={(v) => onChange(v)}
