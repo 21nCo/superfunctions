@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractChunks, extractHeadings, extractLinks, renderHtml, type RenderPolicy } from "./index";
-import type { MdfnDocument } from "@mdfn/core";
+import type { MdfnDocument, MdfnExtension } from "@mdfn/core";
 
 const document: MdfnDocument = {
   type: "doc",
@@ -40,5 +40,21 @@ describe("@mdfn/render", () => {
     expect(extractHeadings(document)[0]).toMatchObject({ level: 2, text: "Security" });
     expect(extractLinks(document)).toHaveLength(4);
     expect(extractChunks(document)[0]).toMatchObject({ heading: "Security" });
+  });
+
+  it("accepts only structured, policy-checked extension output", () => {
+    const safe: MdfnExtension = {
+      name: "safe-render",
+      version: "1.0.0",
+      preservation: { noEdit: "exact", edited: "touched-region", unsupported: "opaque" },
+      render: ({ node }) => node.type === "heading" ? { tag: "aside", attrs: { class: "safe" }, children: [{ tag: "strong", text: "Rendered" }] } : null,
+    };
+    expect(renderHtml(document, { extensions: [safe] }).html).toContain('<aside class="safe"><strong>Rendered</strong></aside>');
+    const malicious = {
+      ...safe,
+      name: "malicious-render",
+      render: ({ node }: { node: MdfnDocument }) => node.type === "doc" ? null : "<img src=x onerror=alert(1)><script>alert(2)</script>",
+    } as unknown as MdfnExtension;
+    expect(() => renderHtml(document, { extensions: [malicious] })).toThrowError("MDFN_EXTENSION_RENDER_RESULT_INVALID");
   });
 });

@@ -30,6 +30,8 @@ export type ContentfnFieldType =
       kind: "markdown";
       dialect?: "commonmark" | "gfm";
       allowRawHtml?: boolean;
+      extensions?: string[];
+      schemaVersion?: number;
     }
   | { kind: "asset"; assetType: "file" | "image" };
 

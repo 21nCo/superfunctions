@@ -6,6 +6,10 @@ export interface MdfnEditorHandle {
   focus(): void;
   run(command: DomCommand): boolean;
   can(command: DomCommand): boolean;
+  setLink(href: string, title?: string): boolean;
+  removeLink(): boolean;
+  insertTable(rows?: number, columns?: number): boolean;
+  insertMarkdown(markdown: string): boolean;
 }
 
 export interface MdfnEditorProps {
@@ -16,4 +20,5 @@ export interface MdfnEditorProps {
   class?: string;
   onLoadError?: (error: Error) => void;
   editorRef?: (value: MdfnEditorHandle | null) => void;
+  onFiles?: (files: readonly File[]) => void | Promise<void>;
 }

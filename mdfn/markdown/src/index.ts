@@ -4,6 +4,7 @@ import { toMarkdown } from "mdast-util-to-markdown";
 import { gfm } from "micromark-extension-gfm";
 import {
   hashString,
+  inspectMdfnUrl,
   resolveExtensions,
   type EditorProjector,
   type MdfnDiagnostic,
@@ -127,8 +128,18 @@ function convertMdastNode(node: MdastNode, source: string, diagnostics: MdfnDiag
     case "strong": return { type: "strong", ...common };
     case "emphasis": return { type: "emphasis", ...common };
     case "delete": return { type: "delete", ...common };
-    case "link": return { type: "link", ...common, attrs: attrs({ url: node.url ?? "", title: node.title ?? "" }) };
-    case "image": return { type: "image", id, source: span, attrs: attrs({ url: node.url ?? "", title: node.title ?? "", alt: node.alt ?? "" }) };
+    case "link": {
+      const url = node.url ?? "";
+      const inspected = inspectMdfnUrl(url, { allowedSchemes: ["http", "https", "mailto"], allowRelative: true });
+      if (!inspected.safe) diagnostics.push(diagnostic("MDFN_UNSAFE_URL", "Unsafe link URL was retained as inert source", "warning", span ? { from: span.from, to: span.to } : undefined, { kind: "link", reason: inspected.reason ?? "scheme" }));
+      return { type: "link", ...common, attrs: attrs({ url, title: node.title ?? "", unsafe: !inspected.safe }) };
+    }
+    case "image": {
+      const url = node.url ?? "";
+      const inspected = inspectMdfnUrl(url, { allowedSchemes: ["http", "https"], allowRelative: true });
+      if (!inspected.safe) diagnostics.push(diagnostic("MDFN_UNSAFE_URL", "Unsafe image URL was retained as inert source", "warning", span ? { from: span.from, to: span.to } : undefined, { kind: "image", reason: inspected.reason ?? "scheme" }));
+      return { type: "image", id, source: span, attrs: attrs({ url, title: node.title ?? "", alt: node.alt ?? "", unsafe: !inspected.safe }) };
+    }
     case "table": return { type: "table", ...common, attrs: attrs({ align: (node.align ?? []).map((value) => value ?? "") }) };
     case "tableRow": return { type: "tableRow", ...common };
     case "tableCell": return { type: "tableCell", ...common };
@@ -157,12 +168,35 @@ function scanExtensionBlocks(source: string, registry: ResolvedExtensionRegistry
   nodes: MdfnNode[];
   diagnostics: MdfnDiagnostic[];
 } {
-  if (registry.extensions.every((extension) => !extension.parseMarkdown)) return { masked: source, nodes: [], diagnostics: [] };
   // Source offsets in mdast and the editor protocol are UTF-16 code-unit offsets.
   const characters = source.split("");
   const nodes: MdfnNode[] = [];
   const diagnostics: MdfnDiagnostic[] = [];
   let offset = 0;
+  const fallbackAt = (line: string): { consumed: number; syntax: string; diagnostic: string } | null => {
+    const directive = /^:::[ \t]*([a-z][a-z0-9-]*)(?:[ \t]+[^\r\n]*)?[ \t]*(?:\r?\n|\r|$)/i.exec(line);
+    if (directive) {
+      const close = /^:{3,}[ \t]*(?:\r?\n|\r|$)/gm;
+      close.lastIndex = offset + line.length;
+      const match = close.exec(source);
+      return {
+        consumed: match ? match.index + match[0].length - offset : source.length - offset,
+        syntax: `directive/${directive[1].toLowerCase()}`,
+        diagnostic: match ? "MDFN_EXTENSION_DISABLED_OR_UNKNOWN" : "MDFN_DIRECTIVE_UNCLOSED",
+      };
+    }
+    if (offset === 0) {
+      const fence = /^(---|\+\+\+)[ \t]*(?:\r?\n|\r|$)/.exec(line);
+      if (fence) {
+        const delimiter = fence[1] === "+++" ? "\\+\\+\\+" : "---";
+        const close = new RegExp(`^${delimiter}[ \\t]*(?:\\r?\\n|\\r|$)`, "gm");
+        close.lastIndex = line.length;
+        const match = close.exec(source);
+        if (match) return { consumed: match.index + match[0].length, syntax: "frontmatter", diagnostic: "MDFN_EXTENSION_DISABLED_OR_UNKNOWN" };
+      }
+    }
+    return null;
+  };
   while (offset < source.length) {
     const lineEnd = source.indexOf("\n", offset);
     const end = lineEnd === -1 ? source.length : lineEnd + 1;
@@ -186,6 +220,20 @@ function scanExtensionBlocks(source: string, registry: ResolvedExtensionRegistry
       offset = consumedEnd;
       matched = true;
       break;
+    }
+    if (!matched) {
+      const unknown = fallbackAt(line);
+      if (unknown) {
+        const consumedEnd = Math.min(source.length, offset + unknown.consumed);
+        const span: SourceSpan = { from: offset, to: consumedEnd, raw: source.slice(offset, consumedEnd), preservation: "opaque" };
+        nodes.push({ type: "opaque", id: `${unknown.syntax}:${offset}:${consumedEnd}`, attrs: { syntax: unknown.syntax }, text: span.raw, source: span });
+        diagnostics.push(diagnostic(unknown.diagnostic, `Syntax ${unknown.syntax} is not available in the active profile and was preserved as opaque source`, "warning", { from: offset, to: consumedEnd }, { syntax: unknown.syntax }));
+        for (let index = offset; index < consumedEnd; index += 1) {
+          if (characters[index] !== "\n" && characters[index] !== "\r") characters[index] = " ";
+        }
+        offset = consumedEnd;
+        matched = true;
+      }
     }
     if (!matched) offset = end;
   }

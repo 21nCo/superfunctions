@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { deterministicFuzzCorpus, compareSemanticTraces, representativeCorpus, runPreservationCorpus, runSecurityCorpus } from "./index";
 import { parseMarkdown, serializeMarkdown } from "@mdfn/markdown";
 import { renderHtml } from "@mdfn/render";
+import { tests as commonmarkSpecTests } from "commonmark-spec";
 
 describe("@mdfn/testing", () => {
   it("passes the representative no-edit corpus", () => {
@@ -20,6 +21,12 @@ describe("@mdfn/testing", () => {
   it("passes a reproducible malformed and Unicode fuzz corpus", () => {
     const corpus = deterministicFuzzCorpus(0x53464e20, 128);
     expect(runPreservationCorpus(corpus)).toMatchObject({ ok: true, passed: 128, failed: 0 });
+  });
+
+  it("parses and byte-preserves every official CommonMark 0.31.2 example", () => {
+    const corpus = commonmarkSpecTests.map((example) => ({ id: `commonmark-${example.number}-${example.section}`, source: example.markdown, options: { dialect: "commonmark" as const } }));
+    expect(corpus.length).toBeGreaterThan(600);
+    expect(runPreservationCorpus(corpus)).toMatchObject({ ok: true, passed: corpus.length, failed: 0 });
   });
 
   it("stays within the documented large-document development budget", () => {

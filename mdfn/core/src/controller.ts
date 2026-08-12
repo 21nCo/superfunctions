@@ -6,6 +6,8 @@ import type {
   EditorState,
   MdfnExtension,
   StateChange,
+  MdfnSelection,
+  MdfnSidecar,
 } from "./types";
 import { resolveExtensions, type ResolvedExtensionRegistry } from "./extensions";
 import { createEditorState } from "./state";
@@ -30,11 +32,13 @@ export interface CreateEditorInput {
   readonly projector: EditorProjector;
   readonly extensions?: readonly MdfnExtension[];
   readonly historyLimit?: number;
+  readonly selection?: MdfnSelection;
+  readonly sidecar?: MdfnSidecar;
 }
 
 export function createEditor(input: CreateEditorInput): EditorController {
   const extensions = resolveExtensions(input.extensions ?? []);
-  let state = createEditorState({ markdown: input.markdown, projector: input.projector, schemaHash: extensions.schemaHash });
+  let state = createEditorState({ markdown: input.markdown, projector: input.projector, schemaHash: extensions.schemaHash, selection: input.selection, sidecar: input.sidecar });
   const listeners = new Set<EditorListener>();
   const undoStack: EditorState[] = [];
   const redoStack: EditorState[] = [];

@@ -5,7 +5,7 @@ import { createMdfnService } from "./index";
 describe("mdfn server", () => {
   it("wraps the adapter and enforces optimistic versions", async () => {
     const database = memoryAdapter();
-    const service = createMdfnService({ database, authorize: () => true, createId: (() => { let id = 0; return () => `id-${id++}`; })() });
+    const service = createMdfnService({ database, durability: "ephemeral", authorize: () => true, createId: (() => { let id = 0; return () => `id-${id++}`; })() });
     const principal = { id: "u" };
     const created = await service.create(principal, { markdown: "# One" });
     const updated = await service.update(principal, created.id, { expectedVersion: 1, markdown: "# Two" });
@@ -16,9 +16,48 @@ describe("mdfn server", () => {
 
   it("enforces tenant scope before host authorization and collaboration limits", async () => {
     const database = memoryAdapter();
-    const service = createMdfnService({ database, authorize: () => true, maxCollaborationUpdateBytes: 4, createId: (() => { let id = 0; return () => `tenant-id-${id++}`; })() });
+    const service = createMdfnService({ database, durability: "ephemeral", authorize: () => true, maxCollaborationUpdateBytes: 4, createId: (() => { let id = 0; return () => `tenant-id-${id++}`; })() });
     const created = await service.create({ id: "a", tenantId: "tenant-a" }, { markdown: "# Scoped" });
     await expect(service.read({ id: "b", tenantId: "tenant-b" }, created.id)).rejects.toMatchObject({ code: "MDFN_DOCUMENT_NOT_FOUND" });
     await expect(service.appendCollaborationUpdate({ id: "a", tenantId: "tenant-a" }, created.id, "12345")).rejects.toMatchObject({ code: "MDFN_COLLAB_UPDATE_TOO_LARGE", status: 413 });
+  });
+
+  it("fails closed when durable storage lacks transaction support", () => {
+    expect(() => createMdfnService({ database: memoryAdapter(), authorize: () => true })).toThrowError("MDFN_TRANSACTIONAL_DATABASE_REQUIRED");
+  });
+
+  it("persists editorial workflows, restores revisions, and compacts collaboration state", async () => {
+    const service = createMdfnService({ database: memoryAdapter(), durability: "ephemeral", authorize: () => true, createId: (() => { let id = 0; return () => `workflow-${id++}`; })() });
+    const principal = { id: "author" };
+    const created = await service.create(principal, { markdown: "# One" });
+    const commented = await service.createComment(principal, created.id, { expectedVersion: 1, anchor: { from: 2, to: 5 }, body: "Please revise", idempotencyKey: "comment" });
+    const threadId = commented.sidecar?.comments?.[0]?.id;
+    expect(threadId).toBeTruthy();
+    expect((await service.createComment(principal, created.id, { expectedVersion: 1, anchor: { from: 2, to: 5 }, body: "ignored replay", idempotencyKey: "comment" })).version).toBe(2);
+    const replied = await service.replyComment(principal, created.id, threadId!, { expectedVersion: 2, body: "Working on it" });
+    const resolved = await service.resolveComment(principal, created.id, threadId!, { expectedVersion: 3, resolved: true });
+    const suggested = await service.createSuggestion(principal, created.id, { expectedVersion: 4, anchor: { from: 2, to: 5 }, replacement: "Two" });
+    const suggestionId = suggested.sidecar?.suggestions?.[0]?.id;
+    const accepted = await service.decideSuggestion(principal, created.id, suggestionId!, { expectedVersion: 5, decision: "accepted" });
+    expect(accepted.markdown).toBe("# Two");
+    const reviewing = await service.transitionReview(principal, created.id, { expectedVersion: 6, state: "in-review" });
+    expect(reviewing.sidecar?.reviewState).toBe("in-review");
+    expect(reviewing.sidecar?.audit).toHaveLength(6);
+    await service.appendCollaborationUpdate(principal, created.id, "one");
+    await service.appendCollaborationUpdate(principal, created.id, "two");
+    await service.compactCollaborationUpdates(principal, created.id, "snapshot");
+    expect(await service.collaborationUpdates(principal, created.id)).toEqual(["snapshot"]);
+    const restored = await service.restoreVersion(principal, created.id, { version: 1, expectedVersion: 7 });
+    expect(restored).toMatchObject({ markdown: "# One", version: 8 });
+    expect(await service.versions(principal, created.id)).toHaveLength(8);
+    await service.delete(principal, created.id);
+    await expect(service.read(principal, created.id)).rejects.toMatchObject({ code: "MDFN_DOCUMENT_NOT_FOUND" });
+    void replied;
+    void resolved;
+  });
+
+  it("rejects untrusted sidecar structures before persistence", async () => {
+    const service = createMdfnService({ database: memoryAdapter(), durability: "ephemeral", authorize: () => true });
+    await expect(service.create({ id: "author" }, { markdown: "safe", sidecar: { comments: "invalid" } as never })).rejects.toMatchObject({ code: "MDFN_DOCUMENT_INVALID", status: 422 });
   });
 });

@@ -140,6 +140,26 @@ describe("compileMarkdown – html fields", () => {
     }
   });
 
+  it("projects the canonical MDFN URL policy into DocsFn output and diagnostics", () => {
+    const compiled = compileMarkdown({
+      source: "Click [here](java%0ascript:alert(1)) for info.",
+      sourcePath: "content/docs/canonical-policy.mdx",
+      allowRawHtml: true,
+    });
+    const block = compiled.blocks[0];
+    expect(block.type).toBe("paragraph");
+    if (block.type === "paragraph") {
+      expect(block.html).toContain("data-mdfn-blocked-link");
+      expect(block.html).not.toContain("href=");
+    }
+    expect(compiled.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "DOCS_MARKDOWN_DIAGNOSTIC",
+        details: expect.objectContaining({ mdfnCode: "MDFN_UNSAFE_URL" }),
+      }),
+    ]));
+  });
+
   it("callout block has an html field", () => {
     const compiled = compileMarkdown({
       source: "> [!TIP] Use **bold** in callouts.",

@@ -1,4 +1,4 @@
-import type { MdfnSidecar } from "@mdfn/core";
+import type { MdfnSidecar, ReviewState, SidecarAnchor } from "@mdfn/core";
 
 export interface MdfnRemoteDocument {
   readonly id: string;
@@ -34,10 +34,19 @@ export interface MdfnClient {
   deleteDocument(id: string): Promise<void>;
   listVersions(id: string): Promise<readonly MdfnRemoteVersion[]>;
   getVersion(id: string, version: number): Promise<MdfnRemoteVersion>;
+  restoreVersion(id: string, version: number, expectedVersion: number, idempotencyKey?: string): Promise<MdfnRemoteDocument>;
   getSidecar(id: string): Promise<MdfnSidecar>;
   updateSidecar(id: string, expectedVersion: number, sidecar: MdfnSidecar): Promise<MdfnRemoteDocument>;
+  getAudit(id: string): Promise<NonNullable<MdfnSidecar["audit"]>>;
+  createComment(id: string, input: { readonly expectedVersion: number; readonly anchor: SidecarAnchor; readonly body: string; readonly idempotencyKey?: string }): Promise<MdfnRemoteDocument>;
+  replyComment(id: string, threadId: string, input: { readonly expectedVersion: number; readonly body: string; readonly idempotencyKey?: string }): Promise<MdfnRemoteDocument>;
+  resolveComment(id: string, threadId: string, input: { readonly expectedVersion: number; readonly resolved: boolean; readonly idempotencyKey?: string }): Promise<MdfnRemoteDocument>;
+  createSuggestion(id: string, input: { readonly expectedVersion: number; readonly anchor: SidecarAnchor; readonly replacement: string; readonly idempotencyKey?: string }): Promise<MdfnRemoteDocument>;
+  decideSuggestion(id: string, suggestionId: string, input: { readonly expectedVersion: number; readonly decision: "accepted" | "rejected"; readonly idempotencyKey?: string }): Promise<MdfnRemoteDocument>;
+  transitionReview(id: string, input: { readonly expectedVersion: number; readonly state: ReviewState; readonly idempotencyKey?: string }): Promise<MdfnRemoteDocument>;
   appendCollaborationUpdate(id: string, update: string): Promise<string>;
   getCollaborationUpdates(id: string): Promise<readonly string[]>;
+  compactCollaborationUpdates(id: string, snapshot: string): Promise<string>;
 }
 
 export function createMdfnClient(options: MdfnClientOptions = {}): MdfnClient {
@@ -67,10 +76,19 @@ export function createMdfnClient(options: MdfnClientOptions = {}): MdfnClient {
     deleteDocument: (id) => request(`/documents/${encode(id)}`, { method: "DELETE" }),
     async listVersions(id) { return (await request<{ versions: MdfnRemoteVersion[] }>(`/documents/${encode(id)}/versions`)).versions; },
     getVersion: (id, version) => request(`/documents/${encode(id)}/versions/${version}`),
+    restoreVersion: (id, version, expectedVersion, idempotencyKey) => request(`/documents/${encode(id)}/restore`, { method: "POST", headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined, body: JSON.stringify({ version, expectedVersion }) }),
     getSidecar: (id) => request(`/documents/${encode(id)}/sidecar`),
     updateSidecar: (id, expectedVersion, sidecar) => request(`/documents/${encode(id)}/sidecar`, { method: "PUT", body: JSON.stringify({ expectedVersion, sidecar }) }),
+    async getAudit(id) { return (await request<{ audit: NonNullable<MdfnSidecar["audit"]> }>(`/documents/${encode(id)}/audit`)).audit; },
+    createComment: (id, input) => request(`/documents/${encode(id)}/comments`, { method: "POST", headers: input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : undefined, body: JSON.stringify(input) }),
+    replyComment: (id, threadId, input) => request(`/documents/${encode(id)}/comments/${encode(threadId)}/replies`, { method: "POST", headers: input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : undefined, body: JSON.stringify(input) }),
+    resolveComment: (id, threadId, input) => request(`/documents/${encode(id)}/comments/${encode(threadId)}`, { method: "PATCH", headers: input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : undefined, body: JSON.stringify(input) }),
+    createSuggestion: (id, input) => request(`/documents/${encode(id)}/suggestions`, { method: "POST", headers: input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : undefined, body: JSON.stringify(input) }),
+    decideSuggestion: (id, suggestionId, input) => request(`/documents/${encode(id)}/suggestions/${encode(suggestionId)}`, { method: "PATCH", headers: input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : undefined, body: JSON.stringify(input) }),
+    transitionReview: (id, input) => request(`/documents/${encode(id)}/review`, { method: "PUT", headers: input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : undefined, body: JSON.stringify(input) }),
     async appendCollaborationUpdate(id, update) { return (await request<{ id: string }>(`/documents/${encode(id)}/collaboration-updates`, { method: "POST", body: JSON.stringify({ update }) })).id; },
     async getCollaborationUpdates(id) { return (await request<{ updates: string[] }>(`/documents/${encode(id)}/collaboration-updates`)).updates; },
+    async compactCollaborationUpdates(id, snapshot) { return (await request<{ id: string }>(`/documents/${encode(id)}/collaboration-updates/compact`, { method: "PUT", body: JSON.stringify({ snapshot }) })).id; },
   };
 }
 

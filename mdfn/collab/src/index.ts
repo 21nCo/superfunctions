@@ -1,6 +1,6 @@
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
-import { Transaction, type EditorController, type MdfnJsonValue, type MdfnSidecar } from "@mdfn/core";
+import { Transaction, validateMdfnSidecar, type EditorController, type MdfnJsonValue, type MdfnSidecar } from "@mdfn/core";
 
 export interface CollaborationUser {
   readonly id: string;
@@ -16,6 +16,31 @@ export interface CollaborationSessionOptions {
   readonly doc?: Y.Doc;
   readonly awareness?: Awareness;
   readonly authorizeUpdate?: (update: Uint8Array, origin: unknown) => boolean | Promise<boolean>;
+  readonly profileId?: string;
+  readonly protocolVersion?: number;
+  readonly maxUpdateBytes?: number;
+  readonly online?: boolean;
+  readonly sendUpdate?: (update: Uint8Array) => void | Promise<void>;
+  readonly compactionThresholdBytes?: number;
+  readonly onAudit?: (event: CollaborationAuditEvent) => void;
+}
+
+export interface CollaborationAuditEvent {
+  readonly type: "local-update" | "remote-update" | "remote-rejected" | "offline" | "online" | "flush" | "compact";
+  readonly documentId: string;
+  readonly userId: string;
+  readonly byteLength?: number;
+  readonly pending?: number;
+  readonly error?: string;
+}
+
+function parseSidecar(value: string | undefined, markdownLength?: number): MdfnSidecar | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return validateMdfnSidecar(JSON.parse(value), { markdownLength });
+  } catch (error) {
+    throw new Error(`MDFN_COLLAB_SIDECAR_INVALID:${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export interface CollaborationSession {
@@ -26,6 +51,11 @@ export interface CollaborationSession {
   applyUpdate(update: Uint8Array, origin?: unknown): Promise<void>;
   setPresence(value: Readonly<Record<string, MdfnJsonValue>>): void;
   getPresence(): ReadonlyMap<number, unknown>;
+  isOnline(): boolean;
+  pendingUpdateCount(): number;
+  setOnline(online: boolean): Promise<void>;
+  flush(): Promise<void>;
+  compact(): Uint8Array;
   destroy(): void;
 }
 
@@ -48,12 +78,51 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
   const localOrigin = Object.freeze({ session: options.user.id });
   let applyingRemote = false;
   let destroyed = false;
+  let online = options.online ?? true;
+  let pendingUpdates: Uint8Array[] = [];
+  let flushing: Promise<void> | null = null;
 
-  const storedSchema = metadata.get("schemaHash");
+  const emitAudit = (event: Omit<CollaborationAuditEvent, "documentId" | "userId">): void => {
+    options.onAudit?.({ ...event, documentId: options.documentId, userId: options.user.id });
+  };
+
   const expectedSchema = options.controller.getState().schemaHash;
-  if (storedSchema && storedSchema !== expectedSchema) throw new Error(`MDFN_COLLAB_SCHEMA_MISMATCH:${storedSchema}:${expectedSchema}`);
-  if (!storedSchema) metadata.set("schemaHash", expectedSchema);
-  metadata.set("documentId", options.documentId);
+  const expectedDocumentId = options.documentId;
+  const expectedProfile = options.profileId ?? "default";
+  const expectedProtocol = String(options.protocolVersion ?? 1);
+  const expectedExtensions = JSON.stringify(options.controller.extensions.extensions.map((extension) => ({ name: extension.name, version: extension.version })));
+  const bindMetadata = (key: string, expected: string, code: string): void => {
+    const current = metadata.get(key);
+    if (current !== undefined && current !== expected) throw new Error(`${code}:${current}:${expected}`);
+    if (current === undefined) metadata.set(key, expected);
+  };
+  bindMetadata("schemaHash", expectedSchema, "MDFN_COLLAB_SCHEMA_MISMATCH");
+  bindMetadata("documentId", expectedDocumentId, "MDFN_COLLAB_DOCUMENT_MISMATCH");
+  bindMetadata("profileId", expectedProfile, "MDFN_COLLAB_PROFILE_MISMATCH");
+  bindMetadata("protocolVersion", expectedProtocol, "MDFN_COLLAB_PROTOCOL_MISMATCH");
+  bindMetadata("extensions", expectedExtensions, "MDFN_COLLAB_EXTENSIONS_MISMATCH");
+
+  const assertContract = (candidate: Y.Doc): void => {
+    const candidateMetadata = candidate.getMap<string>("metadata");
+    const schema = candidateMetadata.get("schemaHash");
+    if (schema !== expectedSchema) throw new Error(`MDFN_COLLAB_SCHEMA_MISMATCH:${schema ?? "missing"}:${expectedSchema}`);
+    if (candidateMetadata.get("documentId") !== expectedDocumentId) throw new Error("MDFN_COLLAB_DOCUMENT_MISMATCH");
+    if (candidateMetadata.get("profileId") !== expectedProfile) throw new Error("MDFN_COLLAB_PROFILE_MISMATCH");
+    if (candidateMetadata.get("protocolVersion") !== expectedProtocol) throw new Error("MDFN_COLLAB_PROTOCOL_MISMATCH");
+    if (candidateMetadata.get("extensions") !== expectedExtensions) throw new Error("MDFN_COLLAB_EXTENSIONS_MISMATCH");
+    parseSidecar(candidate.getMap<string>("sidecar").get("value"), candidate.getText("markdown").length);
+  };
+
+  const validateUpdate = (update: Uint8Array): void => {
+    const candidate = new Y.Doc({ guid: expectedDocumentId });
+    try {
+      Y.applyUpdate(candidate, Y.encodeStateAsUpdate(doc), "validation:baseline");
+      Y.applyUpdate(candidate, update, "validation:candidate");
+      assertContract(candidate);
+    } finally {
+      candidate.destroy();
+    }
+  };
 
   if (source.length === 0) source.insert(0, options.controller.getState().markdown);
   else if (source.toString() !== options.controller.getState().markdown) {
@@ -88,13 +157,48 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
       const nextSource = source.toString();
       let edit = new Transaction().withSource("collab:remote");
       if (nextSource !== state.markdown) edit = edit.replaceSource(0, state.markdown.length, nextSource);
-      const value = sidecar.get("value");
-      const nextSidecar = value ? JSON.parse(value) as MdfnSidecar : undefined;
+      assertContract(doc);
+      const nextSidecar = parseSidecar(sidecar.get("value"), nextSource.length);
       if (JSON.stringify(nextSidecar) !== JSON.stringify(state.sidecar)) edit = edit.setSidecar(nextSidecar);
       if (edit.operations.length > 0) options.controller.dispatch(edit);
     } finally { applyingRemote = false; }
   };
   doc.on("afterTransaction", applySharedState);
+
+  const compactPending = (): Uint8Array => {
+    const update = Y.encodeStateAsUpdate(doc);
+    pendingUpdates = [update];
+    emitAudit({ type: "compact", byteLength: update.byteLength, pending: pendingUpdates.length });
+    return update;
+  };
+
+  const flush = async (): Promise<void> => {
+    if (destroyed) throw new Error("MDFN_COLLAB_DESTROYED");
+    if (!online || !options.sendUpdate || pendingUpdates.length === 0) return;
+    if (flushing) return flushing;
+    flushing = (async () => {
+      while (online && pendingUpdates.length > 0) {
+        const update = pendingUpdates[0];
+        await options.sendUpdate!(update);
+        pendingUpdates.shift();
+        emitAudit({ type: "flush", byteLength: update.byteLength, pending: pendingUpdates.length });
+      }
+    })().finally(() => { flushing = null; });
+    return flushing;
+  };
+
+  const queueLocalUpdate = (update: Uint8Array, origin: unknown): void => {
+    if (destroyed || origin !== localOrigin) return;
+    pendingUpdates.push(update.slice());
+    emitAudit({ type: "local-update", byteLength: update.byteLength, pending: pendingUpdates.length });
+    const threshold = options.compactionThresholdBytes ?? 2 * 1024 * 1024;
+    if (pendingUpdates.reduce((total, entry) => total + entry.byteLength, 0) > threshold) compactPending();
+    if (online) void flush().catch((error: unknown) => {
+      online = false;
+      emitAudit({ type: "offline", pending: pendingUpdates.length, error: error instanceof Error ? error.message : String(error) });
+    });
+  };
+  doc.on("update", queueLocalUpdate);
 
   return {
     doc,
@@ -103,16 +207,37 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
     encodeStateVector: () => Y.encodeStateVector(doc),
     async applyUpdate(update, origin = "transport") {
       if (destroyed) throw new Error("MDFN_COLLAB_DESTROYED");
-      if (options.authorizeUpdate && !(await options.authorizeUpdate(update, origin))) throw new Error("MDFN_COLLAB_UPDATE_FORBIDDEN");
-      Y.applyUpdate(doc, update, origin);
+      const maxUpdateBytes = options.maxUpdateBytes ?? 1024 * 1024;
+      try {
+        if (update.byteLength > maxUpdateBytes) throw new RangeError(`MDFN_COLLAB_UPDATE_TOO_LARGE:${maxUpdateBytes}`);
+        if (options.authorizeUpdate && !(await options.authorizeUpdate(update, origin))) throw new Error("MDFN_COLLAB_UPDATE_FORBIDDEN");
+        validateUpdate(update);
+        Y.applyUpdate(doc, update, origin);
+        emitAudit({ type: "remote-update", byteLength: update.byteLength });
+      } catch (error) {
+        emitAudit({ type: "remote-rejected", byteLength: update.byteLength, error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
     },
     setPresence(value) { if (destroyed) throw new Error("MDFN_COLLAB_DESTROYED"); awareness.setLocalStateField("presence", value); },
     getPresence: () => awareness.getStates(),
+    isOnline: () => online,
+    pendingUpdateCount: () => pendingUpdates.length,
+    async setOnline(value) {
+      if (destroyed) throw new Error("MDFN_COLLAB_DESTROYED");
+      online = value;
+      emitAudit({ type: value ? "online" : "offline", pending: pendingUpdates.length });
+      if (value) await flush();
+    },
+    flush,
+    compact: compactPending,
     destroy() {
       if (destroyed) return;
       destroyed = true;
       unsubscribe();
       doc.off("afterTransaction", applySharedState);
+      doc.off("update", queueLocalUpdate);
+      pendingUpdates = [];
       awareness.setLocalState(null);
       if (ownsAwareness) awareness.destroy();
     },

@@ -5,7 +5,7 @@ import { renderField } from "./renderField";
 describe("Markdown field widget", () => {
   it("selects the MDFN editor shell for explicit Markdown fields", () => {
     const html = renderToStaticMarkup(renderField(
-      { name: "body", type: { kind: "markdown", dialect: "gfm", allowRawHtml: false } },
+      { name: "body", type: { kind: "markdown", dialect: "commonmark", allowRawHtml: false, extensions: ["callout"], schemaVersion: 2 } },
       "body",
       "# Heading\n",
       () => {},
@@ -13,5 +13,9 @@ describe("Markdown field widget", () => {
     expect(html).toContain('data-widget="markdown"');
     expect(html).toContain('data-mdfn-component="editor-shell"');
     expect(html).toContain('data-mdfn-react="editor"');
+    expect(html).toContain('data-markdown-dialect="commonmark"');
+    expect(html).toContain('data-raw-html="false"');
+    expect(html).toContain('data-extensions="callout"');
+    expect(html).toContain('data-schema-version="2"');
   });
 });

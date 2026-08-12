@@ -1,25 +1,33 @@
 "use client";
 
 import * as React from "react";
-import { createAdapterBridge, type AdapterSnapshot } from "@mdfn/adapter-kit";
+import type { AdapterSnapshot } from "@mdfn/adapter-kit";
 import { Transaction, type EditorController } from "@mdfn/core";
 import type { DomCommand, DomEditor } from "@mdfn/dom";
 import type { EditorMode, SourceEditor } from "@mdfn/source";
 
 export function useMdfn(controller: EditorController): AdapterSnapshot {
-  const bridge = React.useMemo(() => createAdapterBridge(controller), [controller]);
-  React.useEffect(() => () => bridge.destroy(), [bridge]);
-  return React.useSyncExternalStore(
-    React.useCallback((listener) => bridge.subscribe(listener), [bridge]),
-    React.useCallback(() => bridge.getSnapshot(), [bridge]),
-    React.useCallback(() => bridge.getSnapshot(), [bridge]),
-  );
+  const subscribe = React.useCallback((listener: () => void) => controller.subscribe(listener), [controller]);
+  const getSnapshot = React.useCallback(() => controller.getState(), [controller]);
+  const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return React.useMemo(() => ({
+    state,
+    version: state.version,
+    markdown: state.markdown,
+    dirty: state.dirty,
+    canUndo: controller.canUndo(),
+    canRedo: controller.canRedo(),
+  }), [controller, state]);
 }
 
 export interface MdfnEditorHandle {
   focus(): void;
   run(command: DomCommand): boolean;
   can(command: DomCommand): boolean;
+  setLink(href: string, title?: string): boolean;
+  removeLink(): boolean;
+  insertTable(rows?: number, columns?: number): boolean;
+  insertMarkdown(markdown: string): boolean;
 }
 
 export interface MdfnEditorProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "children"> {
@@ -29,10 +37,11 @@ export interface MdfnEditorProps extends Omit<React.HTMLAttributes<HTMLDivElemen
   readonly ariaLabel?: string;
   readonly onLoadError?: (error: Error) => void;
   readonly onReady?: (handle: MdfnEditorHandle) => void;
+  readonly onFiles?: (files: readonly File[]) => void | Promise<void>;
 }
 
 export const MdfnEditor = React.forwardRef<MdfnEditorHandle, MdfnEditorProps>(function MdfnEditor(
-  { controller, mode = "visual", readOnly = false, ariaLabel = "Markdown editor", onLoadError, onReady, className, ...props },
+  { controller, mode = "visual", readOnly = false, ariaLabel = "Markdown editor", onLoadError, onReady, onFiles, className, ...props },
   forwardedRef,
 ) {
   const snapshot = useMdfn(controller);
@@ -47,6 +56,10 @@ export const MdfnEditor = React.forwardRef<MdfnEditorHandle, MdfnEditorProps>(fu
     focus() { visual.current?.focus(); source.current?.focus(); },
     run(command) { return visual.current?.run(command) ?? false; },
     can(command) { return visual.current?.can(command) ?? false; },
+    setLink(href, title) { return visual.current?.setLink(href, title) ?? false; },
+    removeLink() { return visual.current?.removeLink() ?? false; },
+    insertTable(rows, columns) { return visual.current?.insertTable(rows, columns) ?? false; },
+    insertMarkdown(markdown) { return visual.current?.insertMarkdown(markdown) ?? false; },
   }), []);
   React.useImperativeHandle(forwardedRef, createHandle, [createHandle]);
 
@@ -59,7 +72,7 @@ export const MdfnEditor = React.forwardRef<MdfnEditorHandle, MdfnEditorProps>(fu
         if ((mode === "visual" || mode === "split") && visualRef.current) {
           const { createDomEditor } = await import("@mdfn/dom");
           if (cancelled || !visualRef.current) return;
-          visual.current = createDomEditor({ target: visualRef.current, controller, readOnly, attributes: { "aria-label": ariaLabel } });
+          visual.current = createDomEditor({ target: visualRef.current, controller, readOnly, attributes: { "aria-label": ariaLabel }, onFiles });
           destroyers.push(() => { visual.current?.destroy(); visual.current = null; });
         }
         if ((mode === "source" || mode === "split") && sourceRef.current) {
@@ -83,7 +96,7 @@ export const MdfnEditor = React.forwardRef<MdfnEditorHandle, MdfnEditorProps>(fu
     };
     void mount();
     return () => { cancelled = true; cleanup(); visual.current = null; source.current = null; };
-  }, [ariaLabel, controller, createHandle, mode, onLoadError, onReady, readOnly]);
+  }, [ariaLabel, controller, createHandle, mode, onFiles, onLoadError, onReady, readOnly]);
 
   React.useEffect(() => {
     if ((mode !== "preview" && mode !== "read-only") || !previewRef.current) return;

@@ -90,6 +90,17 @@ export interface Suggestion {
   readonly createdAt: string;
 }
 
+export type ReviewState = "draft" | "in-review" | "changes-requested" | "approved";
+
+export interface EditorialAuditEntry {
+  readonly id: string;
+  readonly action: "comment-created" | "comment-replied" | "comment-resolved" | "comment-reopened" | "suggestion-created" | "suggestion-accepted" | "suggestion-rejected" | "review-transitioned";
+  readonly actorId: string;
+  readonly targetId?: string;
+  readonly createdAt: string;
+  readonly details?: Readonly<Record<string, MdfnJsonValue>>;
+}
+
 export interface AssetMetadata {
   readonly id: string;
   readonly mediaType: string;
@@ -103,6 +114,8 @@ export interface MdfnSidecar {
   readonly suggestions?: readonly Suggestion[];
   readonly assets?: readonly AssetMetadata[];
   readonly historyRef?: string;
+  readonly reviewState?: ReviewState;
+  readonly audit?: readonly EditorialAuditEntry[];
 }
 
 export interface MdfnSnapshot {
@@ -112,6 +125,8 @@ export interface MdfnSnapshot {
   readonly document?: MdfnDocument;
   readonly schemaHash: string;
   readonly sourceHash: string;
+  /** Hash of the source-bound projected document; caches are still reparsed before acceptance. */
+  readonly documentHash?: string;
   readonly diagnostics: readonly MdfnDiagnostic[];
   readonly sidecar?: MdfnSidecar;
 }
@@ -202,6 +217,13 @@ export interface ExtensionRenderInput {
   readonly escape: (value: string) => string;
 }
 
+export interface ExtensionRenderNode {
+  readonly tag: string;
+  readonly attrs?: Readonly<Record<string, string | number | boolean | null | undefined>>;
+  readonly text?: string;
+  readonly children?: readonly ExtensionRenderNode[];
+}
+
 export interface ExtensionMigration {
   readonly from: number;
   readonly to: number;
@@ -223,7 +245,8 @@ export interface MdfnExtension {
   readonly schema?: SchemaContribution;
   readonly parseMarkdown?: (input: ExtensionParseInput) => ExtensionParseResult | null;
   readonly serializeMarkdown?: (input: ExtensionSerializeInput) => string | null;
-  readonly render?: (input: ExtensionRenderInput) => string | null;
+  /** Structured, policy-checked output. Arbitrary HTML strings are rejected by the renderer. */
+  readonly render?: (input: ExtensionRenderInput) => ExtensionRenderNode | null;
   readonly commands?: Readonly<Record<string, EditorCommand>>;
   readonly keymap?: Readonly<Record<string, string>>;
   readonly inputRules?: readonly string[];

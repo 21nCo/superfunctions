@@ -7,10 +7,10 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "solid": "dist/index.js",
-  "exports": { ".": { "types": "./dist/index.d.ts", "solid": "./dist/index.js", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
+  "exports": { ".": { "types": "./dist/index.d.ts", "browser": { "import": "./dist/index.js", "require": "./dist/index.cjs" }, "node": { "import": "./dist/index.node.js", "require": "./dist/index.node.cjs" }, "solid": "./dist/index.js", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
   "scripts": {
-    "build": "vite build && tsc --project tsconfig.build.json",
-    "test": "vitest run --config ../vitest.config.ts --root . --passWithNoTests",
+    "build": "vite build && vite build --config vite.ssr.config.ts && vite build --config vite.ssr.config.ts --mode ssr-cjs && tsc --project tsconfig.build.json",
+    "test": "vitest run --config vitest.config.ts --root .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "tsc --noEmit -p tsconfig.json",
     "prepack": "npm run build"

@@ -25,7 +25,11 @@ describe("@mdfn/adapter-kit", () => {
 
   it("compares normalized semantic traces", () => {
     const reference = recordSemanticTrace("vanilla", "replace", createEditor({ markdown: "a", projector }), (controller) => createAdapterBridge(controller).replaceSource("b"));
-    const react = { ...reference, framework: "react" as const };
+    const react = recordSemanticTrace("react", "replace", createEditor({ markdown: "a", projector }), (controller) => {
+      const bridge = createAdapterBridge(controller);
+      bridge.replaceSource("b");
+      bridge.destroy();
+    });
     expect(compareAdapterTraces(reference, [react])).toEqual([]);
     expect(compareAdapterTraces(reference, [{ ...react, vectorId: "different" }])).toEqual(["react"]);
   });

@@ -53,7 +53,7 @@ describe("validateSchema", () => {
   it("validates the explicit Markdown field contract", () => {
     const valid = validateSchema({
       version: 1,
-      documentTypes: [{ name: "page", fields: [{ name: "body", type: { kind: "markdown", dialect: "gfm", allowRawHtml: false } }] }],
+      documentTypes: [{ name: "page", fields: [{ name: "body", type: { kind: "markdown", dialect: "gfm", allowRawHtml: false, extensions: ["callout"], schemaVersion: 1 } }] }],
     });
     expect(valid.ok).toBe(true);
     const invalid = validateSchema({

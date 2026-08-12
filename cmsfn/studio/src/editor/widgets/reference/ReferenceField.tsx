@@ -22,7 +22,7 @@ export interface ReferenceFieldProps {
 const canonicalRef = (v: unknown): { _type: "reference"; _ref: string } | undefined => {
   if (v && typeof v === "object" && "_ref" in (v as object)) {
     const ref = (v as { _ref: string })._ref;
-    if (typeof ref === "string") return { _type: "reference", _ref };
+    if (typeof ref === "string") return { _type: "reference", _ref: ref };
   }
   return undefined;
 };

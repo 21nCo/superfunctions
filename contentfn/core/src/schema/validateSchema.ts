@@ -219,6 +219,12 @@ function validateFieldType(
       if (ft.allowRawHtml !== undefined && typeof ft.allowRawHtml !== "boolean") {
         return err("SCHEMA_INVALID", "markdown allowRawHtml must be boolean", { path: `${path}.allowRawHtml` });
       }
+      if (ft.extensions !== undefined && (!Array.isArray(ft.extensions) || ft.extensions.some((extension) => typeof extension !== "string" || !extension))) {
+        return err("SCHEMA_INVALID", "markdown extensions must be an array of non-empty strings", { path: `${path}.extensions` });
+      }
+      if (ft.schemaVersion !== undefined && (!Number.isInteger(ft.schemaVersion) || ft.schemaVersion < 1)) {
+        return err("SCHEMA_INVALID", "markdown schemaVersion must be a positive integer", { path: `${path}.schemaVersion` });
+      }
       return { ok: true, result: undefined };
     case "asset":
       if (ft.assetType !== "file" && ft.assetType !== "image") {

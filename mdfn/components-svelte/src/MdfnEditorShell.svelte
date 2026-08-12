@@ -4,7 +4,9 @@
   import type { MdfnEditorHandle, MdfnEditorProps } from '@mdfn/svelte';
   import type { ToolbarCommandTarget } from '@mdfn/components';
   import MdfnToolbar from './MdfnToolbar.svelte';
-  let { toolbarGroups, hideToolbar = false, class: className = '', ...editorProps }: MdfnEditorProps & { toolbarGroups?: readonly ToolbarGroup[]; hideToolbar?: boolean } = $props();
+  import MdfnAuthoringChrome from './MdfnAuthoringChrome.svelte';
+  import type { EditorialActor } from '@mdfn/core';
+  let { toolbarGroups, hideToolbar = false, hideAuthoringChrome = false, actor, onSelectFiles, onModeChange, class: className = '', ...editorProps }: MdfnEditorProps & { toolbarGroups?: readonly ToolbarGroup[]; hideToolbar?: boolean; hideAuthoringChrome?: boolean; actor?: EditorialActor; onSelectFiles?: (files: readonly File[]) => Promise<string | undefined>; onModeChange?: (mode: NonNullable<MdfnEditorProps['mode']>) => void } = $props();
   let editor = $state<MdfnEditorHandle | null>(null);
   const commandTarget = $derived.by<ToolbarCommandTarget | null>(() => editor ? ({
     can: (command: string) => editor?.can(command as Parameters<MdfnEditorHandle['can']>[0]) ?? false,
@@ -18,5 +20,6 @@
 
 <div class={className} data-mdfn-component="editor-shell">
   {#if !hideToolbar && !editorProps.readOnly}<MdfnToolbar controller={editorProps.controller} groups={toolbarGroups} {commandTarget} />{/if}
-  <MdfnEditor {...editorProps} editorRef={setEditor} />
+  {#if !hideAuthoringChrome}<MdfnAuthoringChrome controller={editorProps.controller} {editor} mode={editorProps.mode} readOnly={editorProps.readOnly} {actor} {onSelectFiles} {onModeChange} />{/if}
+  <MdfnEditor {...editorProps} onFiles={async (files) => { const markdown = await onSelectFiles?.(files); if (markdown) editor?.insertMarkdown(markdown); await editorProps.onFiles?.(files); }} editorRef={setEditor} />
 </div>

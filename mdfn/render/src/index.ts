@@ -1,5 +1,7 @@
 import {
   resolveExtensions,
+  inspectMdfnUrl,
+  type ExtensionRenderNode,
   type MdfnDiagnostic,
   type MdfnDocument,
   type MdfnExtension,
@@ -79,18 +81,8 @@ function booleanAttr(node: MdfnNode, name: string): boolean {
   return node.attrs?.[name] === true;
 }
 
-function isRelativeUrl(url: string): boolean {
-  return url.startsWith("#") || url.startsWith("/") || url.startsWith("./") || url.startsWith("../") || !/^[a-z][a-z0-9+.-]*:/i.test(url);
-}
-
 function validateUrl(url: string, policy: { allowedSchemes: readonly string[]; allowRelative: boolean; allowProtocolRelative: boolean }): boolean {
-  const trimmed = url.trim();
-  if (!trimmed) return false;
-  if (/[\u0000-\u0020\u007f]/.test(trimmed) || trimmed.includes("\\")) return false;
-  if (trimmed.startsWith("//")) return policy.allowProtocolRelative;
-  if (isRelativeUrl(trimmed)) return policy.allowRelative;
-  const match = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed);
-  return Boolean(match && policy.allowedSchemes.includes(match[1].toLowerCase()));
+  return inspectMdfnUrl(url, policy).safe;
 }
 
 function isExternal(url: string): boolean {
@@ -114,6 +106,40 @@ interface RenderContext {
   nodeCount: number;
 }
 
+const EXTENSION_TAGS = new Set([
+  "a", "aside", "audio", "blockquote", "br", "code", "dd", "details", "div", "dl", "dt", "em", "figcaption", "figure", "img",
+  "h1", "h2", "h3", "h4", "h5", "h6", "hr", "kbd", "li", "mark", "ol", "p", "pre", "s", "section",
+  "small", "span", "strong", "sub", "summary", "sup", "table", "tbody", "td", "th", "thead", "tr", "ul", "video",
+]);
+const EXTENSION_ATTRS = new Set(["alt", "class", "colspan", "controls", "decoding", "id", "loading", "open", "rel", "role", "rowspan", "target", "title"]);
+
+function renderExtensionNode(node: ExtensionRenderNode, context: RenderContext, depth: number): string {
+  if (!node || typeof node !== "object" || !EXTENSION_TAGS.has(node.tag)) throw new Error("MDFN_EXTENSION_RENDER_TAG_FORBIDDEN");
+  if (depth > (context.policy.maxDepth ?? 128)) throw new RangeError(`MDFN_RENDER_DEPTH_LIMIT_EXCEEDED:${context.policy.maxDepth ?? 128}`);
+  const attributes: string[] = [];
+  for (const [name, rawValue] of Object.entries(node.attrs ?? {})) {
+    const normalizedName = name.toLowerCase();
+    if (/^on/.test(normalizedName) || normalizedName === "style" || normalizedName === "srcdoc") throw new Error("MDFN_EXTENSION_RENDER_ATTRIBUTE_FORBIDDEN");
+    const allowed = EXTENSION_ATTRS.has(normalizedName) || normalizedName.startsWith("aria-") || normalizedName.startsWith("data-") || normalizedName === "href" || normalizedName === "src";
+    if (!allowed) throw new Error(`MDFN_EXTENSION_RENDER_ATTRIBUTE_FORBIDDEN:${normalizedName}`);
+    if (rawValue === false || rawValue === null || rawValue === undefined) continue;
+    if (normalizedName === "href") {
+      const value = String(rawValue);
+      const policy = { ...DEFAULT_LINKS, ...(context.policy.links ?? {}) };
+      if (!validateUrl(value, policy)) throw new Error("MDFN_EXTENSION_RENDER_URL_FORBIDDEN");
+    }
+    if (normalizedName === "src") {
+      const value = String(rawValue);
+      const policy = { ...DEFAULT_IMAGES, ...(context.policy.images ?? {}) };
+      if (!validateUrl(value, { ...policy, allowProtocolRelative: false })) throw new Error("MDFN_EXTENSION_RENDER_URL_FORBIDDEN");
+    }
+    attributes.push(rawValue === true ? ` ${normalizedName}` : ` ${normalizedName}="${escapeHtml(String(rawValue))}"`);
+  }
+  const contents = `${node.text === undefined ? "" : escapeHtml(node.text)}${(node.children ?? []).map((child) => renderExtensionNode(child, context, depth + 1)).join("")}`;
+  if (["br", "hr", "img"].includes(node.tag)) return `<${node.tag}${attributes.join("")}>`;
+  return `<${node.tag}${attributes.join("")}>${contents}</${node.tag}>`;
+}
+
 function pushUnsafeUrl(context: RenderContext, node: MdfnNode, kind: "link" | "image", url: string): void {
   context.diagnostics.push({
     code: "MDFN_UNSAFE_URL_BLOCKED",
@@ -134,7 +160,10 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
 
   for (const extension of context.registry.extensions) {
     const rendered = extension.render?.({ node, escape: escapeHtml });
-    if (rendered !== null && rendered !== undefined) return rendered;
+    if (rendered !== null && rendered !== undefined) {
+      if (typeof rendered !== "object") throw new Error("MDFN_EXTENSION_RENDER_RESULT_INVALID");
+      return renderExtensionNode(rendered, context, depth + 1);
+    }
   }
 
   const children = () => renderChildren(node, context, depth);

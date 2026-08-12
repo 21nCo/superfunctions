@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createEditor } from "@mdfn/core";
 import { createMarkdownProjector } from "@mdfn/markdown";
-import { createToolbarModel, runToolbarAction } from "./index";
+import { createAuthoringModel, createToolbarModel, filterSlashCommands, runToolbarAction } from "./index";
 
 describe("toolbar model", () => {
   it("reports actual history availability", () => {
@@ -20,5 +20,14 @@ describe("toolbar model", () => {
     expect(runToolbarAction(controller, bold, target)).toBe(true);
     expect(runToolbarAction(controller, undo, target)).toBe(true);
     expect(calls).toEqual(["bold", "undo"]);
+  });
+
+  it("projects every authoring chrome surface from canonical state", () => {
+    const controller = createEditor({ markdown: "# Outline\n", projector: createMarkdownProjector() });
+    const model = createAuthoringModel(controller, { slashQuery: "table", compact: true });
+    expect(model.outline).toEqual([expect.objectContaining({ level: 1, text: "Outline" })]);
+    expect(model.slashCommands.map((entry) => entry.id)).toEqual(["table"]);
+    expect(model.compact).toBe(true);
+    expect(filterSlashCommands("upload")[0]?.kind).toBe("file");
   });
 });

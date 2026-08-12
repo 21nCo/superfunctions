@@ -68,6 +68,9 @@
   },
   "author": "21n",
   "license": "MIT",
+  "engines": {
+    "node": ">=20 <25"
+  },
   "bugs": {
     "url": "https://github.com/21nCo/super-functions/issues"
   },

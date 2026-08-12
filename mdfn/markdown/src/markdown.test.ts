@@ -47,4 +47,24 @@ describe("@mdfn/markdown", () => {
   it("treats lone carriage returns as token boundaries", () => {
     expect(parseMarkdown("one\rtwo\rthree\r", { maxTokenLength: 5 }).lineEnding).toBe("cr");
   });
+
+  it("preserves unknown directives and disabled frontmatter as exact opaque source", () => {
+    const directive = ":::future key=value\nbody\n:::\n\nAfter.\n";
+    const parsedDirective = parseMarkdown(directive);
+    expect(parsedDirective.document.content[0]).toMatchObject({ type: "opaque", attrs: { syntax: "directive/future" } });
+    expect(parsedDirective.document.content[0].source?.raw).toBe(":::future key=value\nbody\n:::\n");
+    expect(parsedDirective.diagnostics.map((entry) => entry.code)).toContain("MDFN_EXTENSION_DISABLED_OR_UNKNOWN");
+    expect(serializeMarkdown({ document: parsedDirective.document, originalSource: directive }).markdown).toBe(directive);
+
+    const frontmatter = "---\ntitle: Exact\n---\n\n# Heading\n";
+    const parsedFrontmatter = parseMarkdown(frontmatter);
+    expect(parsedFrontmatter.document.content[0]).toMatchObject({ type: "opaque", attrs: { syntax: "frontmatter" } });
+    expect(formatMarkdown(frontmatter).markdown).toContain("---\ntitle: Exact\n---");
+  });
+
+  it("diagnoses unsafe URLs while preserving their recoverable source value", () => {
+    const parsed = parseMarkdown("[unsafe](java%0ascript:alert(1))\n");
+    expect(parsed.diagnostics.map((entry) => entry.code)).toContain("MDFN_UNSAFE_URL");
+    expect(parsed.document.content[0].content?.[0].attrs?.url).toBe("java%0ascript:alert(1)");
+  });
 });

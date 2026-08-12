@@ -19,12 +19,13 @@ export interface MdfnEditorProps extends JSX.HTMLAttributes<HTMLDivElement> {
   readonly ariaLabel?: string;
   readonly onLoadError?: (error: Error) => void;
   readonly editorRef?: (value: MdfnEditorHandle | null) => void;
+  readonly onFiles?: (files: readonly File[]) => void | Promise<void>;
 }
 
-export interface MdfnEditorHandle { focus(): void; run(command: DomCommand): boolean; can(command: DomCommand): boolean; }
+export interface MdfnEditorHandle { focus(): void; run(command: DomCommand): boolean; can(command: DomCommand): boolean; setLink(href: string, title?: string): boolean; removeLink(): boolean; insertTable(rows?: number, columns?: number): boolean; insertMarkdown(markdown: string): boolean; }
 
 export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
-  const [local, rest] = splitProps(props, ["controller", "mode", "readOnly", "ariaLabel", "onLoadError", "editorRef"]);
+  const [local, rest] = splitProps(props, ["controller", "mode", "readOnly", "ariaLabel", "onLoadError", "editorRef", "onFiles"]);
   const snapshot = createMdfnSignal(local.controller);
   let visualTarget: HTMLDivElement | undefined;
   let sourceTarget: HTMLDivElement | undefined;
@@ -36,8 +37,7 @@ export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
   const unsubscribe = local.controller.subscribe((change) => setFallbackValue(change.current.markdown));
   onCleanup(unsubscribe);
 
-  const publishHandle = (): void => local.editorRef?.({ focus() { visual?.focus(); source?.focus(); }, run(command) { return visual?.run(command) ?? false; }, can(command) { return visual?.can(command) ?? false; } });
-  publishHandle();
+  const publishHandle = (): void => local.editorRef?.({ focus() { visual?.focus(); source?.focus(); }, run(command) { return visual?.run(command) ?? false; }, can(command) { return visual?.can(command) ?? false; }, setLink(href, title) { return visual?.setLink(href, title) ?? false; }, removeLink() { return visual?.removeLink() ?? false; }, insertTable(rows, columns) { return visual?.insertTable(rows, columns) ?? false; }, insertMarkdown(markdown) { return visual?.insertMarkdown(markdown) ?? false; } });
 
   createEffect(() => {
     const mode = local.mode ?? "visual";
@@ -51,7 +51,7 @@ export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
         if ((mode === "visual" || mode === "split") && visualTarget) {
           const module = await import("@mdfn/dom");
           if (cancelled) return;
-          visual = module.createDomEditor({ target: visualTarget, controller: local.controller, readOnly: local.readOnly, attributes: { "aria-label": local.ariaLabel ?? "Markdown editor" } });
+          visual = module.createDomEditor({ target: visualTarget, controller: local.controller, readOnly: local.readOnly, attributes: { "aria-label": local.ariaLabel ?? "Markdown editor" }, onFiles: local.onFiles });
         }
         if ((mode === "source" || mode === "split") && sourceTarget) {
           const module = await import("@mdfn/source");

@@ -7,6 +7,7 @@
     "searchfn/*",
     "secfn/*",
     "botfn/*",
+    "contentfn/*",
     "hostfn/*",
     "authfn/*",
     "uifn/*",
@@ -132,6 +133,7 @@
     "verify:uifn-catalog-sites": "node scripts/verify-uifn-catalog-sites.mjs",
     "verify:mdfn-package-graph": "node scripts/verify-mdfn-package-graph.mjs",
     "verify:mdfn-consumers": "node scripts/verify-mdfn-consumers.mjs",
+    "verify:mdfn-browser": "node scripts/verify-mdfn-browser.mjs",
     "verify:mdfn": "node scripts/verify-mdfn.mjs",
     "deploy:uifn-catalogs:preview": "node scripts/deploy-uifn-catalogs.mjs preview",
     "deploy:uifn-catalogs:production": "node scripts/deploy-uifn-catalogs.mjs production"
@@ -139,6 +141,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.10.4",
     "@types/node": "^20.0.0",
+    "@sveltejs/vite-plugin-svelte": "^4.0.4",
     "@vitest/expect": "3.2.4",
     "@vitest/spy": "3.2.4",
     "@vitest/ui": "3.2.4",
@@ -147,8 +150,10 @@
     "jscpd": "^4.0.5",
     "msw": "^2.11.6",
     "prettier": "^3.0.0",
+    "playwright": "^1.57.0",
     "turbo": "^2.0.0",
     "typescript": "^5.3.0",
+    "vite": "^5.4.21",
     "vitest": "3.2.4",
     "yaml": "^2.8.1"
   },

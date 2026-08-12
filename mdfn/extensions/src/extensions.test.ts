@@ -11,6 +11,7 @@ describe("@mdfn/extensions", () => {
     const parsed = parseMarkdown(source, { extensions });
     const directive = parsed.document.content.find((node) => node.type === "directive-note");
     expect(directive?.text).toBe("Keep this.");
+    expect(directive?.source?.raw).toBe(":::note Important\nKeep this.\n:::\n");
     const unchanged = serializeMarkdown({ document: parsed.document, originalSource: source, options: { extensions } });
     expect(unchanged.markdown).toBe(source);
     const editedDirective = { ...directive!, text: "Changed.", source: directive?.source ? { ...directive.source, dirty: true } : undefined };

@@ -1,5 +1,6 @@
 import { mapSidecar } from "./anchors";
 import { hashString } from "./hash";
+import { validateMdfnSidecar } from "./sidecar";
 import type {
   ChangedRange,
   EditorProjector,
@@ -99,7 +100,7 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
       selectionChanged = true;
       continue;
     }
-    sidecar = operation.sidecar;
+    sidecar = validateMdfnSidecar(operation.sidecar, { markdownLength: markdown.length });
     sidecarChanged = true;
   }
 

@@ -13,6 +13,7 @@ if (!packOnly) {
 }
 if (!process.argv.includes("--skip-pack")) for (const node of nodes) commands.push(["npm", ["pack", "--dry-run", "--json", `--workspace=${node.path}`]]);
 if (!process.argv.includes("--skip-pack")) commands.push(["node", ["scripts/verify-mdfn-consumers.mjs"]]);
+if (!packOnly && !process.argv.includes("--skip-browser")) commands.push(["node", ["scripts/verify-mdfn-browser.mjs"]]);
 for (const [command, args] of commands) {
   const result = spawnSync(command, args, { cwd: process.cwd(), stdio: "inherit", env: { ...process.env, CI: "1" } });
   if (result.status !== 0) process.exit(result.status ?? 1);

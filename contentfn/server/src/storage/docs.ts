@@ -23,6 +23,7 @@ import { applyPatch } from "../patch/applyPatch.js";
 import { appendRevision } from "./revisions.js";
 import { documentStorageId } from "./documentIdentity.js";
 import { parseMarkdown } from "@mdfn/markdown";
+import { calloutExtension, commonmarkExtension, diagramExtension, gfmExtension } from "@mdfn/extensions";
 
 export interface DocsStorageConfig {
   db: Adapter;
@@ -138,7 +139,11 @@ function validateFieldType(
     case "markdown": {
       if (typeof value !== "string") return { ok: false, error: `expected markdown string, got ${typeof value}` };
       try {
-        parseMarkdown(value, { dialect: fieldType.dialect ?? "gfm", allowRawHtml: fieldType.allowRawHtml ?? false });
+        const dialect = fieldType.dialect ?? "gfm";
+        const available = { callout: calloutExtension, diagram: diagramExtension } as const;
+        const configured = (fieldType.extensions ?? []).map((name) => available[name as keyof typeof available]);
+        if (configured.some((extension) => !extension)) return { ok: false, error: "unknown markdown extension" };
+        parseMarkdown(value, { dialect, allowRawHtml: fieldType.allowRawHtml ?? false, schemaVersion: fieldType.schemaVersion ?? 1, extensions: [commonmarkExtension, ...(dialect === "gfm" ? [gfmExtension] : []), ...configured] });
         return { ok: true };
       } catch (error) {
         return { ok: false, error: `invalid markdown: ${error instanceof Error ? error.message : String(error)}` };

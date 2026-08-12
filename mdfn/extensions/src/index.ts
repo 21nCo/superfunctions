@@ -49,13 +49,13 @@ export function createDirectiveExtension(options: DirectiveExtensionOptions): Md
     preservation: exactPreservation,
     security: { allowsRawHtml: false },
     parseMarkdown({ source, offset, line }) {
-      const opening = new RegExp(`^:::\\s*${name}(?:\\s+([^\\r\\n]*))?\\s*(?:\\r?\\n|$)`).exec(line);
+      const opening = new RegExp(`^:::[ \\t]*${name}(?:[ \\t]+([^\\r\\n]*?))?[ \\t]*(?:\\r?\\n|\\r|$)`).exec(line);
       if (!opening) return null;
       const searchFrom = offset + line.length;
-      const closePattern = /^:{3,}\s*$/gm;
+      const closePattern = /^:{3,}[ \t]*(?:\r?\n|\r|$)/gm;
       closePattern.lastIndex = searchFrom;
       const close = closePattern.exec(source);
-      const closeEnd = close ? close.index + close[0].length + (source[close.index + close[0].length] === "\r" ? 2 : source[close.index + close[0].length] === "\n" ? 1 : 0) : source.length;
+      const closeEnd = close ? close.index + close[0].length : source.length;
       const bodyEnd = close?.index ?? source.length;
       const body = source.slice(searchFrom, bodyEnd).replace(/\r?\n$/, "");
       return {
@@ -73,11 +73,18 @@ export function createDirectiveExtension(options: DirectiveExtensionOptions): Md
       const label = typeof node.attrs?.label === "string" && node.attrs.label !== name ? ` ${node.attrs.label}` : "";
       return `:::${name}${label}\n${node.text ?? ""}\n:::`;
     },
-    render({ node, escape }) {
+    render({ node }) {
       if (node.type !== nodeType) return null;
       const label = typeof node.attrs?.label === "string" ? node.attrs.label : options.label ?? name;
-      const className = options.className ? ` ${escape(options.className)}` : "";
-      return `<aside class="mdfn-directive mdfn-directive-${escape(name)}${className}" data-md-directive="${escape(name)}"><strong>${escape(label)}</strong><p>${escape(node.text ?? "").replaceAll("\n", "<br>")}</p></aside>`;
+      const classes = ["mdfn-directive", `mdfn-directive-${name}`, options.className].filter(Boolean).join(" ");
+      return {
+        tag: "aside",
+        attrs: { class: classes, "data-md-directive": name },
+        children: [
+          { tag: "strong", text: label },
+          { tag: "p", text: node.text ?? "" },
+        ],
+      };
     },
     diagnostics(document) {
       const diagnostics: Array<{ code: string; message: string; severity: "warning"; nodeId?: string; extension: string }> = [];

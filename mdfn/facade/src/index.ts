@@ -5,15 +5,19 @@ export * from "@mdfn/extensions";
 
 import { createEditor, type CreateEditorInput, type EditorController } from "@mdfn/core";
 import { createMarkdownProjector, type MarkdownOptions } from "@mdfn/markdown";
-import { defaultExtensions } from "@mdfn/extensions";
+import { commonmarkExtension, defaultExtensions } from "@mdfn/extensions";
 
 export function createMdfn(
   input: Omit<CreateEditorInput, "projector" | "extensions"> & { readonly markdownOptions?: MarkdownOptions },
 ): EditorController {
+  const configured = input.markdownOptions?.extensions;
+  const extensions = configured
+    ? ("schemaHash" in configured ? configured.extensions : configured)
+    : input.markdownOptions?.dialect === "commonmark" ? [commonmarkExtension] : defaultExtensions;
   return createEditor({
     ...input,
-    projector: createMarkdownProjector({ ...input.markdownOptions, extensions: defaultExtensions }),
-    extensions: defaultExtensions,
+    projector: createMarkdownProjector({ ...input.markdownOptions, extensions }),
+    extensions,
   });
 }
 

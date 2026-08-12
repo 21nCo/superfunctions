@@ -12,6 +12,7 @@
     class: className = '',
     onLoadError,
     editorRef,
+    onFiles,
   }: MdfnEditorProps = $props();
 
   let visualTarget = $state<HTMLElement>();
@@ -39,7 +40,7 @@
         if ((currentMode === 'visual' || currentMode === 'split') && currentVisual) {
           const module = await import('@mdfn/dom');
           if (cancelled) return;
-          visual = module.createDomEditor({ target: currentVisual, controller, readOnly, attributes: { 'aria-label': ariaLabel } });
+          visual = module.createDomEditor({ target: currentVisual, controller, readOnly, attributes: { 'aria-label': ariaLabel }, onFiles });
         }
         if ((currentMode === 'source' || currentMode === 'split') && currentSource) {
           const module = await import('@mdfn/source');
@@ -55,6 +56,10 @@
           focus() { visual?.focus(); source?.focus(); },
           run(command) { return visual?.run(command) ?? false; },
           can(command) { return visual?.can(command) ?? false; },
+          setLink(href, title) { return visual?.setLink(href, title) ?? false; },
+          removeLink() { return visual?.removeLink() ?? false; },
+          insertTable(rows, columns) { return visual?.insertTable(rows, columns) ?? false; },
+          insertMarkdown(markdown) { return visual?.insertMarkdown(markdown) ?? false; },
         };
         editorRef?.(handle);
       } catch (error) {

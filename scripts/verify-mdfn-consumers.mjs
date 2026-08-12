@@ -70,18 +70,38 @@ function writeConsumer(consumerRoot, framework) {
   if (framework === "react") {
     writeFileSync(path.join(sourceRoot, "main.js"), `import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport { createMdfn } from 'mdfn';\nimport { MdfnEditorShell } from '@mdfn/components-react';\nconst controller=createMdfn({markdown:'# Consumer\\n'});\ncreateRoot(document.querySelector('#app')).render(React.createElement(MdfnEditorShell,{controller}));\n`);
     writeFileSync(path.join(consumerRoot, "vite.config.mjs"), "export default { logLevel: 'error' };\n");
+    writeFileSync(path.join(sourceRoot, "ssr.js"), `import React from 'react';\nimport { renderToString } from 'react-dom/server';\nimport { createMdfn } from 'mdfn';\nimport { MdfnEditorShell } from '@mdfn/components-react';\nconst html=renderToString(React.createElement(MdfnEditorShell,{controller:createMdfn({markdown:'# SSR\\n'}),mode:'read-only'}));\nif(!html.includes('data-mdfn-component="editor-shell"')) throw new Error('MDFN_REACT_SSR_FAILED');\nexport {html};\n`);
     return;
   }
   if (framework === "svelte") {
     writeFileSync(path.join(sourceRoot, "App.svelte"), `<script>\n  import { createMdfn } from 'mdfn';\n  import { MdfnEditorShell } from '@mdfn/components-svelte';\n  const controller=createMdfn({markdown:'# Consumer\\n'});\n</script>\n<MdfnEditorShell {controller} />\n`);
     writeFileSync(path.join(sourceRoot, "main.js"), "import { mount } from 'svelte';\nimport App from './App.svelte';\nmount(App,{target:document.querySelector('#app')});\n");
     writeFileSync(path.join(consumerRoot, "vite.config.mjs"), "import { svelte } from '@sveltejs/vite-plugin-svelte';\nexport default { logLevel: 'error', plugins: [svelte()] };\n");
+    writeFileSync(path.join(sourceRoot, "ssr.js"), `import { render } from 'svelte/server';\nimport { createMdfn } from 'mdfn';\nimport { MdfnEditorShell } from '@mdfn/components-svelte';\nconst {body:html}=render(MdfnEditorShell,{props:{controller:createMdfn({markdown:'# SSR\\n'}),mode:'read-only'}});\nif(!html.includes('data-mdfn-component="editor-shell"')) throw new Error('MDFN_SVELTE_SSR_FAILED');\nexport {html};\n`);
     return;
   }
   writeFileSync(path.join(sourceRoot, "App.tsx"), `import { createMdfn } from 'mdfn';\nimport { MdfnEditorShell } from '@mdfn/components-solid';\nconst controller=createMdfn({markdown:'# Consumer\\n'});\nexport default function App(){return <MdfnEditorShell controller={controller}/>;}\n`);
   writeFileSync(path.join(sourceRoot, "main.tsx"), "import { render } from 'solid-js/web';\nimport App from './App';\nrender(()=><App/>,document.querySelector('#app'));\n");
   writeFileSync(path.join(sourceRoot, "main.js"), "import './main.tsx';\n");
   writeFileSync(path.join(consumerRoot, "vite.config.mjs"), "import solid from 'vite-plugin-solid';\nexport default { logLevel: 'error', plugins: [solid({hot:false})] };\n");
+  writeFileSync(path.join(sourceRoot, "ssr.js"), `import { createComponent } from 'solid-js';\nimport { renderToString } from 'solid-js/web';\nimport { createMdfn } from 'mdfn';\nimport { MdfnEditorShell } from '@mdfn/components-solid';\nconst html=renderToString(()=>createComponent(MdfnEditorShell,{controller:createMdfn({markdown:'# SSR\\n'}),mode:'read-only'}));\nif(!html.includes('data-mdfn-component="editor-shell"')) throw new Error('MDFN_SOLID_SSR_FAILED');\nexport {html};\n`);
+}
+
+function verifyRuntimeExports(consumerRoot, framework, packageNames) {
+  const esmImports = [...packageNames, "@mdfn/extensions/commonmark", "@mdfn/extensions/gfm", "@mdfn/extensions/callout", "@mdfn/extensions/diagram", "@mdfn/extensions/directives"];
+  const esm = run(process.execPath, ["--input-type=module", "--eval", `for (const name of ${JSON.stringify(esmImports)}) await import(name);`], consumerRoot);
+  if (esm.status !== 0) fail("MDFN_CONSUMER_ESM_EXPORT_FAILED", { framework, stdout: sanitize(esm.stdout), stderr: sanitize(esm.stderr) });
+
+  const requireImports = packageNames.filter((packageName) => {
+    const entry = [...graph.stable, ...graph.optional].find((candidate) => candidate.name === packageName);
+    if (!entry) return false;
+    const manifest = JSON.parse(readFileSync(path.join(repoRoot, entry.path, "package.json"), "utf8"));
+    return Boolean(manifest.exports?.["."]?.require);
+  });
+  if (packageNames.includes("@mdfn/extensions")) requireImports.push("@mdfn/extensions/commonmark", "@mdfn/extensions/gfm", "@mdfn/extensions/callout", "@mdfn/extensions/diagram", "@mdfn/extensions/directives");
+  const cjs = run(process.execPath, ["--eval", `for (const name of ${JSON.stringify(requireImports)}) require(name);`], consumerRoot);
+  if (cjs.status !== 0) fail("MDFN_CONSUMER_CJS_EXPORT_FAILED", { framework, stdout: sanitize(cjs.stdout), stderr: sanitize(cjs.stderr) });
+  return { esm: esm.status === 0, cjs: cjs.status === 0, subpaths: 5 };
 }
 
 const tarballs = new Map();
@@ -106,10 +126,15 @@ try {
     writeConsumer(consumerRoot, consumer.framework);
     const build = run(process.execPath, [path.join(consumerRoot, "node_modules", "vite", "bin", "vite.js"), "build"], consumerRoot);
     if (build.status !== 0) fail("MDFN_CONSUMER_BUILD_FAILED", { framework: consumer.framework, stdout: sanitize(build.stdout), stderr: sanitize(build.stderr) });
+    const ssrBuild = run(process.execPath, [path.join(consumerRoot, "node_modules", "vite", "bin", "vite.js"), "build", "--ssr", "src/ssr.js", "--outDir", "dist-ssr", "--emptyOutDir", "false"], consumerRoot);
+    if (ssrBuild.status !== 0) fail("MDFN_CONSUMER_SSR_BUILD_FAILED", { framework: consumer.framework, stdout: sanitize(ssrBuild.stdout), stderr: sanitize(ssrBuild.stderr) });
+    const ssrRun = ssrBuild.status === 0 ? run(process.execPath, [path.join(consumerRoot, "dist-ssr", "ssr.js")], consumerRoot) : { status: 1, stdout: "", stderr: "SSR build failed" };
+    if (ssrRun.status !== 0) fail("MDFN_CONSUMER_SSR_RUNTIME_FAILED", { framework: consumer.framework, stdout: sanitize(ssrRun.stdout), stderr: sanitize(ssrRun.stderr) });
+    const exports = verifyRuntimeExports(consumerRoot, consumer.framework, [...commonMdfn, ...consumer.packages.filter((name) => name.startsWith("@mdfn/"))]);
     const installed = new Set(readdirSync(path.join(consumerRoot, "node_modules")));
     const forbiddenPeers = ["react", "react-dom", "svelte", "solid-js"].filter((peer) => !(peer in consumer.peers));
     for (const peer of forbiddenPeers) if (installed.has(peer)) fail("MDFN_CONSUMER_CROSS_FRAMEWORK_PEER", { framework: consumer.framework, peer });
-    results.push({ framework: consumer.framework, packages: consumer.packages.slice(0, 2), productionBuild: build.status === 0, peers: Object.keys(consumer.peers) });
+    results.push({ framework: consumer.framework, packages: consumer.packages.slice(0, 2), productionBuild: build.status === 0, ssrBuild: ssrBuild.status === 0, ssrRuntime: ssrRun.status === 0, runtimeExports: exports, peers: Object.keys(consumer.peers) });
   }
 
   const result = { ok: failures.length === 0, command: "verify:mdfn-consumers", graphSha256: createHash("sha256").update(JSON.stringify(graph)).digest("hex"), artifactHashes, consumers: results, failures };

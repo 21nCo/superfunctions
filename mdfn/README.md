@@ -18,6 +18,39 @@ UIFn chrome, persistence, collaboration, and ecosystem bridges.
   diagnostics.
 - Raw HTML is disabled by default.
 - React, Svelte, Solid, and vanilla DOM share the same semantic controller.
+- Comments, suggestions, review transitions, history, and audit data live in a
+  validated sidecar bound to the canonical source.
+- Collaboration updates are authenticated before application and must match
+  the document, schema, profile, protocol, and extension contract.
+- Durable server operation is transactional; the explicit ephemeral mode is
+  reserved for memory-backed tests and examples.
+
+## Authoring surfaces
+
+`@mdfn/components` exposes the framework-neutral toolbar, slash-command,
+outline, diagnostics, asset, and editorial models. The React, Svelte, and Solid
+component packages render the same model with UIFn. The vanilla DOM adapter and
+all framework adapters share command, selection, undo/redo, file-drop, paste,
+and source-fallback semantics.
+
+Framework packages publish separate browser and server entry points. Packed
+consumer verification builds and executes browser and SSR applications for all
+three framework adapters and checks ESM, CJS, and extension subpath exports.
+
+## Verification
+
+From the repository root:
+
+```sh
+npm run verify:mdfn
+npm run verify:mdfn-browser
+npm run verify:mdfn-consumers
+```
+
+The complete gate includes the official CommonMark examples, deterministic
+fuzz and large-document checks, package builds/typechecks/tests/packs, runtime
+export checks, SSR execution, and Chromium, Firefox, WebKit, and mobile browser
+flows.
 
 See `mdfn/.conduct/MDFN-01` for the normative product, content, architecture,
 extension, security, verification, and delivery contracts.

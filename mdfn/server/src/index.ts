@@ -1,5 +1,20 @@
-import { hashString, resolveExtensions, type MdfnExtension, type MdfnSidecar } from "@mdfn/core";
-import { parseMarkdown, type MarkdownOptions } from "@mdfn/markdown";
+import {
+  createCommentThread,
+  createEditor,
+  createSuggestion,
+  decideSuggestion,
+  hashString,
+  replyToComment,
+  resolveExtensions,
+  setCommentResolved,
+  transitionReview,
+  validateMdfnSidecar,
+  type MdfnExtension,
+  type MdfnSidecar,
+  type ReviewState,
+  type SidecarAnchor,
+} from "@mdfn/core";
+import { createMarkdownProjector, parseMarkdown, type MarkdownOptions } from "@mdfn/markdown";
 import { wrapWithSchema, type Adapter, type TableSchema } from "@superfunctions/db";
 import { createRouter, type Router } from "@superfunctions/http";
 
@@ -37,6 +52,8 @@ export interface MdfnServerConfig {
   readonly basePath?: string;
   readonly createId?: () => string;
   readonly maxCollaborationUpdateBytes?: number;
+  /** Durable storage requires adapter transactions. Ephemeral is intended only for in-memory/test hosts. */
+  readonly durability?: "required" | "ephemeral";
 }
 
 export class MdfnServerError extends Error {
@@ -61,8 +78,16 @@ export interface MdfnService {
   delete(principal: MdfnPrincipal, id: string): Promise<void>;
   versions(principal: MdfnPrincipal, id: string): Promise<readonly MdfnVersionRecord[]>;
   version(principal: MdfnPrincipal, id: string, version: number): Promise<MdfnVersionRecord>;
+  restoreVersion(principal: MdfnPrincipal, id: string, input: { readonly version: number; readonly expectedVersion: number; readonly idempotencyKey?: string }): Promise<MdfnDocumentRecord>;
+  createComment(principal: MdfnPrincipal, id: string, input: { readonly expectedVersion: number; readonly anchor: SidecarAnchor; readonly body: string; readonly idempotencyKey?: string }): Promise<MdfnDocumentRecord>;
+  replyComment(principal: MdfnPrincipal, id: string, threadId: string, input: { readonly expectedVersion: number; readonly body: string; readonly idempotencyKey?: string }): Promise<MdfnDocumentRecord>;
+  resolveComment(principal: MdfnPrincipal, id: string, threadId: string, input: { readonly expectedVersion: number; readonly resolved: boolean; readonly idempotencyKey?: string }): Promise<MdfnDocumentRecord>;
+  createSuggestion(principal: MdfnPrincipal, id: string, input: { readonly expectedVersion: number; readonly anchor: SidecarAnchor; readonly replacement: string; readonly idempotencyKey?: string }): Promise<MdfnDocumentRecord>;
+  decideSuggestion(principal: MdfnPrincipal, id: string, suggestionId: string, input: { readonly expectedVersion: number; readonly decision: "accepted" | "rejected"; readonly idempotencyKey?: string }): Promise<MdfnDocumentRecord>;
+  transitionReview(principal: MdfnPrincipal, id: string, input: { readonly expectedVersion: number; readonly state: ReviewState; readonly idempotencyKey?: string }): Promise<MdfnDocumentRecord>;
   appendCollaborationUpdate(principal: MdfnPrincipal, id: string, update: string): Promise<string>;
   collaborationUpdates(principal: MdfnPrincipal, id: string): Promise<readonly string[]>;
+  compactCollaborationUpdates(principal: MdfnPrincipal, id: string, snapshot: string): Promise<string>;
 }
 
 async function allowed(config: MdfnServerConfig, action: MdfnServerAction, principal: MdfnPrincipal, document?: MdfnDocumentRecord): Promise<void> {
@@ -73,10 +98,20 @@ function whereId(id: string) { return [{ field: "id", operator: "eq" as const, v
 
 export function createMdfnService(config: MdfnServerConfig): MdfnService {
   const database = wrapWithSchema(config.database, getSchema());
+  if (!database.capabilities.transactions.supported && (config.durability ?? "required") === "required") {
+    throw new MdfnServerError("MDFN_TRANSACTIONAL_DATABASE_REQUIRED", 500);
+  }
   const registry = resolveExtensions(config.extensions ?? []);
   const markdownOptions: MarkdownOptions = { ...config.markdown, extensions: registry };
   const createId = config.createId ?? (() => crypto.randomUUID());
-  const parse = (source: string): void => { parseMarkdown(source, markdownOptions); };
+  const parse = (source: string, sidecar?: MdfnSidecar): void => {
+    try {
+      parseMarkdown(source, markdownOptions);
+      validateMdfnSidecar(sidecar, { markdownLength: source.length });
+    } catch {
+      throw new MdfnServerError("MDFN_DOCUMENT_INVALID", 422);
+    }
+  };
   const load = async (id: string): Promise<MdfnDocumentRecord> => {
     const result = await database.findOne<MdfnDocumentRecord>({ model: DOCUMENTS, where: whereId(id) });
     if (!result) throw new MdfnServerError("MDFN_DOCUMENT_NOT_FOUND", 404);
@@ -91,14 +126,39 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
     return document;
   };
   const revision = (document: MdfnDocumentRecord, authorId: string, changeSource: string): MdfnVersionRecord => ({ ...document, id: `${document.id}:${document.version}`, documentId: document.id, authorId, changeSource });
-  type Storage = Pick<Adapter, "create" | "findOne" | "update">;
+  type Storage = Pick<Adapter, "create" | "findOne" | "update" | "delete" | "deleteMany">;
   const withStorage = <T>(callback: (storage: Storage) => Promise<T>): Promise<T> => database.capabilities.transactions.supported
     ? database.transaction((transaction) => callback(transaction))
     : callback(database);
-  return {
+  let service!: MdfnService;
+  const editorialActor = (principal: MdfnPrincipal) => ({ id: principal.id, createId, now: () => new Date().toISOString() });
+  const mutateEditorial = async (
+    principal: MdfnPrincipal,
+    id: string,
+    expectedVersion: number,
+    changeSource: string,
+    idempotencyKey: string | undefined,
+    mutate: (document: MdfnDocumentRecord) => { readonly markdown?: string; readonly sidecar: MdfnSidecar },
+  ): Promise<MdfnDocumentRecord> => {
+    const current = await loadScoped(principal, id);
+    await allowed(config, "update", principal, current);
+    if (idempotencyKey) {
+      const receipt = await database.findOne<{ result: MdfnDocumentRecord }>({ model: RECEIPTS, where: [{ field: "documentId", operator: "eq", value: id }, { field: "idempotencyKey", operator: "eq", value: idempotencyKey }] });
+      if (receipt) return receipt.result;
+    }
+    if (current.version !== expectedVersion) throw new MdfnServerError("MDFN_VERSION_CONFLICT", 409);
+    try {
+      const next = mutate(current);
+      return service.update(principal, id, { expectedVersion, markdown: next.markdown, sidecar: next.sidecar, changeSource, idempotencyKey });
+    } catch (error) {
+      if (error instanceof MdfnServerError) throw error;
+      throw new MdfnServerError("MDFN_EDITORIAL_INVALID", 422);
+    }
+  };
+  service = {
     async create(principal, input) {
       await allowed(config, "create", principal);
-      parse(input.markdown);
+      parse(input.markdown, input.sidecar);
       const now = new Date();
       const document: MdfnDocumentRecord = { id: input.id ?? createId(), ownerId: principal.id, tenantId: principal.tenantId, title: input.title, markdown: input.markdown, sourceHash: hashString(input.markdown), schemaHash: registry.schemaHash, sidecar: input.sidecar, version: 1, createdAt: now, updatedAt: now };
       return withStorage(async (storage) => {
@@ -122,9 +182,13 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
       }
       if (current.version !== input.expectedVersion) throw new MdfnServerError("MDFN_VERSION_CONFLICT", 409);
       const markdown = input.markdown ?? current.markdown;
-      parse(markdown);
+      parse(markdown, input.sidecar ?? current.sidecar);
       const next: MdfnDocumentRecord = { ...current, title: input.title ?? current.title, markdown, sourceHash: hashString(markdown), schemaHash: registry.schemaHash, sidecar: input.sidecar ?? current.sidecar, version: current.version + 1, updatedAt: new Date() };
       return withStorage(async (storage) => {
+        if (input.idempotencyKey) {
+          const receipt = await storage.findOne<{ result: MdfnDocumentRecord }>({ model: RECEIPTS, where: [{ field: "documentId", operator: "eq", value: id }, { field: "idempotencyKey", operator: "eq", value: input.idempotencyKey }] });
+          if (receipt) return receipt.result;
+        }
         const latest = await storage.findOne<MdfnDocumentRecord>({ model: DOCUMENTS, where: whereId(id) });
         if (!latest || latest.version !== input.expectedVersion) throw new MdfnServerError("MDFN_VERSION_CONFLICT", 409);
         const updated = await storage.update<MdfnDocumentRecord>({ model: DOCUMENTS, where: [{ field: "id", operator: "eq", value: id }, { field: "version", operator: "eq", value: input.expectedVersion }], data: next });
@@ -133,16 +197,71 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
         return updated;
       });
     },
-    async delete(principal, id) { const current = await loadScoped(principal, id); await allowed(config, "delete", principal, current); await database.delete({ model: DOCUMENTS, where: whereId(id) }); },
+    async delete(principal, id) {
+      const current = await loadScoped(principal, id);
+      await allowed(config, "delete", principal, current);
+      await withStorage(async (storage) => {
+        const documentWhere = [{ field: "documentId", operator: "eq" as const, value: id }];
+        await storage.deleteMany({ model: COLLAB_UPDATES, where: documentWhere });
+        await storage.deleteMany({ model: RECEIPTS, where: documentWhere });
+        await storage.deleteMany({ model: VERSIONS, where: documentWhere });
+        await storage.delete({ model: DOCUMENTS, where: whereId(id) });
+      });
+    },
     async versions(principal, id) { const document = await loadScoped(principal, id); await allowed(config, "history", principal, document); return database.findMany<MdfnVersionRecord>({ model: VERSIONS, where: [{ field: "documentId", operator: "eq", value: id }], orderBy: [{ field: "version", direction: "desc" }] }); },
     async version(principal, id, version) { const document = await loadScoped(principal, id); await allowed(config, "history", principal, document); const result = await database.findOne<MdfnVersionRecord>({ model: VERSIONS, where: [{ field: "documentId", operator: "eq", value: id }, { field: "version", operator: "eq", value: version }] }); if (!result) throw new MdfnServerError("MDFN_VERSION_NOT_FOUND", 404); return result; },
+    async restoreVersion(principal, id, input) {
+      const restored = await service.version(principal, id, input.version);
+      return service.update(principal, id, { expectedVersion: input.expectedVersion, title: restored.title, markdown: restored.markdown, sidecar: restored.sidecar, changeSource: `restore:${input.version}`, idempotencyKey: input.idempotencyKey });
+    },
+    async createComment(principal, id, input) {
+      return mutateEditorial(principal, id, input.expectedVersion, "editorial:comment-created", input.idempotencyKey, (document) => createCommentThread({ sidecar: document.sidecar, anchor: input.anchor, body: input.body, actor: editorialActor(principal), markdownLength: document.markdown.length }));
+    },
+    async replyComment(principal, id, threadId, input) {
+      return mutateEditorial(principal, id, input.expectedVersion, "editorial:comment-replied", input.idempotencyKey, (document) => ({ sidecar: replyToComment({ sidecar: document.sidecar ?? {}, threadId, body: input.body, actor: editorialActor(principal) }) }));
+    },
+    async resolveComment(principal, id, threadId, input) {
+      return mutateEditorial(principal, id, input.expectedVersion, input.resolved ? "editorial:comment-resolved" : "editorial:comment-reopened", input.idempotencyKey, (document) => ({ sidecar: setCommentResolved({ sidecar: document.sidecar ?? {}, threadId, resolved: input.resolved, actor: editorialActor(principal) }) }));
+    },
+    async createSuggestion(principal, id, input) {
+      return mutateEditorial(principal, id, input.expectedVersion, "editorial:suggestion-created", input.idempotencyKey, (document) => createSuggestion({ sidecar: document.sidecar, anchor: input.anchor, replacement: input.replacement, actor: editorialActor(principal), markdownLength: document.markdown.length }));
+    },
+    async decideSuggestion(principal, id, suggestionId, input) {
+      return mutateEditorial(principal, id, input.expectedVersion, `editorial:suggestion-${input.decision}`, input.idempotencyKey, (document) => {
+        const controller = createEditor({ markdown: document.markdown, projector: createMarkdownProjector(markdownOptions), extensions: config.extensions, sidecar: document.sidecar });
+        try {
+          decideSuggestion({ controller, suggestionId, decision: input.decision, actor: editorialActor(principal) });
+          const state = controller.getState();
+          return { markdown: state.markdown, sidecar: state.sidecar ?? {} };
+        } finally { controller.destroy(); }
+      });
+    },
+    async transitionReview(principal, id, input) {
+      return mutateEditorial(principal, id, input.expectedVersion, "editorial:review-transitioned", input.idempotencyKey, (document) => ({ sidecar: transitionReview({ sidecar: document.sidecar, to: input.state, actor: editorialActor(principal) }) }));
+    },
     async appendCollaborationUpdate(principal, id, update) { const document = await loadScoped(principal, id); await allowed(config, "collaborate", principal, document); const limit = config.maxCollaborationUpdateBytes ?? 1024 * 1024; if (new TextEncoder().encode(update).byteLength > limit) throw new MdfnServerError("MDFN_COLLAB_UPDATE_TOO_LARGE", 413); const updateId = createId(); await database.create({ model: COLLAB_UPDATES, data: { id: updateId, documentId: id, authorId: principal.id, update, createdAt: new Date() } }); return updateId; },
     async collaborationUpdates(principal, id) { const document = await loadScoped(principal, id); await allowed(config, "collaborate", principal, document); const rows = await database.findMany<{ update: string }>({ model: COLLAB_UPDATES, where: [{ field: "documentId", operator: "eq", value: id }], orderBy: [{ field: "createdAt", direction: "asc" }] }); return rows.map((row) => row.update); },
+    async compactCollaborationUpdates(principal, id, snapshot) {
+      const document = await loadScoped(principal, id);
+      await allowed(config, "collaborate", principal, document);
+      const limit = config.maxCollaborationUpdateBytes ?? 1024 * 1024;
+      if (new TextEncoder().encode(snapshot).byteLength > limit) throw new MdfnServerError("MDFN_COLLAB_UPDATE_TOO_LARGE", 413);
+      const updateId = createId();
+      await withStorage(async (storage) => {
+        await storage.deleteMany({ model: COLLAB_UPDATES, where: [{ field: "documentId", operator: "eq", value: id }] });
+        await storage.create({ model: COLLAB_UPDATES, data: { id: updateId, documentId: id, authorId: principal.id, update: snapshot, createdAt: new Date() } });
+      });
+      return updateId;
+    },
   };
+  return service;
 }
 
 function etag(document: MdfnDocumentRecord): string { return `\"mdfn-${document.version}-${document.sourceHash}\"`; }
 function response(document: MdfnDocumentRecord, status = 200): Response { return Response.json(document, { status, headers: { ETag: etag(document), "Cache-Control": "no-store" } }); }
+function idempotent<T extends { readonly idempotencyKey?: string }>(request: Request, body: T): T {
+  return { ...body, idempotencyKey: body.idempotencyKey ?? request.headers.get("Idempotency-Key") ?? undefined };
+}
 
 export function createMdfnRouter(config: MdfnServerConfig, service = createMdfnService(config)): Router<{ principal: MdfnPrincipal }> {
   const principal = config.resolvePrincipal ?? (() => { throw new MdfnServerError("MDFN_UNAUTHENTICATED", 401); });
@@ -154,14 +273,23 @@ export function createMdfnRouter(config: MdfnServerConfig, service = createMdfnS
       { method: "GET", path: "/documents", handler: (_request, context) => service.list(context.principal, { limit: Number(context.query.get("limit") ?? 50), offset: Number(context.query.get("offset") ?? 0) }).then((documents) => Response.json({ documents })) },
       { method: "POST", path: "/documents", handler: async (_request, context) => response(await service.create(context.principal, await context.json()), 201) },
       { method: "GET", path: "/documents/:id", handler: async (_request, context) => response(await service.read(context.principal, context.params.id!)) },
-      { method: "PATCH", path: "/documents/:id", handler: async (_request, context) => response(await service.update(context.principal, context.params.id!, await context.json())) },
+      { method: "PATCH", path: "/documents/:id", handler: async (request, context) => response(await service.update(context.principal, context.params.id!, idempotent(request, await context.json()))) },
       { method: "DELETE", path: "/documents/:id", handler: async (_request, context) => { await service.delete(context.principal, context.params.id!); return new Response(null, { status: 204 }); } },
       { method: "GET", path: "/documents/:id/versions", handler: async (_request, context) => Response.json({ versions: await service.versions(context.principal, context.params.id!) }) },
       { method: "GET", path: "/documents/:id/versions/:version", handler: async (_request, context) => Response.json(await service.version(context.principal, context.params.id!, Number(context.params.version))) },
+      { method: "POST", path: "/documents/:id/restore", handler: async (request, context) => response(await service.restoreVersion(context.principal, context.params.id!, idempotent(request, await context.json()))) },
       { method: "GET", path: "/documents/:id/sidecar", handler: async (_request, context) => Response.json((await service.read(context.principal, context.params.id!)).sidecar ?? {}) },
-      { method: "PUT", path: "/documents/:id/sidecar", handler: async (_request, context) => { const body = await context.json<{ expectedVersion: number; sidecar: MdfnSidecar }>(); return response(await service.update(context.principal, context.params.id!, { ...body, changeSource: "sidecar" })); } },
+      { method: "PUT", path: "/documents/:id/sidecar", handler: async (request, context) => { const body = idempotent(request, await context.json<{ expectedVersion: number; sidecar: MdfnSidecar; idempotencyKey?: string }>()); return response(await service.update(context.principal, context.params.id!, { ...body, changeSource: "sidecar" })); } },
+      { method: "GET", path: "/documents/:id/audit", handler: async (_request, context) => Response.json({ audit: (await service.read(context.principal, context.params.id!)).sidecar?.audit ?? [] }) },
+      { method: "POST", path: "/documents/:id/comments", handler: async (request, context) => response(await service.createComment(context.principal, context.params.id!, idempotent(request, await context.json()))) },
+      { method: "POST", path: "/documents/:id/comments/:threadId/replies", handler: async (request, context) => response(await service.replyComment(context.principal, context.params.id!, context.params.threadId!, idempotent(request, await context.json()))) },
+      { method: "PATCH", path: "/documents/:id/comments/:threadId", handler: async (request, context) => response(await service.resolveComment(context.principal, context.params.id!, context.params.threadId!, idempotent(request, await context.json()))) },
+      { method: "POST", path: "/documents/:id/suggestions", handler: async (request, context) => response(await service.createSuggestion(context.principal, context.params.id!, idempotent(request, await context.json()))) },
+      { method: "PATCH", path: "/documents/:id/suggestions/:suggestionId", handler: async (request, context) => response(await service.decideSuggestion(context.principal, context.params.id!, context.params.suggestionId!, idempotent(request, await context.json()))) },
+      { method: "PUT", path: "/documents/:id/review", handler: async (request, context) => response(await service.transitionReview(context.principal, context.params.id!, idempotent(request, await context.json()))) },
       { method: "GET", path: "/documents/:id/collaboration-updates", handler: async (_request, context) => Response.json({ updates: await service.collaborationUpdates(context.principal, context.params.id!) }) },
       { method: "POST", path: "/documents/:id/collaboration-updates", handler: async (_request, context) => { const body = await context.json<{ update: string }>(); return Response.json({ id: await service.appendCollaborationUpdate(context.principal, context.params.id!, body.update) }, { status: 201 }); } },
+      { method: "PUT", path: "/documents/:id/collaboration-updates/compact", handler: async (_request, context) => { const body = await context.json<{ snapshot: string }>(); return Response.json({ id: await service.compactCollaborationUpdates(context.principal, context.params.id!, body.snapshot) }); } },
     ],
   });
 }
