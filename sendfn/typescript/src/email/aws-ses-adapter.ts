@@ -126,10 +126,11 @@ export class AwsSesAdapter implements EmailProvider {
     // Attachments
     if (params.attachments) {
       for (const att of params.attachments) {
+        const filename = sanitizeMimeParameter(att.filename);
         rawMessage += `--${boundary}\n`;
-        rawMessage += `Content-Type: ${att.contentType || 'application/octet-stream'}; name="${att.filename}"\n`;
+        rawMessage += `Content-Type: ${att.contentType || 'application/octet-stream'}; name="${filename}"\n`;
         rawMessage += `Content-Transfer-Encoding: base64\n`;
-        rawMessage += `Content-Disposition: attachment; filename="${att.filename}"\n\n`;
+        rawMessage += `Content-Disposition: attachment; filename="${filename}"\n\n`;
         
         const content = typeof att.content === 'string' 
           ? Buffer.from(att.content).toString('base64') 
@@ -208,6 +209,10 @@ export class AwsSesAdapter implements EmailProvider {
       },
     };
   }
+}
+
+function sanitizeMimeParameter(value: string): string {
+  return value.normalize('NFKC').replace(/[\u0000-\u001f\u007f"\\/;]/g, '_').slice(0, 255) || 'attachment';
 }
 
 export function awsSesAdapter(config: AwsSesConfig): AwsSesAdapter {

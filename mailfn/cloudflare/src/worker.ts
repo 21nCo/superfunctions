@@ -214,12 +214,12 @@ export function parseCloudflareAuthenticationResults(value: string | null) {
   return { raw: value, spf: find('spf'), dkim: find('dkim'), dmarc: find('dmarc'), arc: find('arc') };
 }
 
-function permanentInboundFailure(error: MailFnError): boolean {
+export function permanentInboundFailure(error: MailFnError): boolean {
+  if (error.retryable) return false;
   return [
     'MAILFN_UNKNOWN_RECIPIENT',
     'MAILFN_INBOX_INACTIVE',
     'MAILFN_MESSAGE_TOO_LARGE',
-    'MAILFN_RATE_LIMITED',
     'MAILFN_SENDER_BLOCKED',
     'MAILFN_QUOTA_EXCEEDED',
     'MAILFN_VALIDATION_FAILED',

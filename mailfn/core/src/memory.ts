@@ -194,6 +194,18 @@ export class MemoryMailFnStore implements MailFnStore {
     if (duplicate) throw new Error('MAILFN_UNIQUE_CONSTRAINT');
     this.messages.set(message.id, copy(message));
   }
+  async createInboundMessageIfInboxActive(message: Message): Promise<boolean> {
+    const inbox = this.inboxes.get(message.inboxId);
+    if (!inbox || inbox.status !== 'active') return false;
+    const duplicate = values(this.messages).find(
+      (candidate) => candidate.id === message.id || (
+        candidate.inboxId === message.inboxId && candidate.providerDeliveryId === message.providerDeliveryId
+      ),
+    );
+    if (duplicate) return false;
+    this.messages.set(message.id, copy(message));
+    return true;
+  }
   async claimMessageForParsing(messageId: string, claimedAt: string, leaseExpiresAt: string): Promise<boolean> {
     const message = this.messages.get(messageId);
     if (
@@ -248,6 +260,14 @@ export class MemoryMailFnStore implements MailFnStore {
     const current = this.threads.get(thread.id) ?? null;
     if (JSON.stringify(current) !== JSON.stringify(expected)) return false;
     this.threads.set(thread.id, copy(thread));
+    return true;
+  }
+  async deleteMessageWithThread(messageId: string, expected: Thread, next: Thread | null): Promise<boolean> {
+    const current = this.threads.get(expected.id) ?? null;
+    if (JSON.stringify(current) !== JSON.stringify(expected) || !this.messages.has(messageId)) return false;
+    this.messages.delete(messageId);
+    if (next) this.threads.set(next.id, copy(next));
+    else this.threads.delete(expected.id);
     return true;
   }
 

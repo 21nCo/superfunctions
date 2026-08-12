@@ -390,6 +390,9 @@ export class MailFn {
   public async updateInbox(actor: Actor, inboxId: string, input: UpdateInboxInput): Promise<Inbox> {
     const inbox = await this.requireInbox(actor.projectId, inboxId);
     await this.authorize(actor, 'inbox:write', inbox.projectId, inbox.id);
+    assertMailFn(inbox.status !== 'deleting', {
+      code: 'MAILFN_CONFLICT', message: 'Inbox deletion is already in progress', status: 409,
+    });
     assertMailFn(input.status === undefined || input.status === 'active' || input.status === 'disabled', {
       code: 'MAILFN_VALIDATION_FAILED', message: 'Inbox status must be active or disabled', status: 400,
     });
@@ -422,16 +425,17 @@ export class MailFn {
     const deletionDueAt = compliance
       ? new Date(Date.parse(startedAt) + compliance.deletionSlaHours * 60 * 60 * 1000).toISOString()
       : undefined;
+    const quiesced: Inbox = { ...inbox, status: 'deleting', updatedAt: startedAt };
+    await this.store.saveInbox(quiesced);
     await this.audit(actor, 'inbox.deletion_started', 'inbox', inbox.id, {
       inboxId: inbox.id,
       deletionDueAt: deletionDueAt ?? null,
     });
-    // Delete durable evidence before making the inbox unreachable. A transient
-    // object-store failure therefore leaves a retryable, active inbox instead
-    // of orphaning objects behind a tombstone that cannot be acted on again.
-    await this.deleteInboxMessages(inbox);
+    // Quiesce before cleanup so new inbound writes cannot race past the message
+    // listing. The deleting state remains retryable when object cleanup fails.
+    await this.deleteInboxMessages(quiesced);
     const completedAt = this.now();
-    const updated: Inbox = { ...inbox, status: 'deleted', updatedAt: completedAt };
+    const updated: Inbox = { ...quiesced, status: 'deleted', updatedAt: completedAt };
     await this.store.saveInbox(updated);
     for (const credential of await this.store.listCredentials(inbox.projectId, inbox.id)) {
       if (credential.status === 'active') {
@@ -653,8 +657,9 @@ export class MailFn {
       createdAt: now,
       updatedAt: now,
     };
+    let created = false;
     try {
-      await this.store.saveMessage(message);
+      created = await this.store.createInboundMessageIfInboxActive(message);
     } catch (error) {
       await this.objects.delete(rawObjectKey).catch(() => undefined);
       await this.store.releaseIngressQuota(messageId).catch(() => undefined);
@@ -672,6 +677,27 @@ export class MailFn {
         status: 503,
         retryable: true,
         cause: error,
+      });
+    }
+    if (!created) {
+      await this.objects.delete(rawObjectKey).catch(() => undefined);
+      await this.store.releaseIngressQuota(messageId).catch(() => undefined);
+      if (storageReservation === 'created') await this.store.releaseStorage(messageId).catch(() => undefined);
+      const canonical = await this.store.getMessageByDelivery(inbox.id, providerDeliveryId).catch(() => null);
+      if (canonical) {
+        if ((canonical.status === 'pending' || canonical.status === 'queue_failed') && this.queue) {
+          await this.enqueueParse(canonical);
+        }
+        return (await this.store.getMessage(canonical.id)) ?? canonical;
+      }
+      const currentInbox = await this.store.getInbox(inbox.id);
+      if (!currentInbox || currentInbox.status !== 'active') {
+        throw new MailFnError({ code: 'MAILFN_INBOX_INACTIVE', message: 'Recipient inbox is not active', status: 410 });
+      }
+      throw new MailFnError({
+        code: 'MAILFN_CONFLICT',
+        message: 'Inbound message identity is already in use',
+        status: 409,
       });
     }
     await this.usage(project.id, 'inbound_message', 1, message.id).catch(() =>
@@ -1482,7 +1508,7 @@ export class MailFn {
           if (message.retentionExpiresAt <= now || inboxDeletion) {
             try {
               result.deletedObjects += await this.deleteMessageObjects(message);
-              await this.store.deleteMessage(message.id);
+              await this.deleteMessageRecord(message);
               result.deletedMessages += 1;
               await this.event('retention.deleted', project.id, {
                 inboxId: inbox.id,
@@ -2183,8 +2209,51 @@ export class MailFn {
   private async deleteInboxMessages(inbox: Inbox): Promise<void> {
     for (const message of await this.store.listMessages(inbox.projectId, inbox.id)) {
       await this.deleteMessageObjects(message);
-      await this.store.deleteMessage(message.id);
+      await this.deleteMessageRecord(message);
     }
+  }
+
+  private async deleteMessageRecord(message: Message): Promise<void> {
+    if (!message.threadId) {
+      await this.store.deleteMessage(message.id);
+      return;
+    }
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const expected = await this.store.getThread(message.threadId);
+      if (!expected || !expected.messageIds.includes(message.id)) {
+        await this.store.deleteMessage(message.id);
+        return;
+      }
+      const remainingMessages = (
+        await Promise.all(expected.messageIds
+          .filter((messageId) => messageId !== message.id)
+          .map((messageId) => this.store.getMessage(messageId)))
+      ).filter((entry): entry is Message => entry !== null);
+      const next: Thread | null = remainingMessages.length
+        ? {
+          ...expected,
+          messageIds: remainingMessages.map((entry) => entry.id),
+          participants: Array.from(new Set(remainingMessages.flatMap((entry) => [
+            ...entry.from.map((address) => address.address),
+            ...entry.to.map((address) => address.address),
+            ...entry.cc.map((address) => address.address),
+          ]))).sort(),
+          lastMessageAt: remainingMessages.reduce(
+            (latest, entry) => entry.receivedAt > latest ? entry.receivedAt : latest,
+            remainingMessages[0]!.receivedAt,
+          ),
+          updatedAt: this.now(),
+        }
+        : null;
+      if (await this.store.deleteMessageWithThread(message.id, expected, next)) return;
+      if (!(await this.store.getMessage(message.id))) return;
+    }
+    throw new MailFnError({
+      code: 'MAILFN_STORAGE_FAILED',
+      message: 'Message retention conflicted with a concurrent thread update',
+      status: 503,
+      retryable: true,
+    });
   }
 
   private async assertOutboundAllowed(inbox: Inbox): Promise<void> {
@@ -2414,7 +2483,7 @@ function parseWebhookUrl(value: string): URL {
 }
 
 function sanitizeFilename(value: string): string {
-  return value.replace(/[\\/\0]/g, '_').slice(0, 255) || 'attachment';
+  return value.normalize('NFKC').replace(/[\u0000-\u001f\u007f"\\/;]/g, '_').slice(0, 255) || 'attachment';
 }
 
 function normalizeContentType(value?: string): string {

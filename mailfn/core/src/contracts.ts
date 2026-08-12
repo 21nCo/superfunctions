@@ -69,6 +69,7 @@ export interface MailFnStore {
     cursorId: string | undefined,
     limit: number,
   ): Promise<{ items: Message[]; hasMore: boolean; cursorFound: boolean }>;
+  createInboundMessageIfInboxActive(message: Message): Promise<boolean>;
   saveMessage(message: Message): Promise<void>;
   claimMessageForParsing(messageId: string, claimedAt: string, leaseExpiresAt: string): Promise<boolean>;
   markMessageRead(messageId: string, readAt: string): Promise<Message | null>;
@@ -84,6 +85,7 @@ export interface MailFnStore {
   listThreads(projectId: string, inboxId: string): Promise<Thread[]>;
   saveThread(thread: Thread): Promise<void>;
   saveThreadIfUnchanged(thread: Thread, expected: Thread | null): Promise<boolean>;
+  deleteMessageWithThread(messageId: string, expected: Thread, next: Thread | null): Promise<boolean>;
 
   getWebhook(id: string): Promise<Webhook | null>;
   listWebhooks(projectId: string, inboxId?: string): Promise<Webhook[]>;

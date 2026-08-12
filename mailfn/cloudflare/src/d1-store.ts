@@ -276,6 +276,23 @@ export class D1MailFnStore implements MailFnStore {
       cursorFound: true,
     };
   }
+  async createInboundMessageIfInboxActive(value: Message): Promise<boolean> {
+    const result = await this.database.prepare(
+      `INSERT INTO mailfn_messages(id, project_id, inbox_id, provider_delivery_id, internet_message_id, envelope_from, envelope_to,
+       subject, received_at, parsed_at, raw_object_key, raw_retention_expires_at, attachment_retention_expires_at, raw_deleted_at,
+       thread_id, size_bytes, status, retention_expires_at, created_at, updated_at, data_json)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM mailfn_inboxes WHERE id = ? AND status = 'active')
+       ON CONFLICT DO NOTHING`,
+    ).bind(
+      value.id, value.projectId, value.inboxId, value.providerDeliveryId, value.internetMessageId ?? null, value.envelopeFrom,
+      value.envelopeTo, value.subject, value.receivedAt, value.parsedAt ?? null, value.rawObjectKey, value.rawRetentionExpiresAt,
+      value.attachmentRetentionExpiresAt, value.rawDeletedAt ?? null, value.threadId ?? null, value.sizeBytes, value.status,
+      value.retentionExpiresAt, value.createdAt, value.updatedAt, json(value), value.inboxId,
+    ).run();
+    if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return Number(result.meta?.changes ?? 0) === 1;
+  }
   async saveMessage(value: Message): Promise<void> {
     const save = bind(
       this.database.prepare(
@@ -384,6 +401,33 @@ export class D1MailFnStore implements MailFnStore {
     const result = await statement.run();
     if (!result.success) throw new Error('MAILFN_D1_WRITE_FAILED');
     return Number(result.meta?.changes ?? 0) === 1;
+  }
+  async deleteMessageWithThread(messageId: string, expected: Thread, next: Thread | null): Promise<boolean> {
+    const expectedJson = json(expected);
+    const threadStatement = next
+      ? bind(this.database.prepare(
+        `UPDATE mailfn_threads
+         SET normalized_subject = ?, last_message_at = ?, updated_at = ?, data_json = ?
+         WHERE id = ? AND data_json = ?`,
+      ), [next.normalizedSubject, next.lastMessageAt, next.updatedAt, json(next), expected.id, expectedJson])
+      : bind(this.database.prepare('DELETE FROM mailfn_threads WHERE id = ? AND data_json = ?'), [expected.id, expectedJson]);
+    const results = await this.database.batch([
+      bind(this.database.prepare(
+        `DELETE FROM mailfn_messages_fts
+         WHERE message_id = ? AND EXISTS (
+           SELECT 1 FROM mailfn_threads WHERE id = ? AND data_json = ?
+         )`,
+      ), [messageId, expected.id, expectedJson]),
+      bind(this.database.prepare(
+        `DELETE FROM mailfn_messages
+         WHERE id = ? AND EXISTS (
+           SELECT 1 FROM mailfn_threads WHERE id = ? AND data_json = ?
+         )`,
+      ), [messageId, expected.id, expectedJson]),
+      threadStatement,
+    ]);
+    if (results.some((result) => !result.success)) throw new Error('MAILFN_D1_WRITE_FAILED');
+    return Number(results[1]?.meta?.changes ?? 0) > 0 && Number(results[2]?.meta?.changes ?? 0) > 0;
   }
 
   async getWebhook(id: string): Promise<Webhook | null> {

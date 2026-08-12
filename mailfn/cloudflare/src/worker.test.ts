@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Message, ParseJob } from '@mailfn/core';
+import { MailFnError, type Message, type ParseJob } from '@mailfn/core';
 
 import type {
   D1Database,
@@ -15,6 +15,7 @@ import {
   createMailFnCloudflareHandlers,
   deriveCloudflareDeliveryId,
   parseCloudflareAuthenticationResults,
+  permanentInboundFailure,
 } from './worker.js';
 
 class FakeStatement implements D1PreparedStatement {
@@ -53,6 +54,15 @@ function env(database: D1Database): MailFnCloudflareEnv {
 }
 
 describe('MailFn Cloudflare handlers', () => {
+  it('does not permanently reject retryable hourly rate limits', () => {
+    expect(permanentInboundFailure(new MailFnError({
+      code: 'MAILFN_RATE_LIMITED', message: 'retry later', status: 429, retryable: true,
+    }))).toBe(false);
+    expect(permanentInboundFailure(new MailFnError({
+      code: 'MAILFN_UNKNOWN_RECIPIENT', message: 'unknown', status: 404,
+    }))).toBe(true);
+  });
+
   it('permanently rejects unknown recipients without exposing the address', async () => {
     const reject = vi.fn();
     let rawAccessed = false;

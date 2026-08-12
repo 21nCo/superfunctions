@@ -3,7 +3,7 @@ export const MAILFN_EVENT_VERSION = 1 as const;
 
 export type ProjectStatus = 'active' | 'suspended' | 'deleted';
 export type InboxKind = 'stable' | 'expiring';
-export type InboxStatus = 'active' | 'disabled' | 'expired' | 'deleted';
+export type InboxStatus = 'active' | 'disabled' | 'expired' | 'deleting' | 'deleted';
 export type MessageStatus = 'pending' | 'ready' | 'parse_failed' | 'queue_failed' | 'deleted';
 export type DomainStatus = 'pending' | 'verified' | 'active' | 'disabled' | 'failed';
 export type WebhookStatus = 'active' | 'disabled' | 'quarantined';

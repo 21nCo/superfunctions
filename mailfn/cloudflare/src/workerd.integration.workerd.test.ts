@@ -113,6 +113,35 @@ describe('MailFn in workerd', () => {
     expect(await store.getMessage(pending!.id)).toMatchObject({
       readAt: '2026-08-10T00:00:02.000Z', labels: ['important'],
     });
+    const [thread] = await store.listThreads(bootstrap.project.id, created.inbox.id);
+    expect(thread?.messageIds).toEqual([pending!.id]);
+    await expect(store.deleteMessageWithThread(pending!.id, thread!, null)).resolves.toBe(true);
+    await expect(store.getMessage(pending!.id)).resolves.toBeNull();
+    await expect(store.getThread(thread!.id)).resolves.toBeNull();
+  });
+
+  it('atomically blocks inbound message creation once an inbox is quiesced', async () => {
+    const testEnv: MailFnCloudflareEnv = { ...env, MAILFN_PARSE_QUEUE: { async send() {} } };
+    const mailfn = await createCloudflareMailFn(testEnv, { migrate: false });
+    const bootstrap = await mailfn.bootstrapProject({ slug: 'quiesce-workerd', displayName: 'Quiesce Workerd' });
+    const admin = await mailfn.authenticate(bootstrap.credential.token);
+    const created = await mailfn.createInbox(admin, {
+      projectId: bootstrap.project.id, kind: 'expiring', requestedLocalPart: 'quiesce', expirySeconds: 3_600,
+    });
+    const body = new TextEncoder().encode('Subject: quiesce\r\n\r\nbody');
+    const accepted = await mailfn.receiveInbound({
+      providerDeliveryId: 'quiesce-accepted', envelopeFrom: 'sender@example.com', envelopeTo: created.inbox.address,
+      raw: body, rawSize: body.byteLength,
+    });
+    const store = new D1MailFnStore(env.MAILFN_DB);
+    await store.saveInbox({ ...created.inbox, status: 'deleting', updatedAt: new Date().toISOString() });
+    await expect(store.createInboundMessageIfInboxActive({
+      ...accepted,
+      id: 'msg_quiesce_blocked',
+      providerDeliveryId: 'quiesce-blocked',
+      rawObjectKey: 'blocked/raw.eml',
+    })).resolves.toBe(false);
+    await expect(store.getMessage('msg_quiesce_blocked')).resolves.toBeNull();
   });
 
   it('deduplicates Message-ID-less retries and preserves distinct mail that reuses Message-ID', async () => {

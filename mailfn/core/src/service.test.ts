@@ -106,6 +106,16 @@ class ConcurrentRevokeStore extends MemoryMailFnStore {
   }
 }
 
+class QuiescingInboundStore extends MemoryMailFnStore {
+  override async createInboundMessageIfInboxActive(
+    message: Parameters<MemoryMailFnStore['createInboundMessageIfInboxActive']>[0],
+  ): Promise<boolean> {
+    const inbox = await this.getInbox(message.inboxId);
+    if (inbox) await this.saveInbox({ ...inbox, status: 'deleting' });
+    return super.createInboundMessageIfInboxActive(message);
+  }
+}
+
 class RecoveringAttachmentStore extends MemoryMailFnStore {
   public failNextAttachment = true;
   override async saveAttachment(attachment: Parameters<MemoryMailFnStore['saveAttachment']>[0]): Promise<void> {
@@ -243,7 +253,7 @@ describe('MailFn domain service', () => {
       subject: 'Verify your account',
       text: 'Use verification code 654321 or https://app.example.com/verify?token=abc',
       html: '<script>steal()</script><style>body{background:url(https://tracker.example)}</style><svg onload="bad()"></svg><p onclick="bad()">Verify</p><a href="javascript:steal()">click</a><img src="https://tracker.example/pixel">',
-      attachments: [{ filename: '../proof.txt', contentType: 'text/plain', content: 'evidence' } as never],
+      attachments: [{ filename: '../proof"\r\n;name.txt', contentType: 'text/plain', content: 'evidence' } as never],
     });
     const message = await context.mailfn.receiveInbound({
       providerDeliveryId: 'delivery-1', envelopeFrom: 'sender@example.com', envelopeTo: created.inbox.address,
@@ -266,7 +276,7 @@ describe('MailFn domain service', () => {
       value: 'https://app.example.com/verify?token=abc', sourceMessageId: message.id,
     });
     const attachments = await context.store.listAttachments(message.id);
-    expect(attachments).toMatchObject([{ filename: '.._proof.txt', contentType: 'text/plain', sizeBytes: 8 }]);
+    expect(attachments).toMatchObject([{ filename: '.._proof____name.txt', contentType: 'text/plain', sizeBytes: 8 }]);
     const attachment = await context.mailfn.getAttachment(actor, created.inbox.id, message.id, attachments[0]!.id);
     expect(new TextDecoder().decode(attachment.data)).toBe('evidence');
 
@@ -470,6 +480,7 @@ describe('MailFn domain service', () => {
     expect(result.expiredInboxes).toBe(1);
     expect(result.deletedMessages).toBe(1);
     expect(context.objects.size()).toBe(0);
+    expect(await context.store.listThreads(context.project.id, created.inbox.id)).toHaveLength(0);
     await expect(context.mailfn.authenticate(created.credential.token)).rejects.toMatchObject({ code: 'MAILFN_UNAUTHORIZED' });
   });
 
@@ -540,9 +551,25 @@ describe('MailFn domain service', () => {
     expect(await context.store.getMessage(message.id)).not.toBeNull();
 
     await expect(context.mailfn.deleteInbox(context.admin, created.inbox.id)).rejects.toThrow('object store unavailable');
-    expect((await context.store.getInbox(created.inbox.id))?.status).toBe('expired');
+    expect((await context.store.getInbox(created.inbox.id))?.status).toBe('deleting');
+    await expect(context.mailfn.preflightInbound({
+      envelopeFrom: 'sender@example.com', envelopeTo: created.inbox.address, rawSize: value.byteLength,
+    })).rejects.toMatchObject({ code: 'MAILFN_INBOX_INACTIVE' });
     objects.failDeletes = false;
     await expect(context.mailfn.deleteInbox(context.admin, created.inbox.id)).resolves.toMatchObject({ status: 'deleted' });
+  });
+
+  it('atomically blocks inbound metadata writes after an inbox starts deleting', async () => {
+    const store = new QuiescingInboundStore();
+    const context = await setup({ store });
+    const created = await createInbox(context, 'delete-race');
+    const value = raw();
+    await expect(context.mailfn.receiveInbound({
+      providerDeliveryId: 'delete-race', envelopeFrom: 'sender@example.com', envelopeTo: created.inbox.address,
+      raw: value, rawSize: value.byteLength,
+    })).rejects.toMatchObject({ code: 'MAILFN_INBOX_INACTIVE' });
+    expect(await store.listMessages(context.project.id, created.inbox.id)).toHaveLength(0);
+    expect(context.objects.size()).toBe(0);
   });
 
   it('searches message content and prevents privilege-expanding token delegation', async () => {

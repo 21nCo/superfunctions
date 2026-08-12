@@ -236,9 +236,13 @@ describe('EmailService', () => {
     await expect(adapter.sendEmail({
       idempotencyKey: 'mailfn:draft:1', from: 'agent@example.com', to: ['to@example.com'],
       cc: ['cc@example.com'], bcc: ['hidden@example.com'], subject: 'Raw', text: 'body',
+      attachments: [{ filename: 'proof"\r\nX-Injected: yes;.txt', content: Buffer.from('proof') }],
     })).resolves.toMatchObject({ success: true, providerMessageId: 'ses-raw' });
     expect(inputs[0].Destinations).toEqual(['to@example.com', 'cc@example.com', 'hidden@example.com']);
-    expect(Buffer.from(inputs[0].RawMessage.Data).toString('utf8')).not.toContain('\nBcc:');
+    const raw = Buffer.from(inputs[0].RawMessage.Data).toString('utf8');
+    expect(raw).not.toContain('\nBcc:');
+    expect(raw).not.toContain('\nX-Injected:');
+    expect(raw).toContain('filename="proof___X-Injected: yes_.txt"');
   });
 
   it('surfaces retry exhaustion with a stable code', async () => {
