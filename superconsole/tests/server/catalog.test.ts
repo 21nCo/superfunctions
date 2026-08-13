@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   KNOWN_MODULE_IDS,
+  FOLDED_MODULE_IDS,
   MODULE_CATALOG,
   ModuleSelectionError,
   NESTED_MODULE_IDS,
   OPTIONAL_MODULE_IDS,
   REQUIRED_MODULE_IDS,
+  UNAVAILABLE_MODULE_IDS,
   catalogForSelection,
   parseModuleSelection,
 } from '../../src/lib/server/catalog';
@@ -15,10 +17,12 @@ describe('Super Console module catalog', () => {
     expect(KNOWN_MODULE_IDS).toHaveLength(29);
     expect(new Set(KNOWN_MODULE_IDS)).toHaveLength(29);
     expect(MODULE_CATALOG).toHaveLength(29);
-    expect(REQUIRED_MODULE_IDS).toHaveLength(20);
-    expect(OPTIONAL_MODULE_IDS).toHaveLength(6);
-    expect(NESTED_MODULE_IDS).toHaveLength(3);
-    expect(new Set([...REQUIRED_MODULE_IDS, ...OPTIONAL_MODULE_IDS, ...NESTED_MODULE_IDS])).toHaveLength(29);
+    expect(REQUIRED_MODULE_IDS).toHaveLength(18);
+    expect(OPTIONAL_MODULE_IDS).toHaveLength(2);
+    expect(NESTED_MODULE_IDS).toHaveLength(2);
+    expect(FOLDED_MODULE_IDS).toHaveLength(1);
+    expect(UNAVAILABLE_MODULE_IDS).toHaveLength(6);
+    expect(new Set([...REQUIRED_MODULE_IDS, ...OPTIONAL_MODULE_IDS, ...NESTED_MODULE_IDS, ...FOLDED_MODULE_IDS, ...UNAVAILABLE_MODULE_IDS])).toHaveLength(29);
   });
 
   it('parses an explicit, deterministic selection without auto-enabling modules', () => {
@@ -47,11 +51,12 @@ describe('Super Console module catalog', () => {
     ]);
   });
 
-  it('allows owners without unused nested products while folding selected children', () => {
+  it('allows owners without unused nested products and rejects independently selected folded modules', () => {
     expect(parseModuleSelection('watchfn')).toEqual(['watchfn']);
     expect(parseModuleSelection('cmsfn')).toEqual(['cmsfn']);
     expect(parseModuleSelection('watchfn,catchfn')).toEqual(['catchfn', 'watchfn']);
-    expect(parseModuleSelection('cmsfn,contentfn')).toEqual(['cmsfn', 'contentfn']);
+    expect(() => parseModuleSelection('cmsfn,contentfn')).toThrow('Folded modules are provided by their owner');
+    expect(() => parseModuleSelection('hostfn')).toThrow('without a domain-backed administration service');
   });
 
   it('returns only explicitly selected catalog entries', () => {

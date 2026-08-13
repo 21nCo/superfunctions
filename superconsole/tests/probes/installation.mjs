@@ -2,7 +2,17 @@ import {
   MemoryAdminAuditSink,
   MemoryAdminIdempotencyStore,
 } from '../../../packages/admin/dist/index.js';
-import { createCiFnAdminAdapter } from '../../../cifn/admin/dist/index.js';
+import {
+  createCiFnAdminAdapter,
+  createCiFnControlPlaneAdminService,
+} from '../../../cifn/admin/dist/index.js';
+import {
+  createApp,
+  MemoryArtifactsAdapter,
+  MemoryLogsAdapter,
+  MemoryQueueAdapter,
+  MemorySecretsAdapter,
+} from '../../../cifn/typescript/control-plane/dist/index.js';
 import { createSuperConsole } from '../../dist/server/index.js';
 
 const scope = {
@@ -22,47 +32,62 @@ const principal = {
   defaultScope: scope,
 };
 
-const run = {
-  id: 'probe-run-001',
-  runId: 'probe-run-001',
-  status: 'running',
-  createdAt: '2026-08-13T03:30:00.000Z',
-  updatedAt: '2026-08-13T03:32:00.000Z',
+const operationContext = {
+  scope,
+  actor: principal.actor,
+  requestId: 'probe-installation-seed',
+  source: 'console',
+  idempotencyKey: 'probe-seed-run',
+};
+
+const API_KEY = 'probe-control-plane-key';
+const artifacts = new MemoryArtifactsAdapter();
+const logs = new MemoryLogsAdapter();
+const queue = new MemoryQueueAdapter();
+const secrets = new MemorySecretsAdapter();
+await secrets.setSecret('CIFN_API_KEYS', API_KEY);
+
+const controlPlane = createApp({
+  adapters: { artifacts, logs, queue, secrets },
+  pipelineResolver: async () => ({
+    doc: JSON.stringify({
+      name: 'Super Console production probe',
+      on: { workflow_dispatch: {} },
+      jobs: {
+        verify: {
+          'runs-on': 'default',
+          steps: [{ run: 'npm test' }],
+        },
+      },
+    }),
+    resolvedConfigPath: '.ci/probe.json',
+  }),
+});
+
+const ciFnService = createCiFnControlPlaneAdminService({
+  resolveConnection: async () => ({
+    baseUrl: 'http://cifn-control-plane.probe',
+    apiKey: API_KEY,
+    fetch: (input, init) => controlPlane.app.fetch(new Request(input, init)),
+  }),
+});
+
+const seededRun = await ciFnService.triggerRun({
+  trigger: { type: 'workflow_dispatch' },
   pipelineRef: {
     repo: '21nCo/super-functions',
     ref: 'refs/heads/codex/super-console',
-    configPath: '.github/workflows/verify.yml',
+    configPath: '.ci/probe.json',
   },
-  trigger: { type: 'workflow_dispatch' },
-  jobs: [{
-    id: 'probe-job-001',
-    jobKey: 'verify',
-    status: 'running',
-    startedAt: '2026-08-13T03:30:10.000Z',
-    steps: [{ id: 'probe-step-001', stepKey: 'test', status: 'success' }],
-  }],
-};
-
-const ciFn = createCiFnAdminAdapter({
-  execute({ operationId, input }) {
-    if (operationId === 'cifn.runs.list') {
-      return { ok: true, data: { items: [run], nextCursor: null } };
-    }
-    if (operationId === 'cifn.runs.get') {
-      return { ok: true, data: { item: run } };
-    }
-    if (operationId.endsWith('.list')) {
-      return { ok: true, data: { items: [], nextCursor: null } };
-    }
-    if (operationId.endsWith('.get')) {
-      return { ok: true, data: { item: { id: String(input?.id ?? 'probe-item') } } };
-    }
-    return {
-      ok: true,
-      data: { accepted: true, operationReference: `probe:${operationId}` },
-    };
-  },
+}, operationContext);
+controlPlane.store.updateRunStatus(seededRun.runId, 'running');
+await logs.appendJobLogLine(seededRun.runId, 'verify', {
+  line: 'CiFn control-plane probe run started',
+  timestamp: '2026-08-13T06:00:00.000Z',
+  stepKey: 'step-0',
 });
+
+const ciFn = createCiFnAdminAdapter(ciFnService);
 
 const confirmation = {
   issue: async () => ({
@@ -86,7 +111,7 @@ export const superConsole = createSuperConsole({
   confirmation,
   overview: {
     read: async () => ({
-      metrics: [{ id: 'probe-runs', label: 'Probe runs', value: 1, detail: 'Production-build smoke fixture' }],
+      metrics: [{ id: 'probe-runs', label: 'Probe runs', value: 1, detail: 'CiFn control-plane-backed production smoke run' }],
       alerts: [],
       activity: [],
       health: [{ moduleId: 'cifn', moduleName: 'CiFn', status: 'healthy' }],

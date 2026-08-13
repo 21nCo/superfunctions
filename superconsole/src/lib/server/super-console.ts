@@ -2,6 +2,9 @@ import {
   AdminError,
   adminOpenApiScopeParameters,
   assertAdminValue,
+  assertAdminScopeHierarchy,
+  adminScopeRootId,
+  adminScopeSupportsOperation,
   createAdminDispatcher,
   createAdminOpenApiDocument,
   createAdminRegistry,
@@ -9,6 +12,7 @@ import {
   normalizeAdminError,
   projectAdminMcpTools,
   redactAdminValue,
+  evaluateAdminDiscoveryPolicy,
   type AdminCapabilityManifest,
   type AdminDispatcher,
   type AdminJsonSchema,
@@ -108,7 +112,7 @@ function failure(error: unknown, requestId?: string): Response {
   return response(normalized, normalized.error.status);
 }
 
-function readScopeValue(url: URL, request: Request, name: 'organization' | 'workspace' | 'project' | 'environment'): string | undefined {
+function readScopeValue(url: URL, request: Request, name: 'installation' | 'organization' | 'workspace' | 'project' | 'environment'): string | undefined {
   return url.searchParams.get(`${name}Id`)
     ?? url.searchParams.get(name)
     ?? request.headers.get(`x-superconsole-${name}-id`)
@@ -118,19 +122,44 @@ function readScopeValue(url: URL, request: Request, name: 'organization' | 'work
 
 function requestedScope(request: Request, principal: SuperConsolePrincipal): AdminScope {
   const url = new URL(request.url);
+  const installation = readScopeValue(url, request, 'installation');
+  const organization = readScopeValue(url, request, 'organization');
+  const workspace = readScopeValue(url, request, 'workspace');
+  const project = readScopeValue(url, request, 'project');
+  const environment = readScopeValue(url, request, 'environment');
+  const requestedRoot = installation ?? organization ?? adminScopeRootId(principal.defaultScope);
+  const rootChanged = Boolean((installation ?? organization) && requestedRoot !== adminScopeRootId(principal.defaultScope));
+  const requestedWorkspace = workspace ?? (rootChanged ? undefined : principal.defaultScope.workspaceId);
+  const workspaceChanged = Boolean(workspace && workspace !== principal.defaultScope.workspaceId);
+  const requestedProject = project ?? (rootChanged || workspaceChanged ? undefined : principal.defaultScope.projectId);
+  const projectChanged = Boolean(project && project !== principal.defaultScope.projectId);
   return {
-    organizationId: readScopeValue(url, request, 'organization') ?? principal.defaultScope.organizationId,
-    workspaceId: readScopeValue(url, request, 'workspace') ?? principal.defaultScope.workspaceId,
-    projectId: readScopeValue(url, request, 'project') ?? principal.defaultScope.projectId,
-    environmentId: readScopeValue(url, request, 'environment') ?? principal.defaultScope.environmentId,
+    ...(installation ? { installationId: requestedRoot } : organization ? { organizationId: requestedRoot } : {
+      ...(principal.defaultScope.installationId ? { installationId: requestedRoot } : {}),
+      ...(principal.defaultScope.organizationId ? { organizationId: requestedRoot } : {}),
+    }),
+    ...(requestedWorkspace ? { workspaceId: requestedWorkspace } : {}),
+    ...(requestedProject ? { projectId: requestedProject } : {}),
+    ...((environment ?? (rootChanged || workspaceChanged || projectChanged ? undefined : principal.defaultScope.environmentId))
+      ? { environmentId: environment ?? principal.defaultScope.environmentId }
+      : {}),
     namespace: url.searchParams.get('namespace') ?? request.headers.get('x-superconsole-namespace') ?? principal.defaultScope.namespace,
     region: url.searchParams.get('region') ?? request.headers.get('x-superconsole-region') ?? principal.defaultScope.region,
   };
 }
 
-function assertCompleteScope(scope: AdminScope): void {
-  for (const key of ['organizationId', 'workspaceId', 'projectId', 'environmentId'] as const) {
-    if (!scope[key]?.trim()) throw new SuperConsoleHttpError(`The active scope requires ${key}.`, { status: 400, code: 'ADMIN_SCOPE_REQUIRED' });
+function assertValidScope(scope: AdminScope): void {
+  try {
+    assertAdminScopeHierarchy(scope);
+  } catch (error) {
+    throw new SuperConsoleHttpError('The active administration scope hierarchy is invalid.', {
+      status: 400,
+      code: 'ADMIN_SCOPE_INVALID',
+      details: normalizeAdminError(error).error.details,
+    });
+  }
+  if (!adminScopeRootId(scope)) {
+    throw new SuperConsoleHttpError('The active scope requires installationId.', { status: 400, code: 'ADMIN_SCOPE_REQUIRED' });
   }
 }
 
@@ -188,7 +217,8 @@ function sessionView(principal: SuperConsolePrincipal) {
 
 function contextView(principal: SuperConsolePrincipal, scope: AdminScope) {
   const configured = principal.contextOptions ?? {};
-  const selected = (name: 'organization' | 'workspace' | 'project' | 'environment', id: string) => {
+  const selected = (name: 'installation' | 'organization' | 'workspace' | 'project' | 'environment', id: string | undefined) => {
+    if (!id) return undefined;
     const singleton = configured[name];
     return (singleton?.id === id ? singleton : undefined)
       ?? configured[`${name}s`]?.find((candidate) => candidate.id === id)
@@ -196,7 +226,8 @@ function contextView(principal: SuperConsolePrincipal, scope: AdminScope) {
   };
   return {
     ...configured,
-    organization: selected('organization', scope.organizationId),
+    installation: selected('installation', adminScopeRootId(scope)),
+    organization: selected('organization', scope.organizationId ?? scope.installationId),
     workspace: selected('workspace', scope.workspaceId),
     project: selected('project', scope.projectId),
     environment: selected('environment', scope.environmentId),
@@ -425,7 +456,7 @@ async function operationInput(request: Request, entry: AdminRegistryOperation, m
   if (request.method === 'GET' || request.method === 'DELETE') {
     const url = new URL(request.url);
     url.searchParams.forEach((value, key) => {
-      if (['organizationId', 'workspaceId', 'projectId', 'environmentId', 'organization', 'workspace', 'project', 'environment', 'namespace', 'region'].includes(key)) return;
+      if (['installationId', 'organizationId', 'workspaceId', 'projectId', 'environmentId', 'installation', 'organization', 'workspace', 'project', 'environment', 'namespace', 'region'].includes(key)) return;
       const canonicalKey = key === 'q' && schema?.properties?.search ? 'search' : key;
       input[canonicalKey] = parseScalar(schema?.properties?.[canonicalKey], value);
     });
@@ -489,7 +520,7 @@ export class SuperConsole {
       info: {
         name: this.options.serverName ?? 'super-console',
         version: '1.0.0',
-        instructions: 'Administer only enabled Superfunctions in the authenticated organization/workspace/project/environment scope.',
+        instructions: 'Administer only enabled Superfunctions in the authenticated installation/workspace/project/environment scope.',
       },
       registry: mcpRegistry,
       context: (extra) => this.mcpContext(extra),
@@ -549,7 +580,7 @@ export class SuperConsole {
       if (relative === 'registry' && getOrHead) { await this.authorizeShell('registry', state); return this.headAware(request, success(await this.registryView(state), identity.requestId)); }
       if (relative === 'overview' && getOrHead) { await this.authorizeShell('overview', state); return this.headAware(request, success(await this.overviewView(state), identity.requestId)); }
       if (relative === 'openapi.json' && getOrHead) { await this.authorizeShell('api', state); return this.headAware(request, response(this.openApi, 200, { 'x-request-id': identity.requestId })); }
-      if (relative === 'mcp' && getOrHead) { await this.authorizeShell('mcp', state); return this.headAware(request, success(this.mcpView(state), identity.requestId)); }
+      if (relative === 'mcp' && getOrHead) { await this.authorizeShell('mcp', state); return this.headAware(request, success(await this.mcpView(state), identity.requestId)); }
       if (relative === 'search' && getOrHead) return this.headAware(request, success(await this.search(request, state), identity.requestId));
       if (relative === 'audit' && getOrHead) return this.headAware(request, success(await this.audit(request, state), identity.requestId));
       if (relative === 'settings' && getOrHead) { await this.authorizeShell('settings', state); return this.headAware(request, success(await this.settings(state), identity.requestId)); }
@@ -627,12 +658,12 @@ export class SuperConsole {
   private async state(request: Request, identity: { requestId: string; correlationId?: string }): Promise<SuperConsoleRequestState> {
     const principal = await this.options.auth.authenticate(request);
     if (!principal) throw new SuperConsoleHttpError('Authentication is required.', { status: 401, code: 'AUTHENTICATION_REQUIRED' });
-    assertCompleteScope(principal.defaultScope);
+    assertValidScope(principal.defaultScope);
     const requested = requestedScope(request, principal);
-    assertCompleteScope(requested);
+    assertValidScope(requested);
     const scope = await this.options.auth.authorizeScope({ principal, requested, request });
     if (!scope) throw new SuperConsoleHttpError('The operator cannot access the requested scope.', { status: 403, code: 'ADMIN_SCOPE_FORBIDDEN' });
-    assertCompleteScope(scope);
+    assertValidScope(scope);
     return {
       principal,
       context: {
@@ -681,14 +712,20 @@ export class SuperConsole {
     return success({ session: sessionView(result.principal) }, requestId, result.headers);
   }
 
-  private permittedEntries(moduleId: string, state: SuperConsoleRequestState): AdminRegistryOperation[] {
-    return this.registry.operations.filter((entry) =>
-      entry.moduleId === moduleId
-      && this.hasPermission(state.principal.actor.permissions, entry.operation.permission));
+  private async operationDiscoverable(entry: AdminRegistryOperation, state: SuperConsoleRequestState): Promise<boolean> {
+    if (!adminScopeSupportsOperation(state.context.scope, entry.manifest, entry.operation)) return false;
+    const decision = await evaluateAdminDiscoveryPolicy(this.options.policy, entry, state.context);
+    return decision.allowed;
   }
 
-  private projectedManifest(manifest: AdminCapabilityManifest, state: SuperConsoleRequestState): AdminCapabilityManifest {
-    const operations = this.permittedEntries(manifest.id, state).map((entry) => entry.operation);
+  private async permittedEntries(moduleId: string, state: SuperConsoleRequestState): Promise<AdminRegistryOperation[]> {
+    const candidates = this.registry.operations.filter((entry) => entry.moduleId === moduleId);
+    const decisions = await Promise.all(candidates.map((entry) => this.operationDiscoverable(entry, state)));
+    return candidates.filter((_, index) => decisions[index]);
+  }
+
+  private async projectedManifest(manifest: AdminCapabilityManifest, state: SuperConsoleRequestState): Promise<AdminCapabilityManifest> {
+    const operations = (await this.permittedEntries(manifest.id, state)).map((entry) => entry.operation);
     const visibleResources = new Set(operations.map((operation) => operation.target.resource));
     const healthVisible = !manifest.health?.operationId
       ? true
@@ -708,7 +745,7 @@ export class SuperConsole {
   }
 
   private async registryView(state: SuperConsoleRequestState) {
-    const projected = this.registry.manifests.map((manifest) => this.projectedManifest(manifest, state));
+    const projected = await Promise.all(this.registry.manifests.map((manifest) => this.projectedManifest(manifest, state)));
     const visible = projected.filter((manifest) => {
       if (manifest.availability === 'nested') return false;
       return manifest.operations.length > 0 || projected.some((child) =>
@@ -718,7 +755,7 @@ export class SuperConsole {
       enabledModules: projected.filter((manifest) => manifest.operations.length > 0),
       // Nested products remain enabled for API/OpenAPI/MCP discovery, but only
       // their owner exposes them to the operator shell navigation model.
-      modules: visible.map((manifest) => this.moduleViewFor(manifest, state)),
+      modules: await Promise.all(visible.map((manifest) => this.moduleViewFor(manifest, state))),
       surfaces: await this.authorizedSurfaces(state),
       generatedAt: this.now().toISOString(),
       apiVersion: 'v1',
@@ -727,19 +764,20 @@ export class SuperConsole {
     };
   }
 
-  private moduleViewFor(manifest: AdminCapabilityManifest, state: SuperConsoleRequestState) {
-    const projectedManifest = this.projectedManifest(manifest, state);
-    const children = this.registry.manifests
+  private async moduleViewFor(manifest: AdminCapabilityManifest, state: SuperConsoleRequestState) {
+    const projectedManifest = await this.projectedManifest(manifest, state);
+    const projectedChildren = await Promise.all(this.registry.manifests
       .filter((candidate) => candidate.owner?.moduleId === manifest.id)
-      .map((candidate) => this.projectedManifest(candidate, state))
+      .map((candidate) => this.projectedManifest(candidate, state)));
+    const children = await Promise.all(projectedChildren
       .filter((candidate) => candidate.operations.length > 0)
-      .map((candidate) => ({
+      .map(async (candidate) => ({
         manifest: candidate,
-        entries: this.permittedEntries(candidate.id, state),
-      }));
+        entries: await this.permittedEntries(candidate.id, state),
+      })));
     return moduleView(
       projectedManifest,
-      this.permittedEntries(manifest.id, state),
+      await this.permittedEntries(manifest.id, state),
       children,
     );
   }
@@ -765,8 +803,9 @@ export class SuperConsole {
     };
   }
 
-  private mcpView(state: SuperConsoleRequestState) {
-    const tools = this.mcpTools.filter((tool) => this.mcpMetadataVisible(tool.metadata, state.context));
+  private async mcpView(state: SuperConsoleRequestState) {
+    const decisions = await Promise.all(this.mcpTools.map((tool) => this.mcpMetadataVisible(tool.metadata, state.context)));
+    const tools = this.mcpTools.filter((_, index) => decisions[index]);
     return {
       enabled: tools.length > 0,
       serverName: this.options.serverName ?? 'Super Console',
@@ -825,21 +864,27 @@ export class SuperConsole {
     return context as AdminOperationContext;
   }
 
-  private mcpToolVisible(tool: McpFnListedTool, context: AdminOperationContext): boolean {
+  private mcpToolVisible(tool: McpFnListedTool, context: AdminOperationContext): Promise<boolean> {
     return this.mcpMetadataVisible(tool._meta, context);
   }
 
-  private mcpMetadataVisible(metadata: Record<string, unknown> | undefined, context: AdminOperationContext): boolean {
+  private async mcpMetadataVisible(metadata: Record<string, unknown> | undefined, context: AdminOperationContext): Promise<boolean> {
     const projected = metadata?.['mcpfn/superconsole'];
     if (!projected || typeof projected !== 'object') return false;
     const values = projected as { operationId?: unknown; permission?: unknown };
     if (values.operationId === 'superconsole.confirmations.issue') {
-      return this.registry.operations.some((entry) =>
-        entry.operation.safety.requiresConfirmation
-        && this.hasPermission(context.actor.permissions, entry.operation.permission));
+      const entries = this.registry.operations.filter((entry) => entry.operation.safety.requiresConfirmation);
+      const decisions = await Promise.all(entries.map((entry) =>
+        evaluateAdminDiscoveryPolicy(this.options.policy, entry, context)
+          .then((decision) => decision.allowed && adminScopeSupportsOperation(context.scope, entry.manifest, entry.operation))));
+      return decisions.some(Boolean);
     }
-    return typeof values.permission === 'string'
-      && this.hasPermission(context.actor.permissions, values.permission);
+    if (typeof values.operationId !== 'string' || typeof values.permission !== 'string') return false;
+    const entry = this.registry.getOperation(values.operationId);
+    return Boolean(entry && await this.operationDiscoverable(entry, {
+      principal: { actor: context.actor } as SuperConsolePrincipal,
+      context,
+    }));
   }
 
   private async search(request: Request, state: SuperConsoleRequestState) {
@@ -886,7 +931,7 @@ export class SuperConsole {
     return {
       deploymentMode: 'self-hosted',
       configurationSource: 'explicit deploy-time module registration',
-      tenantHierarchy: ['organization', 'workspace', 'project', 'environment'],
+      tenantHierarchy: ['installation', 'workspace', 'project', 'environment'],
       policies: supplied?.policies ?? [],
       retention: supplied?.retention ?? [],
       enabledModules: this.registry.enabledModuleIds,
@@ -902,6 +947,10 @@ export class SuperConsole {
   }
 
   private async invokeOperation(request: Request, operationId: string, state: SuperConsoleRequestState): Promise<Response> {
+    const entry = this.registry.requireOperation(operationId);
+    if (!(await this.operationDiscoverable(entry, state))) {
+      throw new SuperConsoleHttpError('The requested administration operation is unavailable.', { status: 404, code: 'OPERATION_NOT_ENABLED' });
+    }
     const body = await request.json().catch(() => undefined);
     return resultResponse(await this.dispatcher.dispatch({ operationId, input: body ?? {}, context: state.context }));
   }
@@ -922,6 +971,9 @@ export class SuperConsole {
     let immutable: { input: unknown; state: SuperConsoleRequestState };
     try {
       entry = this.registry.requireOperation(operationId);
+      if (!(await this.operationDiscoverable(entry, state))) {
+        throw new AdminError('not_found', 'The requested confirmation operation is unavailable.');
+      }
       if (!entry.operation.safety.requiresConfirmation) throw new SuperConsoleHttpError('This operation does not require a confirmation token.', { status: 400, code: 'CONFIRMATION_NOT_REQUIRED' });
       const schema = entry.operation.inputSchema;
       if (!schema) throw new SuperConsoleHttpError('The operation has no input schema.', { status: 500, code: 'OPERATION_SCHEMA_MISSING' });
@@ -1077,7 +1129,7 @@ export class SuperConsole {
     if (rest.length === 0 && (request.method === 'GET' || request.method === 'HEAD')) {
       await this.authorizeShell('registry', state);
       const manifest = this.registry.requireManifest(moduleId);
-      const view = this.moduleViewFor(manifest, state);
+      const view = await this.moduleViewFor(manifest, state);
       if (view.capabilities.length === 0) {
         throw new SuperConsoleHttpError('No module capabilities are visible to the active operator.', { status: 404, code: 'MODULE_NOT_ENABLED' });
       }
@@ -1129,6 +1181,9 @@ export class SuperConsole {
       if (methodExists || ciAliasExists) throw new SuperConsoleHttpError('This module operation does not support the requested method.', { status: 405, code: 'METHOD_NOT_ALLOWED' });
     }
     if (!entry || entry.moduleId !== moduleId) throw new SuperConsoleHttpError('The requested module operation is not enabled.', { status: 404, code: 'OPERATION_NOT_ENABLED' });
+    if (!(await this.operationDiscoverable(entry, state))) {
+      throw new SuperConsoleHttpError('The requested module operation is not enabled.', { status: 404, code: 'OPERATION_NOT_ENABLED' });
+    }
     const input = { ...(await operationInput(request, entry, matchedPath)), ...aliasInput };
     const dispatched = await this.dispatcher.dispatch({ operationId: entry.operation.id, input, context: state.context });
     if (dispatched.ok !== false && ciAliasKind === 'artifacts') {
@@ -1169,18 +1224,19 @@ export class SuperConsole {
       || state.principal.actor.permissions?.includes('*')
       || state.principal.actor.permissions?.includes(permission)
       || false;
-    const [overview, api, mcp, settings, audit, search] = await Promise.all([
+    const [overview, api, mcp, settings, audit, search, toolVisibility] = await Promise.all([
       policy('overview'),
       policy('api'),
       policy('mcp'),
       policy('settings'),
       policy('audit'),
       policy('search'),
+      Promise.all(this.mcpTools.map((tool) => this.mcpMetadataVisible(tool.metadata, state.context))),
     ]);
     return {
       overview: Boolean(overview) && hasPermission(this.options.overview?.permission),
       api: Boolean(api),
-      mcp: Boolean(mcp) && this.mcpTools.some((tool) => this.mcpMetadataVisible(tool.metadata, state.context)),
+      mcp: Boolean(mcp) && toolVisibility.some(Boolean),
       settings: Boolean(settings) && hasPermission(this.options.settings?.permission),
       audit: Boolean(audit) && Boolean(this.options.auditQuery) && hasPermission(this.options.auditQuery?.permission),
       search: Boolean(search) && this.registry.hasModule('searchfn') && Boolean(this.options.search) && hasPermission(this.options.search?.permission),

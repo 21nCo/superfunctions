@@ -17,10 +17,12 @@ export interface SuperConsoleScopeOption {
 }
 
 export interface SuperConsoleContextOptions {
+  installation?: SuperConsoleScopeOption;
   organization?: SuperConsoleScopeOption;
   workspace?: SuperConsoleScopeOption;
   project?: SuperConsoleScopeOption;
   environment?: SuperConsoleScopeOption;
+  installations?: readonly SuperConsoleScopeOption[];
   organizations?: readonly SuperConsoleScopeOption[];
   workspaces?: readonly SuperConsoleScopeOption[];
   projects?: readonly SuperConsoleScopeOption[];

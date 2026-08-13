@@ -74,10 +74,21 @@ try {
   await page.waitForURL('**/modules/cifn');
   await page.getByRole('heading', { name: 'Runs' }).waitFor();
   await page.getByText('21nCo/super-functions').waitFor();
-  await page.getByRole('button', { name: 'Open run probe-run-001' }).click();
-  await page.waitForURL('**/modules/cifn/runs/probe-run-001');
+  await page.getByRole('button', { name: /^Open run / }).first().click();
+  await page.waitForURL(/\/modules\/cifn\/runs\/[^/]+$/);
   await page.getByRole('heading', { name: 'Jobs' }).waitFor();
   await page.getByText('verify', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'View logs' }).click();
+  await page.getByText('CiFn control-plane probe run started').waitFor();
+  await page.goBack({ waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: 'Cancel run' }).click();
+  await page.getByRole('button', { name: 'Confirm Cancel run' }).click();
+  await page.getByRole('status').filter({ hasText: 'Cancel run completed.' }).waitFor();
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.getByText('cancelled', { exact: true }).first().waitFor();
+  await page.getByRole('button', { name: 'Retry run' }).click();
+  await page.getByRole('button', { name: 'Confirm Retry run' }).click();
+  await page.getByRole('status').filter({ hasText: 'Retry run completed.' }).waitFor();
   await page.screenshot({ path: join(artifactDirectory, '02-cifn-run-detail.png'), fullPage: true });
 
   await page.setViewportSize({ width: 390, height: 844 });

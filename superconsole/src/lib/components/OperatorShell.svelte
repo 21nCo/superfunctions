@@ -23,6 +23,7 @@
   import ContextSwitcher from './ContextSwitcher.svelte';
   import OperatorNavigation from './OperatorNavigation.svelte';
   import StatusBadge from './StatusBadge.svelte';
+  import { mutationFeedback } from './mutation-outcome';
   import {
     enabledNavigationModules,
     registryHasModule,
@@ -173,6 +174,13 @@
         <StatusBadge status="degraded" />
         <span>{shell.error.message}</span>
         {#if shell.error.requestId}<code>{shell.error.requestId}</code>{/if}
+      </div>
+    {/if}
+
+    {#if $mutationFeedback}
+      <div class="operator-degraded" role="status" aria-live="polite">
+        <StatusBadge status={$mutationFeedback.ok ? 'healthy' : 'degraded'} />
+        <span>{$mutationFeedback.message}</span>
       </div>
     {/if}
 

@@ -1,5 +1,10 @@
+import { get } from 'svelte/store';
 import { describe, expect, it, vi } from 'vitest';
-import { refreshSuccessfulMutation } from '../../src/lib/components/mutation-outcome';
+import {
+  mutationFeedback,
+  publishMutationFeedback,
+  refreshSuccessfulMutation,
+} from '../../src/lib/components/mutation-outcome';
 
 describe('completed administration mutations', () => {
   it('keeps a completed mutation successful when its follow-up refresh fails', async () => {
@@ -19,5 +24,15 @@ describe('completed administration mutations', () => {
       message: 'Run cancelled. Request req-1.',
       refreshed: true,
     });
+  });
+
+  it('keeps the authoritative receipt in the shell when an action component is replaced', () => {
+    publishMutationFeedback({ ok: true, message: 'Run cancelled. Request req-1.', refreshed: true });
+    expect(get(mutationFeedback)).toEqual({
+      ok: true,
+      message: 'Run cancelled. Request req-1.',
+      refreshed: true,
+    });
+    publishMutationFeedback(undefined);
   });
 });

@@ -20,6 +20,7 @@
       input: {
         ...(projectedDownloadAction.input ?? {}),
         [projectedDownloadAction.targetIdInput]: identity,
+        runId: data.runId,
       },
     };
   }
@@ -47,7 +48,7 @@
         <CardHeader><div class="artifact-card__icon"><ConsoleIcon name="download" size={22} /></div><CardTitle>{artifact.name}</CardTitle><CardDescription>{artifact.contentType ?? 'Build artifact'}{#if formatBytes(artifact.size)} · {formatBytes(artifact.size)}{/if}</CardDescription></CardHeader>
         <CardContent>{#if artifact.fileId}<span>FileFn ID</span><code>{artifact.fileId}</code>{/if}</CardContent>
         {@const action = downloadAction(artifact)}
-        {#if action}<CardFooter><ActionButton {action} compact /></CardFooter>{/if}
+        {#if action}<CardFooter><ActionButton {action} compact openDownloadReceipt /></CardFooter>{/if}
       </CardRoot>
     {/each}
   </div>

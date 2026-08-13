@@ -37,14 +37,15 @@
     type ActionInputField,
     type ActionDraftValue,
   } from './action-form';
-  import { fetchConsole, materializeAdminActionHref, safeAdminDownloadHref, scopedConsoleHref } from './admin-api';
-  import { refreshSuccessfulMutation } from './mutation-outcome';
+  import { fetchConsole, materializeAdminActionHref, openSafeAdminDownload, safeAdminDownloadHref, scopedConsoleHref } from './admin-api';
+  import { publishMutationFeedback, refreshSuccessfulMutation } from './mutation-outcome';
   import type { AdminActionViewModel } from './view-models';
 
   let {
     action,
     compact = false,
-  }: { action: AdminActionViewModel; compact?: boolean } = $props();
+    openDownloadReceipt = false,
+  }: { action: AdminActionViewModel; compact?: boolean; openDownloadReceipt?: boolean } = $props();
 
   let running = $state(false);
   let result = $state<{ ok: boolean; message: string } | undefined>();
@@ -129,6 +130,7 @@
     }
     running = true;
     result = undefined;
+    publishMutationFeedback(undefined);
     try {
       const token = await confirmationToken(input);
       const headers = new Headers({ accept: 'application/json', 'content-type': 'application/json' });
@@ -140,7 +142,7 @@
         body: ['GET', 'HEAD', 'DELETE'].includes(method) ? undefined : JSON.stringify(input),
       });
       const body = await response.json().catch(() => undefined) as
-        | { error?: { message?: string }; message?: string; requestId?: string; auditId?: string; data?: { auditId?: string; requestId?: string } }
+        | { error?: { message?: string }; message?: string; requestId?: string; auditId?: string; data?: { auditId?: string; requestId?: string; downloadUrl?: string; signedExternal?: boolean } }
         | undefined;
       if (!response.ok) {
         const request = body?.requestId ? ` (request ${body.requestId})` : '';
@@ -153,10 +155,16 @@
         requestId ? `Request ${requestId}` : undefined,
       ].filter(Boolean).join(' · ');
       const successMessage = `${body?.message ?? `${action.label} completed.`}${receipt ? ` ${receipt}` : ''}`;
+      if (openDownloadReceipt && body?.data?.downloadUrl) {
+        openSafeAdminDownload(body.data.downloadUrl, { signedExternal: body.data.signedExternal === true });
+      }
       idempotencyKey = undefined;
       idempotencyFingerprint = undefined;
       dialogOpen = false;
-      result = await refreshSuccessfulMutation(successMessage, invalidateAll);
+      const completed = { ok: true as const, message: successMessage, refreshed: false };
+      publishMutationFeedback(completed);
+      const refreshed = await refreshSuccessfulMutation(successMessage, invalidateAll);
+      publishMutationFeedback(refreshed);
     } catch (cause) {
       result = {
         ok: false,

@@ -8,7 +8,6 @@ export const REQUIRED_MODULE_IDS = [
   'datafn',
   'filefn',
   'flowfn',
-  'hostfn',
   'mailfn',
   'memoryfn',
   'plugfn',
@@ -17,20 +16,25 @@ export const REQUIRED_MODULE_IDS = [
   'secfn',
   'sendfn',
   'testfn',
-  'userfn',
   'watchfn',
 ] as const;
 
 export const OPTIONAL_MODULE_IDS = [
-  'apifn',
-  'botfn',
   'cachefn',
-  'docsfn',
-  'langfn',
   'probefn',
 ] as const;
 
-export const NESTED_MODULE_IDS = ['catchfn', 'contentfn', 'logfn'] as const;
+export const UNAVAILABLE_MODULE_IDS = [
+  'apifn',
+  'botfn',
+  'docsfn',
+  'hostfn',
+  'langfn',
+  'userfn',
+] as const;
+
+export const NESTED_MODULE_IDS = ['catchfn', 'logfn'] as const;
+export const FOLDED_MODULE_IDS = ['contentfn'] as const;
 
 export const KNOWN_MODULE_IDS = [
   'apifn',
@@ -65,7 +69,7 @@ export const KNOWN_MODULE_IDS = [
 ] as const;
 
 export type KnownModuleId = (typeof KNOWN_MODULE_IDS)[number];
-export type ModuleAvailability = 'required-product' | 'optional-product' | 'nested';
+export type ModuleAvailability = 'required-product' | 'optional-product' | 'nested' | 'folded' | 'unavailable';
 
 export interface ModuleCatalogEntry {
   id: KnownModuleId;
@@ -76,6 +80,8 @@ export interface ModuleCatalogEntry {
 
 const REQUIRED_SET = new Set<string>(REQUIRED_MODULE_IDS);
 const OPTIONAL_SET = new Set<string>(OPTIONAL_MODULE_IDS);
+const UNAVAILABLE_SET = new Set<string>(UNAVAILABLE_MODULE_IDS);
+const FOLDED_SET = new Set<string>(FOLDED_MODULE_IDS);
 
 const DISPLAY_NAMES: Record<KnownModuleId, string> = {
   apifn: 'ApiFn',
@@ -113,14 +119,18 @@ export const NESTED_OWNERS = {
   catchfn: 'watchfn',
   contentfn: 'cmsfn',
   logfn: 'watchfn',
-} as const satisfies Record<(typeof NESTED_MODULE_IDS)[number], KnownModuleId>;
+} as const satisfies Record<(typeof NESTED_MODULE_IDS)[number] | (typeof FOLDED_MODULE_IDS)[number], KnownModuleId>;
 
 export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = KNOWN_MODULE_IDS.map((id) => {
   const owner = NESTED_OWNERS[id as keyof typeof NESTED_OWNERS];
   return {
     id,
     displayName: DISPLAY_NAMES[id],
-    availability: owner
+    availability: UNAVAILABLE_SET.has(id)
+      ? 'unavailable'
+      : FOLDED_SET.has(id)
+        ? 'folded'
+      : owner
       ? 'nested'
       : OPTIONAL_SET.has(id)
         ? 'optional-product'
@@ -163,6 +173,20 @@ export function parseModuleSelection(
     throw new ModuleSelectionError('The module selection contains unknown Superfunctions.', {
       unknown,
       available: [...available].sort(),
+    });
+  }
+
+  const unavailable = candidates.filter((candidate) => UNAVAILABLE_SET.has(candidate));
+  if (unavailable.length > 0) {
+    throw new ModuleSelectionError('The module selection contains Superfunctions without a domain-backed administration service.', {
+      unavailable: [...new Set(unavailable)],
+    });
+  }
+  const folded = candidates.filter((candidate) => FOLDED_SET.has(candidate));
+  if (folded.length > 0) {
+    throw new ModuleSelectionError('Folded modules are provided by their owner and cannot be selected independently.', {
+      folded: [...new Set(folded)],
+      owners: folded.map((moduleId) => ({ moduleId, ownerId: NESTED_OWNERS[moduleId as keyof typeof NESTED_OWNERS] })),
     });
   }
 

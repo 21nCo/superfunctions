@@ -2,16 +2,30 @@
   import { goto } from '$app/navigation';
   import { ButtonIcon, ButtonLabel, ButtonRoot } from '@uifn/components-svelte/button';
   import { CardContent, CardDescription, CardHeader, CardRoot, CardTitle } from '@uifn/components-svelte/card';
+  import ActionButton from '$lib/components/ActionButton.svelte';
   import ConsoleIcon from '$lib/components/ConsoleIcon.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import StatePanel from '$lib/components/StatePanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import { normalizeCiRun } from '$lib/components/cifn';
-  import { formatValue } from '$lib/components/view-models';
+  import { formatValue, moduleById, type AdminActionViewModel } from '$lib/components/view-models';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const run = $derived(normalizeCiRun(data.run, data.runId));
+  const runResource = $derived(moduleById(data.shell.registry, 'cifn')?.resources?.find((resource) => resource.resourceId === 'runs' || resource.id === 'runs'));
+
+  function boundRunAction(operationId: string): AdminActionViewModel | undefined {
+    const action = runResource?.actions?.find((candidate) => candidate.id === operationId);
+    if (!action?.targetIdInput || !run) return undefined;
+    return {
+      ...action,
+      input: { ...(action.input ?? {}), [action.targetIdInput]: run.runId },
+    };
+  }
+
+  const retryAction = $derived(boundRunAction('cifn.runs.retry-run'));
+  const cancelAction = $derived(boundRunAction('cifn.runs.cancel-run'));
 </script>
 
 {#if !run}
@@ -20,6 +34,12 @@
 {:else}
   <PageHeader eyebrow={`${run.pipelineRef.repo} · ${run.trigger.type}`} title={`Run ${run.runId.slice(0, 10)}`} description={run.createdAt ? `Created ${formatValue(run.createdAt, 'datetime')}` : 'Creation time unavailable'} backHref="/modules/cifn">
     {#snippet actions()}
+      {#if retryAction && ['success', 'failure', 'cancelled'].includes(run.status)}
+        <ActionButton action={retryAction} />
+      {/if}
+      {#if cancelAction && ['queued', 'running'].includes(run.status)}
+        <ActionButton action={cancelAction} />
+      {/if}
       <ButtonRoot variant="outline" onclick={() => void goto(`/modules/cifn/runs/${encodeURIComponent(run.runId)}/artifacts`)}>
         <ButtonIcon><ConsoleIcon name="download" /></ButtonIcon><ButtonLabel>Artifacts</ButtonLabel>
       </ButtonRoot>

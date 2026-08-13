@@ -1,7 +1,20 @@
+import { writable } from 'svelte/store';
+
 export interface SuccessfulMutationFeedback {
   ok: true;
   message: string;
   refreshed: boolean;
+}
+
+/**
+ * Shell-owned receipt channel. Resource/action components can be replaced by a
+ * successful invalidation (for example Cancel becomes Retry); the authoritative
+ * receipt must survive that component replacement.
+ */
+export const mutationFeedback = writable<SuccessfulMutationFeedback | undefined>(undefined);
+
+export function publishMutationFeedback(feedback: SuccessfulMutationFeedback | undefined): void {
+  mutationFeedback.set(feedback);
 }
 
 /**

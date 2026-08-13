@@ -201,7 +201,37 @@ describe('Super Console server composition', () => {
     const registry = await (await console.handle(request('/api/admin/v1/registry?organizationId=org_2&workspaceId=workspace_2'))).json();
     expect(registry.data.context.organization).toEqual({ id: 'org_2', name: 'Switched org' });
     expect(registry.data.context.workspace).toEqual({ id: 'workspace_2', name: 'Switched workspace' });
-    expect(registry.data.context.project).toEqual({ id: 'project_1', name: 'project_1' });
+    expect(registry.data.context.project).toBeUndefined();
+    expect(registry.data.context.environment).toBeUndefined();
+  });
+
+  it('supports installation-scoped operations without fabricating descendant scope IDs', async () => {
+    const base = manifest().operations[0]!;
+    const installationManifest = defineAdminCapability({
+      ...manifest(),
+      scopeLevels: ['installation', 'workspace', 'project', 'environment'],
+      operations: [{ ...base, minimumScope: 'installation' }],
+    });
+    const installationPrincipal: SuperConsolePrincipal = {
+      ...principal,
+      defaultScope: { installationId: 'installation_1' },
+    };
+    const handler = vi.fn(async () => ({ ok: true as const, data: { items: [] } }));
+    const console = createSuperConsole({
+      adapters: [createAdminCapabilityAdapter(installationManifest, { 'examplefn.records.list': handler })],
+      enabledModules: ['examplefn'],
+      auth: auth({ authenticate: async () => installationPrincipal }),
+      shellPolicy: { authorize: () => true },
+    });
+
+    const registry = await (await console.handle(request('/api/admin/v1/registry'))).json();
+    expect(registry.data.enabledModules).toHaveLength(1);
+    expect(registry.data.context).toMatchObject({ installation: { id: 'installation_1' } });
+    expect(registry.data.context.workspace).toBeUndefined();
+    expect((await console.handle(request('/api/admin/v1/modules/examplefn/records'))).status).toBe(200);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({ scope: { installationId: 'installation_1' } }),
+    }));
   });
 
   it.each([
@@ -595,6 +625,60 @@ describe('Super Console server composition', () => {
     expect(hidden.error.code).toBe(-32601);
     expect(missing.error.code).toBe(-32601);
     expect(JSON.stringify(listed)).not.toContain('superconsole_confirm_operation');
+  });
+
+  it('applies contextual policy to registry, MCP and confirmation discovery while retaining input policy at dispatch', async () => {
+    const capability = manifest({ destructive: true });
+    const handler = vi.fn(async () => ({ ok: true as const, data: { accepted: true } }));
+    const infrastructure = {
+      adapters: [createAdminCapabilityAdapter(capability, { 'examplefn.records.delete': handler })],
+      enabledModules: ['examplefn'],
+      auth: auth(),
+      shellPolicy: { authorize: () => true },
+      audit: new MemoryAdminAuditSink(),
+      idempotency: new MemoryAdminIdempotencyStore(),
+      confirmation: {
+        issue: async () => ({ token: 'bound', expiresAt: '2026-08-13T10:00:00.000Z' }),
+        verify: async () => true,
+      },
+    };
+    const scopePolicy = {
+      discover: ({ context }: { context: AdminOperationContext }) => ({ allowed: context.scope.environmentId === 'environment_allowed' }),
+      authorize: () => ({ allowed: true }),
+    };
+    const scoped = createSuperConsole({ ...infrastructure, policy: scopePolicy });
+    const hiddenRegistry = await (await scoped.handle(request('/api/admin/v1/registry'))).json();
+    expect(hiddenRegistry.data.enabledModules).toEqual([]);
+    expect(hiddenRegistry.data.modules).toEqual([]);
+    expect((await (await scoped.handle(request('/api/admin/v1/mcp'))).json()).data.tools).toEqual([]);
+    expect((await scoped.handle(request('/api/admin/v1/confirmations', {
+      method: 'POST',
+      body: JSON.stringify({ operationId: 'examplefn.records.delete', input: { id: 'record_1' } }),
+    }))).status).toBe(404);
+    expect((await scoped.handle(request('/api/admin/v1/modules/examplefn/records/record_1', {
+      method: 'DELETE',
+      headers: { 'idempotency-key': 'hidden', 'x-admin-confirmation': 'bound' },
+    }))).status).toBe(404);
+    const visibleRegistry = await (await scoped.handle(request('/api/admin/v1/registry?environmentId=environment_allowed'))).json();
+    expect(visibleRegistry.data.enabledModules).toHaveLength(1);
+
+    const inputPolicy = {
+      discover: () => ({ allowed: true }),
+      authorize: ({ input }: { input: unknown }) => ({
+        allowed: Boolean(input && typeof input === 'object' && (input as { id?: unknown }).id === 'record_allowed'),
+      }),
+    };
+    const objectBound = createSuperConsole({ ...infrastructure, policy: inputPolicy });
+    expect((await (await objectBound.handle(request('/api/admin/v1/registry'))).json()).data.enabledModules).toHaveLength(1);
+    expect((await objectBound.handle(request('/api/admin/v1/confirmations', {
+      method: 'POST',
+      body: JSON.stringify({ operationId: 'examplefn.records.delete', input: { id: 'record_denied' } }),
+    }))).status).toBe(403);
+    expect((await objectBound.handle(request('/api/admin/v1/modules/examplefn/records/record_denied', {
+      method: 'DELETE',
+      headers: { 'idempotency-key': 'object-denied', 'x-admin-confirmation': 'bound' },
+    }))).status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
   });
 });
 
