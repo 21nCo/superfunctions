@@ -6,13 +6,30 @@ import { createModeController, createPreview, createSourceEditor, sourceInternal
 
 describe("@mdfn/source", () => {
   it("synchronizes CodeMirror changes through the shared controller", () => {
-    const controller = createEditor({ markdown: "# Source\n", projector: createMarkdownProjector() });
+    const controller = createEditor({
+      markdown: "# Source\n",
+      projector: createMarkdownProjector(),
+      selection: { kind: "text", anchor: 2, head: 2 },
+    });
     const target = document.createElement("div");
     document.body.append(target);
     const editor = createSourceEditor({ target, controller });
-    controller.dispatch(new Transaction().replaceSource(2, 8, "Changed").withSource("external"));
+    controller.dispatch(
+      new Transaction()
+        .replaceSource(2, 8, "Changed")
+        .setSelection({ kind: "text", anchor: 9, head: 9 })
+        .withSource("external"),
+    );
     expect(editor.view.state.doc.toString()).toBe("# Changed\n");
+    expect(editor.view.state.selection.main).toMatchObject({ anchor: 9, head: 9 });
     expect(createPreview(controller).html).toContain("Changed");
+
+    editor.view.dispatch({
+      changes: { from: 10, insert: "\nMore" },
+      selection: { anchor: 15, head: 15 },
+    });
+    expect(controller.getState().markdown).toBe("# Changed\n\nMore");
+    expect(controller.getState().selection).toEqual({ kind: "text", anchor: 15, head: 15 });
     editor.destroy();
   });
 

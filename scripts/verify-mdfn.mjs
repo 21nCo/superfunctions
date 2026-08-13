@@ -13,9 +13,12 @@ if (!packOnly) {
 }
 if (!process.argv.includes("--skip-pack")) for (const node of nodes) commands.push(["npm", ["pack", "--dry-run", "--json", `--workspace=${node.path}`]]);
 if (!process.argv.includes("--skip-pack")) commands.push(["node", ["scripts/verify-mdfn-consumers.mjs"]]);
-if (!packOnly && !process.argv.includes("--skip-browser")) commands.push(["node", ["scripts/verify-mdfn-browser.mjs"]]);
+if (!packOnly && !process.argv.includes("--skip-browser")) {
+  commands.push(["node", ["scripts/verify-mdfn-browser.mjs"]]);
+  if (!process.argv.includes("--skip-examples")) commands.push(["node", ["scripts/verify-mdfn-examples.mjs", "--skip-package-build"]]);
+}
 for (const [command, args] of commands) {
   const result = spawnSync(command, args, { cwd: process.cwd(), stdio: "inherit", env: { ...process.env, CI: "1" } });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
-console.log(JSON.stringify({ ok: true, packages: nodes.length, packChecked: !process.argv.includes("--skip-pack"), consumersChecked: !process.argv.includes("--skip-pack") }));
+console.log(JSON.stringify({ ok: true, packages: nodes.length, packChecked: !process.argv.includes("--skip-pack"), consumersChecked: !process.argv.includes("--skip-pack"), examplesChecked: !packOnly && !process.argv.includes("--skip-browser") && !process.argv.includes("--skip-examples") }));

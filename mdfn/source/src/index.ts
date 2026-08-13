@@ -75,10 +75,16 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
       blur: () => { options.onBlur?.(); return false; },
     }),
     EditorView.updateListener.of((update) => {
-      if (!update.docChanged || syncing) return;
-      const previous = options.controller.getState().markdown;
-      const change = smallestSourceChange(previous, update.state.doc.toString());
-      if (change) options.controller.dispatch(new Transaction().replaceSource(change.from, change.to, change.insert).withSource("source"));
+      if (syncing || (!update.docChanged && !update.selectionSet)) return;
+      let transaction = new Transaction().withSource("source");
+      if (update.docChanged) {
+        const previous = options.controller.getState().markdown;
+        const change = smallestSourceChange(previous, update.state.doc.toString());
+        if (change) transaction = transaction.replaceSource(change.from, change.to, change.insert);
+      }
+      const main = update.state.selection.main;
+      transaction = transaction.setSelection({ kind: "text", anchor: main.anchor, head: main.head });
+      options.controller.dispatch(transaction);
     }),
   ];
   const view = new EditorView({
@@ -88,9 +94,16 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
   const unsubscribe = options.controller.subscribe((change) => {
     if (change.source === "source") return;
     const current = view.state.doc.toString();
-    if (current === change.current.markdown) return;
+    const selection = change.current.selection?.kind === "text"
+      ? { anchor: change.current.selection.anchor, head: change.current.selection.head }
+      : undefined;
+    const documentChanged = current !== change.current.markdown;
+    if (!documentChanged && !change.selectionChanged) return;
     syncing = true;
-    view.dispatch({ changes: { from: 0, to: current.length, insert: change.current.markdown } });
+    view.dispatch({
+      ...(documentChanged ? { changes: { from: 0, to: current.length, insert: change.current.markdown } } : {}),
+      ...(selection ? { selection } : {}),
+    });
     syncing = false;
   });
   return {

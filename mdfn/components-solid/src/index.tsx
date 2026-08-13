@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show, type Component } from "solid-js";
+import { createMemo, createSignal, For, Index, Show, type Component } from "solid-js";
 import { Button, Card, Input, ToolbarButton, ToolbarRoot } from "@uifn/components-solid";
 import { createAuthoringModel, createToolbarModel, runToolbarAction, type ToolbarCommandTarget, type ToolbarGroup } from "@mdfn/components";
 import { Transaction, canTransitionReview, createCommentThread, decideSuggestion, transitionReview, type EditorController, type EditorialActor, type ReviewState } from "@mdfn/core";
@@ -9,9 +9,9 @@ export const MdfnToolbar: Component<{ controller: EditorController; groups?: rea
   const snapshot = createMdfnSignal(props.controller);
   const model = () => { snapshot().version; return createToolbarModel(props.controller, props.groups, props.ariaLabel, props.commandTarget); };
   return <ToolbarRoot class={props.class} data-mdfn-component="toolbar" aria-label={model().ariaLabel}>
-    <For each={model().groups}>{(group) => <span role="group" aria-label={group.label} data-mdfn-toolbar-group={group.id}>
-      <For each={group.actions}>{(action) => <ToolbarButton value={action.id} type="button" disabled={action.disabled} aria-label={action.label} aria-pressed={action.pressed} title={action.shortcut ? `${action.label} (${action.shortcut})` : action.label} onClick={() => runToolbarAction(props.controller, action, props.commandTarget)}>{action.label}</ToolbarButton>}</For>
-    </span>}</For>
+    <Index each={model().groups}>{(group) => <span role="group" aria-label={group().label} data-mdfn-toolbar-group={group().id}>
+      <Index each={group().actions}>{(action) => <ToolbarButton value={action().id} type="button" disabled={action().disabled} aria-label={action().label} aria-pressed={action().pressed} title={action().shortcut ? `${action().label} (${action().shortcut})` : action().label} onClick={() => runToolbarAction(props.controller, action(), props.commandTarget)}>{action().label}</ToolbarButton>}</Index>
+    </span>}</Index>
   </ToolbarRoot>;
 };
 
@@ -27,10 +27,18 @@ export const MdfnEditorShell: Component<MdfnEditorShellProps> = (props) => {
     } : null);
     props.editorRef?.(value);
   };
-  return <div data-mdfn-component="editor-shell">
+  return <div class={props.class} data-mdfn-component="editor-shell">
     {!props.hideToolbar && !props.readOnly && <MdfnToolbar controller={props.controller} groups={props.toolbarGroups} commandTarget={commandTarget()} />}
     {!props.hideAuthoringChrome && <MdfnAuthoringChrome controller={props.controller} editor={editor()} mode={props.mode} readOnly={props.readOnly} actor={props.actor} onSelectFiles={props.onSelectFiles} onModeChange={props.onModeChange} />}
-    <MdfnEditor {...props} onFiles={async (files) => { const markdown = await props.onSelectFiles?.(files); if (markdown) editor()?.insertMarkdown(markdown); await props.onFiles?.(files); }} editorRef={setEditor} />
+    <MdfnEditor
+      controller={props.controller}
+      mode={props.mode}
+      readOnly={props.readOnly}
+      ariaLabel={props.ariaLabel}
+      onLoadError={props.onLoadError}
+      onFiles={async (files) => { const markdown = await props.onSelectFiles?.(files); if (markdown) editor()?.insertMarkdown(markdown); await props.onFiles?.(files); }}
+      editorRef={setEditor}
+    />
   </div>;
 };
 

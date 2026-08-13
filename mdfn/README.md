@@ -45,12 +45,16 @@ From the repository root:
 npm run verify:mdfn
 npm run verify:mdfn-browser
 npm run verify:mdfn-consumers
+npm run verify:mdfn-examples
 ```
 
 The complete gate includes the official CommonMark examples, deterministic
 fuzz and large-document checks, package builds/typechecks/tests/packs, runtime
 export checks, SSR execution, and Chromium, Firefox, WebKit, and mobile browser
 flows.
+
+Runnable React, Svelte, and Solid authoring apps, together with their browser
+workflow and artifact contract, are documented in `mdfn/examples/README.md`.
 
 See `mdfn/.conduct/MDFN-01` for the normative product, content, architecture,
 extension, security, verification, and delivery contracts.

@@ -1,4 +1,4 @@
-import { mapSidecar } from "./anchors";
+import { mapSelection, mapSidecar } from "./anchors";
 import { hashString } from "./hash";
 import { validateMdfnSidecar } from "./sidecar";
 import type {
@@ -78,6 +78,9 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
       markdown = `${markdown.slice(0, operation.from)}${operation.text}${markdown.slice(operation.to)}`;
       const range = { from: operation.from, to: operation.to, insertedLength: operation.text.length };
       ranges.push(range);
+      const mappedSelection = mapSelection(selection, [range]);
+      selectionChanged ||= mappedSelection !== selection;
+      selection = mappedSelection;
       sidecar = mapSidecar(sidecar, [range]);
       const parsed = projector.parse(markdown);
       document = parsed.document;
@@ -91,7 +94,11 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
       markdown = serialized.markdown;
       document = operation.document;
       diagnostics = serialized.diagnostics;
-      ranges.push({ from: 0, to: previousLength, insertedLength: markdown.length });
+      const range = { from: 0, to: previousLength, insertedLength: markdown.length };
+      ranges.push(range);
+      const mappedSelection = mapSelection(selection, [range]);
+      selectionChanged ||= mappedSelection !== selection;
+      selection = mappedSelection;
       documentChanged = true;
       continue;
     }

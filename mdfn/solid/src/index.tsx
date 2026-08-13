@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, splitProps, type Accessor, type Component, type JSX } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, splitProps, type Accessor, type Component, type JSX } from "solid-js";
 import { createAdapterBridge, type AdapterSnapshot } from "@mdfn/adapter-kit";
 import { Transaction, type EditorController } from "@mdfn/core";
 import type { DomCommand, DomEditor } from "@mdfn/dom";
@@ -25,7 +25,19 @@ export interface MdfnEditorProps extends JSX.HTMLAttributes<HTMLDivElement> {
 export interface MdfnEditorHandle { focus(): void; run(command: DomCommand): boolean; can(command: DomCommand): boolean; setLink(href: string, title?: string): boolean; removeLink(): boolean; insertTable(rows?: number, columns?: number): boolean; insertMarkdown(markdown: string): boolean; }
 
 export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
-  const [local, rest] = splitProps(props, ["controller", "mode", "readOnly", "ariaLabel", "onLoadError", "editorRef", "onFiles"]);
+  type ShellForwardedProps = MdfnEditorProps & {
+    readonly toolbarGroups?: unknown;
+    readonly hideToolbar?: boolean;
+    readonly hideAuthoringChrome?: boolean;
+    readonly actor?: unknown;
+    readonly onSelectFiles?: unknown;
+    readonly onModeChange?: unknown;
+  };
+  const [local, , rest] = splitProps(
+    props as ShellForwardedProps,
+    ["controller", "mode", "readOnly", "ariaLabel", "onLoadError", "editorRef", "onFiles"],
+    ["toolbarGroups", "hideToolbar", "hideAuthoringChrome", "actor", "onSelectFiles", "onModeChange"],
+  );
   const snapshot = createMdfnSignal(local.controller);
   let visualTarget: HTMLDivElement | undefined;
   let sourceTarget: HTMLDivElement | undefined;
@@ -37,41 +49,44 @@ export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
   const unsubscribe = local.controller.subscribe((change) => setFallbackValue(change.current.markdown));
   onCleanup(unsubscribe);
 
-  const publishHandle = (): void => local.editorRef?.({ focus() { visual?.focus(); source?.focus(); }, run(command) { return visual?.run(command) ?? false; }, can(command) { return visual?.can(command) ?? false; }, setLink(href, title) { return visual?.setLink(href, title) ?? false; }, removeLink() { return visual?.removeLink() ?? false; }, insertTable(rows, columns) { return visual?.insertTable(rows, columns) ?? false; }, insertMarkdown(markdown) { return visual?.insertMarkdown(markdown) ?? false; } });
+  const handle: MdfnEditorHandle = { focus() { visual?.focus(); source?.focus(); }, run(command) { return visual?.run(command) ?? false; }, can(command) { return visual?.can(command) ?? false; }, setLink(href, title) { return visual?.setLink(href, title) ?? false; }, removeLink() { return visual?.removeLink() ?? false; }, insertTable(rows, columns) { return visual?.insertTable(rows, columns) ?? false; }, insertMarkdown(markdown) { return visual?.insertMarkdown(markdown) ?? false; } };
+  const publishHandle = (): void => local.editorRef?.(handle);
 
-  createEffect(() => {
-    const mode = local.mode ?? "visual";
-    let cancelled = false;
-    visual?.destroy();
-    source?.destroy();
-    visual = undefined;
-    source = undefined;
-    const mount = async (): Promise<void> => {
-      try {
-        if ((mode === "visual" || mode === "split") && visualTarget) {
-          const module = await import("@mdfn/dom");
-          if (cancelled) return;
-          visual = module.createDomEditor({ target: visualTarget, controller: local.controller, readOnly: local.readOnly, attributes: { "aria-label": local.ariaLabel ?? "Markdown editor" }, onFiles: local.onFiles });
+  onMount(() => {
+    createEffect(() => {
+      const mode = local.mode ?? "visual";
+      let cancelled = false;
+      visual?.destroy();
+      source?.destroy();
+      visual = undefined;
+      source = undefined;
+      const mount = async (): Promise<void> => {
+        try {
+          if ((mode === "visual" || mode === "split") && visualTarget) {
+            const module = await import("@mdfn/dom");
+            if (cancelled) return;
+            visual = module.createDomEditor({ target: visualTarget, controller: local.controller, readOnly: local.readOnly, attributes: { "aria-label": local.ariaLabel ?? "Markdown editor" }, onFiles: local.onFiles });
+          }
+          if ((mode === "source" || mode === "split") && sourceTarget) {
+            const module = await import("@mdfn/source");
+            if (cancelled) return;
+            source = module.createSourceEditor({ target: sourceTarget, controller: local.controller, readOnly: local.readOnly, ariaLabel: `${local.ariaLabel ?? "Markdown editor"} source` });
+          }
+          if ((mode === "preview" || mode === "read-only") && previewTarget) {
+            const module = await import("@mdfn/source");
+            if (cancelled) return;
+            previewTarget.innerHTML = module.createPreview(local.controller).html;
+          }
+          publishHandle();
+        } catch (error) {
+          const resolved = error instanceof Error ? error : new Error(String(error));
+          setLoadError(resolved);
+          local.onLoadError?.(resolved);
         }
-        if ((mode === "source" || mode === "split") && sourceTarget) {
-          const module = await import("@mdfn/source");
-          if (cancelled) return;
-          source = module.createSourceEditor({ target: sourceTarget, controller: local.controller, readOnly: local.readOnly, ariaLabel: `${local.ariaLabel ?? "Markdown editor"} source` });
-        }
-        if ((mode === "preview" || mode === "read-only") && previewTarget) {
-          const module = await import("@mdfn/source");
-          if (cancelled) return;
-          previewTarget.innerHTML = module.createPreview(local.controller).html;
-        }
-        publishHandle();
-      } catch (error) {
-        const resolved = error instanceof Error ? error : new Error(String(error));
-        setLoadError(resolved);
-        local.onLoadError?.(resolved);
-      }
-    };
-    void mount();
-    onCleanup(() => { cancelled = true; local.editorRef?.(null); visual?.destroy(); source?.destroy(); visual = undefined; source = undefined; });
+      };
+      void mount();
+      onCleanup(() => { cancelled = true; local.editorRef?.(null); visual?.destroy(); source?.destroy(); visual = undefined; source = undefined; });
+    });
   });
 
   createEffect(() => {

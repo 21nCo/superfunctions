@@ -32,6 +32,7 @@
     "mailfn/*",
     "mcpfn/*",
     "mdfn/*",
+    "mdfn/examples/*",
     "plugfn/*",
     "recfn/*",
     "recfn/adapters/*",
@@ -134,6 +135,7 @@
     "verify:mdfn-package-graph": "node scripts/verify-mdfn-package-graph.mjs",
     "verify:mdfn-consumers": "node scripts/verify-mdfn-consumers.mjs",
     "verify:mdfn-browser": "node scripts/verify-mdfn-browser.mjs",
+    "verify:mdfn-examples": "node scripts/verify-mdfn-examples.mjs",
     "verify:mdfn": "node scripts/verify-mdfn.mjs",
     "deploy:uifn-catalogs:preview": "node scripts/deploy-uifn-catalogs.mjs preview",
     "deploy:uifn-catalogs:production": "node scripts/deploy-uifn-catalogs.mjs production"

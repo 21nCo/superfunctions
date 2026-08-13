@@ -45,7 +45,9 @@ export const MdfnEditorShell = React.forwardRef<React.ElementRef<typeof MdfnEdit
 ) {
   const [commandTarget, setCommandTarget] = React.useState<ToolbarCommandTarget | null>(null);
   const [editorHandle, setEditorHandle] = React.useState<MdfnEditorHandle | null>(null);
+  const editorHandleRef = React.useRef<MdfnEditorHandle | null>(null);
   const setEditorRef = React.useCallback((handle: MdfnEditorHandle | null) => {
+    editorHandleRef.current = handle;
     setEditorHandle(handle);
     setCommandTarget(handle ? {
       can: (command) => handle.can(command as Parameters<MdfnEditorHandle["can"]>[0]),
@@ -61,15 +63,16 @@ export const MdfnEditorShell = React.forwardRef<React.ElementRef<typeof MdfnEdit
     });
     onReady?.(handle);
   }, [onReady]);
+  const handleFiles = React.useCallback(async (files: readonly File[]) => {
+    const markdown = await onSelectFiles?.(files);
+    if (markdown) editorHandleRef.current?.insertMarkdown(markdown);
+    await props.onFiles?.(files);
+  }, [onSelectFiles, props.onFiles]);
   return (
     <div className={className} data-mdfn-component="editor-shell">
       {!hideToolbar && !props.readOnly && <MdfnToolbar controller={props.controller} groups={toolbarGroups} commandTarget={commandTarget} />}
       {!hideAuthoringChrome && <MdfnAuthoringChrome controller={props.controller} editor={editorHandle} mode={props.mode} readOnly={props.readOnly} actor={actor} onSelectFiles={onSelectFiles} onModeChange={onModeChange} />}
-      <MdfnEditor {...props} onFiles={async (files) => {
-        const markdown = await onSelectFiles?.(files);
-        if (markdown) editorHandle?.insertMarkdown(markdown);
-        await props.onFiles?.(files);
-      }} ref={setEditorRef} onReady={editorReady} />
+      <MdfnEditor {...props} onFiles={handleFiles} ref={setEditorRef} onReady={editorReady} />
     </div>
   );
 });

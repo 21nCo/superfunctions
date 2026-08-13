@@ -48,6 +48,28 @@ describe("@mdfn/core", () => {
     expect(mapAnchor({ from: 8, to: 11 }, [{ from: 6, to: 11, insertedLength: 4 }])).toEqual({ from: 10, to: 10 });
   });
 
+  it("maps canonical selections through source replacement", () => {
+    const editor = createEditor({
+      markdown: "hello world",
+      projector,
+      selection: { kind: "text", anchor: 8, head: 8 },
+    });
+    const replacement = "a completely different document";
+    const change = editor.dispatch(new Transaction().replaceSource(0, 11, replacement));
+    expect(change.selectionChanged).toBe(true);
+    expect(editor.getState().selection).toEqual({ kind: "text", anchor: replacement.length, head: replacement.length });
+
+    editor.dispatch(new Transaction().replaceSource(0, 0, "prefix "));
+    expect(editor.getState().selection).toEqual({ kind: "text", anchor: replacement.length + 7, head: replacement.length + 7 });
+  });
+
+  it("clears node selections when source edits can invalidate node identity", () => {
+    const editor = createEditor({ markdown: "hello", projector, selection: { kind: "node", nodeId: "paragraph-1" } });
+    const change = editor.dispatch(new Transaction().replaceSource(5, 5, " world"));
+    expect(change.selectionChanged).toBe(true);
+    expect(editor.getState().selection).toBeNull();
+  });
+
   it("validates extension dependencies, conflicts, and deterministic schema identity", () => {
     const base = {
       name: "base",

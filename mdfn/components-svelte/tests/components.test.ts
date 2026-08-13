@@ -16,4 +16,16 @@ describe("Svelte authoring components", () => {
     await unmount(component);
     expect(target.children).toHaveLength(0);
   });
+
+  it("uses an uncontrolled native file input", async () => {
+    const controller = createEditor({ markdown: "# Files", projector: createMarkdownProjector() });
+    const target = document.createElement("div");
+    const component = mount(MdfnEditorShell, { target, props: { controller, mode: "visual", onSelectFiles: async () => undefined } });
+    await tick();
+    const input = target.querySelector<HTMLInputElement>('input[type="file"][aria-label="Select files"]');
+    expect(input).not.toBeNull();
+    expect(input?.hasAttribute("value")).toBe(false);
+    expect(input?.dataset.uifnComponent).toBe("input");
+    await unmount(component);
+  });
 });
