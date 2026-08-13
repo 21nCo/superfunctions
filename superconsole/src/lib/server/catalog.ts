@@ -8,6 +8,7 @@ export const REQUIRED_MODULE_IDS = [
   'datafn',
   'filefn',
   'flowfn',
+  'hostfn',
   'mailfn',
   'memoryfn',
   'plugfn',
@@ -16,22 +17,20 @@ export const REQUIRED_MODULE_IDS = [
   'secfn',
   'sendfn',
   'testfn',
+  'userfn',
   'watchfn',
 ] as const;
 
 export const OPTIONAL_MODULE_IDS = [
+  'apifn',
+  'botfn',
   'cachefn',
+  'docsfn',
+  'langfn',
   'probefn',
 ] as const;
 
-export const UNAVAILABLE_MODULE_IDS = [
-  'apifn',
-  'botfn',
-  'docsfn',
-  'hostfn',
-  'langfn',
-  'userfn',
-] as const;
+export const UNAVAILABLE_MODULE_IDS = [] as const;
 
 export const NESTED_MODULE_IDS = ['catchfn', 'logfn'] as const;
 export const FOLDED_MODULE_IDS = ['contentfn'] as const;

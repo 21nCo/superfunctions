@@ -17,11 +17,11 @@ describe('Super Console module catalog', () => {
     expect(KNOWN_MODULE_IDS).toHaveLength(29);
     expect(new Set(KNOWN_MODULE_IDS)).toHaveLength(29);
     expect(MODULE_CATALOG).toHaveLength(29);
-    expect(REQUIRED_MODULE_IDS).toHaveLength(18);
-    expect(OPTIONAL_MODULE_IDS).toHaveLength(2);
+    expect(REQUIRED_MODULE_IDS).toHaveLength(20);
+    expect(OPTIONAL_MODULE_IDS).toHaveLength(6);
     expect(NESTED_MODULE_IDS).toHaveLength(2);
     expect(FOLDED_MODULE_IDS).toHaveLength(1);
-    expect(UNAVAILABLE_MODULE_IDS).toHaveLength(6);
+    expect(UNAVAILABLE_MODULE_IDS).toHaveLength(0);
     expect(new Set([...REQUIRED_MODULE_IDS, ...OPTIONAL_MODULE_IDS, ...NESTED_MODULE_IDS, ...FOLDED_MODULE_IDS, ...UNAVAILABLE_MODULE_IDS])).toHaveLength(29);
   });
 
@@ -56,7 +56,13 @@ describe('Super Console module catalog', () => {
     expect(parseModuleSelection('cmsfn')).toEqual(['cmsfn']);
     expect(parseModuleSelection('watchfn,catchfn')).toEqual(['catchfn', 'watchfn']);
     expect(() => parseModuleSelection('cmsfn,contentfn')).toThrow('Folded modules are provided by their owner');
-    expect(() => parseModuleSelection('hostfn')).toThrow('without a domain-backed administration service');
+    expect(parseModuleSelection('hostfn')).toEqual(['hostfn']);
+    expect(parseModuleSelection('apifn,botfn,docsfn,langfn')).toEqual([
+      'apifn',
+      'botfn',
+      'docsfn',
+      'langfn',
+    ]);
   });
 
   it('returns only explicitly selected catalog entries', () => {

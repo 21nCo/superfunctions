@@ -149,3 +149,14 @@ node docsfn/scripts/migration-check.mjs
 ## Release Checklist
 
 Before release, complete `docsfn/.conduct/release-checklist.md`.
+
+## Operator administration
+
+`@docsfn/admin` is the optional Super Console capability for DocsFn. It requires
+an injected durable `DocsFnOperatorStore` and a real `DocsContentProvider`
+resolver. Builds run through `@docsfn/core`'s `buildManifest`; the admin package
+does not synthesize content or compiler results.
+
+Sites and build records are isolated by the complete installation, workspace,
+project, and optional environment scope. Compiler error details remain in the
+owning store and are represented to operators only by `hasError`.

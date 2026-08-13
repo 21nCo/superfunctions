@@ -1,19 +1,30 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const probeDirectory = dirname(fileURLToPath(import.meta.url));
 const consoleDirectory = dirname(dirname(probeDirectory));
+const repositoryDirectory = dirname(consoleDirectory);
 const installationPath = join(probeDirectory, 'installation.mjs');
 const stamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
 const artifactDirectory = process.env.SUPERCONSOLE_PROBE_ARTIFACTS
   ?? join(process.env.TMPDIR ?? '/tmp', `superconsole-probe-${stamp}`);
+const sourceCommit = process.env.SUPERCONSOLE_PROBE_SOURCE_COMMIT ?? 'uncommitted';
 const baseUrl = 'http://127.0.0.1:4178';
 const serverLog = [];
 const browserLog = [];
+
+function sanitizedEvidence(value) {
+  return value
+    .replaceAll(baseUrl, '<local-probe-url>')
+    .replaceAll(consoleDirectory, '<superconsole>')
+    .replaceAll(repositoryDirectory, '<repository>')
+    .replaceAll(artifactDirectory, '<evidence>')
+    .replaceAll(process.env.TMPDIR ?? '/tmp', '<temporary-directory>');
+}
 
 await mkdir(artifactDirectory, { recursive: true });
 
@@ -117,13 +128,21 @@ try {
     preview.once('exit', resolve);
     setTimeout(resolve, 2000);
   });
-  await writeFile(join(artifactDirectory, 'server.log'), serverLog.join(''));
-  await writeFile(join(artifactDirectory, 'browser.log'), browserLog.join('\n'));
+  await writeFile(join(artifactDirectory, 'server.txt'), sanitizedEvidence(serverLog.join('')));
+  await writeFile(join(artifactDirectory, 'browser.txt'), sanitizedEvidence(browserLog.join('\n')));
   await writeFile(join(artifactDirectory, 'result.json'), `${JSON.stringify({
     ok: !failure,
-    baseUrl,
-    artifactDirectory,
-    failure: failure instanceof Error ? { name: failure.name, message: failure.message, stack: failure.stack } : failure,
+    schemaVersion: 1,
+    evidenceSet: basename(artifactDirectory),
+    sourceCommit,
+    scenario: 'real-cifn-selected-module-production-smoke',
+    failure: failure instanceof Error
+      ? {
+          name: failure.name,
+          message: sanitizedEvidence(failure.message),
+          stack: failure.stack ? sanitizedEvidence(failure.stack) : undefined,
+        }
+      : failure,
   }, null, 2)}\n`);
 }
 

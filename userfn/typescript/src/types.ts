@@ -130,6 +130,12 @@ export interface Campaign {
   enabled: boolean;
 }
 
+export interface MessageDelivery {
+  campaignId: string;
+  status: 'shown' | 'dismissed' | 'clicked';
+  timestamp: number;
+}
+
 export type QuestionType = 'nps' | 'csat' | 'text' | 'choice';
 
 export interface Question {

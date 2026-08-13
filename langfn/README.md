@@ -76,3 +76,15 @@ This gate runs the TypeScript build, the full TypeScript and Python test suites,
 - [Release-gate checklist](./.conduct/release-gate.md)
 - [TypeScript README](./typescript/README.md)
 - [Python README](./python/README.md)
+
+## Operator administration
+
+`@langfn/admin` is LangFn's optional Super Console capability. Applications must
+inject a durable `LangFnOperatorStore`, a scope-aware adapter over their real
+trace storage, and a real `LangFn` client resolver. The package never creates a
+default model client or silently selects credentials.
+
+Profiles, prompts, and traces are isolated by installation, workspace, project,
+and optional environment. Prompt runs require recent-auth confirmation, return
+usage/trace metadata rather than model content, and project through the same
+typed SDK, REST/OpenAPI, and MCP surfaces as Console.

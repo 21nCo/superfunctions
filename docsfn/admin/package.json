@@ -33,6 +33,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@docsfn/core": "0.0.6",
     "@superfunctions/admin": "0.1.0"
   },
   "devDependencies": {

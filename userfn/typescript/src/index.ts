@@ -127,3 +127,4 @@ export class UserFnClient {
 }
 
 export * from './types';
+export * from './operator';

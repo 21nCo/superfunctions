@@ -32,7 +32,16 @@ export class MCPClient {
 
   async callTool<T = unknown>(name: string, arguments_: Record<string, unknown> = {}): Promise<T> {
     await this.ensureConnected();
-    const result = await this.client.callTool({ name, arguments: arguments_ }) as CallToolResult;
+    let result: CallToolResult;
+    try {
+      result = await this.client.callTool({ name, arguments: arguments_ }) as CallToolResult;
+    } catch (error) {
+      if (error instanceof MCPProtocolError) throw error;
+      throw new MCPProtocolError(
+        error instanceof Error ? error.message : `MCP tool ${name} failed`,
+        { cause: error },
+      );
+    }
     if (result.isError) {
       const message = result.content
         .filter((entry): entry is { type: "text"; text: string } => entry.type === "text")
