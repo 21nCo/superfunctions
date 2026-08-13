@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAdminCapabilityAdapter } from "./adapter.js";
-import { createAdminClient, AdminClientError } from "./client.js";
+import { createAdminClient, createCapabilityAdminClient, AdminClientError } from "./client.js";
 import { createAdminDispatcher } from "./dispatcher.js";
 import { projectAdminMcpTools, registerAdminMcpTools } from "./mcp.js";
 import { createAdminOpenApiDocument } from "./openapi.js";
@@ -65,6 +65,56 @@ describe("OpenAPI projection", () => {
       expect.objectContaining({ name: "X-Admin-Confirmation", in: "header", required: true }),
     ]));
     expect(JSON.stringify(operation)).not.toContain("_admin");
+  });
+
+  it("projects one-time secret outputs without exposing the internal redaction bypass name", () => {
+    const base = testManifest("examplefn").operations[0]!;
+    const manifest = testManifest("examplefn", {
+      operations: [{
+        ...base,
+        id: "examplefn.records.issue-token",
+        inputSchema: {
+          type: "object",
+          properties: { id: { type: "string" } },
+          required: ["id"],
+          additionalProperties: false,
+        },
+        outputSchema: {
+          type: "object",
+          properties: { token: { type: "string" } },
+          required: ["token"],
+          additionalProperties: false,
+        },
+        route: { method: "POST", path: "/records/:id/token" },
+        permission: "examplefn.records.write",
+        safety: {
+          classification: "write",
+          idempotent: false,
+          requiresConfirmation: true,
+          audit: "required",
+          confirmation: { risk: "high", method: "recent-auth", reason: "Issue a one-time access token." },
+        },
+        target: { resource: "records", idInput: "id" },
+        redaction: { allowOutputFields: ["token"] },
+        mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+      }],
+    });
+    const registry = createAdminRegistry({
+      adapters: [createAdminCapabilityAdapter(manifest, {
+        "examplefn.records.issue-token": async () => ({ ok: true as const, data: { token: "secret" } }),
+      })],
+      enabledModules: ["examplefn"],
+    });
+    const document = createAdminOpenApiDocument(registry);
+    const projected = document.paths["/api/admin/v1/modules/examplefn/records/{id}/token"]?.post as Record<string, unknown>;
+    expect(projected["x-superfunctions-redaction"]).toEqual({ oneTimeOutputFields: ["token"] });
+    expect(JSON.stringify(projected)).not.toContain("allowOutputFields");
+
+    const tools = projectAdminMcpTools({ registry, dispatcher: createAdminDispatcher({ registry }) });
+    expect(tools[0]?.metadata["mcpfn/superconsole"]).toMatchObject({
+      redaction: { oneTimeOutputFields: ["token"] },
+    });
+    expect(JSON.stringify(tools[0]?.metadata)).not.toContain("allowOutputFields");
   });
 
   it("rejects dangling security overrides and documents JSON query encoding and full envelopes", () => {
@@ -219,5 +269,43 @@ describe("AdminClient", () => {
     expect(new URL(observed[1]!.url).searchParams.get("q")).toBe("failed run");
     expect(new URL(observed[2]!.url).searchParams.get("module")).toBe("cifn");
     expect(JSON.parse(String(observed.at(-1)!.init?.body))).toEqual({ operationId: "examplefn.records.delete", input: { id: "1" } });
+  });
+
+  it("generates function operation methods, availability, and cursor page iteration", async () => {
+    const manifest = testManifest("examplefn");
+    const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];
+    const client = createAdminClient({
+      baseUrl: "https://console.example.test/api/admin/v1",
+      fetch: (async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+        requests.push({ path, body });
+        if (path.endsWith("/registry")) {
+          return Response.json({ ok: true, data: { enabledModules: [manifest] } });
+        }
+        const cursor = body?.cursor;
+        return Response.json({
+          ok: true,
+          data: { items: [cursor ?? "first"], nextCursor: cursor ? null : "page_2" },
+          page: { nextCursor: cursor ? null : "page_2", hasMore: !cursor },
+          requestId: cursor ? "req_2" : "req_1",
+        });
+      }) as typeof fetch,
+    });
+    const capability = createCapabilityAdminClient(manifest, client);
+
+    await expect(capability.availability()).resolves.toMatchObject({
+      available: true,
+      moduleId: "examplefn",
+      installedVersion: manifest.version,
+    });
+    await expect(capability.operations["examplefn.records.list"]({ limit: 1 })).resolves.toMatchObject({
+      ok: true,
+      requestId: "req_1",
+    });
+    const pages = [];
+    for await (const page of capability.pages("examplefn.records.list", { limit: 1 })) pages.push(page);
+    expect(pages.map((page) => page.requestId)).toEqual(["req_1", "req_2"]);
+    expect(requests.at(-1)?.body).toMatchObject({ cursor: "page_2", limit: 1 });
   });
 });

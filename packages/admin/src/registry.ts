@@ -97,7 +97,18 @@ export class AdminCapabilityRegistry {
     }
     const requested = [...new Set(options.enabledModules)];
     for (const moduleId of requested) {
-      if (!supplied.has(moduleId)) throw new AdminError("dependency_unavailable", `Enabled admin module is not registered: ${moduleId}.`);
+      const adapter = supplied.get(moduleId);
+      if (!adapter) throw new AdminError("dependency_unavailable", `Enabled admin module is not registered: ${moduleId}.`);
+      if (adapter.manifest.availability === "unavailable") {
+        throw new AdminError("dependency_unavailable", `Admin module ${moduleId} is not domain-backed and cannot be enabled.`, {
+          details: { moduleId, reason: adapter.manifest.unavailableReason },
+        });
+      }
+      if (adapter.manifest.availability === "folded") {
+        throw new AdminError("dependency_unavailable", `Admin module ${moduleId} is folded into ${adapter.manifest.owner?.moduleId ?? "its owner"} and cannot be enabled independently.`, {
+          details: { moduleId, ownerModuleId: adapter.manifest.owner?.moduleId },
+        });
+      }
     }
     const enabled = new Set(requested);
     for (const moduleId of requested) {

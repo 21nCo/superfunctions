@@ -60,7 +60,16 @@ export function redactAdminValue(
   sensitiveFields: readonly string[] = [],
   seen = new WeakSet<object>(),
 ): unknown {
-  return redactValue(value, sensitiveFields, true, seen);
+  return redactValue(value, sensitiveFields, true, [], seen);
+}
+
+export function redactAdminOutputValue(
+  value: unknown,
+  sensitiveFields: readonly string[] = [],
+  allowOutputFields: readonly string[] = [],
+  seen = new WeakSet<object>(),
+): unknown {
+  return redactValue(value, sensitiveFields, true, allowOutputFields, seen);
 }
 
 export function redactDeclaredAdminValue(
@@ -68,25 +77,27 @@ export function redactDeclaredAdminValue(
   sensitiveFields: readonly string[] = [],
   seen = new WeakSet<object>(),
 ): unknown {
-  return redactValue(value, sensitiveFields, false, seen);
+  return redactValue(value, sensitiveFields, false, [], seen);
 }
 
 function redactValue(
   value: unknown,
   sensitiveFields: readonly string[],
   redactImplicitSecrets: boolean,
+  allowedFields: readonly string[],
   seen: WeakSet<object>,
 ): unknown {
   const normalizeKey = (field: string) =>
     field.replace(/[-_\s]/g, "").toLowerCase();
   const explicit = new Set(sensitiveFields.map(normalizeKey));
+  const allowed = new Set(allowedFields.map(normalizeKey));
   const visit = (current: unknown): unknown => {
     if (!current || typeof current !== "object") return current;
     if (seen.has(current)) return "[Circular]";
     seen.add(current);
     const redacted = Array.isArray(current) ? current.map(visit) : Object.fromEntries(Object.entries(current as Record<string, unknown>).map(([key, item]) => [
       key,
-      (redactImplicitSecrets && isImplicitSecretKey(key)) || explicit.has(normalizeKey(key)) ? "[REDACTED]" : visit(item),
+      explicit.has(normalizeKey(key)) || ((redactImplicitSecrets && isImplicitSecretKey(key)) && !allowed.has(normalizeKey(key))) ? "[REDACTED]" : visit(item),
     ]));
     seen.delete(current);
     return redacted;

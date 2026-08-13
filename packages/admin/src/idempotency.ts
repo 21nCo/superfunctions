@@ -14,6 +14,12 @@ export interface AdminIdempotencyRecord<T = unknown> {
   fingerprint: string;
   result: AdminResult<T>;
   auditId?: string;
+  /** Domain completion is durable before the terminal audit is attempted. */
+  audit?: {
+    status: "pending" | "completed" | "not-required";
+    auditId?: string;
+    updatedAt: string;
+  };
   createdAt: string;
 }
 
@@ -39,7 +45,9 @@ export type AdminIdempotencyBeginResult<T = unknown> =
  * and `release` with the claim token. `release` is used only before domain
  * invocation, so a failed audit/policy dependency cannot poison a safe retry.
  * Cross-process stores should use a renewable lease or a documented stale-claim
- * recovery policy.
+ * recovery policy. `complete` must be safely repeatable with the same claim,
+ * identity, fingerprint and result: the dispatcher retries it after ambiguous
+ * dependency acknowledgement failures and never re-invokes the domain.
  */
 export interface AdminIdempotencyStore {
   begin<T = unknown>(input: {
@@ -49,6 +57,16 @@ export interface AdminIdempotencyStore {
   complete<T = unknown>(
     claim: AdminIdempotencyClaim,
     record: AdminIdempotencyRecord<T>,
+  ): Promise<void> | void;
+  /**
+   * Optional reconciliation hook. Implementations atomically update only a
+   * completed record with the same identity and fingerprint. It lets a replay
+   * close a terminal-audit gap without re-running the domain mutation.
+   */
+  finalizeAudit?(
+    identity: AdminIdempotencyIdentity,
+    fingerprint: string,
+    input: { auditId: string; completedAt: string },
   ): Promise<void> | void;
   release(claim: AdminIdempotencyClaim): Promise<void> | void;
 }
@@ -76,6 +94,7 @@ interface MemoryPendingEntry {
 interface MemoryCompletedEntry {
   status: "completed";
   fingerprint: string;
+  token: string;
   record: AdminIdempotencyRecord;
 }
 
@@ -109,6 +128,13 @@ export class MemoryAdminIdempotencyStore implements AdminIdempotencyStore {
   complete<T = unknown>(claim: AdminIdempotencyClaim, record: AdminIdempotencyRecord<T>): void {
     const key = adminIdempotencyStorageKey(claim.identity);
     const existing = this.entries.get(key);
+    if (existing?.status === "completed" && existing.token === claim.token) {
+      if (existing.fingerprint !== claim.fingerprint || record.fingerprint !== claim.fingerprint) {
+        throw new AdminError("conflict", "The idempotency completion fingerprint does not match its reservation.");
+      }
+      existing.record = structuredClone(record) as AdminIdempotencyRecord;
+      return;
+    }
     if (!existing || existing.status !== "in-progress" || existing.token !== claim.token) {
       throw new AdminError("conflict", "The idempotency reservation is no longer owned by this operation.");
     }
@@ -116,8 +142,25 @@ export class MemoryAdminIdempotencyStore implements AdminIdempotencyStore {
       throw new AdminError("conflict", "The idempotency completion fingerprint does not match its reservation.");
     }
     const snapshot = structuredClone(record) as AdminIdempotencyRecord;
-    this.entries.set(key, { status: "completed", fingerprint: claim.fingerprint, record: snapshot });
+    this.entries.set(key, { status: "completed", fingerprint: claim.fingerprint, token: claim.token, record: snapshot });
     existing.resolve(structuredClone(snapshot));
+  }
+
+  finalizeAudit(
+    identity: AdminIdempotencyIdentity,
+    fingerprint: string,
+    input: { auditId: string; completedAt: string },
+  ): void {
+    const existing = this.entries.get(adminIdempotencyStorageKey(identity));
+    if (!existing || existing.status !== "completed" || existing.fingerprint !== fingerprint) {
+      throw new AdminError("conflict", "The idempotency record is unavailable for audit reconciliation.");
+    }
+    existing.record = {
+      ...existing.record,
+      auditId: input.auditId,
+      result: { ...existing.record.result, auditId: input.auditId },
+      audit: { status: "completed", auditId: input.auditId, updatedAt: input.completedAt },
+    };
   }
 
   release(claim: AdminIdempotencyClaim): void {

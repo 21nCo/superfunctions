@@ -1,5 +1,6 @@
 import { AdminError } from "./errors.js";
 import type { AdminCapabilityRegistry, AdminRegistryOperation } from "./registry.js";
+import { adminOperationMinimumScope } from "./scope.js";
 import type { AdminJsonSchema, AdminObjectSchema } from "./types.js";
 
 export interface AdminOpenApiOptions {
@@ -46,7 +47,8 @@ const ERROR_SCHEMA: AdminObjectSchema = {
 };
 
 const SCOPE_QUERY_PARAMETERS: readonly Record<string, unknown>[] = [
-  { name: "organizationId", in: "query", required: false, description: "Override the authenticated organization. Also accepted as X-SuperConsole-Organization-Id or X-Admin-Organization-Id.", schema: { type: "string", minLength: 1 } },
+  { name: "installationId", in: "query", required: false, description: "Override the authenticated installation root. Also accepted as X-SuperConsole-Installation-Id or X-Admin-Installation-Id.", schema: { type: "string", minLength: 1 } },
+  { name: "organizationId", in: "query", required: false, deprecated: true, description: "Compatibility alias for installationId. Also accepted as X-SuperConsole-Organization-Id or X-Admin-Organization-Id.", schema: { type: "string", minLength: 1 } },
   { name: "workspaceId", in: "query", required: false, description: "Override the authenticated workspace. Also accepted as X-SuperConsole-Workspace-Id or X-Admin-Workspace-Id.", schema: { type: "string", minLength: 1 } },
   { name: "projectId", in: "query", required: false, description: "Override the authenticated project. Also accepted as X-SuperConsole-Project-Id or X-Admin-Project-Id.", schema: { type: "string", minLength: 1 } },
   { name: "environmentId", in: "query", required: false, description: "Override the authenticated environment. Also accepted as X-SuperConsole-Environment-Id or X-Admin-Environment-Id.", schema: { type: "string", minLength: 1 } },
@@ -197,10 +199,15 @@ export function createAdminOpenApiDocument(
       "x-superfunctions-module": entry.moduleId,
       "x-superfunctions-capability-version": entry.manifest.version,
       "x-superfunctions-permission": entry.operation.permission,
+      "x-superfunctions-minimum-scope": adminOperationMinimumScope(entry.manifest, entry.operation),
       "x-superfunctions-safety": entry.operation.safety,
       ...(entry.operation.pagination ? { "x-superfunctions-pagination": entry.operation.pagination } : {}),
       ...(entry.operation.target ? { "x-superfunctions-target": entry.operation.target } : {}),
-      ...(entry.operation.redaction ? { "x-superfunctions-redaction": entry.operation.redaction } : {}),
+      ...(entry.operation.redaction ? { "x-superfunctions-redaction": {
+        ...(entry.operation.redaction.inputFields ? { inputFields: entry.operation.redaction.inputFields } : {}),
+        ...(entry.operation.redaction.outputFields ? { outputFields: entry.operation.redaction.outputFields } : {}),
+        ...(entry.operation.redaction.allowOutputFields ? { oneTimeOutputFields: entry.operation.redaction.allowOutputFields } : {}),
+      } } : {}),
     };
     paths[path] ??= {};
     if (paths[path]![method.toLowerCase()]) throw new AdminError("conflict", `OpenAPI operation collision: ${method} ${path}.`);

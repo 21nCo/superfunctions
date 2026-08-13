@@ -252,29 +252,33 @@ describe("AdminDispatcher", () => {
     });
     const handler = vi.fn(async () => ({ ok: true as const, data: { items: [] } }));
     let writes = 0;
+    let terminalUnavailable = true;
     const registry = createAdminRegistry({
       adapters: [createAdminCapabilityAdapter(manifest, {
         "examplefn.records.rotate": handler,
       })],
       enabledModules: ["examplefn"],
     });
-    const result = await createAdminDispatcher({
+    const dispatcher = createAdminDispatcher({
       registry,
       audit: {
         write: async () => {
           writes += 1;
-          if (writes > 1) throw new Error("terminal sink unavailable");
+          if (writes > 1 && terminalUnavailable) throw new Error("terminal sink unavailable");
         },
       },
       idempotency: new MemoryAdminIdempotencyStore(),
-    }).dispatch({
+    });
+    const dispatch = (requestId: string) => dispatcher.dispatch({
       operationId: "examplefn.records.rotate",
       input: {},
       context: context({
+        requestId,
         actor: { id: "user_1", permissions: ["examplefn.records.rotate"] },
         idempotencyKey: "terminal-audit",
       }),
     });
+    const result = await dispatch("req_first");
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(writes).toBe(2);
@@ -283,7 +287,77 @@ describe("AdminDispatcher", () => {
       error: { code: "dependency_unavailable" },
     });
     expect(result).not.toHaveProperty("auditId");
+
+    terminalUnavailable = false;
+    const recovered = await dispatch("req_retry");
+    expect(recovered).toMatchObject({
+      ok: true,
+      meta: { idempotencyReplay: true, recoveredTerminalAudit: true },
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(writes).toBe(3);
   });
+
+  it.each(["before-write", "after-write"] as const)(
+    "recovers an ambiguous idempotency completion failure (%s) with the same key without re-running the domain",
+    async (failureMode) => {
+      const base = testManifest().operations[0]!;
+      const manifest = testManifest("examplefn", {
+        operations: [{
+          ...base,
+          id: "examplefn.records.rotate",
+          route: { method: "POST", path: "/records/rotate" },
+          permission: "examplefn.records.rotate",
+          safety: { classification: "write", idempotent: true, audit: "required" },
+          mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+        }],
+      });
+      const handler = vi.fn(async () => ({ ok: true as const, data: { items: [] } }));
+      const registry = createAdminRegistry({
+        adapters: [createAdminCapabilityAdapter(manifest, { "examplefn.records.rotate": handler })],
+        enabledModules: ["examplefn"],
+      });
+      const backing = new MemoryAdminIdempotencyStore();
+      let fail = true;
+      const idempotency = {
+        begin: backing.begin.bind(backing),
+        complete: async (...args: Parameters<typeof backing.complete>) => {
+          if (fail) {
+            fail = false;
+            if (failureMode === "after-write") backing.complete(...args);
+            throw new Error(`injected ${failureMode}`);
+          }
+          backing.complete(...args);
+        },
+        finalizeAudit: backing.finalizeAudit.bind(backing),
+        release: backing.release.bind(backing),
+      };
+      const dispatcher = createAdminDispatcher({
+        registry,
+        audit: new MemoryAdminAuditSink(),
+        idempotency,
+      });
+      const dispatch = (requestId: string) => dispatcher.dispatch({
+        operationId: "examplefn.records.rotate",
+        input: {},
+        context: context({
+          requestId,
+          actor: { id: "user_1", permissions: ["examplefn.records.rotate"] },
+          idempotencyKey: `completion-${failureMode}`,
+        }),
+      });
+
+      await expect(dispatch("first")).resolves.toMatchObject({
+        ok: false,
+        error: { code: "dependency_unavailable", retryable: true },
+      });
+      await expect(dispatch("retry")).resolves.toMatchObject({
+        ok: true,
+        meta: { idempotencyReplay: true },
+      });
+      expect(handler).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("enforces confirmation, required audit, idempotency replay, conflict, and redaction", async () => {
     const read = testManifest().operations[0]!;
@@ -323,8 +397,8 @@ describe("AdminDispatcher", () => {
     expect(await dispatcher.dispatch({ operationId: "examplefn.records.delete", input: { id: "1", apiToken: "raw-secret" }, context: { ...baseContext, confirmationToken: undefined } })).toMatchObject({ ok: false, error: { code: "precondition_failed" } });
     const first = await dispatcher.dispatch({ operationId: "examplefn.records.delete", input: { id: "1", apiToken: "raw-secret", webhookToken: "implicit-secret" }, context: baseContext });
     const replay = await dispatcher.dispatch({ operationId: "examplefn.records.delete", input: { id: "1", apiToken: "raw-secret", webhookToken: "implicit-secret" }, context: { ...baseContext, requestId: "req_2" } });
-    expect(first).toMatchObject({ ok: true, data: { deleted: true, privateBody: "[REDACTED]", statusCode: 204, sessionCount: 3, authorization: "domain-value" }, auditId: "audit_1" });
-    expect(replay).toMatchObject({ ok: true, data: { deleted: true, privateBody: "[REDACTED]", statusCode: 204, sessionCount: 3, authorization: "domain-value" }, meta: { idempotencyReplay: true } });
+    expect(first).toMatchObject({ ok: true, data: { deleted: true, privateBody: "[REDACTED]", statusCode: 204, sessionCount: 3, authorization: "[REDACTED]" }, auditId: "audit_1" });
+    expect(replay).toMatchObject({ ok: true, data: { deleted: true, privateBody: "[REDACTED]", statusCode: 204, sessionCount: 3, authorization: "[REDACTED]" }, meta: { idempotencyReplay: true } });
     expect(handler).toHaveBeenCalledTimes(1); // missing required infrastructure fails before domain execution
     expect(audit.events.at(-1)?.input).toEqual({ id: "1", apiToken: "[REDACTED]", webhookToken: "[REDACTED]" });
     expect(audit.events.slice(-3).map((event) => event.outcome)).toEqual(["attempted", "succeeded", "replayed"]);
@@ -332,11 +406,33 @@ describe("AdminDispatcher", () => {
     expect(await dispatcher.dispatch({ operationId: "examplefn.records.delete", input: { id: "2", apiToken: "different" }, context: baseContext })).toMatchObject({ ok: false, error: { code: "conflict" } });
   });
 
-  it("requires the universal four-level context", async () => {
+  it("enforces the operation minimum scope and rejects broken hierarchy chains", async () => {
     const manifest = testManifest();
     const registry = createAdminRegistry({ adapters: [createAdminCapabilityAdapter(manifest, { "examplefn.records.list": async () => ({ ok: true as const, data: { items: [] } }) })], enabledModules: ["examplefn"] });
     const result = await createAdminDispatcher({ registry }).dispatch({ operationId: "examplefn.records.list", input: {}, context: { ...context(), scope: { ...context().scope, environmentId: "" } } });
     expect(result).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
+
+    const installationManifest = testManifest("examplefn", {
+      scopeLevels: ["installation", "workspace", "project", "environment"],
+      operations: [{ ...testManifest().operations[0]!, minimumScope: "installation" }],
+    });
+    const installationRegistry = createAdminRegistry({
+      adapters: [createAdminCapabilityAdapter(installationManifest, {
+        "examplefn.records.list": async () => ({ ok: true as const, data: { items: [] } }),
+      })],
+      enabledModules: ["examplefn"],
+    });
+    const installationDispatcher = createAdminDispatcher({ registry: installationRegistry });
+    await expect(installationDispatcher.dispatch({
+      operationId: "examplefn.records.list",
+      input: {},
+      context: context({ scope: { installationId: "install_1" } }),
+    })).resolves.toMatchObject({ ok: true });
+    await expect(installationDispatcher.dispatch({
+      operationId: "examplefn.records.list",
+      input: {},
+      context: context({ scope: { installationId: "install_1", projectId: "project_without_workspace" } }),
+    })).resolves.toMatchObject({ ok: false, error: { code: "invalid_argument" } });
   });
 
   it("always ANDs manifest permission with a custom contextual policy", async () => {
@@ -482,6 +578,38 @@ describe("AdminDispatcher", () => {
       },
       meta: { api_key: "[REDACTED]", statusCode: 200 },
     });
+  });
+
+  it("reveals an explicitly declared one-time secret while keeping audit data redacted", async () => {
+    const base = testManifest().operations[0]!;
+    const manifest = testManifest("examplefn", { operations: [{
+      ...base,
+      id: "examplefn.records.issue-token",
+      description: "Issue a one-time token.",
+      outputSchema: { type: "object", properties: { token: { type: "string" } }, required: ["token"], additionalProperties: false },
+      route: { method: "POST", path: "/records/actions/issue-token" },
+      permission: "examplefn.records.issue-token",
+      safety: { classification: "write", idempotent: false, requiresConfirmation: true, confirmation: { risk: "high", method: "recent-auth", reason: "Issue one token." }, audit: "required" },
+      redaction: { allowOutputFields: ["token"] },
+      target: { resource: "records", collection: true },
+      mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    }] });
+    const audit = new MemoryAdminAuditSink();
+    const registry = createAdminRegistry({
+      adapters: [createAdminCapabilityAdapter(manifest, { "examplefn.records.issue-token": async () => ({ ok: true as const, data: { token: "one-time-secret" } }) })],
+      enabledModules: ["examplefn"],
+    });
+    const result = await createAdminDispatcher({
+      registry,
+      audit,
+      confirmation: { verify: async () => true },
+    }).dispatch({
+      operationId: "examplefn.records.issue-token",
+      input: {},
+      context: context({ confirmationToken: "confirmed", actor: { id: "user_1", permissions: ["examplefn.records.issue-token"] } }),
+    });
+    expect(result).toMatchObject({ ok: true, data: { token: "one-time-secret" } });
+    expect(JSON.stringify(audit.events)).not.toContain("one-time-secret");
   });
 
   it("atomically reserves an idempotency key so concurrent requests execute once", async () => {

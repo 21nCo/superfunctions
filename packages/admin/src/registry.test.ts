@@ -34,6 +34,36 @@ describe("AdminCapabilityRegistry", () => {
     );
   });
 
+  it("refuses to enable a manifest whose domain binding is explicitly unavailable", () => {
+    const manifest = testManifest("blockedfn", {
+      availability: "unavailable",
+      unavailableReason: "No canonical operator service exists.",
+      navigation: [],
+      resources: [],
+      operations: [],
+    });
+    const adapter = createAdminCapabilityAdapter(manifest, {});
+    expect(validateAdminCapabilityManifest(manifest)).toEqual([]);
+    expect(() => createAdminRegistry({ adapters: [adapter], enabledModules: ["blockedfn"] }))
+      .toThrowError(/not domain-backed/);
+    expect(createAdminRegistry({ adapters: [adapter], enabledModules: [] }).operations).toEqual([]);
+  });
+
+  it("refuses to enable a folded child as an independent module", () => {
+    const manifest = testManifest("contentfn", {
+      availability: "folded",
+      owner: { moduleId: "cmsfn", mountPath: "/modules/cmsfn/content" },
+      dependencies: ["cmsfn"],
+      navigation: [],
+      resources: [],
+      operations: [],
+    });
+    const adapter = createAdminCapabilityAdapter(manifest, {});
+    expect(validateAdminCapabilityManifest(manifest)).toEqual([]);
+    expect(() => createAdminRegistry({ adapters: [adapter], enabledModules: ["contentfn"] }))
+      .toThrowError(/folded into cmsfn/);
+  });
+
   it("fails startup for missing or unknown adapter handlers", () => {
     const manifest = testManifest("examplefn");
     expect(() => createAdminRegistry({
@@ -399,6 +429,20 @@ describe("manifest validation", () => {
     );
   });
 
+  it("allows one-time output secrets only on strongly confirmed non-idempotent operations", () => {
+    const base = testManifest("examplefn").operations[0]!;
+    const invalid = testManifest("examplefn", { operations: [{
+      ...base,
+      redaction: { allowOutputFields: ["token"] },
+      safety: { classification: "write", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "recent-auth", reason: "Issue one token." }, audit: "required" },
+      mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    }] });
+    expect(validateAdminCapabilityManifest(invalid)).toContainEqual(expect.objectContaining({
+      path: "$.operations[0].redaction.allowOutputFields",
+      message: "one-time output secrets require audited, confirmed, non-idempotent recent-auth, MFA, or approval",
+    }));
+  });
+
   it("rejects destructive collection targets", () => {
     const manifest = testManifest("examplefn");
     const invalid = testManifest("examplefn", {
@@ -427,5 +471,72 @@ describe("manifest validation", () => {
         message: "destructive targets must identify one resource",
       }),
     );
+  });
+
+  it("compiles every nested schema regex during registry startup", () => {
+    const base = testManifest("examplefn");
+    const invalid = testManifest("examplefn", {
+      operations: [{
+        ...base.operations[0]!,
+        inputSchema: {
+          type: "object",
+          properties: { filter: { type: "object", properties: { name: { type: "string", pattern: "[" } } } },
+          additionalProperties: false,
+        },
+      }],
+    });
+    const issues = validateAdminCapabilityManifest(invalid);
+    expect(issues).toContainEqual(expect.objectContaining({
+      path: "$.operations[0].inputSchema.properties.filter.properties.name.pattern",
+      message: "must be a valid regular expression",
+    }));
+    expect(() => createAdminRegistry({
+      adapters: [createAdminCapabilityAdapter(invalid, { "examplefn.records.list": async () => ({ items: [] }) })],
+      enabledModules: ["examplefn"],
+    })).toThrow(/Invalid admin capability manifest/);
+  });
+
+  it("validates resource and operation minimum scope inheritance", () => {
+    const base = testManifest("examplefn");
+    const invalid = testManifest("examplefn", {
+      scopeLevels: ["installation", "workspace", "project", "environment"],
+      resources: [{
+        id: "records",
+        label: "Records",
+        description: "Records.",
+        risk: "sensitive",
+        idField: "id",
+        minimumScope: "project",
+      }],
+      operations: [{ ...base.operations[0]!, minimumScope: "workspace" }],
+    });
+    expect(validateAdminCapabilityManifest(invalid)).toContainEqual(expect.objectContaining({
+      path: "$.operations[0].minimumScope",
+      message: "must be the resource minimum scope or a deeper descendant",
+    }));
+    const compatibleAlias = testManifest("examplefn", {
+      scopeLevels: ["installation", "organization"],
+    });
+    expect(validateAdminCapabilityManifest(compatibleAlias)).toContainEqual(expect.objectContaining({
+      path: "$.scopeLevels",
+      message: "must not contain duplicate scope levels",
+    }));
+  });
+
+  it("requires high-risk confirmation metadata to activate confirmation", () => {
+    const base = testManifest("examplefn");
+    const invalid = testManifest("examplefn", {
+      operations: [{
+        ...base.operations[0]!,
+        safety: {
+          ...base.operations[0]!.safety,
+          confirmation: { risk: "high", method: "mfa", reason: "Rotate production credentials." },
+        },
+      }],
+    });
+    expect(validateAdminCapabilityManifest(invalid)).toContainEqual(expect.objectContaining({
+      path: "$.operations[0].safety.requiresConfirmation",
+      message: "must be true when high-risk confirmation metadata is declared",
+    }));
   });
 });

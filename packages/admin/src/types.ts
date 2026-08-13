@@ -1,6 +1,10 @@
-export type AdminScopeLevel = "organization" | "workspace" | "project" | "environment";
+/**
+ * Administration scopes form one strict hierarchy. `organization` remains a
+ * compatibility alias for the installation root used by early manifests.
+ */
+export type AdminScopeLevel = "installation" | "organization" | "workspace" | "project" | "environment";
 
-export type AdminAvailability = "required-product" | "optional-product" | "nested";
+export type AdminAvailability = "required-product" | "optional-product" | "nested" | "folded" | "unavailable";
 
 export type AdminOperationClassification = "read" | "write" | "destructive";
 
@@ -46,10 +50,12 @@ export interface AdminObjectSchema extends AdminJsonSchema {
 }
 
 export interface AdminScope {
-  organizationId: string;
-  workspaceId: string;
-  projectId: string;
-  environmentId: string;
+  installationId?: string;
+  /** @deprecated Use installationId. Accepted as the installation root for compatibility. */
+  organizationId?: string;
+  workspaceId?: string;
+  projectId?: string;
+  environmentId?: string;
   namespace?: string;
   region?: string;
 }
@@ -86,6 +92,13 @@ export interface AdminSafetyDefinition {
   classification: AdminOperationClassification;
   idempotent?: boolean;
   requiresConfirmation?: boolean;
+  /** Describes the assurance expected from a confirmation service. */
+  confirmation?: {
+    risk: "high" | "critical";
+    method: "explicit" | "recent-auth" | "mfa" | "approval";
+    reason: string;
+    maxAgeSeconds?: number;
+  };
   audit?: "required" | "optional" | "none";
 }
 
@@ -109,15 +122,16 @@ export interface AdminMcpDefinition {
   annotations?: Readonly<Record<string, unknown>>;
 }
 
-export type AdminRedactionDefinition =
-  | {
-      inputFields: readonly string[];
-      outputFields?: readonly string[];
-    }
-  | {
-      inputFields?: readonly string[];
-      outputFields: readonly string[];
-    };
+export interface AdminRedactionDefinition {
+  inputFields?: readonly string[];
+  outputFields?: readonly string[];
+  /**
+   * Explicit one-time outward secret fields. These are only valid for audited,
+   * confirmed, non-idempotent operations so plaintext never enters the durable
+   * idempotency result store.
+   */
+  allowOutputFields?: readonly string[];
+}
 
 export type AdminOperationTargetDefinition =
   | {
@@ -142,6 +156,8 @@ export interface AdminOperationDefinition<
   outputSchema?: AdminJsonSchema;
   route: AdminRouteDefinition | string;
   permission: string;
+  /** Deepest ancestor required before this operation may be discovered or invoked. */
+  minimumScope?: AdminScopeLevel;
   safety: AdminSafetyDefinition;
   pagination?: AdminPaginationDefinition;
   mcp?: AdminMcpDefinition | boolean;
@@ -187,6 +203,8 @@ export interface AdminResourceDefinition {
   description: string;
   icon?: string;
   risk: "standard" | "sensitive";
+  /** Default minimum scope for operations targeting this resource. */
+  minimumScope?: AdminScopeLevel;
   idField: string;
   displayFields?: readonly string[];
   searchableFields?: readonly string[];
@@ -203,6 +221,8 @@ export interface AdminCapabilityManifest {
   description: string;
   category: string;
   availability: AdminAvailability;
+  /** Required when the package has no truthful domain-backed operator service yet. */
+  unavailableReason?: string;
   scopeLevels: readonly AdminScopeLevel[];
   owner?: AdminCapabilityOwner;
   dependencies?: readonly (AdminDependencyDefinition | string)[];

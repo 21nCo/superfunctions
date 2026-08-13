@@ -2,6 +2,7 @@ import type { McpFnObjectSchema, McpFnToolDefinition } from "@mcpfn/core";
 import { AdminError } from "./errors.js";
 import type { AdminDispatcher } from "./dispatcher.js";
 import type { AdminCapabilityRegistry, AdminRegistryOperation } from "./registry.js";
+import { adminOperationMinimumScope } from "./scope.js";
 import type { AdminOperationContext, AdminResult } from "./types.js";
 
 export interface AdminMcpProjectionOptions {
@@ -112,11 +113,16 @@ export function projectAdminMcpTools(
           moduleId: entry.moduleId,
           operationId: entry.operation.id,
           permission: entry.operation.permission,
+          minimumScope: adminOperationMinimumScope(entry.manifest, entry.operation),
           safety: entry.operation.safety,
           capabilityVersion: entry.manifest.version,
           ...(entry.operation.pagination ? { pagination: entry.operation.pagination } : {}),
           ...(entry.operation.target ? { target: entry.operation.target } : {}),
-          ...(entry.operation.redaction ? { redaction: entry.operation.redaction } : {}),
+          ...(entry.operation.redaction ? { redaction: {
+            ...(entry.operation.redaction.inputFields ? { inputFields: entry.operation.redaction.inputFields } : {}),
+            ...(entry.operation.redaction.outputFields ? { outputFields: entry.operation.redaction.outputFields } : {}),
+            ...(entry.operation.redaction.allowOutputFields ? { oneTimeOutputFields: entry.operation.redaction.allowOutputFields } : {}),
+          } } : {}),
         },
       },
       handler: async (args, context) => {

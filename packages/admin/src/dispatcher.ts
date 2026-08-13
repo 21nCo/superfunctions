@@ -1,4 +1,4 @@
-import { createAdminAuditId, redactAdminValue, redactDeclaredAdminValue, type AdminAuditIdFactory, type AdminAuditSink } from "./audit.js";
+import { createAdminAuditId, redactAdminOutputValue, redactAdminValue, type AdminAuditIdFactory, type AdminAuditSink } from "./audit.js";
 import { AdminError, normalizeAdminError } from "./errors.js";
 import {
   beginAdminIdempotency,
@@ -7,6 +7,7 @@ import {
   type AdminIdempotencyStore,
 } from "./idempotency.js";
 import type { AdminCapabilityRegistry, AdminRegistryOperation } from "./registry.js";
+import { adminOperationMinimumScope, assertAdminScopeHierarchy, assertAdminScopeMinimum } from "./scope.js";
 import { assertAdminValue, validateAdminValue } from "./validator.js";
 import type {
   AdminOperationContext,
@@ -27,6 +28,33 @@ export interface AdminPolicyEvaluator {
     input: unknown;
     context: AdminOperationContext;
   }): Promise<AdminPolicyDecision> | AdminPolicyDecision;
+  /**
+   * Context-only discovery decision. If omitted, authorize is invoked with an
+   * undefined input so existing contextual policies still fail closed.
+   */
+  discover?(request: {
+    entry: AdminRegistryOperation;
+    context: AdminOperationContext;
+  }): Promise<AdminPolicyDecision> | AdminPolicyDecision;
+}
+
+export async function evaluateAdminDiscoveryPolicy(
+  policy: AdminPolicyEvaluator | undefined,
+  entry: AdminRegistryOperation,
+  context: AdminOperationContext,
+): Promise<AdminPolicyDecision> {
+  const permissions = context.actor.permissions ?? [];
+  if (!permissions.includes("*") && !permissions.includes(entry.operation.permission)) {
+    return { allowed: false, reason: "The active actor cannot discover this operation." };
+  }
+  if (!policy) return { allowed: true };
+  try {
+    return policy.discover
+      ? await policy.discover({ entry, context })
+      : await policy.authorize({ entry, input: undefined, context });
+  } catch {
+    return { allowed: false, reason: "The contextual policy could not authorize discovery." };
+  }
 }
 
 export interface AdminConfirmationVerifier {
@@ -73,6 +101,29 @@ function immutableDispatchRequest(request: AdminDispatchRequest): AdminDispatchR
   };
 }
 
+function outwardAdminResult<T>(
+  result: AdminResult<T>,
+  entry: AdminRegistryOperation,
+): AdminResult<T> {
+  const fields = entry.operation.redaction?.outputFields ?? [];
+  const allowed = entry.operation.redaction?.allowOutputFields ?? [];
+  if (result.ok === false) {
+    return result.error.details === undefined
+      ? result
+      : {
+          ...result,
+          error: { ...result.error, details: redactAdminValue(result.error.details, fields) },
+        };
+  }
+  return {
+    ...result,
+    data: redactAdminOutputValue(result.data, fields, allowed) as T,
+    ...(result.meta === undefined
+      ? {}
+      : { meta: redactAdminOutputValue(result.meta, fields, allowed) as Readonly<Record<string, unknown>> }),
+  };
+}
+
 export class AdminDispatcher {
   private readonly registry: AdminCapabilityRegistry;
   private readonly policy?: AdminPolicyEvaluator;
@@ -104,6 +155,8 @@ export class AdminDispatcher {
     let terminalAuditWritten = false;
     let domainInvoked = false;
     let domainCompleted = false;
+    let domainResponse: AdminOperationResult<T> | undefined;
+    let idempotencyPersisted = false;
     let policyMetadata: Readonly<Record<string, unknown>> | undefined;
     try {
       this.assertContext(request.context);
@@ -117,9 +170,10 @@ export class AdminDispatcher {
       // actor permissions or tenant scope after validation.
       request = immutableDispatchRequest(request);
 
-      if (!entry.manifest.scopeLevels.some((level) => this.scopeSupports(level, request.context))) {
-        throw new AdminError("forbidden", "The operation is unavailable at the active scope.");
-      }
+      assertAdminScopeMinimum(
+        request.context.scope,
+        adminOperationMinimumScope(entry.manifest, entry.operation),
+      );
       const permissionDecision = this.defaultPolicy(entry, request.context);
       if (!permissionDecision.allowed) {
         throw new AdminError("forbidden", "The active actor cannot perform this operation.");
@@ -155,16 +209,37 @@ export class AdminDispatcher {
       if (identity && this.idempotency) {
         const reservation = await beginAdminIdempotency<T>(this.idempotency, identity, request.input);
         if (reservation.status === "replay") {
-          const prior = reservation.record.result;
+          const prior = outwardAdminResult(reservation.record.result, entry);
           const originalAuditId = reservation.record.auditId ?? prior.auditId;
+          const recoveringAudit = reservation.record.audit?.status === "pending";
           let replayAuditId: string | undefined;
           if (this.shouldAudit(entry)) {
             terminalAuditAttempted = true;
             const candidateAuditId = this.createAuditId();
             try {
-              await this.writeAudit(entry, request, startedAt, candidateAuditId, "replayed", undefined, policyMetadata);
+              await this.writeAudit(
+                entry,
+                request,
+                startedAt,
+                candidateAuditId,
+                recoveringAudit ? "succeeded" : "replayed",
+                undefined,
+                policyMetadata,
+              );
               terminalAuditWritten = true;
               replayAuditId = candidateAuditId;
+              if (recoveringAudit) {
+                try {
+                  await this.idempotency.finalizeAudit?.(
+                    reservation.record.identity,
+                    reservation.record.fingerprint,
+                    { auditId: candidateAuditId, completedAt: this.now().toISOString() },
+                  );
+                } catch {
+                  // The durable domain result and audit receipt remain valid.
+                  // A later replay may repeat the terminal audit at-least-once.
+                }
+              }
             } catch (error) {
               if (entry.operation.safety.audit === "required") throw error;
             }
@@ -176,6 +251,7 @@ export class AdminDispatcher {
             meta: {
               ...prior.meta,
               idempotencyReplay: true,
+              ...(recoveringAudit ? { recoveredTerminalAudit: Boolean(replayAuditId) } : {}),
               ...(originalAuditId ? { originalAuditId } : {}),
             },
           };
@@ -234,14 +310,46 @@ export class AdminDispatcher {
       ) {
         throw new AdminError("internal", "The administration service returned invalid metadata.");
       }
-      const externalData = redactDeclaredAdminValue(result.data, entry.operation.redaction?.outputFields ?? []) as T;
+      const externalData = redactAdminOutputValue(result.data, entry.operation.redaction?.outputFields ?? [], entry.operation.redaction?.allowOutputFields ?? []) as T;
       const externalMeta = result.meta === undefined
         ? undefined
-        : redactDeclaredAdminValue(
+        : redactAdminOutputValue(
             result.meta,
             entry.operation.redaction?.outputFields ?? [],
+            entry.operation.redaction?.allowOutputFields ?? [],
           ) as Readonly<Record<string, unknown>>;
       domainCompleted = true;
+
+      domainResponse = {
+        data: externalData,
+        ok: true,
+        ...(result.page ? { page: result.page } : {}),
+        ...(result.warnings ? { warnings: result.warnings } : {}),
+        requestId: request.context.requestId,
+        correlationId: request.context.correlationId,
+        ...(externalMeta ? { meta: externalMeta } : {}),
+      };
+      if (idempotencyClaim && idempotencyIdentity && this.idempotency) {
+        try {
+          await this.persistDomainOutcome(
+            idempotencyClaim,
+            idempotencyIdentity,
+            domainResponse,
+            this.shouldAudit(entry) ? "pending" : "not-required",
+          );
+          idempotencyPersisted = true;
+        } catch (cause) {
+          throw new AdminError(
+            "dependency_unavailable",
+            "The domain operation completed, but its result is pending durable idempotency reconciliation.",
+            {
+              retryable: true,
+              details: { outcome: "domain_completed", reconciliationRequired: true },
+              cause,
+            },
+          );
+        }
+      }
 
       if (this.shouldAudit(entry)) {
         const candidateAuditId = this.createAuditId();
@@ -255,30 +363,15 @@ export class AdminDispatcher {
         }
       }
       const response: AdminOperationResult<T> = {
-        data: externalData,
-        ok: true,
-        ...(result.page ? { page: result.page } : {}),
-        ...(result.warnings ? { warnings: result.warnings } : {}),
-        requestId: request.context.requestId,
-        correlationId: request.context.correlationId,
+        ...domainResponse,
         ...(auditId ? { auditId } : {}),
-        ...(externalMeta ? { meta: externalMeta } : {}),
       };
-      if (idempotencyClaim && idempotencyIdentity && this.idempotency) {
+      if (idempotencyPersisted && idempotencyClaim && idempotencyIdentity && this.idempotency) {
         try {
-          await this.idempotency.complete(idempotencyClaim, {
-            identity: idempotencyIdentity,
-            fingerprint: idempotencyClaim.fingerprint,
-            result: response,
-            auditId,
-            createdAt: this.now().toISOString(),
-          });
-        } catch (cause) {
-          throw new AdminError(
-            "dependency_unavailable",
-            "The domain operation completed, but its idempotency result could not be persisted; reconciliation is required.",
-            { retryable: false, cause },
-          );
+          await this.persistDomainOutcome(idempotencyClaim, idempotencyIdentity, response, "completed", auditId);
+        } catch {
+          // The domain result was already persisted before terminal audit. The
+          // response is safe; replay can reconcile the pending audit marker.
         }
       }
       return response;
@@ -316,7 +409,11 @@ export class AdminDispatcher {
             request,
             startedAt,
             failureAuditId,
-            normalized.error.code === "forbidden" || normalized.error.code === "precondition_failed" ? "denied" : "failed",
+            domainCompleted
+              ? "succeeded"
+              : normalized.error.code === "forbidden" || normalized.error.code === "precondition_failed"
+                ? "denied"
+                : "failed",
             normalized.error.code,
             policyMetadata,
           );
@@ -332,6 +429,17 @@ export class AdminDispatcher {
         try {
           if (!domainInvoked) {
             await this.idempotency.release(idempotencyClaim);
+          } else if (domainCompleted && domainResponse && !idempotencyPersisted) {
+            // Completion is retry-safe for the same fenced claim. This covers
+            // stores that committed then lost their acknowledgement as well as
+            // one-shot availability faults, without re-running the domain.
+            await this.persistDomainOutcome(
+              idempotencyClaim,
+              idempotencyIdentity,
+              domainResponse,
+              terminalAuditWritten ? "completed" : entry && this.shouldAudit(entry) ? "pending" : "not-required",
+              terminalAuditWritten ? auditId : undefined,
+            );
           } else if (!domainCompleted) {
             // Once the handler was entered, even retryable failures stay
             // fenced: execution may have committed before the error surfaced.
@@ -357,19 +465,7 @@ export class AdminDispatcher {
     if (typeof context.requestId !== "string" || !context.requestId.trim() || typeof context.source !== "string" || !context.source.trim()) {
       throw new AdminError("invalid_argument", "Request identity and source are required.");
     }
-    const required = ["organizationId", "workspaceId", "projectId", "environmentId"] as const;
-    for (const key of required) {
-      if (typeof context.scope?.[key] !== "string" || !context.scope[key].trim()) {
-        throw new AdminError("invalid_argument", `Administration scope requires ${key}.`);
-      }
-    }
-  }
-
-  private scopeSupports(level: "organization" | "workspace" | "project" | "environment", context: AdminOperationContext): boolean {
-    return level === "organization" ? Boolean(context.scope.organizationId)
-      : level === "workspace" ? Boolean(context.scope.workspaceId)
-      : level === "project" ? Boolean(context.scope.projectId)
-      : Boolean(context.scope.environmentId);
+    assertAdminScopeHierarchy(context.scope);
   }
 
   private defaultPolicy(entry: AdminRegistryOperation, context: AdminOperationContext): AdminPolicyDecision {
@@ -384,6 +480,29 @@ export class AdminDispatcher {
 
   private shouldAudit(entry: AdminRegistryOperation): boolean {
     return entry.operation.safety.audit === "required" || (entry.operation.safety.audit === "optional" && Boolean(this.audit));
+  }
+
+  private async persistDomainOutcome<T>(
+    claim: AdminIdempotencyClaim,
+    identity: AdminIdempotencyIdentity,
+    result: AdminResult<T>,
+    auditStatus: "pending" | "completed" | "not-required",
+    auditId?: string,
+  ): Promise<void> {
+    if (!this.idempotency) return;
+    const timestamp = this.now().toISOString();
+    await this.idempotency.complete(claim, {
+      identity,
+      fingerprint: claim.fingerprint,
+      result,
+      ...(auditId ? { auditId } : {}),
+      audit: {
+        status: auditStatus,
+        ...(auditId ? { auditId } : {}),
+        updatedAt: timestamp,
+      },
+      createdAt: timestamp,
+    });
   }
 
   private async writeAudit(

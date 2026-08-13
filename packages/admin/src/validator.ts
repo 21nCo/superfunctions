@@ -1,4 +1,5 @@
 import { AdminError } from "./errors.js";
+import { adminScopeLevelRank, canonicalAdminScopeLevel } from "./scope.js";
 import type {
   AdminCapabilityManifest,
   AdminJsonSchema,
@@ -13,6 +14,16 @@ export interface AdminValidationIssue {
 
 const ID_PATTERN = /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/;
 const MODULE_PATTERN = /^[a-z][a-z0-9-]*$/;
+const COMPILED_PATTERNS = new WeakMap<AdminJsonSchema, RegExp>();
+
+function compiledPattern(schema: AdminJsonSchema): RegExp | undefined {
+  if (schema.pattern === undefined) return undefined;
+  const existing = COMPILED_PATTERNS.get(schema);
+  if (existing) return existing;
+  const compiled = new RegExp(schema.pattern);
+  COMPILED_PATTERNS.set(schema, compiled);
+  return compiled;
+}
 
 function valueType(value: unknown): string {
   if (value === null) return "null";
@@ -78,12 +89,18 @@ export function validateAdminValue(
         keyword: "maxLength",
       });
     }
-    if (schema.pattern && !new RegExp(schema.pattern).test(value)) {
-      issues.push({
-        path,
-        message: "does not match the required pattern",
-        keyword: "pattern",
-      });
+    if (schema.pattern) {
+      try {
+        if (!compiledPattern(schema)!.test(value)) {
+          issues.push({
+            path,
+            message: "does not match the required pattern",
+            keyword: "pattern",
+          });
+        }
+      } catch {
+        issues.push({ path, message: "declares an invalid regular expression", keyword: "pattern" });
+      }
     }
   }
 
@@ -269,6 +286,13 @@ function validateSupportedSchema(
   if (types.some((type) => !supportedTypes.has(type)) || new Set(types).size !== types.length) {
     issues.push({ path: `${path}.type`, message: "must contain unique supported JSON types" });
   }
+  if (schema.pattern !== undefined) {
+    try {
+      compiledPattern(schema);
+    } catch {
+      issues.push({ path: `${path}.pattern`, message: "must be a valid regular expression" });
+    }
+  }
   for (const [name, property] of Object.entries(schema.properties ?? {})) {
     validateSupportedSchema(property, `${path}.properties.${name}`, issues);
   }
@@ -354,20 +378,36 @@ export function validateAdminCapabilityManifest(
       path: "$.scopeLevels",
       message: "must contain at least one supported level",
     });
-  const supportedScopeLevels = new Set(["organization", "workspace", "project", "environment"]);
+  const supportedScopeLevels = new Set(["installation", "organization", "workspace", "project", "environment"]);
   if (manifest.scopeLevels.some((level) => !supportedScopeLevels.has(level))) {
     issues.push({ path: "$.scopeLevels", message: "must contain only supported scope levels" });
   }
-  if (new Set(manifest.scopeLevels).size !== manifest.scopeLevels.length) {
+  if (new Set(manifest.scopeLevels.map(canonicalAdminScopeLevel)).size !== manifest.scopeLevels.length) {
     issues.push({ path: "$.scopeLevels", message: "must not contain duplicate scope levels" });
   }
-  if (manifest.availability === "nested" && !manifest.owner)
-    issues.push({ path: "$.owner", message: "is required for nested modules" });
-  if (manifest.availability !== "nested" && manifest.owner)
+  if (["nested", "folded"].includes(manifest.availability) && !manifest.owner)
+    issues.push({ path: "$.owner", message: "is required for nested and folded modules" });
+  if (!["nested", "folded"].includes(manifest.availability) && manifest.owner)
     issues.push({
       path: "$.owner",
-      message: "is only valid for nested modules",
+      message: "is only valid for nested or folded modules",
     });
+  if (manifest.availability === "folded") {
+    if (manifest.operations.length > 0)
+      issues.push({ path: "$.operations", message: "must be empty for folded modules because the owner exposes their operations" });
+    if (manifest.navigation && (Array.isArray(manifest.navigation) ? manifest.navigation.length > 0 : true))
+      issues.push({ path: "$.navigation", message: "must be empty for folded modules" });
+  }
+  if (manifest.availability === "unavailable") {
+    if (!manifest.unavailableReason?.trim())
+      issues.push({ path: "$.unavailableReason", message: "is required for unavailable modules" });
+    if (manifest.operations.length > 0)
+      issues.push({ path: "$.operations", message: "must be empty for unavailable modules" });
+    if (manifest.navigation && (Array.isArray(manifest.navigation) ? manifest.navigation.length > 0 : true))
+      issues.push({ path: "$.navigation", message: "must be empty for unavailable modules" });
+  } else if (manifest.unavailableReason !== undefined) {
+    issues.push({ path: "$.unavailableReason", message: "is only valid for unavailable modules" });
+  }
   for (const [index, dependency] of (manifest.dependencies ?? []).entries()) {
     const moduleId = typeof dependency === "string"
       ? dependency
@@ -470,11 +510,15 @@ export function validateAdminCapabilityManifest(
     if (issue) issues.push({ path: "$.health.path", message: issue });
   }
   const resourceIds = new Set<string>();
+  const manifestScopeLevels = new Set(manifest.scopeLevels.map(canonicalAdminScopeLevel));
   for (const [index, resource] of (manifest.resources ?? []).entries()) {
     const basePath = `$.resources[${index}]`;
     if (!ID_PATTERN.test(resource.id) || resource.id.includes(".")) issues.push({ path: `${basePath}.id`, message: "must be a stable resource identifier" });
     if (resourceIds.has(resource.id)) issues.push({ path: `${basePath}.id`, message: "duplicates another resource" });
     resourceIds.add(resource.id);
+    if (resource.minimumScope && !manifestScopeLevels.has(canonicalAdminScopeLevel(resource.minimumScope))) {
+      issues.push({ path: `${basePath}.minimumScope`, message: "must be one of the manifest scope levels" });
+    }
     for (const field of ["label", "description", "idField"] as const) {
       if (!resource[field].trim()) issues.push({ path: `${basePath}.${field}`, message: "must not be empty" });
     }
@@ -545,6 +589,20 @@ export function validateAdminCapabilityManifest(
         path: `$.operations[${index}].permission`,
         message: "must not be empty",
       });
+    const operationResource = manifest.resources?.find((resource) => resource.id === operation.target?.resource);
+    if (operation.minimumScope && !manifestScopeLevels.has(canonicalAdminScopeLevel(operation.minimumScope))) {
+      issues.push({ path: `$.operations[${index}].minimumScope`, message: "must be one of the manifest scope levels" });
+    }
+    if (
+      operation.minimumScope &&
+      operationResource?.minimumScope &&
+      adminScopeLevelRank(operation.minimumScope) < adminScopeLevelRank(operationResource.minimumScope)
+    ) {
+      issues.push({
+        path: `$.operations[${index}].minimumScope`,
+        message: "must be the resource minimum scope or a deeper descendant",
+      });
+    }
     if (!operation.target) {
       issues.push({
         path: `$.operations[${index}].target`,
@@ -569,7 +627,24 @@ export function validateAdminCapabilityManifest(
         message: "destructive operations must require confirmation",
       });
     }
-    for (const [kind, fields] of Object.entries(operation.redaction ?? {})) {
+    if (operation.safety.confirmation && !operation.safety.requiresConfirmation) {
+      issues.push({
+        path: `$.operations[${index}].safety.requiresConfirmation`,
+        message: "must be true when high-risk confirmation metadata is declared",
+      });
+    }
+    if (operation.safety.confirmation) {
+      if (!operation.safety.confirmation.reason.trim()) {
+        issues.push({ path: `$.operations[${index}].safety.confirmation.reason`, message: "must not be empty" });
+      }
+      if (
+        operation.safety.confirmation.maxAgeSeconds !== undefined &&
+        (!Number.isInteger(operation.safety.confirmation.maxAgeSeconds) || operation.safety.confirmation.maxAgeSeconds <= 0)
+      ) {
+        issues.push({ path: `$.operations[${index}].safety.confirmation.maxAgeSeconds`, message: "must be a positive integer" });
+      }
+    }
+    for (const [kind, fields] of Object.entries(operation.redaction ?? {}) as Array<[string, readonly string[] | undefined]>) {
       const normalized = (fields ?? []).map((field) =>
         field.trim().replace(/[-_\s]/g, "").toLowerCase(),
       );
@@ -589,10 +664,31 @@ export function validateAdminCapabilityManifest(
           message: "must contain unique normalized field names",
         });
     }
+    const allowOutputFields = operation.redaction?.allowOutputFields ?? [];
+    if (allowOutputFields.length > 0) {
+      const confirmation = operation.safety.confirmation;
+      if (
+        operation.safety.audit !== "required" ||
+        !operation.safety.requiresConfirmation ||
+        !confirmation ||
+        !["recent-auth", "mfa", "approval"].includes(confirmation.method) ||
+        operation.safety.idempotent !== false
+      ) {
+        issues.push({
+          path: `$.operations[${index}].redaction.allowOutputFields`,
+          message: "one-time output secrets require audited, confirmed, non-idempotent recent-auth, MFA, or approval",
+        });
+      }
+      const denied = new Set((operation.redaction?.outputFields ?? []).map((field) => field.replace(/[-_\s]/g, "").toLowerCase()));
+      if (allowOutputFields.some((field) => denied.has(field.replace(/[-_\s]/g, "").toLowerCase()))) {
+        issues.push({ path: `$.operations[${index}].redaction`, message: "cannot both redact and allow the same output field" });
+      }
+    }
     if (
       [
         ...(operation.redaction?.inputFields ?? []),
         ...(operation.redaction?.outputFields ?? []),
+        ...(operation.redaction?.allowOutputFields ?? []),
       ].length > 0 &&
       operation.safety.audit !== "required"
     ) {

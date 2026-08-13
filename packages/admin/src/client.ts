@@ -246,13 +246,47 @@ type CapabilityOperationById<
   ? AdminOperationDefinition
   : Extract<CapabilityOperation<TManifest>, { id: TId }>;
 
+export interface AdminCapabilityAvailability {
+  available: boolean;
+  moduleId: string;
+  installedVersion?: string;
+  manifest?: AdminCapabilityManifest;
+}
+
+export type CapabilityAdminOperationMethods<TManifest extends AdminCapabilityManifest> = {
+  [TId in CapabilityOperationId<TManifest>]: (
+    input: AdminOperationInput<CapabilityOperationById<TManifest, TId>>,
+    options?: AdminClientRequestOptions,
+  ) => Promise<AdminOperationResult<AdminOperationOutput<CapabilityOperationById<TManifest, TId>>>>;
+};
+
 export interface CapabilityAdminClient<TManifest extends AdminCapabilityManifest> {
   readonly manifest: TManifest;
+  /** Exact operation-ID methods generated from the function-owned manifest. */
+  readonly operations: CapabilityAdminOperationMethods<TManifest>;
+  /** Checks runtime installation selection instead of assuming package presence means availability. */
+  availability(options?: AdminClientRequestOptions): Promise<AdminCapabilityAvailability>;
   invoke<TId extends CapabilityOperationId<TManifest>>(
     operationId: TId,
     input: AdminOperationInput<CapabilityOperationById<TManifest, TId>>,
     options?: AdminClientRequestOptions,
   ): Promise<AdminOperationResult<AdminOperationOutput<CapabilityOperationById<TManifest, TId>>>>;
+  /** Iterates canonical cursor envelopes without hiding request/audit receipts. */
+  pages<TId extends CapabilityOperationId<TManifest>>(
+    operationId: TId,
+    input: AdminOperationInput<CapabilityOperationById<TManifest, TId>>,
+    options?: AdminClientRequestOptions,
+  ): AsyncGenerator<AdminOperationResult<AdminOperationOutput<CapabilityOperationById<TManifest, TId>>>>;
+}
+
+function cursorFromResult(result: AdminOperationResult<unknown>, outputPath = "nextCursor"): string | null {
+  if (result.page?.nextCursor !== undefined) return result.page.nextCursor ?? null;
+  let value: unknown = result.data;
+  for (const segment of outputPath.split(".").filter(Boolean)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    value = (value as Record<string, unknown>)[segment];
+  }
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 /** Creates a function-scoped SDK while preserving manifest operation inference. */
@@ -260,18 +294,57 @@ export function createCapabilityAdminClient<const TManifest extends AdminCapabil
   manifest: TManifest,
   client: AdminClient,
 ): CapabilityAdminClient<TManifest> {
+  const invoke = async <TId extends CapabilityOperationId<TManifest>>(
+    operationId: TId,
+    input: AdminOperationInput<CapabilityOperationById<TManifest, TId>>,
+    options?: AdminClientRequestOptions,
+  ): Promise<AdminOperationResult<AdminOperationOutput<CapabilityOperationById<TManifest, TId>>>> =>
+    client.invokeOperation<AdminOperationOutput<CapabilityOperationById<TManifest, TId>>>(
+      operationId,
+      input,
+      options,
+    );
+  const operations = Object.fromEntries(
+    manifest.operations.map((operation) => [
+      operation.id,
+      (input: unknown, options?: AdminClientRequestOptions) =>
+        client.invokeOperation(operation.id, input, options),
+    ]),
+  ) as CapabilityAdminOperationMethods<TManifest>;
   return {
     manifest,
-    async invoke<TId extends CapabilityOperationId<TManifest>>(
-      operationId: TId,
-      input: AdminOperationInput<CapabilityOperationById<TManifest, TId>>,
-      options?: AdminClientRequestOptions,
-    ): Promise<AdminOperationResult<AdminOperationOutput<CapabilityOperationById<TManifest, TId>>>> {
-      return client.invokeOperation<AdminOperationOutput<CapabilityOperationById<TManifest, TId>>>(
-        operationId,
-        input,
-        options,
-      );
+    operations,
+    async availability(options) {
+      const installed = (await client.registry(options)).find((entry) => entry.id === manifest.id);
+      return installed
+        ? { available: true, moduleId: manifest.id, installedVersion: installed.version, manifest: installed }
+        : { available: false, moduleId: manifest.id };
+    },
+    invoke,
+    async *pages(operationId, input, options) {
+      const definition = manifest.operations.find((operation) => operation.id === operationId);
+      if (!definition?.pagination) {
+        throw new AdminClientError(`Operation ${String(operationId)} is not cursor paginated.`, 400);
+      }
+      if (!input || typeof input !== "object" || Array.isArray(input)) {
+        throw new AdminClientError(`Paginated operation ${String(operationId)} requires an object input.`, 400);
+      }
+      const cursorInput = definition.pagination.cursorInput ?? "cursor";
+      const nextCursorOutput = definition.pagination.nextCursorOutput ?? "nextCursor";
+      let cursor = (input as Record<string, unknown>)[cursorInput];
+      const observed = new Set<string>();
+      while (true) {
+        const requestInput = { ...(input as Record<string, unknown>), ...(cursor ? { [cursorInput]: cursor } : {}) };
+        const result = await invoke(operationId, requestInput as AdminOperationInput<CapabilityOperationById<TManifest, typeof operationId>>, options);
+        yield result;
+        const nextCursor = cursorFromResult(result, nextCursorOutput);
+        if (!nextCursor) return;
+        if (observed.has(nextCursor)) {
+          throw new AdminClientError(`Operation ${String(operationId)} returned a repeated pagination cursor.`, 500);
+        }
+        observed.add(nextCursor);
+        cursor = nextCursor;
+      }
     },
   };
 }
