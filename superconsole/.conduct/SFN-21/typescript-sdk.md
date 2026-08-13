@@ -24,7 +24,20 @@ Per-request options accept additional headers, an abort signal, an idempotency k
 - `client.invoke(moduleId, route, input)` calls a discovered module route.
 - `client.invokeOperation(operationId, input)` calls the operation-ID transport.
 
-The client is intentionally transport-level in v1. Function `admin` packages publish typed capability manifests and server adapter/service contracts; they do not yet ship generated function-specific REST client methods. `invoke` and `invokeOperation` therefore accept transport-level `unknown` input. Generated per-module clients, operation-specific input/output types, automatic cursor iterators, and discovery-cached preflight checks require a later schema-generation pass and are not implemented yet.
+The shared `AdminClient` remains the language-neutral REST transport boundary.
+Each available function package publishes `create<Function>AdminClient(...)`,
+which wraps it with:
+
+- an exact operation-ID method map under `operations`;
+- `availability()` against the live enabled registry;
+- typed `invoke(...)` where the function preserves operation input/output types;
+- `pages(...)`, an async cursor iterator that retains request/audit receipts.
+
+Functions migrated to real domain bindings also export operation input/output
+maps and typed service/adapter constructors. Generic `unknown` domain payloads
+are not accepted as proof that a function has a commercial admin API. A
+function without a canonical server/store is marked unavailable rather than
+publishing fictional generated methods.
 
 ## Mutations
 
@@ -37,6 +50,8 @@ Mutation options support:
 
 The returned administration envelope can expose `auditId`, `requestId`, correlation ID, replay/deduplication metadata, warnings, and domain data when supplied by the server.
 
+Named clients surface intentional one-time credentials only on operations whose manifests require audit, strong confirmation, and non-idempotent execution. Callers must capture that successful response immediately; the credential is never recoverable from audit, errors, or an idempotent replay.
+
 ## Errors
 
 The SDK throws `AdminClientError` with the HTTP status and normalized administration response when one was returned. The response carries the stable code, safe message/details, retryability, request ID, correlation ID, and audit ID supported by the server.
@@ -45,7 +60,7 @@ The v1 client performs no automatic retries. Callers may retry an idempotent mut
 
 ## Capability typing
 
-Manifest, operation, scope, result, and error types are exported by `@superfunctions/admin`. Runtime discovery determines which function capabilities are enabled. The server remains authoritative and returns not-found behavior for disabled modules; the v1 client does not cache discovery or manufacture local availability errors.
+Manifest, operation, scope, result, and error types are exported by `@superfunctions/admin`. Runtime discovery determines which function capabilities are enabled. The server remains authoritative: disabled modules are absent, while explicitly unavailable packages fail startup selection with their domain-binding reason. Function clients expose this through `availability()` without treating package installation as runtime enablement.
 
 ## Verification
 
@@ -56,3 +71,6 @@ Contract tests assert that:
 - idempotency and confirmation headers are emitted correctly;
 - normalized failures retain their response and HTTP status;
 - asynchronous authentication/header callbacks and abort signals are applied consistently.
+- capability operation maps preserve exact operation IDs;
+- availability reflects the live enabled registry;
+- page iterators forward cursors, preserve receipts, and reject repeated cursors.

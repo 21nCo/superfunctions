@@ -20,12 +20,14 @@
 Every function admin package proves that:
 
 - its manifest satisfies shared validation;
-- declared resources and operations match the normative inventory;
-- handlers forward actor, tenant, namespace/region, idempotency, and input to the injected service;
-- outputs and domain errors are returned without transport coupling;
+- declared resources and operations are a truthful subset of real public domain behavior;
+- exact handlers delegate through the owning function's service rather than a caller-supplied generic executor;
+- actor, scope, namespace/region, request identity, and idempotency reach the real domain boundary;
+- operation-specific schemas reject unsupported fields before domain execution;
+- functions without a canonical operator service are explicitly unavailable and expose no operations;
 - destructive/sensitive operations carry the required metadata;
 - nested modules declare the correct parent;
-- representative handlers never read a raw database or storage adapter.
+- representative integration tests exercise public domain services/adapters and cross-scope denial.
 
 ### Cross-surface contract tests
 

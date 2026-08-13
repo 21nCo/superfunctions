@@ -2,21 +2,67 @@
 
 The inventory defines the minimum real operator model for each module. Commercial products are comparison points for jobs and information architecture, not implementation dependencies.
 
-This table is the normative product coverage map, not a claim that every
-listed action already has its final domain-specific public request schema. The
-v1 packages register all listed resources/actions with target, permission,
-safety, audit, REST/OpenAPI, and MCP metadata through an injected service. An
-owning function must still stabilize required payload fields and generated
-client methods before treating a generic-payload action as a mature public API.
+The comparison tables are the product target, not an implementation claim.
+The live manifest is authoritative for what can be enabled today: it exposes a
+truthful subset with exact domain handlers and schemas. Unsupported target
+capabilities are omitted. A function with no canonical operator service is
+`unavailable` and exposes nothing; ContentFn is folded into CmsFn rather than
+duplicating its server. This deliberately leaves roadmap gaps visible instead
+of filling them with generic payload/execute façades.
 
-## Required modules
+## Live implementation status
+
+The catalog contains 29 administration packages: 18 required selectable
+modules, 2 optional selectable modules, 2 real nested modules, 1 folded empty
+module, and 6 unavailable empty modules. Only required and optional modules are
+independently selectable. Nested modules mount under their owner, folded
+modules cannot be selected independently, and unavailable modules fail closed.
+
+| Module | Live availability | Real implemented subset |
+| --- | --- | --- |
+| AuthFn | Required selectable | Scoped users and sessions: list/get/delete users, list a user's sessions, and revoke a session through AuthFn storage and hooks. |
+| BillFn | Required selectable | Products, plans, prices, subscriptions, entitlements, usage, payments, and reconciliation; change/cancel subscriptions, refund payments, and reconcile the provider through the configured BillFn instance. |
+| BrowseFn | Required selectable | Environment-bound provider availability, aggregate metrics, rate-limit state, sanitized lifecycle logs, and aggregate cache state; confirmed clearing of metrics, logs, or cache through the BrowseFn facade. |
+| CiFn | Required selectable | Control-plane runs, materialized jobs, redacted logs, and retained artifacts; trigger/retry/cancel runs and issue audited signed artifact downloads. |
+| CmsFn | Required selectable | Environment-bound ContentFn datasets, schemas, documents, and revisions; create/upsert/query/patch/delete, publish/unpublish, and restore revisions. |
+| CompFn | Required selectable | Scoped frameworks, controls, checks, evidence, and reports; collect evidence and generate auditor reports through the CompFn API. |
+| DataFn | Required selectable | Schemas, resources, relations, indices, capabilities, records, and query execution; query, mutate, and transact through the configured DataFn executor. |
+| FileFn | Required selectable | Authorized files, versions, upload sessions, grants, share links, policies, and processing artifacts; upload lifecycle, deletion, grants, one-time share creation/revocation, and processing through FileFn services. |
+| FlowFn | Required selectable | Environment-owned queues, jobs, workers, dead letters, and event log; pause/resume, enqueue, run/close workers, and redrive/delete/clean dead letters through FlowFn APIs. |
+| MailFn | Required selectable | Project-scoped projects, inboxes, messages, threads, drafts, attachments, credentials, domains, webhooks, retention, quotas, and audit events; the implemented inbox, message, draft, domain, webhook, credential, and retention actions. |
+| MemoryFn | Required selectable | Environment-scoped memory search and ingestion through the configured MemoryFn pipeline and storage adapter. |
+| PlugFn | Required selectable | Project-owned providers, connections, provider installations, workflows, webhook receipts/deliveries, and sync jobs; OAuth authorization, connection lifecycle, installation lifecycle, workflow controls, and sync-job controls. |
+| RecFn | Required selectable | Recording bots, recordings, transcripts, participants, chat, metadata, analytics, and webhooks through the RecFn router; bot leave/delete and webhook create/delete are the exposed mutations. |
+| SearchFn | Required selectable | Isolated adapter, index, and health inspection plus document index/batch-index/remove and index clear through the configured SearchAdapter. |
+| SecFn | Required selectable | Environments, namespaces, secret sets and members, secrets, audit events, scanner, and rate limits; lifecycle operations delegate to SecFn vault, scanner, audit, and limiter services. |
+| SendFn | Required selectable | Templates, delivery events, channel sends, suppressions, and device tokens; explicit email/SMS/WhatsApp/push, template, suppression, and device-token operations through SendFn. |
+| TestFn | Required selectable | Project-scoped persisted runs, redacted artifact metadata, analytics, visual diffs, and visual baselines; start/clean runs, compare screenshots, and update a confirmed baseline. |
+| WatchFn | Required selectable | WatchFn events, exception/message capture, and alert list/create backed by the configured WatchFn instance; it owns the CatchFn and LogFn navigation surfaces. |
+| CacheFn | Optional selectable | Environment/namespace-scoped key metadata and cache statistics; set/delete keys, invalidate tags, and clear a namespace without exposing cached values in reads. |
+| ProbeFn | Optional selectable; workspace-private | Sessions, checkpoints, event deltas, reports, and repository-relative artifact paths; session transitions, evidence capture/diff, checkpoint capture, and report export. The admin package remains workspace-private because ProbeFn's runtime dependencies are private. |
+| CatchFn | Nested real under WatchFn | Persisted bug reports: cursor list, get, and create through CatchFn storage, mounted at WatchFn errors. |
+| LogFn | Nested real under WatchFn | Emit structured events and flush configured LogFn sinks, mounted at WatchFn logs. |
+| ContentFn | Folded empty into CmsFn | No standalone resources, navigation, or operations. CmsFn owns the real ContentFn server-backed surface. |
+| ApiFn | Unavailable empty | No canonical persistent operator store/service; exposes no resources, navigation, or operations. |
+| BotFn | Unavailable empty | No canonical aggregate for bots, channels, deployments, commands, and conversations; exposes no resources, navigation, or operations. |
+| DocsFn | Unavailable empty | No canonical site CRUD or deployment control plane; exposes no resources, navigation, or operations. |
+| HostFn | Unavailable empty | CLI and command primitives do not form a reusable deployment/domain/traffic/secret operator API; exposes no resources, navigation, or operations. |
+| LangFn | Unavailable empty | Execution, model, and tracing primitives do not provide the advertised persistent operator registry; exposes no resources, navigation, or operations. |
+| UserFn | Unavailable empty | The client/UI engine cannot prove server-side scope or persistence ownership; exposes no resources, navigation, or operations. |
+
+## Commercial comparison roadmap
+
+The following tables describe the intended commercial-grade product breadth.
+They are roadmap targets, not claims about the live manifests above.
+
+### Required-module roadmap
 
 | Module | Commercial reference | Resources and views | Mutations and actions |
 | --- | --- | --- | --- |
 | AuthFn | Clerk, Auth0, Descope, Better Auth | users, identities, sessions, workspaces, memberships, roles, API keys, OAuth providers/connections, MFA, regions, auth health, audit | invite/block/delete user, revoke session, rotate/revoke key, manage role, reset MFA, configure provider |
 | BillFn | Stripe Billing, Paddle, Chargebee, RevenueCat | customers, products, plans, prices, subscriptions, entitlements, quotas, invoices, payments, usage, reconciliation, revenue | create/update catalog, grant entitlement, change/cancel subscription, issue credit/refund, reconcile provider |
 | BrowseFn | Firecrawl, Browserless, Apify | providers, credentials, scrape/crawl jobs, sessions, queues, cache, policies, usage, cost, errors | start/cancel/retry crawl, invalidate cache, configure provider/policy |
-| CiFn | GitHub Actions, CircleCI, Buildkite | projects, pipelines, runs, jobs, steps, runners, logs, artifacts, secrets, schedules, webhooks | trigger/retry/cancel run or job, manage runner, rotate secret, download/delete artifact |
+| CiFn | GitHub Actions, CircleCI, Buildkite | control-plane runs, materialized jobs/steps, redacted logs, retained artifacts | trigger/retry/cancel run, issue signed artifact download; unsupported project/pipeline/runner/secret/schedule/webhook administration is not advertised |
 | CmsFn | Sanity, Contentful | datasets, schemas, documents, drafts, revisions, assets, previews, workflows, releases, collaborators | create/edit/archive document, publish/unpublish, restore revision, upload asset, advance workflow |
 | ContentFn | Sanity Content Lake | nested in CmsFn: datasets, schema types, documents, drafts, revisions, assets, queries, webhooks | import/export, mutate document, publish draft, manage webhook |
 | CompFn | Vanta, Drata | frameworks, controls, checks, evidence, policies, risks, exceptions, owners, auditors, reports | map control, collect/approve evidence, accept risk, grant exception, generate report |
@@ -37,7 +83,7 @@ client methods before treating a generic-payload action as a mature public API.
 | CatchFn | Sentry Feedback, Jam | nested in WatchFn: feedback/bug inbox, screenshots, attachments, breadcrumbs, sessions, severity, status, assignee, linked issue | triage, assign, merge, resolve, link/export issue |
 | LogFn | Datadog Logs, Better Stack, Axiom | nested in WatchFn: log events, sources, live tail, queries, saved views, charts, alerts, retention | save query/view, create alert, change retention, manage source/token |
 
-## Optional modules
+### Optional-module roadmap
 
 | Module | Commercial reference | Resources and views | Mutations and actions |
 | --- | --- | --- | --- |

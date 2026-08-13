@@ -11,7 +11,7 @@ The stable composition entry is `superconsole/server`. A deployment compiles a m
 - network origin, TLS, and trusted proxy settings at the SvelteKit/Node deployment layer;
 - AuthFn runtime config and an operator resolver/scope authorizer;
 - audit and idempotency stores;
-- organization/workspace/project/environment resolver;
+- installation/workspace/project/environment resolver (`organizationId` is a compatibility installation alias);
 - explicit enabled module list and each module's service adapter;
 - an explicit shell-surface policy and optional per-operation policy evaluator;
 - a bound confirmation issuer/verifier when any selected action is destructive;

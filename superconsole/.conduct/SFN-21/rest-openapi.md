@@ -21,7 +21,7 @@ Only enabled operations appear in routing and OpenAPI.
 
 ## Scope
 
-Canonical scope is carried in query parameters or validated headers according to the deployment adapter. The normalized context requires organization, workspace, project, and environment IDs, with optional function namespace and region. Supported query keys are `organizationId`, `workspaceId`, `projectId`, `environmentId`, `namespace`, and `region`; the corresponding headers use `x-superconsole-<level>-id` and `x-superconsole-namespace|region`.
+Canonical scope is carried in query parameters or validated headers according to the deployment adapter. The normalized context is a contiguous installation, workspace, project, and environment chain down to the operation's declared minimum, with optional function namespace and region. Supported query keys are `installationId`, `workspaceId`, `projectId`, `environmentId`, `namespace`, and `region`; `organizationId` is the deprecated installation-root alias. Corresponding headers use `x-superconsole-<level>-id` and `x-superconsole-namespace|region`.
 
 Scope values are never trusted merely because they were sent by a client. AuthFn membership and the function's object-level authorization are evaluated for each request.
 
@@ -56,6 +56,8 @@ Failure:
 
 `auditId` is returned when the dispatcher records the terminal event, including audited failures after domain invocation. An `attempted` event is deliberately not exposed as a terminal receipt. Shared shell endpoints use the same success/error envelope but do not fabricate pagination or audit metadata. Secret or private domain payloads never appear in generic errors.
 
+Intentional one-time credentials are an explicit exception, not a generic redaction opt-out. The manifest validator accepts them only for non-idempotent operations with required audit and strong recent-auth, MFA, or approval confirmation. The successful response may reveal only the declared fields once; audit, error, and replay data remain redacted. OpenAPI and MCP describe those fields as `oneTimeOutputFields` and never expose the kernel's internal allow-list name.
+
 ## Pagination, filtering, and sorting
 
 - Cursor pagination is stable under the injected resource service's declared ordering.
@@ -88,13 +90,16 @@ The generator emits OpenAPI 3.1 with:
 - deterministic operation IDs;
 - per-operation request/response schemas plus the shared normalized error schema; pagination, audit receipts, and safety metadata are represented in operation envelopes/extensions;
 - security schemes and per-operation permissions;
-- scope, confirmation, idempotency, safety, target, and redaction extensions;
+- scope, confirmation, idempotency, safety, target, and redaction extensions, including `oneTimeOutputFields` for narrowly confirmed one-time credentials;
 - module and capability versions;
 - disabled modules omitted from paths and components when safe to do so.
 
 The document also records the implemented shared shell, AuthFn, confirmation, and McpFn paths. Kernel tests compare enabled registry operations, REST paths, OpenAPI operation IDs, and McpFn projections.
 
-V1 function inventories expose bounded generic payload objects for actions whose concrete domain service schema is not yet stabilized. Those injected services must reject missing/unknown domain fields. OpenAPI and MCP do not claim per-action required fields until the owning function replaces that generic schema; generated operation-specific clients are follow-up work.
+Available function operations expose the exact schema enforced by their
+domain-backed adapter. OpenAPI, MCP, the TypeScript client, and the console form
+all consume that schema. A package without a canonical domain service exposes
+no REST/OpenAPI/MCP operations and cannot be selected at startup.
 
 ## Versioning
 

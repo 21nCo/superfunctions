@@ -4,12 +4,12 @@
 
 ```text
 installation
-└── organization/workspace
+└── workspace
     └── project
         └── environment
 ```
 
-`workspace` is the stable API term. A deployment may label it organization in UI copy. Function namespaces and regions are subordinate execution attributes, not alternative tenant roots.
+`installation` is the stable root API term. `organizationId` is accepted as a deprecated compatibility alias for that root; it is not an additional hierarchy level. Function namespaces and regions are subordinate execution attributes, not alternative tenant roots.
 
 ## Authentication
 

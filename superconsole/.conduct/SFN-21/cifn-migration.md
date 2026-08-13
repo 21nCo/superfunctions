@@ -15,7 +15,7 @@ These workflows are ported, not iframe-embedded. The React application remains m
 
 ## Super Console routes
 
-- `/modules/cifn` — runs and project/pipeline context;
+- `/modules/cifn` — scoped control-plane runs and pipeline references;
 - `/modules/cifn/runs/{runId}` — run, jobs, steps, trigger, timing, and links to permitted resource actions;
 - `/modules/cifn/runs/{runId}/jobs/{jobKey}/logs` — structured/plain logs with navigation and follow behavior when supported;
 - `/modules/cifn/runs/{runId}/artifacts` — artifact metadata and authorized access.
@@ -24,11 +24,20 @@ The precise route shapes may be generated from the CiFn manifest, but these user
 
 ## Domain boundary
 
-The CiFn admin package declares projects, pipelines, runs, jobs, runners, logs, artifacts, secrets, schedules, and webhooks. Super Console calls the shared dispatcher, which delegates to an injected CiFn service. UI route loaders do not reuse the React dashboard's direct fetch client.
+The CiFn admin package declares only the resources backed by the current control plane: runs, materialized jobs/steps, redacted job logs, and retained artifacts. `createCiFnControlPlaneAdminService` connects that function-owned contract to a scoped CiFn installation. A deployment may provide one static connection or resolve an isolated connection from the authorized operator scope. UI route loaders do not reuse the React dashboard's direct fetch client.
+
+Projects, stored pipeline definitions, runner administration, secret administration, schedules, and webhook administration are deliberately absent. The current CiFn control plane has no corresponding service or persistence APIs, so exposing them would fabricate product behavior.
 
 ## Action parity
 
-In addition to retained reads, the CiFn capability inventory includes trigger, retry, cancel, runner management, secret rotation, artifact access, schedules, and webhook inspection. The generic module/resource pages expose actions only when permitted and bound. The specialized run-detail presentation currently prioritizes read parity; retry/cancel buttons on that view require the bound CiFn service to return the action projection and stable target identifiers. Unimplemented domain methods are never represented as clickable no-op controls.
+In addition to retained reads, the function-owned contract supports trigger, retry, cancel, and artifact download issuance:
+
+- trigger invokes the real create-run API with a typed pipeline reference or inline pipeline document;
+- retry resolves the original run, then creates a new workflow-dispatch run from its resolved repository pipeline reference. Inline pipelines fail with `precondition_failed` because CiFn does not retain their source document;
+- cancel invokes the control plane's state-checked cancellation route;
+- download returns only an HTTPS signed destination issued by the configured artifact adapter. An unsigned/memory-only artifact fails with `precondition_failed`.
+
+Retry and cancellation are projected into the specialized run view according to run state. All mutations retain Super Console permission, scope, confirmation, idempotency, and audit enforcement.
 
 ## Presentation
 
@@ -40,6 +49,8 @@ UIFn supplies tables, status badges, breadcrumbs, cards, tabs, pagination, confi
 - run list preserves status, trigger, creation time, cursor, and navigation;
 - run detail preserves job/step status and links;
 - log and artifact errors retain request IDs and authorization behavior;
-- declared retry/cancel operations use idempotency and produce audit receipts when invoked from the generic resource/action surface; specialized run-detail controls remain a follow-up projection;
+- trigger/list/detail/jobs/logs/artifacts/retry/cancel are exercised against `createApp` with its real store, queue, log, artifact, secret, and pipeline-resolver boundaries;
+- declared retry/cancel operations use idempotency, bound confirmation, and audit receipts, including from the specialized run-detail controls;
+- the production Playwright probe composes the adapter over an actual in-process CiFn control plane rather than returning fabricated run records;
 - disabled CiFn removes all UI, REST/OpenAPI, SDK discovery, and MCP surface;
 - no React runtime or iframe is required by Super Console.

@@ -27,7 +27,7 @@ The registry must make the following true by construction:
 
 ### Function-owned domain administration
 
-Every function's `admin` package declares:
+Every available function's `admin` package declares:
 
 - operator resources and identifiers;
 - list, get, mutation, and domain-action service methods;
@@ -39,6 +39,8 @@ Every function's `admin` package declares:
 - an adapter factory that delegates to an injected domain service.
 
 The package does not create fake product data or embed framework-specific handlers.
+An unavailable function instead declares a stable reason and an empty operator
+surface; package presence never implies deployable administration.
 
 ### Shared administration kernel
 
@@ -90,6 +92,8 @@ Startup validation rejects:
 - redaction metadata that is malformed or is used without auditing;
 - MCP safety hints that contradict operation safety;
 - invalid scope declarations;
+- unavailable manifests that expose navigation or operations, and any attempt to enable an unavailable module;
+- one-time secret output declarations without required audit, strong confirmation, and non-idempotent execution;
 - capability schema versions unsupported by the kernel.
 
 Validation fails closed before the server accepts requests.
@@ -123,14 +127,15 @@ A disabled-module request returns canonical not-found behavior so installation c
 ## Request lifecycle
 
 1. authenticate the actor using AuthFn-backed session or service credentials;
-2. resolve organization/workspace, project, and environment context;
+2. resolve installation, workspace, project, and environment context;
 3. for unsafe HTTP/MCP requests, run AuthFn mutation authorization and CSRF checks;
 4. locate an enabled operation and validate its input;
 5. evaluate scope, declared permission, and contextual policy;
 6. verify confirmation and reserve idempotency when applicable;
 7. append a sanitized `attempted` audit event; abort without invoking the adapter if that required write fails;
-8. invoke the function-owned adapter, validate and redact its output, append the terminal audit event, and durably complete idempotency;
-9. return the normalized result and terminal audit identity.
+8. invoke the function-owned adapter, validate/redact its output, and durably fence an idempotent mutation result before terminal audit;
+9. append the terminal audit event; if that append fails after a fenced domain result, a same-key replay reconciles audit without another domain invocation;
+10. return the normalized result and terminal audit identity.
 
 UI requests, direct REST calls, SDK requests, and McpFn tools enter at step one and converge on the shared dispatcher before domain execution. WatchFn/LogFn telemetry is supplied through the injected audit/observability services rather than emitted by a parallel console-only code path.
 
@@ -146,7 +151,7 @@ UI requests, direct REST calls, SDK requests, and McpFn tools enter at step one 
 - Dependency unavailable: service unavailable with retry guidance.
 - Unexpected failure: opaque internal error with request ID; detailed data stays in server telemetry.
 
-Secrets, tokens, raw credentials, private message bodies, and configured redaction fields never enter generic error or audit envelopes.
+Secrets, tokens, raw credentials, private message bodies, and configured redaction fields never enter generic error or audit envelopes. An intentional one-time credential may appear only in a validated successful response whose operation is audited, strongly confirmed, and non-idempotent; it is still removed from audit/error data.
 
 The pre-mutation audit record preserves intent when a later terminal append fails after a domain change. The interface does not claim cross-store atomicity between independently supplied domain, audit, and idempotency stores; production composition should colocate or transactionally coordinate them where a function requires a stronger guarantee.
 

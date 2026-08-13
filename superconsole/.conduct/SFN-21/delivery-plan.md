@@ -2,8 +2,8 @@
 
 ## Worktree and branch
 
-- Original checkout: `/Users/serro/Documents/dev/n/superfunctions`, local `next`.
-- Isolated worktree: `/Users/serro/Documents/dev/n/worktrees/superfunctions/super-console`.
+- Original checkout: repository root on local `next`.
+- Isolated worktree: dedicated `super-console` worktree.
 - Feature branch: `codex/super-console`.
 - Integrated base: `da0720a508eb86e3680f433dee17474670c41b27`.
 - No push or pull request.
@@ -55,7 +55,7 @@ Generated artifacts remain with their source change. Root lockfile is regenerate
 
 ## Completion gate
 
-- every required and optional function has a real injected-service admin contract;
+- every selectable function has a real function-owned domain binding and every function without one is explicitly unavailable with no exposed operations;
 - one registry controls all exposure surfaces;
 - disabled modules are absent everywhere;
 - tenant, namespace, region, permission, idempotency, and audit semantics converge;
@@ -65,12 +65,9 @@ Generated artifacts remain with their source change. Root lockfile is regenerate
 - no user-owned dirty work is modified;
 - local commits are coherent and no external publication is claimed.
 
-## Follow-up hardening boundary
+## Follow-up product boundary
 
-This implementation completes the shared control-plane/kernel, explicit
-module composition, function-owned administration inventories/adapters, and
-transport-level TypeScript client. Promotion of each inventory action into a
-stable commercial public API still requires the owning function to replace
-its bounded generic `payload` schema with operation-specific required fields
-and generate function-specific REST client methods. That work must follow the
-same manifest as UI/OpenAPI/MCP rather than creating parallel endpoints.
+Unavailable functions must first add a canonical, scope-aware operator
+service/store in the owning function. Only then may their admin package add
+operation-specific schemas and become selectable. This is product domain work,
+not a console-side generic handler escape hatch.

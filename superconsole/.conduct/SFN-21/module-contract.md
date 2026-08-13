@@ -57,14 +57,30 @@ An operation declares:
 
 No mutation may omit permission and audit declarations. Destructive actions must be explicit and cannot be inferred from the HTTP method alone.
 
-The v1 generated inventory gives every action a bounded envelope (`id` for object targets plus optional `payload`/`reason`) and delegates payload-specific validation to the injected function administration service. This makes target and safety semantics enforceable today, but it is not an operation-specific commercial schema. Before a function promotes an action from inventory contract to a stable public admin API, its package must replace the generic payload with domain-specific required fields and generate corresponding typed client methods. The UI, OpenAPI, and MCP truthfully project whichever schema the function owns; they do not infer missing domain semantics.
+Every available action owns an operation-specific input/output schema and an
+exact domain handler. Object actions declare their identifier field;
+collection actions declare collection ownership. The UI, OpenAPI, TypeScript
+client, and MCP all project the same manifest and therefore cannot invent
+fields that the domain service does not support.
+
+A caller-supplied `execute({ operationId, input: unknown })` facade is not an
+available admin implementation. If a function lacks a canonical operator
+service/store, its manifest uses `availability: "unavailable"`, declares a
+reason, and exposes zero resources, navigation entries, and operations. The
+registry refuses to enable it.
+
+When a function's domain is intentionally owned by another product module,
+the child uses `availability: "folded"`, declares its owner, and exposes no
+parallel operations. ContentFn follows this rule because CmsFn already binds
+the real ContentFn server. CatchFn and LogFn remain true nested modules under
+WatchFn because they own distinct domain operations.
 
 ## Invocation context
 
 The kernel supplies a frozen context containing:
 
 - authenticated actor ID, actor type, and authentication method;
-- organization, workspace, project, and environment IDs;
+- installation, workspace, project, and environment IDs (`organizationId` remains a deprecated installation-root alias);
 - effective function namespace and optional region;
 - actor roles, permissions, and policy metadata;
 - request and correlation IDs;

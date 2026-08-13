@@ -38,7 +38,7 @@
 
 ## ADR-007 — Universal tenancy
 
-**Decision:** Use organization → workspace → project → environment, with optional function namespace and region execution attributes.
+**Decision:** Use installation → workspace → project → environment, with optional function namespace and region execution attributes. Accept `organizationId` only as the deprecated installation-root alias.
 
 **Reason:** A common hierarchy enables consistent navigation and policy while preserving DataFn/SearchFn/AuthFn regional and namespaced isolation.
 

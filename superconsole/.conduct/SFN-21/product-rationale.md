@@ -59,7 +59,7 @@ Building a separate dashboard for every function would duplicate authentication,
 
 - adding a function does not require new shell routing logic;
 - disabling a function removes all five projections: UI, dispatch, REST/OpenAPI, SDK discovery, and MCP;
-- every required and optional module is selectable and exposes its declared inventory through injected service adapters; representative live work depends on the self-hoster binding real domain services, and final per-action payload schemas remain function-owned follow-up where the inventory is still generic;
+- every selectable module exposes only operations backed by a real function-owned domain service; missing operator aggregates are explicitly unavailable and fail closed instead of advertising generated placeholder inventory;
 - console, REST, SDK, and MCP return the same result and audit identity;
 - tenancy isolation and permission tests cover every dispatcher entry;
 - CiFn workflows remain usable after migration;

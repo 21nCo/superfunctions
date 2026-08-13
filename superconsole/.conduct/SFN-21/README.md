@@ -14,10 +14,10 @@ Super Console is the self-hosted operator control plane for a consumer-selected 
 - Operator administration stays separate from customer portals and embedded product UI.
 - Each function owns its administration service interface and capability manifest.
 - REST is versioned and language-neutral; OpenAPI is generated from enabled capabilities.
-- The initial TypeScript admin SDK is transport-level; function packages provide typed capability/server contracts, while generated operation-specific REST clients remain follow-up work.
+- `@superfunctions/admin` provides the language-neutral REST transport client and a manifest-derived TypeScript capability client with exact operation IDs, runtime availability discovery, and cursor iteration. Domain-backed function packages additionally publish typed operation maps and direct domain-adapter factories.
 - McpFn projects enabled capabilities to MCP; mutations use the same scope, policy, validation, idempotency, and audit path as REST.
-- Tenancy is organization/workspace → project → environment.
-- CatchFn and LogFn are nested under WatchFn. ContentFn is nested under CmsFn.
+- Tenancy is installation → workspace → project → environment. `organizationId` remains a compatibility alias for the installation root.
+- CatchFn and LogFn are nested under WatchFn. ContentFn is folded into CmsFn and cannot be enabled independently.
 - CiFn's existing React dashboard behavior is migrated into the SvelteKit shell.
 - Delivery remains local in coherent commits; no push or pull request is part of SFN-21.
 
@@ -46,3 +46,12 @@ The separate `dev` worktree contains uncommitted AuthFn, DataFn, FileFn, SearchF
 - [Verification](verification.md)
 
 The architecture and capability contract are normative. Verification records what was actually run and must be read before treating the branch as releasable.
+
+An admin package is not considered available merely because it exists in the
+workspace. Available modules must expose exact handlers backed by their public
+domain service. Packages whose functions do not yet own a canonical operator
+service are registered as `unavailable`, expose no operations/navigation, and
+are rejected if a self-hoster attempts to enable them.
+ContentFn is `folded` into CmsFn and cannot be enabled independently; this
+prevents the old generic ContentFn package from duplicating CmsFn's real
+ContentFnServer-backed resources.
