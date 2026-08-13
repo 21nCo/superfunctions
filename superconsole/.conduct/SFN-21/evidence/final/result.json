@@ -1,0 +1,7 @@
+{
+  "ok": true,
+  "schemaVersion": 1,
+  "evidenceSet": "final",
+  "sourceCommit": "51575b4a42f6d23fd5f313b7f75937ff849a7d6f",
+  "scenario": "real-cifn-selected-module-production-smoke"
+}
