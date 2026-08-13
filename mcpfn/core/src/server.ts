@@ -44,12 +44,27 @@ import type {
   McpFnSamplingResult,
   McpFnServerInfo,
   McpFnTaskRequestExtra,
+  McpFnListedTool,
 } from "./types.js";
+
+export interface McpFnToolVisibilityInput<TContext> {
+  tool: McpFnListedTool;
+  context: TContext;
+  extra: McpFnRequestExtra;
+}
 
 export interface McpFnServerOptions<TContext> extends CreateManifestOptions {
   info: McpFnServerInfo;
   registry: McpFnRegistry<TContext>;
   context?: (extra: McpFnRequestExtra) => TContext | Promise<TContext>;
+  /**
+   * Per-request discovery and invocation filter. Returning false hides the
+   * tool from tools/list and makes tools/call indistinguishable from an
+   * unknown tool. Static manifests remain the complete server contract.
+   */
+  toolVisibility?: (
+    input: McpFnToolVisibilityInput<TContext>,
+  ) => boolean | Promise<boolean>;
   /** Maximum entries returned by each list request. Defaults to 100. */
   pageSize?: number;
   additionalCapabilities?: ServerCapabilities;
@@ -106,6 +121,7 @@ export class McpFnServer<TContext = undefined> {
   private readonly contextFactory: (
     extra: McpFnRequestExtra,
   ) => TContext | Promise<TContext>;
+  private readonly toolVisibility?: McpFnServerOptions<TContext>["toolVisibility"];
   private readonly manifestOptions: CreateManifestOptions;
   private readonly pageSize: number;
   private connected = false;
@@ -115,6 +131,7 @@ export class McpFnServer<TContext = undefined> {
     this.registry = options.registry;
     assertMcpAppContracts(this.registry);
     this.contextFactory = options.context ?? (() => undefined as TContext);
+    this.toolVisibility = options.toolVisibility;
     this.pageSize = options.pageSize ?? 100;
     if (!Number.isInteger(this.pageSize) || this.pageSize < 1) {
       throw new Error("McpFn pageSize must be a positive integer");
@@ -160,11 +177,21 @@ export class McpFnServer<TContext = undefined> {
 
   private installHandlers(): void {
     if (this.capabilities.tools) {
-      this.protocol.setRequestHandler(ListToolsRequestSchema, async (request) => {
-        const result = page(this.registry.listTools(), request.params?.cursor, this.pageSize);
+      this.protocol.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
+        const tools = this.registry.listTools();
+        const visibleTools = this.toolVisibility
+          ? await this.filterVisibleTools(tools, await this.contextFactory(extra), extra)
+          : tools;
+        const result = page(visibleTools, request.params?.cursor, this.pageSize);
         return { tools: result.values, ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}) };
       });
       this.protocol.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+        const context = await this.contextFactory(extra);
+        const listedTool = this.registry.listTools().find((tool) => tool.name === request.params.name);
+        if (!listedTool || (this.toolVisibility
+          && !(await this.toolVisibility({ tool: listedTool, context, extra })))) {
+          throw new McpError(ErrorCode.MethodNotFound, `Tool ${request.params.name} not found`);
+        }
         const taskSupport = this.registry.taskSupport(request.params.name);
         const isTaskRequest = Boolean(request.params.task);
         if (taskSupport === "required" && !isTaskRequest) {
@@ -180,7 +207,6 @@ export class McpFnServer<TContext = undefined> {
           );
         }
         try {
-          const context = await this.contextFactory(extra);
           if (isTaskRequest) {
             if (!extra.taskStore) throw new Error("No task store is available");
             return await this.registry.createToolTask(
@@ -276,6 +302,17 @@ export class McpFnServer<TContext = undefined> {
         ),
       );
     }
+  }
+
+  private async filterVisibleTools(
+    tools: McpFnListedTool[],
+    context: TContext,
+    extra: McpFnRequestExtra,
+  ): Promise<McpFnListedTool[]> {
+    if (!this.toolVisibility) return tools;
+    const decisions = await Promise.all(tools.map((tool) =>
+      this.toolVisibility!({ tool, context, extra })));
+    return tools.filter((_, index) => decisions[index]);
   }
 
   manifest(): McpFnManifest {

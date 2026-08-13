@@ -1,0 +1,635 @@
+import {
+  createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
+  createCapabilityAdminClient,
+  defineAdminCapability,
+  type AdminClient,
+  type AdminCapabilityAdapter,
+  type AdminJsonSchema,
+  type AdminObjectSchema,
+  type AdminOperationContext,
+  type AdminOperationDefinition,
+  type AdminOperationResult,
+} from "@superfunctions/admin";
+
+export interface BillFnAdminResourceDefinition {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;
+  risk: "standard" | "sensitive";
+  idField: string;
+  displayFields: readonly string[];
+  searchableFields: readonly string[];
+  filterableFields: readonly string[];
+  sortableFields: readonly string[];
+  sensitiveFields: readonly string[];
+}
+
+export interface BillFnAdminActionDefinition {
+  id: string;
+  resource: string;
+  title: string;
+  description: string;
+  classification: "write" | "destructive";
+  requiresConfirmation: boolean;
+  idempotent: true;
+  target: "resource" | "collection";
+}
+
+export const billFnAdminResources = [
+  {
+    id: "customers",
+    label: "Customers",
+    description: "Inspect and operate customers in BillFn.",
+    icon: "billfn:customers",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "products",
+    label: "Products",
+    description: "Inspect and operate products in BillFn.",
+    icon: "billfn:products",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "plans",
+    label: "Plans",
+    description: "Inspect and operate plans in BillFn.",
+    icon: "billfn:plans",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "prices",
+    label: "Prices",
+    description: "Inspect and operate prices in BillFn.",
+    icon: "billfn:prices",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "subscriptions",
+    label: "Subscriptions",
+    description: "Inspect and operate subscriptions in BillFn.",
+    icon: "billfn:subscriptions",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "entitlements",
+    label: "Entitlements",
+    description: "Inspect and operate entitlements in BillFn.",
+    icon: "billfn:entitlements",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "quotas",
+    label: "Quotas",
+    description: "Inspect and operate quotas in BillFn.",
+    icon: "billfn:quotas",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "invoices",
+    label: "Invoices",
+    description: "Inspect and operate invoices in BillFn.",
+    icon: "billfn:invoices",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "payments",
+    label: "Payments",
+    description: "Inspect and operate payments in BillFn.",
+    icon: "billfn:payments",
+    risk: "sensitive",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [
+      "secret",
+      "token",
+      "credential",
+      "value",
+      "password",
+      "passwd",
+      "apiKey",
+      "privateKey",
+      "authorization",
+      "cookie",
+      "otp",
+      "otpCode",
+      "recoveryCode",
+      "recoveryCodes",
+      "verificationCode",
+      "sessionToken",
+    ],
+  },
+  {
+    id: "usage",
+    label: "Usage",
+    description: "Inspect and operate usage in BillFn.",
+    icon: "billfn:usage",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "reconciliation",
+    label: "Reconciliation",
+    description: "Inspect and operate reconciliation in BillFn.",
+    icon: "billfn:reconciliation",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+  {
+    id: "revenue",
+    label: "Revenue",
+    description: "Inspect and operate revenue in BillFn.",
+    icon: "billfn:revenue",
+    risk: "standard",
+    idField: "id",
+    displayFields: ["id", "name", "status", "updatedAt"],
+    searchableFields: ["id", "name", "status"],
+    filterableFields: ["status", "createdAt", "updatedAt"],
+    sortableFields: ["createdAt", "updatedAt", "name"],
+    sensitiveFields: [],
+  },
+] as const satisfies readonly BillFnAdminResourceDefinition[];
+
+export const billFnAdminActions = [
+  {
+    id: "create-catalog",
+    resource: "products",
+    title: "Create Catalog",
+    description: "Create Catalog for products.",
+    classification: "write",
+    requiresConfirmation: false,
+    idempotent: true,
+    target: "collection",
+  },
+  {
+    id: "update-catalog",
+    resource: "products",
+    title: "Update Catalog",
+    description: "Update Catalog for products.",
+    classification: "write",
+    requiresConfirmation: false,
+    idempotent: true,
+    target: "resource",
+  },
+  {
+    id: "grant-entitlement",
+    resource: "entitlements",
+    title: "Grant Entitlement",
+    description: "Grant Entitlement for entitlements.",
+    classification: "write",
+    requiresConfirmation: false,
+    idempotent: true,
+    target: "resource",
+  },
+  {
+    id: "change-subscription",
+    resource: "subscriptions",
+    title: "Change Subscription",
+    description: "Change Subscription for subscriptions.",
+    classification: "write",
+    requiresConfirmation: false,
+    idempotent: true,
+    target: "resource",
+  },
+  {
+    id: "cancel-subscription",
+    resource: "subscriptions",
+    title: "Cancel Subscription",
+    description: "Cancel Subscription for subscriptions.",
+    classification: "destructive",
+    requiresConfirmation: true,
+    idempotent: true,
+    target: "resource",
+  },
+  {
+    id: "issue-credit",
+    resource: "invoices",
+    title: "Issue Credit",
+    description: "Issue Credit for invoices.",
+    classification: "write",
+    requiresConfirmation: false,
+    idempotent: true,
+    target: "resource",
+  },
+  {
+    id: "refund-payment",
+    resource: "payments",
+    title: "Refund Payment",
+    description: "Refund Payment for payments.",
+    classification: "write",
+    requiresConfirmation: false,
+    idempotent: true,
+    target: "resource",
+  },
+  {
+    id: "reconcile-provider",
+    resource: "reconciliation",
+    title: "Reconcile Provider",
+    description: "Reconcile Provider for reconciliation.",
+    classification: "write",
+    requiresConfirmation: false,
+    idempotent: true,
+    target: "collection",
+  },
+] as const satisfies readonly BillFnAdminActionDefinition[];
+
+export interface BillFnAdminResourcePolicy {
+  defaultScope: "active";
+  permission: string;
+  redaction: "none" | "sensitive-fields";
+}
+
+export interface BillFnAdminOperationPolicy {
+  permission: string;
+  scope: {
+    levels: readonly ["organization", "workspace", "project", "environment"];
+    forwardsNamespace: true;
+    forwardsRegion: true;
+  };
+  safety: {
+    classification: "write" | "destructive";
+    requiresConfirmation: boolean;
+  };
+  idempotency: {
+    mode: "required";
+    keyStrategy: "context.idempotencyKey";
+  };
+  audit: {
+    mode: "required";
+    action: string;
+    targetResource: string;
+    targetIdPath?: "$.id";
+    collection?: true;
+  };
+  observation: {
+    domain: "billfn";
+    requestIdPath: "context.requestId";
+    correlationIdPath: "context.correlationId";
+  };
+}
+
+export const billFnAdminResourcePolicies = Object.freeze(
+  Object.fromEntries(
+    billFnAdminResources.map((resource) => [
+      resource.id,
+      {
+        defaultScope: "active",
+        permission: "billfn." + resource.id + ".read",
+        redaction:
+          resource.sensitiveFields.length > 0 ? "sensitive-fields" : "none",
+      } satisfies BillFnAdminResourcePolicy,
+    ]),
+  ),
+) as Readonly<Record<string, BillFnAdminResourcePolicy>>;
+
+export const billFnAdminOperationPolicies = Object.freeze(
+  Object.fromEntries(
+    billFnAdminActions.map((action) => [
+      "billfn." + action.resource + "." + action.id,
+      {
+        permission: "billfn." + action.resource + "." + action.id,
+        scope: {
+          levels: ["organization", "workspace", "project", "environment"],
+          forwardsNamespace: true,
+          forwardsRegion: true,
+        },
+        safety: {
+          classification: action.classification,
+          requiresConfirmation: action.requiresConfirmation,
+        },
+        idempotency: {
+          mode: "required",
+          keyStrategy: "context.idempotencyKey",
+        },
+        audit: {
+          mode: "required",
+          action: "billfn." + action.id,
+          targetResource: action.resource,
+          ...(action.target === "resource"
+            ? { targetIdPath: "$.id" as const }
+            : { collection: true as const }),
+        },
+        observation: {
+          domain: "billfn",
+          requestIdPath: "context.requestId",
+          correlationIdPath: "context.correlationId",
+        },
+      } satisfies BillFnAdminOperationPolicy,
+    ]),
+  ),
+) as Readonly<Record<string, BillFnAdminOperationPolicy>>;
+
+const entitySchema: AdminObjectSchema = {
+  type: "object",
+  description:
+    "A domain-owned administration resource. Sensitive fields are redacted by the domain service.",
+  additionalProperties: true,
+};
+
+const listInputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    cursor: { type: "string", minLength: 1 },
+    limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+    search: { type: "string", maxLength: 500 },
+    filter: { type: "object", additionalProperties: true },
+    sort: {
+      type: "array",
+      items: { type: "object", additionalProperties: true },
+      maxItems: 10,
+    },
+  },
+  additionalProperties: false,
+};
+
+const listOutputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    items: { type: "array", items: entitySchema },
+    nextCursor: { type: ["string", "null"] },
+  },
+  required: ["items"],
+  additionalProperties: false,
+};
+
+const getInputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: { id: { type: "string", minLength: 1 } },
+  required: ["id"],
+  additionalProperties: false,
+};
+
+const getOutputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: { item: entitySchema },
+  required: ["item"],
+  additionalProperties: false,
+};
+
+const actionInputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", minLength: 1 },
+    payload: { type: "object", additionalProperties: true },
+    reason: { type: "string", minLength: 1, maxLength: 2000 },
+  },
+  additionalProperties: false,
+};
+
+const actionOutputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    item: entitySchema,
+    accepted: { type: "boolean" },
+    operationReference: { type: "string" },
+  },
+  required: ["accepted"],
+  additionalProperties: true,
+};
+
+export const billFnAdminSchemas = {
+  entity: entitySchema,
+  listInput: listInputSchema,
+  listOutput: listOutputSchema,
+  getInput: getInputSchema,
+  getOutput: getOutputSchema,
+  actionInput: actionInputSchema,
+  actionOutput: actionOutputSchema,
+} as const satisfies Record<string, AdminJsonSchema>;
+
+function resourceOperations(
+  resource: BillFnAdminResourceDefinition,
+): AdminOperationDefinition[] {
+  const baseId = "billfn." + resource.id;
+  const basePath = "/resources/" + resource.id;
+  return [
+    {
+      id: baseId + ".list",
+      title: "List " + resource.label,
+      description:
+        "List permitted " +
+        resource.label.toLowerCase() +
+        " in the active administration scope.",
+      inputSchema: listInputSchema,
+      outputSchema: listOutputSchema,
+      route: { method: "GET", path: basePath },
+      permission: "billfn." + resource.id + ".read",
+      safety: {
+        classification: "read",
+        idempotent: true,
+        requiresConfirmation: false,
+        audit: resource.risk === "sensitive" ? "required" : "optional",
+      },
+      pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 200 },
+      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      redaction: { outputFields: resource.sensitiveFields },
+      target: { resource: resource.id, collection: true },
+    },
+    {
+      id: baseId + ".get",
+      title: "Get " + resource.label,
+      description:
+        "Get one permitted " + resource.label.toLowerCase() + " resource.",
+      inputSchema: getInputSchema,
+      outputSchema: getOutputSchema,
+      route: { method: "GET", path: basePath + "/:id" },
+      permission: "billfn." + resource.id + ".read",
+      safety: {
+        classification: "read",
+        idempotent: true,
+        requiresConfirmation: false,
+        audit: resource.risk === "sensitive" ? "required" : "optional",
+      },
+      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      redaction: { outputFields: resource.sensitiveFields },
+      target: { resource: resource.id, idInput: "id" },
+    },
+  ];
+}
+
+function actionOperation(
+  action: BillFnAdminActionDefinition,
+): AdminOperationDefinition {
+  const sensitiveFields =
+    billFnAdminResources.find((resource) => resource.id === action.resource)
+      ?.sensitiveFields ?? [];
+  return {
+    id: "billfn." + action.resource + "." + action.id,
+    title: action.title,
+    description: action.description,
+    inputSchema:
+      action.target === "resource"
+        ? { ...actionInputSchema, required: ["id"] }
+        : actionInputSchema,
+    outputSchema: actionOutputSchema,
+    route: {
+      method: "POST",
+      path: "/resources/" + action.resource + "/actions/" + action.id,
+    },
+    permission: "billfn." + action.resource + "." + action.id,
+    safety: {
+      classification: action.classification,
+      idempotent: action.idempotent,
+      requiresConfirmation: action.requiresConfirmation,
+      audit: "required",
+    },
+    mcp: {
+      readOnlyHint: false,
+      destructiveHint: action.classification === "destructive",
+      idempotentHint: action.idempotent,
+    },
+    redaction: { inputFields: sensitiveFields, outputFields: sensitiveFields },
+    target:
+      action.target === "resource"
+        ? { resource: action.resource, idInput: "id" }
+        : { resource: action.resource, collection: true },
+  };
+}
+
+const operations: AdminOperationDefinition[] = [
+  ...billFnAdminResources.flatMap(resourceOperations),
+  ...billFnAdminActions.map(actionOperation),
+];
+
+type FunctionAdminActionOperationId<TModule extends string, TAction> =
+  TAction extends { resource: infer TResource extends string; id: infer TActionId extends string }
+    ? `${TModule}.${TResource}.${TActionId}`
+    : never;
+
+export type BillFnAdminOperationId =
+  | `billfn.${(typeof billFnAdminResources)[number]["id"]}.list`
+  | `billfn.${(typeof billFnAdminResources)[number]["id"]}.get`
+  | FunctionAdminActionOperationId<"billfn", (typeof billFnAdminActions)[number]>;
+
+export const billFnAdminCapability = defineAdminCapability({
+  schemaVersion: "1.0",
+  id: "billfn",
+  displayName: "BillFn",
+  version: "1.0.0",
+  description:
+    "Commercial-grade, function-owned operator capabilities for BillFn.",
+  category: "commerce",
+  availability: "required-product",
+  scopeLevels: ["organization", "workspace", "project", "environment"],
+  dependencies: [],
+  resources: billFnAdminResources,
+  navigation: [
+    {
+      id: "billfn",
+      label: "BillFn",
+      path: "/modules/billfn",
+      icon: "billfn",
+      description: "Operate BillFn in the active scope.",
+      order: 100,
+    },
+  ],
+  operations: operations as readonly (AdminOperationDefinition & { readonly id: BillFnAdminOperationId })[],
+});
+
+export function createBillFnAdminClient(adminClient: AdminClient) {
+  return createCapabilityAdminClient(billFnAdminCapability, adminClient);
+}
+
+export interface BillFnAdminServiceRequest {
+  operationId: BillFnAdminOperationId;
+  input: unknown;
+  context: AdminOperationContext;
+}
+
+export interface BillFnAdminService {
+  execute(
+    request: BillFnAdminServiceRequest,
+  ):
+    | Promise<AdminOperationResult<Record<string, unknown>>>
+    | AdminOperationResult<Record<string, unknown>>;
+}
+
+export function createBillFnAdminAdapter(
+  service: BillFnAdminService,
+): AdminCapabilityAdapter {
+  const handlers: Record<
+    string,
+    (request: {
+      input: unknown;
+      context: AdminOperationContext;
+    }) =>
+      | Promise<AdminOperationResult<Record<string, unknown>>>
+      | AdminOperationResult<Record<string, unknown>>
+  > = {};
+
+  for (const operation of billFnAdminCapability.operations) {
+    handlers[operation.id] = (request) =>
+      service.execute({
+        operationId: operation.id,
+        input: request.input,
+        context: request.context,
+      });
+  }
+
+  return createKernelAdminCapabilityAdapter(billFnAdminCapability, handlers);
+}
+
+export const adminCapability = billFnAdminCapability;
+export const createAdminAdapter = createBillFnAdminAdapter;

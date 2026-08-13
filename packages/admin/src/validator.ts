@@ -1,0 +1,791 @@
+import { AdminError } from "./errors.js";
+import type {
+  AdminCapabilityManifest,
+  AdminJsonSchema,
+  AdminOperationDefinition,
+} from "./types.js";
+
+export interface AdminValidationIssue {
+  path: string;
+  message: string;
+  keyword?: string;
+}
+
+const ID_PATTERN = /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/;
+const MODULE_PATTERN = /^[a-z][a-z0-9-]*$/;
+
+function valueType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (Number.isInteger(value)) return "integer";
+  return typeof value;
+}
+
+function allowedTypes(schema: AdminJsonSchema): string[] {
+  if (!schema.type) return [];
+  return typeof schema.type === "string" ? [schema.type] : [...schema.type];
+}
+
+export function validateAdminValue(
+  schema: AdminJsonSchema,
+  value: unknown,
+  path = "$",
+): AdminValidationIssue[] {
+  const issues: AdminValidationIssue[] = [];
+  if (schema.const !== undefined && !Object.is(schema.const, value)) {
+    issues.push({
+      path,
+      message: "must equal the declared constant",
+      keyword: "const",
+    });
+  }
+  if (
+    schema.enum &&
+    !schema.enum.some((candidate) => Object.is(candidate, value))
+  ) {
+    issues.push({
+      path,
+      message: "must be one of the declared values",
+      keyword: "enum",
+    });
+  }
+
+  const types = allowedTypes(schema);
+  if (types.length > 0) {
+    const actual = valueType(value);
+    const matches =
+      types.includes(actual) ||
+      (actual === "integer" && types.includes("number"));
+    if (!matches) {
+      return [
+        { path, message: `must be ${types.join(" or ")}`, keyword: "type" },
+      ];
+    }
+  }
+
+  if (typeof value === "string") {
+    if (schema.minLength !== undefined && value.length < schema.minLength) {
+      issues.push({
+        path,
+        message: `must contain at least ${schema.minLength} characters`,
+        keyword: "minLength",
+      });
+    }
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) {
+      issues.push({
+        path,
+        message: `must contain at most ${schema.maxLength} characters`,
+        keyword: "maxLength",
+      });
+    }
+    if (schema.pattern && !new RegExp(schema.pattern).test(value)) {
+      issues.push({
+        path,
+        message: "does not match the required pattern",
+        keyword: "pattern",
+      });
+    }
+  }
+
+  if (typeof value === "number") {
+    if (schema.minimum !== undefined && value < schema.minimum) {
+      issues.push({
+        path,
+        message: `must be at least ${schema.minimum}`,
+        keyword: "minimum",
+      });
+    }
+    if (schema.maximum !== undefined && value > schema.maximum) {
+      issues.push({
+        path,
+        message: `must be at most ${schema.maximum}`,
+        keyword: "maximum",
+      });
+    }
+  }
+
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      issues.push({
+        path,
+        message: `must contain at least ${schema.minItems} items`,
+        keyword: "minItems",
+      });
+    }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      issues.push({
+        path,
+        message: `must contain at most ${schema.maxItems} items`,
+        keyword: "maxItems",
+      });
+    }
+    if (schema.uniqueItems) {
+      const keys = value.map(stableSerialize);
+      if (new Set(keys).size !== keys.length)
+        issues.push({
+          path,
+          message: "must contain unique items",
+          keyword: "uniqueItems",
+        });
+    }
+    if (schema.items && !Array.isArray(schema.items)) {
+      value.forEach((item, index) =>
+        issues.push(
+          ...validateAdminValue(
+            schema.items as AdminJsonSchema,
+            item,
+            `${path}[${index}]`,
+          ),
+        ),
+      );
+    }
+  }
+
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>;
+    for (const key of schema.required ?? []) {
+      if (!(key in object))
+        issues.push({
+          path: `${path}.${key}`,
+          message: "is required",
+          keyword: "required",
+        });
+    }
+    for (const [key, item] of Object.entries(object)) {
+      const propertySchema = schema.properties?.[key];
+      if (propertySchema) {
+        issues.push(
+          ...validateAdminValue(propertySchema, item, `${path}.${key}`),
+        );
+      } else if (schema.additionalProperties === false) {
+        issues.push({
+          path: `${path}.${key}`,
+          message: "is not allowed",
+          keyword: "additionalProperties",
+        });
+      } else if (
+        schema.additionalProperties &&
+        typeof schema.additionalProperties === "object"
+      ) {
+        issues.push(
+          ...validateAdminValue(
+            schema.additionalProperties,
+            item,
+            `${path}.${key}`,
+          ),
+        );
+      }
+    }
+  }
+
+  if (schema.allOf)
+    for (const candidate of schema.allOf)
+      issues.push(...validateAdminValue(candidate, value, path));
+  if (
+    schema.anyOf &&
+    !schema.anyOf.some(
+      (candidate) => validateAdminValue(candidate, value, path).length === 0,
+    )
+  ) {
+    issues.push({
+      path,
+      message: "must match at least one allowed schema",
+      keyword: "anyOf",
+    });
+  }
+  if (
+    schema.oneOf &&
+    schema.oneOf.filter(
+      (candidate) => validateAdminValue(candidate, value, path).length === 0,
+    ).length !== 1
+  ) {
+    issues.push({
+      path,
+      message: "must match exactly one allowed schema",
+      keyword: "oneOf",
+    });
+  }
+  return issues;
+}
+
+export function assertAdminValue(
+  schema: AdminJsonSchema,
+  value: unknown,
+  label = "input",
+): void {
+  const issues = validateAdminValue(schema, value);
+  if (issues.length > 0) {
+    throw new AdminError(
+      "invalid_argument",
+      `Invalid administration ${label}.`,
+      { details: { issues } },
+    );
+  }
+}
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function operationSchemas(
+  operation: AdminOperationDefinition,
+): [AdminJsonSchema, AdminJsonSchema] {
+  const input = operation.inputSchema;
+  const output = operation.outputSchema;
+  if (!input || !output)
+    throw new AdminError(
+      "invalid_argument",
+      `Operation ${operation.id} must declare inputSchema and outputSchema.`,
+    );
+  return [input, output];
+}
+
+const SUPPORTED_SCHEMA_KEYWORDS = new Set([
+  "title", "description", "type", "enum", "const", "default", "examples",
+  "properties", "required", "additionalProperties", "items", "allOf", "anyOf",
+  "oneOf", "pattern", "minimum", "maximum", "minLength", "maxLength",
+  "minItems", "maxItems", "uniqueItems",
+]);
+
+function validateSupportedSchema(
+  schema: AdminJsonSchema,
+  path: string,
+  issues: AdminValidationIssue[],
+): void {
+  for (const keyword of Object.keys(schema)) {
+    if (!SUPPORTED_SCHEMA_KEYWORDS.has(keyword)) {
+      issues.push({ path: `${path}.${keyword}`, message: "is not supported by the administration runtime validator" });
+    }
+  }
+  const types = schema.type === undefined ? [] : Array.isArray(schema.type) ? schema.type : [schema.type];
+  const supportedTypes = new Set(["object", "array", "string", "number", "integer", "boolean", "null"]);
+  if (types.some((type) => !supportedTypes.has(type)) || new Set(types).size !== types.length) {
+    issues.push({ path: `${path}.type`, message: "must contain unique supported JSON types" });
+  }
+  for (const [name, property] of Object.entries(schema.properties ?? {})) {
+    validateSupportedSchema(property, `${path}.properties.${name}`, issues);
+  }
+  if (schema.additionalProperties && typeof schema.additionalProperties === "object") {
+    validateSupportedSchema(schema.additionalProperties, `${path}.additionalProperties`, issues);
+  }
+  if (schema.items) validateSupportedSchema(schema.items, `${path}.items`, issues);
+  for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+    schema[keyword]?.forEach((candidate, index) => validateSupportedSchema(candidate, `${path}.${keyword}[${index}]`, issues));
+  }
+}
+
+function normalizedRoute(operation: AdminOperationDefinition): string {
+  const raw =
+    typeof operation.route === "string"
+      ? operation.route.trim()
+      : `${operation.route.method} ${operation.route.path}`;
+  return raw
+    .replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, ":param")
+    .replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, ":param");
+}
+
+function internalPathIssue(value: string): string | undefined {
+  if (!value || value !== value.trim() || /\s/.test(value))
+    return "must be a nonblank internal absolute path without whitespace";
+  let decoded = value;
+  try {
+    for (let index = 0; index < 3; index += 1) {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    }
+  } catch {
+    return "must contain valid path encoding";
+  }
+  if (!decoded.startsWith("/") || decoded.startsWith("//"))
+    return "must be an internal absolute path, not a URL or protocol-relative path";
+  if (
+    decoded.includes("\\") ||
+    decoded.includes("//") ||
+    decoded.includes("?") ||
+    decoded.includes("#") ||
+    decoded.includes("@") ||
+    /[\u0000-\u001f\u007f]/.test(decoded) ||
+    /(^|\/)\.{1,2}(\/|$)/.test(decoded) ||
+    /(^|\/)[a-z][a-z0-9+.-]*:/i.test(decoded)
+  ) {
+    return "must not contain a scheme, credentials, traversal, query, fragment, or ambiguous separators";
+  }
+  return undefined;
+}
+
+function operationRoutePath(
+  operation: AdminOperationDefinition,
+): string | undefined {
+  if (typeof operation.route !== "string") return operation.route.path;
+  return /^(?:GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i.exec(
+    operation.route.trim(),
+  )?.[1];
+}
+
+export function validateAdminCapabilityManifest(
+  manifest: AdminCapabilityManifest,
+): AdminValidationIssue[] {
+  const issues: AdminValidationIssue[] = [];
+  if (manifest.schemaVersion !== "1.0")
+    issues.push({ path: "$.schemaVersion", message: "must be 1.0" });
+  if (!MODULE_PATTERN.test(manifest.id))
+    issues.push({
+      path: "$.id",
+      message: "must be a stable lowercase module identifier",
+    });
+  if (!manifest.displayName.trim())
+    issues.push({ path: "$.displayName", message: "must not be empty" });
+  if (!manifest.description.trim())
+    issues.push({ path: "$.description", message: "must not be empty" });
+  if (!manifest.category.trim())
+    issues.push({ path: "$.category", message: "must not be empty" });
+  if (!manifest.version.trim())
+    issues.push({ path: "$.version", message: "must not be empty" });
+  if (manifest.scopeLevels.length === 0)
+    issues.push({
+      path: "$.scopeLevels",
+      message: "must contain at least one supported level",
+    });
+  const supportedScopeLevels = new Set(["organization", "workspace", "project", "environment"]);
+  if (manifest.scopeLevels.some((level) => !supportedScopeLevels.has(level))) {
+    issues.push({ path: "$.scopeLevels", message: "must contain only supported scope levels" });
+  }
+  if (new Set(manifest.scopeLevels).size !== manifest.scopeLevels.length) {
+    issues.push({ path: "$.scopeLevels", message: "must not contain duplicate scope levels" });
+  }
+  if (manifest.availability === "nested" && !manifest.owner)
+    issues.push({ path: "$.owner", message: "is required for nested modules" });
+  if (manifest.availability !== "nested" && manifest.owner)
+    issues.push({
+      path: "$.owner",
+      message: "is only valid for nested modules",
+    });
+  for (const [index, dependency] of (manifest.dependencies ?? []).entries()) {
+    const moduleId = typeof dependency === "string"
+      ? dependency
+      : dependency.moduleId;
+    if (!MODULE_PATTERN.test(moduleId))
+      issues.push({
+        path: `$.dependencies[${index}]`,
+        message: "must name a stable lowercase module identifier",
+      });
+    if (moduleId === manifest.id)
+      issues.push({
+        path: `$.dependencies[${index}]`,
+        message: "must not depend on itself",
+      });
+  }
+  const dependencyIds = (manifest.dependencies ?? []).map((dependency) =>
+    typeof dependency === "string" ? dependency : dependency.moduleId,
+  );
+  if (new Set(dependencyIds).size !== dependencyIds.length)
+    issues.push({
+      path: "$.dependencies",
+      message: "must not contain duplicate modules",
+    });
+  if (manifest.owner) {
+    if (!MODULE_PATTERN.test(manifest.owner.moduleId))
+      issues.push({
+        path: "$.owner.moduleId",
+        message: "must be a stable lowercase module identifier",
+      });
+    if (manifest.owner.mountPath !== undefined) {
+      const issue = internalPathIssue(manifest.owner.mountPath);
+      if (issue)
+        issues.push({ path: "$.owner.mountPath", message: issue });
+      const ownerRoot = `/modules/${manifest.owner.moduleId}`;
+      if (
+        !issue &&
+        manifest.owner.mountPath !== ownerRoot &&
+        !manifest.owner.mountPath.startsWith(`${ownerRoot}/`)
+      ) {
+        issues.push({
+          path: "$.owner.mountPath",
+          message: `must be mounted under ${ownerRoot}`,
+        });
+      }
+    }
+    if (
+      !(manifest.dependencies ?? []).some((dependency) =>
+        (typeof dependency === "string"
+          ? dependency
+          : dependency.moduleId) === manifest.owner?.moduleId &&
+        (typeof dependency === "string" || dependency.required !== false),
+      )
+    ) {
+      issues.push({
+        path: "$.dependencies",
+        message: "nested modules must require their owner module",
+      });
+    }
+  }
+  const navigation = manifest.navigation
+    ? Array.isArray(manifest.navigation)
+      ? manifest.navigation
+      : [manifest.navigation]
+    : [];
+  navigation.forEach((item, index) => {
+    if (!ID_PATTERN.test(item.id))
+      issues.push({
+        path: `$.navigation[${index}].id`,
+        message: "must be a stable lowercase navigation identifier",
+      });
+    if (!item.label.trim())
+      issues.push({
+        path: `$.navigation[${index}].label`,
+        message: "must not be empty",
+      });
+    if (item.parentId !== undefined && !ID_PATTERN.test(item.parentId))
+      issues.push({
+        path: `$.navigation[${index}].parentId`,
+        message: "must be a stable lowercase navigation identifier",
+      });
+    const issue = internalPathIssue(item.path);
+    if (issue)
+      issues.push({ path: `$.navigation[${index}].path`, message: issue });
+    const navigationRoot = manifest.owner
+      ? manifest.owner.mountPath ?? `/modules/${manifest.owner.moduleId}`
+      : `/modules/${manifest.id}`;
+    if (
+      !issue &&
+      item.path !== navigationRoot &&
+      !item.path.startsWith(`${navigationRoot}/`)
+    ) {
+      issues.push({
+        path: `$.navigation[${index}].path`,
+        message: `must be scoped under ${navigationRoot}`,
+      });
+    }
+  });
+  if (manifest.health?.path !== undefined) {
+    const issue = internalPathIssue(manifest.health.path);
+    if (issue) issues.push({ path: "$.health.path", message: issue });
+  }
+  const resourceIds = new Set<string>();
+  for (const [index, resource] of (manifest.resources ?? []).entries()) {
+    const basePath = `$.resources[${index}]`;
+    if (!ID_PATTERN.test(resource.id) || resource.id.includes(".")) issues.push({ path: `${basePath}.id`, message: "must be a stable resource identifier" });
+    if (resourceIds.has(resource.id)) issues.push({ path: `${basePath}.id`, message: "duplicates another resource" });
+    resourceIds.add(resource.id);
+    for (const field of ["label", "description", "idField"] as const) {
+      if (!resource[field].trim()) issues.push({ path: `${basePath}.${field}`, message: "must not be empty" });
+    }
+    for (const [field, values] of Object.entries({
+      displayFields: resource.displayFields,
+      searchableFields: resource.searchableFields,
+      filterableFields: resource.filterableFields,
+      sortableFields: resource.sortableFields,
+      sensitiveFields: resource.sensitiveFields,
+    })) {
+      if ((values ?? []).some((value) => !value.trim())) issues.push({ path: `${basePath}.${field}`, message: "must not contain blank fields" });
+      if (new Set(values ?? []).size !== (values ?? []).length) issues.push({ path: `${basePath}.${field}`, message: "must not contain duplicate fields" });
+    }
+  }
+  const ids = new Set<string>();
+  const routes = new Set<string>();
+  manifest.operations.forEach((operation, index) => {
+    if (!operation.title.trim())
+      issues.push({
+        path: `$.operations[${index}].title`,
+        message: "must not be empty",
+      });
+    if (!operation.description.trim())
+      issues.push({
+        path: `$.operations[${index}].description`,
+        message: "must not be empty",
+      });
+    if (
+      !ID_PATTERN.test(operation.id) ||
+      !operation.id.startsWith(`${manifest.id}.`)
+    ) {
+      issues.push({
+        path: `$.operations[${index}].id`,
+        message: `must be namespaced with ${manifest.id}.`,
+      });
+    }
+    if (ids.has(operation.id))
+      issues.push({
+        path: `$.operations[${index}].id`,
+        message: "duplicates another operation",
+      });
+    ids.add(operation.id);
+    const routePath = operationRoutePath(operation);
+    if (!routePath) {
+      issues.push({
+        path: `$.operations[${index}].route`,
+        message: "must declare a supported HTTP method and path",
+      });
+    } else {
+      const issue = internalPathIssue(routePath);
+      if (issue)
+        issues.push({
+          path: `$.operations[${index}].route`,
+          message: issue,
+        });
+    }
+    if (routePath) {
+      const route = normalizedRoute(operation);
+      if (routes.has(route))
+        issues.push({
+          path: `$.operations[${index}].route`,
+          message: "duplicates another route",
+        });
+      routes.add(route);
+    }
+    if (!operation.permission.trim())
+      issues.push({
+        path: `$.operations[${index}].permission`,
+        message: "must not be empty",
+      });
+    if (!operation.target) {
+      issues.push({
+        path: `$.operations[${index}].target`,
+        message: "operations must declare a resource or collection target",
+      });
+    }
+    if (
+      operation.safety.classification !== "read" &&
+      operation.safety.audit !== "required"
+    ) {
+      issues.push({
+        path: `$.operations[${index}].safety.audit`,
+        message: "mutations must require audit",
+      });
+    }
+    if (
+      operation.safety.classification === "destructive" &&
+      !operation.safety.requiresConfirmation
+    ) {
+      issues.push({
+        path: `$.operations[${index}].safety.requiresConfirmation`,
+        message: "destructive operations must require confirmation",
+      });
+    }
+    for (const [kind, fields] of Object.entries(operation.redaction ?? {})) {
+      const normalized = (fields ?? []).map((field) =>
+        field.trim().replace(/[-_\s]/g, "").toLowerCase(),
+      );
+      if (normalized.some((field) => !field))
+        issues.push({
+          path: `$.operations[${index}].redaction.${kind}`,
+          message: "must not contain blank field names",
+        });
+      if ((fields ?? []).some((field) => !/^[A-Za-z][A-Za-z0-9_-]*$/.test(field)))
+        issues.push({
+          path: `$.operations[${index}].redaction.${kind}`,
+          message: "must contain simple field names rather than paths",
+        });
+      if (new Set(normalized).size !== normalized.length)
+        issues.push({
+          path: `$.operations[${index}].redaction.${kind}`,
+          message: "must contain unique normalized field names",
+        });
+    }
+    if (
+      [
+        ...(operation.redaction?.inputFields ?? []),
+        ...(operation.redaction?.outputFields ?? []),
+      ].length > 0 &&
+      operation.safety.audit !== "required"
+    ) {
+      issues.push({
+        path: `$.operations[${index}].safety.audit`,
+        message: "operations with declared sensitive fields must require audit",
+      });
+    }
+    if (operation.target) {
+      if (manifest.resources && !resourceIds.has(operation.target.resource)) {
+        issues.push({ path: `$.operations[${index}].target.resource`, message: "must name a declared manifest resource" });
+      }
+      if (!operation.target.resource.trim())
+        issues.push({
+          path: `$.operations[${index}].target.resource`,
+          message: "must not be blank",
+        });
+      const operationResource = operation.id.split(".")[1];
+      if (
+        operationResource &&
+        operation.target.resource !== operationResource
+      ) {
+        issues.push({
+          path: `$.operations[${index}].target.resource`,
+          message: "must match the resource segment in the operation id",
+        });
+      }
+      if (
+        operation.target.idInput !== undefined &&
+        !operation.target.idInput.trim()
+      )
+        issues.push({
+          path: `$.operations[${index}].target.idInput`,
+          message: "must not be blank",
+        });
+      if (operation.target.collection === true && operation.target.idInput) {
+        issues.push({
+          path: `$.operations[${index}].target`,
+          message: "must declare either a collection or an idInput, not both",
+        });
+      }
+      if (
+        operation.safety.classification === "destructive" &&
+        operation.target.collection === true
+      ) {
+        issues.push({
+          path: `$.operations[${index}].target`,
+          message: "destructive targets must identify one resource",
+        });
+      }
+      if (operation.target.collection !== true && !operation.target.idInput) {
+        issues.push({
+          path: `$.operations[${index}].target`,
+          message: "must declare a collection or an idInput",
+        });
+      }
+      if (
+        operation.target.idInput &&
+        !operation.inputSchema?.required?.includes(operation.target.idInput)
+      ) {
+        issues.push({
+          path: `$.operations[${index}].inputSchema.required`,
+          message: "must require the target idInput",
+        });
+      }
+      if (
+        operation.target.idInput &&
+        !operation.inputSchema?.properties?.[operation.target.idInput]
+      ) {
+        issues.push({
+          path: `$.operations[${index}].inputSchema.properties`,
+          message: "must define the target idInput",
+        });
+      }
+    }
+    if (operation.mcp && typeof operation.mcp === "object") {
+      if (
+        operation.mcp.name !== undefined &&
+        !/^[A-Za-z0-9_-]{1,128}$/.test(operation.mcp.name)
+      ) {
+        issues.push({
+          path: `$.operations[${index}].mcp.name`,
+          message: "must be a 1-128 character MCP-safe tool name",
+        });
+      }
+      const expectedRead = operation.safety.classification === "read";
+      const expectedDestructive =
+        operation.safety.classification === "destructive";
+      if (
+        operation.mcp.readOnlyHint !== undefined &&
+        operation.mcp.readOnlyHint !== expectedRead
+      )
+        issues.push({
+          path: `$.operations[${index}].mcp.readOnlyHint`,
+          message: "must match the operation safety classification",
+        });
+      if (
+        operation.mcp.destructiveHint !== undefined &&
+        operation.mcp.destructiveHint !== expectedDestructive
+      )
+        issues.push({
+          path: `$.operations[${index}].mcp.destructiveHint`,
+          message: "must match the operation safety classification",
+        });
+      if (
+        operation.mcp.idempotentHint !== undefined &&
+        operation.mcp.idempotentHint !== Boolean(operation.safety.idempotent)
+      )
+        issues.push({
+          path: `$.operations[${index}].mcp.idempotentHint`,
+          message: "must match the operation idempotency declaration",
+        });
+    }
+    try {
+      const [inputSchema, outputSchema] = operationSchemas(operation);
+      validateSupportedSchema(inputSchema, `$.operations[${index}].inputSchema`, issues);
+      validateSupportedSchema(outputSchema, `$.operations[${index}].outputSchema`, issues);
+      if (inputSchema.type !== "object") {
+        issues.push({
+          path: `$.operations[${index}].inputSchema.type`,
+          message: "must be object because REST and MCP administration transports accept named fields",
+        });
+      }
+    } catch (error) {
+      issues.push({
+        path: `$.operations[${index}]`,
+        message: error instanceof Error ? error.message : "schemas are invalid",
+      });
+    }
+  });
+  if (manifest.health) {
+    if (!manifest.health.operationId && !manifest.health.path) {
+      issues.push({
+        path: "$.health",
+        message: "must reference a declared read operation or route",
+      });
+    }
+    const healthOperation = manifest.health.operationId
+      ? manifest.operations.find(
+          (operation) => operation.id === manifest.health?.operationId,
+        )
+      : undefined;
+    if (manifest.health.operationId && !healthOperation) {
+      issues.push({
+        path: "$.health.operationId",
+        message: "must name a declared operation",
+      });
+    } else if (
+      healthOperation &&
+      healthOperation.safety.classification !== "read"
+    ) {
+      issues.push({
+        path: "$.health.operationId",
+        message: "must name a read operation",
+      });
+    }
+    const healthPathOperation = manifest.health.path
+      ? manifest.operations.find(
+          (operation) =>
+            operation.safety.classification === "read" &&
+            operationRoutePath(operation) === manifest.health?.path,
+        )
+      : undefined;
+    if (manifest.health.path && !healthPathOperation) {
+      issues.push({
+        path: "$.health.path",
+        message: "must exactly match a declared read route",
+      });
+    }
+    if (
+      healthOperation &&
+      manifest.health.path &&
+      operationRoutePath(healthOperation) !== manifest.health.path
+    ) {
+      issues.push({
+        path: "$.health",
+        message: "operationId and path must identify the same read operation",
+      });
+    }
+  }
+  return issues;
+}
+
+export function assertAdminCapabilityManifest(
+  manifest: AdminCapabilityManifest,
+): void {
+  const issues = validateAdminCapabilityManifest(manifest);
+  if (issues.length > 0)
+    throw new AdminError(
+      "invalid_argument",
+      `Invalid admin capability manifest: ${manifest.id}.`,
+      { details: { issues } },
+    );
+}
+
+export { stableSerialize };

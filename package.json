@@ -27,6 +27,8 @@
     "datafn/server",
     "datafn/svelte",
     "billfn/*",
+    "*fn/admin",
+    "superconsole",
     "filefn/*",
     "logfn/*",
     "mailfn/*",
