@@ -21,6 +21,8 @@ const browserLog = [];
 function sanitizedEvidence(value) {
   return value
     .replaceAll(baseUrl, '<local-probe-url>')
+    .replaceAll('127.0.0.1', '<local-probe-host>')
+    .replaceAll('4178', '<local-probe-port>')
     .replaceAll(consoleDirectory, '<superconsole>')
     .replaceAll(repositoryDirectory, '<repository>')
     .replaceAll(artifactDirectory, '<evidence>')
