@@ -5,13 +5,21 @@ description: "@authfn/admin — admin-only routes for listing and deleting users
 
 # Admin
 
+> **Legacy compatibility surface.** `createAuthFnAdmin` predates the shared
+> Super Console administration contract. Its destructive routes do not by
+> themselves provide bound confirmation, durable idempotency, or the shared
+> attempted/terminal audit sequence. Do not expose this router as a new
+> operator control plane. New self-hosted administration should bind
+> `createAuthFnAdminAdapter(service)` into Super Console or another
+> `@superfunctions/admin` dispatcher.
+
 `@authfn/admin` is a small package that mounts admin-only HTTP routes alongside your kernel. It uses the same database, the same namespace, and the same observability sink. You bring the **authorization** — a callback that decides whether a given request is allowed to perform a given admin action.
 
 ```bash
 npm install @authfn/admin
 ```
 
-## Setup
+## Legacy setup
 
 ```ts
 import { createAuthFn, authFnPasswordPlugin } from '@authfn/core';
@@ -49,8 +57,8 @@ app.route('/auth/admin', toHono(admin.router));
 | Method | Path | Operation ID | Notes |
 | --- | --- | --- | --- |
 | `GET` | `/admin/users` | `listAuthFnAdminUsers` | List users with paging/search. |
-| `DELETE` | `/admin/users/:userId` | `deleteAuthFnAdminUserById` | Cascading delete by user id. |
-| `DELETE` | `/admin/users` | `deleteAuthFnAdminUsersByEmail` | Cascading delete by email (handles ambiguity). |
+| `DELETE` | `/admin/users/:id` | `deleteAuthFnAdminUserById` | Cascading delete by user id. |
+| `DELETE` | `/admin/users/by-email/:email` | `deleteAuthFnAdminUsersByEmail` | Cascading delete by email (handles ambiguity). |
 
 All routes use the standard authfn envelopes and emit `authfn.account.deleted` plus admin-specific observability events.
 
@@ -82,14 +90,14 @@ authorize: async (ctx, input) => {
 
 ## Static-token authorizer
 
-For internal tools or scripts, the bundled `staticAdminKeyAuthorizer` accepts a fixed token from a header:
+For legacy internal tools or scripts, the bundled `createStaticAdminKeyAuthorizer` accepts a fixed token from a header. Prefer scoped AuthFn service credentials through Super Console for new automation:
 
 ```ts
-import { staticAdminKeyAuthorizer } from '@authfn/admin';
+import { createStaticAdminKeyAuthorizer } from '@authfn/admin';
 
 createAuthFnAdmin({
   authFnConfig: auth.config,
-  authorize: staticAdminKeyAuthorizer({
+  authorize: createStaticAdminKeyAuthorizer({
     token: process.env.ADMIN_TOKEN!,
     headerName: 'x-admin-token',
     actorId: 'admin-cli',
@@ -128,6 +136,21 @@ createAuthFnAdmin({
 | `AUTHFN_ADMIN_AMBIGUOUS_USER` | `deleteAuthFnAdminUsersByEmail` matched multiple users; you must disambiguate by id. |
 | `AUTHFN_ADMIN_CONFIG_INVALID` | Construction-time config error. |
 | `AUTHFN_VALIDATION_ERROR` | Missing or malformed parameters. |
+
+## New administration integrations
+
+The same package now exports `authFnAdminCapability` and
+`createAuthFnAdminAdapter`. The capability declares AuthFn resources,
+permissions, target binding, confirmation, idempotency, audit, REST/OpenAPI,
+and MCP metadata. Its injected service remains responsible for AuthFn domain
+authorization and namespace/region isolation; the shared dispatcher supplies
+the cross-function safety contract.
+
+The low-level router remains temporarily available for compatibility. If an
+existing deployment cannot migrate immediately, its surrounding gateway must
+add equivalent confirmation, idempotency, immutable audit, rate limiting, and
+operator authentication controls. An `authorize` callback alone is not that
+full contract.
 
 ## Why a separate package?
 

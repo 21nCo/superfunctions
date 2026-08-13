@@ -5,6 +5,11 @@ description: Mount @authfn/admin behind your corporate IAM and ship a UI for sup
 
 # Building an admin tool
 
+> This recipe describes the legacy low-level AuthFn router. For new operator
+> tooling, use Super Console with `createAuthFnAdminAdapter`; it shares bound
+> confirmation, durable idempotency, attempted/terminal audit, REST/OpenAPI,
+> and McpFn semantics with every enabled Superfunction.
+
 ## Goal
 
 Give your support team a UI to look up and delete users, gated behind your corporate IAM (Okta, Entra, in-house OIDC, …).
@@ -49,9 +54,11 @@ The UI is a thin shell over the admin routes:
 
 - `GET /internal/auth-admin/users?search=ada@` — search.
 - `DELETE /internal/auth-admin/users/:userId` — delete by id.
-- `DELETE /internal/auth-admin/users?email=ada@example.com` — delete by email.
+- `DELETE /internal/auth-admin/users/by-email/ada%40example.com` — delete by email.
 
-Always confirm destructive actions:
+The browser prompt below is only a user-experience guard. It is not a
+server-bound confirmation token and does not make the legacy route equivalent
+to the shared administration dispatcher:
 
 ```svelte
 <button on:click={() => confirmAndDelete(user)}>Delete</button>
@@ -66,7 +73,11 @@ Always confirm destructive actions:
 
 ## Audit
 
-Every admin action emits an `authfn.account.deleted` event with the `actorId` your `authorize` callback returned. Pipe this to your immutable audit log for compliance use cases.
+The legacy delete operation emits an `authfn.account.deleted` observation with
+the `actorId` returned by your authorization callback. That domain observation
+is not the shared pre-mutation intent plus terminal-outcome audit contract.
+Pipe it to protected telemetry during migration, but use the AuthFn capability
+adapter for new compliance-sensitive administration.
 
 ## Related
 
