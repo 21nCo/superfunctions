@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
@@ -11,7 +11,8 @@ const repositoryDirectory = dirname(consoleDirectory);
 const installationPath = join(probeDirectory, 'installation.mjs');
 const stamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
 const artifactDirectory = process.env.SUPERCONSOLE_PROBE_ARTIFACTS
-  ?? join(process.env.TMPDIR ?? '/tmp', `superconsole-probe-${stamp}`);
+  ? resolve(repositoryDirectory, process.env.SUPERCONSOLE_PROBE_ARTIFACTS)
+  : join(process.env.TMPDIR ?? '/tmp', `superconsole-probe-${stamp}`);
 const sourceCommit = process.env.SUPERCONSOLE_PROBE_SOURCE_COMMIT ?? 'uncommitted';
 const baseUrl = 'http://127.0.0.1:4178';
 const serverLog = [];
