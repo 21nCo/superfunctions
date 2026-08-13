@@ -1,5 +1,14 @@
 # Verification record
 
+## Current verdict
+
+**BLOCKED at audited commit `f46cf63f`.** The read-only re-audit found that the
+live Linear completion contract remained broader than this branch's local
+delivery gate. The historical green commands below remain useful evidence for
+that commit, but they do not establish SFN-21 completion. A new exact-HEAD
+verification record will replace this verdict only after every re-audit exit
+criterion is satisfied.
+
 ## Source and external state
 
 - Linear issue: [SFN-21](https://linear.app/21n/issue/SFN-21/build-super-console-as-the-modular-self-hosted-administration-control), with the ideation and architecture/delivery documents created, attached, and read back during project setup.
