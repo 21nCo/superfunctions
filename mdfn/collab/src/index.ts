@@ -16,6 +16,8 @@ export interface CollaborationSessionOptions {
   readonly doc?: Y.Doc;
   readonly awareness?: Awareness;
   readonly authorizeUpdate?: (update: Uint8Array, origin: unknown) => boolean | Promise<boolean>;
+  /** Protected editorial sidecar changes require an authoritative host decision. */
+  readonly authorizeSidecarUpdate?: (previous: MdfnSidecar | undefined, next: MdfnSidecar | undefined, origin: unknown) => boolean | Promise<boolean>;
   readonly profileId?: string;
   readonly protocolVersion?: number;
   readonly maxUpdateBytes?: number;
@@ -79,7 +81,10 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
   let applyingRemote = false;
   let destroyed = false;
   let online = options.online ?? true;
-  let pendingUpdates: Uint8Array[] = [];
+  interface PendingUpdate { readonly id: number; readonly update: Uint8Array; }
+  let nextPendingId = 0;
+  let pendingUpdates: PendingUpdate[] = [];
+  let inFlight: PendingUpdate | null = null;
   let flushing: Promise<void> | null = null;
 
   const emitAudit = (event: Omit<CollaborationAuditEvent, "documentId" | "userId">): void => {
@@ -113,12 +118,26 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
     parseSidecar(candidate.getMap<string>("sidecar").get("value"), candidate.getText("markdown").length);
   };
 
-  const validateUpdate = (update: Uint8Array): void => {
+  const protectedSidecar = (value: MdfnSidecar | undefined): string => JSON.stringify({
+    comments: value?.comments ?? [],
+    suggestions: value?.suggestions ?? [],
+    reviewState: value?.reviewState ?? "draft",
+    audit: value?.audit ?? [],
+  });
+
+  const validateUpdate = async (update: Uint8Array, origin: unknown): Promise<void> => {
     const candidate = new Y.Doc({ guid: expectedDocumentId });
     try {
       Y.applyUpdate(candidate, Y.encodeStateAsUpdate(doc), "validation:baseline");
       Y.applyUpdate(candidate, update, "validation:candidate");
       assertContract(candidate);
+      const previousSidecar = parseSidecar(sidecar.get("value"), source.length);
+      const candidateSidecar = parseSidecar(candidate.getMap<string>("sidecar").get("value"), candidate.getText("markdown").length);
+      if (protectedSidecar(previousSidecar) !== protectedSidecar(candidateSidecar)) {
+        if (!options.authorizeSidecarUpdate || !(await options.authorizeSidecarUpdate(previousSidecar, candidateSidecar, origin))) {
+          throw new Error("MDFN_COLLAB_EDITORIAL_UPDATE_FORBIDDEN");
+        }
+      }
     } finally {
       candidate.destroy();
     }
@@ -167,7 +186,8 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
 
   const compactPending = (): Uint8Array => {
     const update = Y.encodeStateAsUpdate(doc);
-    pendingUpdates = [update];
+    const replacement = { id: ++nextPendingId, update };
+    pendingUpdates = inFlight ? [inFlight, replacement] : [replacement];
     emitAudit({ type: "compact", byteLength: update.byteLength, pending: pendingUpdates.length });
     return update;
   };
@@ -178,10 +198,15 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
     if (flushing) return flushing;
     flushing = (async () => {
       while (online && pendingUpdates.length > 0) {
-        const update = pendingUpdates[0];
-        await options.sendUpdate!(update);
-        pendingUpdates.shift();
-        emitAudit({ type: "flush", byteLength: update.byteLength, pending: pendingUpdates.length });
+        const entry = pendingUpdates[0];
+        inFlight = entry;
+        try {
+          await options.sendUpdate!(entry.update);
+          pendingUpdates = pendingUpdates.filter((candidate) => candidate !== entry);
+          emitAudit({ type: "flush", byteLength: entry.update.byteLength, pending: pendingUpdates.length });
+        } finally {
+          if (inFlight === entry) inFlight = null;
+        }
       }
     })().finally(() => { flushing = null; });
     return flushing;
@@ -189,16 +214,25 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
 
   const queueLocalUpdate = (update: Uint8Array, origin: unknown): void => {
     if (destroyed || origin !== localOrigin) return;
-    pendingUpdates.push(update.slice());
+    pendingUpdates.push({ id: ++nextPendingId, update: update.slice() });
     emitAudit({ type: "local-update", byteLength: update.byteLength, pending: pendingUpdates.length });
     const threshold = options.compactionThresholdBytes ?? 2 * 1024 * 1024;
-    if (pendingUpdates.reduce((total, entry) => total + entry.byteLength, 0) > threshold) compactPending();
+    if (pendingUpdates.reduce((total, entry) => total + entry.update.byteLength, 0) > threshold) compactPending();
     if (online) void flush().catch((error: unknown) => {
       online = false;
       emitAudit({ type: "offline", pending: pendingUpdates.length, error: error instanceof Error ? error.message : String(error) });
     });
   };
   doc.on("update", queueLocalUpdate);
+  if (options.sendUpdate) {
+    const initial = Y.encodeStateAsUpdate(doc);
+    pendingUpdates.push({ id: ++nextPendingId, update: initial });
+    emitAudit({ type: "local-update", byteLength: initial.byteLength, pending: pendingUpdates.length });
+    if (online) void flush().catch((error: unknown) => {
+      online = false;
+      emitAudit({ type: "offline", pending: pendingUpdates.length, error: error instanceof Error ? error.message : String(error) });
+    });
+  }
 
   return {
     doc,
@@ -211,7 +245,7 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
       try {
         if (update.byteLength > maxUpdateBytes) throw new RangeError(`MDFN_COLLAB_UPDATE_TOO_LARGE:${maxUpdateBytes}`);
         if (options.authorizeUpdate && !(await options.authorizeUpdate(update, origin))) throw new Error("MDFN_COLLAB_UPDATE_FORBIDDEN");
-        validateUpdate(update);
+        await validateUpdate(update, origin);
         Y.applyUpdate(doc, update, origin);
         emitAudit({ type: "remote-update", byteLength: update.byteLength });
       } catch (error) {

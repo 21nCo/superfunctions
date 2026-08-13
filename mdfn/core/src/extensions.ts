@@ -1,5 +1,5 @@
 import { hashValue } from "./hash";
-import type { EditorCommand, MdfnDiagnostic, MdfnDocument, MdfnExtension } from "./types";
+import type { EditorCommand, ExtensionPlugin, ExtensionTextRule, MdfnDiagnostic, MdfnDocument, MdfnExtension } from "./types";
 
 export class ExtensionGraphError extends Error {
   readonly code: string;
@@ -17,8 +17,24 @@ export interface ResolvedExtensionRegistry {
   readonly extensions: readonly MdfnExtension[];
   readonly schemaHash: string;
   readonly commands: Readonly<Record<string, EditorCommand>>;
+  readonly keymap: Readonly<Record<string, string>>;
+  readonly inputRules: readonly ExtensionTextRule[];
+  readonly pasteRules: readonly ExtensionTextRule[];
+  readonly plugins: readonly ExtensionPlugin[];
   diagnose(document: MdfnDocument): readonly MdfnDiagnostic[];
   migrate(document: MdfnDocument, fromVersion: number, toVersion: number): MdfnDocument;
+}
+
+export function applyExtensionTextRules(text: string, source: string, from: number, to: number, rules: readonly ExtensionTextRule[]): string {
+  let output = text;
+  for (const rule of rules) {
+    const flags = rule.match.flags.replaceAll("g", "");
+    const match = output.match(new RegExp(rule.match.source, flags));
+    if (!match) continue;
+    const replacement = rule.replace(match, { text: output, source, from, to });
+    if (replacement !== null) output = replacement;
+  }
+  return output;
 }
 
 function assertName(value: string, label: string): void {
@@ -103,6 +119,34 @@ export function resolveExtensions(input: readonly MdfnExtension[]): ResolvedExte
     }
   }
 
+  const keymap: Record<string, string> = {};
+  const inputRules: ExtensionTextRule[] = [];
+  const pasteRules: ExtensionTextRule[] = [];
+  const plugins: ExtensionPlugin[] = [];
+  const pluginNames = new Set<string>();
+  for (const extension of ordered) {
+    for (const [key, command] of Object.entries(extension.keymap ?? {})) {
+      if (keymap[key]) throw new ExtensionGraphError("MDFN_EXTENSION_KEYMAP_DUPLICATE", `Duplicate key binding ${key}: ${keymap[key]} and ${extension.name}:${command}`, extension.name);
+      const qualified = command.includes(":") ? command : `${extension.name}:${command}`;
+      if (!commands[qualified]) throw new ExtensionGraphError("MDFN_EXTENSION_KEYMAP_COMMAND_MISSING", `Key binding ${key} references missing command ${qualified}`, extension.name);
+      keymap[key] = qualified;
+    }
+    for (const rule of extension.inputRules ?? []) {
+      if (!(rule.match instanceof RegExp) || !rule.name.trim()) throw new ExtensionGraphError("MDFN_EXTENSION_INPUT_RULE_INVALID", `Extension ${extension.name} has an invalid input rule`, extension.name);
+      inputRules.push(rule);
+    }
+    for (const rule of extension.pasteRules ?? []) {
+      if (!(rule.match instanceof RegExp) || !rule.name.trim()) throw new ExtensionGraphError("MDFN_EXTENSION_PASTE_RULE_INVALID", `Extension ${extension.name} has an invalid paste rule`, extension.name);
+      pasteRules.push(rule);
+    }
+    for (const plugin of extension.plugins ?? []) {
+      const qualified = `${extension.name}:${plugin.name}`;
+      if (pluginNames.has(qualified)) throw new ExtensionGraphError("MDFN_EXTENSION_PLUGIN_DUPLICATE", `Duplicate plugin ${qualified}`, extension.name);
+      pluginNames.add(qualified);
+      plugins.push(plugin);
+    }
+  }
+
   const schemaHash = hashValue(
     ordered.map((extension) => ({
       name: extension.name,
@@ -117,6 +161,10 @@ export function resolveExtensions(input: readonly MdfnExtension[]): ResolvedExte
     extensions: ordered,
     schemaHash,
     commands,
+    keymap,
+    inputRules,
+    pasteRules,
+    plugins,
     diagnose(document) {
       return ordered.flatMap((extension) => extension.diagnostics?.(document) ?? []);
     },

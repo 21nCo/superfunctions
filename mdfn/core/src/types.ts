@@ -224,6 +224,36 @@ export interface ExtensionRenderNode {
   readonly children?: readonly ExtensionRenderNode[];
 }
 
+export interface ExtensionTextRuleInput {
+  readonly text: string;
+  readonly source: string;
+  readonly from: number;
+  readonly to: number;
+}
+
+export interface ExtensionTextRule {
+  readonly name: string;
+  readonly match: RegExp;
+  replace(match: RegExpMatchArray, input: ExtensionTextRuleInput): string | null;
+}
+
+export interface ExtensionPluginContext {
+  getState(): EditorState;
+  dispatch(transaction: unknown): StateChange;
+  subscribe(listener: EditorListener): () => void;
+}
+
+export interface ExtensionPlugin {
+  readonly name: string;
+  setup(context: ExtensionPluginContext): void | (() => void);
+}
+
+export interface ExtensionCertificationManifest {
+  readonly schemaVersion: 1;
+  readonly fixtures: readonly string[];
+  readonly capabilities: readonly ("parse" | "serialize" | "render" | "visual" | "commands" | "keymap" | "input" | "paste" | "plugins" | "diagnostics" | "migrations" | "security")[];
+}
+
 export interface ExtensionMigration {
   readonly from: number;
   readonly to: number;
@@ -247,10 +277,15 @@ export interface MdfnExtension {
   readonly serializeMarkdown?: (input: ExtensionSerializeInput) => string | null;
   /** Structured, policy-checked output. Arbitrary HTML strings are rejected by the renderer. */
   readonly render?: (input: ExtensionRenderInput) => ExtensionRenderNode | null;
+  /** Optional additional policy pass over structured render output. */
+  readonly sanitizeRender?: (node: ExtensionRenderNode) => ExtensionRenderNode | null;
+  /** Structured visual representation consumed by browser adapters. */
+  readonly visual?: (input: ExtensionRenderInput) => ExtensionRenderNode | null;
   readonly commands?: Readonly<Record<string, EditorCommand>>;
   readonly keymap?: Readonly<Record<string, string>>;
-  readonly inputRules?: readonly string[];
-  readonly pasteRules?: readonly string[];
+  readonly inputRules?: readonly ExtensionTextRule[];
+  readonly pasteRules?: readonly ExtensionTextRule[];
+  readonly plugins?: readonly ExtensionPlugin[];
   readonly migrations?: readonly ExtensionMigration[];
   readonly diagnostics?: (document: MdfnDocument) => readonly MdfnDiagnostic[];
   readonly preservation: PreservationDeclaration;
@@ -259,4 +294,5 @@ export interface MdfnExtension {
     readonly urlSchemes?: readonly string[];
     readonly executesContent?: boolean;
   };
+  readonly certification?: ExtensionCertificationManifest;
 }

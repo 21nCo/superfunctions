@@ -30,4 +30,13 @@ describe("toolbar model", () => {
     expect(model.compact).toBe(true);
     expect(filterSlashCommands("upload")[0]?.kind).toBe("file");
   });
+
+  it("shows contextual controls only for the matching canonical selection", () => {
+    const range = createEditor({ markdown: "text", projector: createMarkdownProjector(), selection: { kind: "text", anchor: 0, head: 4 } });
+    expect(createAuthoringModel(range)).toMatchObject({ bubbleVisible: true, floatingVisible: false, slashOpen: false });
+    const caret = createEditor({ markdown: "/tab", projector: createMarkdownProjector(), selection: { kind: "text", anchor: 4, head: 4 } });
+    const model = createAuthoringModel(caret);
+    expect(model).toMatchObject({ bubbleVisible: false, floatingVisible: true, slashOpen: true });
+    expect(model.slashCommands.map((entry) => entry.id)).toEqual(["table"]);
+  });
 });

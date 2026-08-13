@@ -88,10 +88,10 @@ describe("PHASE_02 docs create/get/delete + perspectives", () => {
   });
 
   describe("Markdown field validation", () => {
-    it("stores Markdown source and rejects non-string values", async () => {
+    it("migrates legacy strings into versioned profile-bound Markdown values", async () => {
       const accepted = await api.docs.create({ dataset: "prod", id: "markdown-1", type: "post", doc: { title: "Markdown", markdownBody: "# Heading\n" } });
       expect(accepted.ok).toBe(true);
-      if (accepted.ok) expect(accepted.result.markdownBody).toBe("# Heading\n");
+      if (accepted.ok) expect(accepted.result.markdownBody).toMatchObject({ type: "text/markdown", version: 1, markdown: "# Heading\n", profile: { dialect: "gfm", allowRawHtml: false, schemaVersion: 1 } });
       const rejected = await api.docs.create({ dataset: "prod", id: "markdown-2", type: "post", doc: { title: "Invalid", markdownBody: ["not source"] } });
       expect(rejected.ok).toBe(false);
       if (!rejected.ok) expect(rejected.error).toMatchObject({ code: "VALIDATION_FAILED", details: { path: "markdownBody" } });

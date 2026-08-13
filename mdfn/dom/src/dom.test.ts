@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createEditor } from "@mdfn/core";
 import { createMarkdownProjector, parseMarkdown } from "@mdfn/markdown";
 import { commonmarkExtension, createDirectiveExtension } from "@mdfn/extensions";
-import { TextSelection } from "prosemirror-state";
+import { EditorState, TextSelection } from "prosemirror-state";
 import { createDomEditor, documentToProseMirror, proseMirrorToDocument } from "./index";
 
 describe("@mdfn/dom", () => {
@@ -61,6 +61,23 @@ describe("@mdfn/dom", () => {
     expect(projector.serialize(visual, source).markdown).toContain("`value`");
   });
 
+  it("preserves unsupported inline source and reference links through nearby visual edits", () => {
+    for (const source of [
+      "before <custom-inline>inside</custom-inline> after\n",
+      "[label][ref]\n\n[ref]: https://example.com\n",
+    ]) {
+      const projector = createMarkdownProjector({ dialect: "commonmark" });
+      const parsed = projector.parse(source);
+      const before = documentToProseMirror(parsed.document);
+      const state = EditorState.create({ schema: before.type.schema, doc: before });
+      const after = state.apply(state.tr.insertText("X", 1)).doc;
+      const changed = proseMirrorToDocument(after, before);
+      const output = projector.serialize(changed, source).markdown;
+      if (source.includes("custom-inline")) expect(output).toContain("<custom-inline>inside</custom-inline>");
+      else expect(output).toContain("[label][ref]");
+    }
+  });
+
   it("keeps extension identity and unsafe URLs inert in the visual model", () => {
     const callout = createDirectiveExtension({ name: "callout" });
     const extensionDocument = parseMarkdown(":::callout\nBody\n:::\n", { extensions: [commonmarkExtension, callout] }).document;
@@ -90,6 +107,29 @@ describe("@mdfn/dom", () => {
     target.querySelector(".ProseMirror")?.dispatchEvent(event);
     await Promise.resolve();
     expect(dropped).toEqual([[file]]);
+    editor.destroy();
+  });
+
+  it("executes extension input rules and structured visual hooks in the DOM adapter", () => {
+    const directive = createDirectiveExtension({ name: "note", label: "Note" });
+    const rules = {
+      name: "dom-rules",
+      version: "1.0.0",
+      preservation: { noEdit: "exact", edited: "semantic", unsupported: "opaque" } as const,
+      inputRules: [{ name: "arrow", match: /->/, replace: () => "→" }],
+    };
+    const extensions = [commonmarkExtension, directive, rules];
+    const controller = createEditor({ markdown: ":::note\nBody\n:::\n\nText\n", projector: createMarkdownProjector({ extensions }), extensions });
+    const target = document.createElement("div");
+    const editor = createDomEditor({ target, controller });
+    expect(target.querySelector('[data-md-directive="note"]')?.textContent).toContain("Body");
+    let handled = false;
+    editor.view.someProp("handleTextInput", (handler) => {
+      handled = handler(editor.view, editor.view.state.doc.content.size - 1, editor.view.state.doc.content.size - 1, "->");
+      return handled;
+    });
+    expect(handled).toBe(true);
+    expect(controller.getState().markdown).toContain("→");
     editor.destroy();
   });
 });

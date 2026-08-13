@@ -24,6 +24,7 @@ import { appendRevision } from "./revisions.js";
 import { documentStorageId } from "./documentIdentity.js";
 import { parseMarkdown } from "@mdfn/markdown";
 import { calloutExtension, commonmarkExtension, diagramExtension, gfmExtension } from "@mdfn/extensions";
+import { isMarkdownContent, markdownContent, type MarkdownContent, type MarkdownContentProfile } from "@mdfn/contentfn";
 
 export interface DocsStorageConfig {
   db: Adapter;
@@ -64,6 +65,30 @@ function validateDocumentAgainstSchema(
   }
 
   return ok(undefined);
+}
+
+function markdownProfile(fieldType: Extract<ContentfnFieldType, { kind: "markdown" }>): MarkdownContentProfile {
+  const dialect = fieldType.dialect ?? "gfm";
+  return {
+    id: `mdfn:${dialect}`,
+    dialect,
+    allowRawHtml: fieldType.allowRawHtml ?? false,
+    extensions: [...(fieldType.extensions ?? [])],
+    schemaVersion: fieldType.schemaVersion ?? 1,
+  };
+}
+
+function normalizeMarkdownFields(schema: ContentfnSchema, docType: string, doc: Record<string, unknown>): { ok: true; value: Record<string, unknown> } | { ok: false; field: string; error: string } {
+  const type = schema.documentTypes.find((candidate) => candidate.name === docType);
+  if (!type) return { ok: false, field: "_type", error: `document type ${docType} not found` };
+  const value = { ...doc };
+  for (const field of type.fields) {
+    if (field.type.kind !== "markdown" || !(field.name in value) || value[field.name] == null) continue;
+    const current = value[field.name];
+    if (typeof current === "string") value[field.name] = markdownContent(current, { profile: markdownProfile(field.type) });
+    else if (!isMarkdownContent(current)) return { ok: false, field: field.name, error: "expected a versioned Markdown value or legacy string" };
+  }
+  return { ok: true, value };
 }
 
 /**
@@ -137,13 +162,14 @@ function validateFieldType(
       return { ok: true };
     }
     case "markdown": {
-      if (typeof value !== "string") return { ok: false, error: `expected markdown string, got ${typeof value}` };
+      if (!isMarkdownContent(value)) return { ok: false, error: "expected versioned Markdown value" };
       try {
-        const dialect = fieldType.dialect ?? "gfm";
+        const content = value as MarkdownContent;
+        const dialect = content.profile.dialect;
         const available = { callout: calloutExtension, diagram: diagramExtension } as const;
-        const configured = (fieldType.extensions ?? []).map((name) => available[name as keyof typeof available]);
+        const configured = content.profile.extensions.map((name) => available[name as keyof typeof available]);
         if (configured.some((extension) => !extension)) return { ok: false, error: "unknown markdown extension" };
-        parseMarkdown(value, { dialect, allowRawHtml: fieldType.allowRawHtml ?? false, schemaVersion: fieldType.schemaVersion ?? 1, extensions: [commonmarkExtension, ...(dialect === "gfm" ? [gfmExtension] : []), ...configured] });
+        parseMarkdown(content.markdown, { dialect, allowRawHtml: content.profile.allowRawHtml, schemaVersion: content.profile.schemaVersion, extensions: [commonmarkExtension, ...(dialect === "gfm" ? [gfmExtension] : []), ...configured] });
         return { ok: true };
       } catch (error) {
         return { ok: false, error: `invalid markdown: ${error instanceof Error ? error.message : String(error)}` };
@@ -199,8 +225,10 @@ export async function docCreate(
   }
   const schema = schemaRes.result;
 
+  const normalized = normalizeMarkdownFields(schema, input.type, input.doc);
+  if (!normalized.ok) return err("VALIDATION_FAILED", `Field "${normalized.field}" has invalid type: ${normalized.error}`, { path: normalized.field });
   // Validate document against schema
-  const validation = validateDocumentAgainstSchema(schema, input.type, input.doc);
+  const validation = validateDocumentAgainstSchema(schema, input.type, normalized.value);
   if (!validation.ok) {
     return validation as ContentfnEnvelope<ContentfnDocument>;
   }
@@ -231,7 +259,7 @@ export async function docCreate(
     _rev: rev,
     _createdAt: now,
     _updatedAt: now,
-    ...input.doc,
+    ...normalized.value,
   };
 
   // If published, may have _publishedAt
@@ -308,7 +336,10 @@ export async function docGet(
   }
 
   const r = row as { docJson: ContentfnDocument };
-  return ok(r.docJson);
+  const schemaRes = await schemaGet({ db: config.db }, { dataset: input.dataset });
+  if (!schemaRes.ok) return schemaRes as ContentfnEnvelope<ContentfnDocument>;
+  const normalized = normalizeMarkdownFields(schemaRes.result, r.docJson._type, r.docJson);
+  return normalized.ok ? ok(normalized.value as ContentfnDocument) : err("VALIDATION_FAILED", normalized.error, { path: normalized.field });
 }
 
 /**
@@ -434,6 +465,14 @@ export async function docPatch(
     _updatedAt: now,
   } as ContentfnDocument;
 
+  const schemaRes = await schemaGet({ db: config.db }, { dataset: input.dataset });
+  if (!schemaRes.ok) return schemaRes as ContentfnEnvelope<ContentfnDocument>;
+  const normalized = normalizeMarkdownFields(schemaRes.result, currentDoc._type, updatedDoc);
+  if (!normalized.ok) return err("VALIDATION_FAILED", normalized.error, { path: normalized.field });
+  const validation = validateDocumentAgainstSchema(schemaRes.result, currentDoc._type, normalized.value);
+  if (!validation.ok) return validation as ContentfnEnvelope<ContentfnDocument>;
+  const persistedDoc = normalized.value as ContentfnDocument;
+
   // Persist updated document (delete old, create new with updated data)
   await config.db.deleteMany({
     model: table,
@@ -450,7 +489,7 @@ export async function docPatch(
       id: documentStorageId(input.dataset, input.id),
       documentId: input.id,
       type: currentDoc._type,
-      docJson: updatedDoc,
+      docJson: persistedDoc,
       rev: newRev,
       createdAt: currentDoc._createdAt,
       updatedAt: now,
@@ -466,9 +505,9 @@ export async function docPatch(
       docId: input.id,
       perspective,
       rev: newRev,
-      docJson: updatedDoc,
+      docJson: persistedDoc,
     }
   );
 
-  return ok(updatedDoc);
+  return ok(persistedDoc);
 }

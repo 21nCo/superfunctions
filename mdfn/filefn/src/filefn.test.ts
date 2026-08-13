@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAssetGateway, createMemoryAssetProvider, resolvedAssetRenderNode } from "./index";
+import { assetReferenceMarkdown, createAssetGateway, createAuthoringAssetHandler, createMemoryAssetProvider, resolvedAssetRenderNode } from "./index";
 
 describe("filefn bridge", () => {
   it("stores bytes and enforces provider policy", async () => {
@@ -27,5 +27,19 @@ describe("filefn bridge", () => {
     expect(resolvedAssetRenderNode(resolved)).toMatchObject({ tag: "img", attrs: { src: "/api/mdfn/assets/asset" } });
     expect(operations).toEqual(["upload", "resolve"]);
     await expect(gateway.resolve(reference, { documentId: "other" })).rejects.toThrow("MDFN_ASSET_DOCUMENT_MISMATCH");
+  });
+
+  it("emits a durable document- and version-bound asset identifier", () => {
+    expect(assetReferenceMarkdown({ id: "asset", provider: "filefn", documentId: "document", versionId: "v1", mediaType: "image/png" }, "Image"))
+      .toBe("![Image](mdfn-asset:filefn/asset?document=document&version=v1)");
+  });
+
+  it("adapts an asset provider to the shared authoring file callback", async () => {
+    const handler = createAuthoringAssetHandler({
+      provider: createMemoryAssetProvider({ createId: () => "inserted" }),
+      context: { documentId: "document" },
+    });
+    const markdown = await handler([new Blob(["image"], { type: "image/png" })]);
+    expect(markdown).toBe("![asset](mdfn-asset:memory/inserted?document=document)");
   });
 });

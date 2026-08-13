@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseMarkdown, serializeMarkdown } from "@mdfn/markdown";
 import { renderHtml } from "@mdfn/render";
+import { certifyExtension } from "@mdfn/testing";
 import { commonmarkExtension, createDirectiveExtension } from "./index";
 
 describe("@mdfn/extensions", () => {
@@ -22,5 +23,6 @@ describe("@mdfn/extensions", () => {
     expect(note.diagnostics?.(empty).map((entry) => entry.code)).toContain("MDFN_DIRECTIVE_EMPTY");
     const legacy = { ...parsed.document, content: [{ ...directive!, type: "callout-note" }] };
     expect(note.migrations?.[0].migrate(legacy).content[0].type).toBe("directive-note");
+    expect(certifyExtension(note, { id: "directive-note", source, options: { extensions: [commonmarkExtension] } })).toMatchObject({ ok: true, failed: 0 });
   });
 });

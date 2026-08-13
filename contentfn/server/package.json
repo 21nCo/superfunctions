@@ -52,6 +52,7 @@
     "@contentfn/core": "0.0.2",
     "@mdfn/markdown": "0.1.0",
     "@mdfn/extensions": "0.1.0",
+    "@mdfn/contentfn": "0.1.0",
     "@superfunctions/db": "0.1.4",
     "@superfunctions/http": "0.1.3"
   },

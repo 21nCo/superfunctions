@@ -1,4 +1,4 @@
-import { inspectMdfnUrl, type AssetMetadata, type ExtensionRenderNode, type MdfnJsonValue } from "@mdfn/core";
+import { formatMdfnAssetUrl, inspectMdfnUrl, type AssetMetadata, type ExtensionRenderNode, type MdfnJsonValue } from "@mdfn/core";
 import type { FileFnClient, RenderDescriptor } from "@filefn/client";
 
 export interface AssetContext {
@@ -125,7 +125,25 @@ export function createFileFnAssetProvider(input: {
 
 export function assetReferenceMarkdown(reference: AssetReference, alt = reference.name ?? "asset"): string {
   const label = alt.replaceAll("]", "\\]");
-  return `![${label}](mdfn-asset:${encodeURIComponent(reference.provider)}/${encodeURIComponent(reference.id)})`;
+  const url = formatMdfnAssetUrl({ provider: reference.provider, id: reference.id, documentId: reference.documentId, versionId: reference.versionId });
+  return `![${label}](${url})`;
+}
+
+export type MdfnAuthoringAssetHandler = (files: readonly (File | Blob)[]) => Promise<string | undefined>;
+
+/** Adapt any authorized asset provider to the framework-neutral authoring callback. */
+export function createAuthoringAssetHandler(input: {
+  readonly provider: MdfnAssetProvider;
+  readonly context: AssetContext;
+  readonly separator?: string;
+}): MdfnAuthoringAssetHandler {
+  const gateway = createAssetGateway(input.provider);
+  return async (files) => {
+    if (files.length === 0) return undefined;
+    const references: AssetReference[] = [];
+    for (const file of files) references.push(await gateway.upload(file, { ...input.context, purpose: "insert" }));
+    return references.map((reference) => assetReferenceMarkdown(reference)).join(input.separator ?? "\n");
+  };
 }
 
 export function resolvedAssetRenderNode(asset: ResolvedAsset): ExtensionRenderNode {

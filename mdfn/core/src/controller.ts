@@ -147,11 +147,17 @@ export function createEditor(input: CreateEditorInput): EditorController {
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      for (const cleanup of pluginCleanups.splice(0).reverse()) cleanup();
       listeners.clear();
       undoStack.length = 0;
       redoStack.length = 0;
     },
   };
+  const pluginCleanups: Array<() => void> = [];
+  for (const plugin of extensions.plugins) {
+    const cleanup = plugin.setup({ getState: controller.getState, dispatch: (transaction) => controller.dispatch(transaction as Transaction), subscribe: controller.subscribe });
+    if (cleanup) pluginCleanups.push(cleanup);
+  }
   return controller;
 }
 

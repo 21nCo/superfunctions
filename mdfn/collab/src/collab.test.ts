@@ -51,6 +51,49 @@ describe("collaboration", () => {
     rightSession.destroy();
   });
 
+  it("sends a dependency-complete initial state before incremental edits", async () => {
+    const controller = createEditor({ markdown: "initial", projector: createMarkdownProjector() });
+    const sent: Uint8Array[] = [];
+    const session = createCollaborationSession({ controller, documentId: "bootstrap", user: { id: "author" }, sendUpdate: (update) => { sent.push(update); } });
+    await session.flush();
+    expect(sent).toHaveLength(1);
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, sent[0]);
+    expect(peer.getText("markdown").toString()).toBe("initial");
+    expect(peer.getMap("metadata").get("documentId")).toBe("bootstrap");
+    session.destroy(); controller.destroy(); peer.destroy();
+  });
+
+  it("preserves a replacement snapshot when compaction races an in-flight send", async () => {
+    const controller = createEditor({ markdown: "a", projector: createMarkdownProjector() });
+    let release!: () => void;
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+    const sent: Uint8Array[] = [];
+    const session = createCollaborationSession({
+      controller,
+      documentId: "race",
+      user: { id: "author" },
+      compactionThresholdBytes: 1,
+      sendUpdate: async (update) => {
+        sent.push(update);
+        if (sent.length === 1) { started(); await new Promise<void>((resolve) => { release = resolve; }); }
+      },
+    });
+    await firstStarted;
+    controller.dispatch(new Transaction().replaceSource(1, 1, "1"));
+    controller.dispatch(new Transaction().replaceSource(2, 2, "2"));
+    release();
+    await session.flush();
+    expect(sent).toHaveLength(2);
+    expect(session.pendingUpdateCount()).toBe(0);
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, sent[0]);
+    Y.applyUpdate(peer, sent[1]);
+    expect(peer.getText("markdown").toString()).toBe("a12");
+    session.destroy(); controller.destroy(); peer.destroy();
+  });
+
   it("rejects incompatible schema metadata before mutating the live document", async () => {
     const projector = createMarkdownProjector();
     const controller = createEditor({ markdown: "safe", projector });

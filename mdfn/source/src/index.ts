@@ -1,11 +1,11 @@
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { bracketMatching, defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { linter, lintGutter, type Diagnostic as CodeMirrorDiagnostic } from "@codemirror/lint";
 import { searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState as CodeMirrorState } from "@codemirror/state";
 import { drawSelection, dropCursor, EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
-import { Transaction, type EditorController } from "@mdfn/core";
+import { applyExtensionTextRules, Transaction, type EditorController } from "@mdfn/core";
 import { renderHtml, type RenderPolicy } from "@mdfn/render";
 
 export type EditorMode = "visual" | "source" | "split" | "preview" | "read-only";
@@ -56,6 +56,7 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
   if (typeof document === "undefined") throw new Error("MDFN_SOURCE_BROWSER_REQUIRED");
   let syncing = false;
   const editable = new Compartment();
+  const extensionKeys = Object.entries(options.controller.extensions.keymap).map(([key, command]) => ({ key, run: () => options.controller.run(command) }));
   const extensions = [
     options.lineNumbers === false ? [] : lineNumbers(),
     drawSelection(),
@@ -64,10 +65,17 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
     bracketMatching(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     markdown({ base: markdownLanguage }),
-    history(),
     lintGutter(),
     linter(() => diagnostics(options.controller), { delay: 100 }),
-    keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+    keymap.of([
+      ...extensionKeys,
+      { key: "Mod-z", run: () => options.controller.undo() },
+      { key: "Mod-Shift-z", run: () => options.controller.redo() },
+      { key: "Mod-y", run: () => options.controller.redo() },
+      indentWithTab,
+      ...defaultKeymap,
+      ...searchKeymap,
+    ]),
     editable.of(EditorView.editable.of(!(options.readOnly ?? false))),
     EditorView.contentAttributes.of({ "aria-label": options.ariaLabel ?? "Markdown source", "data-mdfn-editor": "source" }),
     EditorView.domEventHandlers({
@@ -80,9 +88,19 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
       if (update.docChanged) {
         const previous = options.controller.getState().markdown;
         const change = smallestSourceChange(previous, update.state.doc.toString());
-        if (change) transaction = transaction.replaceSource(change.from, change.to, change.insert);
+        if (change) {
+          const pasted = update.transactions.some((entry) => entry.isUserEvent("input.paste"));
+          const rules = pasted ? options.controller.extensions.pasteRules : options.controller.extensions.inputRules;
+          const insert = applyExtensionTextRules(change.insert, previous, change.from, change.to, rules);
+          transaction = transaction.replaceSource(change.from, change.to, insert);
+          if (insert !== change.insert) {
+            syncing = true;
+            update.view.dispatch({ changes: { from: change.from, to: change.from + change.insert.length, insert } });
+            syncing = false;
+          }
+        }
       }
-      const main = update.state.selection.main;
+      const main = update.view.state.selection.main;
       transaction = transaction.setSelection({ kind: "text", anchor: main.anchor, head: main.head });
       options.controller.dispatch(transaction);
     }),

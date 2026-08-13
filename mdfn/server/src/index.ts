@@ -4,6 +4,7 @@ import {
   createSuggestion,
   decideSuggestion,
   hashString,
+  mapSidecar,
   replyToComment,
   resolveExtensions,
   setCommentResolved,
@@ -132,6 +133,51 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
     : callback(database);
   let service!: MdfnService;
   const editorialActor = (principal: MdfnPrincipal) => ({ id: principal.id, createId, now: () => new Date().toISOString() });
+  type UpdateInput = Parameters<MdfnService["update"]>[2];
+  const protectedSidecar = (value: MdfnSidecar | undefined): string => JSON.stringify({
+    comments: value?.comments ?? [],
+    suggestions: value?.suggestions ?? [],
+    reviewState: value?.reviewState ?? "draft",
+    audit: value?.audit ?? [],
+  });
+  const mapForMarkdownChange = (sidecar: MdfnSidecar | undefined, previous: string, next: string): MdfnSidecar | undefined => {
+    if (!sidecar || previous === next) return sidecar;
+    let from = 0;
+    const shared = Math.min(previous.length, next.length);
+    while (from < shared && previous.charCodeAt(from) === next.charCodeAt(from)) from += 1;
+    let previousTo = previous.length;
+    let nextTo = next.length;
+    while (previousTo > from && nextTo > from && previous.charCodeAt(previousTo - 1) === next.charCodeAt(nextTo - 1)) { previousTo -= 1; nextTo -= 1; }
+    return mapSidecar(sidecar, [{ from, to: previousTo, insertedLength: nextTo - from }]);
+  };
+  const writeUpdate = async (principal: MdfnPrincipal, id: string, input: UpdateInput, trustedEditorial = false): Promise<MdfnDocumentRecord> => {
+    const current = await loadScoped(principal, id);
+    await allowed(config, "update", principal, current);
+    if (input.idempotencyKey) {
+      const receipt = await database.findOne<{ result: MdfnDocumentRecord }>({ model: RECEIPTS, where: [{ field: "documentId", operator: "eq", value: id }, { field: "idempotencyKey", operator: "eq", value: input.idempotencyKey }] });
+      if (receipt) return receipt.result;
+    }
+    if (current.version !== input.expectedVersion) throw new MdfnServerError("MDFN_VERSION_CONFLICT", 409);
+    const markdown = input.markdown ?? current.markdown;
+    if (!trustedEditorial && input.sidecar && protectedSidecar(input.sidecar) !== protectedSidecar(current.sidecar)) {
+      throw new MdfnServerError("MDFN_EDITORIAL_MUTATION_FORBIDDEN", 403);
+    }
+    const sidecar = input.sidecar ?? mapForMarkdownChange(current.sidecar, current.markdown, markdown);
+    parse(markdown, sidecar);
+    const next: MdfnDocumentRecord = { ...current, title: input.title ?? current.title, markdown, sourceHash: hashString(markdown), schemaHash: registry.schemaHash, sidecar, version: current.version + 1, updatedAt: new Date() };
+    return withStorage(async (storage) => {
+      if (input.idempotencyKey) {
+        const receipt = await storage.findOne<{ result: MdfnDocumentRecord }>({ model: RECEIPTS, where: [{ field: "documentId", operator: "eq", value: id }, { field: "idempotencyKey", operator: "eq", value: input.idempotencyKey }] });
+        if (receipt) return receipt.result;
+      }
+      const latest = await storage.findOne<MdfnDocumentRecord>({ model: DOCUMENTS, where: whereId(id) });
+      if (!latest || latest.version !== input.expectedVersion) throw new MdfnServerError("MDFN_VERSION_CONFLICT", 409);
+      const updated = await storage.update<MdfnDocumentRecord>({ model: DOCUMENTS, where: [{ field: "id", operator: "eq", value: id }, { field: "version", operator: "eq", value: input.expectedVersion }], data: next });
+      await storage.create({ model: VERSIONS, data: revision(updated, principal.id, input.changeSource ?? "update") });
+      if (input.idempotencyKey) await storage.create({ model: RECEIPTS, data: { id: createId(), documentId: id, idempotencyKey: input.idempotencyKey, result: updated, createdAt: new Date() } });
+      return updated;
+    });
+  };
   const mutateEditorial = async (
     principal: MdfnPrincipal,
     id: string,
@@ -149,7 +195,7 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
     if (current.version !== expectedVersion) throw new MdfnServerError("MDFN_VERSION_CONFLICT", 409);
     try {
       const next = mutate(current);
-      return service.update(principal, id, { expectedVersion, markdown: next.markdown, sidecar: next.sidecar, changeSource, idempotencyKey });
+      return writeUpdate(principal, id, { expectedVersion, markdown: next.markdown, sidecar: next.sidecar, changeSource, idempotencyKey }, true);
     } catch (error) {
       if (error instanceof MdfnServerError) throw error;
       throw new MdfnServerError("MDFN_EDITORIAL_INVALID", 422);
@@ -171,32 +217,14 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
     async list(principal, options = {}) {
       await allowed(config, "read", principal);
       const where = principal.tenantId ? [{ field: "tenantId", operator: "eq" as const, value: principal.tenantId }] : [{ field: "ownerId", operator: "eq" as const, value: principal.id }];
-      return database.findMany<MdfnDocumentRecord>({ model: DOCUMENTS, where, limit: Math.min(100, Math.max(1, options.limit ?? 50)), offset: Math.max(0, options.offset ?? 0), orderBy: [{ field: "updatedAt", direction: "desc" }] });
+      const candidates = await database.findMany<MdfnDocumentRecord>({ model: DOCUMENTS, where, orderBy: [{ field: "updatedAt", direction: "desc" }] });
+      const visible: MdfnDocumentRecord[] = [];
+      for (const document of candidates) if (await config.authorize("read", principal, document)) visible.push(document);
+      const offset = Math.max(0, options.offset ?? 0);
+      const limit = Math.min(100, Math.max(1, options.limit ?? 50));
+      return visible.slice(offset, offset + limit);
     },
-    async update(principal, id, input) {
-      const current = await loadScoped(principal, id);
-      await allowed(config, "update", principal, current);
-      if (input.idempotencyKey) {
-        const receipt = await database.findOne<{ result: MdfnDocumentRecord }>({ model: RECEIPTS, where: [{ field: "documentId", operator: "eq", value: id }, { field: "idempotencyKey", operator: "eq", value: input.idempotencyKey }] });
-        if (receipt) return receipt.result;
-      }
-      if (current.version !== input.expectedVersion) throw new MdfnServerError("MDFN_VERSION_CONFLICT", 409);
-      const markdown = input.markdown ?? current.markdown;
-      parse(markdown, input.sidecar ?? current.sidecar);
-      const next: MdfnDocumentRecord = { ...current, title: input.title ?? current.title, markdown, sourceHash: hashString(markdown), schemaHash: registry.schemaHash, sidecar: input.sidecar ?? current.sidecar, version: current.version + 1, updatedAt: new Date() };
-      return withStorage(async (storage) => {
-        if (input.idempotencyKey) {
-          const receipt = await storage.findOne<{ result: MdfnDocumentRecord }>({ model: RECEIPTS, where: [{ field: "documentId", operator: "eq", value: id }, { field: "idempotencyKey", operator: "eq", value: input.idempotencyKey }] });
-          if (receipt) return receipt.result;
-        }
-        const latest = await storage.findOne<MdfnDocumentRecord>({ model: DOCUMENTS, where: whereId(id) });
-        if (!latest || latest.version !== input.expectedVersion) throw new MdfnServerError("MDFN_VERSION_CONFLICT", 409);
-        const updated = await storage.update<MdfnDocumentRecord>({ model: DOCUMENTS, where: [{ field: "id", operator: "eq", value: id }, { field: "version", operator: "eq", value: input.expectedVersion }], data: next });
-        await storage.create({ model: VERSIONS, data: revision(updated, principal.id, input.changeSource ?? "update") });
-        if (input.idempotencyKey) await storage.create({ model: RECEIPTS, data: { id: createId(), documentId: id, idempotencyKey: input.idempotencyKey, result: updated, createdAt: new Date() } });
-        return updated;
-      });
-    },
+    async update(principal, id, input) { return writeUpdate(principal, id, input); },
     async delete(principal, id) {
       const current = await loadScoped(principal, id);
       await allowed(config, "delete", principal, current);
@@ -212,7 +240,7 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
     async version(principal, id, version) { const document = await loadScoped(principal, id); await allowed(config, "history", principal, document); const result = await database.findOne<MdfnVersionRecord>({ model: VERSIONS, where: [{ field: "documentId", operator: "eq", value: id }, { field: "version", operator: "eq", value: version }] }); if (!result) throw new MdfnServerError("MDFN_VERSION_NOT_FOUND", 404); return result; },
     async restoreVersion(principal, id, input) {
       const restored = await service.version(principal, id, input.version);
-      return service.update(principal, id, { expectedVersion: input.expectedVersion, title: restored.title, markdown: restored.markdown, sidecar: restored.sidecar, changeSource: `restore:${input.version}`, idempotencyKey: input.idempotencyKey });
+      return service.update(principal, id, { expectedVersion: input.expectedVersion, title: restored.title, markdown: restored.markdown, changeSource: `restore:${input.version}`, idempotencyKey: input.idempotencyKey });
     },
     async createComment(principal, id, input) {
       return mutateEditorial(principal, id, input.expectedVersion, "editorial:comment-created", input.idempotencyKey, (document) => createCommentThread({ sidecar: document.sidecar, anchor: input.anchor, body: input.body, actor: editorialActor(principal), markdownLength: document.markdown.length }));

@@ -86,6 +86,18 @@ export function createDirectiveExtension(options: DirectiveExtensionOptions): Md
         ],
       };
     },
+    visual({ node }) {
+      if (node.type !== nodeType) return null;
+      const label = typeof node.attrs?.label === "string" ? node.attrs.label : options.label ?? name;
+      return {
+        tag: "aside",
+        attrs: { class: "mdfn-directive-visual", "data-md-directive": name },
+        children: [
+          { tag: "strong", text: label },
+          { tag: "p", text: node.text ?? "" },
+        ],
+      };
+    },
     diagnostics(document) {
       const diagnostics: Array<{ code: string; message: string; severity: "warning"; nodeId?: string; extension: string }> = [];
       const visit = (node: MdfnNode): void => {
@@ -105,6 +117,11 @@ export function createDirectiveExtension(options: DirectiveExtensionOptions): Md
         return { ...migrate(document), type: "doc", schemaVersion: 2 } as MdfnDocument;
       },
     }],
+    certification: {
+      schemaVersion: 1,
+      fixtures: [`directive-${name}`],
+      capabilities: ["parse", "serialize", "render", "visual", "diagnostics", "migrations", "security"],
+    },
   };
 }
 

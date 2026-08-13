@@ -1,4 +1,4 @@
-import { Transaction as MdfnTransaction, inspectMdfnUrl, type EditorController } from "@mdfn/core";
+import { applyExtensionTextRules, Transaction as MdfnTransaction, inspectMdfnUrl, type EditorController, type ExtensionRenderNode, type MdfnNode } from "@mdfn/core";
 import { baseKeymap, createParagraphNear, exitCode, liftEmptyBlock, newlineInCode, setBlockType, splitBlock, toggleMark, wrapIn } from "prosemirror-commands";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
@@ -132,7 +132,9 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
   let readOnly = options.readOnly ?? false;
   let syncing = false;
   const commands = commandMap(options.controller);
+  const extensionKeymap = Object.fromEntries(Object.entries(options.controller.extensions.keymap).map(([key, command]) => [key, () => options.controller.run(command)]));
   const plugins = [
+    keymap(extensionKeymap),
     keymap({
       "Mod-z": commands.undo,
       "Shift-Mod-z": commands.redo,
@@ -157,6 +159,40 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
     editable: () => !readOnly,
     attributes: { role: "textbox", "aria-multiline": "true", "data-mdfn-editor": "visual", ...(options.attributes ?? {}) },
     transformPastedHTML: sanitizePastedHtml,
+    transformPastedText: (text) => {
+      const state = options.controller.getState();
+      const selection = state.selection?.kind === "text" ? state.selection : { anchor: 0, head: 0 };
+      return applyExtensionTextRules(text, state.markdown, selection.anchor, selection.head, options.controller.extensions.pasteRules);
+    },
+    nodeViews: {
+      extension_block(node) {
+        let attrs: Record<string, unknown> = {};
+        let content: readonly MdfnNode[] = [];
+        try { attrs = JSON.parse(String(node.attrs.nodeAttrs)); } catch { attrs = {}; }
+        try { content = JSON.parse(String(node.attrs.nodeContent)); } catch { content = []; }
+        const extensionNode: MdfnNode = { type: String(node.attrs.nodeType), attrs: attrs as never, content, text: String(node.attrs.text ?? "") || undefined };
+        let descriptor: ExtensionRenderNode | null = null;
+        for (const extension of options.controller.extensions.extensions) {
+          descriptor = extension.visual?.({ node: extensionNode, escape: (value) => value }) ?? null;
+          if (descriptor) break;
+        }
+        if (!descriptor) return { dom: document.createElement("span") };
+        const create = (entry: ExtensionRenderNode): HTMLElement => {
+          if (!/^(?:aside|blockquote|code|div|em|figure|figcaption|kbd|mark|p|pre|section|small|span|strong|sub|sup)$/.test(entry.tag)) throw new Error("MDFN_EXTENSION_VISUAL_TAG_FORBIDDEN");
+          const element = document.createElement(entry.tag);
+          for (const [name, value] of Object.entries(entry.attrs ?? {})) {
+            if (value == null || value === false || /^on/i.test(name) || name === "style" || name === "srcdoc" || name === "href" || name === "src") continue;
+            if (name === "class" || name === "title" || name === "role" || name.startsWith("aria-") || name.startsWith("data-")) element.setAttribute(name, value === true ? "" : String(value));
+          }
+          if (entry.text) element.append(document.createTextNode(entry.text));
+          for (const child of entry.children ?? []) element.append(create(child));
+          return element;
+        };
+        const dom = create(descriptor);
+        dom.contentEditable = "false";
+        return { dom };
+      },
+    },
     handleDOMEvents: {
       focus: () => { options.onFocus?.(); return false; },
       blur: () => { options.onBlur?.(); return false; },
@@ -174,6 +210,12 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
         if (options.onFiles && !readOnly) void options.onFiles(files);
         return true;
       },
+    },
+    handleTextInput(_view, from, to, text) {
+      const replacement = applyExtensionTextRules(text, options.controller.getState().markdown, from, to, options.controller.extensions.inputRules);
+      if (replacement === text) return false;
+      view.dispatch(view.state.tr.insertText(replacement, from, to));
+      return true;
     },
     dispatchTransaction(transaction) {
       const next = view.state.apply(transaction);

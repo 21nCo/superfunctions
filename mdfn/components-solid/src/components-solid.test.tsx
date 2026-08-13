@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createEditor, Transaction } from "@mdfn/core";
 import { createMarkdownProjector } from "@mdfn/markdown";
-import { MdfnEditorShell } from "./index";
+import { MdfnAuthoringChrome, MdfnEditorShell } from "./index";
 
 describe("Solid authoring components", () => {
   it("mounts UIFn chrome and every read-only authoring surface", async () => {
@@ -41,6 +41,40 @@ describe("Solid authoring components", () => {
     controller.dispatch(new Transaction().replaceSource(0, 0, "Updated "));
     await Promise.resolve();
     expect(target.querySelector('[data-mdfn-source-fallback="true"]')).toBeNull();
+    dispose();
+  });
+
+  it("runs contextual editorial and version workflows", async () => {
+    const controller = createEditor({ markdown: "text", projector: createMarkdownProjector(), selection: { kind: "text", anchor: 0, head: 4 } });
+    const restore = vi.fn();
+    const target = document.createElement("div");
+    const dispose = render(() => <MdfnAuthoringChrome controller={controller} versions={[{ version: 1 }]} onRestoreVersion={restore} />, target);
+    await Promise.resolve();
+    expect(target.querySelector('[data-mdfn-surface="bubble-toolbar"]')).not.toBeNull();
+    expect(target.querySelector('[data-mdfn-surface="floating-toolbar"]')).toBeNull();
+    const update = async (label: string, value: string): Promise<void> => {
+      const input = target.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+      input.value = value;
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+      await Promise.resolve();
+    };
+    const button = (label: string): HTMLButtonElement => Array.from(target.querySelectorAll("button")).find((candidate) => candidate.textContent === label) as HTMLButtonElement;
+    await update("Comment", "Review this");
+    button("Add comment").click();
+    await Promise.resolve();
+    const thread = controller.getState().sidecar?.comments?.[0];
+    await update(`Reply to comment ${thread!.id}`, "Reply");
+    button("Reply").click();
+    await Promise.resolve();
+    button("Resolve").click();
+    await Promise.resolve();
+    expect(controller.getState().sidecar?.comments?.[0]).toMatchObject({ resolved: true, messages: expect.arrayContaining([expect.objectContaining({ body: "Reply" })]) });
+    await update("Suggestion replacement", "replacement");
+    button("Add suggestion").click();
+    await Promise.resolve();
+    expect(controller.getState().sidecar?.suggestions?.[0]?.replacement).toBe("replacement");
+    button("Restore").click();
+    expect(restore).toHaveBeenCalledWith(1);
     dispose();
   });
 });

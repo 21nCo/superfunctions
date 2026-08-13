@@ -45,6 +45,7 @@
   "dependencies": {
     "@mdfn/components-react": "0.1.0",
     "@mdfn/core": "0.1.0",
+    "@mdfn/contentfn": "0.1.0",
     "@mdfn/extensions": "0.1.0",
     "cmsfn": "0.0.2",
     "react": "^18.3.1",

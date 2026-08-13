@@ -30,7 +30,9 @@ export const mdfnSchema = new Schema({
     bullet_list: block({ content: "list_item+", group: "block", parseDOM: [{ tag: "ul" }], toDOM: () => ["ul", 0] }),
     ordered_list: block({ attrs: { ...sourceAttrs, order: { default: 1 } }, content: "list_item+", group: "block", parseDOM: [{ tag: "ol", getAttrs: (element) => ({ order: (element as HTMLOListElement).start || 1 }) }], toDOM: (node) => node.attrs.order === 1 ? ["ol", 0] : ["ol", { start: node.attrs.order }, 0] }),
     list_item: { attrs: { checked: { default: null } }, content: "paragraph block*", defining: true, parseDOM: [{ tag: "li" }], toDOM: (node) => ["li", node.attrs.checked === null ? {} : { "data-checked": String(node.attrs.checked) }, 0] },
-    image: { inline: true, attrs: { src: { default: "" }, sourceSrc: { default: "" }, blocked: { default: false }, alt: { default: "" }, title: { default: "" } }, group: "inline", draggable: true, parseDOM: [{ tag: "img[src]", getAttrs: (element) => { const image = element as HTMLImageElement; const src = image.getAttribute("src") ?? ""; return { src, sourceSrc: src, blocked: false, alt: image.getAttribute("alt") ?? "", title: image.getAttribute("title") ?? "" }; } }], toDOM: (node) => node.attrs.blocked ? ["span", { "data-mdfn-blocked-image": "true", "aria-label": node.attrs.alt || "Blocked image" }, String(node.attrs.alt || "")] : ["img", { src: node.attrs.src, alt: node.attrs.alt, title: node.attrs.title || null }] },
+    image: { inline: true, attrs: { src: { default: "" }, sourceSrc: { default: "" }, blocked: { default: false }, alt: { default: "" }, title: { default: "" }, referenceIdentifier: { default: "" }, referenceLabel: { default: "" }, referenceType: { default: "" } }, group: "inline", draggable: true, parseDOM: [{ tag: "img[src]", getAttrs: (element) => { const image = element as HTMLImageElement; const src = image.getAttribute("src") ?? ""; return { src, sourceSrc: src, blocked: false, alt: image.getAttribute("alt") ?? "", title: image.getAttribute("title") ?? "" }; } }], toDOM: (node) => node.attrs.blocked ? ["span", { "data-mdfn-blocked-image": "true", "aria-label": node.attrs.alt || "Blocked image" }, String(node.attrs.alt || "")] : ["img", { src: node.attrs.src, alt: node.attrs.alt, title: node.attrs.title || null }] },
+    asset: { inline: true, attrs: { ...sourceAttrs, provider: { default: "" }, assetId: { default: "" }, documentId: { default: "" }, versionId: { default: "" }, sourceUrl: { default: "" }, alt: { default: "" }, title: { default: "" } }, group: "inline", atom: true, selectable: true, draggable: true, toDOM: (node) => ["span", { "data-mdfn-asset": node.attrs.assetId, "data-mdfn-provider": node.attrs.provider, contenteditable: "false" }, String(node.attrs.alt || "Asset")] },
+    opaque_inline: { inline: true, attrs: { ...sourceAttrs, syntax: { default: "unknown" }, raw: { default: "" } }, group: "inline", atom: true, selectable: true, toDOM: (node) => ["code", { "data-mdfn-opaque-inline": node.attrs.syntax, contenteditable: "false" }, String(node.attrs.raw)] },
     hard_break: { inline: true, group: "inline", selectable: false, parseDOM: [{ tag: "br" }], toDOM: () => ["br"] },
     opaque_block: block({ attrs: { ...sourceAttrs, syntax: { default: "unknown" }, raw: { default: "" } }, group: "block", atom: true, selectable: true, draggable: false, parseDOM: [{ tag: "pre[data-mdfn-opaque]", getAttrs: (element) => ({ syntax: (element as HTMLElement).dataset.mdfnOpaque, raw: element.textContent ?? "" }) }], toDOM: (node) => ["pre", { "data-mdfn-opaque": node.attrs.syntax, contenteditable: "false" }, ["code", String(node.attrs.raw)]] }),
     extension_block: block({ attrs: { ...sourceAttrs, nodeType: { default: "unknown" }, nodeAttrs: { default: "{}" }, nodeContent: { default: "[]" }, raw: { default: "" }, text: { default: "" } }, group: "block", atom: true, selectable: true, draggable: false, parseDOM: [{ tag: "aside[data-mdfn-extension]", getAttrs: (element) => ({ nodeType: (element as HTMLElement).dataset.mdfnExtension ?? "unknown", raw: (element as HTMLElement).dataset.mdfnRaw ?? "", text: element.textContent ?? "" }) }], toDOM: (node) => ["aside", { "data-mdfn-extension": node.attrs.nodeType, "data-mdfn-raw": node.attrs.raw, contenteditable: "false" }, ["strong", String(node.attrs.nodeType)], node.attrs.text ? ["pre", String(node.attrs.text)] : ["span", "Opaque extension block"]] }),
@@ -44,7 +46,7 @@ export const mdfnSchema = new Schema({
     strong: { parseDOM: [{ tag: "strong" }, { tag: "b", getAttrs: (element) => (element as HTMLElement).style.fontWeight !== "normal" && null }], toDOM: () => ["strong", 0] },
     em: { parseDOM: [{ tag: "em" }, { tag: "i" }], toDOM: () => ["em", 0] },
     code: { parseDOM: [{ tag: "code" }], toDOM: () => ["code", 0] },
-    link: { attrs: { href: { default: "" }, sourceHref: { default: "" }, blocked: { default: false }, title: { default: "" } }, inclusive: false, parseDOM: [{ tag: "a[href]", getAttrs: (element) => { const href = (element as HTMLAnchorElement).getAttribute("href") ?? ""; return { href, sourceHref: href, blocked: false, title: (element as HTMLAnchorElement).getAttribute("title") ?? "" }; } }], toDOM: (mark) => mark.attrs.blocked ? ["span", { "data-mdfn-blocked-link": "true" }, 0] : ["a", { href: mark.attrs.href, title: mark.attrs.title || null }, 0] },
+    link: { attrs: { href: { default: "" }, sourceHref: { default: "" }, blocked: { default: false }, title: { default: "" }, referenceIdentifier: { default: "" }, referenceLabel: { default: "" }, referenceType: { default: "" } }, inclusive: false, parseDOM: [{ tag: "a[href]", getAttrs: (element) => { const href = (element as HTMLAnchorElement).getAttribute("href") ?? ""; return { href, sourceHref: href, blocked: false, title: (element as HTMLAnchorElement).getAttribute("title") ?? "" }; } }], toDOM: (mark) => mark.attrs.blocked ? ["span", { "data-mdfn-blocked-link": "true" }, 0] : ["a", { href: mark.attrs.href, title: mark.attrs.title || null }, 0] },
     strike: { parseDOM: [{ tag: "del" }, { tag: "s" }], toDOM: () => ["del", 0] },
   },
 });
@@ -57,7 +59,7 @@ function marksFor(node: MdfnNode, active: readonly Mark[]): readonly import("pro
   if (node.type === "link") {
     const sourceHref = String(node.attrs?.url ?? "");
     const safe = inspectMdfnUrl(sourceHref, { allowedSchemes: ["http", "https", "mailto"], allowRelative: true }).safe;
-    return [...active, mdfnSchema.marks.link.create({ href: safe ? sourceHref : "", sourceHref, blocked: !safe, title: String(node.attrs?.title ?? "") })];
+    return [...active, mdfnSchema.marks.link.create({ href: safe ? sourceHref : "", sourceHref, blocked: !safe, title: String(node.attrs?.title ?? ""), referenceIdentifier: String(node.attrs?.referenceIdentifier ?? ""), referenceLabel: String(node.attrs?.referenceLabel ?? ""), referenceType: String(node.attrs?.referenceType ?? "") })];
   }
   return active;
 }
@@ -69,8 +71,10 @@ function inlineNodes(nodes: readonly MdfnNode[] | undefined, active: readonly Ma
     if (node.type === "image") {
       const sourceSrc = String(node.attrs?.url ?? "");
       const safe = inspectMdfnUrl(sourceSrc, { allowedSchemes: ["http", "https"], allowRelative: true }).safe;
-      return [mdfnSchema.nodes.image.create({ src: safe ? sourceSrc : "", sourceSrc, blocked: !safe, alt: String(node.attrs?.alt ?? ""), title: String(node.attrs?.title ?? "") }, undefined, marks)];
+      return [mdfnSchema.nodes.image.create({ src: safe ? sourceSrc : "", sourceSrc, blocked: !safe, alt: String(node.attrs?.alt ?? ""), title: String(node.attrs?.title ?? ""), referenceIdentifier: String(node.attrs?.referenceIdentifier ?? ""), referenceLabel: String(node.attrs?.referenceLabel ?? ""), referenceType: String(node.attrs?.referenceType ?? "") }, undefined, marks)];
     }
+    if (node.type === "asset") return [mdfnSchema.nodes.asset.create({ ...attrsFromSource(node.source), provider: String(node.attrs?.provider ?? ""), assetId: String(node.attrs?.id ?? ""), documentId: String(node.attrs?.documentId ?? ""), versionId: String(node.attrs?.versionId ?? ""), sourceUrl: String(node.attrs?.url ?? ""), alt: String(node.attrs?.alt ?? ""), title: String(node.attrs?.title ?? "") }, undefined, marks)];
+    if (node.type === "opaque") return [mdfnSchema.nodes.opaque_inline.create({ ...attrsFromSource(node.source), syntax: String(node.attrs?.syntax ?? "unknown"), raw: node.source?.raw ?? node.text ?? "" }, undefined, marks)];
     if (node.type === "hardBreak") return [mdfnSchema.nodes.hard_break.create(undefined, undefined, marks)];
     return inlineNodes(node.content, marks);
   });
@@ -128,7 +132,7 @@ function wrapMarks(node: MdfnNode, marks: readonly Mark[]): MdfnNode {
       return { type: "inlineCode", text };
     }
     if (mark.type === mdfnSchema.marks.strike) return { type: "delete", content: [content] };
-    if (mark.type === mdfnSchema.marks.link) return { type: "link", attrs: { url: String(mark.attrs.sourceHref || mark.attrs.href), title: String(mark.attrs.title ?? ""), unsafe: mark.attrs.blocked === true }, content: [content] };
+    if (mark.type === mdfnSchema.marks.link) return { type: "link", attrs: { url: String(mark.attrs.sourceHref || mark.attrs.href), title: String(mark.attrs.title ?? ""), unsafe: mark.attrs.blocked === true, referenceIdentifier: String(mark.attrs.referenceIdentifier ?? ""), referenceLabel: String(mark.attrs.referenceLabel ?? ""), referenceType: String(mark.attrs.referenceType ?? "") }, content: [content] };
     return content;
   }, node);
 }
@@ -137,7 +141,9 @@ function inlineFromPm(node: PmNode): MdfnNode[] {
   const output: MdfnNode[] = [];
   node.forEach((child) => {
     if (child.isText) output.push(wrapMarks({ type: "text", text: child.text ?? "" }, child.marks));
-    else if (child.type === mdfnSchema.nodes.image) output.push(wrapMarks({ type: "image", attrs: { url: child.attrs.sourceSrc || child.attrs.src, alt: child.attrs.alt, title: child.attrs.title, unsafe: child.attrs.blocked === true } as Record<string, MdfnJsonValue> }, child.marks));
+    else if (child.type === mdfnSchema.nodes.image) output.push(wrapMarks({ type: "image", attrs: { url: child.attrs.sourceSrc || child.attrs.src, alt: child.attrs.alt, title: child.attrs.title, unsafe: child.attrs.blocked === true, referenceIdentifier: child.attrs.referenceIdentifier, referenceLabel: child.attrs.referenceLabel, referenceType: child.attrs.referenceType } as Record<string, MdfnJsonValue> }, child.marks));
+    else if (child.type === mdfnSchema.nodes.asset) output.push(wrapMarks({ type: "asset", source: sourceFromAttrs(child, false), attrs: { provider: child.attrs.provider, id: child.attrs.assetId, documentId: child.attrs.documentId, versionId: child.attrs.versionId, url: child.attrs.sourceUrl, alt: child.attrs.alt, title: child.attrs.title } as Record<string, MdfnJsonValue> }, child.marks));
+    else if (child.type === mdfnSchema.nodes.opaque_inline) output.push(wrapMarks({ type: "opaque", source: sourceFromAttrs(child, false), text: String(child.attrs.raw), attrs: { syntax: child.attrs.syntax, inline: true } }, child.marks));
     else if (child.type === mdfnSchema.nodes.hard_break) output.push({ type: "hardBreak" });
   });
   return output;

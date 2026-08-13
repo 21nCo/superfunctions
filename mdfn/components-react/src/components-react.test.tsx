@@ -4,7 +4,7 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createEditor, Transaction } from "@mdfn/core";
 import { createMarkdownProjector } from "@mdfn/markdown";
 import { MdfnAuthoringChrome, MdfnEditorShell, MdfnToolbar } from "./index";
@@ -42,6 +42,40 @@ describe("React toolbar", () => {
     expect(target.querySelector('[data-mdfn-editor="visual"]')).not.toBeNull();
     await act(async () => { controller.dispatch(new Transaction().replaceSource(0, 0, "Updated ")); });
     expect(target.querySelector('[data-mdfn-editor="visual"]')).not.toBeNull();
+    await act(async () => root.unmount());
+  });
+
+  it("runs contextual editorial and version workflows", async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const controller = createEditor({ markdown: "text", projector: createMarkdownProjector(), selection: { kind: "text", anchor: 0, head: 4 } });
+    const target = document.createElement("div");
+    const root = createRoot(target);
+    const restore = vi.fn();
+    await act(async () => root.render(<MdfnAuthoringChrome controller={controller} versions={[{ version: 1, authorId: "author" }]} onRestoreVersion={restore} />));
+    expect(target.querySelector('[data-mdfn-surface="bubble-toolbar"]')).not.toBeNull();
+    expect(target.querySelector('[data-mdfn-surface="floating-toolbar"]')).toBeNull();
+    const update = async (label: string, value: string): Promise<void> => {
+      const input = target.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await update("Comment", "Review this");
+    await act(async () => (Array.from(target.querySelectorAll("button")).find((button) => button.textContent === "Add comment") as HTMLButtonElement).click());
+    const thread = controller.getState().sidecar?.comments?.[0];
+    expect(thread?.messages[0]?.body).toBe("Review this");
+    await update(`Reply to comment ${thread!.id}`, "Reply");
+    await act(async () => (Array.from(target.querySelectorAll("button")).find((button) => button.textContent === "Reply") as HTMLButtonElement).click());
+    expect(controller.getState().sidecar?.comments?.[0]?.messages).toHaveLength(2);
+    await act(async () => (Array.from(target.querySelectorAll("button")).find((button) => button.textContent === "Resolve") as HTMLButtonElement).click());
+    expect(controller.getState().sidecar?.comments?.[0]?.resolved).toBe(true);
+    await update("Suggestion replacement", "replacement");
+    await act(async () => (Array.from(target.querySelectorAll("button")).find((button) => button.textContent === "Add suggestion") as HTMLButtonElement).click());
+    expect(controller.getState().sidecar?.suggestions?.[0]?.replacement).toBe("replacement");
+    await act(async () => (Array.from(target.querySelectorAll("button")).find((button) => button.textContent === "Restore") as HTMLButtonElement).click());
+    expect(restore).toHaveBeenCalledWith(1);
     await act(async () => root.unmount());
   });
 });

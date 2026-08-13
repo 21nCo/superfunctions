@@ -5,6 +5,7 @@ import { gfm } from "micromark-extension-gfm";
 import {
   hashString,
   inspectMdfnUrl,
+  parseMdfnAssetUrl,
   resolveExtensions,
   type EditorProjector,
   type MdfnDiagnostic,
@@ -32,6 +33,9 @@ type MdastNode = {
   title?: string | null;
   alt?: string;
   align?: Array<"left" | "right" | "center" | null>;
+  identifier?: string;
+  label?: string | null;
+  referenceType?: "shortcut" | "collapsed" | "full";
   children?: MdastNode[];
   position?: MdastPosition;
   [key: string]: unknown;
@@ -109,10 +113,19 @@ function attrs(input: Record<string, unknown>): Readonly<Record<string, MdfnJson
   return entries.length === 0 ? undefined : Object.fromEntries(entries) as Readonly<Record<string, MdfnJsonValue>>;
 }
 
-function convertMdastNode(node: MdastNode, source: string, diagnostics: MdfnDiagnostic[], depth: number, allowRawHtml: boolean): MdfnNode {
+function convertMdastNode(
+  node: MdastNode,
+  source: string,
+  diagnostics: MdfnDiagnostic[],
+  depth: number,
+  allowRawHtml: boolean,
+  definitions: ReadonlyMap<string, MdastNode>,
+  inlineContext = false,
+): MdfnNode {
   const span = sourceSpan(node, source);
   const id = span ? `${node.type}:${span.from}:${span.to}` : undefined;
-  const content = node.children?.map((child) => convertMdastNode(child, source, diagnostics, depth + 1, allowRawHtml));
+  const childInline = ["paragraph", "heading", "strong", "emphasis", "delete", "link", "linkReference"].includes(node.type);
+  const content = node.children?.map((child) => convertMdastNode(child, source, diagnostics, depth + 1, allowRawHtml, definitions, childInline));
   const common = { id, source: span, content };
   switch (node.type) {
     case "text": return { type: "text", id, source: span, text: node.value ?? "" };
@@ -122,7 +135,7 @@ function convertMdastNode(node: MdastNode, source: string, diagnostics: MdfnDiag
     case "list": return { type: "list", ...common, attrs: attrs({ ordered: node.ordered ?? false, start: node.start ?? 1, spread: node.spread ?? false }) };
     case "listItem": return { type: "listItem", ...common, attrs: attrs({ checked: node.checked ?? null, spread: node.spread ?? false }) };
     case "code": return { type: "codeBlock", id, source: span, text: node.value ?? "", attrs: attrs({ language: node.lang ?? "", meta: node.meta ?? "" }) };
-    case "inlineCode": return { type: "inlineCode", id, source: span, text: node.value ?? "" };
+    case "inlineCode": return { type: "inlineCode", id, source: span, text: (node.value ?? "").replace(/\r\n|\r|\n/g, " ") };
     case "thematicBreak": return { type: "thematicBreak", id, source: span };
     case "break": return { type: "hardBreak", id, source: span };
     case "strong": return { type: "strong", ...common };
@@ -134,25 +147,48 @@ function convertMdastNode(node: MdastNode, source: string, diagnostics: MdfnDiag
       if (!inspected.safe) diagnostics.push(diagnostic("MDFN_UNSAFE_URL", "Unsafe link URL was retained as inert source", "warning", span ? { from: span.from, to: span.to } : undefined, { kind: "link", reason: inspected.reason ?? "scheme" }));
       return { type: "link", ...common, attrs: attrs({ url, title: node.title ?? "", unsafe: !inspected.safe }) };
     }
+    case "linkReference": {
+      const identifier = (node.identifier ?? "").toLocaleLowerCase();
+      const definition = definitions.get(identifier);
+      if (!definition) return { type: "opaque", id, source: span ? { ...span, preservation: "opaque" } : undefined, attrs: { syntax: "linkReference", inline: true }, text: span?.raw ?? "" };
+      const url = definition.url ?? "";
+      const inspected = inspectMdfnUrl(url, { allowedSchemes: ["http", "https", "mailto"], allowRelative: true });
+      if (!inspected.safe) diagnostics.push(diagnostic("MDFN_UNSAFE_URL", "Unsafe reference link URL was retained as inert source", "warning", span ? { from: span.from, to: span.to } : undefined, { kind: "link", reason: inspected.reason ?? "scheme" }));
+      return { type: "link", ...common, attrs: attrs({ url, title: definition.title ?? "", unsafe: !inspected.safe, referenceIdentifier: node.identifier ?? "", referenceLabel: node.label ?? "", referenceType: node.referenceType ?? "full" }) };
+    }
     case "image": {
       const url = node.url ?? "";
+      const asset = parseMdfnAssetUrl(url);
+      if (asset) return { type: "asset", id, source: span, attrs: attrs({ ...asset, url, alt: node.alt ?? "", title: node.title ?? "" }) };
       const inspected = inspectMdfnUrl(url, { allowedSchemes: ["http", "https"], allowRelative: true });
       if (!inspected.safe) diagnostics.push(diagnostic("MDFN_UNSAFE_URL", "Unsafe image URL was retained as inert source", "warning", span ? { from: span.from, to: span.to } : undefined, { kind: "image", reason: inspected.reason ?? "scheme" }));
       return { type: "image", id, source: span, attrs: attrs({ url, title: node.title ?? "", alt: node.alt ?? "", unsafe: !inspected.safe }) };
     }
+    case "imageReference": {
+      const identifier = (node.identifier ?? "").toLocaleLowerCase();
+      const definition = definitions.get(identifier);
+      if (!definition) return { type: "opaque", id, source: span ? { ...span, preservation: "opaque" } : undefined, attrs: { syntax: "imageReference", inline: true }, text: span?.raw ?? "" };
+      const url = definition.url ?? "";
+      const asset = parseMdfnAssetUrl(url);
+      if (asset) return { type: "asset", id, source: span, attrs: attrs({ ...asset, url, alt: node.alt ?? "", title: definition.title ?? "", referenceIdentifier: node.identifier ?? "", referenceLabel: node.label ?? "", referenceType: node.referenceType ?? "full" }) };
+      const inspected = inspectMdfnUrl(url, { allowedSchemes: ["http", "https"], allowRelative: true });
+      if (!inspected.safe) diagnostics.push(diagnostic("MDFN_UNSAFE_URL", "Unsafe reference image URL was retained as inert source", "warning", span ? { from: span.from, to: span.to } : undefined, { kind: "image", reason: inspected.reason ?? "scheme" }));
+      return { type: "image", id, source: span, attrs: attrs({ url, title: definition.title ?? "", alt: node.alt ?? "", unsafe: !inspected.safe, referenceIdentifier: node.identifier ?? "", referenceLabel: node.label ?? "", referenceType: node.referenceType ?? "full" }) };
+    }
+    case "definition": return { type: "definition", id, source: span, attrs: attrs({ identifier: node.identifier ?? "", label: node.label ?? "", url: node.url ?? "", title: node.title ?? "" }) };
     case "table": return { type: "table", ...common, attrs: attrs({ align: (node.align ?? []).map((value) => value ?? "") }) };
     case "tableRow": return { type: "tableRow", ...common };
     case "tableCell": return { type: "tableCell", ...common };
     case "html": {
       const range = span ? { from: span.from, to: span.to } : undefined;
       if (!allowRawHtml) diagnostics.push(diagnostic("MDFN_RAW_HTML_DISABLED", "Raw HTML was preserved but is disabled by the active policy", "warning", range));
-      return { type: "opaque", id, source: span ? { ...span, preservation: "opaque" } : undefined, attrs: { syntax: "html" }, text: node.value ?? "" };
+      return { type: "opaque", id, source: span ? { ...span, preservation: "opaque" } : undefined, attrs: { syntax: "html", inline: inlineContext }, text: node.value ?? "" };
     }
     default: {
       const raw = span?.raw ?? node.value ?? "";
       const range = span ? { from: span.from, to: span.to } : undefined;
       diagnostics.push(diagnostic("MDFN_SYNTAX_OPAQUE", `Unsupported syntax ${node.type} was preserved as opaque content`, "warning", range, { syntax: node.type }));
-      return { type: "opaque", id, source: span ? { ...span, preservation: "opaque" } : undefined, attrs: { syntax: node.type }, text: raw };
+      return { type: "opaque", id, source: span ? { ...span, preservation: "opaque" } : undefined, attrs: { syntax: node.type, inline: inlineContext }, text: raw };
     }
   }
 }
@@ -163,7 +199,7 @@ function resolveRegistry(options: MarkdownOptions): ResolvedExtensionRegistry {
   return resolveExtensions(configured ?? []);
 }
 
-function scanExtensionBlocks(source: string, registry: ResolvedExtensionRegistry): {
+function scanExtensionBlocks(source: string, registry: ResolvedExtensionRegistry, recognizeFrontmatter: boolean): {
   masked: string;
   nodes: MdfnNode[];
   diagnostics: MdfnDiagnostic[];
@@ -185,7 +221,7 @@ function scanExtensionBlocks(source: string, registry: ResolvedExtensionRegistry
         diagnostic: match ? "MDFN_EXTENSION_DISABLED_OR_UNKNOWN" : "MDFN_DIRECTIVE_UNCLOSED",
       };
     }
-    if (offset === 0) {
+    if (recognizeFrontmatter && offset === 0) {
       const fence = /^(---|\+\+\+)[ \t]*(?:\r?\n|\r|$)/.exec(line);
       if (fence) {
         const delimiter = fence[1] === "+++" ? "\\+\\+\\+" : "---";
@@ -264,18 +300,24 @@ export function parseMarkdown(source: string, options: MarkdownOptions = {}): Ma
   validateLimits(source, options);
   const dialect = options.dialect ?? "gfm";
   const registry = resolveRegistry(options);
-  const extensionScan = scanExtensionBlocks(source, registry);
+  const extensionScan = scanExtensionBlocks(source, registry, dialect !== "commonmark");
   const mdast = fromMarkdown(extensionScan.masked, dialect === "gfm" ? {
     extensions: [gfm()],
     mdastExtensions: [gfmFromMarkdown()],
   } : undefined) as MdastNode;
   const diagnostics = [...extensionScan.diagnostics];
+  const definitions = new Map<string, MdastNode>();
+  const collectDefinitions = (node: MdastNode): void => {
+    if (node.type === "definition" && node.identifier && !definitions.has(node.identifier.toLocaleLowerCase())) definitions.set(node.identifier.toLocaleLowerCase(), node);
+    node.children?.forEach(collectDefinitions);
+  };
+  collectDefinitions(mdast);
   const normalNodes = (mdast.children ?? [])
     .filter((node) => {
       const span = sourceSpan(node, source);
       return !span || (span.raw ?? source.slice(span.from, span.to)).trim().length > 0;
     })
-    .map((node) => convertMdastNode(node, source, diagnostics, 1, options.allowRawHtml === true));
+    .map((node) => convertMdastNode(node, source, diagnostics, 1, options.allowRawHtml === true, definitions));
   const content = [...normalNodes, ...extensionScan.nodes].sort((a, b) => (a.source?.from ?? Number.MAX_SAFE_INTEGER) - (b.source?.from ?? Number.MAX_SAFE_INTEGER));
   const document: MdfnDocument = {
     type: "doc",
@@ -323,8 +365,14 @@ function convertNodeToMdast(node: MdfnNode, registry: ResolvedExtensionRegistry)
     case "strong": return { type: "strong", children };
     case "emphasis": return { type: "emphasis", children };
     case "delete": return { type: "delete", children };
-    case "link": return { type: "link", url: String(jsonAttr(node, "url") ?? ""), title: String(jsonAttr(node, "title") ?? "") || null, children };
-    case "image": return { type: "image", url: String(jsonAttr(node, "url") ?? ""), title: String(jsonAttr(node, "title") ?? "") || null, alt: String(jsonAttr(node, "alt") ?? "") };
+    case "link": return jsonAttr(node, "referenceIdentifier")
+      ? { type: "linkReference", identifier: String(jsonAttr(node, "referenceIdentifier")), label: String(jsonAttr(node, "referenceLabel") ?? "") || null, referenceType: String(jsonAttr(node, "referenceType") ?? "full") as MdastNode["referenceType"], children }
+      : { type: "link", url: String(jsonAttr(node, "url") ?? ""), title: String(jsonAttr(node, "title") ?? "") || null, children };
+    case "image": return jsonAttr(node, "referenceIdentifier")
+      ? { type: "imageReference", identifier: String(jsonAttr(node, "referenceIdentifier")), label: String(jsonAttr(node, "referenceLabel") ?? "") || null, referenceType: String(jsonAttr(node, "referenceType") ?? "full") as MdastNode["referenceType"], alt: String(jsonAttr(node, "alt") ?? "") }
+      : { type: "image", url: String(jsonAttr(node, "url") ?? ""), title: String(jsonAttr(node, "title") ?? "") || null, alt: String(jsonAttr(node, "alt") ?? "") };
+    case "asset": return { type: "image", url: String(jsonAttr(node, "url") ?? ""), title: String(jsonAttr(node, "title") ?? "") || null, alt: String(jsonAttr(node, "alt") ?? "") };
+    case "definition": return { type: "definition", identifier: String(jsonAttr(node, "identifier") ?? ""), label: String(jsonAttr(node, "label") ?? "") || null, url: String(jsonAttr(node, "url") ?? ""), title: String(jsonAttr(node, "title") ?? "") || null };
     case "table": return { type: "table", align: (jsonAttr(node, "align") as Array<"left" | "right" | "center" | ""> | undefined)?.map((value) => value || null), children };
     case "tableRow": return { type: "tableRow", children };
     case "tableCell": return { type: "tableCell", children };

@@ -84,6 +84,9 @@ export interface AuthoringModel {
   readonly toolbar: ToolbarModel;
   readonly bubble: ToolbarModel;
   readonly floating: ToolbarModel;
+  readonly bubbleVisible: boolean;
+  readonly floatingVisible: boolean;
+  readonly slashOpen: boolean;
   readonly slashCommands: readonly SlashCommand[];
   readonly outline: readonly OutlineItem[];
   readonly diagnostics: readonly MdfnDiagnostic[];
@@ -95,9 +98,14 @@ export interface AuthoringModel {
 
 export function createAuthoringModel(
   controller: EditorController,
-  options: { readonly mode?: EditorMode; readonly compact?: boolean; readonly slashQuery?: string; readonly commandTarget?: ToolbarCommandTarget | null } = {},
+  options: { readonly mode?: EditorMode; readonly compact?: boolean; readonly slashQuery?: string; readonly slashOpen?: boolean; readonly commandTarget?: ToolbarCommandTarget | null } = {},
 ): AuthoringModel {
   const state = controller.getState();
+  const selection = state.selection?.kind === "text" ? state.selection : null;
+  const selectionFrom = selection ? Math.min(selection.anchor, selection.head) : 0;
+  const selectionTo = selection ? Math.max(selection.anchor, selection.head) : 0;
+  const beforeCaret = selection && selectionFrom === selectionTo ? state.markdown.slice(state.markdown.lastIndexOf("\n", selectionFrom - 1) + 1, selectionFrom) : "";
+  const slashMatch = /^\s*\/([^\s/]*)$/.exec(beforeCaret);
   const inlineGroups = defaultToolbarGroups.filter((group) => group.id === "inline");
   const blockGroups = defaultToolbarGroups.filter((group) => group.id === "blocks");
   return {
@@ -107,7 +115,10 @@ export function createAuthoringModel(
     toolbar: createToolbarModel(controller, defaultToolbarGroups, "Markdown authoring toolbar", options.commandTarget),
     bubble: createToolbarModel(controller, inlineGroups, "Selection formatting", options.commandTarget),
     floating: createToolbarModel(controller, blockGroups, "Block formatting", options.commandTarget),
-    slashCommands: filterSlashCommands(options.slashQuery ?? ""),
+    bubbleVisible: Boolean(selection && selectionFrom !== selectionTo),
+    floatingVisible: Boolean(selection && selectionFrom === selectionTo),
+    slashOpen: options.slashOpen === true || Boolean(slashMatch),
+    slashCommands: filterSlashCommands(options.slashQuery ?? slashMatch?.[1] ?? ""),
     outline: state.document.content.flatMap((node, index) => node.type === "heading" ? [{ id: node.id ?? `heading-${index}`, level: typeof node.attrs?.level === "number" ? node.attrs.level : 1, text: plainText(node), from: node.source?.from }] : []),
     diagnostics: state.diagnostics,
     comments: state.sidecar?.comments ?? [],
@@ -115,6 +126,14 @@ export function createAuthoringModel(
     reviewState: state.sidecar?.reviewState ?? "draft",
     audit: state.sidecar?.audit ?? [],
   };
+}
+
+/** Framework-neutral version descriptor used by every authoring adapter. */
+export interface AuthoringVersion {
+  readonly version: number;
+  readonly createdAt?: string;
+  readonly authorId?: string;
+  readonly changeSource?: string;
 }
 
 export function createToolbarModel(controller: EditorController, groups: readonly ToolbarGroup[] = defaultToolbarGroups, ariaLabel = "Markdown formatting", commandTarget?: ToolbarCommandTarget | null): ToolbarModel {

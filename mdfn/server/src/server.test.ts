@@ -60,4 +60,30 @@ describe("mdfn server", () => {
     const service = createMdfnService({ database: memoryAdapter(), durability: "ephemeral", authorize: () => true });
     await expect(service.create({ id: "author" }, { markdown: "safe", sidecar: { comments: "invalid" } as never })).rejects.toMatchObject({ code: "MDFN_DOCUMENT_INVALID", status: 422 });
   });
+
+  it("filters list results through document-level authorization", async () => {
+    const service = createMdfnService({
+      database: memoryAdapter(),
+      durability: "ephemeral",
+      authorize: (action, _principal, document) => action !== "read" || !document || document.title !== "restricted",
+      createId: (() => { let id = 0; return () => `auth-${id++}`; })(),
+    });
+    const principal = { id: "owner" };
+    await service.create(principal, { title: "visible", markdown: "visible" });
+    const restricted = await service.create(principal, { title: "restricted", markdown: "secret" });
+    await expect(service.read(principal, restricted.id)).rejects.toMatchObject({ code: "MDFN_FORBIDDEN" });
+    expect((await service.list(principal)).map((document) => document.title)).toEqual(["visible"]);
+  });
+
+  it("keeps editorial state and audit history server-authoritative", async () => {
+    const service = createMdfnService({ database: memoryAdapter(), durability: "ephemeral", authorize: () => true, createId: (() => { let id = 0; return () => `integrity-${id++}`; })() });
+    const principal = { id: "author" };
+    const created = await service.create(principal, { markdown: "hello" });
+    const commented = await service.createComment(principal, created.id, { expectedVersion: 1, anchor: { from: 0, to: 5 }, body: "review" });
+    await expect(service.update(principal, created.id, { expectedVersion: commented.version, sidecar: { ...commented.sidecar, comments: [], audit: [] } }))
+      .rejects.toMatchObject({ code: "MDFN_EDITORIAL_MUTATION_FORBIDDEN", status: 403 });
+    const stored = await service.read(principal, created.id);
+    expect(stored.sidecar?.comments).toHaveLength(1);
+    expect(stored.sidecar?.audit).toHaveLength(1);
+  });
 });

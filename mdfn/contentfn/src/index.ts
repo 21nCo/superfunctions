@@ -45,7 +45,17 @@ export function snapshotToContent(snapshot: MdfnSnapshot, profile: MarkdownConte
 
 export function isMarkdownContent(value: unknown): value is MarkdownContent {
   const candidate = value as Partial<MarkdownContent> | null;
-  return candidate?.type === "text/markdown" && candidate.version === 1 && typeof candidate.markdown === "string" && !!candidate.profile;
+  const profile = candidate?.profile as Partial<MarkdownContentProfile> | undefined;
+  return candidate?.type === "text/markdown"
+    && candidate.version === 1
+    && typeof candidate.markdown === "string"
+    && typeof profile?.id === "string"
+    && (profile.dialect === "commonmark" || profile.dialect === "gfm")
+    && typeof profile.allowRawHtml === "boolean"
+    && Array.isArray(profile.extensions)
+    && profile.extensions.every((extension) => typeof extension === "string")
+    && Number.isInteger(profile.schemaVersion)
+    && (profile.schemaVersion ?? 0) > 0;
 }
 
 export interface ContentMigrationDiagnostic {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deterministicFuzzCorpus, compareSemanticTraces, representativeCorpus, runPreservationCorpus, runSecurityCorpus } from "./index";
+import { authoritativeGfmCorpus, deterministicFuzzCorpus, compareSemanticTraces, representativeCorpus, runPreservationCorpus, runSecurityCorpus, runSemanticCorpus } from "./index";
 import { parseMarkdown, serializeMarkdown } from "@mdfn/markdown";
 import { renderHtml } from "@mdfn/render";
 import { tests as commonmarkSpecTests } from "commonmark-spec";
@@ -27,6 +27,15 @@ describe("@mdfn/testing", () => {
     const corpus = commonmarkSpecTests.map((example) => ({ id: `commonmark-${example.number}-${example.section}`, source: example.markdown, options: { dialect: "commonmark" as const } }));
     expect(corpus.length).toBeGreaterThan(600);
     expect(runPreservationCorpus(corpus)).toMatchObject({ ok: true, passed: corpus.length, failed: 0 });
+  });
+
+  it("matches the official CommonMark semantic output", () => {
+    const corpus = commonmarkSpecTests.map((example) => ({ id: `commonmark-${example.number}-${example.section}`, source: example.markdown.replaceAll("→", "\t"), expectedHtml: example.html.replaceAll("→", "\t"), options: { dialect: "commonmark" as const, allowRawHtml: true } }));
+    expect(runSemanticCorpus(corpus)).toMatchObject({ ok: true, passed: corpus.length, failed: 0 });
+  });
+
+  it("matches the authoritative GFM extension corpus", () => {
+    expect(runSemanticCorpus(authoritativeGfmCorpus)).toMatchObject({ ok: true, passed: authoritativeGfmCorpus.length, failed: 0 });
   });
 
   it("stays within the documented large-document development budget", () => {

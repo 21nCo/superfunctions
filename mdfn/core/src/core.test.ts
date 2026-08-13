@@ -63,6 +63,19 @@ describe("@mdfn/core", () => {
     expect(editor.getState().selection).toEqual({ kind: "text", anchor: replacement.length + 7, head: replacement.length + 7 });
   });
 
+  it("maps sidecar anchors through structural document replacement", () => {
+    let id = 0;
+    const comment = createCommentThread({
+      anchor: { from: 6, to: 11 },
+      body: "Track this",
+      actor: { id: "author", now: () => "2026-08-13T00:00:00.000Z", createId: () => `anchor-${++id}` },
+      markdownLength: 11,
+    });
+    const editor = createEditor({ markdown: "hello world", projector, sidecar: comment.sidecar });
+    editor.dispatch(new Transaction().replaceDocument(projector.parse("prefix hello world").document));
+    expect(editor.getState().sidecar?.comments?.[0]?.anchor).toEqual({ from: 13, to: 18 });
+  });
+
   it("clears node selections when source edits can invalidate node identity", () => {
     const editor = createEditor({ markdown: "hello", projector, selection: { kind: "node", nodeId: "paragraph-1" } });
     const change = editor.dispatch(new Transaction().replaceSource(5, 5, " world"));
@@ -84,6 +97,30 @@ describe("@mdfn/core", () => {
     expect(registry.schemaHash).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(() => resolveExtensions([{ ...base, dependencies: ["missing"] }])).toThrowError(/requires missing/);
     expect(() => resolveExtensions([base, { ...base, name: "unsafe", conflicts: ["base"] }])).toThrowError(/conflicts/);
+  });
+
+  it("resolves executable extension keymaps, text rules, and plugin cleanup", () => {
+    let setup = 0;
+    let cleanup = 0;
+    const command = () => true;
+    const extension = {
+      name: "lifecycle",
+      version: "1.0.0",
+      preservation: { noEdit: "exact", edited: "semantic", unsupported: "opaque" } as const,
+      commands: { insert: command },
+      keymap: { "Mod-Alt-l": "insert" },
+      inputRules: [{ name: "arrow", match: /->/, replace: () => "→" }],
+      pasteRules: [{ name: "ellipsis", match: /\.\.\./, replace: () => "…" }],
+      plugins: [{ name: "observe", setup: () => { setup += 1; return () => { cleanup += 1; }; } }],
+    };
+    const registry = resolveExtensions([extension]);
+    expect(registry.keymap["Mod-Alt-l"]).toBe("lifecycle:insert");
+    expect(registry.inputRules).toHaveLength(1);
+    const editor = createEditor({ markdown: "", projector, extensions: [extension] });
+    expect(setup).toBe(1);
+    editor.destroy();
+    expect(cleanup).toBe(1);
+    expect(() => resolveExtensions([extension, { ...extension, name: "other" }])).toThrowError(/Duplicate key binding/);
   });
 
   it("invalidates cached documents when source or schema identity changes", () => {

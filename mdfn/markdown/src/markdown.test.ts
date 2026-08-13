@@ -67,4 +67,22 @@ describe("@mdfn/markdown", () => {
     expect(parsed.diagnostics.map((entry) => entry.code)).toContain("MDFN_UNSAFE_URL");
     expect(parsed.document.content[0].content?.[0].attrs?.url).toBe("java%0ascript:alert(1)");
   });
+
+  it("resolves reference links into editable semantic nodes while retaining reference syntax", () => {
+    const source = "[label][ref]\n\n[ref]: https://example.com \"Title\"\n";
+    const parsed = parseMarkdown(source, { dialect: "commonmark" });
+    expect(parsed.document.content[0].content?.[0]).toMatchObject({
+      type: "link",
+      attrs: { url: "https://example.com", referenceIdentifier: "ref", referenceType: "full" },
+    });
+    expect(parsed.document.content[1]).toMatchObject({ type: "definition", attrs: { identifier: "ref" } });
+    expect(serializeMarkdown({ document: parsed.document, originalSource: source, options: { dialect: "commonmark" } }).markdown).toBe(source);
+  });
+
+  it("recognizes durable asset identifiers before generic URL rejection", () => {
+    const source = "![asset](mdfn-asset:filefn/asset-1?document=doc&version=v1)";
+    const parsed = parseMarkdown(source);
+    expect(parsed.document.content[0].content?.[0]).toMatchObject({ type: "asset", attrs: { provider: "filefn", id: "asset-1", documentId: "doc", versionId: "v1" } });
+    expect(parsed.diagnostics.map((entry) => entry.code)).not.toContain("MDFN_UNSAFE_URL");
+  });
 });

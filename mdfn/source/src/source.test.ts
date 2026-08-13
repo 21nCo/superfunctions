@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { createEditor, Transaction } from "@mdfn/core";
+import { undoDepth, redoDepth } from "@codemirror/commands";
 import { createMarkdownProjector } from "@mdfn/markdown";
 import { createModeController, createPreview, createSourceEditor, sourceInternals } from "./index";
 
@@ -40,9 +41,41 @@ describe("@mdfn/source", () => {
     modes.destroy();
   });
 
+  it("uses controller history as the only source-mode history", () => {
+    const controller = createEditor({ markdown: "a", projector: createMarkdownProjector() });
+    const target = document.createElement("div");
+    const editor = createSourceEditor({ target, controller });
+    editor.view.dispatch({ changes: { from: 1, insert: "b" } });
+    expect(controller.getState().markdown).toBe("ab");
+    expect(controller.canUndo()).toBe(true);
+    expect(undoDepth(editor.view.state)).toBe(0);
+    expect(controller.undo()).toBe(true);
+    expect(editor.view.state.doc.toString()).toBe("a");
+    expect(redoDepth(editor.view.state)).toBe(0);
+    expect(controller.redo()).toBe(true);
+    expect(editor.view.state.doc.toString()).toBe("ab");
+    editor.destroy();
+  });
+
   it("computes the smallest UTF-16 source replacement", () => {
     expect(sourceInternals.smallestSourceChange("prefix old suffix", "prefix new suffix")).toEqual({ from: 7, to: 10, insert: "new" });
     expect(sourceInternals.smallestSourceChange("👋 old", "👋 new")).toEqual({ from: 3, to: 6, insert: "new" });
     expect(sourceInternals.smallestSourceChange("same", "same")).toBeUndefined();
+  });
+
+  it("executes extension input rules in the source adapter", () => {
+    const extension = {
+      name: "source-rules",
+      version: "1.0.0",
+      preservation: { noEdit: "exact", edited: "semantic", unsupported: "opaque" } as const,
+      inputRules: [{ name: "arrow", match: /->/, replace: () => "→" }],
+    };
+    const controller = createEditor({ markdown: "", projector: createMarkdownProjector({ extensions: [extension] }), extensions: [extension] });
+    const target = document.createElement("div");
+    const editor = createSourceEditor({ target, controller });
+    editor.view.dispatch({ changes: { from: 0, insert: "->" }, selection: { anchor: 2, head: 2 } });
+    expect(controller.getState()).toMatchObject({ markdown: "→", selection: { kind: "text", anchor: 1, head: 1 } });
+    expect(editor.view.state.doc.toString()).toBe("→");
+    editor.destroy();
   });
 });

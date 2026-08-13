@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount, splitProps, type Accessor, type Component, type JSX } from "solid-js";
+import { createEffect, createSignal, onCleanup, splitProps, type Accessor, type Component, type JSX } from "solid-js";
 import { createAdapterBridge, type AdapterSnapshot } from "@mdfn/adapter-kit";
 import { Transaction, type EditorController } from "@mdfn/core";
 import type { DomCommand, DomEditor } from "@mdfn/dom";
@@ -38,7 +38,6 @@ export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
     ["controller", "mode", "readOnly", "ariaLabel", "onLoadError", "editorRef", "onFiles"],
     ["toolbarGroups", "hideToolbar", "hideAuthoringChrome", "actor", "onSelectFiles", "onModeChange"],
   );
-  const snapshot = createMdfnSignal(local.controller);
   let visualTarget: HTMLDivElement | undefined;
   let sourceTarget: HTMLDivElement | undefined;
   let previewTarget: HTMLDivElement | undefined;
@@ -46,59 +45,73 @@ export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
   let source: SourceEditor | undefined;
   const [loadError, setLoadError] = createSignal<Error | null>(null);
   const [fallbackValue, setFallbackValue] = createSignal(local.controller.getState().markdown);
-  const unsubscribe = local.controller.subscribe((change) => setFallbackValue(change.current.markdown));
-  onCleanup(unsubscribe);
+  const [version, setVersion] = createSignal(local.controller.getState().version);
+
+  createEffect(() => {
+    const controller = local.controller;
+    setFallbackValue(controller.getState().markdown);
+    setVersion(controller.getState().version);
+    const unsubscribe = controller.subscribe((change) => {
+      setFallbackValue(change.current.markdown);
+      setVersion(change.current.version);
+    });
+    onCleanup(unsubscribe);
+  });
 
   const handle: MdfnEditorHandle = { focus() { visual?.focus(); source?.focus(); }, run(command) { return visual?.run(command) ?? false; }, can(command) { return visual?.can(command) ?? false; }, setLink(href, title) { return visual?.setLink(href, title) ?? false; }, removeLink() { return visual?.removeLink() ?? false; }, insertTable(rows, columns) { return visual?.insertTable(rows, columns) ?? false; }, insertMarkdown(markdown) { return visual?.insertMarkdown(markdown) ?? false; } };
-  const publishHandle = (): void => local.editorRef?.(handle);
-
-  onMount(() => {
-    createEffect(() => {
-      const mode = local.mode ?? "visual";
-      let cancelled = false;
-      visual?.destroy();
-      source?.destroy();
-      visual = undefined;
-      source = undefined;
-      const mount = async (): Promise<void> => {
-        try {
-          if ((mode === "visual" || mode === "split") && visualTarget) {
-            const module = await import("@mdfn/dom");
-            if (cancelled) return;
-            visual = module.createDomEditor({ target: visualTarget, controller: local.controller, readOnly: local.readOnly, attributes: { "aria-label": local.ariaLabel ?? "Markdown editor" }, onFiles: local.onFiles });
-          }
-          if ((mode === "source" || mode === "split") && sourceTarget) {
-            const module = await import("@mdfn/source");
-            if (cancelled) return;
-            source = module.createSourceEditor({ target: sourceTarget, controller: local.controller, readOnly: local.readOnly, ariaLabel: `${local.ariaLabel ?? "Markdown editor"} source` });
-          }
-          if ((mode === "preview" || mode === "read-only") && previewTarget) {
-            const module = await import("@mdfn/source");
-            if (cancelled) return;
-            previewTarget.innerHTML = module.createPreview(local.controller).html;
-          }
-          publishHandle();
-        } catch (error) {
-          const resolved = error instanceof Error ? error : new Error(String(error));
-          setLoadError(resolved);
-          local.onLoadError?.(resolved);
+  createEffect(() => {
+    const mode = local.mode ?? "visual";
+    const controller = local.controller;
+    const readOnly = local.readOnly;
+    const ariaLabel = local.ariaLabel ?? "Markdown editor";
+    const onFiles = local.onFiles;
+    const editorRef = local.editorRef;
+    const onLoadError = local.onLoadError;
+    let cancelled = false;
+    visual?.destroy();
+    source?.destroy();
+    visual = undefined;
+    source = undefined;
+    const mount = async (): Promise<void> => {
+      try {
+        if ((mode === "visual" || mode === "split") && visualTarget) {
+          const module = await import("@mdfn/dom");
+          if (cancelled) return;
+          visual = module.createDomEditor({ target: visualTarget, controller, readOnly, attributes: { "aria-label": ariaLabel }, onFiles });
         }
-      };
-      void mount();
-      onCleanup(() => { cancelled = true; local.editorRef?.(null); visual?.destroy(); source?.destroy(); visual = undefined; source = undefined; });
-    });
+        if ((mode === "source" || mode === "split") && sourceTarget) {
+          const module = await import("@mdfn/source");
+          if (cancelled) return;
+          source = module.createSourceEditor({ target: sourceTarget, controller, readOnly, ariaLabel: `${ariaLabel} source` });
+        }
+        if ((mode === "preview" || mode === "read-only") && previewTarget) {
+          const module = await import("@mdfn/source");
+          if (cancelled) return;
+          previewTarget.innerHTML = module.createPreview(controller).html;
+        }
+        editorRef?.(handle);
+      } catch (error) {
+        const resolved = error instanceof Error ? error : new Error(String(error));
+        setLoadError(resolved);
+        onLoadError?.(resolved);
+      }
+    };
+    void mount();
+    onCleanup(() => { cancelled = true; editorRef?.(null); visual?.destroy(); source?.destroy(); visual = undefined; source = undefined; });
   });
 
   createEffect(() => {
-    snapshot().version;
+    version();
     const mode = local.mode ?? "visual";
+    const controller = local.controller;
+    const onLoadError = local.onLoadError;
     if ((mode !== "preview" && mode !== "read-only") || !previewTarget) return;
     void import("@mdfn/source").then((module) => {
-      if (previewTarget) previewTarget.innerHTML = module.createPreview(local.controller).html;
+      if (previewTarget) previewTarget.innerHTML = module.createPreview(controller).html;
     }).catch((error: unknown) => {
       const resolved = error instanceof Error ? error : new Error(String(error));
       setLoadError(resolved);
-      local.onLoadError?.(resolved);
+      onLoadError?.(resolved);
     });
   });
 

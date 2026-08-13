@@ -32,6 +32,12 @@
     const currentVisual = visualTarget;
     const currentSource = sourceTarget;
     const currentPreview = previewTarget;
+    const currentController = controller;
+    const currentReadOnly = readOnly;
+    const currentAriaLabel = ariaLabel;
+    const currentOnFiles = onFiles;
+    const currentEditorRef = editorRef;
+    const currentOnLoadError = onLoadError;
     let cancelled = false;
     let visual: DomEditor | undefined;
     let source: SourceEditor | undefined;
@@ -40,17 +46,17 @@
         if ((currentMode === 'visual' || currentMode === 'split') && currentVisual) {
           const module = await import('@mdfn/dom');
           if (cancelled) return;
-          visual = module.createDomEditor({ target: currentVisual, controller, readOnly, attributes: { 'aria-label': ariaLabel }, onFiles });
+          visual = module.createDomEditor({ target: currentVisual, controller: currentController, readOnly: currentReadOnly, attributes: { 'aria-label': currentAriaLabel }, onFiles: currentOnFiles });
         }
         if ((currentMode === 'source' || currentMode === 'split') && currentSource) {
           const module = await import('@mdfn/source');
           if (cancelled) return;
-          source = module.createSourceEditor({ target: currentSource, controller, readOnly, ariaLabel: `${ariaLabel} source` });
+          source = module.createSourceEditor({ target: currentSource, controller: currentController, readOnly: currentReadOnly, ariaLabel: `${currentAriaLabel} source` });
         }
         if ((currentMode === 'preview' || currentMode === 'read-only') && currentPreview) {
           const module = await import('@mdfn/source');
           if (cancelled) return;
-          currentPreview.innerHTML = module.createPreview(controller).html;
+          currentPreview.innerHTML = module.createPreview(currentController).html;
         }
         const handle: MdfnEditorHandle = {
           focus() { visual?.focus(); source?.focus(); },
@@ -61,27 +67,29 @@
           insertTable(rows, columns) { return visual?.insertTable(rows, columns) ?? false; },
           insertMarkdown(markdown) { return visual?.insertMarkdown(markdown) ?? false; },
         };
-        editorRef?.(handle);
+        currentEditorRef?.(handle);
       } catch (error) {
         loadError = error instanceof Error ? error : new Error(String(error));
-        onLoadError?.(loadError);
+        currentOnLoadError?.(loadError);
       }
     };
     void mount();
-    return () => { cancelled = true; editorRef?.(null); visual?.destroy(); source?.destroy(); };
+    return () => { cancelled = true; currentEditorRef?.(null); visual?.destroy(); source?.destroy(); };
   });
 
   $effect(() => {
     const currentValue = value;
     const currentMode = mode;
     const currentPreview = previewTarget;
+    const currentController = controller;
+    const currentOnLoadError = onLoadError;
     if ((currentMode !== 'preview' && currentMode !== 'read-only') || !currentPreview) return;
     let cancelled = false;
     void import('@mdfn/source').then((module) => {
-      if (!cancelled) currentPreview.innerHTML = module.createPreview(controller).html;
+      if (!cancelled) currentPreview.innerHTML = module.createPreview(currentController).html;
     }).catch((error: unknown) => {
       loadError = error instanceof Error ? error : new Error(String(error));
-      onLoadError?.(loadError);
+      currentOnLoadError?.(loadError);
     });
     void currentValue;
     return () => { cancelled = true; };

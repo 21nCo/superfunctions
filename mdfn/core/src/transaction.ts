@@ -90,15 +90,29 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
     }
     if (operation.kind === "replace-document") {
       const serialized = projector.serialize(operation.document, markdown);
-      const previousLength = markdown.length;
+      const previousMarkdown = markdown;
       markdown = serialized.markdown;
       document = operation.document;
       diagnostics = serialized.diagnostics;
-      const range = { from: 0, to: previousLength, insertedLength: markdown.length };
-      ranges.push(range);
-      const mappedSelection = mapSelection(selection, [range]);
-      selectionChanged ||= mappedSelection !== selection;
-      selection = mappedSelection;
+      if (previousMarkdown !== markdown) {
+        let from = 0;
+        const shared = Math.min(previousMarkdown.length, markdown.length);
+        while (from < shared && previousMarkdown.charCodeAt(from) === markdown.charCodeAt(from)) from += 1;
+        let previousTo = previousMarkdown.length;
+        let nextTo = markdown.length;
+        while (previousTo > from && nextTo > from && previousMarkdown.charCodeAt(previousTo - 1) === markdown.charCodeAt(nextTo - 1)) {
+          previousTo -= 1;
+          nextTo -= 1;
+        }
+        const range = { from, to: previousTo, insertedLength: nextTo - from };
+        ranges.push(range);
+        const mappedSelection = mapSelection(selection, [range]);
+        selectionChanged ||= mappedSelection !== selection;
+        selection = mappedSelection;
+        const mappedSidecar = mapSidecar(sidecar, [range]);
+        sidecarChanged ||= mappedSidecar !== sidecar;
+        sidecar = mappedSidecar;
+      }
       documentChanged = true;
       continue;
     }

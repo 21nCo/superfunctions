@@ -99,6 +99,11 @@ function renderChildren(node: MdfnNode, context: RenderContext, depth: number): 
   return (node.content ?? []).map((child) => renderNode(child, context, depth + 1)).join("");
 }
 
+function renderBlockChildren(node: MdfnNode, context: RenderContext, depth: number): string {
+  const rendered = (node.content ?? []).map((child) => renderNode(child, context, depth + 1));
+  return rendered.length === 0 ? "" : `${rendered.join("\n")}\n`;
+}
+
 interface RenderContext {
   readonly policy: RenderPolicy;
   readonly registry: ResolvedExtensionRegistry;
@@ -162,7 +167,9 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
     const rendered = extension.render?.({ node, escape: escapeHtml });
     if (rendered !== null && rendered !== undefined) {
       if (typeof rendered !== "object") throw new Error("MDFN_EXTENSION_RENDER_RESULT_INVALID");
-      return renderExtensionNode(rendered, context, depth + 1);
+      const sanitized = extension.sanitizeRender ? extension.sanitizeRender(rendered) : rendered;
+      if (!sanitized) throw new Error("MDFN_EXTENSION_RENDER_REJECTED");
+      return renderExtensionNode(sanitized, context, depth + 1);
     }
   }
 
@@ -174,11 +181,22 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
       const level = Math.min(6, Math.max(1, numberAttr(node, "level", 1)));
       return `<h${level}>${children()}</h${level}>`;
     }
-    case "blockquote": return `<blockquote>${children()}</blockquote>`;
+    case "blockquote": return `<blockquote>\n${renderBlockChildren(node, context, depth)}</blockquote>`;
     case "list": {
       const ordered = booleanAttr(node, "ordered");
       const start = numberAttr(node, "start", 1);
-      return ordered ? `<ol${start === 1 ? "" : ` start=\"${start}\"`}>${children()}</ol>` : `<ul>${children()}</ul>`;
+      const tight = node.attrs?.spread !== true && (node.content ?? []).every((item) => item.attrs?.spread !== true);
+      const task = (node.content ?? []).some((item) => typeof item.attrs?.checked === "boolean");
+      const items = (node.content ?? []).map((item) => {
+        context.nodeCount += 1;
+        const checked = item.attrs?.checked;
+        const checkbox = typeof checked === "boolean" ? `<input type="checkbox" disabled${checked ? " checked" : ""}> ` : "";
+        const body = (item.content ?? []).map((child) => child.type === "paragraph" && tight ? renderChildren(child, context, depth + 2) : renderNode(child, context, depth + 2)).join("");
+        return `<li${typeof checked === "boolean" ? ' class="task-list-item"' : ""}>${checkbox}${body}</li>`;
+      }).join("");
+      return ordered
+        ? `<ol${start === 1 ? "" : ` start=\"${start}\"`}>${items}</ol>`
+        : `<ul${task ? ' class="contains-task-list"' : ""}>${items}</ul>`;
     }
     case "listItem": {
       const checked = node.attrs?.checked;
@@ -187,7 +205,8 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
     }
     case "codeBlock": {
       const language = stringAttr(node, "language");
-      return `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${escapeHtml(node.text ?? "")}</code></pre>`;
+      const code = node.text ?? "";
+      return `<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${escapeHtml(code)}${code ? "\n" : ""}</code></pre>`;
     }
     case "inlineCode": return `<code>${escapeHtml(node.text ?? "")}</code>`;
     case "thematicBreak": return "<hr>";
@@ -206,7 +225,7 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
       const external = isExternal(url);
       const target = external && policy.externalTarget ? ` target="${policy.externalTarget}"` : "";
       const rel = external && policy.externalRel ? ` rel="${escapeHtml(policy.externalRel)}"` : "";
-      return `<a href="${escapeHtml(url)}"${title ? ` title="${escapeHtml(title)}"` : ""}${target}${rel}>${children()}</a>`;
+      return `<a href="${escapeHtml(encodeURI(url))}"${title ? ` title="${escapeHtml(title)}"` : ""}${target}${rel}>${children()}</a>`;
     }
     case "image": {
       const url = stringAttr(node, "url");
@@ -215,9 +234,23 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
         pushUnsafeUrl(context, node, "image", url);
         return `<span data-mdfn-blocked-image="true">${escapeHtml(stringAttr(node, "alt"))}</span>`;
       }
-      return `<img src="${escapeHtml(url)}" alt="${escapeHtml(stringAttr(node, "alt"))}"${stringAttr(node, "title") ? ` title="${escapeHtml(stringAttr(node, "title"))}"` : ""} loading="${policy.loading}" decoding="${policy.decoding}">`;
+      return `<img src="${escapeHtml(encodeURI(url))}" alt="${escapeHtml(stringAttr(node, "alt"))}"${stringAttr(node, "title") ? ` title="${escapeHtml(stringAttr(node, "title"))}"` : ""} loading="${policy.loading}" decoding="${policy.decoding}">`;
     }
-    case "table": return `<table><tbody>${children()}</tbody></table>`;
+    case "asset": return `<span data-mdfn-asset="${escapeHtml(stringAttr(node, "id"))}" data-mdfn-provider="${escapeHtml(stringAttr(node, "provider"))}">${escapeHtml(stringAttr(node, "alt") || "Asset")}</span>`;
+    case "definition": return "";
+    case "table": {
+      const rows = node.content ?? [];
+      const align = Array.isArray(node.attrs?.align) ? node.attrs.align : [];
+      const renderRow = (row: MdfnNode, header: boolean): string => `<tr>${(row.content ?? []).map((cell, index) => {
+        context.nodeCount += 1;
+        const tag = header ? "th" : "td";
+        const alignment = typeof align[index] === "string" && align[index] ? ` align="${escapeHtml(String(align[index]))}"` : "";
+        return `<${tag}${alignment}>${renderChildren(cell, context, depth + 2)}</${tag}>`;
+      }).join("")}</tr>`;
+      const head = rows[0] ? `<thead>${renderRow(rows[0], true)}</thead>` : "";
+      const body = rows.length > 1 ? `<tbody>${rows.slice(1).map((row) => renderRow(row, false)).join("")}</tbody>` : "";
+      return `<table>${head}${body}</table>`;
+    }
     case "tableRow": return `<tr>${children()}</tr>`;
     case "tableCell": return `<td>${children()}</td>`;
     case "opaque": {
@@ -225,9 +258,11 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
       const raw = node.source?.raw ?? node.text ?? "";
       if (syntax === "html" && context.policy.rawHtml?.enabled) {
         if (!context.policy.rawHtml.sanitize) throw new Error("MDFN_RAW_HTML_SANITIZER_REQUIRED");
-        return context.policy.rawHtml.sanitize(raw);
+        return context.policy.rawHtml.sanitize(node.text ?? raw);
       }
-      return `<pre data-mdfn-opaque="${escapeHtml(syntax)}"><code>${escapeHtml(raw)}</code></pre>`;
+      return node.attrs?.inline === true
+        ? `<code data-mdfn-opaque-inline="${escapeHtml(syntax)}">${escapeHtml(raw)}</code>`
+        : `<pre data-mdfn-opaque="${escapeHtml(syntax)}"><code>${escapeHtml(raw)}</code></pre>`;
     }
     default:
       context.diagnostics.push({ code: "MDFN_RENDER_NODE_UNSUPPORTED", message: `Node ${node.type} has no renderer`, severity: "warning", nodeId: node.id });
@@ -237,7 +272,8 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
 
 export function renderHtml(document: MdfnDocument, policy: RenderPolicy = {}): RenderResult {
   const context: RenderContext = { policy, registry: resolveRegistry(policy), diagnostics: [], nodeCount: 0 };
-  const html = document.content.map((node) => renderNode(node, context, 1)).join("");
+  const blocks = document.content.map((node) => renderNode(node, context, 1));
+  const html = blocks.length === 0 ? "" : `${blocks.join("\n")}\n`;
   const maxOutputBytes = policy.maxOutputBytes ?? 8 * 1024 * 1024;
   if (new TextEncoder().encode(html).byteLength > maxOutputBytes) throw new RangeError(`MDFN_RENDER_OUTPUT_TOO_LARGE:${maxOutputBytes}`);
   return { html, diagnostics: context.diagnostics, nodeCount: context.nodeCount };
