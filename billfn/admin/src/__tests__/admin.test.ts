@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   billFnAdminCapability,
   createBillFnAdminAdapter,
+  createBillFnDomainAdminService,
   type BillFnAdminService,
-  type BillFnAdminServiceRequest,
 } from "../index.js";
+import { createBillFn } from "@billfn/core";
+import { memoryAdapter } from "@superfunctions/db/adapters";
 
 const context = {
   scope: {
@@ -34,7 +36,7 @@ describe("@billfn/admin", () => {
     ]);
     expect(
       billFnAdminCapability.operations.some(
-        (operation) => operation.id === "billfn.customers.list",
+        (operation) => operation.id === "billfn.plans.list",
       ),
     ).toBe(true);
     const mutation = billFnAdminCapability.operations.find(
@@ -49,32 +51,84 @@ describe("@billfn/admin", () => {
   });
 
   it("delegates the operation and complete scope to the injected domain service", async () => {
-    const execute = vi.fn(async (request: BillFnAdminServiceRequest) => ({
+    const listPlans = vi.fn(async (_input, operationContext) => ({
       ok: true as const,
       data: {
-        operationId: request.operationId,
-        namespace: request.context.scope.namespace,
-        region: request.context.scope.region,
+        operationId: "billfn.plans.list",
+        namespace: operationContext.scope.namespace,
+        region: operationContext.scope.region,
       },
     }));
-    const service: BillFnAdminService = { execute };
+    const unused = vi.fn(async () => ({ ok: true as const, data: {} }));
+    const service: BillFnAdminService = {
+      listProducts: unused,
+      getProduct: unused,
+      listPlans,
+      getPlan: unused,
+      listPrices: unused,
+      getPrice: unused,
+      listSubscriptions: unused,
+      getSubscription: unused,
+      listEntitlements: unused,
+      getEntitlement: unused,
+      listUsage: unused,
+      getUsage: unused,
+      changeSubscription: unused,
+      cancelSubscription: unused,
+      refundPayment: unused,
+      reconcileProvider: unused,
+    };
     const adapter = createBillFnAdminAdapter(service);
 
     const result = await adapter.execute(
-      "billfn.customers.list",
+      "billfn.plans.list",
       { limit: 25 },
       context,
     );
 
     expect(result.data).toEqual({
-      operationId: "billfn.customers.list",
+      operationId: "billfn.plans.list",
       namespace: "tenant_1",
       region: "in-south",
     });
-    expect(execute).toHaveBeenCalledWith({
-      operationId: "billfn.customers.list",
-      input: { limit: 25 },
-      context,
+    expect(listPlans).toHaveBeenCalledWith({ limit: 25 }, context);
+    expect(unused).not.toHaveBeenCalled();
+  });
+
+  it("reads the configured catalog through a real BillFn instance", async () => {
+    const billfn = createBillFn({
+      db: memoryAdapter(),
+      catalog: {
+        plans: [{
+          productKey: "superconsole",
+          planKey: "pro",
+          displayName: "Pro",
+          features: { audit: true },
+          limits: { projects: 25 },
+          prices: [{
+            priceId: "price_monthly",
+            provider: "stripe",
+            providerProductId: "prod_superconsole",
+            currency: "USD",
+            amount: 2900,
+            kind: "subscription",
+            interval: "month",
+          }],
+        }],
+      },
+    });
+    const adapter = createBillFnAdminAdapter(
+      createBillFnDomainAdminService({
+        billfn,
+        subject: (admin) => ({ tenantId: admin.scope.workspaceId }),
+      }),
+    );
+
+    await expect(adapter.execute("billfn.plans.list", {}, context)).resolves.toMatchObject({
+      data: { items: [{ id: "pro", productKey: "superconsole" }] },
+    });
+    await expect(adapter.execute("billfn.prices.get", { id: "price_monthly" }, context)).resolves.toMatchObject({
+      data: { item: { planKey: "pro", amount: 2900 } },
     });
   });
 });

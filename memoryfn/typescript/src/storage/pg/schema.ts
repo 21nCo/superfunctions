@@ -1,5 +1,4 @@
 import { pgTable, text, boolean, timestamp, jsonb, real, uuid, index, vector } from 'drizzle-orm/pg-core';
-import { sql } from 'drizzle-orm';
 
 // Enable pgvector extension - this usually needs to be done in a migration
 // CREATE EXTENSION IF NOT EXISTS vector;

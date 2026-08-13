@@ -1,7 +1,7 @@
 import { StorageAdapter } from '../adapter';
-import { Memory, MemoryRelationship, SearchMemoryInput } from '../../core/types';
+import { Memory, MemoryRelationship } from '../../core/types';
 import { memories, memoryRelationships } from './schema';
-import { eq, and, sql, desc, inArray } from 'drizzle-orm';
+import { and, sql } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
 // We assume the DB passed is compatible with PostgresJsDatabase schema

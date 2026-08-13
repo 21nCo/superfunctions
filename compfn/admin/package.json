@@ -33,6 +33,7 @@
     "access": "public"
   },
   "dependencies": {
+    "compfn": "0.1.2",
     "@superfunctions/admin": "0.1.0"
   },
   "devDependencies": {

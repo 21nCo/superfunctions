@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   dataFnAdminCapability,
+  createDataFnAdminClient,
   createDataFnAdminAdapter,
-  type DataFnAdminService,
-  type DataFnAdminServiceRequest,
+  createDataFnDomainAdminService,
 } from "../index.js";
+import { createAdminClient, validateAdminCapabilityManifest } from "@superfunctions/admin";
+import { createDatafnServer } from "@datafn/server";
+import { memoryAdapter } from "@superfunctions/db/adapters";
 
 const context = {
   scope: {
@@ -24,6 +27,7 @@ const context = {
 
 describe("@datafn/admin", () => {
   it("declares the inventoried operator surface and mutation policy", () => {
+    expect(validateAdminCapabilityManifest(dataFnAdminCapability)).toEqual([]);
     expect(dataFnAdminCapability.schemaVersion).toBe("1.0");
     expect(dataFnAdminCapability.availability).toBe("required-product");
     expect(dataFnAdminCapability.scopeLevels).toEqual([
@@ -37,6 +41,7 @@ describe("@datafn/admin", () => {
         (operation) => operation.id === "datafn.schemas.list",
       ),
     ).toBe(true);
+    expect(dataFnAdminCapability.operations).toHaveLength(15);
     const mutation = dataFnAdminCapability.operations.find(
       (operation) => operation.safety.classification !== "read",
     );
@@ -46,35 +51,135 @@ describe("@datafn/admin", () => {
         idempotent: true,
       },
     });
+    expect(dataFnAdminCapability.operations.find(
+      (operation) => operation.id === "datafn.queries.query",
+    )).toMatchObject({
+      safety: { classification: "read", idempotent: true },
+      mcp: { readOnlyHint: true },
+      target: { resource: "queries", collection: true },
+    });
+    expect(dataFnAdminCapability.resources?.map((resource) => resource.id)).toContain("queries");
+    expect(dataFnAdminCapability.operations.some(
+      (operation) => operation.id === "datafn.queries.list",
+    )).toBe(false);
+    const schemaList = dataFnAdminCapability.operations.find(
+      (operation) => operation.id === "datafn.schemas.list",
+    );
+    expect(schemaList?.inputSchema?.properties).toEqual({
+      cursor: expect.any(Object),
+      limit: expect.any(Object),
+    });
+    const recordList = dataFnAdminCapability.operations.find(
+      (operation) => operation.id === "datafn.records.list",
+    );
+    expect(recordList?.inputSchema).toMatchObject({
+      required: ["filter"],
+      properties: { filter: { required: ["resource"] } },
+    });
+    const mutationOperation = dataFnAdminCapability.operations.find(
+      (operation) => operation.id === "datafn.records.mutate",
+    );
+    expect(mutationOperation?.inputSchema).toMatchObject({
+      required: ["id", "payload"],
+      additionalProperties: false,
+    });
   });
 
-  it("delegates the operation and complete scope to the injected domain service", async () => {
-    const execute = vi.fn(async (request: DataFnAdminServiceRequest) => ({
-      ok: true as const,
-      data: {
-        operationId: request.operationId,
-        namespace: request.context.scope.namespace,
-        region: request.context.scope.region,
-      },
+  it("provides named typed client methods for every real resource family", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      ok: true,
+      data: { items: [], nextCursor: null },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const client = createDataFnAdminClient(createAdminClient({
+      baseUrl: "https://console.example.test/api/admin/v1",
+      fetch: fetcher as typeof fetch,
     }));
-    const service: DataFnAdminService = { execute };
+
+    await client.schemas.list({ limit: 25 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [url, request] = fetcher.mock.calls[0]!;
+    expect(String(url)).toContain("/operations/datafn.schemas.list");
+    expect(JSON.parse(String(request?.body))).toEqual({ limit: 25 });
+    expect(client.records).toEqual(expect.objectContaining({
+      list: expect.any(Function),
+      get: expect.any(Function),
+      mutate: expect.any(Function),
+      transact: expect.any(Function),
+    }));
+    expect(client.queries.query).toEqual(expect.any(Function));
+  });
+
+  it("binds schema, mutation, and record reads through the real DataFn executor", async () => {
+    const server = await createDatafnServer<{ namespace: string; actorId: string }>({
+      schema: {
+        resources: [{
+          name: "tasks",
+          version: 1,
+          fields: [{ name: "title", type: "string", required: true }],
+          permissions: {
+            read: { fields: ["title"] },
+            write: { fields: ["title"] },
+          },
+        }],
+      },
+      db: memoryAdapter(),
+      namespaceProvider: {
+        getNamespace: (value) => value.namespace,
+        getActorId: (value) => value.actorId,
+      },
+    });
+    const service = createDataFnDomainAdminService({
+        executor: server.executor,
+        context: (admin) => ({
+          namespace: admin.scope.namespace ?? admin.scope.projectId ?? "datafn",
+          actorId: admin.actor.id,
+        }),
+      });
+    const mutate = vi.spyOn(service, "mutate");
     const adapter = createDataFnAdminAdapter(service);
-
-    const result = await adapter.execute(
-      "datafn.schemas.list",
-      { limit: 25 },
-      context,
+    expect(Object.keys(adapter.handlers).sort()).toEqual(
+      dataFnAdminCapability.operations.map((operation) => operation.id).sort(),
     );
+    await adapter.execute("datafn.records.mutate", {
+      id: "tasks:task-1",
+      payload: {
+        resource: "tasks",
+        version: "1",
+        operation: "insert",
+        clientId: "superconsole",
+        mutationId: "create-task-1",
+        id: "task-1",
+        record: { title: "Ship Super Console" },
+      },
+    }, context);
+    expect(mutate).toHaveBeenCalledWith(expect.objectContaining({
+      id: "tasks:task-1",
+    }), context);
+    expect(service).not.toHaveProperty("execute");
+    await expect(adapter.execute("datafn.records.mutate", {
+      id: "tasks:another-task",
+      payload: {
+        resource: "tasks",
+        version: "1",
+        operation: "insert",
+        clientId: "superconsole",
+        mutationId: "mismatched-target",
+        id: "task-2",
+        record: { title: "Must not run" },
+      },
+    }, context)).rejects.toMatchObject({ code: "invalid_argument" });
 
-    expect(result.data).toEqual({
-      operationId: "datafn.schemas.list",
-      namespace: "tenant_1",
-      region: "in-south",
+    const records = await adapter.execute("datafn.records.list", {
+      limit: 10,
+      filter: { resource: "tasks", select: ["id", "title"] },
+    }, context);
+    expect(records.data).toMatchObject({
+      items: [{ id: "task-1", title: "Ship Super Console" }],
     });
-    expect(execute).toHaveBeenCalledWith({
-      operationId: "datafn.schemas.list",
-      input: { limit: 25 },
-      context,
+    const resources = await adapter.execute("datafn.resources.list", {}, context);
+    expect(resources.data).toMatchObject({
+      items: expect.arrayContaining([expect.objectContaining({ id: "tasks", version: 1 })]),
     });
+    await server.close();
   });
 });

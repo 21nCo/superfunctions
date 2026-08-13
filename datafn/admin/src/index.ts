@@ -3,13 +3,34 @@ import {
   createCapabilityAdminClient,
   defineAdminCapability,
   type AdminClient,
+  type AdminClientRequestOptions,
   type AdminCapabilityAdapter,
   type AdminJsonSchema,
   type AdminObjectSchema,
   type AdminOperationContext,
   type AdminOperationDefinition,
-  type AdminOperationResult,
+  type AdminOperationRequest,
 } from "@superfunctions/admin";
+import type {
+  DataFnActionOutput,
+  DataFnAdminRecord,
+  DataFnAdminService,
+  DataFnCapabilityView,
+  DataFnGetInput,
+  DataFnIndexView,
+  DataFnItemOutput,
+  DataFnListInput,
+  DataFnListRecordsInput,
+  DataFnMutateInput,
+  DataFnPageOutput,
+  DataFnQueryInput,
+  DataFnRelationView,
+  DataFnResourceView,
+  DataFnSchemaView,
+  DataFnTransactInput,
+} from "./types.js";
+
+export * from "./types.js";
 
 export interface DataFnAdminResourceDefinition {
   id: string;
@@ -29,7 +50,7 @@ export interface DataFnAdminActionDefinition {
   resource: string;
   title: string;
   description: string;
-  classification: "write" | "destructive";
+  classification: "read" | "write" | "destructive";
   requiresConfirmation: boolean;
   idempotent: true;
   target: "resource" | "collection";
@@ -224,7 +245,7 @@ export const dataFnAdminActions = [
     resource: "queries",
     title: "Query",
     description: "Query for queries.",
-    classification: "write",
+    classification: "read",
     requiresConfirmation: false,
     idempotent: true,
     target: "collection",
@@ -365,15 +386,14 @@ export interface DataFnAdminOperationPolicy {
     forwardsRegion: true;
   };
   safety: {
-    classification: "write" | "destructive";
+    classification: "read" | "write" | "destructive";
     requiresConfirmation: boolean;
   };
-  idempotency: {
-    mode: "required";
-    keyStrategy: "context.idempotencyKey";
-  };
+  idempotency:
+    | { mode: "required"; keyStrategy: "context.idempotencyKey" }
+    | { mode: "not-required" };
   audit: {
-    mode: "required";
+    mode: "required" | "optional";
     action: string;
     targetResource: string;
     targetIdPath?: "$.id";
@@ -415,12 +435,11 @@ export const dataFnAdminOperationPolicies = Object.freeze(
           classification: action.classification,
           requiresConfirmation: action.requiresConfirmation,
         },
-        idempotency: {
-          mode: "required",
-          keyStrategy: "context.idempotencyKey",
-        },
+        idempotency: action.classification === "read"
+          ? { mode: "not-required" as const }
+          : { mode: "required" as const, keyStrategy: "context.idempotencyKey" as const },
         audit: {
-          mode: "required",
+          mode: action.classification === "read" ? "optional" : "required",
           action: "datafn." + action.id,
           targetResource: action.resource,
           ...(action.target === "resource"
@@ -448,14 +467,22 @@ const listInputSchema: AdminObjectSchema = {
   properties: {
     cursor: { type: "string", minLength: 1 },
     limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
-    search: { type: "string", maxLength: 500 },
-    filter: { type: "object", additionalProperties: true },
-    sort: {
-      type: "array",
-      items: { type: "object", additionalProperties: true },
-      maxItems: 10,
+  },
+  additionalProperties: false,
+};
+const recordListInputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    cursor: { type: "string", minLength: 1 },
+    limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+    filter: {
+      type: "object",
+      properties: { resource: { type: "string", minLength: 1 } },
+      required: ["resource"],
+      additionalProperties: true,
     },
   },
+  required: ["filter"],
   additionalProperties: false,
 };
 const listOutputSchema: AdminObjectSchema = {
@@ -482,10 +509,18 @@ const getOutputSchema: AdminObjectSchema = {
 const actionInputSchema: AdminObjectSchema = {
   type: "object",
   properties: {
-    id: { type: "string", minLength: 1 },
     payload: { type: "object", additionalProperties: true },
-    reason: { type: "string", minLength: 1, maxLength: 2000 },
   },
+  required: ["payload"],
+  additionalProperties: false,
+};
+const mutateInputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", minLength: 3, pattern: "^[^:]+:.+$" },
+    payload: { type: "object", additionalProperties: true },
+  },
+  required: ["id", "payload"],
   additionalProperties: false,
 };
 const actionOutputSchema: AdminObjectSchema = {
@@ -493,18 +528,19 @@ const actionOutputSchema: AdminObjectSchema = {
   properties: {
     item: entitySchema,
     accepted: { type: "boolean" },
-    operationReference: { type: "string" },
   },
-  required: ["accepted"],
-  additionalProperties: true,
+  required: ["accepted", "item"],
+  additionalProperties: false,
 };
 export const dataFnAdminSchemas = {
   entity: entitySchema,
   listInput: listInputSchema,
+  recordListInput: recordListInputSchema,
   listOutput: listOutputSchema,
   getInput: getInputSchema,
   getOutput: getOutputSchema,
   actionInput: actionInputSchema,
+  mutateInput: mutateInputSchema,
   actionOutput: actionOutputSchema,
 } as const satisfies Record<string, AdminJsonSchema>;
 function resourceOperations(
@@ -520,10 +556,11 @@ function resourceOperations(
         "List permitted " +
         resource.label.toLowerCase() +
         " in the active administration scope.",
-      inputSchema: listInputSchema,
+      inputSchema: resource.id === "records" ? recordListInputSchema : listInputSchema,
       outputSchema: listOutputSchema,
       route: { method: "GET", path: basePath },
       permission: "datafn." + resource.id + ".read",
+      minimumScope: "project",
       safety: {
         classification: "read",
         idempotent: true,
@@ -544,6 +581,7 @@ function resourceOperations(
       outputSchema: getOutputSchema,
       route: { method: "GET", path: basePath + "/:id" },
       permission: "datafn." + resource.id + ".read",
+      minimumScope: "project",
       safety: {
         classification: "read",
         idempotent: true,
@@ -566,24 +604,22 @@ function actionOperation(
     id: "datafn." + action.resource + "." + action.id,
     title: action.title,
     description: action.description,
-    inputSchema:
-      action.target === "resource"
-        ? { ...actionInputSchema, required: ["id"] }
-        : actionInputSchema,
+    inputSchema: action.id === "mutate" ? mutateInputSchema : actionInputSchema,
     outputSchema: actionOutputSchema,
     route: {
       method: "POST",
       path: "/resources/" + action.resource + "/actions/" + action.id,
     },
     permission: "datafn." + action.resource + "." + action.id,
+    minimumScope: "project",
     safety: {
       classification: action.classification,
       idempotent: action.idempotent,
       requiresConfirmation: action.requiresConfirmation,
-      audit: "required",
+      audit: action.classification === "read" ? "optional" : "required",
     },
     mcp: {
-      readOnlyHint: false,
+      readOnlyHint: action.classification === "read",
       destructiveHint: action.classification === "destructive",
       idempotentHint: action.idempotent,
     },
@@ -594,30 +630,52 @@ function actionOperation(
         : { resource: action.resource, collection: true },
   };
 }
+const domainResourceIds = new Set([
+  "schemas",
+  "resources",
+  "relations",
+  "indices",
+  "capabilities",
+  "records",
+  "queries",
+]);
+const domainActionIds = new Set(["query", "mutate", "transact"]);
+const domainResources = dataFnAdminResources.filter((resource) =>
+  domainResourceIds.has(resource.id),
+);
+const domainActions = dataFnAdminActions.filter((action) =>
+  domainActionIds.has(action.id),
+);
+const domainReadResources = domainResources.filter((resource) => resource.id !== "queries");
 const operations: AdminOperationDefinition[] = [
-  ...dataFnAdminResources.flatMap(resourceOperations),
-  ...dataFnAdminActions.map(actionOperation),
+  ...domainReadResources.flatMap(resourceOperations),
+  ...domainActions.map(actionOperation),
 ];
 type FunctionAdminActionOperationId<TModule extends string, TAction> =
   TAction extends { resource: infer TResource extends string; id: infer TActionId extends string }
     ? `${TModule}.${TResource}.${TActionId}`
     : never;
+type DataFnDomainReadResourceId = "schemas" | "resources" | "relations" | "indices" | "capabilities" | "records";
+type DataFnDomainAction = Extract<
+  (typeof dataFnAdminActions)[number],
+  { id: "query" | "mutate" | "transact" }
+>;
 export type DataFnAdminOperationId =
-  | `datafn.${(typeof dataFnAdminResources)[number]["id"]}.list`
-  | `datafn.${(typeof dataFnAdminResources)[number]["id"]}.get`
-  | FunctionAdminActionOperationId<"datafn", (typeof dataFnAdminActions)[number]>;
+  | `datafn.${DataFnDomainReadResourceId}.list`
+  | `datafn.${DataFnDomainReadResourceId}.get`
+  | FunctionAdminActionOperationId<"datafn", DataFnDomainAction>;
 export const dataFnAdminCapability = defineAdminCapability({
   schemaVersion: "1.0",
   id: "datafn",
   displayName: "DataFn",
   version: "1.0.0",
   description:
-    "Commercial-grade, function-owned operator capabilities for DataFn.",
+    "Function-owned DataFn operator capabilities backed by the configured executor and schema.",
   category: "infrastructure",
   availability: "required-product",
   scopeLevels: ["organization", "workspace", "project", "environment"],
   dependencies: [],
-  resources: dataFnAdminResources,
+  resources: domainResources,
   navigation: [
     {
       id: "datafn",
@@ -630,41 +688,79 @@ export const dataFnAdminCapability = defineAdminCapability({
   ],
   operations: operations as readonly (AdminOperationDefinition & { readonly id: DataFnAdminOperationId })[],
 });
+
+/** Named, operation-specific TypeScript client over the shared administration transport. */
 export function createDataFnAdminClient(adminClient: AdminClient) {
-  return createCapabilityAdminClient(dataFnAdminCapability, adminClient);
+  const client = createCapabilityAdminClient(dataFnAdminCapability, adminClient);
+  const invoke = <TOutput>(
+    operationId: DataFnAdminOperationId,
+    input: unknown,
+    options?: AdminClientRequestOptions,
+  ) => adminClient.invokeOperation<TOutput>(operationId, input, options);
+  return Object.assign(client, {
+    schemas: {
+      list: (input: DataFnListInput = {}, options?: AdminClientRequestOptions) => invoke<DataFnPageOutput<DataFnSchemaView>>("datafn.schemas.list", input, options),
+      get: (input: DataFnGetInput, options?: AdminClientRequestOptions) => invoke<DataFnItemOutput<DataFnSchemaView>>("datafn.schemas.get", input, options),
+    },
+    resources: {
+      list: (input: DataFnListInput = {}, options?: AdminClientRequestOptions) => invoke<DataFnPageOutput<DataFnResourceView>>("datafn.resources.list", input, options),
+      get: (input: DataFnGetInput, options?: AdminClientRequestOptions) => invoke<DataFnItemOutput<DataFnResourceView>>("datafn.resources.get", input, options),
+    },
+    relations: {
+      list: (input: DataFnListInput = {}, options?: AdminClientRequestOptions) => invoke<DataFnPageOutput<DataFnRelationView>>("datafn.relations.list", input, options),
+      get: (input: DataFnGetInput, options?: AdminClientRequestOptions) => invoke<DataFnItemOutput<DataFnRelationView>>("datafn.relations.get", input, options),
+    },
+    indices: {
+      list: (input: DataFnListInput = {}, options?: AdminClientRequestOptions) => invoke<DataFnPageOutput<DataFnIndexView>>("datafn.indices.list", input, options),
+      get: (input: DataFnGetInput, options?: AdminClientRequestOptions) => invoke<DataFnItemOutput<DataFnIndexView>>("datafn.indices.get", input, options),
+    },
+    capabilities: {
+      list: (input: DataFnListInput = {}, options?: AdminClientRequestOptions) => invoke<DataFnPageOutput<DataFnCapabilityView>>("datafn.capabilities.list", input, options),
+      get: (input: DataFnGetInput, options?: AdminClientRequestOptions) => invoke<DataFnItemOutput<DataFnCapabilityView>>("datafn.capabilities.get", input, options),
+    },
+    records: {
+      list: (input: DataFnListRecordsInput, options?: AdminClientRequestOptions) => invoke<DataFnPageOutput<DataFnAdminRecord>>("datafn.records.list", input, options),
+      get: (input: DataFnGetInput, options?: AdminClientRequestOptions) => invoke<DataFnItemOutput<DataFnAdminRecord>>("datafn.records.get", input, options),
+      mutate: (input: DataFnMutateInput, options?: AdminClientRequestOptions) => invoke<DataFnActionOutput>("datafn.records.mutate", input, options),
+      transact: (input: DataFnTransactInput, options?: AdminClientRequestOptions) => invoke<DataFnActionOutput>("datafn.records.transact", input, options),
+    },
+    queries: {
+      query: (input: DataFnQueryInput, options?: AdminClientRequestOptions) => invoke<DataFnActionOutput>("datafn.queries.query", input, options),
+    },
+  });
 }
-export interface DataFnAdminServiceRequest {
-  operationId: DataFnAdminOperationId;
-  input: unknown;
-  context: AdminOperationContext;
+
+function bind<TInput, TOutput>(
+  handler: (input: TInput, context: AdminOperationContext) => Promise<TOutput>,
+) {
+  return ({ input, context }: AdminOperationRequest) => handler(input as TInput, context);
 }
-export interface DataFnAdminService {
-  execute(
-    request: DataFnAdminServiceRequest,
-  ):
-    | Promise<AdminOperationResult<Record<string, unknown>>>
-    | AdminOperationResult<Record<string, unknown>>;
-}
+
+/** Exact handler coverage; adding a manifest operation requires an explicit service method. */
 export function createDataFnAdminAdapter(
   service: DataFnAdminService,
-): AdminCapabilityAdapter {
-  const handlers: Record<
-    string,
-    (request: {
-      input: unknown;
-      context: AdminOperationContext;
-    }) =>
-      | Promise<AdminOperationResult<Record<string, unknown>>>
-      | AdminOperationResult<Record<string, unknown>>
-  > = {};
-  for (const operation of dataFnAdminCapability.operations)
-    handlers[operation.id] = (request) =>
-      service.execute({
-        operationId: operation.id,
-        input: request.input,
-        context: request.context,
-      });
-  return createKernelAdminCapabilityAdapter(dataFnAdminCapability, handlers);
+): AdminCapabilityAdapter<typeof dataFnAdminCapability> {
+  return createKernelAdminCapabilityAdapter(dataFnAdminCapability, {
+    "datafn.schemas.list": bind(service.listSchemas),
+    "datafn.schemas.get": bind(service.getSchema),
+    "datafn.resources.list": bind(service.listResources),
+    "datafn.resources.get": bind(service.getResource),
+    "datafn.relations.list": bind(service.listRelations),
+    "datafn.relations.get": bind(service.getRelation),
+    "datafn.indices.list": bind(service.listIndices),
+    "datafn.indices.get": bind(service.getIndex),
+    "datafn.capabilities.list": bind(service.listCapabilities),
+    "datafn.capabilities.get": bind(service.getCapability),
+    "datafn.records.list": bind(service.listRecords),
+    "datafn.records.get": bind(service.getRecord),
+    "datafn.queries.query": bind(service.query),
+    "datafn.records.mutate": bind(service.mutate),
+    "datafn.records.transact": bind(service.transact),
+  });
 }
 export const adminCapability = dataFnAdminCapability;
 export const createAdminAdapter = createDataFnAdminAdapter;
+export {
+  createDataFnDomainAdminService,
+  type DataFnDomainAdminServiceOptions,
+} from "./domain-service.js";

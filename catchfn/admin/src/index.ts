@@ -1,585 +1,147 @@
 import {
+  AdminError,
   createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
   createCapabilityAdminClient,
+  decodeAdminCursor,
   defineAdminCapability,
+  encodeAdminCursor,
   type AdminClient,
-  type AdminCapabilityAdapter,
-  type AdminJsonSchema,
-  type AdminObjectSchema,
+  type AdminClientRequestOptions,
   type AdminOperationContext,
-  type AdminOperationDefinition,
-  type AdminOperationResult,
 } from "@superfunctions/admin";
+import type { CatchFnService } from "@catchfn/server";
+import type { BugReportEvent } from "catchfn";
 
-export interface CatchFnAdminResourceDefinition {
-  id: string;
-  label: string;
-  description: string;
-  icon: string;
-  risk: "standard" | "sensitive";
-  idField: string;
-  displayFields: readonly string[];
-  searchableFields: readonly string[];
-  filterableFields: readonly string[];
-  sortableFields: readonly string[];
-  sensitiveFields: readonly string[];
-}
-export interface CatchFnAdminActionDefinition {
-  id: string;
-  resource: string;
-  title: string;
-  description: string;
-  classification: "write" | "destructive";
-  requiresConfirmation: boolean;
-  idempotent: true;
-  target: "resource" | "collection";
-}
-export const catchFnAdminResources = [
-  {
-    id: "feedback",
-    label: "Feedback",
-    description: "Inspect and operate feedback in CatchFn.",
-    icon: "catchfn:feedback",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "bug-inbox",
-    label: "Bug Inbox",
-    description: "Inspect and operate bug inbox in CatchFn.",
-    icon: "catchfn:bug-inbox",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "screenshots",
-    label: "Screenshots",
-    description: "Inspect and operate screenshots in CatchFn.",
-    icon: "catchfn:screenshots",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "attachments",
-    label: "Attachments",
-    description: "Inspect and operate attachments in CatchFn.",
-    icon: "catchfn:attachments",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [
-      "secret",
-      "token",
-      "credential",
-      "value",
-      "password",
-      "passwd",
-      "apiKey",
-      "privateKey",
-      "authorization",
-      "cookie",
-      "otp",
-      "otpCode",
-      "recoveryCode",
-      "recoveryCodes",
-      "verificationCode",
-      "sessionToken",
-    ],
-  },
-  {
-    id: "breadcrumbs",
-    label: "Breadcrumbs",
-    description: "Inspect and operate breadcrumbs in CatchFn.",
-    icon: "catchfn:breadcrumbs",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "sessions",
-    label: "Sessions",
-    description: "Inspect and operate sessions in CatchFn.",
-    icon: "catchfn:sessions",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [
-      "secret",
-      "token",
-      "credential",
-      "value",
-      "password",
-      "passwd",
-      "apiKey",
-      "privateKey",
-      "authorization",
-      "cookie",
-      "otp",
-      "otpCode",
-      "recoveryCode",
-      "recoveryCodes",
-      "verificationCode",
-      "sessionToken",
-    ],
-  },
-  {
-    id: "severity",
-    label: "Severity",
-    description: "Inspect and operate severity in CatchFn.",
-    icon: "catchfn:severity",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "status",
-    label: "Status",
-    description: "Inspect and operate status in CatchFn.",
-    icon: "catchfn:status",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "assignees",
-    label: "Assignees",
-    description: "Inspect and operate assignees in CatchFn.",
-    icon: "catchfn:assignees",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "linked-issues",
-    label: "Linked Issues",
-    description: "Inspect and operate linked issues in CatchFn.",
-    icon: "catchfn:linked-issues",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-] as const satisfies readonly CatchFnAdminResourceDefinition[];
-export const catchFnAdminActions = [
-  {
-    id: "triage",
-    resource: "feedback",
-    title: "Triage",
-    description: "Triage for feedback.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "assign",
-    resource: "assignees",
-    title: "Assign",
-    description: "Assign for assignees.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "merge",
-    resource: "feedback",
-    title: "Merge",
-    description: "Merge for feedback.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "resolve",
-    resource: "feedback",
-    title: "Resolve",
-    description: "Resolve for feedback.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "link-issue",
-    resource: "linked-issues",
-    title: "Link Issue",
-    description: "Link Issue for linked issues.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "export-issue",
-    resource: "linked-issues",
-    title: "Export Issue",
-    description: "Export Issue for linked issues.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-] as const satisfies readonly CatchFnAdminActionDefinition[];
-
-export interface CatchFnAdminResourcePolicy {
-  defaultScope: "active";
-  permission: string;
-  redaction: "none" | "sensitive-fields";
+export interface CatchFnAdminScope {
+  organizationId: string;
+  workspaceId: string;
+  projectId: string;
+  environmentId: string;
+  namespace?: string;
+  region?: string;
 }
 
-export interface CatchFnAdminOperationPolicy {
-  permission: string;
-  scope: {
-    levels: readonly ["organization", "workspace", "project", "environment"];
-    forwardsNamespace: true;
-    forwardsRegion: true;
-  };
-  safety: {
-    classification: "write" | "destructive";
-    requiresConfirmation: boolean;
-  };
-  idempotency: {
-    mode: "required";
-    keyStrategy: "context.idempotencyKey";
-  };
-  audit: {
-    mode: "required";
-    action: string;
-    targetResource: string;
-    targetIdPath?: "$.id";
-    collection?: true;
-  };
-  observation: {
-    domain: "catchfn";
-    requestIdPath: "context.requestId";
-    correlationIdPath: "context.correlationId";
-  };
-}
+export interface ListBugReportsInput { limit?: number; cursor?: string }
+export interface GetBugReportInput { id: string }
+export type CreateBugReportInput = Pick<
+  BugReportEvent,
+  "id" | "timestamp" | "title" | "severity"
+> & Partial<Omit<BugReportEvent, "id" | "timestamp" | "title" | "severity">>;
+export interface BugReportListResult { items: BugReportEvent[]; nextCursor: string | null }
+export interface BugReportResult { item: BugReportEvent }
 
-export const catchFnAdminResourcePolicies = Object.freeze(
-  Object.fromEntries(
-    catchFnAdminResources.map((resource) => [
-      resource.id,
-      {
-        defaultScope: "active",
-        permission: "catchfn." + resource.id + ".read",
-        redaction:
-          resource.sensitiveFields.length > 0 ? "sensitive-fields" : "none",
-      } satisfies CatchFnAdminResourcePolicy,
-    ]),
-  ),
-) as Readonly<Record<string, CatchFnAdminResourcePolicy>>;
-
-export const catchFnAdminOperationPolicies = Object.freeze(
-  Object.fromEntries(
-    catchFnAdminActions.map((action) => [
-      "catchfn." + action.resource + "." + action.id,
-      {
-        permission: "catchfn." + action.resource + "." + action.id,
-        scope: {
-          levels: ["organization", "workspace", "project", "environment"],
-          forwardsNamespace: true,
-          forwardsRegion: true,
-        },
-        safety: {
-          classification: action.classification,
-          requiresConfirmation: action.requiresConfirmation,
-        },
-        idempotency: {
-          mode: "required",
-          keyStrategy: "context.idempotencyKey",
-        },
-        audit: {
-          mode: "required",
-          action: "catchfn." + action.id,
-          targetResource: action.resource,
-          ...(action.target === "resource"
-            ? { targetIdPath: "$.id" as const }
-            : { collection: true as const }),
-        },
-        observation: {
-          domain: "catchfn",
-          requestIdPath: "context.requestId",
-          correlationIdPath: "context.correlationId",
-        },
-      } satisfies CatchFnAdminOperationPolicy,
-    ]),
-  ),
-) as Readonly<Record<string, CatchFnAdminOperationPolicy>>;
-
-const entitySchema: AdminObjectSchema = {
+const bugReportSchema = {
   type: "object",
-  description:
-    "A domain-owned administration resource. Sensitive fields are redacted by the domain service.",
+  properties: {
+    id: { type: "string" }, timestamp: { type: "number" }, title: { type: "string" },
+    description: { type: "string" }, severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
+    tags: { type: "array", items: { type: "string" } }, environment: { type: "string" }, release: { type: "string" },
+  },
+  required: ["id", "timestamp", "title", "severity"],
   additionalProperties: true,
-};
-const listInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    cursor: { type: "string", minLength: 1 },
-    limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
-    search: { type: "string", maxLength: 500 },
-    filter: { type: "object", additionalProperties: true },
-    sort: {
-      type: "array",
-      items: { type: "object", additionalProperties: true },
-      maxItems: 10,
-    },
-  },
-  additionalProperties: false,
-};
-const listOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    items: { type: "array", items: entitySchema },
-    nextCursor: { type: ["string", "null"] },
-  },
-  required: ["items"],
-  additionalProperties: false,
-};
-const getInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: { id: { type: "string", minLength: 1 } },
-  required: ["id"],
-  additionalProperties: false,
-};
-const getOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: { item: entitySchema },
-  required: ["item"],
-  additionalProperties: false,
-};
-const actionInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    id: { type: "string", minLength: 1 },
-    payload: { type: "object", additionalProperties: true },
-    reason: { type: "string", minLength: 1, maxLength: 2000 },
-  },
-  additionalProperties: false,
-};
-const actionOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    item: entitySchema,
-    accepted: { type: "boolean" },
-    operationReference: { type: "string" },
-  },
-  required: ["accepted"],
-  additionalProperties: true,
-};
-export const catchFnAdminSchemas = {
-  entity: entitySchema,
-  listInput: listInputSchema,
-  listOutput: listOutputSchema,
-  getInput: getInputSchema,
-  getOutput: getOutputSchema,
-  actionInput: actionInputSchema,
-  actionOutput: actionOutputSchema,
-} as const satisfies Record<string, AdminJsonSchema>;
+} as const;
 
-function resourceOperations(
-  resource: CatchFnAdminResourceDefinition,
-): AdminOperationDefinition[] {
-  const baseId = "catchfn." + resource.id;
-  const basePath = "/resources/" + resource.id;
-  return [
-    {
-      id: baseId + ".list",
-      title: "List " + resource.label,
-      description:
-        "List permitted " +
-        resource.label.toLowerCase() +
-        " in the active administration scope.",
-      inputSchema: listInputSchema,
-      outputSchema: listOutputSchema,
-      route: { method: "GET", path: basePath },
-      permission: "catchfn." + resource.id + ".read",
-      safety: {
-        classification: "read",
-        idempotent: true,
-        requiresConfirmation: false,
-        audit: resource.risk === "sensitive" ? "required" : "optional",
-      },
-      pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 200 },
-      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-      redaction: { outputFields: resource.sensitiveFields },
-      target: { resource: resource.id, collection: true },
-    },
-    {
-      id: baseId + ".get",
-      title: "Get " + resource.label,
-      description:
-        "Get one permitted " + resource.label.toLowerCase() + " resource.",
-      inputSchema: getInputSchema,
-      outputSchema: getOutputSchema,
-      route: { method: "GET", path: basePath + "/:id" },
-      permission: "catchfn." + resource.id + ".read",
-      safety: {
-        classification: "read",
-        idempotent: true,
-        requiresConfirmation: false,
-        audit: resource.risk === "sensitive" ? "required" : "optional",
-      },
-      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-      redaction: { outputFields: resource.sensitiveFields },
-      target: { resource: resource.id, idInput: "id" },
-    },
-  ];
-}
-function actionOperation(
-  action: CatchFnAdminActionDefinition,
-): AdminOperationDefinition {
-  const sensitiveFields =
-    catchFnAdminResources.find((resource) => resource.id === action.resource)
-      ?.sensitiveFields ?? [];
-  return {
-    id: "catchfn." + action.resource + "." + action.id,
-    title: action.title,
-    description: action.description,
-    inputSchema:
-      action.target === "resource"
-        ? { ...actionInputSchema, required: ["id"] }
-        : actionInputSchema,
-    outputSchema: actionOutputSchema,
-    route: {
-      method: "POST",
-      path: "/resources/" + action.resource + "/actions/" + action.id,
-    },
-    permission: "catchfn." + action.resource + "." + action.id,
-    safety: {
-      classification: action.classification,
-      idempotent: action.idempotent,
-      requiresConfirmation: action.requiresConfirmation,
-      audit: "required",
-    },
-    mcp: {
-      readOnlyHint: false,
-      destructiveHint: action.classification === "destructive",
-      idempotentHint: action.idempotent,
-    },
-    redaction: { inputFields: sensitiveFields, outputFields: sensitiveFields },
-    target:
-      action.target === "resource"
-        ? { resource: action.resource, idInput: "id" }
-        : { resource: action.resource, collection: true },
-  };
-}
-const operations: AdminOperationDefinition[] = [
-  ...catchFnAdminResources.flatMap(resourceOperations),
-  ...catchFnAdminActions.map(actionOperation),
-];
-type FunctionAdminActionOperationId<TModule extends string, TAction> =
-  TAction extends { resource: infer TResource extends string; id: infer TActionId extends string }
-    ? `${TModule}.${TResource}.${TActionId}`
-    : never;
-export type CatchFnAdminOperationId =
-  | `catchfn.${(typeof catchFnAdminResources)[number]["id"]}.list`
-  | `catchfn.${(typeof catchFnAdminResources)[number]["id"]}.get`
-  | FunctionAdminActionOperationId<"catchfn", (typeof catchFnAdminActions)[number]>;
+const operations = [
+  {
+    id: "catchfn.bug-reports.list", title: "List bug reports", description: "List persisted CatchFn bug reports.",
+    inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 200, default: 50 }, cursor: { type: "string", minLength: 1 } }, additionalProperties: false },
+    outputSchema: { type: "object", properties: { items: { type: "array", items: bugReportSchema }, nextCursor: { oneOf: [{ type: "string" }, { type: "null" }] } }, required: ["items", "nextCursor"], additionalProperties: false },
+    route: { method: "GET", path: "/resources/bug-reports" }, permission: "catchfn.bug-reports.read",
+    safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "optional" },
+    pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 200, cursorInput: "cursor", itemsOutput: "items", nextCursorOutput: "nextCursor" }, mcp: { readOnlyHint: true },
+    target: { resource: "bug-reports", collection: true },
+  },
+  {
+    id: "catchfn.bug-reports.get", title: "Get bug report", description: "Get one persisted CatchFn bug report.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 } }, required: ["id"], additionalProperties: false },
+    outputSchema: { type: "object", properties: { item: bugReportSchema }, required: ["item"], additionalProperties: false },
+    route: { method: "GET", path: "/resources/bug-reports/:id" }, permission: "catchfn.bug-reports.read",
+    safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "optional" }, mcp: { readOnlyHint: true },
+    target: { resource: "bug-reports", idInput: "id" },
+  },
+  {
+    id: "catchfn.bug-reports.create", title: "Capture bug report", description: "Persist a typed CatchFn bug report.",
+    inputSchema: { ...bugReportSchema, additionalProperties: true },
+    outputSchema: { type: "object", properties: { item: bugReportSchema }, required: ["item"], additionalProperties: false },
+    route: { method: "POST", path: "/resources/bug-reports" }, permission: "catchfn.bug-reports.create",
+    safety: { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" }, mcp: { readOnlyHint: false, idempotentHint: true },
+    redaction: { inputFields: ["user", "metadata", "attachments"], outputFields: ["user", "metadata", "attachments"] },
+    target: { resource: "bug-reports", idInput: "id" },
+  },
+] as const;
+
 export const catchFnAdminCapability = defineAdminCapability({
-  schemaVersion: "1.0",
-  id: "catchfn",
-  displayName: "CatchFn",
-  version: "1.0.0",
-  description:
-    "Commercial-grade, function-owned operator capabilities for CatchFn.",
-  category: "observability",
-  availability: "nested",
-  scopeLevels: ["organization", "workspace", "project", "environment"],
-  owner: { moduleId: "watchfn", mountPath: "/modules/watchfn/catchfn" },
-  dependencies: ["watchfn"],
-  resources: catchFnAdminResources,
-  navigation: [
-    {
-      id: "catchfn",
-      label: "CatchFn",
-      path: "/modules/watchfn/catchfn",
-      icon: "catchfn",
-      description: "Operate CatchFn in the active scope.",
-      order: 121,
-      parentId: "watchfn",
-    },
-  ],
-  operations: operations as readonly (AdminOperationDefinition & { readonly id: CatchFnAdminOperationId })[],
+  schemaVersion: "1.0", id: "catchfn", displayName: "CatchFn", version: "1.1.0",
+  description: "Function-owned administration for persisted CatchFn bug reports.", category: "observability",
+  availability: "nested", owner: { moduleId: "watchfn", mountPath: "/modules/watchfn/errors" },
+  scopeLevels: ["organization", "workspace", "project", "environment"], dependencies: ["watchfn"],
+  resources: [{ id: "bug-reports", label: "Bug reports", description: "Captured product feedback and bug evidence.", icon: "catchfn:bugs", risk: "sensitive", idField: "id", displayFields: ["id", "title", "severity", "timestamp"], searchableFields: ["id", "title"], filterableFields: ["severity", "environment", "timestamp"], sortableFields: ["timestamp", "severity"], sensitiveFields: ["user", "metadata", "attachments"] }],
+  navigation: [{ id: "catchfn", label: "Bug reports", path: "/modules/watchfn/errors", parentId: "watchfn", group: "WatchFn", order: 30 }],
+  operations,
 });
-export function createCatchFnAdminClient(adminClient: AdminClient) {
-  return createCapabilityAdminClient(catchFnAdminCapability, adminClient);
-}
-export interface CatchFnAdminServiceRequest {
-  operationId: CatchFnAdminOperationId;
-  input: unknown;
-  context: AdminOperationContext;
-}
+
 export interface CatchFnAdminService {
-  execute(
-    request: CatchFnAdminServiceRequest,
-  ):
-    | Promise<AdminOperationResult<Record<string, unknown>>>
-    | AdminOperationResult<Record<string, unknown>>;
+  listBugReports(input: ListBugReportsInput, context: AdminOperationContext): Promise<BugReportListResult>;
+  getBugReport(input: GetBugReportInput, context: AdminOperationContext): Promise<BugReportResult>;
+  createBugReport(input: CreateBugReportInput, context: AdminOperationContext): Promise<BugReportResult>;
 }
-export function createCatchFnAdminAdapter(
-  service: CatchFnAdminService,
-): AdminCapabilityAdapter {
-  const handlers: Record<
-    string,
-    (request: {
-      input: unknown;
-      context: AdminOperationContext;
-    }) =>
-      | Promise<AdminOperationResult<Record<string, unknown>>>
-      | AdminOperationResult<Record<string, unknown>>
-  > = {};
-  for (const operation of catchFnAdminCapability.operations)
-    handlers[operation.id] = (request) =>
-      service.execute({
-        operationId: operation.id,
-        input: request.input,
-        context: request.context,
-      });
-  return createKernelAdminCapabilityAdapter(catchFnAdminCapability, handlers);
+
+function assertScope(expected: CatchFnAdminScope, actual: AdminOperationContext["scope"]): void {
+  for (const key of ["organizationId", "workspaceId", "projectId", "environmentId", "namespace", "region"] as const) {
+    if (expected[key] !== undefined && actual[key] !== expected[key]) {
+      throw new AdminError("forbidden", `CatchFn is not bound to the active ${key}.`);
+    }
+  }
 }
+
+export function createCatchFnAdminService(service: CatchFnService, scope: CatchFnAdminScope): CatchFnAdminService {
+  return {
+    async listBugReports(input, context) {
+      assertScope(scope, context.scope);
+      const limit = input.limit ?? 50;
+      const offset = input.cursor
+        ? decodeAdminCursor<{ offset: number }>(input.cursor, context.scope).offset
+        : 0;
+      if (!Number.isInteger(offset) || offset < 0) throw new AdminError("invalid_argument", "The bug-report cursor is invalid.");
+      const items = await service.listBugs(limit + 1, offset);
+      return {
+        items: items.slice(0, limit),
+        nextCursor: items.length > limit
+          ? encodeAdminCursor(context.scope, { offset: offset + limit })
+          : null,
+      };
+    },
+    async getBugReport(input, context) {
+      assertScope(scope, context.scope);
+      const item = await service.getBug(input.id);
+      if (!item) throw new AdminError("not_found", "Bug report not found.", { details: { id: input.id } });
+      return { item };
+    },
+    async createBugReport(input, context) {
+      assertScope(scope, context.scope);
+      const item = await service.createBug(input as BugReportEvent);
+      return { item };
+    },
+  };
+}
+
+export function createCatchFnAdminAdapter(service: CatchFnAdminService) {
+  return createKernelAdminCapabilityAdapter(catchFnAdminCapability, {
+    "catchfn.bug-reports.list": ({ input, context }) => service.listBugReports(input as ListBugReportsInput, context),
+    "catchfn.bug-reports.get": ({ input, context }) => service.getBugReport(input as GetBugReportInput, context),
+    "catchfn.bug-reports.create": ({ input, context }) => service.createBugReport(input as CreateBugReportInput, context),
+  });
+}
+
+export function createCatchFnAdminClient(adminClient: AdminClient) {
+  const capability = createCapabilityAdminClient(catchFnAdminCapability, adminClient);
+  return {
+    manifest: capability.manifest,
+    listBugReports: (input: ListBugReportsInput = {}, options?: AdminClientRequestOptions) => capability.invoke("catchfn.bug-reports.list", input, options),
+    getBugReport: (input: GetBugReportInput, options?: AdminClientRequestOptions) => capability.invoke("catchfn.bug-reports.get", input, options),
+    createBugReport: (input: CreateBugReportInput, options?: AdminClientRequestOptions) => capability.invoke("catchfn.bug-reports.create", input, options),
+  };
+}
+
 export const adminCapability = catchFnAdminCapability;
 export const createAdminAdapter = createCatchFnAdminAdapter;

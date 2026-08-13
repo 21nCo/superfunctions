@@ -1,16 +1,14 @@
+import { timingSafeEqual } from "node:crypto";
 import { wrapWithSchema } from "@superfunctions/db";
 import { createRouter, type Route, type Router } from "@superfunctions/http";
 import {
+  AdminError,
   createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
   createCapabilityAdminClient,
   defineAdminCapability,
   type AdminClient,
-  type AdminCapabilityAdapter,
-  type AdminJsonSchema,
-  type AdminObjectSchema,
+  type AdminClientRequestOptions,
   type AdminOperationContext,
-  type AdminOperationDefinition,
-  type AdminOperationResult,
 } from "@superfunctions/admin";
 import {
   AuthFnAdminConfigError,
@@ -19,1032 +17,214 @@ import {
   createPluginRunner,
   deleteAuthFnAdminUserById,
   deleteAuthFnAdminUsersByEmail,
+  findRegionProfileByUserId,
+  findUserById,
   getSchema,
   jsonError,
   jsonSuccess,
   listAuthFnAdminUsers,
+  revokeSessionById,
   type AuthFnAccountDeletionResult,
   type AuthFnAdminDeleteUsersByEmailResult,
+  type AuthFnAdminListUsersInput,
   type AuthFnAdminListUsersResult,
+  type AuthFnAdminUserSummary,
   type AuthFnConfig,
   type AuthFnHooks,
+  type AuthFnSessionRecord,
+  type AuthFnUserRecord,
 } from "@authfn/core";
 
 export type AuthFnAdminAction = "users.list" | "users.delete";
+export interface AuthFnAdminAuthorizationContext { request: Request; action: AuthFnAdminAction }
+export interface AuthFnAdminAuthorizationInput { operationId: string; params?: Record<string, string>; query?: Record<string, string | undefined>; body?: unknown }
+export type AuthFnAdminAuthorizationResult = boolean | { allowed: boolean; actorId?: string; metadata?: Record<string, unknown> };
+export type AuthFnAdminAuthorize = (ctx: AuthFnAdminAuthorizationContext, input: AuthFnAdminAuthorizationInput) => Promise<AuthFnAdminAuthorizationResult> | AuthFnAdminAuthorizationResult;
+export interface AuthFnAdminOptions { authFnConfig: AuthFnConfig; authorize: AuthFnAdminAuthorize; basePath?: string }
+export interface AuthFnAdminInstance { router: Router; routes: Route[] }
+export interface StaticAdminKeyAuthorizerOptions { token: string; actorId?: string; headerName?: string }
 
-export interface AuthFnAdminAuthorizationContext {
-  request: Request;
-  action: AuthFnAdminAction;
+function prepareConfig(config: AuthFnConfig): { config: AuthFnConfig; hooks: Partial<AuthFnHooks> } {
+  const normalized: AuthFnConfig = { ...config, plugins: config.plugins ?? [] };
+  const prepared: AuthFnConfig = { ...normalized, database: wrapWithSchema(normalized.database, getSchema(normalized)) };
+  return { config: prepared, hooks: createPluginRunner(prepared).hooks };
 }
 
-export interface AuthFnAdminAuthorizationInput {
-  operationId: string;
-  params?: Record<string, string>;
-  query?: Record<string, string | undefined>;
-  body?: unknown;
-}
-
-export type AuthFnAdminAuthorizationResult =
-  | boolean
-  | {
-      allowed: boolean;
-      actorId?: string;
-      metadata?: Record<string, unknown>;
-    };
-
-export type AuthFnAdminAuthorize = (
-  ctx: AuthFnAdminAuthorizationContext,
-  input: AuthFnAdminAuthorizationInput,
-) => Promise<AuthFnAdminAuthorizationResult> | AuthFnAdminAuthorizationResult;
-
-export interface AuthFnAdminOptions {
-  authFnConfig: AuthFnConfig;
-  authorize: AuthFnAdminAuthorize;
-  basePath?: string;
-}
-
-export interface AuthFnAdminInstance {
-  router: Router;
-  routes: Route[];
-}
-
-export interface StaticAdminKeyAuthorizerOptions {
-  token: string;
-  actorId?: string;
-  headerName?: string;
-}
-
-interface PreparedAuthFnAdmin {
-  config: AuthFnConfig;
-  hooks: Partial<AuthFnHooks>;
-  authorize: AuthFnAdminAuthorize;
-}
-
-interface AuthorizedAdminActor {
-  actorId?: string;
-  metadata?: Record<string, unknown>;
-}
-
-/**
- * @deprecated Low-level compatibility router. It predates the shared
- * `@superfunctions/admin` confirmation, idempotency, and attempted/terminal
- * audit contract. New operator control planes must bind
- * `createAuthFnAdminAdapter` through Super Console (or the shared dispatcher)
- * instead of exposing this router directly.
- */
-export function createAuthFnAdmin(
-  options: AuthFnAdminOptions,
-): AuthFnAdminInstance {
-  const prepared = prepareAuthFnAdmin(options);
-  const routes = createPreparedAuthFnAdminRoutes(prepared);
-
-  return {
-    routes,
-    router: createRouter({
-      basePath: options.basePath ?? "/admin",
-      routes,
-      onError: (error, request) => jsonError(request, error),
-    }),
+/** @deprecated Bind `createAuthFnAdminService` through the shared administration dispatcher. */
+export function createAuthFnAdmin(options: AuthFnAdminOptions): AuthFnAdminInstance {
+  if (typeof options.authorize !== "function") throw new AuthFnAdminConfigError("AuthFn admin routes require an authorize hook");
+  const prepared = prepareConfig(options.authFnConfig);
+  const authorize = async (request: Request, action: AuthFnAdminAction, input: AuthFnAdminAuthorizationInput): Promise<{ actorId?: string }> => {
+    const result = await options.authorize({ request, action }, input);
+    if (!(typeof result === "boolean" ? result : result.allowed)) throw new AuthFnAdminUnauthorizedError();
+    return typeof result === "boolean" ? {} : result;
   };
-}
-
-/** @deprecated Use `createAuthFnAdminAdapter` through the shared admin dispatcher. */
-export function createAuthFnAdminRouter(options: AuthFnAdminOptions): Router {
-  return createAuthFnAdmin(options).router;
-}
-
-/** @deprecated Use `createAuthFnAdminAdapter` through the shared admin dispatcher. */
-export function createAuthFnAdminRoutes(options: AuthFnAdminOptions): Route[] {
-  return createPreparedAuthFnAdminRoutes(prepareAuthFnAdmin(options));
-}
-
-export function createStaticAdminKeyAuthorizer(
-  options: StaticAdminKeyAuthorizerOptions,
-): AuthFnAdminAuthorize {
-  const expectedToken = options.token.trim();
-  if (!expectedToken) {
-    throw new AuthFnAdminConfigError(
-      "Static admin key authorizer requires a token",
-    );
-  }
-
-  const headerName = options.headerName ?? "authorization";
-  const actorId = options.actorId ?? "authfn-admin-key";
-
-  return ({ request }) => {
-    const headerValue = request.headers.get(headerName);
-    const token = headerValue?.replace(/^Bearer\s+/i, "").trim();
-    return {
-      allowed: Boolean(token && safeEqual(token, expectedToken)),
-      actorId,
-    };
-  };
-}
-
-function prepareAuthFnAdmin(options: AuthFnAdminOptions): PreparedAuthFnAdmin {
-  if (typeof options.authorize !== "function") {
-    throw new AuthFnAdminConfigError(
-      "AuthFn admin routes require an authorize hook",
-    );
-  }
-
-  const schema = getSchema(options.authFnConfig);
-  const config: AuthFnConfig = {
-    ...options.authFnConfig,
-    database: wrapWithSchema(options.authFnConfig.database, schema),
-  };
-  const runner = createPluginRunner(config);
-
-  return {
-    config,
-    hooks: runner.hooks,
-    authorize: options.authorize,
-  };
-}
-
-function createPreparedAuthFnAdminRoutes(admin: PreparedAuthFnAdmin): Route[] {
-  return [
+  const routes: Route[] = [
     {
-      method: "GET",
-      path: "/users",
-      meta: createAdminRouteMeta("listAuthFnAdminUsers", "List AuthFn users"),
-      handler: (request, context) =>
-        withAdminEnvelope(request, async () => {
-          const input = parseListUsersInput(context.query);
-          await authorizeAdmin(admin, request, "users.list", {
-            operationId: "listAuthFnAdminUsers",
-            query: queryToObject(context.query),
-          });
-
-          return listAuthFnAdminUsers(admin.config, input);
-        }),
+      method: "GET", path: "/users", handler: async (request, context) => {
+        try {
+          const input: AuthFnAdminListUsersInput = {
+            limit: parseOptionalInt(context.query.get("limit"), "limit"), cursor: context.query.get("cursor") ?? undefined,
+            email: context.query.get("email") ?? undefined, regionId: context.query.get("regionId") ?? undefined,
+            direction: parseDirection(context.query.get("direction")),
+          };
+          await authorize(request, "users.list", { operationId: "listAuthFnAdminUsers", query: Object.fromEntries(context.query) });
+          return jsonSuccess(request, await listAuthFnAdminUsers(prepared.config, input));
+        } catch (error) { return jsonError(request, error); }
+      },
     },
     {
-      method: "DELETE",
-      path: "/users/:id",
-      meta: createAdminRouteMeta(
-        "deleteAuthFnAdminUserById",
-        "Delete an AuthFn user by id",
-      ),
-      handler: (request, context) =>
-        withAdminEnvelope(request, async () => {
-          const userId = context.params.id?.trim();
-          if (!userId) {
-            throw new AuthFnValidationError("User id is required", {
-              field: "id",
-            });
-          }
-
-          const authorization = await authorizeAdmin(
-            admin,
-            request,
-            "users.delete",
-            {
-              operationId: "deleteAuthFnAdminUserById",
-              params: { id: userId },
-            },
-          );
-
-          return deleteAuthFnAdminUserById(admin.config, admin.hooks, {
-            userId,
-            request,
-            actorId: authorization.actorId,
-          });
-        }),
+      method: "DELETE", path: "/users/:id", handler: async (request, context) => {
+        try {
+          const id = context.params.id?.trim(); if (!id) throw new AuthFnValidationError("User id is required", { field: "id" });
+          const actor = await authorize(request, "users.delete", { operationId: "deleteAuthFnAdminUserById", params: { id } });
+          return jsonSuccess(request, await deleteAuthFnAdminUserById(prepared.config, prepared.hooks, { userId: id, request, actorId: actor.actorId }));
+        } catch (error) { return jsonError(request, error); }
+      },
     },
     {
-      method: "DELETE",
-      path: "/users/by-email/:email",
-      meta: createAdminRouteMeta(
-        "deleteAuthFnAdminUsersByEmail",
-        "Delete AuthFn user by email",
-      ),
-      handler: (request, context) =>
-        withAdminEnvelope(request, async () => {
-          const email = context.params.email?.trim();
-          if (!email) {
-            throw new AuthFnValidationError("Email is required", {
-              field: "email",
-            });
-          }
-
-          const body = await parseOptionalJsonBody(request);
-          const deleteAllMatches = readDeleteAllMatches(body);
-          const authorization = await authorizeAdmin(
-            admin,
-            request,
-            "users.delete",
-            {
-              operationId: "deleteAuthFnAdminUsersByEmail",
-              params: { email },
-              body:
-                deleteAllMatches === undefined
-                  ? undefined
-                  : { deleteAllMatches },
-            },
-          );
-
-          return deleteAuthFnAdminUsersByEmail(admin.config, admin.hooks, {
-            email,
-            deleteAllMatches,
-            request,
-            actorId: authorization.actorId,
-          });
-        }),
+      method: "DELETE", path: "/users/by-email/:email", handler: async (request, context) => {
+        try {
+          const email = context.params.email?.trim(); if (!email) throw new AuthFnValidationError("Email is required", { field: "email" });
+          const body = await parseOptionalBody(request);
+          const deleteAllMatches = body.deleteAllMatches === undefined ? undefined : body.deleteAllMatches;
+          if (deleteAllMatches !== undefined && typeof deleteAllMatches !== "boolean") throw new AuthFnValidationError("deleteAllMatches must be boolean", { field: "deleteAllMatches" });
+          const actor = await authorize(request, "users.delete", { operationId: "deleteAuthFnAdminUsersByEmail", params: { email }, body });
+          return jsonSuccess(request, await deleteAuthFnAdminUsersByEmail(prepared.config, prepared.hooks, { email, deleteAllMatches, request, actorId: actor.actorId }));
+        } catch (error) { return jsonError(request, error); }
+      },
     },
   ];
+  return { routes, router: createRouter({ basePath: options.basePath ?? "/admin", routes, onError: (error, request) => jsonError(request, error) }) };
 }
+export function createAuthFnAdminRouter(options: AuthFnAdminOptions): Router { return createAuthFnAdmin(options).router }
+export function createAuthFnAdminRoutes(options: AuthFnAdminOptions): Route[] { return createAuthFnAdmin(options).routes }
 
-async function authorizeAdmin(
-  admin: PreparedAuthFnAdmin,
-  request: Request,
-  action: AuthFnAdminAction,
-  input: AuthFnAdminAuthorizationInput,
-): Promise<AuthorizedAdminActor> {
-  const result = await admin.authorize({ request, action }, input);
-  const allowed = typeof result === "boolean" ? result : result.allowed;
-  if (!allowed) {
-    throw new AuthFnAdminUnauthorizedError();
-  }
-
-  return typeof result === "boolean"
-    ? {}
-    : {
-        actorId: result.actorId,
-        metadata: result.metadata,
-      };
+export function createStaticAdminKeyAuthorizer(options: StaticAdminKeyAuthorizerOptions): AuthFnAdminAuthorize {
+  const expected = options.token.trim(); if (!expected) throw new AuthFnAdminConfigError("Static admin key authorizer requires a token");
+  return ({ request }) => ({ allowed: safeEqual(request.headers.get(options.headerName ?? "authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "", expected), actorId: options.actorId ?? "authfn-admin-key" });
 }
+function safeEqual(actual: string, expected: string): boolean { const a = Buffer.from(actual); const b = Buffer.from(expected); return a.length === b.length && timingSafeEqual(a, b) }
+function parseOptionalInt(value: string | null, field: string): number | undefined { if (value === null) return undefined; const parsed = Number(value); if (!Number.isInteger(parsed)) throw new AuthFnValidationError(`${field} must be an integer`, { field }); return parsed }
+function parseDirection(value: string | null): "asc" | "desc" | undefined { if (value === null) return undefined; if (value !== "asc" && value !== "desc") throw new AuthFnValidationError("direction must be asc or desc", { field: "direction" }); return value }
+async function parseOptionalBody(request: Request): Promise<Record<string, unknown>> { const text = await request.text(); if (!text.trim()) return {}; try { const value = JSON.parse(text); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(); return value; } catch { throw new AuthFnValidationError("Request body must be a JSON object"); } }
 
-async function withAdminEnvelope<TData>(
-  request: Request,
-  operation: () => Promise<TData>,
-): Promise<Response> {
-  try {
-    return jsonSuccess(request, await operation());
-  } catch (error) {
-    return jsonError(request, error);
-  }
-}
+export type { AuthFnAccountDeletionResult, AuthFnAdminDeleteUsersByEmailResult, AuthFnAdminListUsersResult };
 
-function parseListUsersInput(query: URLSearchParams): {
-  limit?: number;
-  cursor?: string;
-  email?: string;
-  regionId?: string;
-  direction?: "asc" | "desc";
-} {
-  const direction = query.get("direction") ?? undefined;
-  if (direction !== undefined && direction !== "asc" && direction !== "desc") {
-    throw new AuthFnValidationError("direction must be asc or desc", {
-      field: "direction",
-    });
-  }
+export interface AuthFnUserAdminView { id: string; primaryEmail?: string; emailVerifiedAt: string | null; createdAt: string; updatedAt: string; regionId?: string; authority?: string }
+export interface AuthFnSessionAdminView { id: string; userId: string; methods: string[]; expiresAt: string; revokedAt: string | null; createdAt: string; updatedAt: string; regionId?: string }
+export interface ListUsersInput { limit?: number; cursor?: string; email?: string; direction?: "asc" | "desc" }
+export interface UserListResult { items: AuthFnUserAdminView[]; nextCursor: string | null }
+export interface UserIdInput { id: string }
+export interface UserResult { item: AuthFnUserAdminView }
+export interface DeleteUserResult { deleted: true; id: string }
+export interface ListSessionsInput { userId: string }
+export interface SessionListResult { items: AuthFnSessionAdminView[] }
+export interface RevokeSessionInput { id: string; userId: string }
+export interface RevokeSessionResult { item: AuthFnSessionAdminView }
 
-  return {
-    limit: parseOptionalInteger(query.get("limit"), "limit"),
-    cursor: query.get("cursor") ?? undefined,
-    email: query.get("email") ?? undefined,
-    regionId: query.get("regionId") ?? undefined,
-    direction,
-  };
-}
-
-function parseOptionalInteger(
-  value: string | null,
-  field: string,
-): number | undefined {
-  if (value === null || value.trim() === "") {
-    return undefined;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed)) {
-    throw new AuthFnValidationError(`${field} must be an integer`, {
-      field,
-    });
-  }
-
-  return parsed;
-}
-
-async function parseOptionalJsonBody(request: Request): Promise<unknown> {
-  const text = await request.text();
-  if (!text.trim()) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new AuthFnValidationError("Invalid JSON body", {
-      field: "body",
-    });
-  }
-}
-
-function readDeleteAllMatches(body: unknown): boolean | undefined {
-  if (body === undefined) {
-    return undefined;
-  }
-
-  if (
-    !isRecord(body) ||
-    (body.deleteAllMatches !== undefined &&
-      typeof body.deleteAllMatches !== "boolean")
-  ) {
-    throw new AuthFnValidationError(
-      "deleteAllMatches must be a boolean when provided",
-      {
-        field: "deleteAllMatches",
-      },
-    );
-  }
-
-  return body.deleteAllMatches;
-}
-
-function createAdminRouteMeta(operationId: string, summary: string) {
-  return {
-    auth: {
-      mode: "bearer" as const,
-      scopes: ["authfn:admin"],
-    },
-    openapi: {
-      include: true,
-      operationId,
-      summary,
-      tags: ["authfn-admin"],
-    },
-  };
-}
-
-function queryToObject(
-  query: URLSearchParams,
-): Record<string, string | undefined> {
-  return {
-    limit: query.get("limit") ?? undefined,
-    cursor: query.get("cursor") ?? undefined,
-    email: query.get("email") ?? undefined,
-    regionId: query.get("regionId") ?? undefined,
-    direction: query.get("direction") ?? undefined,
-  };
-}
-
-function safeEqual(left: string, right: string): boolean {
-  const leftBytes = new TextEncoder().encode(left);
-  const rightBytes = new TextEncoder().encode(right);
-
-  let diff = leftBytes.length ^ rightBytes.length;
-  const length = Math.max(leftBytes.length, rightBytes.length);
-  for (let index = 0; index < length; index += 1) {
-    diff |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
-  }
-  return diff === 0;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-export type {
-  AuthFnAccountDeletionResult,
-  AuthFnAdminDeleteUsersByEmailResult,
-  AuthFnAdminListUsersResult,
-};
-
-export interface AuthFnAdminResourceDefinition {
-  id: string;
-  label: string;
-  description: string;
-  icon: string;
-  risk: "standard" | "sensitive";
-  idField: string;
-  displayFields: readonly string[];
-  searchableFields: readonly string[];
-  filterableFields: readonly string[];
-  sortableFields: readonly string[];
-  sensitiveFields: readonly string[];
-}
-
-export interface AuthFnAdminActionDefinition {
-  id: string;
-  resource: string;
-  title: string;
-  description: string;
-  classification: "write" | "destructive";
-  requiresConfirmation: boolean;
-  idempotent: true;
-  target: "resource" | "collection";
-}
-
-export const authFnAdminResources = [
+const userSchema = { type: "object", properties: { id: { type: "string" }, primaryEmail: { type: "string" }, emailVerifiedAt: { oneOf: [{ type: "string" }, { type: "null" }] }, createdAt: { type: "string" }, updatedAt: { type: "string" }, regionId: { type: "string" }, authority: { type: "string" } }, required: ["id", "emailVerifiedAt", "createdAt", "updatedAt"], additionalProperties: false } as const;
+const sessionSchema = { type: "object", properties: { id: { type: "string" }, userId: { type: "string" }, methods: { type: "array", items: { type: "string" } }, expiresAt: { type: "string" }, revokedAt: { oneOf: [{ type: "string" }, { type: "null" }] }, createdAt: { type: "string" }, updatedAt: { type: "string" }, regionId: { type: "string" } }, required: ["id", "userId", "methods", "expiresAt", "revokedAt", "createdAt", "updatedAt"], additionalProperties: false } as const;
+const operations = [
   {
-    id: "users",
-    label: "Users",
-    description: "Authentication users and account state.",
-    icon: "authfn:users",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "primaryEmail", "status", "updatedAt"],
-    searchableFields: ["id", "primaryEmail"],
-    filterableFields: ["status", "createdAt", "regionId"],
-    sortableFields: ["createdAt", "updatedAt", "primaryEmail"],
-    sensitiveFields: [
-      "metadata",
-      "password",
-      "passwordHash",
-      "verificationCode",
-      "recoveryCode",
-      "recoveryCodes",
-    ],
+    id: "authfn.users.list", title: "List users", description: "List AuthFn users in the bound namespace and active region.",
+    inputSchema: { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }, cursor: { type: "string" }, email: { type: "string" }, direction: { type: "string", enum: ["asc", "desc"] } }, additionalProperties: false },
+    outputSchema: { type: "object", properties: { items: { type: "array", items: userSchema }, nextCursor: { oneOf: [{ type: "string" }, { type: "null" }] } }, required: ["items", "nextCursor"], additionalProperties: false },
+    route: { method: "GET", path: "/resources/users" }, permission: "authfn.users.read", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "required" }, pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 100 }, mcp: { readOnlyHint: true }, redaction: { inputFields: ["email"] }, target: { resource: "users", collection: true },
   },
   {
-    id: "identities",
-    label: "Identities",
-    description: "Linked login identities.",
-    icon: "authfn:identities",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "provider", "userId", "updatedAt"],
-    searchableFields: ["id", "provider", "userId"],
-    filterableFields: ["provider", "status"],
-    sortableFields: ["createdAt", "updatedAt"],
-    sensitiveFields: [
-      "accessToken",
-      "refreshToken",
-      "idToken",
-      "authorizationCode",
-      "clientSecret",
-    ],
+    id: "authfn.users.get", title: "Get user", description: "Get an AuthFn user only when it belongs to the active namespace and region.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { type: "object", properties: { item: userSchema }, required: ["item"], additionalProperties: false },
+    route: { method: "GET", path: "/resources/users/:id" }, permission: "authfn.users.read", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "required" }, mcp: { readOnlyHint: true }, target: { resource: "users", idInput: "id" },
   },
   {
-    id: "sessions",
-    label: "Sessions",
-    description: "Active and historical sessions.",
-    icon: "authfn:sessions",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "userId", "expiresAt", "status"],
-    searchableFields: ["id", "userId"],
-    filterableFields: ["status", "method", "regionId"],
-    sortableFields: ["createdAt", "expiresAt"],
-    sensitiveFields: ["token", "tokenHash", "sessionToken", "cookie"],
+    id: "authfn.users.delete", title: "Delete user", description: "Permanently delete an in-scope AuthFn user and authentication state.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 } }, required: ["id"], additionalProperties: false }, outputSchema: { type: "object", properties: { deleted: { type: "boolean", const: true }, id: { type: "string" } }, required: ["deleted", "id"], additionalProperties: false },
+    route: { method: "DELETE", path: "/resources/users/:id" }, permission: "authfn.users.delete", safety: { classification: "destructive", idempotent: true, requiresConfirmation: true, confirmation: { risk: "critical", method: "mfa", reason: "Permanent deletion removes the user and owned authentication state.", maxAgeSeconds: 300 }, audit: "required" }, mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true }, target: { resource: "users", idInput: "id" },
   },
   {
-    id: "workspaces",
-    label: "Workspaces",
-    description: "AuthFn workspace boundaries.",
-    icon: "authfn:workspaces",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name"],
-    filterableFields: ["status"],
-    sortableFields: ["name", "createdAt"],
-    sensitiveFields: [],
+    id: "authfn.users.list-sessions", title: "List user sessions", description: "List active sessions for an in-scope AuthFn user.",
+    inputSchema: { type: "object", properties: { userId: { type: "string", minLength: 1 } }, required: ["userId"], additionalProperties: false }, outputSchema: { type: "object", properties: { items: { type: "array", items: sessionSchema } }, required: ["items"], additionalProperties: false },
+    route: { method: "GET", path: "/resources/users/:userId/sessions" }, permission: "authfn.sessions.read", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "required" }, mcp: { readOnlyHint: true }, target: { resource: "users", idInput: "userId" },
   },
   {
-    id: "memberships",
-    label: "Memberships",
-    description: "Workspace membership grants.",
-    icon: "authfn:memberships",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "userId", "workspaceId", "roleId"],
-    searchableFields: ["id", "userId", "workspaceId"],
-    filterableFields: ["roleId", "status"],
-    sortableFields: ["createdAt", "updatedAt"],
-    sensitiveFields: [],
+    id: "authfn.sessions.revoke", title: "Revoke session", description: "Revoke a session after proving it belongs to an in-scope AuthFn user.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 }, userId: { type: "string", minLength: 1 } }, required: ["id", "userId"], additionalProperties: false }, outputSchema: { type: "object", properties: { item: sessionSchema }, required: ["item"], additionalProperties: false },
+    route: { method: "POST", path: "/resources/sessions/actions/revoke" }, permission: "authfn.sessions.revoke", safety: { classification: "destructive", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "recent-auth", reason: "Session revocation immediately terminates an authenticated session.", maxAgeSeconds: 600 }, audit: "required" }, mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true }, target: { resource: "sessions", idInput: "id" },
   },
-  {
-    id: "roles",
-    label: "Roles",
-    description: "Operator and application roles.",
-    icon: "authfn:roles",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name"],
-    filterableFields: ["status"],
-    sortableFields: ["name", "createdAt"],
-    sensitiveFields: ["permissions"],
-  },
-  {
-    id: "api-keys",
-    label: "API Keys",
-    description: "Issued API credentials and status.",
-    icon: "authfn:api-keys",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "name", "prefix", "status"],
-    searchableFields: ["id", "name", "prefix"],
-    filterableFields: ["status", "expiresAt"],
-    sortableFields: ["createdAt", "expiresAt"],
-    sensitiveFields: [
-      "secret",
-      "key",
-      "tokenHash",
-      "apiKey",
-      "privateKey",
-      "authorization",
-    ],
-  },
-  {
-    id: "oauth-providers",
-    label: "OAuth Providers",
-    description: "Configured OAuth providers and connections.",
-    icon: "authfn:oauth",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name"],
-    filterableFields: ["status", "regionId"],
-    sortableFields: ["name", "updatedAt"],
-    sensitiveFields: [
-      "clientSecret",
-      "privateKey",
-      "apiKey",
-      "authorization",
-      "cookie",
-    ],
-  },
-  {
-    id: "mfa",
-    label: "MFA",
-    description: "Multi-factor enrollment state.",
-    icon: "authfn:mfa",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "userId", "method", "status"],
-    searchableFields: ["id", "userId"],
-    filterableFields: ["method", "status"],
-    sortableFields: ["createdAt", "updatedAt"],
-    sensitiveFields: [
-      "secret",
-      "otp",
-      "otpCode",
-      "verificationCode",
-      "recoveryCode",
-      "recoveryCodes",
-    ],
-  },
-  {
-    id: "regions",
-    label: "Regions",
-    description: "Authentication regions and directory health.",
-    icon: "authfn:regions",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "authority", "status", "updatedAt"],
-    searchableFields: ["id", "authority"],
-    filterableFields: ["status"],
-    sortableFields: ["id", "updatedAt"],
-    sensitiveFields: [],
-  },
-  {
-    id: "health",
-    label: "Auth Health",
-    description: "AuthFn runtime and dependency health.",
-    icon: "authfn:health",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "status", "updatedAt"],
-    searchableFields: ["id"],
-    filterableFields: ["status"],
-    sortableFields: ["updatedAt"],
-    sensitiveFields: [],
-  },
-  {
-    id: "audit",
-    label: "Audit",
-    description: "Authentication security and administration events.",
-    icon: "authfn:audit",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "action", "actorId", "createdAt"],
-    searchableFields: ["id", "action", "actorId", "subjectId"],
-    filterableFields: ["action", "outcome", "createdAt"],
-    sortableFields: ["createdAt"],
-    sensitiveFields: ["metadata"],
-  },
-] as const satisfies readonly AuthFnAdminResourceDefinition[];
-
-export const authFnAdminActions = [
-  {
-    id: "invite-user",
-    resource: "users",
-    title: "Invite User",
-    description: "Invite a user into the active workspace.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "collection",
-  },
-  {
-    id: "block-user",
-    resource: "users",
-    title: "Block User",
-    description: "Block authentication for a user.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "delete-user",
-    resource: "users",
-    title: "Delete User",
-    description: "Permanently delete a user and owned authentication state.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "revoke-session",
-    resource: "sessions",
-    title: "Revoke Session",
-    description: "Revoke an active session.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "rotate-key",
-    resource: "api-keys",
-    title: "Rotate API Key",
-    description: "Rotate an API credential.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "revoke-key",
-    resource: "api-keys",
-    title: "Revoke API Key",
-    description: "Revoke an API credential.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "manage-role",
-    resource: "roles",
-    title: "Manage Role",
-    description: "Create or update role permissions.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "reset-mfa",
-    resource: "mfa",
-    title: "Reset MFA",
-    description: "Remove a user multi-factor enrollment.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "configure-provider",
-    resource: "oauth-providers",
-    title: "Configure Provider",
-    description: "Create or update an OAuth provider.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-] as const satisfies readonly AuthFnAdminActionDefinition[];
-
-export interface AuthFnAdminResourcePolicy {
-  defaultScope: "active";
-  permission: string;
-  redaction: "none" | "sensitive-fields";
-}
-
-export interface AuthFnAdminOperationPolicy {
-  permission: string;
-  scope: {
-    levels: readonly ["organization", "workspace", "project", "environment"];
-    forwardsNamespace: true;
-    forwardsRegion: true;
-  };
-  safety: {
-    classification: "write" | "destructive";
-    requiresConfirmation: boolean;
-  };
-  idempotency: {
-    mode: "required";
-    keyStrategy: "context.idempotencyKey";
-  };
-  audit: {
-    mode: "required";
-    action: string;
-    targetResource: string;
-    targetIdPath?: "$.id";
-    collection?: true;
-  };
-  observation: {
-    domain: "authfn";
-    requestIdPath: "context.requestId";
-    correlationIdPath: "context.correlationId";
-  };
-}
-
-export const authFnAdminResourcePolicies = Object.freeze(
-  Object.fromEntries(
-    authFnAdminResources.map((resource) => [
-      resource.id,
-      {
-        defaultScope: "active",
-        permission: "authfn." + resource.id + ".read",
-        redaction:
-          resource.sensitiveFields.length > 0 ? "sensitive-fields" : "none",
-      } satisfies AuthFnAdminResourcePolicy,
-    ]),
-  ),
-) as Readonly<Record<string, AuthFnAdminResourcePolicy>>;
-
-export const authFnAdminOperationPolicies = Object.freeze(
-  Object.fromEntries(
-    authFnAdminActions.map((action) => [
-      "authfn." + action.resource + "." + action.id,
-      {
-        permission: "authfn." + action.resource + "." + action.id,
-        scope: {
-          levels: ["organization", "workspace", "project", "environment"],
-          forwardsNamespace: true,
-          forwardsRegion: true,
-        },
-        safety: {
-          classification: action.classification,
-          requiresConfirmation: action.requiresConfirmation,
-        },
-        idempotency: {
-          mode: "required",
-          keyStrategy: "context.idempotencyKey",
-        },
-        audit: {
-          mode: "required",
-          action: "authfn." + action.id,
-          targetResource: action.resource,
-          ...(action.target === "resource"
-            ? { targetIdPath: "$.id" as const }
-            : { collection: true as const }),
-        },
-        observation: {
-          domain: "authfn",
-          requestIdPath: "context.requestId",
-          correlationIdPath: "context.correlationId",
-        },
-      } satisfies AuthFnAdminOperationPolicy,
-    ]),
-  ),
-) as Readonly<Record<string, AuthFnAdminOperationPolicy>>;
-
-const authEntitySchema: AdminObjectSchema = {
-  type: "object",
-  description:
-    "A domain-owned AuthFn administration resource with secret fields redacted.",
-  additionalProperties: true,
-};
-const authListInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    cursor: { type: "string", minLength: 1 },
-    limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
-    search: { type: "string", maxLength: 500 },
-    filter: { type: "object", additionalProperties: true },
-    sort: {
-      type: "array",
-      items: { type: "object", additionalProperties: true },
-      maxItems: 10,
-    },
-  },
-  additionalProperties: false,
-};
-const authListOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    items: { type: "array", items: authEntitySchema },
-    nextCursor: { type: ["string", "null"] },
-  },
-  required: ["items"],
-  additionalProperties: false,
-};
-const authGetInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: { id: { type: "string", minLength: 1 } },
-  required: ["id"],
-  additionalProperties: false,
-};
-const authGetOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: { item: authEntitySchema },
-  required: ["item"],
-  additionalProperties: false,
-};
-const authActionInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    id: { type: "string", minLength: 1 },
-    payload: { type: "object", additionalProperties: true },
-    reason: { type: "string", minLength: 1, maxLength: 2000 },
-  },
-  additionalProperties: false,
-};
-const authActionOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    item: authEntitySchema,
-    accepted: { type: "boolean" },
-    operationReference: { type: "string" },
-  },
-  required: ["accepted"],
-  additionalProperties: true,
-};
-
-export const authFnAdminSchemas = {
-  entity: authEntitySchema,
-  listInput: authListInputSchema,
-  listOutput: authListOutputSchema,
-  getInput: authGetInputSchema,
-  getOutput: authGetOutputSchema,
-  actionInput: authActionInputSchema,
-  actionOutput: authActionOutputSchema,
-} as const satisfies Record<string, AdminJsonSchema>;
-
-function authResourceOperations(
-  resource: AuthFnAdminResourceDefinition,
-): AdminOperationDefinition[] {
-  const baseId = `authfn.${resource.id}`;
-  const basePath = `/resources/${resource.id}`;
-  return [
-    {
-      id: `${baseId}.list`,
-      title: `List ${resource.label}`,
-      description: `List permitted ${resource.label.toLowerCase()} in the active administration scope.`,
-      inputSchema: authListInputSchema,
-      outputSchema: authListOutputSchema,
-      route: { method: "GET", path: basePath },
-      permission: `authfn.${resource.id}.read`,
-      safety: {
-        classification: "read",
-        idempotent: true,
-        requiresConfirmation: false,
-        audit: resource.risk === "sensitive" ? "required" : "optional",
-      },
-      pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 200 },
-      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-      redaction: { outputFields: resource.sensitiveFields },
-      target: { resource: resource.id, collection: true },
-    },
-    {
-      id: `${baseId}.get`,
-      title: `Get ${resource.label}`,
-      description: `Get one permitted ${resource.label.toLowerCase()} resource.`,
-      inputSchema: authGetInputSchema,
-      outputSchema: authGetOutputSchema,
-      route: { method: "GET", path: `${basePath}/:id` },
-      permission: `authfn.${resource.id}.read`,
-      safety: {
-        classification: "read",
-        idempotent: true,
-        requiresConfirmation: false,
-        audit: resource.risk === "sensitive" ? "required" : "optional",
-      },
-      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-      redaction: { outputFields: resource.sensitiveFields },
-      target: { resource: resource.id, idInput: "id" },
-    },
-  ];
-}
-
-function authActionOperation(
-  action: AuthFnAdminActionDefinition,
-): AdminOperationDefinition {
-  const sensitiveFields =
-    authFnAdminResources.find((resource) => resource.id === action.resource)
-      ?.sensitiveFields ?? [];
-  return {
-    id: `authfn.${action.resource}.${action.id}`,
-    title: action.title,
-    description: action.description,
-    inputSchema:
-      action.target === "resource"
-        ? { ...authActionInputSchema, required: ["id"] }
-        : authActionInputSchema,
-    outputSchema: authActionOutputSchema,
-    route: {
-      method: "POST",
-      path: `/resources/${action.resource}/actions/${action.id}`,
-    },
-    permission: `authfn.${action.resource}.${action.id}`,
-    safety: {
-      classification: action.classification,
-      idempotent: action.idempotent,
-      requiresConfirmation: action.requiresConfirmation,
-      audit: "required",
-    },
-    mcp: {
-      readOnlyHint: false,
-      destructiveHint: action.classification === "destructive",
-      idempotentHint: action.idempotent,
-    },
-    redaction: { inputFields: sensitiveFields, outputFields: sensitiveFields },
-    target:
-      action.target === "resource"
-        ? { resource: action.resource, idInput: "id" }
-        : { resource: action.resource, collection: true },
-  };
-}
-
-const authCapabilityOperations: AdminOperationDefinition[] = [
-  ...authFnAdminResources.flatMap(authResourceOperations),
-  ...authFnAdminActions.map(authActionOperation),
-];
-
-type FunctionAdminActionOperationId<TModule extends string, TAction> =
-  TAction extends { resource: infer TResource extends string; id: infer TActionId extends string }
-    ? `${TModule}.${TResource}.${TActionId}`
-    : never;
-
-export type AuthFnCapabilityOperationId =
-  | `authfn.${(typeof authFnAdminResources)[number]["id"]}.list`
-  | `authfn.${(typeof authFnAdminResources)[number]["id"]}.get`
-  | FunctionAdminActionOperationId<"authfn", (typeof authFnAdminActions)[number]>;
+] as const;
 
 export const authFnAdminCapability = defineAdminCapability({
-  schemaVersion: "1.0",
-  id: "authfn",
-  displayName: "AuthFn",
-  version: "1.0.0",
-  description:
-    "Commercial-grade, function-owned operator capabilities for AuthFn.",
-  category: "identity",
-  availability: "required-product",
-  scopeLevels: ["organization", "workspace", "project", "environment"],
-  dependencies: [],
-  resources: authFnAdminResources,
-  navigation: [
-    {
-      id: "authfn",
-      label: "AuthFn",
-      path: "/modules/authfn",
-      icon: "authfn",
-      description: "Operate AuthFn in the active scope.",
-      order: 10,
-    },
+  schemaVersion: "1.0", id: "authfn", displayName: "AuthFn", version: "1.1.0", description: "AuthFn user and session operations backed by the AuthFn core service and scoped storage.",
+  category: "identity", availability: "required-product", scopeLevels: ["organization", "workspace", "project", "environment"],
+  resources: [
+    { id: "users", label: "Users", description: "Authentication users in the active namespace and region.", icon: "authfn:users", risk: "sensitive", idField: "id", displayFields: ["id", "primaryEmail", "updatedAt"], searchableFields: ["id", "primaryEmail"], filterableFields: ["regionId", "createdAt"], sortableFields: ["createdAt", "updatedAt"], sensitiveFields: [] },
+    { id: "sessions", label: "Sessions", description: "Active AuthFn sessions for an in-scope user.", icon: "authfn:sessions", risk: "sensitive", idField: "id", displayFields: ["id", "userId", "expiresAt", "revokedAt"], sensitiveFields: [] },
   ],
-  health: { operationId: "authfn.health.list" },
-  operations: authCapabilityOperations as readonly (AdminOperationDefinition & { readonly id: AuthFnCapabilityOperationId })[],
+  navigation: [{ id: "authfn", label: "AuthFn", path: "/modules/authfn", icon: "authfn", order: 10 }], operations,
 });
 
-export function createAuthFnAdminClient(adminClient: AdminClient) {
-  return createCapabilityAdminClient(authFnAdminCapability, adminClient);
-}
-
-export interface AuthFnAdminServiceRequest {
-  operationId: AuthFnCapabilityOperationId;
-  input: unknown;
-  context: AdminOperationContext;
-}
-
 export interface AuthFnAdminService {
-  execute(
-    request: AuthFnAdminServiceRequest,
-  ):
-    | Promise<AdminOperationResult<Record<string, unknown>>>
-    | AdminOperationResult<Record<string, unknown>>;
+  listUsers(input: ListUsersInput, context: AdminOperationContext): Promise<UserListResult>;
+  getUser(input: UserIdInput, context: AdminOperationContext): Promise<UserResult>;
+  deleteUser(input: UserIdInput, context: AdminOperationContext): Promise<DeleteUserResult>;
+  listSessions(input: ListSessionsInput, context: AdminOperationContext): Promise<SessionListResult>;
+  revokeSession(input: RevokeSessionInput, context: AdminOperationContext): Promise<RevokeSessionResult>;
 }
 
-export function createAuthFnAdminAdapter(
-  service: AuthFnAdminService,
-): AdminCapabilityAdapter {
-  const handlers: Record<
-    string,
-    (request: {
-      input: unknown;
-      context: AdminOperationContext;
-    }) =>
-      | Promise<AdminOperationResult<Record<string, unknown>>>
-      | AdminOperationResult<Record<string, unknown>>
-  > = {};
-  for (const operation of authFnAdminCapability.operations) {
-    handlers[operation.id] = (request) =>
-      service.execute({
-        operationId: operation.id,
-        input: request.input,
-        context: request.context,
-      });
-  }
-  return createKernelAdminCapabilityAdapter(authFnAdminCapability, handlers);
+function iso(value: Date | string | null | undefined): string | null { return value == null ? null : new Date(value).toISOString() }
+function userView(user: AuthFnUserRecord | AuthFnAdminUserSummary): AuthFnUserAdminView {
+  const region = "regionProfile" in user ? user.regionProfile : undefined;
+  return { id: user.id, primaryEmail: user.primaryEmail, emailVerifiedAt: iso(user.emailVerifiedAt), createdAt: iso(user.createdAt)!, updatedAt: iso(user.updatedAt)!, ...(region ? { regionId: region.regionId, authority: region.authority } : {}) };
+}
+function sessionView(session: AuthFnSessionRecord, regionId?: string): AuthFnSessionAdminView { return { id: session.id, userId: session.userId, methods: [...session.methods], expiresAt: iso(session.expiresAt)!, revokedAt: iso(session.revokedAt), createdAt: iso(session.createdAt)!, updatedAt: iso(session.updatedAt)!, regionId }; }
+
+export function createAuthFnAdminService(authFnConfig: AuthFnConfig): AuthFnAdminService {
+  const prepared = prepareConfig(authFnConfig);
+  const expectedNamespace = prepared.config.namespace ?? "authfn";
+  const assertNamespace = (context: AdminOperationContext) => { if (context.scope.namespace !== undefined && context.scope.namespace !== expectedNamespace) throw new AdminError("forbidden", "AuthFn is not bound to the active namespace."); };
+  const scopedUser = async (id: string, context: AdminOperationContext): Promise<AuthFnUserRecord> => {
+    assertNamespace(context);
+    const user = await findUserById(prepared.config, id); if (!user) throw new AdminError("not_found", "AuthFn user not found.", { details: { id } });
+    if (context.scope.region) {
+      const profile = await findRegionProfileByUserId(prepared.config, id);
+      if (!profile || profile.regionId !== context.scope.region) throw new AdminError("not_found", "AuthFn user not found in the active region.", { details: { id } });
+    }
+    return user;
+  };
+  return {
+    async listUsers(input, context) { assertNamespace(context); const result = await listAuthFnAdminUsers(prepared.config, { ...input, regionId: context.scope.region }); return { items: result.users.map(userView), nextCursor: result.pageInfo.nextCursor ?? null }; },
+    async getUser(input, context) { const user = await scopedUser(input.id, context); const profile = await findRegionProfileByUserId(prepared.config, user.id); return { item: userView({ ...user, regionProfile: profile ? { regionId: profile.regionId, authority: profile.authority, domain: profile.domain } : undefined } as AuthFnAdminUserSummary) }; },
+    async deleteUser(input, context) { await scopedUser(input.id, context); await deleteAuthFnAdminUserById(prepared.config, prepared.hooks, { userId: input.id, actorId: context.actor.id }); return { deleted: true, id: input.id }; },
+    async listSessions(input, context) { await scopedUser(input.userId, context); const records = await prepared.config.database.findMany<AuthFnSessionRecord>({ model: "sessions", where: [{ field: "userId", operator: "eq", value: input.userId }], orderBy: [{ field: "createdAt", direction: "asc" }, { field: "id", direction: "asc" }], namespace: expectedNamespace }); const now = context.now ?? new Date(); return { items: records.filter((record) => !record.revokedAt && record.expiresAt > now).map((record) => sessionView(record, context.scope.region)) }; },
+    async revokeSession(input, context) { await scopedUser(input.userId, context); return { item: sessionView(await revokeSessionById(prepared.config, input.id, { userId: input.userId }), context.scope.region) }; },
+  };
+}
+
+export function createAuthFnAdminAdapter(service: AuthFnAdminService) {
+  return createKernelAdminCapabilityAdapter(authFnAdminCapability, {
+    "authfn.users.list": ({ input, context }) => service.listUsers(input as ListUsersInput, context),
+    "authfn.users.get": ({ input, context }) => service.getUser(input as UserIdInput, context),
+    "authfn.users.delete": ({ input, context }) => service.deleteUser(input as UserIdInput, context),
+    "authfn.users.list-sessions": ({ input, context }) => service.listSessions(input as ListSessionsInput, context),
+    "authfn.sessions.revoke": ({ input, context }) => service.revokeSession(input as RevokeSessionInput, context),
+  });
+}
+
+export function createAuthFnAdminClient(adminClient: AdminClient) {
+  const capability = createCapabilityAdminClient(authFnAdminCapability, adminClient);
+  return {
+    manifest: capability.manifest,
+    users: {
+      list: (input: ListUsersInput = {}, options?: AdminClientRequestOptions) => capability.invoke("authfn.users.list", input, options),
+      get: (input: UserIdInput, options?: AdminClientRequestOptions) => capability.invoke("authfn.users.get", input, options),
+      delete: (input: UserIdInput, options?: AdminClientRequestOptions) => capability.invoke("authfn.users.delete", input, options),
+    },
+    sessions: {
+      list: (input: ListSessionsInput, options?: AdminClientRequestOptions) => capability.invoke("authfn.users.list-sessions", input, options),
+      revoke: (input: RevokeSessionInput, options?: AdminClientRequestOptions) => capability.invoke("authfn.sessions.revoke", input, options),
+    },
+  };
 }
 
 export const adminCapability = authFnAdminCapability;

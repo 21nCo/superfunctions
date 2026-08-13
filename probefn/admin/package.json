@@ -1,7 +1,8 @@
 {
   "name": "@probefn/admin",
   "version": "0.1.0",
-  "description": "Function-owned Super Console administration capability for ProbeFn",
+  "private": true,
+  "description": "Private self-hosted Super Console administration capability for ProbeFn",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "typecheck": "tsc --noEmit",
@@ -29,13 +30,15 @@
   ],
   "author": "21n",
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  },
   "dependencies": {
+    "@probefn/contracts": "*",
+    "@probefn/core": "*",
+    "@probefn/storage": "*",
     "@superfunctions/admin": "0.1.0"
   },
   "devDependencies": {
+    "@types/node": "^22.14.0",
+    "tsup": "^8.0.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
   }

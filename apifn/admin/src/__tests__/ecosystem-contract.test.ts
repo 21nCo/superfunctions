@@ -201,14 +201,19 @@ const billFnIdsAreRejected: BillFnIdsAcceptedByApiClient extends false
   : false = true;
 
 describe("Superfunctions admin ecosystem contract", () => {
-  it("publishes resource metadata and a scoped client for every function", () => {
+  it("publishes truthful resource metadata and a scoped client for every function", () => {
     const transport = {} as AdminClient;
 
     expect(contracts).toHaveLength(29);
-    for (const [capability, resources, createClient] of contracts) {
-      expect(resources.length).toBeGreaterThan(0);
-      expect(capability.resources).toBe(resources);
+    for (const [capability, _declaredResources, createClient] of contracts) {
       expect(createClient(transport).manifest).toBe(capability);
+      if (capability.availability === "unavailable" || capability.availability === "folded") {
+        expect(capability.resources).toEqual([]);
+        expect(capability.operations).toEqual([]);
+      } else {
+        expect(capability.resources?.length).toBeGreaterThan(0);
+        expect(capability.operations.length).toBeGreaterThan(0);
+      }
     }
   });
 

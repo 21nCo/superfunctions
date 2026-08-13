@@ -8,13 +8,13 @@
 ## Quick Start
 
 ```typescript
-import { memoryfn } from "memoryfn";
+import { memoryfn } from "@memoryfn/core";
 
 // Initialize with default settings (or configure storage)
 const memory = memoryfn({
   storage: {
-    kind: "sqlite", // or 'pg'
-    path: "./memories.db"
+    // Process-local persistence. Use `pg` for restart-durable storage.
+    kind: "sqlite"
   }
 });
 
@@ -33,6 +33,11 @@ const results = await memory.search({
 
 console.log(results.results);
 ```
+
+The function-owned `@memoryfn/admin` package exposes only the operations backed
+by this public runtime today: environment-scoped `memories.search` and
+`memories.ingest`. The binding derives tenant and container scope from the
+authenticated Super Console context; callers cannot select another tenant.
 
 ## Features (Planned/In Progress)
 

@@ -1,569 +1,231 @@
 import {
+  AdminError,
   createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
   createCapabilityAdminClient,
   defineAdminCapability,
   type AdminClient,
-  type AdminCapabilityAdapter,
-  type AdminJsonSchema,
-  type AdminObjectSchema,
+  type AdminClientRequestOptions,
   type AdminOperationContext,
-  type AdminOperationDefinition,
-  type AdminOperationResult,
 } from "@superfunctions/admin";
+import type { ContentfnServer } from "@contentfn/server";
+import type { CfqlFilter, ContentfnDocument, ContentfnEnvelope, ContentfnPatchOp, ContentfnSchema } from "@contentfn/core";
 
-export interface CmsFnAdminResourceDefinition {
-  id: string;
-  label: string;
-  description: string;
-  icon: string;
-  risk: "standard" | "sensitive";
-  idField: string;
-  displayFields: readonly string[];
-  searchableFields: readonly string[];
-  filterableFields: readonly string[];
-  sortableFields: readonly string[];
-  sensitiveFields: readonly string[];
+export interface CmsFnAdminServiceOptions {
+  contentfn: ContentfnServer;
+  datasetForScope?: (context: AdminOperationContext) => string;
 }
-export interface CmsFnAdminActionDefinition {
-  id: string;
-  resource: string;
-  title: string;
-  description: string;
-  classification: "write" | "destructive";
-  requiresConfirmation: boolean;
-  idempotent: true;
-  target: "resource" | "collection";
-}
-export const cmsFnAdminResources = [
-  {
-    id: "datasets",
-    label: "Datasets",
-    description: "Inspect and operate datasets in CmsFn.",
-    icon: "cmsfn:datasets",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "schemas",
-    label: "Schemas",
-    description: "Inspect and operate schemas in CmsFn.",
-    icon: "cmsfn:schemas",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "documents",
-    label: "Documents",
-    description: "Inspect and operate documents in CmsFn.",
-    icon: "cmsfn:documents",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "drafts",
-    label: "Drafts",
-    description: "Inspect and operate drafts in CmsFn.",
-    icon: "cmsfn:drafts",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "revisions",
-    label: "Revisions",
-    description: "Inspect and operate revisions in CmsFn.",
-    icon: "cmsfn:revisions",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "assets",
-    label: "Assets",
-    description: "Inspect and operate assets in CmsFn.",
-    icon: "cmsfn:assets",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "previews",
-    label: "Previews",
-    description: "Inspect and operate previews in CmsFn.",
-    icon: "cmsfn:previews",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "workflows",
-    label: "Workflows",
-    description: "Inspect and operate workflows in CmsFn.",
-    icon: "cmsfn:workflows",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "releases",
-    label: "Releases",
-    description: "Inspect and operate releases in CmsFn.",
-    icon: "cmsfn:releases",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "collaborators",
-    label: "Collaborators",
-    description: "Inspect and operate collaborators in CmsFn.",
-    icon: "cmsfn:collaborators",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-] as const satisfies readonly CmsFnAdminResourceDefinition[];
-export const cmsFnAdminActions = [
-  {
-    id: "create-document",
-    resource: "documents",
-    title: "Create Document",
-    description: "Create Document for documents.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "collection",
-  },
-  {
-    id: "edit-document",
-    resource: "documents",
-    title: "Edit Document",
-    description: "Edit Document for documents.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "archive-document",
-    resource: "documents",
-    title: "Archive Document",
-    description: "Archive Document for documents.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "publish-document",
-    resource: "documents",
-    title: "Publish Document",
-    description: "Publish Document for documents.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "unpublish-document",
-    resource: "documents",
-    title: "Unpublish Document",
-    description: "Unpublish Document for documents.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "restore-revision",
-    resource: "revisions",
-    title: "Restore Revision",
-    description: "Restore Revision for revisions.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "upload-asset",
-    resource: "assets",
-    title: "Upload Asset",
-    description: "Upload Asset for assets.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "collection",
-  },
-  {
-    id: "advance-workflow",
-    resource: "workflows",
-    title: "Advance Workflow",
-    description: "Advance Workflow for workflows.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-] as const satisfies readonly CmsFnAdminActionDefinition[];
+export interface DatasetResult { item: { id: string; name: string } }
+export interface DatasetListResult { items: Array<{ id: string; name: string }> }
+export interface SchemaResult { item: ContentfnSchema }
+export interface UpsertSchemaInput { schema: ContentfnSchema }
+export interface ListDocumentsInput { types?: string[]; filter?: CfqlFilter; cursor?: string; limit?: number }
+export interface DocumentListResult { items: ContentfnDocument[]; nextCursor: string | null }
+export interface GetDocumentInput { id: string; perspective?: "published" | "draft" }
+export interface DocumentResult { item: ContentfnDocument }
+export interface CreateDocumentInput { id?: string; type: string; document: Record<string, unknown>; asDraft?: boolean }
+export interface PatchDocumentInput { id: string; ifRev?: string; ops: ContentfnPatchOp[] }
+export interface DeleteDocumentInput { id: string; purge?: boolean }
+export interface PublishDocumentInput { id: string; ifRev?: string }
+export interface ListRevisionsInput { id: string; limit?: number; cursor?: string }
+export interface RevisionListResult { items: ContentfnDocument[]; nextCursor: string | null }
+export interface RestoreRevisionInput { id: string; rev: string }
+export interface MutationResult { completed: true }
 
-export interface CmsFnAdminResourcePolicy {
-  defaultScope: "active";
-  permission: string;
-  redaction: "none" | "sensitive-fields";
-}
+const documentSchema = { type: "object", properties: { _id: { type: "string" }, _type: { type: "string" }, _rev: { type: "string" }, _createdAt: { type: "string" }, _updatedAt: { type: "string" }, _publishedAt: { type: "string" } }, required: ["_id", "_type", "_rev", "_createdAt", "_updatedAt"], additionalProperties: true } as const;
+const schemaSchema = { type: "object", properties: { version: { type: "integer", minimum: 1 }, documentTypes: { type: "array", items: { type: "object", additionalProperties: true } } }, required: ["version", "documentTypes"], additionalProperties: false } as const;
+const documentResultSchema = { type: "object", properties: { item: documentSchema }, required: ["item"], additionalProperties: false } as const;
+const completedSchema = { type: "object", properties: { completed: { type: "boolean", const: true } }, required: ["completed"], additionalProperties: false } as const;
 
-export interface CmsFnAdminOperationPolicy {
-  permission: string;
-  scope: {
-    levels: readonly ["organization", "workspace", "project", "environment"];
-    forwardsNamespace: true;
-    forwardsRegion: true;
-  };
-  safety: {
-    classification: "write" | "destructive";
-    requiresConfirmation: boolean;
-  };
-  idempotency: {
-    mode: "required";
-    keyStrategy: "context.idempotencyKey";
-  };
-  audit: {
-    mode: "required";
-    action: string;
-    targetResource: string;
-    targetIdPath?: "$.id";
-    collection?: true;
-  };
-  observation: {
-    domain: "cmsfn";
-    requestIdPath: "context.requestId";
-    correlationIdPath: "context.correlationId";
-  };
-}
-
-export const cmsFnAdminResourcePolicies = Object.freeze(
-  Object.fromEntries(
-    cmsFnAdminResources.map((resource) => [
-      resource.id,
-      {
-        defaultScope: "active",
-        permission: "cmsfn." + resource.id + ".read",
-        redaction:
-          resource.sensitiveFields.length > 0 ? "sensitive-fields" : "none",
-      } satisfies CmsFnAdminResourcePolicy,
-    ]),
-  ),
-) as Readonly<Record<string, CmsFnAdminResourcePolicy>>;
-
-export const cmsFnAdminOperationPolicies = Object.freeze(
-  Object.fromEntries(
-    cmsFnAdminActions.map((action) => [
-      "cmsfn." + action.resource + "." + action.id,
-      {
-        permission: "cmsfn." + action.resource + "." + action.id,
-        scope: {
-          levels: ["organization", "workspace", "project", "environment"],
-          forwardsNamespace: true,
-          forwardsRegion: true,
-        },
-        safety: {
-          classification: action.classification,
-          requiresConfirmation: action.requiresConfirmation,
-        },
-        idempotency: {
-          mode: "required",
-          keyStrategy: "context.idempotencyKey",
-        },
-        audit: {
-          mode: "required",
-          action: "cmsfn." + action.id,
-          targetResource: action.resource,
-          ...(action.target === "resource"
-            ? { targetIdPath: "$.id" as const }
-            : { collection: true as const }),
-        },
-        observation: {
-          domain: "cmsfn",
-          requestIdPath: "context.requestId",
-          correlationIdPath: "context.correlationId",
-        },
-      } satisfies CmsFnAdminOperationPolicy,
-    ]),
-  ),
-) as Readonly<Record<string, CmsFnAdminOperationPolicy>>;
-
-const entitySchema: AdminObjectSchema = {
-  type: "object",
-  description:
-    "A domain-owned administration resource. Sensitive fields are redacted by the domain service.",
-  additionalProperties: true,
-};
-const listInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    cursor: { type: "string", minLength: 1 },
-    limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
-    search: { type: "string", maxLength: 500 },
-    filter: { type: "object", additionalProperties: true },
-    sort: {
-      type: "array",
-      items: { type: "object", additionalProperties: true },
-      maxItems: 10,
-    },
+const operations = [
+  {
+    id: "cmsfn.datasets.list", title: "Get active dataset", description: "Return the ContentFn dataset bound to the active administration scope.",
+    inputSchema: { type: "object", additionalProperties: false }, outputSchema: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" } }, required: ["id", "name"], additionalProperties: false } } }, required: ["items"], additionalProperties: false },
+    route: { method: "GET", path: "/resources/datasets" }, permission: "cmsfn.datasets.read", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "optional" }, mcp: { readOnlyHint: true }, target: { resource: "datasets", collection: true },
   },
-  additionalProperties: false,
-};
-const listOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    items: { type: "array", items: entitySchema },
-    nextCursor: { type: ["string", "null"] },
+  {
+    id: "cmsfn.datasets.create", title: "Create active dataset", description: "Create the ContentFn dataset derived from the active administration scope.",
+    inputSchema: { type: "object", additionalProperties: false }, outputSchema: { type: "object", properties: { item: { type: "object", properties: { id: { type: "string" }, name: { type: "string" } }, required: ["id", "name"], additionalProperties: false } }, required: ["item"], additionalProperties: false },
+    route: { method: "POST", path: "/resources/datasets" }, permission: "cmsfn.datasets.create", safety: { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" }, mcp: { readOnlyHint: false, idempotentHint: true }, target: { resource: "datasets", collection: true },
   },
-  required: ["items"],
-  additionalProperties: false,
-};
-const getInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: { id: { type: "string", minLength: 1 } },
-  required: ["id"],
-  additionalProperties: false,
-};
-const getOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: { item: entitySchema },
-  required: ["item"],
-  additionalProperties: false,
-};
-const actionInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    id: { type: "string", minLength: 1 },
-    payload: { type: "object", additionalProperties: true },
-    reason: { type: "string", minLength: 1, maxLength: 2000 },
+  {
+    id: "cmsfn.schemas.get", title: "Get schema", description: "Get the schema for the active ContentFn dataset.",
+    inputSchema: { type: "object", additionalProperties: false }, outputSchema: { type: "object", properties: { item: schemaSchema }, required: ["item"], additionalProperties: false },
+    route: { method: "GET", path: "/resources/schemas/active" }, permission: "cmsfn.schemas.read", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "optional" }, mcp: { readOnlyHint: true }, target: { resource: "schemas", collection: true },
   },
-  additionalProperties: false,
-};
-const actionOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    item: entitySchema,
-    accepted: { type: "boolean" },
-    operationReference: { type: "string" },
+  {
+    id: "cmsfn.schemas.upsert", title: "Upsert schema", description: "Validate and upsert the schema for the active ContentFn dataset.",
+    inputSchema: { type: "object", properties: { schema: schemaSchema }, required: ["schema"], additionalProperties: false }, outputSchema: { type: "object", properties: { item: schemaSchema }, required: ["item"], additionalProperties: false },
+    route: { method: "PUT", path: "/resources/schemas/active" }, permission: "cmsfn.schemas.upsert", safety: { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" }, mcp: { readOnlyHint: false, idempotentHint: true }, target: { resource: "schemas", collection: true },
   },
-  required: ["accepted"],
-  additionalProperties: true,
-};
-export const cmsFnAdminSchemas = {
-  entity: entitySchema,
-  listInput: listInputSchema,
-  listOutput: listOutputSchema,
-  getInput: getInputSchema,
-  getOutput: getOutputSchema,
-  actionInput: actionInputSchema,
-  actionOutput: actionOutputSchema,
-} as const satisfies Record<string, AdminJsonSchema>;
+  {
+    id: "cmsfn.documents.list", title: "List documents", description: "Query published documents in the active ContentFn dataset.",
+    inputSchema: { type: "object", properties: { types: { type: "array", items: { type: "string" }, maxItems: 100 }, filter: { type: "object", additionalProperties: true }, cursor: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 } }, additionalProperties: false },
+    outputSchema: { type: "object", properties: { items: { type: "array", items: documentSchema }, nextCursor: { oneOf: [{ type: "string" }, { type: "null" }] } }, required: ["items", "nextCursor"], additionalProperties: false },
+    route: { method: "GET", path: "/resources/documents" }, permission: "cmsfn.documents.read", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "optional" }, pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 100 }, mcp: { readOnlyHint: true }, target: { resource: "documents", collection: true },
+  },
+  {
+    id: "cmsfn.documents.get", title: "Get document", description: "Get one document from the active ContentFn dataset.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 }, perspective: { type: "string", enum: ["published", "draft"] } }, required: ["id"], additionalProperties: false }, outputSchema: documentResultSchema,
+    route: { method: "GET", path: "/resources/documents/:id" }, permission: "cmsfn.documents.read", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "optional" }, mcp: { readOnlyHint: true }, target: { resource: "documents", idInput: "id" },
+  },
+  {
+    id: "cmsfn.documents.create", title: "Create document", description: "Create a typed ContentFn document in the active dataset.",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, type: { type: "string", minLength: 1 }, document: { type: "object", additionalProperties: true }, asDraft: { type: "boolean", default: true } }, required: ["type", "document"], additionalProperties: false }, outputSchema: documentResultSchema,
+    route: { method: "POST", path: "/resources/documents" }, permission: "cmsfn.documents.create", safety: { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" }, mcp: { readOnlyHint: false, idempotentHint: true }, target: { resource: "documents", collection: true },
+  },
+  {
+    id: "cmsfn.documents.patch", title: "Patch document", description: "Apply typed ContentFn patch operations with optional revision precondition.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 }, ifRev: { type: "string" }, ops: { type: "array", items: { type: "object", additionalProperties: true }, minItems: 1, maxItems: 100 } }, required: ["id", "ops"], additionalProperties: false }, outputSchema: documentResultSchema,
+    route: { method: "PATCH", path: "/resources/documents/:id" }, permission: "cmsfn.documents.patch", safety: { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" }, mcp: { readOnlyHint: false, idempotentHint: true }, target: { resource: "documents", idInput: "id" },
+  },
+  {
+    id: "cmsfn.documents.delete", title: "Delete document", description: "Delete a document from the active ContentFn dataset.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 }, purge: { type: "boolean", default: false } }, required: ["id"], additionalProperties: false }, outputSchema: completedSchema,
+    route: { method: "DELETE", path: "/resources/documents/:id" }, permission: "cmsfn.documents.delete", safety: { classification: "destructive", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "recent-auth", reason: "Document deletion can remove published and draft content.", maxAgeSeconds: 600 }, audit: "required" }, mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true }, target: { resource: "documents", idInput: "id" },
+  },
+  {
+    id: "cmsfn.documents.publish", title: "Publish document", description: "Publish a draft through ContentFn and deliver its events/webhooks.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 }, ifRev: { type: "string" } }, required: ["id"], additionalProperties: false }, outputSchema: documentResultSchema,
+    route: { method: "POST", path: "/resources/documents/actions/publish" }, permission: "cmsfn.documents.publish", safety: { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" }, mcp: { readOnlyHint: false, idempotentHint: true }, target: { resource: "documents", idInput: "id" },
+  },
+  {
+    id: "cmsfn.documents.unpublish", title: "Unpublish document", description: "Remove a published document from the active ContentFn dataset.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 }, ifRev: { type: "string" } }, required: ["id"], additionalProperties: false }, outputSchema: completedSchema,
+    route: { method: "POST", path: "/resources/documents/actions/unpublish" }, permission: "cmsfn.documents.unpublish", safety: { classification: "destructive", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "explicit", reason: "Unpublishing removes content from the published perspective." }, audit: "required" }, mcp: { readOnlyHint: false, destructiveHint: true, idempotentHint: true }, target: { resource: "documents", idInput: "id" },
+  },
+  {
+    id: "cmsfn.documents.list-revisions", title: "List revisions", description: "List immutable ContentFn revisions for a scoped document.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 }, limit: { type: "integer", minimum: 1, maximum: 100 }, cursor: { type: "string" } }, required: ["id"], additionalProperties: false },
+    outputSchema: { type: "object", properties: { items: { type: "array", items: documentSchema }, nextCursor: { oneOf: [{ type: "string" }, { type: "null" }] } }, required: ["items", "nextCursor"], additionalProperties: false },
+    route: { method: "GET", path: "/resources/documents/:id/revisions" }, permission: "cmsfn.revisions.read", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "optional" }, pagination: { mode: "cursor", maxLimit: 100 }, mcp: { readOnlyHint: true }, target: { resource: "documents", idInput: "id" },
+  },
+  {
+    id: "cmsfn.documents.restore-revision", title: "Restore revision", description: "Restore a ContentFn revision into the draft perspective.",
+    inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 }, rev: { type: "string", minLength: 1 } }, required: ["id", "rev"], additionalProperties: false }, outputSchema: documentResultSchema,
+    route: { method: "POST", path: "/resources/documents/:id/actions/restore" }, permission: "cmsfn.revisions.restore", safety: { classification: "write", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "explicit", reason: "Revision restore replaces the active draft state." }, audit: "required" }, mcp: { readOnlyHint: false, idempotentHint: true }, target: { resource: "documents", idInput: "id" },
+  },
+] as const;
 
-function resourceOperations(
-  resource: CmsFnAdminResourceDefinition,
-): AdminOperationDefinition[] {
-  const baseId = "cmsfn." + resource.id;
-  const basePath = "/resources/" + resource.id;
-  return [
-    {
-      id: baseId + ".list",
-      title: "List " + resource.label,
-      description:
-        "List permitted " +
-        resource.label.toLowerCase() +
-        " in the active administration scope.",
-      inputSchema: listInputSchema,
-      outputSchema: listOutputSchema,
-      route: { method: "GET", path: basePath },
-      permission: "cmsfn." + resource.id + ".read",
-      safety: {
-        classification: "read",
-        idempotent: true,
-        requiresConfirmation: false,
-        audit: resource.risk === "sensitive" ? "required" : "optional",
-      },
-      pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 200 },
-      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-      redaction: { outputFields: resource.sensitiveFields },
-      target: { resource: resource.id, collection: true },
-    },
-    {
-      id: baseId + ".get",
-      title: "Get " + resource.label,
-      description:
-        "Get one permitted " + resource.label.toLowerCase() + " resource.",
-      inputSchema: getInputSchema,
-      outputSchema: getOutputSchema,
-      route: { method: "GET", path: basePath + "/:id" },
-      permission: "cmsfn." + resource.id + ".read",
-      safety: {
-        classification: "read",
-        idempotent: true,
-        requiresConfirmation: false,
-        audit: resource.risk === "sensitive" ? "required" : "optional",
-      },
-      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-      redaction: { outputFields: resource.sensitiveFields },
-      target: { resource: resource.id, idInput: "id" },
-    },
-  ];
-}
-function actionOperation(
-  action: CmsFnAdminActionDefinition,
-): AdminOperationDefinition {
-  const sensitiveFields =
-    cmsFnAdminResources.find((resource) => resource.id === action.resource)
-      ?.sensitiveFields ?? [];
-  return {
-    id: "cmsfn." + action.resource + "." + action.id,
-    title: action.title,
-    description: action.description,
-    inputSchema:
-      action.target === "resource"
-        ? { ...actionInputSchema, required: ["id"] }
-        : actionInputSchema,
-    outputSchema: actionOutputSchema,
-    route: {
-      method: "POST",
-      path: "/resources/" + action.resource + "/actions/" + action.id,
-    },
-    permission: "cmsfn." + action.resource + "." + action.id,
-    safety: {
-      classification: action.classification,
-      idempotent: action.idempotent,
-      requiresConfirmation: action.requiresConfirmation,
-      audit: "required",
-    },
-    mcp: {
-      readOnlyHint: false,
-      destructiveHint: action.classification === "destructive",
-      idempotentHint: action.idempotent,
-    },
-    redaction: { inputFields: sensitiveFields, outputFields: sensitiveFields },
-    target:
-      action.target === "resource"
-        ? { resource: action.resource, idInput: "id" }
-        : { resource: action.resource, collection: true },
-  };
-}
-const operations: AdminOperationDefinition[] = [
-  ...cmsFnAdminResources.flatMap(resourceOperations),
-  ...cmsFnAdminActions.map(actionOperation),
-];
-type FunctionAdminActionOperationId<TModule extends string, TAction> =
-  TAction extends { resource: infer TResource extends string; id: infer TActionId extends string }
-    ? `${TModule}.${TResource}.${TActionId}`
-    : never;
-export type CmsFnAdminOperationId =
-  | `cmsfn.${(typeof cmsFnAdminResources)[number]["id"]}.list`
-  | `cmsfn.${(typeof cmsFnAdminResources)[number]["id"]}.get`
-  | FunctionAdminActionOperationId<"cmsfn", (typeof cmsFnAdminActions)[number]>;
 export const cmsFnAdminCapability = defineAdminCapability({
-  schemaVersion: "1.0",
-  id: "cmsfn",
-  displayName: "CmsFn",
-  version: "1.0.0",
-  description:
-    "Commercial-grade, function-owned operator capabilities for CmsFn.",
-  category: "content",
-  availability: "required-product",
-  scopeLevels: ["organization", "workspace", "project", "environment"],
+  schemaVersion: "1.0", id: "cmsfn", displayName: "CmsFn", version: "1.1.0",
+  description: "CmsFn administration backed directly by the ContentFn programmatic server API.", category: "content",
+  availability: "required-product", scopeLevels: ["organization", "workspace", "project", "environment"],
+  // ContentFn is the domain implementation behind this adapter, not an independently
+  // enabled administration module. Its folded manifest therefore is not a registry dependency.
   dependencies: [],
-  resources: cmsFnAdminResources,
-  navigation: [
-    {
-      id: "cmsfn",
-      label: "CmsFn",
-      path: "/modules/cmsfn",
-      icon: "cmsfn",
-      description: "Operate CmsFn in the active scope.",
-      order: 100,
-    },
+  resources: [
+    { id: "datasets", label: "Dataset", description: "ContentFn dataset bound to the active environment.", icon: "cmsfn:dataset", risk: "standard", idField: "id", displayFields: ["id", "name"] },
+    { id: "schemas", label: "Schema", description: "Content model for the active dataset.", icon: "cmsfn:schema", risk: "standard", idField: "version", displayFields: ["version"] },
+    { id: "documents", label: "Documents", description: "Draft and published ContentFn documents.", icon: "cmsfn:documents", risk: "standard", idField: "_id", displayFields: ["_id", "_type", "_rev", "_updatedAt"], searchableFields: ["_id", "_type"], filterableFields: ["_type"], sortableFields: ["_updatedAt", "_createdAt"] },
+    { id: "revisions", label: "Revisions", description: "Immutable ContentFn document revisions.", icon: "cmsfn:revisions", risk: "standard", idField: "_rev", displayFields: ["_id", "_rev", "_updatedAt"] },
   ],
-  operations: operations as readonly (AdminOperationDefinition & { readonly id: CmsFnAdminOperationId })[],
+  navigation: [{ id: "cmsfn", label: "CmsFn", path: "/modules/cmsfn", icon: "cmsfn", order: 40 }],
+  operations,
 });
-export function createCmsFnAdminClient(adminClient: AdminClient) {
-  return createCapabilityAdminClient(cmsFnAdminCapability, adminClient);
+
+function mapDomainError(error: Extract<ContentfnEnvelope<unknown>, { ok: false }>["error"]): AdminError {
+  const code = error.code === "AUTH_REQUIRED" ? "unauthenticated"
+    : error.code === "PERMISSION_DENIED" ? "forbidden"
+    : error.code === "RATE_LIMITED" ? "rate_limited"
+    : error.code === "DATASET_NOT_FOUND" || error.code === "SCHEMA_NOT_FOUND" || error.code === "DOCUMENT_NOT_FOUND" || error.code === "ASSET_NOT_FOUND" || error.code === "WEBHOOK_NOT_FOUND" ? "not_found"
+    : error.code === "DATASET_ALREADY_EXISTS" || error.code === "SCHEMA_VERSION_CONFLICT" || error.code === "DOCUMENT_ALREADY_EXISTS" || error.code === "REV_CONFLICT" ? "conflict"
+    : error.code === "ASSET_UPLOAD_FAILED" || error.code === "WEBHOOK_DELIVERY_FAILED" || error.code === "REALTIME_NOT_AVAILABLE" || error.code === "STORAGE_ERROR" ? "dependency_unavailable"
+    : error.code === "INTERNAL_ERROR" ? "internal"
+    : "invalid_argument";
+  return new AdminError(code, error.message, { details: error.details });
 }
-export interface CmsFnAdminServiceRequest {
-  operationId: CmsFnAdminOperationId;
-  input: unknown;
-  context: AdminOperationContext;
+async function unwrap<T>(promise: Promise<ContentfnEnvelope<T>>): Promise<T> {
+  const result = await promise;
+  if (!result.ok) throw mapDomainError(result.error);
+  return result.result;
 }
+
 export interface CmsFnAdminService {
-  execute(
-    request: CmsFnAdminServiceRequest,
-  ):
-    | Promise<AdminOperationResult<Record<string, unknown>>>
-    | AdminOperationResult<Record<string, unknown>>;
+  listDatasets(context: AdminOperationContext): Promise<DatasetListResult>;
+  createDataset(context: AdminOperationContext): Promise<DatasetResult>;
+  getSchema(context: AdminOperationContext): Promise<SchemaResult>;
+  upsertSchema(input: UpsertSchemaInput, context: AdminOperationContext): Promise<SchemaResult>;
+  listDocuments(input: ListDocumentsInput, context: AdminOperationContext): Promise<DocumentListResult>;
+  getDocument(input: GetDocumentInput, context: AdminOperationContext): Promise<DocumentResult>;
+  createDocument(input: CreateDocumentInput, context: AdminOperationContext): Promise<DocumentResult>;
+  patchDocument(input: PatchDocumentInput, context: AdminOperationContext): Promise<DocumentResult>;
+  deleteDocument(input: DeleteDocumentInput, context: AdminOperationContext): Promise<MutationResult>;
+  publishDocument(input: PublishDocumentInput, context: AdminOperationContext): Promise<DocumentResult>;
+  unpublishDocument(input: PublishDocumentInput, context: AdminOperationContext): Promise<MutationResult>;
+  listRevisions(input: ListRevisionsInput, context: AdminOperationContext): Promise<RevisionListResult>;
+  restoreRevision(input: RestoreRevisionInput, context: AdminOperationContext): Promise<DocumentResult>;
 }
-export function createCmsFnAdminAdapter(
-  service: CmsFnAdminService,
-): AdminCapabilityAdapter {
-  const handlers: Record<
-    string,
-    (request: {
-      input: unknown;
-      context: AdminOperationContext;
-    }) =>
-      | Promise<AdminOperationResult<Record<string, unknown>>>
-      | AdminOperationResult<Record<string, unknown>>
-  > = {};
-  for (const operation of cmsFnAdminCapability.operations)
-    handlers[operation.id] = (request) =>
-      service.execute({
-        operationId: operation.id,
-        input: request.input,
-        context: request.context,
-      });
-  return createKernelAdminCapabilityAdapter(cmsFnAdminCapability, handlers);
+
+export function createCmsFnAdminService(options: CmsFnAdminServiceOptions): CmsFnAdminService {
+  const dataset = (context: AdminOperationContext) => {
+    const resolver = options.datasetForScope;
+    const resolved = resolver ? resolver(context) : context.scope.environmentId;
+    if (!resolved) throw new AdminError("forbidden", "The active scope does not resolve to a ContentFn dataset.");
+    const value = resolved.trim();
+    if (!value) throw new AdminError("forbidden", "The active scope does not resolve to a ContentFn dataset.");
+    return value;
+  };
+  const api = options.contentfn.api;
+  return {
+    async listDatasets(context) { const name = dataset(context); const all = await unwrap(api.datasets.list()); return { items: all.datasets.includes(name) ? [{ id: name, name }] : [] }; },
+    async createDataset(context) { const name = dataset(context); await unwrap(api.datasets.create({ dataset: name })); return { item: { id: name, name } }; },
+    async getSchema(context) { return { item: await unwrap(api.schema.get({ dataset: dataset(context) })) }; },
+    async upsertSchema(input, context) { const name = dataset(context); await unwrap(api.schema.upsert({ dataset: name, schema: input.schema })); return { item: await unwrap(api.schema.get({ dataset: name })) }; },
+    async listDocuments(input, context) { const page = await unwrap(api.docs.list({ dataset: dataset(context), types: input.types, filter: input.filter, cursor: input.cursor, limit: input.limit })); return { items: page.data, nextCursor: page.nextCursor }; },
+    async getDocument(input, context) { return { item: await unwrap(api.docs.get({ dataset: dataset(context), ...input })) }; },
+    async createDocument(input, context) { return { item: await unwrap(api.docs.create({ dataset: dataset(context), id: input.id, type: input.type, doc: input.document, asDraft: input.asDraft ?? true })) }; },
+    async patchDocument(input, context) { return { item: await unwrap(api.docs.patch({ dataset: dataset(context), ...input })) }; },
+    async deleteDocument(input, context) { await unwrap(api.docs.delete({ dataset: dataset(context), ...input })); return { completed: true }; },
+    async publishDocument(input, context) { return { item: await unwrap(api.docs.publish({ dataset: dataset(context), ...input })) }; },
+    async unpublishDocument(input, context) { await unwrap(api.docs.unpublish({ dataset: dataset(context), ...input })); return { completed: true }; },
+    async listRevisions(input, context) { const page = await unwrap(api.docs.history({ dataset: dataset(context), ...input })); return { items: page.revisions, nextCursor: page.nextCursor }; },
+    async restoreRevision(input, context) { return { item: await unwrap(api.docs.restore({ dataset: dataset(context), ...input })) }; },
+  };
 }
+
+export function createCmsFnAdminAdapter(service: CmsFnAdminService) {
+  return createKernelAdminCapabilityAdapter(cmsFnAdminCapability, {
+    "cmsfn.datasets.list": ({ context }) => service.listDatasets(context),
+    "cmsfn.datasets.create": ({ context }) => service.createDataset(context),
+    "cmsfn.schemas.get": ({ context }) => service.getSchema(context),
+    "cmsfn.schemas.upsert": ({ input, context }) => service.upsertSchema(input as UpsertSchemaInput, context),
+    "cmsfn.documents.list": ({ input, context }) => service.listDocuments(input as ListDocumentsInput, context),
+    "cmsfn.documents.get": ({ input, context }) => service.getDocument(input as GetDocumentInput, context),
+    "cmsfn.documents.create": ({ input, context }) => service.createDocument(input as CreateDocumentInput, context),
+    "cmsfn.documents.patch": ({ input, context }) => service.patchDocument(input as PatchDocumentInput, context),
+    "cmsfn.documents.delete": ({ input, context }) => service.deleteDocument(input as DeleteDocumentInput, context),
+    "cmsfn.documents.publish": ({ input, context }) => service.publishDocument(input as PublishDocumentInput, context),
+    "cmsfn.documents.unpublish": ({ input, context }) => service.unpublishDocument(input as PublishDocumentInput, context),
+    "cmsfn.documents.list-revisions": ({ input, context }) => service.listRevisions(input as ListRevisionsInput, context),
+    "cmsfn.documents.restore-revision": ({ input, context }) => service.restoreRevision(input as RestoreRevisionInput, context),
+  });
+}
+
+export function createCmsFnAdminClient(adminClient: AdminClient) {
+  const capability = createCapabilityAdminClient(cmsFnAdminCapability, adminClient);
+  return {
+    manifest: capability.manifest,
+    datasets: {
+      list: (options?: AdminClientRequestOptions) => capability.invoke("cmsfn.datasets.list", {}, options),
+      create: (options?: AdminClientRequestOptions) => capability.invoke("cmsfn.datasets.create", {}, options),
+    },
+    schemas: {
+      get: (options?: AdminClientRequestOptions) => capability.invoke("cmsfn.schemas.get", {}, options),
+      upsert: (input: UpsertSchemaInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.schemas.upsert", input, options),
+    },
+    documents: {
+      list: (input: ListDocumentsInput = {}, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.list", input, options),
+      get: (input: GetDocumentInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.get", input, options),
+      create: (input: CreateDocumentInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.create", input, options),
+      patch: (input: PatchDocumentInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.patch", input, options),
+      delete: (input: DeleteDocumentInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.delete", input, options),
+      publish: (input: PublishDocumentInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.publish", input, options),
+      unpublish: (input: PublishDocumentInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.unpublish", input, options),
+      revisions: (input: ListRevisionsInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.list-revisions", input, options),
+      restore: (input: RestoreRevisionInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.restore-revision", input, options),
+    },
+  };
+}
+
 export const adminCapability = cmsFnAdminCapability;
 export const createAdminAdapter = createCmsFnAdminAdapter;

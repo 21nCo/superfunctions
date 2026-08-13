@@ -7,7 +7,6 @@ import { Deduplicator } from '../extraction/dedup';
 import { ConflictResolver } from '../extraction/resolver';
 
 export class MemoryFn implements IMemoryFn {
-  private config: MemoryFnConfig;
   private storage: StorageAdapter;
   private embedder?: Embedder;
   private llm?: LLMProvider;
@@ -15,8 +14,7 @@ export class MemoryFn implements IMemoryFn {
   private deduplicator: Deduplicator;
   private resolver?: ConflictResolver;
 
-  constructor(config: MemoryFnConfig, storage: StorageAdapter, embedder?: Embedder, llm?: LLMProvider) {
-    this.config = config;
+  constructor(_config: MemoryFnConfig, storage: StorageAdapter, embedder?: Embedder, llm?: LLMProvider) {
     this.storage = storage;
     this.embedder = embedder;
     this.llm = llm;
@@ -194,10 +192,10 @@ export class MemoryFn implements IMemoryFn {
     if (this.embedder) {
         embedding = await this.embedder.embed(input.q);
     } else {
-        // Fallback for no embedder (e.g. mock mode or error)
-        // If we have no embedder, vector search is impossible unless we mock the vector
+        // Deterministic zero vector for storage adapters that support lexical or
+        // metadata-only fallback search without a configured embedder.
         console.warn('No embedder configured, search results may be invalid for vector search');
-        embedding = new Array(1536).fill(0); // Mock
+        embedding = new Array(1536).fill(0);
     }
 
     // 2. Vector search

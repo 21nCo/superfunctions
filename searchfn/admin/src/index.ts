@@ -1,14 +1,8 @@
 import {
-  createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
-  createCapabilityAdminClient,
   defineAdminCapability,
-  type AdminClient,
-  type AdminCapabilityAdapter,
   type AdminJsonSchema,
   type AdminObjectSchema,
-  type AdminOperationContext,
   type AdminOperationDefinition,
-  type AdminOperationResult,
 } from "@superfunctions/admin";
 export interface SearchFnAdminResourceDefinition {
   id: string;
@@ -458,6 +452,48 @@ const actionOutputSchema: AdminObjectSchema = {
   required: ["accepted"],
   additionalProperties: true,
 };
+const payloadSchema = (
+  properties: NonNullable<AdminObjectSchema["properties"]>,
+  required: string[] = [],
+): AdminObjectSchema => ({
+  type: "object",
+  properties,
+  ...(required.length ? { required } : {}),
+  additionalProperties: false,
+});
+const documentSchema: AdminObjectSchema = payloadSchema(
+  {
+    id: { type: ["string", "number"] },
+    fields: { type: "object", additionalProperties: { type: "string" } },
+  },
+  ["id", "fields"],
+);
+const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
+  index: payloadSchema(
+    {
+      id: { type: "string", minLength: 3 },
+      payload: payloadSchema(
+        { fields: { type: "object", additionalProperties: { type: "string" } } },
+        ["fields"],
+      ),
+    },
+    ["id", "payload"],
+  ),
+  "batch-index": payloadSchema(
+    {
+      payload: payloadSchema(
+        {
+          resource: { type: "string", minLength: 1 },
+          documents: { type: "array", items: documentSchema, minItems: 1, maxItems: 10_000 },
+        },
+        ["resource", "documents"],
+      ),
+    },
+    ["payload"],
+  ),
+  "remove-document": { ...getInputSchema },
+  "clear-index": { ...getInputSchema },
+};
 export const searchFnAdminSchemas = {
   entity: entitySchema,
   listInput: listInputSchema,
@@ -484,6 +520,7 @@ function resourceOperations(
       outputSchema: listOutputSchema,
       route: { method: "GET", path: basePath },
       permission: "searchfn." + resource.id + ".read",
+      minimumScope: "environment",
       safety: {
         classification: "read",
         idempotent: true,
@@ -504,6 +541,7 @@ function resourceOperations(
       outputSchema: getOutputSchema,
       route: { method: "GET", path: basePath + "/:id" },
       permission: "searchfn." + resource.id + ".read",
+      minimumScope: "environment",
       safety: {
         classification: "read",
         idempotent: true,
@@ -526,16 +564,18 @@ function actionOperation(
     id: "searchfn." + action.resource + "." + action.id,
     title: action.title,
     description: action.description,
-    inputSchema:
+    inputSchema: domainActionInputSchemas[action.id] ?? (
       action.target === "resource"
         ? { ...actionInputSchema, required: ["id"] }
-        : actionInputSchema,
+        : actionInputSchema
+    ),
     outputSchema: actionOutputSchema,
     route: {
       method: "POST",
       path: "/resources/" + action.resource + "/actions/" + action.id,
     },
     permission: "searchfn." + action.resource + "." + action.id,
+    minimumScope: "environment",
     safety: {
       classification: action.classification,
       idempotent: action.idempotent,
@@ -554,31 +594,42 @@ function actionOperation(
         : { resource: action.resource, collection: true },
   };
 }
+const domainReadResourceIds = new Set(["adapters-backends", "indexes-collections", "health"]);
+const domainResourceIds = new Set([...domainReadResourceIds, "documents"]);
+const domainActionIds = new Set(["index", "batch-index", "remove-document", "clear-index"]);
+const domainResources = searchFnAdminResources.filter((resource) => domainResourceIds.has(resource.id));
+const domainReadResources = domainResources.filter((resource) => domainReadResourceIds.has(resource.id));
+const domainActions = searchFnAdminActions.filter((action) => domainActionIds.has(action.id));
 const operations: AdminOperationDefinition[] = [
-  ...searchFnAdminResources.flatMap(resourceOperations),
-  ...searchFnAdminActions.map(actionOperation),
+  ...domainReadResources.flatMap(resourceOperations),
+  ...domainActions.map(actionOperation),
 ];
 type FunctionAdminActionOperationId<TModule extends string, TAction> =
   TAction extends { resource: infer TResource extends string; id: infer TActionId extends string }
     ? `${TModule}.${TResource}.${TActionId}`
     : never;
+type SearchFnDomainReadResourceId = "adapters-backends" | "indexes-collections" | "health";
+type SearchFnDomainAction = Extract<
+  (typeof searchFnAdminActions)[number],
+  { id: "index" | "batch-index" | "remove-document" | "clear-index" }
+>;
 export type SearchFnAdminOperationId =
-  | `searchfn.${(typeof searchFnAdminResources)[number]["id"]}.list`
-  | `searchfn.${(typeof searchFnAdminResources)[number]["id"]}.get`
-  | FunctionAdminActionOperationId<"searchfn", (typeof searchFnAdminActions)[number]>;
+  | `searchfn.${SearchFnDomainReadResourceId}.list`
+  | `searchfn.${SearchFnDomainReadResourceId}.get`
+  | FunctionAdminActionOperationId<"searchfn", SearchFnDomainAction>;
 export const searchFnAdminCapability = defineAdminCapability({
   schemaVersion: "1.0",
   id: "searchfn",
   displayName: "SearchFn",
   version: "1.0.0",
   description:
-    "Commercial-grade, function-owned operator capabilities for SearchFn.",
+    "Function-owned SearchFn operator capabilities backed by an isolated search adapter.",
   category: "infrastructure",
   availability: "required-product",
   scopeLevels: ["organization", "workspace", "project", "environment"],
   health: { operationId: "searchfn.health.list" },
   dependencies: [],
-  resources: searchFnAdminResources,
+  resources: domainResources,
   navigation: [
     {
       id: "searchfn",
@@ -591,41 +642,11 @@ export const searchFnAdminCapability = defineAdminCapability({
   ],
   operations: operations as readonly (AdminOperationDefinition & { readonly id: SearchFnAdminOperationId })[],
 });
-export function createSearchFnAdminClient(adminClient: AdminClient) {
-  return createCapabilityAdminClient(searchFnAdminCapability, adminClient);
-}
-export interface SearchFnAdminServiceRequest {
-  operationId: SearchFnAdminOperationId;
-  input: unknown;
-  context: AdminOperationContext;
-}
-export interface SearchFnAdminService {
-  execute(
-    request: SearchFnAdminServiceRequest,
-  ):
-    | Promise<AdminOperationResult<Record<string, unknown>>>
-    | AdminOperationResult<Record<string, unknown>>;
-}
-export function createSearchFnAdminAdapter(
-  service: SearchFnAdminService,
-): AdminCapabilityAdapter {
-  const handlers: Record<
-    string,
-    (request: {
-      input: unknown;
-      context: AdminOperationContext;
-    }) =>
-      | Promise<AdminOperationResult<Record<string, unknown>>>
-      | AdminOperationResult<Record<string, unknown>>
-  > = {};
-  for (const operation of searchFnAdminCapability.operations)
-    handlers[operation.id] = (request) =>
-      service.execute({
-        operationId: operation.id,
-        input: request.input,
-        context: request.context,
-      });
-  return createKernelAdminCapabilityAdapter(searchFnAdminCapability, handlers);
-}
 export const adminCapability = searchFnAdminCapability;
-export const createAdminAdapter = createSearchFnAdminAdapter;
+export * from "./types.js";
+export * from "./adapter.js";
+export * from "./client.js";
+export {
+  createSearchFnDomainAdminService,
+  type SearchFnDomainAdminServiceOptions,
+} from "./domain-service.js";

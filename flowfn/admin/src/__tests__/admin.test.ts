@@ -1,80 +1,236 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  MemoryDLQManager,
+  MemoryEventLog,
+  MemoryJobStorage,
+  createFlow,
+  createWorker,
+  type FlowFn,
+} from "@flowfn/core";
+import {
+  MemoryAdminAuditSink,
+  MemoryAdminIdempotencyStore,
+  createAdminDispatcher,
+  createAdminRegistry,
+  type AdminOperationContext,
+  validateAdminCapabilityManifest,
+} from "@superfunctions/admin";
+import {
+  createFlowFnDomainAdminAdapter,
   flowFnAdminCapability,
-  createFlowFnAdminAdapter,
-  type FlowFnAdminService,
-  type FlowFnAdminServiceRequest,
+  flowFnAdminResources,
 } from "../index.js";
 
-const context = {
-  scope: {
-    organizationId: "org_1",
+const flows: FlowFn[] = [];
+
+function context(overrides: Partial<AdminOperationContext> = {}): AdminOperationContext {
+  return {
+    scope: {
+      installationId: "installation_1",
+      workspaceId: "workspace_1",
+      projectId: "project_1",
+      environmentId: "environment_1",
+      namespace: "tenant_1",
+    },
+    actor: { id: "operator_1", type: "user", permissions: ["*"] },
+    requestId: `request_${crypto.randomUUID()}`,
+    correlationId: "correlation_1",
+    source: "console",
+    ...overrides,
+  };
+}
+
+function deployment() {
+  const flow = createFlow({ adapter: "memory", namespace: "tenant_1" });
+  flows.push(flow);
+  const jobs = new MemoryJobStorage();
+  const dlq = new MemoryDLQManager();
+  const events = new MemoryEventLog();
+  const queue = flow.queue("emails");
+  const worker = createWorker({ flow, queues: ["emails"], concurrency: 1 });
+  const adapter = createFlowFnDomainAdminAdapter({
+    flow,
+    jobs,
+    dlq,
+    events,
+    workers: [{ id: "worker_1", worker, queues: ["emails"] }],
     workspaceId: "workspace_1",
     projectId: "project_1",
     environmentId: "environment_1",
     namespace: "tenant_1",
-    region: "in-south",
-  },
-  actor: { id: "operator_1", type: "user" as const, permissions: ["*"] },
-  requestId: "request_1",
-  correlationId: "correlation_1",
-  source: "console" as const,
-  idempotencyKey: "idempotency_1",
-};
+  });
+  const audit = new MemoryAdminAuditSink();
+  const dispatch = createAdminDispatcher({
+    registry: createAdminRegistry({ adapters: [adapter], enabledModules: ["flowfn"] }),
+    audit,
+    idempotency: new MemoryAdminIdempotencyStore(),
+    confirmation: { verify: ({ token }) => token === "confirmed" },
+  });
+  return { flow, jobs, dlq, events, queue, worker, audit, dispatch };
+}
+
+afterEach(async () => {
+  await Promise.all(flows.splice(0).map((flow) => flow.close()));
+});
 
 describe("@flowfn/admin", () => {
-  it("declares the inventoried operator surface and mutation policy", () => {
-    expect(flowFnAdminCapability.schemaVersion).toBe("1.0");
-    expect(flowFnAdminCapability.availability).toBe("required-product");
+  it("publishes only the real environment-backed FlowFn subset", () => {
+    expect(validateAdminCapabilityManifest(flowFnAdminCapability)).toEqual([]);
+    expect(flowFnAdminResources.map((resource) => resource.id)).toEqual([
+      "queues",
+      "jobs",
+      "workers",
+      "dead-letters",
+      "events",
+    ]);
     expect(flowFnAdminCapability.scopeLevels).toEqual([
-      "organization",
+      "installation",
       "workspace",
       "project",
       "environment",
     ]);
-    expect(
-      flowFnAdminCapability.operations.some(
-        (operation) => operation.id === "flowfn.workflows.list",
-      ),
-    ).toBe(true);
-    const mutation = flowFnAdminCapability.operations.find(
-      (operation) => operation.safety.classification !== "read",
-    );
-    expect(mutation).toMatchObject({
-      safety: {
-        audit: "required",
-        idempotent: true,
-      },
+    expect(flowFnAdminCapability.operations).toHaveLength(17);
+    expect(flowFnAdminCapability.operations.every((operation) => operation.minimumScope === "environment")).toBe(true);
+    expect(flowFnAdminCapability.operations.some((operation) => operation.id.includes("workflows"))).toBe(false);
+    expect(flowFnAdminCapability.operations.some((operation) => operation.id.includes("streams"))).toBe(false);
+    expect(flowFnAdminCapability.operations.some((operation) => operation.id.includes("consumers"))).toBe(false);
+    expect(flowFnAdminCapability.operations.some((operation) => operation.id.includes("schedules"))).toBe(false);
+    expect(flowFnAdminCapability.operations.some((operation) => operation.inputSchema?.properties?.payload)).toBe(false);
+
+    expect(flowFnAdminCapability.operations.find((operation) => operation.id === "flowfn.jobs.enqueue")?.inputSchema?.required).toEqual([
+      "queue",
+      "name",
+      "data",
+    ]);
+    expect(flowFnAdminCapability.operations.find((operation) => operation.id === "flowfn.dead-letters.redrive")?.safety).toMatchObject({
+      classification: "write",
+      requiresConfirmation: true,
+      confirmation: { method: "recent-auth", risk: "high" },
+    });
+    expect(flowFnAdminCapability.operations.find((operation) => operation.id === "flowfn.dead-letters.delete")?.safety).toMatchObject({
+      classification: "destructive",
+      confirmation: { method: "mfa", risk: "critical" },
     });
   });
 
-  it("delegates the operation and complete scope to the injected domain service", async () => {
-    const execute = vi.fn(async (request: FlowFnAdminServiceRequest) => ({
-      ok: true as const,
-      data: {
-        operationId: request.operationId,
-        namespace: request.context.scope.namespace,
-        region: request.context.scope.region,
-      },
-    }));
-    const service: FlowFnAdminService = { execute };
-    const adapter = createFlowFnAdminAdapter(service);
+  it("uses real createFlow, Queue, JobStorage, Worker, and EventLog contracts", async () => {
+    const { dispatch, jobs, events, audit } = deployment();
 
-    const result = await adapter.execute(
-      "flowfn.workflows.list",
-      { limit: 25 },
-      context,
-    );
+    await events.append({
+      type: "email.requested",
+      aggregateId: "campaign_1",
+      aggregateType: "campaign",
+      data: { recipient: "private@example.com", apiKey: "private-key" },
+      metadata: { trace: "private-trace" },
+    });
 
-    expect(result.data).toEqual({
-      operationId: "flowfn.workflows.list",
-      namespace: "tenant_1",
-      region: "in-south",
+    const queues = await dispatch.dispatch({
+      operationId: "flowfn.queues.list",
+      input: {},
+      context: context(),
     });
-    expect(execute).toHaveBeenCalledWith({
-      operationId: "flowfn.workflows.list",
-      input: { limit: 25 },
-      context,
+    expect(queues).toMatchObject({ ok: true, data: { items: [{ id: "emails", name: "emails" }], nextCursor: null } });
+
+    const enqueued = await dispatch.dispatch<{ item: { id: string; data: unknown } }>({
+      operationId: "flowfn.jobs.enqueue",
+      input: { queue: "emails", name: "deliver", data: { to: "private@example.com", apiKey: "private-key" } },
+      context: context({ idempotencyKey: "job_campaign_1" }),
     });
+    expect(enqueued).toMatchObject({
+      ok: true,
+      data: { item: { id: "job_campaign_1", queue: "emails", data: "[REDACTED]", state: "waiting" } },
+    });
+    expect(await jobs.get("emails", "job_campaign_1")).toMatchObject({ data: { to: "private@example.com", apiKey: "private-key" } });
+
+    const listedJobs = await dispatch.dispatch({
+      operationId: "flowfn.jobs.list",
+      input: { queue: "emails", status: "waiting" },
+      context: context(),
+    });
+    expect(listedJobs).toMatchObject({ ok: true, data: { items: [{ id: "job_campaign_1", data: "[REDACTED]" }] } });
+
+    const workers = await dispatch.dispatch({ operationId: "flowfn.workers.list", input: {}, context: context() });
+    expect(workers).toMatchObject({ ok: true, data: { items: [{ id: "worker_1", queues: ["emails"] }] } });
+    expect(await dispatch.dispatch({
+      operationId: "flowfn.workers.run",
+      input: { id: "worker_1" },
+      context: context({ idempotencyKey: "run_worker_1", confirmationToken: "confirmed" }),
+    })).toMatchObject({ ok: true, data: { accepted: true } });
+
+    const listedEvents = await dispatch.dispatch({
+      operationId: "flowfn.events.list",
+      input: { aggregateId: "campaign_1" },
+      context: context(),
+    });
+    expect(listedEvents).toMatchObject({
+      ok: true,
+      data: { items: [{ type: "email.requested", data: "[REDACTED]", metadata: "[REDACTED]" }] },
+    });
+    expect(audit.events.find((event) => event.operationId === "flowfn.jobs.enqueue")?.input).toMatchObject({ data: "[REDACTED]" });
+  });
+
+  it("redrives through the real DLQ, Queue, and JobStorage with confirmation", async () => {
+    const { dispatch, dlq, queue, jobs } = deployment();
+    const failed = await queue.add("emails", { authorization: "private-token" }, { jobId: "failed_1", attempts: 3 });
+    await failed.moveToFailed(new Error("provider secret failure"));
+    await dlq.moveToDLQ(failed, "provider failed");
+
+    const listed = await dispatch.dispatch({ operationId: "flowfn.dead-letters.list", input: {}, context: context() });
+    expect(listed).toMatchObject({
+      ok: true,
+      data: { items: [{ id: "failed_1", originalQueue: "emails", data: "[REDACTED]", errors: "[REDACTED]" }] },
+    });
+
+    const missingConfirmation = await dispatch.dispatch({
+      operationId: "flowfn.dead-letters.redrive",
+      input: { id: "failed_1" },
+      context: context({ idempotencyKey: "redrive_failed_1" }),
+    });
+    expect(missingConfirmation).toMatchObject({ ok: false, error: { code: "precondition_failed" } });
+
+    const redriven = await dispatch.dispatch({
+      operationId: "flowfn.dead-letters.redrive",
+      input: { id: "failed_1" },
+      context: context({ idempotencyKey: "redrive_failed_1", confirmationToken: "confirmed" }),
+    });
+    expect(redriven).toMatchObject({
+      ok: true,
+      data: { accepted: true, item: { id: "failed_1", queue: "emails", data: "[REDACTED]", state: "waiting" } },
+    });
+    expect(await dlq.getAll()).toEqual([]);
+    expect(await jobs.get("emails", "failed_1")).toMatchObject({ state: "waiting" });
+  });
+
+  it("rejects another environment or namespace before calling FlowFn", async () => {
+    const { dispatch } = deployment();
+    const wrongEnvironment = await dispatch.dispatch({
+      operationId: "flowfn.queues.list",
+      input: {},
+      context: context({
+        scope: {
+          installationId: "installation_1",
+          workspaceId: "workspace_1",
+          projectId: "project_1",
+          environmentId: "environment_2",
+          namespace: "tenant_1",
+        },
+      }),
+    });
+    expect(wrongEnvironment).toMatchObject({ ok: false, error: { code: "forbidden", status: 403 } });
+
+    const wrongNamespace = await dispatch.dispatch({
+      operationId: "flowfn.queues.list",
+      input: {},
+      context: context({
+        scope: {
+          installationId: "installation_1",
+          workspaceId: "workspace_1",
+          projectId: "project_1",
+          environmentId: "environment_1",
+          namespace: "tenant_2",
+        },
+      }),
+    });
+    expect(wrongNamespace).toMatchObject({ ok: false, error: { code: "forbidden", status: 403 } });
   });
 });

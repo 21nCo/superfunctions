@@ -33,6 +33,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@mailfn/core": "0.1.0",
     "@superfunctions/admin": "0.1.0"
   },
   "devDependencies": {

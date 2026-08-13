@@ -3,11 +3,13 @@ import {
   createCapabilityAdminClient,
   defineAdminCapability,
   type AdminClient,
+  type AdminClientRequestOptions,
   type AdminCapabilityAdapter,
   type AdminJsonSchema,
   type AdminObjectSchema,
   type AdminOperationContext,
   type AdminOperationDefinition,
+  type AdminOperationRequest,
   type AdminOperationResult,
 } from "@superfunctions/admin";
 
@@ -410,6 +412,28 @@ const actionOutputSchema: AdminObjectSchema = {
   required: ["accepted"],
   additionalProperties: true,
 };
+const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
+  "collect-evidence": {
+    type: "object",
+    properties: { payload: { type: "object", additionalProperties: true } },
+    required: ["payload"],
+    additionalProperties: false,
+  },
+  "generate-report": {
+    type: "object",
+    properties: {
+      payload: {
+        type: "object",
+        properties: {
+          frameworkId: { type: "string", minLength: 1 },
+          since: { type: "number", minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+};
 export const compFnAdminSchemas = {
   entity: entitySchema,
   listInput: listInputSchema,
@@ -437,6 +461,7 @@ function resourceOperations(
       outputSchema: listOutputSchema,
       route: { method: "GET", path: basePath },
       permission: "compfn." + resource.id + ".read",
+      minimumScope: "workspace",
       safety: {
         classification: "read",
         idempotent: true,
@@ -457,6 +482,7 @@ function resourceOperations(
       outputSchema: getOutputSchema,
       route: { method: "GET", path: basePath + "/:id" },
       permission: "compfn." + resource.id + ".read",
+      minimumScope: "workspace",
       safety: {
         classification: "read",
         idempotent: true,
@@ -479,16 +505,18 @@ function actionOperation(
     id: "compfn." + action.resource + "." + action.id,
     title: action.title,
     description: action.description,
-    inputSchema:
+    inputSchema: domainActionInputSchemas[action.id] ?? (
       action.target === "resource"
         ? { ...actionInputSchema, required: ["id"] }
-        : actionInputSchema,
+        : actionInputSchema
+    ),
     outputSchema: actionOutputSchema,
     route: {
       method: "POST",
       path: "/resources/" + action.resource + "/actions/" + action.id,
     },
     permission: "compfn." + action.resource + "." + action.id,
+    minimumScope: "workspace",
     safety: {
       classification: action.classification,
       idempotent: action.idempotent,
@@ -507,30 +535,39 @@ function actionOperation(
         : { resource: action.resource, collection: true },
   };
 }
+const domainResourceIds = new Set(["frameworks", "controls", "checks", "evidence", "reports"]);
+const domainActionIds = new Set(["collect-evidence", "generate-report"]);
+const domainResources = compFnAdminResources.filter((resource) => domainResourceIds.has(resource.id));
+const domainActions = compFnAdminActions.filter((action) => domainActionIds.has(action.id));
 const operations: AdminOperationDefinition[] = [
-  ...compFnAdminResources.flatMap(resourceOperations),
-  ...compFnAdminActions.map(actionOperation),
+  ...domainResources.filter((resource) => resource.id !== "reports").flatMap(resourceOperations),
+  ...domainActions.map(actionOperation),
 ];
 type FunctionAdminActionOperationId<TModule extends string, TAction> =
   TAction extends { resource: infer TResource extends string; id: infer TActionId extends string }
     ? `${TModule}.${TResource}.${TActionId}`
     : never;
+type CompFnDomainReadResourceId = "frameworks" | "controls" | "checks" | "evidence";
+type CompFnDomainAction = Extract<
+  (typeof compFnAdminActions)[number],
+  { id: "collect-evidence" | "generate-report" }
+>;
 export type CompFnAdminOperationId =
-  | `compfn.${(typeof compFnAdminResources)[number]["id"]}.list`
-  | `compfn.${(typeof compFnAdminResources)[number]["id"]}.get`
-  | FunctionAdminActionOperationId<"compfn", (typeof compFnAdminActions)[number]>;
+  | `compfn.${CompFnDomainReadResourceId}.list`
+  | `compfn.${CompFnDomainReadResourceId}.get`
+  | FunctionAdminActionOperationId<"compfn", CompFnDomainAction>;
 export const compFnAdminCapability = defineAdminCapability({
   schemaVersion: "1.0",
   id: "compfn",
   displayName: "CompFn",
   version: "1.0.0",
   description:
-    "Commercial-grade, function-owned operator capabilities for CompFn.",
+    "Function-owned CompFn operator capabilities backed by an exact scoped compliance API.",
   category: "security",
   availability: "required-product",
   scopeLevels: ["organization", "workspace", "project", "environment"],
   dependencies: [],
-  resources: compFnAdminResources,
+  resources: domainResources,
   navigation: [
     {
       id: "compfn",
@@ -543,41 +580,82 @@ export const compFnAdminCapability = defineAdminCapability({
   ],
   operations: operations as readonly (AdminOperationDefinition & { readonly id: CompFnAdminOperationId })[],
 });
-export function createCompFnAdminClient(adminClient: AdminClient) {
-  return createCapabilityAdminClient(compFnAdminCapability, adminClient);
+
+export interface CompFnAdminListInput {
+  filter?: Record<string, unknown>;
+  limit?: number;
+  cursor?: string;
 }
-export interface CompFnAdminServiceRequest {
-  operationId: CompFnAdminOperationId;
-  input: unknown;
-  context: AdminOperationContext;
+export interface CompFnAdminGetInput { id: string }
+export interface CompFnCollectEvidenceInput { payload: Record<string, unknown> }
+export interface CompFnGenerateReportInput {
+  payload?: { frameworkId?: string; since?: number };
+}
+type CompFnAdminResult = AdminOperationResult<Record<string, unknown>>;
+
+export function createCompFnAdminClient(adminClient: AdminClient) {
+  const client = createCapabilityAdminClient(compFnAdminCapability, adminClient);
+  return Object.assign(client, {
+    frameworks: {
+      list: (input: CompFnAdminListInput = {}, options?: AdminClientRequestOptions) => client.invoke("compfn.frameworks.list", input, options),
+      get: (input: CompFnAdminGetInput, options?: AdminClientRequestOptions) => client.invoke("compfn.frameworks.get", input, options),
+    },
+    controls: {
+      list: (input: CompFnAdminListInput = {}, options?: AdminClientRequestOptions) => client.invoke("compfn.controls.list", input, options),
+      get: (input: CompFnAdminGetInput, options?: AdminClientRequestOptions) => client.invoke("compfn.controls.get", input, options),
+    },
+    checks: {
+      list: (input: CompFnAdminListInput = {}, options?: AdminClientRequestOptions) => client.invoke("compfn.checks.list", input, options),
+      get: (input: CompFnAdminGetInput, options?: AdminClientRequestOptions) => client.invoke("compfn.checks.get", input, options),
+    },
+    evidence: {
+      list: (input: CompFnAdminListInput = {}, options?: AdminClientRequestOptions) => client.invoke("compfn.evidence.list", input, options),
+      get: (input: CompFnAdminGetInput, options?: AdminClientRequestOptions) => client.invoke("compfn.evidence.get", input, options),
+      collect: (input: CompFnCollectEvidenceInput, options?: AdminClientRequestOptions) => client.invoke("compfn.evidence.collect-evidence", input, options),
+    },
+    reports: {
+      generate: (input: CompFnGenerateReportInput = {}, options?: AdminClientRequestOptions) => client.invoke("compfn.reports.generate-report", input, options),
+    },
+  });
 }
 export interface CompFnAdminService {
-  execute(
-    request: CompFnAdminServiceRequest,
-  ):
-    | Promise<AdminOperationResult<Record<string, unknown>>>
-    | AdminOperationResult<Record<string, unknown>>;
+  listFrameworks(input: CompFnAdminListInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
+  getFramework(input: CompFnAdminGetInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
+  listControls(input: CompFnAdminListInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
+  getControl(input: CompFnAdminGetInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
+  listChecks(input: CompFnAdminListInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
+  getCheck(input: CompFnAdminGetInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
+  listEvidence(input: CompFnAdminListInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
+  getEvidence(input: CompFnAdminGetInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
+  collectEvidence(input: CompFnCollectEvidenceInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
+  generateReport(input: CompFnGenerateReportInput, context: AdminOperationContext): Promise<CompFnAdminResult>;
 }
+
+function bind<TInput>(
+  handler: (input: TInput, context: AdminOperationContext) => Promise<CompFnAdminResult>,
+) {
+  return ({ input, context }: AdminOperationRequest) => handler(input as TInput, context);
+}
+
 export function createCompFnAdminAdapter(
   service: CompFnAdminService,
 ): AdminCapabilityAdapter {
-  const handlers: Record<
-    string,
-    (request: {
-      input: unknown;
-      context: AdminOperationContext;
-    }) =>
-      | Promise<AdminOperationResult<Record<string, unknown>>>
-      | AdminOperationResult<Record<string, unknown>>
-  > = {};
-  for (const operation of compFnAdminCapability.operations)
-    handlers[operation.id] = (request) =>
-      service.execute({
-        operationId: operation.id,
-        input: request.input,
-        context: request.context,
-      });
-  return createKernelAdminCapabilityAdapter(compFnAdminCapability, handlers);
+  return createKernelAdminCapabilityAdapter(compFnAdminCapability, {
+    "compfn.frameworks.list": bind(service.listFrameworks),
+    "compfn.frameworks.get": bind(service.getFramework),
+    "compfn.controls.list": bind(service.listControls),
+    "compfn.controls.get": bind(service.getControl),
+    "compfn.checks.list": bind(service.listChecks),
+    "compfn.checks.get": bind(service.getCheck),
+    "compfn.evidence.list": bind(service.listEvidence),
+    "compfn.evidence.get": bind(service.getEvidence),
+    "compfn.evidence.collect-evidence": bind(service.collectEvidence),
+    "compfn.reports.generate-report": bind(service.generateReport),
+  });
 }
 export const adminCapability = compFnAdminCapability;
 export const createAdminAdapter = createCompFnAdminAdapter;
+export {
+  createCompFnDomainAdminService,
+  type CompFnDomainAdminServiceOptions,
+} from "./domain-service.js";

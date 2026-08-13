@@ -25,6 +25,7 @@ export class OpenAILLM implements LLMProvider {
   }
 
   async generateJSON<T>(prompt: string, schema?: any): Promise<T> {
+    void schema;
     const response = await this.client.chat.completions.create({
       model: this.model,
       messages: [

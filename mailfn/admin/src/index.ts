@@ -1,14 +1,8 @@
 import {
-  createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
-  createCapabilityAdminClient,
   defineAdminCapability,
-  type AdminClient,
-  type AdminCapabilityAdapter,
   type AdminJsonSchema,
   type AdminObjectSchema,
-  type AdminOperationContext,
   type AdminOperationDefinition,
-  type AdminOperationResult,
 } from "@superfunctions/admin";
 export interface MailFnAdminResourceDefinition {
   id: string;
@@ -291,16 +285,6 @@ export const mailFnAdminActions = [
     target: "resource",
   },
   {
-    id: "delete-message",
-    resource: "messages",
-    title: "Delete Message",
-    description: "Delete Message for messages.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
     id: "send-draft",
     resource: "drafts",
     title: "Send Draft",
@@ -312,9 +296,9 @@ export const mailFnAdminActions = [
   },
   {
     id: "reply-draft",
-    resource: "drafts",
+    resource: "messages",
     title: "Reply Draft",
-    description: "Reply Draft for drafts.",
+    description: "Create a reply draft from an existing message.",
     classification: "write",
     requiresConfirmation: false,
     idempotent: true,
@@ -331,14 +315,14 @@ export const mailFnAdminActions = [
     target: "resource",
   },
   {
-    id: "manage-webhook",
+    id: "create-webhook",
     resource: "webhooks",
-    title: "Manage Webhook",
-    description: "Manage Webhook for webhooks.",
+    title: "Create Webhook",
+    description: "Create a project or inbox-scoped webhook.",
     classification: "write",
     requiresConfirmation: false,
     idempotent: true,
-    target: "resource",
+    target: "collection",
   },
   {
     id: "rotate-credential",
@@ -509,6 +493,78 @@ const actionOutputSchema: AdminObjectSchema = {
   required: ["accepted"],
   additionalProperties: true,
 };
+const payloadSchema = (
+  properties: NonNullable<AdminObjectSchema["properties"]>,
+  required: string[] = [],
+): AdminObjectSchema => ({
+  type: "object",
+  properties,
+  ...(required.length ? { required } : {}),
+  additionalProperties: false,
+});
+const actionInputSchemas: Record<(typeof mailFnAdminActions)[number]["id"], AdminObjectSchema> = {
+  "create-inbox": payloadSchema(
+    {
+      payload: payloadSchema(
+        {
+          kind: { type: "string", enum: ["stable", "expiring"] },
+          requestedLocalPart: { type: "string", minLength: 1 },
+          domain: { type: "string", minLength: 1 },
+          displayName: { type: "string", minLength: 1 },
+          expirySeconds: { type: "integer", minimum: 1 },
+          metadata: { type: "object", additionalProperties: { type: "string" } },
+        },
+        ["kind"],
+      ),
+    },
+    ["payload"],
+  ),
+  "expire-inbox": { ...getInputSchema },
+  "label-message": payloadSchema(
+    {
+      id: { type: "string", minLength: 1 },
+      payload: payloadSchema(
+        { labels: { type: "array", items: { type: "string", minLength: 1 }, maxItems: 100 } },
+        ["labels"],
+      ),
+    },
+    ["id", "payload"],
+  ),
+  "send-draft": { ...getInputSchema },
+  "reply-draft": payloadSchema(
+    {
+      id: { type: "string", minLength: 1 },
+      payload: payloadSchema({
+        text: { type: "string" },
+        html: { type: "string" },
+        replyAll: { type: "boolean" },
+      }),
+    },
+    ["id"],
+  ),
+  "manage-domain": payloadSchema(
+    {
+      id: { type: "string", minLength: 1 },
+      payload: payloadSchema({ mode: { type: "string", enum: ["verify", "disable"] } }, ["mode"]),
+    },
+    ["id", "payload"],
+  ),
+  "create-webhook": payloadSchema(
+    {
+      payload: payloadSchema(
+        {
+          inboxId: { type: "string", minLength: 1 },
+          url: { type: "string", minLength: 1 },
+          eventTypes: { type: "array", items: { type: "string", minLength: 1 }, minItems: 1 },
+        },
+        ["url", "eventTypes"],
+      ),
+    },
+    ["payload"],
+  ),
+  "rotate-credential": { ...getInputSchema },
+  purge: { ...getInputSchema },
+};
 export const mailFnAdminSchemas = {
   entity: entitySchema,
   listInput: listInputSchema,
@@ -535,6 +591,7 @@ function resourceOperations(
       outputSchema: listOutputSchema,
       route: { method: "GET", path: basePath },
       permission: "mailfn." + resource.id + ".read",
+      minimumScope: "project",
       safety: {
         classification: "read",
         idempotent: true,
@@ -555,6 +612,7 @@ function resourceOperations(
       outputSchema: getOutputSchema,
       route: { method: "GET", path: basePath + "/:id" },
       permission: "mailfn." + resource.id + ".read",
+      minimumScope: "project",
       safety: {
         classification: "read",
         idempotent: true,
@@ -578,15 +636,14 @@ function actionOperation(
     title: action.title,
     description: action.description,
     inputSchema:
-      action.target === "resource"
-        ? { ...actionInputSchema, required: ["id"] }
-        : actionInputSchema,
+      actionInputSchemas[action.id as (typeof mailFnAdminActions)[number]["id"]],
     outputSchema: actionOutputSchema,
     route: {
       method: "POST",
       path: "/resources/" + action.resource + "/actions/" + action.id,
     },
     permission: "mailfn." + action.resource + "." + action.id,
+    minimumScope: "project",
     safety: {
       classification: action.classification,
       idempotent: action.idempotent,
@@ -623,7 +680,7 @@ export const mailFnAdminCapability = defineAdminCapability({
   displayName: "MailFn",
   version: "1.0.0",
   description:
-    "Commercial-grade, function-owned operator capabilities for MailFn.",
+    "Function-owned MailFn operator capabilities backed by a scoped MailFn service.",
   category: "communication",
   availability: "required-product",
   scopeLevels: ["organization", "workspace", "project", "environment"],
@@ -641,41 +698,11 @@ export const mailFnAdminCapability = defineAdminCapability({
   ],
   operations: operations as readonly (AdminOperationDefinition & { readonly id: MailFnAdminOperationId })[],
 });
-export function createMailFnAdminClient(adminClient: AdminClient) {
-  return createCapabilityAdminClient(mailFnAdminCapability, adminClient);
-}
-export interface MailFnAdminServiceRequest {
-  operationId: MailFnAdminOperationId;
-  input: unknown;
-  context: AdminOperationContext;
-}
-export interface MailFnAdminService {
-  execute(
-    request: MailFnAdminServiceRequest,
-  ):
-    | Promise<AdminOperationResult<Record<string, unknown>>>
-    | AdminOperationResult<Record<string, unknown>>;
-}
-export function createMailFnAdminAdapter(
-  service: MailFnAdminService,
-): AdminCapabilityAdapter {
-  const handlers: Record<
-    string,
-    (request: {
-      input: unknown;
-      context: AdminOperationContext;
-    }) =>
-      | Promise<AdminOperationResult<Record<string, unknown>>>
-      | AdminOperationResult<Record<string, unknown>>
-  > = {};
-  for (const operation of mailFnAdminCapability.operations)
-    handlers[operation.id] = (request) =>
-      service.execute({
-        operationId: operation.id,
-        input: request.input,
-        context: request.context,
-      });
-  return createKernelAdminCapabilityAdapter(mailFnAdminCapability, handlers);
-}
 export const adminCapability = mailFnAdminCapability;
-export const createAdminAdapter = createMailFnAdminAdapter;
+export * from "./types.js";
+export * from "./adapter.js";
+export * from "./client.js";
+export {
+  createMailFnDomainAdminService,
+  type MailFnDomainAdminServiceOptions,
+} from "./domain-service.js";

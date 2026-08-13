@@ -33,6 +33,8 @@
     "access": "public"
   },
   "dependencies": {
+    "@recfn/core": "0.1.1",
+    "@recfn/server": "0.1.1",
     "@superfunctions/admin": "0.1.0"
   },
   "devDependencies": {

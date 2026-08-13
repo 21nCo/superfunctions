@@ -33,9 +33,11 @@
     "access": "public"
   },
   "dependencies": {
-    "@superfunctions/admin": "0.1.0"
+    "@superfunctions/admin": "0.1.0",
+    "sendfn": "0.0.4"
   },
   "devDependencies": {
+    "@superfunctions/db": "0.1.4",
     "typescript": "^5.6.0",
     "vitest": "^3.2.4"
   }

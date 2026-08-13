@@ -12,7 +12,7 @@ describe('MemoryFn Pipeline', () => {
     expect(memory).toBeDefined();
   });
 
-  it('should add a memory (stub)', async () => {
+  it('should add a memory', async () => {
     const memory = memoryfn({
       storage: {
         kind: 'sqlite',
@@ -34,12 +34,18 @@ describe('MemoryFn Pipeline', () => {
     expect(result.summary.created).toBe(1);
   });
 
-  it('should search memories (stub)', async () => {
+  it('should persist and search memories in the process-local adapter', async () => {
     const memory = memoryfn({
       storage: {
         kind: 'sqlite',
         path: ':memory:'
       }
+    });
+
+    await memory.add({
+      content: 'The sky is blue',
+      containerTags: ['user:test'],
+      type: 'conversational'
     });
 
     const result = await memory.search({
@@ -48,6 +54,7 @@ describe('MemoryFn Pipeline', () => {
     });
 
     expect(result).toBeDefined();
-    expect(result.results).toBeDefined();
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.content).toBe('The sky is blue');
   });
 });

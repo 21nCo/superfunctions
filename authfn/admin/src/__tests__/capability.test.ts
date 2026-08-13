@@ -1,94 +1,39 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  authFnAdminCapability,
-  createAuthFnAdminAdapter,
-  type AuthFnAdminService,
-  type AuthFnAdminServiceRequest,
-} from "../index.js";
+import { describe, expect, it } from "vitest";
+import { memoryAdapter } from "@superfunctions/db/testing";
+import type { AuthFnConfig, AuthFnUserRecord } from "@authfn/core";
+import { authFnAdminCapability, createAuthFnAdminAdapter, createAuthFnAdminService } from "../index.js";
 
 const context = {
-  scope: {
-    organizationId: "org_1",
-    workspaceId: "workspace_1",
-    projectId: "project_1",
-    environmentId: "environment_1",
-    namespace: "auth_tenant_1",
-    region: "in-south",
-  },
-  actor: { id: "operator_1", type: "user" as const, permissions: ["*"] },
-  requestId: "request_1",
-  correlationId: "correlation_1",
-  source: "console" as const,
-  idempotencyKey: "idempotency_1",
+  scope: { installationId: "install_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "env_1", namespace: "authfn" },
+  actor: { id: "operator_1", permissions: ["*"] }, requestId: "request_1", source: "console" as const,
 };
 
+async function setup() {
+  const config: AuthFnConfig = { database: memoryAdapter({ debug: false }), namespace: "authfn" };
+  await config.database.create<AuthFnUserRecord>({ model: "users", namespace: "authfn", data: { id: "user_1", primaryEmail: "ada@example.com", emailVerifiedAt: null, createdAt: new Date("2026-01-01"), updatedAt: new Date("2026-01-01") } });
+  return { config, adapter: createAuthFnAdminAdapter(createAuthFnAdminService(config)) };
+}
+
 describe("@authfn/admin capability", () => {
-  it("extends the existing admin routes with the full operator contract", () => {
-    expect(authFnAdminCapability.availability).toBe("required-product");
-    expect(
-      authFnAdminCapability.operations.some(
-        (operation) => operation.id === "authfn.users.list",
-      ),
-    ).toBe(true);
-    expect(
-      authFnAdminCapability.operations.find(
-        (operation) => operation.id === "authfn.users.delete-user",
-      ),
-    ).toMatchObject({
-      safety: {
-        classification: "destructive",
-        requiresConfirmation: true,
-        audit: "required",
-      },
-    });
-  });
-
-  it("binds collection invitations and destructive user targets explicitly", () => {
-    const inviteUser = authFnAdminCapability.operations.find(
-      (operation) => operation.id === "authfn.users.invite-user",
-    );
-    expect(inviteUser).toMatchObject({
-      target: { resource: "users", collection: true },
-    });
-    expect(inviteUser?.inputSchema?.required).toBeUndefined();
-    expect(
-      authFnAdminCapability.operations.find(
-        (operation) => operation.id === "authfn.users.delete-user",
-      ),
-    ).toMatchObject({
+  it("advertises only real user and session operations with typed schemas", () => {
+    expect(authFnAdminCapability.operations.map((operation) => operation.id)).toEqual([
+      "authfn.users.list", "authfn.users.get", "authfn.users.delete", "authfn.users.list-sessions", "authfn.sessions.revoke",
+    ]);
+    expect(authFnAdminCapability.operations.find((operation) => operation.id === "authfn.users.delete")).toMatchObject({
+      inputSchema: { required: ["id"] }, target: { resource: "users", idInput: "id" },
       safety: { classification: "destructive", requiresConfirmation: true },
-      target: { resource: "users", idInput: "id" },
-      inputSchema: { required: ["id"] },
     });
   });
 
-  it("delegates the operation and complete scope to the injected AuthFn service", async () => {
-    const execute = vi.fn(async (request: AuthFnAdminServiceRequest) => ({
-      ok: true as const,
-      data: {
-        operationId: request.operationId,
-        namespace: request.context.scope.namespace,
-        region: request.context.scope.region,
-      },
-    }));
-    const service: AuthFnAdminService = { execute };
-    const adapter = createAuthFnAdminAdapter(service);
+  it("reads and deletes through AuthFn core storage", async () => {
+    const { config, adapter } = await setup();
+    await expect(adapter.invoke("authfn.users.list", {}, context)).resolves.toMatchObject({ data: { items: [{ id: "user_1", primaryEmail: "ada@example.com" }], nextCursor: null } });
+    await expect(adapter.invoke("authfn.users.delete", { id: "user_1" }, context)).resolves.toMatchObject({ data: { deleted: true, id: "user_1" } });
+    await expect(config.database.findOne({ model: "users", namespace: "authfn", where: [{ field: "id", operator: "eq", value: "user_1" }] })).resolves.toBeNull();
+  });
 
-    const result = await adapter.execute(
-      "authfn.users.list",
-      { limit: 25 },
-      context,
-    );
-
-    expect(result.data).toEqual({
-      operationId: "authfn.users.list",
-      namespace: "auth_tenant_1",
-      region: "in-south",
-    });
-    expect(execute).toHaveBeenCalledWith({
-      operationId: "authfn.users.list",
-      input: { limit: 25 },
-      context,
-    });
+  it("rejects a namespace that is not bound to the AuthFn instance", async () => {
+    const { adapter } = await setup();
+    await expect(adapter.invoke("authfn.users.list", {}, { ...context, scope: { ...context.scope, namespace: "other" } })).rejects.toMatchObject({ code: "forbidden" });
   });
 });

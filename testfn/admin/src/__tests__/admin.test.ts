@@ -1,80 +1,269 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  TestRunner,
+  TestStorage,
+  VisualTester,
+  type TestCase,
+  type TestFrameworkAdapter,
+  type TestResult,
+} from "@testfn/core";
+import {
+  MemoryAdminAuditSink,
+  MemoryAdminIdempotencyStore,
+  createAdminDispatcher,
+  createAdminRegistry,
+  type AdminOperationContext,
+} from "@superfunctions/admin";
+import {
+  createTestFnDomainAdminAdapter,
   testFnAdminCapability,
-  createTestFnAdminAdapter,
-  type TestFnAdminService,
-  type TestFnAdminServiceRequest,
+  testFnAdminResources,
+  type TestFnDomainAdminBinding,
 } from "../index.js";
 
-const context = {
-  scope: {
-    organizationId: "org_1",
-    workspaceId: "workspace_1",
-    projectId: "project_1",
-    environmentId: "environment_1",
-    namespace: "tenant_1",
-    region: "in-south",
-  },
-  actor: { id: "operator_1", type: "user" as const, permissions: ["*"] },
-  requestId: "request_1",
-  correlationId: "correlation_1",
-  source: "console" as const,
-  idempotencyKey: "idempotency_1",
-};
+const temporaryDirectories: string[] = [];
+
+function context(projectId: string, overrides: Partial<AdminOperationContext> = {}): AdminOperationContext {
+  return {
+    scope: {
+      installationId: "installation_1",
+      workspaceId: "workspace_1",
+      projectId,
+      environmentId: "environment_1",
+      namespace: "tenant_1",
+      region: "in-south",
+    },
+    actor: { id: "operator_1", type: "user", permissions: ["*"] },
+    requestId: crypto.randomUUID(),
+    correlationId: "correlation_1",
+    source: "console",
+    ...overrides,
+  };
+}
+
+function testAdapter(projectId: string): TestFrameworkAdapter {
+  return {
+    name: `memory-${projectId}`,
+    supports: () => true,
+    async discover(): Promise<TestCase[]> {
+      return [{ id: `test-${projectId}`, file: `${projectId}.test.ts`, name: "scope test" }];
+    },
+    async run(tests: TestCase[]): Promise<TestResult[]> {
+      return tests.map((test) => ({
+        id: test.id,
+        status: "passed",
+        duration: 12,
+        artifacts: [{
+          type: "log",
+          path: `/private/${projectId}.log`,
+          buffer: Buffer.from("operator secret"),
+        }],
+      }));
+    },
+  };
+}
+
+function domainBinding(projectId: string): TestFnDomainAdminBinding {
+  const root = mkdtempSync(join(tmpdir(), `testfn-admin-${projectId}-`));
+  temporaryDirectories.push(root);
+  const runner = new TestRunner({ framework: "vitest", parallel: 1, reporters: [] });
+  runner.setAdapter(testAdapter(projectId));
+  return {
+    runner,
+    storage: new TestStorage({ type: "indexeddb", dbName: `testfn-admin-${projectId}-${crypto.randomUUID()}` }),
+    visual: new VisualTester({ baselineDir: join(root, "baselines"), diffDir: join(root, "diffs") }),
+    environment: { platform: "test", ci: true },
+  };
+}
+
+function dispatcher(bindings: Map<string, TestFnDomainAdminBinding>) {
+  const adapter = createTestFnDomainAdminAdapter({
+    resolve: (adminContext) => {
+      const binding = bindings.get(adminContext.scope.projectId ?? "");
+      if (!binding) throw new Error("missing test binding");
+      return binding;
+    },
+  });
+  return createAdminDispatcher({
+    registry: createAdminRegistry({ adapters: [adapter], enabledModules: ["testfn"] }),
+    audit: new MemoryAdminAuditSink(),
+    idempotency: new MemoryAdminIdempotencyStore(),
+    confirmation: { verify: ({ token }) => token === "confirmed" },
+  });
+}
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe("@testfn/admin", () => {
-  it("declares the inventoried operator surface and mutation policy", () => {
-    expect(testFnAdminCapability.schemaVersion).toBe("1.0");
-    expect(testFnAdminCapability.availability).toBe("required-product");
-    expect(testFnAdminCapability.scopeLevels).toEqual([
-      "organization",
-      "workspace",
-      "project",
-      "environment",
+  it("publishes only operations backed by public TestFn services", () => {
+    expect(testFnAdminResources.map((resource) => resource.id)).toEqual([
+      "runs",
+      "artifacts",
+      "analytics",
+      "visual-diffs",
+      "visual-baselines",
     ]);
-    expect(
-      testFnAdminCapability.operations.some(
-        (operation) => operation.id === "testfn.projects.list",
-      ),
-    ).toBe(true);
-    const mutation = testFnAdminCapability.operations.find(
-      (operation) => operation.safety.classification !== "read",
-    );
-    expect(mutation).toMatchObject({
-      safety: {
-        audit: "required",
-        idempotent: true,
+    expect(testFnAdminCapability.operations).toHaveLength(12);
+    expect(testFnAdminCapability.operations.every((operation) => operation.minimumScope === "project")).toBe(true);
+    expect(testFnAdminCapability.operations.some((operation) => operation.id.includes("suites"))).toBe(false);
+    expect(testFnAdminCapability.operations.some((operation) => operation.id.includes("schedules"))).toBe(false);
+    expect(testFnAdminCapability.operations.some((operation) => operation.id.includes("agents"))).toBe(false);
+    expect(testFnAdminCapability.operations.some((operation) => operation.id.includes("environments"))).toBe(false);
+
+    expect(testFnAdminCapability.operations.find(
+      (operation) => operation.id === "testfn.runs.start",
+    )?.safety).toMatchObject({ classification: "write", idempotent: false, audit: "required" });
+    expect(testFnAdminCapability.operations.find(
+      (operation) => operation.id === "testfn.visual-baselines.update",
+    )?.safety).toMatchObject({
+      classification: "destructive",
+      requiresConfirmation: true,
+      confirmation: { risk: "critical", method: "mfa" },
+    });
+    expect(testFnAdminCapability.operations.find(
+      (operation) => operation.id === "testfn.visual-diffs.compare",
+    )?.redaction?.inputFields).toContain("screenshotBase64");
+  });
+
+  it("runs, persists, reads, and analyzes through real TestFn APIs without crossing projects", async () => {
+    const bindings = new Map([
+      ["project_1", domainBinding("project_1")],
+      ["project_2", domainBinding("project_2")],
+    ]);
+    const dispatch = dispatcher(bindings);
+
+    const started = await dispatch.dispatch<{ item: { id: string; results: Array<{ id: string }> } }>({
+      operationId: "testfn.runs.start",
+      input: {},
+      context: context("project_1"),
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    expect(started.data.item.results).toEqual([
+      expect.objectContaining({
+        id: "test-project_1",
+        hasError: false,
+        artifactTypes: ["log"],
+      }),
+    ]);
+    expect(JSON.stringify(started.data)).not.toContain("/private/");
+    expect(JSON.stringify(started.data)).not.toContain("operator secret");
+
+    const artifact = await dispatch.dispatch({
+      operationId: "testfn.artifacts.get",
+      input: { id: `${started.data.item.id}-test-project_1-log` },
+      context: context("project_1"),
+    });
+    expect(artifact).toMatchObject({
+      ok: true,
+      data: { item: { type: "log", available: true } },
+    });
+    expect(JSON.stringify(artifact)).not.toContain("/private/");
+    expect(JSON.stringify(artifact)).not.toContain("operator secret");
+
+    const runsOne = await dispatch.dispatch<{ items: Array<{ id: string }> }>({
+      operationId: "testfn.runs.list",
+      input: { limit: 25 },
+      context: context("project_1"),
+    });
+    const runsTwo = await dispatch.dispatch<{ items: Array<{ id: string }> }>({
+      operationId: "testfn.runs.list",
+      input: { limit: 25 },
+      context: context("project_2"),
+    });
+    expect(runsOne.ok && runsOne.data.items.map((run) => run.id)).toContain(started.data.item.id);
+    expect(runsTwo.ok && runsTwo.data.items).toEqual([]);
+
+    const metrics = await dispatch.dispatch<{ item: { id: string; successRate: number } }>({
+      operationId: "testfn.analytics.metrics",
+      input: { id: started.data.item.id },
+      context: context("project_1"),
+    });
+    expect(metrics).toMatchObject({
+      ok: true,
+      data: { item: { id: started.data.item.id, successRate: 1 } },
+    });
+  });
+
+  it("rejects a domain object reused across project scopes", async () => {
+    const shared = domainBinding("shared");
+    const dispatch = dispatcher(new Map([
+      ["project_1", shared],
+      ["project_2", shared],
+    ]));
+
+    await dispatch.dispatch({
+      operationId: "testfn.runs.list",
+      input: {},
+      context: context("project_1"),
+    });
+    const leaked = await dispatch.dispatch({
+      operationId: "testfn.runs.list",
+      input: {},
+      context: context("project_2"),
+    });
+    expect(leaked).toMatchObject({
+      ok: false,
+      error: { code: "precondition_failed" },
+    });
+  });
+
+  it("updates and compares a real scope-owned visual baseline", async () => {
+    const dispatch = dispatcher(new Map([["project_1", domainBinding("project_1")]]));
+    const screenshotBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+    const updated = await dispatch.dispatch({
+      operationId: "testfn.visual-baselines.update",
+      input: { id: "home", screenshotBase64, reason: "approved rendering" },
+      context: context("project_1", {
+        idempotencyKey: "baseline_1",
+        confirmationToken: "confirmed",
+      }),
+    });
+    expect(updated).toMatchObject({ ok: true, data: { accepted: true } });
+
+    const comparison = await dispatch.dispatch({
+      operationId: "testfn.visual-diffs.compare",
+      input: { id: "home", screenshotBase64 },
+      context: context("project_1", { idempotencyKey: "compare_1" }),
+    });
+    expect(comparison).toMatchObject({
+      ok: true,
+      data: {
+        item: {
+          id: "home",
+          passed: true,
+          similarity: 1,
+          pixelDiffCount: 0,
+        },
       },
     });
   });
 
-  it("delegates the operation and complete scope to the injected domain service", async () => {
-    const execute = vi.fn(async (request: TestFnAdminServiceRequest) => ({
-      ok: true as const,
-      data: {
-        operationId: request.operationId,
-        namespace: request.context.scope.namespace,
-        region: request.context.scope.region,
-      },
-    }));
-    const service: TestFnAdminService = { execute };
-    const adapter = createTestFnAdminAdapter(service);
-
-    const result = await adapter.execute(
-      "testfn.projects.list",
-      { limit: 25 },
-      context,
-    );
-
-    expect(result.data).toEqual({
-      operationId: "testfn.projects.list",
-      namespace: "tenant_1",
-      region: "in-south",
+  it("requires confirmation for retention cleanup", async () => {
+    const dispatch = dispatcher(new Map([["project_1", domainBinding("project_1")]]));
+    const denied = await dispatch.dispatch({
+      operationId: "testfn.runs.cleanup",
+      input: { id: "expired", reason: "retention policy" },
+      context: context("project_1", { idempotencyKey: "cleanup_1" }),
     });
-    expect(execute).toHaveBeenCalledWith({
-      operationId: "testfn.projects.list",
-      input: { limit: 25 },
-      context,
+    expect(denied).toMatchObject({ ok: false, error: { code: "precondition_failed" } });
+
+    const accepted = await dispatch.dispatch({
+      operationId: "testfn.runs.cleanup",
+      input: { id: "expired", reason: "retention policy" },
+      context: context("project_1", {
+        idempotencyKey: "cleanup_2",
+        confirmationToken: "confirmed",
+      }),
     });
+    expect(accepted).toMatchObject({ ok: true, data: { accepted: true } });
   });
 });

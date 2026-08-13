@@ -1,80 +1,43 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  cmsFnAdminCapability,
-  createCmsFnAdminAdapter,
-  type CmsFnAdminService,
-  type CmsFnAdminServiceRequest,
-} from "../index.js";
+import { describe, expect, it } from "vitest";
+import { memoryAdapter } from "@superfunctions/db/testing";
+import { createAdminRegistry } from "@superfunctions/admin";
+import { createContentfnServer } from "@contentfn/server";
+import { cmsFnAdminCapability, createCmsFnAdminAdapter, createCmsFnAdminService } from "../index.js";
 
-const context = {
-  scope: {
-    organizationId: "org_1",
-    workspaceId: "workspace_1",
-    projectId: "project_1",
-    environmentId: "environment_1",
-    namespace: "tenant_1",
-    region: "in-south",
-  },
-  actor: { id: "operator_1", type: "user" as const, permissions: ["*"] },
-  requestId: "request_1",
-  correlationId: "correlation_1",
-  source: "console" as const,
-  idempotencyKey: "idempotency_1",
-};
+const context = { scope: { installationId: "install_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "prod" }, actor: { id: "operator_1" }, requestId: "request_1", source: "console" as const };
+const schema = { version: 1, documentTypes: [{ name: "post", fields: [{ name: "title", type: { kind: "primitive" as const, type: "string" as const }, required: true }] }] };
+
+function setup() {
+  const contentfn = createContentfnServer({ db: memoryAdapter({ debug: false }) });
+  return createCmsFnAdminAdapter(createCmsFnAdminService({ contentfn }));
+}
 
 describe("@cmsfn/admin", () => {
-  it("declares the inventoried operator surface and mutation policy", () => {
-    expect(cmsFnAdminCapability.schemaVersion).toBe("1.0");
-    expect(cmsFnAdminCapability.availability).toBe("required-product");
-    expect(cmsFnAdminCapability.scopeLevels).toEqual([
-      "organization",
-      "workspace",
-      "project",
-      "environment",
-    ]);
-    expect(
-      cmsFnAdminCapability.operations.some(
-        (operation) => operation.id === "cmsfn.datasets.list",
-      ),
-    ).toBe(true);
-    const mutation = cmsFnAdminCapability.operations.find(
-      (operation) => operation.safety.classification !== "read",
-    );
-    expect(mutation).toMatchObject({
-      safety: {
-        audit: "required",
-        idempotent: true,
-      },
-    });
+  it("folds ContentFn into CmsFn and advertises only backed operations", () => {
+    expect(cmsFnAdminCapability.dependencies).toEqual([]);
+    expect(createAdminRegistry({ adapters: [setup()], enabledModules: ["cmsfn"] }).enabledModuleIds).toEqual(["cmsfn"]);
+    expect(cmsFnAdminCapability.operations.map((operation) => operation.id)).toContain("cmsfn.documents.list");
+    expect(cmsFnAdminCapability.operations.map((operation) => operation.id)).not.toContain("cmsfn.datasets.delete");
+    expect(cmsFnAdminCapability.operations.some((operation) => operation.id.includes("workflows"))).toBe(false);
   });
 
-  it("delegates the operation and complete scope to the injected domain service", async () => {
-    const execute = vi.fn(async (request: CmsFnAdminServiceRequest) => ({
-      ok: true as const,
-      data: {
-        operationId: request.operationId,
-        namespace: request.context.scope.namespace,
-        region: request.context.scope.region,
-      },
-    }));
-    const service: CmsFnAdminService = { execute };
-    const adapter = createCmsFnAdminAdapter(service);
+  it("creates the scoped dataset/schema/document and queries it through ContentFn", async () => {
+    const adapter = setup();
+    await expect(adapter.invoke("cmsfn.datasets.create", {}, context)).resolves.toMatchObject({ data: { item: { id: "prod" } } });
+    await adapter.invoke("cmsfn.schemas.upsert", { schema }, context);
+    await expect(adapter.invoke("cmsfn.documents.create", { id: "post_1", type: "post", document: { title: "Hello" }, asDraft: false }, context)).resolves.toMatchObject({ data: { item: { _id: "post_1", title: "Hello" } } });
+    await expect(adapter.invoke("cmsfn.documents.list", { limit: 10 }, context)).resolves.toMatchObject({ data: { items: [{ _id: "post_1", title: "Hello" }], nextCursor: null } });
+  });
 
-    const result = await adapter.execute(
-      "cmsfn.datasets.list",
-      { limit: 25 },
-      context,
-    );
+  it("derives dataset identity from the active environment instead of accepting an object-scope override", async () => {
+    const adapter = setup();
+    await adapter.invoke("cmsfn.datasets.create", {}, context);
+    await expect(adapter.invoke("cmsfn.schemas.get", {}, { ...context, scope: { ...context.scope, environmentId: "other" } })).rejects.toMatchObject({ code: "not_found" });
+  });
 
-    expect(result.data).toEqual({
-      operationId: "cmsfn.datasets.list",
-      namespace: "tenant_1",
-      region: "in-south",
-    });
-    expect(execute).toHaveBeenCalledWith({
-      operationId: "cmsfn.datasets.list",
-      input: { limit: 25 },
-      context,
-    });
+  it("maps ContentFn schema absence to a canonical not-found admin error", async () => {
+    const adapter = setup();
+    await adapter.invoke("cmsfn.datasets.create", {}, context);
+    await expect(adapter.invoke("cmsfn.schemas.get", {}, context)).rejects.toMatchObject({ code: "not_found" });
   });
 });

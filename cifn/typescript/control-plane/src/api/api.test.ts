@@ -6,6 +6,9 @@ import { DEFAULT_QUEUE_NAME, type JobPayload } from '../queue/flowfn-client.js';
 import type { PipelineSpec } from '../pipeline/types.js';
 import type { PipelineRef } from '../pipeline/resolver.js';
 import { ResolverError } from '../pipeline/resolver.js';
+import { MemoryArtifactsAdapter } from '../integrations/filefn.js';
+import { MemoryLogsAdapter } from '../integrations/logfn.js';
+import { MemorySecretsAdapter } from '../integrations/secfn.js';
 
 const validPipelineSpec = {
   name: 'test',
@@ -560,6 +563,37 @@ describe('Control Plane API', () => {
       expect(res.status).toBe(404);
       const body = await res.json();
       expect(body.error.code).toBe('RUN_NOT_FOUND');
+    });
+  });
+
+  describe('GET /api/v1/runs/:runId/artifacts', () => {
+    it('projects a short-lived URL from the configured artifact adapter', async () => {
+      const artifactAdapter = new MemoryArtifactsAdapter();
+      const secretAdapter = new MemorySecretsAdapter();
+      await secretAdapter.setSecret('CIFN_API_KEYS', VALID_API_KEY);
+      artifactAdapter.getSignedUrl = async (fileId) => `https://files.example.test/${fileId}?signature=bound`;
+      const result = createApp({
+        adapters: {
+          queue,
+          artifacts: artifactAdapter,
+          secrets: secretAdapter,
+          logs: new MemoryLogsAdapter(),
+        },
+      });
+      const created = await makeRequest(result.app, '/api/v1/runs', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ trigger: { type: 'workflow_dispatch' }, pipelineSpec: validPipelineSpec }),
+      });
+      const runId = (await created.json()).data.runId as string;
+      const fileId = await artifactAdapter.upload(`cifn/${runId}`, 'dist.tgz', Buffer.from('artifact'));
+      result.store.addArtifact(runId, { name: 'dist.tgz', fileId });
+
+      const response = await makeRequest(result.app, `/api/v1/runs/${runId}/artifacts`, { headers: authHeaders() });
+      expect(await response.json()).toMatchObject({
+        ok: true,
+        data: { artifacts: [{ name: 'dist.tgz', fileId, url: `https://files.example.test/${fileId}?signature=bound` }] },
+      });
     });
   });
 

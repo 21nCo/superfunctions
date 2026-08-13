@@ -3,11 +3,13 @@ import {
   createCapabilityAdminClient,
   defineAdminCapability,
   type AdminClient,
+  type AdminClientRequestOptions,
   type AdminCapabilityAdapter,
   type AdminJsonSchema,
   type AdminObjectSchema,
   type AdminOperationContext,
   type AdminOperationDefinition,
+  type AdminOperationRequest,
   type AdminOperationResult,
 } from "@superfunctions/admin";
 
@@ -279,7 +281,7 @@ export const billFnAdminActions = [
     title: "Refund Payment",
     description: "Refund Payment for payments.",
     classification: "write",
-    requiresConfirmation: false,
+    requiresConfirmation: true,
     idempotent: true,
     target: "resource",
   },
@@ -448,6 +450,64 @@ const actionOutputSchema: AdminObjectSchema = {
   required: ["accepted"],
   additionalProperties: true,
 };
+const payloadSchema = (
+  properties: NonNullable<AdminObjectSchema["properties"]>,
+  required: string[] = [],
+): AdminObjectSchema => ({
+  type: "object",
+  properties,
+  ...(required.length ? { required } : {}),
+  additionalProperties: false,
+});
+const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
+  "change-subscription": payloadSchema(
+    {
+      id: { type: "string", minLength: 1 },
+      payload: payloadSchema(
+        {
+          targetPriceId: { type: "string", minLength: 1 },
+          effectiveAt: { type: "string", enum: ["immediate", "next_renewal"] },
+          prorationBehavior: { type: "string", enum: ["provider_default", "prorate", "none"] },
+        },
+        ["targetPriceId"],
+      ),
+      reason: { type: "string", minLength: 1, maxLength: 2000 },
+    },
+    ["id", "payload"],
+  ),
+  "cancel-subscription": payloadSchema(
+    { id: { type: "string", minLength: 1 }, reason: { type: "string", minLength: 1, maxLength: 2000 } },
+    ["id"],
+  ),
+  "refund-payment": payloadSchema(
+    {
+      id: { type: "string", minLength: 1 },
+      payload: payloadSchema({
+        subscriptionId: { type: "string", minLength: 1 },
+        mode: { type: "string", enum: ["full", "prorated_remaining_period", "custom"] },
+        amount: { type: "number", minimum: 0 },
+      }),
+      reason: { type: "string", minLength: 1, maxLength: 2000 },
+    },
+    ["id", "payload"],
+  ),
+  "reconcile-provider": payloadSchema(
+    {
+      payload: payloadSchema(
+        {
+          kind: { type: "string", enum: ["webhook-event", "subscription-sync", "account-scan", "notification-history-backfill", "webhook-replay"] },
+          provider: { type: "string", minLength: 1 },
+          billingAccountId: { type: "string", minLength: 1 },
+          subscriptionId: { type: "string", minLength: 1 },
+          providerEventId: { type: "string", minLength: 1 },
+          cursor: { type: "string", minLength: 1 },
+        },
+        ["kind"],
+      ),
+    },
+    ["payload"],
+  ),
+};
 
 export const billFnAdminSchemas = {
   entity: entitySchema,
@@ -476,6 +536,7 @@ function resourceOperations(
       outputSchema: listOutputSchema,
       route: { method: "GET", path: basePath },
       permission: "billfn." + resource.id + ".read",
+      minimumScope: "workspace",
       safety: {
         classification: "read",
         idempotent: true,
@@ -496,6 +557,7 @@ function resourceOperations(
       outputSchema: getOutputSchema,
       route: { method: "GET", path: basePath + "/:id" },
       permission: "billfn." + resource.id + ".read",
+      minimumScope: "workspace",
       safety: {
         classification: "read",
         idempotent: true,
@@ -519,20 +581,32 @@ function actionOperation(
     id: "billfn." + action.resource + "." + action.id,
     title: action.title,
     description: action.description,
-    inputSchema:
+    inputSchema: domainActionInputSchemas[action.id] ?? (
       action.target === "resource"
         ? { ...actionInputSchema, required: ["id"] }
-        : actionInputSchema,
+        : actionInputSchema
+    ),
     outputSchema: actionOutputSchema,
     route: {
       method: "POST",
       path: "/resources/" + action.resource + "/actions/" + action.id,
     },
     permission: "billfn." + action.resource + "." + action.id,
+    minimumScope: "workspace",
     safety: {
       classification: action.classification,
       idempotent: action.idempotent,
       requiresConfirmation: action.requiresConfirmation,
+      ...(action.id === "refund-payment"
+        ? {
+            confirmation: {
+              risk: "critical" as const,
+              method: "mfa" as const,
+              reason: "Refunds move money and require a recently verified operator.",
+              maxAgeSeconds: 300,
+            },
+          }
+        : {}),
       audit: "required",
     },
     mcp: {
@@ -548,9 +622,15 @@ function actionOperation(
   };
 }
 
+const domainReadResourceIds = new Set(["products", "plans", "prices", "subscriptions", "entitlements", "usage"]);
+const domainResourceIds = new Set([...domainReadResourceIds, "payments", "reconciliation"]);
+const domainActionIds = new Set(["change-subscription", "cancel-subscription", "refund-payment", "reconcile-provider"]);
+const domainResources = billFnAdminResources.filter((resource) => domainResourceIds.has(resource.id));
+const domainReadResources = domainResources.filter((resource) => domainReadResourceIds.has(resource.id));
+const domainActions = billFnAdminActions.filter((action) => domainActionIds.has(action.id));
 const operations: AdminOperationDefinition[] = [
-  ...billFnAdminResources.flatMap(resourceOperations),
-  ...billFnAdminActions.map(actionOperation),
+  ...domainReadResources.flatMap(resourceOperations),
+  ...domainActions.map(actionOperation),
 ];
 
 type FunctionAdminActionOperationId<TModule extends string, TAction> =
@@ -558,10 +638,16 @@ type FunctionAdminActionOperationId<TModule extends string, TAction> =
     ? `${TModule}.${TResource}.${TActionId}`
     : never;
 
+type BillFnDomainReadResourceId = "products" | "plans" | "prices" | "subscriptions" | "entitlements" | "usage";
+type BillFnDomainAction = Extract<
+  (typeof billFnAdminActions)[number],
+  { id: "change-subscription" | "cancel-subscription" | "refund-payment" | "reconcile-provider" }
+>;
+
 export type BillFnAdminOperationId =
-  | `billfn.${(typeof billFnAdminResources)[number]["id"]}.list`
-  | `billfn.${(typeof billFnAdminResources)[number]["id"]}.get`
-  | FunctionAdminActionOperationId<"billfn", (typeof billFnAdminActions)[number]>;
+  | `billfn.${BillFnDomainReadResourceId}.list`
+  | `billfn.${BillFnDomainReadResourceId}.get`
+  | FunctionAdminActionOperationId<"billfn", BillFnDomainAction>;
 
 export const billFnAdminCapability = defineAdminCapability({
   schemaVersion: "1.0",
@@ -569,12 +655,12 @@ export const billFnAdminCapability = defineAdminCapability({
   displayName: "BillFn",
   version: "1.0.0",
   description:
-    "Commercial-grade, function-owned operator capabilities for BillFn.",
+    "Function-owned BillFn operator capabilities backed by the configured billing instance.",
   category: "commerce",
   availability: "required-product",
   scopeLevels: ["organization", "workspace", "project", "environment"],
   dependencies: [],
-  resources: billFnAdminResources,
+  resources: domainResources,
   navigation: [
     {
       id: "billfn",
@@ -588,48 +674,118 @@ export const billFnAdminCapability = defineAdminCapability({
   operations: operations as readonly (AdminOperationDefinition & { readonly id: BillFnAdminOperationId })[],
 });
 
-export function createBillFnAdminClient(adminClient: AdminClient) {
-  return createCapabilityAdminClient(billFnAdminCapability, adminClient);
+export interface BillFnAdminListInput {
+  filter?: Record<string, unknown>;
+  limit?: number;
+  cursor?: string;
 }
+export interface BillFnAdminGetInput { id: string }
+export interface BillFnChangeSubscriptionInput {
+  id: string;
+  payload: {
+    targetPriceId: string;
+    effectiveAt?: "immediate" | "next_renewal";
+    prorationBehavior?: "provider_default" | "prorate" | "none";
+  };
+  reason?: string;
+}
+export interface BillFnCancelSubscriptionInput { id: string; reason?: string }
+export interface BillFnRefundPaymentInput {
+  id: string;
+  payload: {
+    subscriptionId?: string;
+    mode?: "full" | "prorated_remaining_period" | "custom";
+    amount?: number;
+  };
+  reason?: string;
+}
+export interface BillFnReconcileProviderInput {
+  payload: {
+    kind: "webhook-event" | "subscription-sync" | "account-scan" | "notification-history-backfill" | "webhook-replay";
+    provider?: string;
+    billingAccountId?: string;
+    subscriptionId?: string;
+    providerEventId?: string;
+    cursor?: string;
+  };
+}
+type BillFnAdminResult = AdminOperationResult<Record<string, unknown>>;
 
-export interface BillFnAdminServiceRequest {
-  operationId: BillFnAdminOperationId;
-  input: unknown;
-  context: AdminOperationContext;
+export function createBillFnAdminClient(adminClient: AdminClient) {
+  const client = createCapabilityAdminClient(billFnAdminCapability, adminClient);
+  const resource = (name: BillFnDomainReadResourceId) => ({
+    list: (input: BillFnAdminListInput = {}, options?: AdminClientRequestOptions) => client.invoke(`billfn.${name}.list` as BillFnAdminOperationId, input, options),
+    get: (input: BillFnAdminGetInput, options?: AdminClientRequestOptions) => client.invoke(`billfn.${name}.get` as BillFnAdminOperationId, input, options),
+  });
+  return Object.assign(client, {
+    products: resource("products"),
+    plans: resource("plans"),
+    prices: resource("prices"),
+    subscriptions: {
+      ...resource("subscriptions"),
+      change: (input: BillFnChangeSubscriptionInput, options?: AdminClientRequestOptions) => client.invoke("billfn.subscriptions.change-subscription", input, options),
+      cancel: (input: BillFnCancelSubscriptionInput, options?: AdminClientRequestOptions) => client.invoke("billfn.subscriptions.cancel-subscription", input, options),
+    },
+    entitlements: resource("entitlements"),
+    usage: resource("usage"),
+    payments: {
+      refund: (input: BillFnRefundPaymentInput, options?: AdminClientRequestOptions) => client.invoke("billfn.payments.refund-payment", input, options),
+    },
+    reconciliation: {
+      run: (input: BillFnReconcileProviderInput, options?: AdminClientRequestOptions) => client.invoke("billfn.reconciliation.reconcile-provider", input, options),
+    },
+  });
 }
 
 export interface BillFnAdminService {
-  execute(
-    request: BillFnAdminServiceRequest,
-  ):
-    | Promise<AdminOperationResult<Record<string, unknown>>>
-    | AdminOperationResult<Record<string, unknown>>;
+  listProducts(input: BillFnAdminListInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  getProduct(input: BillFnAdminGetInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  listPlans(input: BillFnAdminListInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  getPlan(input: BillFnAdminGetInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  listPrices(input: BillFnAdminListInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  getPrice(input: BillFnAdminGetInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  listSubscriptions(input: BillFnAdminListInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  getSubscription(input: BillFnAdminGetInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  listEntitlements(input: BillFnAdminListInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  getEntitlement(input: BillFnAdminGetInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  listUsage(input: BillFnAdminListInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  getUsage(input: BillFnAdminGetInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  changeSubscription(input: BillFnChangeSubscriptionInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  cancelSubscription(input: BillFnCancelSubscriptionInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  refundPayment(input: BillFnRefundPaymentInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+  reconcileProvider(input: BillFnReconcileProviderInput, context: AdminOperationContext): Promise<BillFnAdminResult>;
+}
+
+function bind<TInput>(handler: (input: TInput, context: AdminOperationContext) => Promise<BillFnAdminResult>) {
+  return ({ input, context }: AdminOperationRequest) => handler(input as TInput, context);
 }
 
 export function createBillFnAdminAdapter(
   service: BillFnAdminService,
 ): AdminCapabilityAdapter {
-  const handlers: Record<
-    string,
-    (request: {
-      input: unknown;
-      context: AdminOperationContext;
-    }) =>
-      | Promise<AdminOperationResult<Record<string, unknown>>>
-      | AdminOperationResult<Record<string, unknown>>
-  > = {};
-
-  for (const operation of billFnAdminCapability.operations) {
-    handlers[operation.id] = (request) =>
-      service.execute({
-        operationId: operation.id,
-        input: request.input,
-        context: request.context,
-      });
-  }
-
-  return createKernelAdminCapabilityAdapter(billFnAdminCapability, handlers);
+  return createKernelAdminCapabilityAdapter(billFnAdminCapability, {
+    "billfn.products.list": bind(service.listProducts),
+    "billfn.products.get": bind(service.getProduct),
+    "billfn.plans.list": bind(service.listPlans),
+    "billfn.plans.get": bind(service.getPlan),
+    "billfn.prices.list": bind(service.listPrices),
+    "billfn.prices.get": bind(service.getPrice),
+    "billfn.subscriptions.list": bind(service.listSubscriptions),
+    "billfn.subscriptions.get": bind(service.getSubscription),
+    "billfn.entitlements.list": bind(service.listEntitlements),
+    "billfn.entitlements.get": bind(service.getEntitlement),
+    "billfn.usage.list": bind(service.listUsage),
+    "billfn.usage.get": bind(service.getUsage),
+    "billfn.subscriptions.change-subscription": bind(service.changeSubscription),
+    "billfn.subscriptions.cancel-subscription": bind(service.cancelSubscription),
+    "billfn.payments.refund-payment": bind(service.refundPayment),
+    "billfn.reconciliation.reconcile-provider": bind(service.reconcileProvider),
+  });
 }
 
 export const adminCapability = billFnAdminCapability;
 export const createAdminAdapter = createBillFnAdminAdapter;
+export {
+  createBillFnDomainAdminService,
+  type BillFnDomainAdminServiceOptions,
+} from "./domain-service.js";

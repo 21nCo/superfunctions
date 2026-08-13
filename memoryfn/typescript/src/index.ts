@@ -1,6 +1,7 @@
 import { MemoryFnConfig } from './core/config';
 import { MemoryFn } from './core/pipeline';
 import { StorageAdapter } from './storage/adapter';
+import { MemoryStorageAdapter } from './storage/memory/adapter';
 import { PostgresAdapter } from './storage/pg/adapter';
 import { OpenAIEmbedder } from './providers/embed/openai';
 import { OpenAILLM } from './providers/llm/openai';
@@ -24,39 +25,10 @@ export function memoryfn(config: MemoryFnConfig): MemoryFn {
     const db = drizzle(client, { schema });
     storage = new PostgresAdapter(db);
   } else if (config.storage.kind === 'sqlite') {
-      // Stub for SQLite - could use better-sqlite3 via drizzle
-      const mockStorage: StorageAdapter = {
-        async insertMemories(memories) {
-          return memories.map(m => ({
-              ...m,
-              id: m.id || 'mock-id-' + Math.random(),
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-              isLatest: true,
-              metadata: m.metadata || {},
-              tenantId: m.tenantId || 'default',
-              containerTags: m.containerTags || [],
-              type: m.type || 'conversational',
-              content: m.content || '',
-              embedding: m.embedding || []
-          }));
-        },
-        async insertRelationships(rels) {
-          return rels.map(r => ({
-              ...r,
-              id: r.id || 'mock-rel-id',
-              createdAt: Date.now(),
-              fromId: r.fromId!,
-              toId: r.toId!,
-              type: r.type || 'extends',
-              confidence: r.confidence || 1
-          }));
-        },
-        async searchVectors() {
-          return [];
-        }
-      };
-      storage = mockStorage;
+      // Process-local persistence for zero-infrastructure and test deployments.
+      // A path-backed SQLite adapter can replace this through the public
+      // MemoryFn constructor without changing the administration contract.
+      storage = new MemoryStorageAdapter();
   } else {
       throw new Error(`Storage kind ${config.storage.kind} not yet supported`);
   }
@@ -92,5 +64,8 @@ export function memoryfn(config: MemoryFnConfig): MemoryFn {
 export * from './core/types';
 export * from './core/config';
 export * from './core/pipeline';
+export * from './providers/types';
+export * from './storage/adapter';
+export * from './storage/memory/adapter';
 export * as http from './http';
 export * as mcp from './mcp';

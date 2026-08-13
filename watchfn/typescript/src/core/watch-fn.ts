@@ -29,6 +29,11 @@ export class WatchFn implements WatchFnInstance {
   private syntheticsScheduler: SyntheticScheduler;
   private isStarted: boolean = false;
 
+  /** True only while collectors route captured events into the configured runtime. */
+  get started(): boolean {
+    return this.isStarted;
+  }
+
   constructor(config: WatchFnConfig) {
     this.config = WatchFnConfigSchema.parse(config);
     this.eventRouter = new EventRouter();
@@ -186,6 +191,7 @@ export class WatchFn implements WatchFnInstance {
   get alerts() {
       return {
           create: async (opts: any) => this.alertManager.create(opts),
+          list: async (filter?: { status?: string }) => this.alertManager.list(filter),
           onTrigger: (cb: any) => this.alertManager.onTrigger(cb),
           onResolve: (cb: any) => this.alertManager.onResolve(cb),
           addNote: async (id: string, note: any) => this.alertManager.addNote(id, note),

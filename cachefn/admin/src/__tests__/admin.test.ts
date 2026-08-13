@@ -1,80 +1,35 @@
-import { describe, expect, it, vi } from "vitest";
-import {
-  cacheFnAdminCapability,
-  createCacheFnAdminAdapter,
-  type CacheFnAdminService,
-  type CacheFnAdminServiceRequest,
-} from "../index.js";
+import { describe, expect, it } from "vitest";
+import { CacheFn } from "@cachefn/core";
+import { validateAdminCapabilityManifest } from "@superfunctions/admin";
+import { cacheFnAdminCapability, createCacheFnDomainAdminAdapter } from "../index.js";
 
 const context = {
-  scope: {
-    organizationId: "org_1",
-    workspaceId: "workspace_1",
-    projectId: "project_1",
-    environmentId: "environment_1",
-    namespace: "tenant_1",
-    region: "in-south",
-  },
+  scope: { organizationId: "installation_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "environment_1", namespace: "tenant_1" },
   actor: { id: "operator_1", type: "user" as const, permissions: ["*"] },
-  requestId: "request_1",
-  correlationId: "correlation_1",
-  source: "console" as const,
-  idempotencyKey: "idempotency_1",
+  requestId: "request_1", correlationId: "correlation_1", source: "console" as const, idempotencyKey: "idem_1",
 };
 
-describe("@cachefn/admin", () => {
-  it("declares the inventoried operator surface and mutation policy", () => {
-    expect(cacheFnAdminCapability.schemaVersion).toBe("1.0");
-    expect(cacheFnAdminCapability.availability).toBe("optional-product");
-    expect(cacheFnAdminCapability.scopeLevels).toEqual([
-      "organization",
-      "workspace",
-      "project",
-      "environment",
+describe("@cachefn/admin real CacheFn binding", () => {
+  it("registers only real CacheFn keys and statistics operations", () => {
+    expect(validateAdminCapabilityManifest(cacheFnAdminCapability)).toEqual([]);
+    expect(cacheFnAdminCapability.operations.map((operation) => operation.id)).toEqual([
+      "cachefn.keys.list", "cachefn.keys.get", "cachefn.stats.list", "cachefn.keys.set",
+      "cachefn.keys.delete", "cachefn.keys.invalidate-tag", "cachefn.namespaces.clear",
     ]);
-    expect(
-      cacheFnAdminCapability.operations.some(
-        (operation) => operation.id === "cachefn.namespaces.list",
-      ),
-    ).toBe(true);
-    const mutation = cacheFnAdminCapability.operations.find(
-      (operation) => operation.safety.classification !== "read",
-    );
-    expect(mutation).toMatchObject({
-      safety: {
-        audit: "required",
-        idempotent: true,
-      },
-    });
   });
 
-  it("delegates the operation and complete scope to the injected domain service", async () => {
-    const execute = vi.fn(async (request: CacheFnAdminServiceRequest) => ({
-      ok: true as const,
-      data: {
-        operationId: request.operationId,
-        namespace: request.context.scope.namespace,
-        region: request.context.scope.region,
-      },
-    }));
-    const service: CacheFnAdminService = { execute };
-    const adapter = createCacheFnAdminAdapter(service);
+  it("mutates a real namespace-bound CacheFn instance without exposing cached values", async () => {
+    const cache = new CacheFn<unknown>({ name: "admin-test", namespace: "tenant_1" });
+    const adapter = createCacheFnDomainAdminAdapter({ cache, environmentId: "environment_1", namespace: "tenant_1" });
+    await adapter.execute("cachefn.keys.set", { id: "secret", value: { token: "do-not-return" }, tags: ["auth"] }, context);
+    expect(await adapter.execute("cachefn.keys.list", {}, context)).toMatchObject({ data: { items: [{ id: "secret", exists: true }] } });
+    expect(JSON.stringify(await adapter.execute("cachefn.keys.get", { id: "secret" }, context))).not.toContain("do-not-return");
+    await adapter.execute("cachefn.keys.invalidate-tag", { id: "auth" }, context);
+    expect(await cache.has("secret")).toBe(false);
+  });
 
-    const result = await adapter.execute(
-      "cachefn.namespaces.list",
-      { limit: 25 },
-      context,
-    );
-
-    expect(result.data).toEqual({
-      operationId: "cachefn.namespaces.list",
-      namespace: "tenant_1",
-      region: "in-south",
-    });
-    expect(execute).toHaveBeenCalledWith({
-      operationId: "cachefn.namespaces.list",
-      input: { limit: 25 },
-      context,
-    });
+  it("fails closed across environment scope", async () => {
+    const adapter = createCacheFnDomainAdminAdapter({ cache: new CacheFn({ name: "scoped" }), environmentId: "environment_1" });
+    await expect(adapter.execute("cachefn.keys.list", {}, { ...context, scope: { ...context.scope, environmentId: "environment_2" } })).rejects.toMatchObject({ code: "forbidden" });
   });
 });

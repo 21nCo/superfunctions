@@ -1,637 +1,206 @@
 import {
+  AdminError,
   createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
   createCapabilityAdminClient,
   defineAdminCapability,
-  type AdminClient,
   type AdminCapabilityAdapter,
-  type AdminJsonSchema,
+  type AdminClient,
   type AdminObjectSchema,
   type AdminOperationContext,
-  type AdminOperationDefinition,
-  type AdminOperationResult,
+  type AdminOperationRequest,
+  type AdminResourceDefinition,
 } from "@superfunctions/admin";
+import type { CacheFn, CacheStats } from "@cachefn/core";
 
-export interface CacheFnAdminResourceDefinition {
-  id: string;
-  label: string;
-  description: string;
-  icon: string;
-  risk: "standard" | "sensitive";
-  idField: string;
-  displayFields: readonly string[];
-  searchableFields: readonly string[];
-  filterableFields: readonly string[];
-  sortableFields: readonly string[];
-  sensitiveFields: readonly string[];
-}
-
-export interface CacheFnAdminActionDefinition {
-  id: string;
-  resource: string;
-  title: string;
-  description: string;
-  classification: "write" | "destructive";
-  requiresConfirmation: boolean;
-  idempotent: true;
-  target: "resource" | "collection";
-}
-
-export const cacheFnAdminResources = [
-  {
-    id: "namespaces",
-    label: "Namespaces",
-    description: "Inspect and operate namespaces in CacheFn.",
-    icon: "cachefn:namespaces",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "keys",
-    label: "Keys",
-    description: "Inspect and operate keys in CacheFn.",
-    icon: "cachefn:keys",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [
-      "secret",
-      "token",
-      "credential",
-      "value",
-      "password",
-      "passwd",
-      "apiKey",
-      "privateKey",
-      "authorization",
-      "cookie",
-      "otp",
-      "otpCode",
-      "recoveryCode",
-      "recoveryCodes",
-      "verificationCode",
-      "sessionToken",
-    ],
-  },
-  {
-    id: "tags",
-    label: "Tags",
-    description: "Inspect and operate tags in CacheFn.",
-    icon: "cachefn:tags",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "ttl",
-    label: "Ttl",
-    description: "Inspect and operate ttl in CacheFn.",
-    icon: "cachefn:ttl",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "hit-miss",
-    label: "Hit Miss",
-    description: "Inspect and operate hit miss in CacheFn.",
-    icon: "cachefn:hit-miss",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "hot-keys",
-    label: "Hot Keys",
-    description: "Inspect and operate hot keys in CacheFn.",
-    icon: "cachefn:hot-keys",
-    risk: "sensitive",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [
-      "secret",
-      "token",
-      "credential",
-      "value",
-      "password",
-      "passwd",
-      "apiKey",
-      "privateKey",
-      "authorization",
-      "cookie",
-      "otp",
-      "otpCode",
-      "recoveryCode",
-      "recoveryCodes",
-      "verificationCode",
-      "sessionToken",
-    ],
-  },
-  {
-    id: "evictions",
-    label: "Evictions",
-    description: "Inspect and operate evictions in CacheFn.",
-    icon: "cachefn:evictions",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "capacity",
-    label: "Capacity",
-    description: "Inspect and operate capacity in CacheFn.",
-    icon: "cachefn:capacity",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "providers",
-    label: "Providers",
-    description: "Inspect and operate providers in CacheFn.",
-    icon: "cachefn:providers",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-  {
-    id: "health",
-    label: "Health",
-    description: "Inspect and operate health in CacheFn.",
-    icon: "cachefn:health",
-    risk: "standard",
-    idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
-  },
-] as const satisfies readonly CacheFnAdminResourceDefinition[];
-
-export const cacheFnAdminActions = [
-  {
-    id: "get-key",
-    resource: "keys",
-    title: "Get Key",
-    description: "Get Key for keys.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "set-key",
-    resource: "keys",
-    title: "Set Key",
-    description: "Set Key for keys.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "delete-key",
-    resource: "keys",
-    title: "Delete Key",
-    description: "Delete Key for keys.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "invalidate-tag",
-    resource: "tags",
-    title: "Invalidate Tag",
-    description: "Invalidate Tag for tags.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "purge-namespace",
-    resource: "namespaces",
-    title: "Purge Namespace",
-    description: "Purge Namespace for namespaces.",
-    classification: "destructive",
-    requiresConfirmation: true,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "warm-namespace",
-    resource: "namespaces",
-    title: "Warm Namespace",
-    description: "Warm Namespace for namespaces.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "change-ttl",
-    resource: "ttl",
-    title: "Change Ttl",
-    description: "Change Ttl for ttl.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "change-eviction",
-    resource: "evictions",
-    title: "Change Eviction",
-    description: "Change Eviction for evictions.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-  {
-    id: "change-limit",
-    resource: "capacity",
-    title: "Change Limit",
-    description: "Change Limit for capacity.",
-    classification: "write",
-    requiresConfirmation: false,
-    idempotent: true,
-    target: "resource",
-  },
-] as const satisfies readonly CacheFnAdminActionDefinition[];
-
-export interface CacheFnAdminResourcePolicy {
-  defaultScope: "active";
-  permission: string;
-  redaction: "none" | "sensitive-fields";
-}
-
-export interface CacheFnAdminOperationPolicy {
-  permission: string;
-  scope: {
-    levels: readonly ["organization", "workspace", "project", "environment"];
-    forwardsNamespace: true;
-    forwardsRegion: true;
-  };
-  safety: {
-    classification: "write" | "destructive";
-    requiresConfirmation: boolean;
-  };
-  idempotency: {
-    mode: "required";
-    keyStrategy: "context.idempotencyKey";
-  };
-  audit: {
-    mode: "required";
-    action: string;
-    targetResource: string;
-    targetIdPath?: "$.id";
-    collection?: true;
-  };
-  observation: {
-    domain: "cachefn";
-    requestIdPath: "context.requestId";
-    correlationIdPath: "context.correlationId";
-  };
-}
-
-export const cacheFnAdminResourcePolicies = Object.freeze(
-  Object.fromEntries(
-    cacheFnAdminResources.map((resource) => [
-      resource.id,
-      {
-        defaultScope: "active",
-        permission: "cachefn." + resource.id + ".read",
-        redaction:
-          resource.sensitiveFields.length > 0 ? "sensitive-fields" : "none",
-      } satisfies CacheFnAdminResourcePolicy,
-    ]),
-  ),
-) as Readonly<Record<string, CacheFnAdminResourcePolicy>>;
-
-export const cacheFnAdminOperationPolicies = Object.freeze(
-  Object.fromEntries(
-    cacheFnAdminActions.map((action) => [
-      "cachefn." + action.resource + "." + action.id,
-      {
-        permission: "cachefn." + action.resource + "." + action.id,
-        scope: {
-          levels: ["organization", "workspace", "project", "environment"],
-          forwardsNamespace: true,
-          forwardsRegion: true,
-        },
-        safety: {
-          classification: action.classification,
-          requiresConfirmation: action.requiresConfirmation,
-        },
-        idempotency: {
-          mode: "required",
-          keyStrategy: "context.idempotencyKey",
-        },
-        audit: {
-          mode: "required",
-          action: "cachefn." + action.id,
-          targetResource: action.resource,
-          ...(action.target === "resource"
-            ? { targetIdPath: "$.id" as const }
-            : { collection: true as const }),
-        },
-        observation: {
-          domain: "cachefn",
-          requestIdPath: "context.requestId",
-          correlationIdPath: "context.correlationId",
-        },
-      } satisfies CacheFnAdminOperationPolicy,
-    ]),
-  ),
-) as Readonly<Record<string, CacheFnAdminOperationPolicy>>;
-
-const entitySchema: AdminObjectSchema = {
+const stringSchema = { type: "string", minLength: 1 } as const;
+const emptyInput: AdminObjectSchema = { type: "object", additionalProperties: false };
+const keyInput: AdminObjectSchema = {
   type: "object",
-  description:
-    "A domain-owned administration resource. Sensitive fields are redacted by the domain service.",
-  additionalProperties: true,
+  properties: { id: stringSchema },
+  required: ["id"],
+  additionalProperties: false,
 };
-
-const listInputSchema: AdminObjectSchema = {
+const listInput: AdminObjectSchema = {
   type: "object",
   properties: {
-    cursor: { type: "string", minLength: 1 },
-    limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
-    search: { type: "string", maxLength: 500 },
-    filter: { type: "object", additionalProperties: true },
-    sort: {
-      type: "array",
-      items: { type: "object", additionalProperties: true },
-      maxItems: 10,
-    },
+    pattern: { type: "string" },
+    limit: { type: "integer", minimum: 1, maximum: 1000 },
   },
   additionalProperties: false,
 };
-
-const listOutputSchema: AdminObjectSchema = {
+const keySchema: AdminObjectSchema = {
   type: "object",
-  properties: {
-    items: { type: "array", items: entitySchema },
-    nextCursor: { type: ["string", "null"] },
-  },
-  required: ["items"],
+  properties: { id: stringSchema, exists: { type: "boolean" } },
+  required: ["id", "exists"],
   additionalProperties: false,
 };
-
-const getInputSchema: AdminObjectSchema = {
+const keyListSchema: AdminObjectSchema = {
   type: "object",
-  properties: { id: { type: "string", minLength: 1 } },
+  properties: {
+    items: { type: "array", items: keySchema },
+    nextCursor: { type: "null" },
+  },
+  required: ["items", "nextCursor"],
+  additionalProperties: false,
+};
+const keyOutput: AdminObjectSchema = {
+  type: "object",
+  properties: { item: keySchema },
+  required: ["item"],
+  additionalProperties: false,
+};
+const statsSchema: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    hits: { type: "integer", minimum: 0 }, misses: { type: "integer", minimum: 0 },
+    hitRate: { type: "number", minimum: 0, maximum: 100 }, sets: { type: "integer", minimum: 0 },
+    deletes: { type: "integer", minimum: 0 }, evictions: { type: "integer", minimum: 0 },
+    size: { type: "integer", minimum: 0 }, memoryUsage: { type: "integer", minimum: 0 },
+  },
+  required: ["hits", "misses", "hitRate", "sets", "deletes", "evictions", "size"],
+  additionalProperties: false,
+};
+const statsOutput: AdminObjectSchema = {
+  type: "object",
+  properties: { item: statsSchema },
+  required: ["item"],
+  additionalProperties: false,
+};
+const acceptedOutput: AdminObjectSchema = {
+  type: "object",
+  properties: { accepted: { const: true }, id: { type: "string" }, deleted: { type: "boolean" } },
+  required: ["accepted"],
+  additionalProperties: false,
+};
+const setInput: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    id: stringSchema,
+    value: {},
+    ttl: { type: "integer", minimum: 1 },
+    tags: { type: "array", items: stringSchema, uniqueItems: true },
+  },
+  required: ["id", "value"],
+  additionalProperties: false,
+};
+const tagInput: AdminObjectSchema = {
+  type: "object",
+  properties: { id: stringSchema },
+  required: ["id"],
+  additionalProperties: false,
+};
+const namespaceInput: AdminObjectSchema = {
+  type: "object",
+  properties: { id: stringSchema },
   required: ["id"],
   additionalProperties: false,
 };
 
-const getOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: { item: entitySchema },
-  required: ["item"],
-  additionalProperties: false,
-};
-
-const actionInputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    id: { type: "string", minLength: 1 },
-    payload: { type: "object", additionalProperties: true },
-    reason: { type: "string", minLength: 1, maxLength: 2000 },
+export const cacheFnAdminResources = [
+  {
+    id: "keys", label: "Keys", description: "Inspect key names in the bound CacheFn namespace without returning cached values.",
+    icon: "cachefn:keys", risk: "sensitive", minimumScope: "environment", idField: "id",
+    displayFields: ["id", "exists"], searchableFields: ["id"], filterableFields: [], sortableFields: ["id"],
+    sensitiveFields: ["value"],
   },
-  additionalProperties: false,
-};
-
-const actionOutputSchema: AdminObjectSchema = {
-  type: "object",
-  properties: {
-    item: entitySchema,
-    accepted: { type: "boolean" },
-    operationReference: { type: "string" },
+  {
+    id: "stats", label: "Statistics", description: "Inspect live hit, miss, eviction, and capacity counters from the bound CacheFn instance.",
+    icon: "cachefn:stats", risk: "standard", minimumScope: "environment", idField: "id",
+    displayFields: ["hits", "misses", "hitRate", "size"], searchableFields: [], filterableFields: [], sortableFields: [], sensitiveFields: [],
   },
-  required: ["accepted"],
-  additionalProperties: true,
-};
+  {
+    id: "namespaces", label: "Namespace", description: "The deployment-bound CacheFn namespace that can be cleared as one confirmed target.",
+    icon: "cachefn:namespaces", risk: "standard", minimumScope: "environment", idField: "id",
+    displayFields: ["id"], searchableFields: ["id"], filterableFields: [], sortableFields: [], sensitiveFields: [],
+  },
+] as const satisfies readonly AdminResourceDefinition[];
 
-export const cacheFnAdminSchemas = {
-  entity: entitySchema,
-  listInput: listInputSchema,
-  listOutput: listOutputSchema,
-  getInput: getInputSchema,
-  getOutput: getOutputSchema,
-  actionInput: actionInputSchema,
-  actionOutput: actionOutputSchema,
-} as const satisfies Record<string, AdminJsonSchema>;
-
-function resourceOperations(
-  resource: CacheFnAdminResourceDefinition,
-): AdminOperationDefinition[] {
-  const baseId = "cachefn." + resource.id;
-  const basePath = "/resources/" + resource.id;
-  return [
-    {
-      id: baseId + ".list",
-      title: "List " + resource.label,
-      description:
-        "List permitted " +
-        resource.label.toLowerCase() +
-        " in the active administration scope.",
-      inputSchema: listInputSchema,
-      outputSchema: listOutputSchema,
-      route: { method: "GET", path: basePath },
-      permission: "cachefn." + resource.id + ".read",
-      safety: {
-        classification: "read",
-        idempotent: true,
-        requiresConfirmation: false,
-        audit: resource.risk === "sensitive" ? "required" : "optional",
-      },
-      pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 200 },
-      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-      redaction: { outputFields: resource.sensitiveFields },
-      target: { resource: resource.id, collection: true },
-    },
-    {
-      id: baseId + ".get",
-      title: "Get " + resource.label,
-      description:
-        "Get one permitted " + resource.label.toLowerCase() + " resource.",
-      inputSchema: getInputSchema,
-      outputSchema: getOutputSchema,
-      route: { method: "GET", path: basePath + "/:id" },
-      permission: "cachefn." + resource.id + ".read",
-      safety: {
-        classification: "read",
-        idempotent: true,
-        requiresConfirmation: false,
-        audit: resource.risk === "sensitive" ? "required" : "optional",
-      },
-      mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-      redaction: { outputFields: resource.sensitiveFields },
-      target: { resource: resource.id, idInput: "id" },
-    },
-  ];
-}
-
-function actionOperation(
-  action: CacheFnAdminActionDefinition,
-): AdminOperationDefinition {
-  const sensitiveFields =
-    cacheFnAdminResources.find((resource) => resource.id === action.resource)
-      ?.sensitiveFields ?? [];
-  return {
-    id: "cachefn." + action.resource + "." + action.id,
-    title: action.title,
-    description: action.description,
-    inputSchema:
-      action.target === "resource"
-        ? { ...actionInputSchema, required: ["id"] }
-        : actionInputSchema,
-    outputSchema: actionOutputSchema,
-    route: {
-      method: "POST",
-      path: "/resources/" + action.resource + "/actions/" + action.id,
-    },
-    permission: "cachefn." + action.resource + "." + action.id,
-    safety: {
-      classification: action.classification,
-      idempotent: action.idempotent,
-      requiresConfirmation: action.requiresConfirmation,
-      audit: "required",
-    },
-    mcp: {
-      readOnlyHint: false,
-      destructiveHint: action.classification === "destructive",
-      idempotentHint: action.idempotent,
-    },
-    redaction: { inputFields: sensitiveFields, outputFields: sensitiveFields },
-    target:
-      action.target === "resource"
-        ? { resource: action.resource, idInput: "id" }
-        : { resource: action.resource, collection: true },
-  };
-}
-
-const operations: AdminOperationDefinition[] = [
-  ...cacheFnAdminResources.flatMap(resourceOperations),
-  ...cacheFnAdminActions.map(actionOperation),
-];
-
-type FunctionAdminActionOperationId<TModule extends string, TAction> =
-  TAction extends { resource: infer TResource extends string; id: infer TActionId extends string }
-    ? `${TModule}.${TResource}.${TActionId}`
-    : never;
-
-export type CacheFnAdminOperationId =
-  | `cachefn.${(typeof cacheFnAdminResources)[number]["id"]}.list`
-  | `cachefn.${(typeof cacheFnAdminResources)[number]["id"]}.get`
-  | FunctionAdminActionOperationId<"cachefn", (typeof cacheFnAdminActions)[number]>;
+const readSafety = { classification: "read", idempotent: true, requiresConfirmation: false, audit: "optional" } as const;
+const writeSafety = { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" } as const;
+const destructiveSafety = { classification: "destructive", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "recent-auth", reason: "This operation permanently removes cached data from the selected namespace.", maxAgeSeconds: 300 }, audit: "required" } as const;
+const clearSafety = { classification: "destructive", idempotent: true, requiresConfirmation: true, confirmation: { risk: "critical", method: "mfa", reason: "Clearing a cache namespace permanently removes every key.", maxAgeSeconds: 300 }, audit: "required" } as const;
+const mcp = (readOnly: boolean, destructive = false) => ({ enabled: true, hints: { readOnly, destructive, idempotent: true, openWorld: false } }) as const;
 
 export const cacheFnAdminCapability = defineAdminCapability({
   schemaVersion: "1.0",
   id: "cachefn",
   displayName: "CacheFn",
   version: "1.0.0",
-  description:
-    "Commercial-grade, function-owned operator capabilities for CacheFn.",
+  description: "Real administration for a deployment-bound CacheFn instance.",
   category: "infrastructure",
   availability: "optional-product",
-  scopeLevels: ["organization", "workspace", "project", "environment"],
-  health: { operationId: "cachefn.health.list" },
-  dependencies: [],
+  scopeLevels: ["installation", "workspace", "project", "environment"],
   resources: cacheFnAdminResources,
-  navigation: [
-    {
-      id: "cachefn",
-      label: "CacheFn",
-      path: "/modules/cachefn",
-      icon: "cachefn",
-      description: "Operate CacheFn in the active scope.",
-      order: 100,
-    },
-  ],
-  operations: operations as readonly (AdminOperationDefinition & { readonly id: CacheFnAdminOperationId })[],
+  navigation: [{ id: "cachefn", label: "CacheFn", path: "/modules/cachefn", icon: "cachefn", description: "Operate the bound cache namespace.", order: 100 }],
+  operations: [
+    { id: "cachefn.keys.list", title: "List cache keys", description: "List key names without returning cached values.", inputSchema: listInput, outputSchema: keyListSchema, route: { method: "GET", path: "/resources/keys" }, permission: "cachefn.keys.read", minimumScope: "environment", safety: readSafety, target: { resource: "keys", collection: true }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(true) },
+    { id: "cachefn.keys.get", title: "Inspect cache key", description: "Check whether a key exists without returning its cached value.", inputSchema: keyInput, outputSchema: keyOutput, route: { method: "GET", path: "/resources/keys/:id" }, permission: "cachefn.keys.read", minimumScope: "environment", safety: readSafety, target: { resource: "keys", idInput: "id" }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(true) },
+    { id: "cachefn.stats.list", title: "Read cache statistics", description: "Read live cache counters and current size.", inputSchema: emptyInput, outputSchema: statsOutput, route: { method: "GET", path: "/resources/stats" }, permission: "cachefn.stats.read", minimumScope: "environment", safety: readSafety, target: { resource: "stats", collection: true }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(true) },
+    { id: "cachefn.keys.set", title: "Set cache key", description: "Set one value in the bound cache namespace.", inputSchema: setInput, outputSchema: acceptedOutput, route: { method: "PUT", path: "/resources/keys/:id" }, permission: "cachefn.keys.set", minimumScope: "environment", safety: writeSafety, target: { resource: "keys", idInput: "id" }, redaction: { inputFields: ["value"], outputFields: [] }, mcp: mcp(false) },
+    { id: "cachefn.keys.delete", title: "Delete cache key", description: "Permanently remove one key from the bound cache namespace.", inputSchema: keyInput, outputSchema: acceptedOutput, route: { method: "DELETE", path: "/resources/keys/:id" }, permission: "cachefn.keys.delete", minimumScope: "environment", safety: destructiveSafety, target: { resource: "keys", idInput: "id" }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(false, true) },
+    { id: "cachefn.keys.invalidate-tag", title: "Invalidate cache tag", description: "Remove every cached value carrying a tag.", inputSchema: tagInput, outputSchema: acceptedOutput, route: { method: "POST", path: "/resources/keys/actions/invalidate-tag" }, permission: "cachefn.keys.invalidate", minimumScope: "environment", safety: writeSafety, target: { resource: "keys", collection: true }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(false) },
+    { id: "cachefn.namespaces.clear", title: "Clear cache namespace", description: "Permanently remove every key in the bound cache namespace.", inputSchema: namespaceInput, outputSchema: acceptedOutput, route: { method: "POST", path: "/resources/namespaces/:id/actions/clear" }, permission: "cachefn.namespaces.clear", minimumScope: "environment", safety: clearSafety, target: { resource: "namespaces", idInput: "id" }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(false, true) },
+  ] as const,
 });
 
-export function createCacheFnAdminClient(adminClient: AdminClient) {
-  return createCapabilityAdminClient(cacheFnAdminCapability, adminClient);
-}
-
-export interface CacheFnAdminServiceRequest {
-  operationId: CacheFnAdminOperationId;
-  input: unknown;
-  context: AdminOperationContext;
-}
+export type CacheFnAdminOperationId = (typeof cacheFnAdminCapability.operations)[number]["id"];
+export interface CacheFnListKeysInput { pattern?: string; limit?: number }
+export interface CacheFnKeyInput { id: string }
+export interface CacheFnSetKeyInput extends CacheFnKeyInput { value: unknown; ttl?: number; tags?: string[] }
+export interface CacheFnTagInput { id: string }
+export interface CacheFnKeyListOutput { items: Array<{ id: string; exists: true }>; nextCursor: null }
+export interface CacheFnKeyOutput { item: { id: string; exists: boolean } }
+export interface CacheFnStatsOutput { item: CacheStats }
+export interface CacheFnAcceptedOutput { accepted: true; id?: string; deleted?: boolean }
 
 export interface CacheFnAdminService {
-  execute(
-    request: CacheFnAdminServiceRequest,
-  ):
-    | Promise<AdminOperationResult<Record<string, unknown>>>
-    | AdminOperationResult<Record<string, unknown>>;
+  listKeys(input: CacheFnListKeysInput, context: AdminOperationContext): Promise<CacheFnKeyListOutput>;
+  getKey(input: CacheFnKeyInput, context: AdminOperationContext): Promise<CacheFnKeyOutput>;
+  stats(input: Record<string, never>, context: AdminOperationContext): Promise<CacheFnStatsOutput>;
+  setKey(input: CacheFnSetKeyInput, context: AdminOperationContext): Promise<CacheFnAcceptedOutput>;
+  deleteKey(input: CacheFnKeyInput, context: AdminOperationContext): Promise<CacheFnAcceptedOutput>;
+  invalidateTag(input: CacheFnTagInput, context: AdminOperationContext): Promise<CacheFnAcceptedOutput>;
+  clear(input: CacheFnKeyInput, context: AdminOperationContext): Promise<CacheFnAcceptedOutput>;
 }
 
-export function createCacheFnAdminAdapter(
-  service: CacheFnAdminService,
-): AdminCapabilityAdapter {
-  const handlers: Record<
-    string,
-    (request: {
-      input: unknown;
-      context: AdminOperationContext;
-    }) =>
-      | Promise<AdminOperationResult<Record<string, unknown>>>
-      | AdminOperationResult<Record<string, unknown>>
-  > = {};
-
-  for (const operation of cacheFnAdminCapability.operations) {
-    handlers[operation.id] = (request) =>
-      service.execute({
-        operationId: operation.id,
-        input: request.input,
-        context: request.context,
-      });
-  }
-
-  return createKernelAdminCapabilityAdapter(cacheFnAdminCapability, handlers);
+function bind<TInput, TOutput>(handler: (input: TInput, context: AdminOperationContext) => Promise<TOutput>) {
+  return ({ input, context }: AdminOperationRequest) => handler(input as TInput, context);
 }
 
+export function createCacheFnAdminAdapter(service: CacheFnAdminService): AdminCapabilityAdapter<typeof cacheFnAdminCapability> {
+  return createKernelAdminCapabilityAdapter(cacheFnAdminCapability, {
+    "cachefn.keys.list": bind(service.listKeys), "cachefn.keys.get": bind(service.getKey), "cachefn.stats.list": bind(service.stats),
+    "cachefn.keys.set": bind(service.setKey), "cachefn.keys.delete": bind(service.deleteKey),
+    "cachefn.keys.invalidate-tag": bind(service.invalidateTag), "cachefn.namespaces.clear": bind(service.clear),
+  });
+}
+
+export interface CacheFnDomainAdminServiceOptions {
+  cache: CacheFn<unknown>;
+  environmentId: string;
+  namespace?: string;
+}
+
+export function createCacheFnDomainAdminService(options: CacheFnDomainAdminServiceOptions): CacheFnAdminService {
+  if (!options.environmentId.trim()) throw new AdminError("invalid_argument", "CacheFn admin binding requires an environmentId.");
+  const assertScope = (context: AdminOperationContext) => {
+    if (context.scope.environmentId !== options.environmentId) throw new AdminError("forbidden", "The active environment cannot access this CacheFn instance.");
+    if (options.namespace !== undefined && context.scope.namespace !== options.namespace) throw new AdminError("forbidden", "The active namespace cannot access this CacheFn instance.");
+  };
+  return {
+    async listKeys(input, context) { assertScope(context); const keys = await options.cache.keys(input.pattern); return { items: keys.slice(0, input.limit ?? 100).map((id) => ({ id, exists: true as const })), nextCursor: null }; },
+    async getKey(input, context) { assertScope(context); return { item: { id: input.id, exists: await options.cache.has(input.id) } }; },
+    async stats(_input, context) { assertScope(context); return { item: await options.cache.getStats() }; },
+    async setKey(input, context) { assertScope(context); await options.cache.set(input.id, input.value, { ...(input.ttl ? { ttl: input.ttl } : {}), ...(input.tags ? { tags: input.tags } : {}) }); return { accepted: true, id: input.id }; },
+    async deleteKey(input, context) { assertScope(context); return { accepted: true, id: input.id, deleted: await options.cache.delete(input.id) }; },
+    async invalidateTag(input, context) { assertScope(context); await options.cache.invalidateByTag(input.id); return { accepted: true, id: input.id }; },
+    async clear(input, context) { assertScope(context); const namespaceId = options.namespace ?? options.environmentId; if (input.id !== namespaceId) throw new AdminError("not_found", "The requested CacheFn namespace is not bound to this environment."); await options.cache.clear(); return { accepted: true, id: input.id }; },
+  };
+}
+
+export function createCacheFnDomainAdminAdapter(options: CacheFnDomainAdminServiceOptions) {
+  return createCacheFnAdminAdapter(createCacheFnDomainAdminService(options));
+}
+export function createCacheFnAdminClient(adminClient: AdminClient) { return createCapabilityAdminClient(cacheFnAdminCapability, adminClient); }
 export const adminCapability = cacheFnAdminCapability;
 export const createAdminAdapter = createCacheFnAdminAdapter;

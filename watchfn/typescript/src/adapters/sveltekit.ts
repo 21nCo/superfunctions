@@ -7,13 +7,22 @@ export interface SvelteKitWatchFnOptions {
   trackRequests?: boolean;
 }
 
+export type SvelteKitWatchFnHandler = (event: RequestEvent) => Promise<Response> | Response;
+export interface SvelteKitWatchFnHandlers {
+  GET: SvelteKitWatchFnHandler;
+  POST: SvelteKitWatchFnHandler;
+  PUT: SvelteKitWatchFnHandler;
+  DELETE: SvelteKitWatchFnHandler;
+  PATCH: SvelteKitWatchFnHandler;
+}
+
 /**
  * Create SvelteKit handlers for WatchFn
  */
 export function createSvelteKitHandler(
   watchFn: WatchFn,
   options: SvelteKitWatchFnOptions = {}
-) {
+): SvelteKitWatchFnHandlers {
   const { GET, POST, PUT, DELETE, PATCH } = toSvelteKitHandlers(createWatchFnRouter(watchFn));
 
   // Wrap handlers with request tracking

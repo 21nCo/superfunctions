@@ -33,6 +33,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@flowfn/core": "0.0.2",
     "@superfunctions/admin": "0.1.0"
   },
   "devDependencies": {
