@@ -28,6 +28,10 @@ describe('theme-tailwind integration', () => {
     expect(preset.plugins[0]?.utilities['.uifn-hover--stripe']).toEqual({
       '--uifn-hover-effect': 'stripe',
     });
+    const registered: Record<string, Record<string, string>>[] = [];
+    preset.plugins[0]?.handler({ addUtilities: (utilities) => registered.push(utilities) });
+    expect(registered).toEqual([preset.plugins[0]?.utilities]);
+    expect(preset.plugins[0]?.config).toEqual({});
   });
 
   it('TV-STYLE-005 negative rejects dynamic class fragments', () => {

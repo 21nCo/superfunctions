@@ -27,7 +27,23 @@ export interface TailwindPresetOutput {
     };
   };
   safelist: string[];
-  plugins: Array<{ name: string; utilities: Record<string, Record<string, string>> }>;
+  plugins: UIFnTailwindPlugin[];
+}
+
+export interface TailwindPluginApi {
+  addUtilities: (utilities: Record<string, Record<string, string>>) => void;
+}
+
+/**
+ * Tailwind accepts plugin objects with a `handler` function. Keep the named
+ * utility map on the object as public, inspectable metadata for build tools
+ * and tests while also returning a preset Tailwind can execute directly.
+ */
+export interface UIFnTailwindPlugin {
+  name: string;
+  utilities: Record<string, Record<string, string>>;
+  handler: (api: TailwindPluginApi) => void;
+  config: Record<string, never>;
 }
 
 const UNSAFE_DYNAMIC_FRAGMENT_PATTERN = /\$\{|computed|`|\+|:\$\{|hover:\$\{|hover:\{|\[object Object\]/;
@@ -41,6 +57,20 @@ function createSemanticColorMap(): Record<string, string> {
       names.map((name) => [`uifn-${group}-${name}`, `var(--uifn-color-${group}-${name})`])
     )
   );
+}
+
+function createUtilitiesPlugin(
+  name: string,
+  utilities: Record<string, Record<string, string>>
+): UIFnTailwindPlugin {
+  return {
+    name,
+    utilities,
+    handler({ addUtilities }) {
+      addUtilities(utilities);
+    },
+    config: {},
+  };
 }
 
 export function assertSafeTailwindClassFragments(fragments: string[]): void {
@@ -83,38 +113,35 @@ export function createTailwindPreset(options: TailwindPresetOptions = {}): Tailw
     },
     safelist,
     plugins: [
-      {
-        name: 'uifn-recipes',
-        utilities: {
-          '.uifn-surface': {
-            color: 'var(--uifn-color-text-primary)',
-            backgroundColor: 'var(--uifn-surface, var(--uifn-color-surface-canvas))',
-          },
-          '.uifn-button': {
-            color: 'var(--uifn-button-foreground, var(--uifn-color-text-primary))',
-            backgroundColor: 'var(--uifn-button-surface)',
-            borderRadius: 'var(--uifn-button-radius, var(--uifn-radius-md))',
-            transitionDuration: 'var(--uifn-motion-duration-fast)',
-            transitionTimingFunction: 'var(--uifn-motion-easing-standard)',
-          },
-          '.uifn-button--primary': { '--uifn-button-surface': 'var(--uifn-color-accent-solid)' },
-          '.uifn-button--secondary': { '--uifn-button-surface': 'var(--uifn-color-surface-raised)' },
-          '.uifn-button--ghost': { '--uifn-button-surface': 'transparent' },
-          '.uifn-button--danger': { '--uifn-button-surface': 'var(--uifn-color-danger-solid)' },
-          '.uifn-button--sm': { '--uifn-button-density': 'var(--uifn-density-compact)' },
-          '.uifn-button--md': { '--uifn-button-density': 'var(--uifn-density-comfortable)' },
-          '.uifn-button--lg': { '--uifn-button-density': 'var(--uifn-density-spacious)' },
-          '.uifn-hover--tint': { '--uifn-hover-effect': 'tint' },
-          '.uifn-hover--stripe': { '--uifn-hover-effect': 'stripe' },
-          '.uifn-hover--border': { '--uifn-hover-effect': 'border' },
-          '.uifn-hover--lift': { '--uifn-hover-effect': 'lift' },
-          '.uifn-hover--none': { '--uifn-hover-effect': 'none' },
+      createUtilitiesPlugin('uifn-recipes', {
+        '.uifn-surface': {
+          color: 'var(--uifn-color-text-primary)',
+          backgroundColor: 'var(--uifn-surface, var(--uifn-color-surface-canvas))',
         },
-      },
-      {
-        name: 'uifn-theme-selectors',
-        utilities: Object.fromEntries(selectors.map((selector) => [selector, {}])),
-      },
+        '.uifn-button': {
+          color: 'var(--uifn-button-foreground, var(--uifn-color-text-primary))',
+          backgroundColor: 'var(--uifn-button-surface)',
+          borderRadius: 'var(--uifn-button-radius, var(--uifn-radius-md))',
+          transitionDuration: 'var(--uifn-motion-duration-fast)',
+          transitionTimingFunction: 'var(--uifn-motion-easing-standard)',
+        },
+        '.uifn-button--primary': { '--uifn-button-surface': 'var(--uifn-color-accent-solid)' },
+        '.uifn-button--secondary': { '--uifn-button-surface': 'var(--uifn-color-surface-raised)' },
+        '.uifn-button--ghost': { '--uifn-button-surface': 'transparent' },
+        '.uifn-button--danger': { '--uifn-button-surface': 'var(--uifn-color-danger-solid)' },
+        '.uifn-button--sm': { '--uifn-button-density': 'var(--uifn-density-compact)' },
+        '.uifn-button--md': { '--uifn-button-density': 'var(--uifn-density-comfortable)' },
+        '.uifn-button--lg': { '--uifn-button-density': 'var(--uifn-density-spacious)' },
+        '.uifn-hover--tint': { '--uifn-hover-effect': 'tint' },
+        '.uifn-hover--stripe': { '--uifn-hover-effect': 'stripe' },
+        '.uifn-hover--border': { '--uifn-hover-effect': 'border' },
+        '.uifn-hover--lift': { '--uifn-hover-effect': 'lift' },
+        '.uifn-hover--none': { '--uifn-hover-effect': 'none' },
+      }),
+      createUtilitiesPlugin(
+        'uifn-theme-selectors',
+        Object.fromEntries(selectors.map((selector) => [selector, {}]))
+      ),
     ],
   };
 }

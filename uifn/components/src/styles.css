@@ -284,6 +284,59 @@
     padding: 1.5rem;
   }
 
+  :where([data-uifn-component="drawer"][data-uifn-part="positioner"][data-side="left"]) {
+    justify-content: flex-start;
+  }
+
+  :where([data-uifn-component="drawer"][data-uifn-part="content"][data-side="left"]) {
+    margin-inline: 0 auto;
+    border-inline-start: 0;
+    border-inline-end: 1px solid var(--uifn-component-border);
+  }
+
+  :where([data-uifn-component="drawer"][data-uifn-part="positioner"][data-side="right"]) {
+    justify-content: flex-end;
+  }
+
+  :where([data-uifn-component="drawer"][data-uifn-part="content"][data-side="right"]) {
+    margin-inline: auto 0;
+  }
+
+  :where(
+    [data-uifn-component="drawer"][data-uifn-part="positioner"][data-side="top"],
+    [data-uifn-component="drawer"][data-uifn-part="positioner"][data-side="bottom"]
+  ) {
+    align-items: flex-start;
+    justify-content: stretch;
+  }
+
+  :where([data-uifn-component="drawer"][data-uifn-part="positioner"][data-side="bottom"]) {
+    align-items: flex-end;
+  }
+
+  :where(
+    [data-uifn-component="drawer"][data-uifn-part="content"][data-side="top"],
+    [data-uifn-component="drawer"][data-uifn-part="content"][data-side="bottom"]
+  ) {
+    inline-size: 100%;
+    block-size: auto;
+    max-block-size: min(90dvh, 44rem);
+    margin: 0;
+    border-inline-start: 0;
+    border-inline-end: 0;
+    border-radius: 0;
+  }
+
+  :where([data-uifn-component="drawer"][data-uifn-part="content"][data-side="top"]) {
+    border-block-start: 0;
+    border-block-end: 1px solid var(--uifn-component-border);
+  }
+
+  :where([data-uifn-component="drawer"][data-uifn-part="content"][data-side="bottom"]) {
+    border-block-start: 1px solid var(--uifn-component-border);
+    border-block-end: 0;
+  }
+
   :where([data-uifn-component="drawer"][data-uifn-part="handle"]) {
     inline-size: 3rem;
     block-size: .25rem;
@@ -963,15 +1016,28 @@
   }
 
   :where([data-uifn-component="avatar"][data-uifn-part="root"]) {
+    --uifn-avatar-size: 4rem;
     position: relative;
     display: inline-grid;
-    inline-size: 4rem;
-    block-size: 4rem;
+    inline-size: var(--uifn-avatar-size);
+    block-size: var(--uifn-avatar-size);
     place-items: center;
     overflow: hidden;
     border-radius: 999px;
     background: var(--uifn-component-bg-muted);
     font-weight: 700;
+  }
+
+  :where([data-uifn-component="avatar"][data-uifn-part="root"]:is([data-uifn-size="sm"], [data-uifn-size="icon-sm"])) {
+    --uifn-avatar-size: var(--uifn-control-size-sm, 2rem);
+  }
+
+  :where([data-uifn-component="avatar"][data-uifn-part="root"]:is([data-uifn-size="md"], [data-uifn-size="icon-md"])) {
+    --uifn-avatar-size: var(--uifn-control-size-md, 2.5rem);
+  }
+
+  :where([data-uifn-component="avatar"][data-uifn-part="root"]:is([data-uifn-size="lg"], [data-uifn-size="icon-lg"])) {
+    --uifn-avatar-size: var(--uifn-control-size-lg, 3rem);
   }
 
   :where([data-uifn-component="avatar"][data-uifn-part="image"]) {

@@ -986,7 +986,24 @@ const STYLED_COMPONENT_SEEDS = [
         "stability": "stable semantic state"
       }
     ],
-    "cssVariables": [],
+    "cssVariables": [
+      {
+        "name": "--uifn-avatar-size",
+        "scope": "component"
+      },
+      {
+        "name": "--uifn-control-size-lg",
+        "scope": "shared"
+      },
+      {
+        "name": "--uifn-control-size-md",
+        "scope": "shared"
+      },
+      {
+        "name": "--uifn-control-size-sm",
+        "scope": "shared"
+      }
+    ],
     "limitations": [
       0,
       "Apply the static-foundation profile specifically to Avatar; implementation vectors own exact behavior."
