@@ -78,4 +78,26 @@ describe("React toolbar", () => {
     expect(restore).toHaveBeenCalledWith(1);
     await act(async () => root.unmount());
   });
+
+  it("inserts selected-file Markdown through the controller without a visual surface", async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const controller = createEditor({
+      markdown: "before",
+      projector: createMarkdownProjector(),
+      selection: { kind: "text", anchor: 6, head: 6 },
+    });
+    const target = document.createElement("div");
+    const root = createRoot(target);
+    await act(async () => root.render(
+      <MdfnAuthoringChrome controller={controller} mode="source" onSelectFiles={async () => "![asset](mdfn-asset:filefn/id)"} />,
+    ));
+    const input = target.querySelector<HTMLInputElement>('[aria-label="Select files"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], "x.png", { type: "image/png" })] });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(controller.getState().markdown).toBe("before![asset](mdfn-asset:filefn/id)");
+    await act(async () => root.unmount());
+  });
 });

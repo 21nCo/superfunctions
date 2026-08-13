@@ -65,21 +65,32 @@ export const MdfnEditor = React.forwardRef<MdfnEditorHandle, MdfnEditorProps>(fu
 
   React.useEffect(() => {
     let cancelled = false;
-    let cleanup: () => void = () => {};
+    const destroyers: Array<() => void> = [];
+    const cleanup = (): void => {
+      for (const destroy of destroyers.splice(0).reverse()) destroy();
+    };
+    setLoadError(null);
     const mount = async (): Promise<void> => {
       try {
-        const destroyers: Array<() => void> = [];
         if ((mode === "visual" || mode === "split") && visualRef.current) {
           const { createDomEditor } = await import("@mdfn/dom");
           if (cancelled || !visualRef.current) return;
-          visual.current = createDomEditor({ target: visualRef.current, controller, readOnly, attributes: { "aria-label": ariaLabel }, onFiles });
-          destroyers.push(() => { visual.current?.destroy(); visual.current = null; });
+          const mountedVisual = createDomEditor({ target: visualRef.current, controller, readOnly, attributes: { "aria-label": ariaLabel }, onFiles });
+          visual.current = mountedVisual;
+          destroyers.push(() => {
+            mountedVisual.destroy();
+            if (visual.current === mountedVisual) visual.current = null;
+          });
         }
         if ((mode === "source" || mode === "split") && sourceRef.current) {
           const { createSourceEditor } = await import("@mdfn/source");
           if (cancelled || !sourceRef.current) return;
-          source.current = createSourceEditor({ target: sourceRef.current, controller, readOnly, ariaLabel: `${ariaLabel} source` });
-          destroyers.push(() => { source.current?.destroy(); source.current = null; });
+          const mountedSource = createSourceEditor({ target: sourceRef.current, controller, readOnly, ariaLabel: `${ariaLabel} source` });
+          source.current = mountedSource;
+          destroyers.push(() => {
+            mountedSource.destroy();
+            if (source.current === mountedSource) source.current = null;
+          });
         }
         if ((mode === "preview" || mode === "read-only") && previewRef.current) {
           const { createPreview } = await import("@mdfn/source");
@@ -87,8 +98,9 @@ export const MdfnEditor = React.forwardRef<MdfnEditorHandle, MdfnEditorProps>(fu
           previewRef.current.innerHTML = createPreview(controller).html;
         }
         onReady?.(createHandle());
-        cleanup = () => destroyers.reverse().forEach((destroy) => destroy());
       } catch (error) {
+        cleanup();
+        if (cancelled) return;
         const resolved = error instanceof Error ? error : new Error(String(error));
         setLoadError(resolved);
         onLoadError?.(resolved);
@@ -104,6 +116,7 @@ export const MdfnEditor = React.forwardRef<MdfnEditorHandle, MdfnEditorProps>(fu
     void import("@mdfn/source").then(({ createPreview }) => {
       if (!cancelled && previewRef.current) previewRef.current.innerHTML = createPreview(controller).html;
     }).catch((error: unknown) => {
+      if (cancelled) return;
       const resolved = error instanceof Error ? error : new Error(String(error));
       setLoadError(resolved);
       onLoadError?.(resolved);

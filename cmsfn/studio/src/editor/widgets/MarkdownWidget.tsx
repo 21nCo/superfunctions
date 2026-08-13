@@ -32,17 +32,21 @@ export function MarkdownWidget({ value, onChange, required, disabled, dialect = 
   const content = isMarkdownContent(value) ? value : markdownContent(typeof value === "string" ? value : "", { profile: fallbackProfile });
   const activeProfile = content.profile;
   const extensionKey = activeProfile.extensions.join("\u0000");
+  const sidecarKey = JSON.stringify(content.sidecar ?? null);
   const controller = useMemo(() => {
     const resolved = [commonmarkExtension, ...(activeProfile.dialect === "gfm" ? [gfmExtension] : []), ...resolveConfiguredExtensions(activeProfile.extensions)];
-    return createMdfn({ markdown: content.markdown, markdownOptions: { dialect: activeProfile.dialect, allowRawHtml: activeProfile.allowRawHtml, schemaVersion: activeProfile.schemaVersion, extensions: resolved } });
+    return createMdfn({ markdown: content.markdown, sidecar: content.sidecar, markdownOptions: { dialect: activeProfile.dialect, allowRawHtml: activeProfile.allowRawHtml, schemaVersion: activeProfile.schemaVersion, extensions: resolved } });
   }, [path, activeProfile.id, activeProfile.dialect, activeProfile.allowRawHtml, activeProfile.schemaVersion, extensionKey]);
   useEffect(() => {
     const next = content.markdown;
-    const current = controller.getState().markdown;
-    if (next !== current) controller.dispatch(new Transaction().replaceSource(0, current.length, next).withSource("cmsfn:external"));
-  }, [controller, content.markdown]);
+    const current = controller.getState();
+    let transaction = new Transaction().withSource("cmsfn:external").withMetadata({ addToHistory: false });
+    if (next !== current.markdown) transaction = transaction.replaceSource(0, current.markdown.length, next);
+    if (sidecarKey !== JSON.stringify(current.sidecar ?? null)) transaction = transaction.setSidecar(content.sidecar);
+    if (transaction.operations.length > 0) controller.dispatch(transaction);
+  }, [controller, content.markdown, sidecarKey]);
   useEffect(() => controller.subscribe((change) => {
-    if (change.documentChanged && change.source !== "cmsfn:external") onChange(markdownContent(change.current.markdown, { profile: activeProfile, schemaHash: change.current.schemaHash, sidecar: change.current.sidecar }));
+    if ((change.documentChanged || change.sidecarChanged) && change.source !== "cmsfn:external") onChange(markdownContent(change.current.markdown, { profile: activeProfile, schemaHash: change.current.schemaHash, sidecar: change.current.sidecar }));
   }), [controller, onChange, activeProfile]);
   useEffect(() => () => controller.destroy(), [controller]);
   return (

@@ -111,6 +111,12 @@ interface RenderContext {
   nodeCount: number;
 }
 
+function countRenderedNode(context: RenderContext): void {
+  context.nodeCount += 1;
+  const maxNodes = context.policy.maxNodes ?? 100_000;
+  if (context.nodeCount > maxNodes) throw new RangeError(`MDFN_RENDER_NODE_LIMIT_EXCEEDED:${maxNodes}`);
+}
+
 const EXTENSION_TAGS = new Set([
   "a", "aside", "audio", "blockquote", "br", "code", "dd", "details", "div", "dl", "dt", "em", "figcaption", "figure", "img",
   "h1", "h2", "h3", "h4", "h5", "h6", "hr", "kbd", "li", "mark", "ol", "p", "pre", "s", "section",
@@ -119,6 +125,7 @@ const EXTENSION_TAGS = new Set([
 const EXTENSION_ATTRS = new Set(["alt", "class", "colspan", "controls", "decoding", "id", "loading", "open", "rel", "role", "rowspan", "target", "title"]);
 
 function renderExtensionNode(node: ExtensionRenderNode, context: RenderContext, depth: number): string {
+  countRenderedNode(context);
   if (!node || typeof node !== "object" || !EXTENSION_TAGS.has(node.tag)) throw new Error("MDFN_EXTENSION_RENDER_TAG_FORBIDDEN");
   if (depth > (context.policy.maxDepth ?? 128)) throw new RangeError(`MDFN_RENDER_DEPTH_LIMIT_EXCEEDED:${context.policy.maxDepth ?? 128}`);
   const attributes: string[] = [];
@@ -157,10 +164,8 @@ function pushUnsafeUrl(context: RenderContext, node: MdfnNode, kind: "link" | "i
 }
 
 function renderNode(node: MdfnNode, context: RenderContext, depth: number): string {
-  context.nodeCount += 1;
-  const maxNodes = context.policy.maxNodes ?? 100_000;
+  countRenderedNode(context);
   const maxDepth = context.policy.maxDepth ?? 128;
-  if (context.nodeCount > maxNodes) throw new RangeError(`MDFN_RENDER_NODE_LIMIT_EXCEEDED:${maxNodes}`);
   if (depth > maxDepth) throw new RangeError(`MDFN_RENDER_DEPTH_LIMIT_EXCEEDED:${maxDepth}`);
 
   for (const extension of context.registry.extensions) {
@@ -188,10 +193,14 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
       const tight = node.attrs?.spread !== true && (node.content ?? []).every((item) => item.attrs?.spread !== true);
       const task = (node.content ?? []).some((item) => typeof item.attrs?.checked === "boolean");
       const items = (node.content ?? []).map((item) => {
-        context.nodeCount += 1;
+        countRenderedNode(context);
         const checked = item.attrs?.checked;
         const checkbox = typeof checked === "boolean" ? `<input type="checkbox" disabled${checked ? " checked" : ""}> ` : "";
-        const body = (item.content ?? []).map((child) => child.type === "paragraph" && tight ? renderChildren(child, context, depth + 2) : renderNode(child, context, depth + 2)).join("");
+        const body = (item.content ?? []).map((child) => {
+          if (child.type !== "paragraph" || !tight) return renderNode(child, context, depth + 2);
+          countRenderedNode(context);
+          return renderChildren(child, context, depth + 2);
+        }).join("");
         return `<li${typeof checked === "boolean" ? ' class="task-list-item"' : ""}>${checkbox}${body}</li>`;
       }).join("");
       return ordered
@@ -241,12 +250,15 @@ function renderNode(node: MdfnNode, context: RenderContext, depth: number): stri
     case "table": {
       const rows = node.content ?? [];
       const align = Array.isArray(node.attrs?.align) ? node.attrs.align : [];
-      const renderRow = (row: MdfnNode, header: boolean): string => `<tr>${(row.content ?? []).map((cell, index) => {
-        context.nodeCount += 1;
+      const renderRow = (row: MdfnNode, header: boolean): string => {
+        countRenderedNode(context);
+        return `<tr>${(row.content ?? []).map((cell, index) => {
+        countRenderedNode(context);
         const tag = header ? "th" : "td";
         const alignment = typeof align[index] === "string" && align[index] ? ` align="${escapeHtml(String(align[index]))}"` : "";
         return `<${tag}${alignment}>${renderChildren(cell, context, depth + 2)}</${tag}>`;
-      }).join("")}</tr>`;
+        }).join("")}</tr>`;
+      };
       const head = rows[0] ? `<thead>${renderRow(rows[0], true)}</thead>` : "";
       const body = rows.length > 1 ? `<tbody>${rows.slice(1).map((row) => renderRow(row, false)).join("")}</tbody>` : "";
       return `<table>${head}${body}</table>`;

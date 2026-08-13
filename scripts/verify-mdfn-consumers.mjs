@@ -47,7 +47,7 @@ function parsePackOutput(stdout) {
 
 function pack(packageName) {
   const workspace = graph.stable.find((entry) => entry.name === packageName)?.path ?? packageName;
-  const result = run("npm", ["pack", "--workspace", workspace, "--pack-destination", packRoot, "--json", "--ignore-scripts"], repoRoot);
+  const result = run("npm", ["pack", "--workspace", workspace, "--pack-destination", packRoot, "--json"], repoRoot);
   if (result.status !== 0) {
     fail("MDFN_CONSUMER_PACK_FAILED", { package: packageName, stdout: sanitize(result.stdout), stderr: sanitize(result.stderr) });
     return undefined;

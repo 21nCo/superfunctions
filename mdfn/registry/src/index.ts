@@ -30,7 +30,7 @@ export function createRegistry(input: { readonly extensions?: readonly MdfnExten
     resolveExtensions([...extensions.values(), extension]);
     extensions.set(extension.name, extension);
   };
-  for (const extension of input.extensions ?? []) registerExtension(extension);
+  for (const extension of resolveExtensions(input.extensions ?? []).extensions) extensions.set(extension.name, extension);
   const registerProfile = (profile: MdfnProfile): void => {
     if (!profile.name || !profile.version) throw new Error("MDFN_REGISTRY_PROFILE_INVALID");
     if (profiles.has(profile.name)) throw new Error(`MDFN_REGISTRY_PROFILE_EXISTS:${profile.name}`);

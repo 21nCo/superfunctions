@@ -296,7 +296,7 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
       const selection = state.selection?.kind === "text" ? state.selection : { anchor: state.markdown.length, head: state.markdown.length };
       const from = Math.min(selection.anchor, selection.head);
       const to = Math.max(selection.anchor, selection.head);
-      options.controller.dispatch(new MdfnTransaction().replaceSource(from, to, markdown).setSelection({ kind: "text", anchor: from + markdown.length, head: from + markdown.length }).withSource("visual:insert-markdown"));
+      options.controller.dispatch(new MdfnTransaction().replaceSource(from, to, markdown).setSelection({ kind: "text", anchor: from + markdown.length, head: from + markdown.length }).withSource("command:insert-markdown"));
       return true;
     },
     focus() { view.focus(); },

@@ -44,7 +44,9 @@ export function runPreservationCorpus(fixtures: readonly PreservationFixture[]):
 }
 
 export function certifyExtension(extension: MdfnExtension, fixture: PreservationFixture): ConformanceResult {
-  const options = { ...(fixture.options ?? {}), extensions: [...(fixture.options?.extensions && Array.isArray(fixture.options.extensions) ? fixture.options.extensions : []), extension] };
+  const configured = fixture.options?.extensions;
+  const existing = configured ? ("schemaHash" in configured ? configured.extensions : configured) : [];
+  const options = { ...(fixture.options ?? {}), extensions: [...existing, extension] };
   const findings = [...runPreservationCorpus([{ ...fixture, options }]).findings];
   let passed = findings.length === 0 ? 1 : 0;
   try {
@@ -187,7 +189,7 @@ export function traceState(framework: AdapterSemanticTrace["framework"], fixture
     schemaVersion: 1,
     framework,
     fixture,
-    steps: states.map((state) => ({ name: `version:${state.version}`, state: { markdown: state.markdown, dirty: state.dirty } })),
+    steps: states.map((state) => ({ name: `version:${state.version}`, state: { markdown: state.markdown, dirty: state.dirty, selection: state.selection as MdfnJsonValue, diagnostics: state.diagnostics.map((entry) => entry.code) } })),
     finalMarkdown: final.markdown,
     finalSelection: final.selection as MdfnJsonValue,
     diagnostics: final.diagnostics.map((entry) => entry.code),
@@ -198,7 +200,7 @@ export function traceState(framework: AdapterSemanticTrace["framework"], fixture
 export function compareSemanticTraces(reference: AdapterSemanticTrace, traces: readonly AdapterSemanticTrace[]): ConformanceResult {
   const findings: ConformanceFinding[] = [];
   for (const trace of traces) {
-    const comparable = (value: AdapterSemanticTrace) => JSON.stringify({ steps: value.steps, finalMarkdown: value.finalMarkdown, finalSelection: value.finalSelection, diagnostics: value.diagnostics });
+    const comparable = (value: AdapterSemanticTrace) => JSON.stringify({ steps: value.steps, finalMarkdown: value.finalMarkdown, finalSelection: value.finalSelection, diagnostics: value.diagnostics, cleanup: value.cleanup });
     if (comparable(trace) !== comparable(reference)) findings.push({ code: "MDFN_ADAPTER_TRACE_DIVERGED", fixture: trace.fixture, message: `${trace.framework} diverged from vanilla semantics` });
   }
   return { ok: findings.length === 0, passed: traces.length - findings.length, failed: findings.length, findings };

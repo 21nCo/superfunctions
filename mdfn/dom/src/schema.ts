@@ -27,8 +27,8 @@ export const mdfnSchema = new Schema({
     blockquote: block({ content: "block+", group: "block", defining: true, parseDOM: [{ tag: "blockquote" }], toDOM: () => ["blockquote", 0] }),
     horizontal_rule: block({ group: "block", parseDOM: [{ tag: "hr" }], toDOM: () => ["hr"] }),
     code_block: block({ attrs: { ...sourceAttrs, language: { default: "" }, meta: { default: "" } }, content: "text*", marks: "", group: "block", code: true, defining: true, parseDOM: [{ tag: "pre", preserveWhitespace: "full" }], toDOM: (node) => ["pre", ["code", node.attrs.language ? { class: `language-${node.attrs.language}` } : {}, 0]] }),
-    bullet_list: block({ content: "list_item+", group: "block", parseDOM: [{ tag: "ul" }], toDOM: () => ["ul", 0] }),
-    ordered_list: block({ attrs: { ...sourceAttrs, order: { default: 1 } }, content: "list_item+", group: "block", parseDOM: [{ tag: "ol", getAttrs: (element) => ({ order: (element as HTMLOListElement).start || 1 }) }], toDOM: (node) => node.attrs.order === 1 ? ["ol", 0] : ["ol", { start: node.attrs.order }, 0] }),
+    bullet_list: block({ attrs: { ...sourceAttrs, spread: { default: false } }, content: "list_item+", group: "block", parseDOM: [{ tag: "ul" }], toDOM: () => ["ul", 0] }),
+    ordered_list: block({ attrs: { ...sourceAttrs, order: { default: 1 }, spread: { default: false } }, content: "list_item+", group: "block", parseDOM: [{ tag: "ol", getAttrs: (element) => ({ order: (element as HTMLOListElement).start || 1 }) }], toDOM: (node) => node.attrs.order === 1 ? ["ol", 0] : ["ol", { start: node.attrs.order }, 0] }),
     list_item: { attrs: { checked: { default: null } }, content: "paragraph block*", defining: true, parseDOM: [{ tag: "li" }], toDOM: (node) => ["li", node.attrs.checked === null ? {} : { "data-checked": String(node.attrs.checked) }, 0] },
     image: { inline: true, attrs: { src: { default: "" }, sourceSrc: { default: "" }, blocked: { default: false }, alt: { default: "" }, title: { default: "" }, referenceIdentifier: { default: "" }, referenceLabel: { default: "" }, referenceType: { default: "" } }, group: "inline", draggable: true, parseDOM: [{ tag: "img[src]", getAttrs: (element) => { const image = element as HTMLImageElement; const src = image.getAttribute("src") ?? ""; return { src, sourceSrc: src, blocked: false, alt: image.getAttribute("alt") ?? "", title: image.getAttribute("title") ?? "" }; } }], toDOM: (node) => node.attrs.blocked ? ["span", { "data-mdfn-blocked-image": "true", "aria-label": node.attrs.alt || "Blocked image" }, String(node.attrs.alt || "")] : ["img", { src: node.attrs.src, alt: node.attrs.alt, title: node.attrs.title || null }] },
     asset: { inline: true, attrs: { ...sourceAttrs, provider: { default: "" }, assetId: { default: "" }, documentId: { default: "" }, versionId: { default: "" }, sourceUrl: { default: "" }, alt: { default: "" }, title: { default: "" } }, group: "inline", atom: true, selectable: true, draggable: true, toDOM: (node) => ["span", { "data-mdfn-asset": node.attrs.assetId, "data-mdfn-provider": node.attrs.provider, contenteditable: "false" }, String(node.attrs.alt || "Asset")] },
@@ -36,7 +36,7 @@ export const mdfnSchema = new Schema({
     hard_break: { inline: true, group: "inline", selectable: false, parseDOM: [{ tag: "br" }], toDOM: () => ["br"] },
     opaque_block: block({ attrs: { ...sourceAttrs, syntax: { default: "unknown" }, raw: { default: "" } }, group: "block", atom: true, selectable: true, draggable: false, parseDOM: [{ tag: "pre[data-mdfn-opaque]", getAttrs: (element) => ({ syntax: (element as HTMLElement).dataset.mdfnOpaque, raw: element.textContent ?? "" }) }], toDOM: (node) => ["pre", { "data-mdfn-opaque": node.attrs.syntax, contenteditable: "false" }, ["code", String(node.attrs.raw)]] }),
     extension_block: block({ attrs: { ...sourceAttrs, nodeType: { default: "unknown" }, nodeAttrs: { default: "{}" }, nodeContent: { default: "[]" }, raw: { default: "" }, text: { default: "" } }, group: "block", atom: true, selectable: true, draggable: false, parseDOM: [{ tag: "aside[data-mdfn-extension]", getAttrs: (element) => ({ nodeType: (element as HTMLElement).dataset.mdfnExtension ?? "unknown", raw: (element as HTMLElement).dataset.mdfnRaw ?? "", text: element.textContent ?? "" }) }], toDOM: (node) => ["aside", { "data-mdfn-extension": node.attrs.nodeType, "data-mdfn-raw": node.attrs.raw, contenteditable: "false" }, ["strong", String(node.attrs.nodeType)], node.attrs.text ? ["pre", String(node.attrs.text)] : ["span", "Opaque extension block"]] }),
-    table: { ...tables.table, attrs: { ...sourceAttrs, ...(tables.table.attrs ?? {}) } },
+    table: { ...tables.table, attrs: { ...sourceAttrs, ...(tables.table.attrs ?? {}), mdfnAlign: { default: [] } } },
     table_row: tables.table_row,
     table_cell: tables.table_cell,
     table_header: tables.table_header,
@@ -90,14 +90,15 @@ function blockNode(node: MdfnNode): PmNode {
     case "codeBlock": return mdfnSchema.nodes.code_block.create({ ...source, language: String(node.attrs?.language ?? ""), meta: String(node.attrs?.meta ?? "") }, node.text ? mdfnSchema.text(node.text) : undefined);
     case "list": {
       const ordered = node.attrs?.ordered === true;
-      return (ordered ? mdfnSchema.nodes.ordered_list : mdfnSchema.nodes.bullet_list).create(ordered ? { ...source, order: Number(node.attrs?.start ?? 1) } : source, (node.content ?? []).map(blockNode));
+      const spread = node.attrs?.spread === true;
+      return (ordered ? mdfnSchema.nodes.ordered_list : mdfnSchema.nodes.bullet_list).create(ordered ? { ...source, order: Number(node.attrs?.start ?? 1), spread } : { ...source, spread }, (node.content ?? []).map(blockNode));
     }
     case "listItem": {
       const childBlocks = (node.content ?? []).map((child) => child.type === "paragraph" ? blockNode(child) : blockNode(child));
       const content = childBlocks.length > 0 ? childBlocks : [mdfnSchema.nodes.paragraph.create()];
       return mdfnSchema.nodes.list_item.create({ checked: typeof node.attrs?.checked === "boolean" ? node.attrs.checked : null }, content);
     }
-    case "table": return mdfnSchema.nodes.table.create(source, (node.content ?? []).map(blockNode));
+    case "table": return mdfnSchema.nodes.table.create({ ...source, mdfnAlign: Array.isArray(node.attrs?.align) ? [...node.attrs.align] : [] }, (node.content ?? []).map(blockNode));
     case "tableRow": return mdfnSchema.nodes.table_row.create(undefined, (node.content ?? []).map(blockNode));
     case "tableCell": return mdfnSchema.nodes.table_cell.create(undefined, (node.content ?? []).map((child) => child.type === "paragraph" ? blockNode(child) : mdfnSchema.nodes.paragraph.create(undefined, inlineNodes([child]))));
     case "opaque": return mdfnSchema.nodes.opaque_block.create({ ...source, syntax: String(node.attrs?.syntax ?? "unknown"), raw: node.source?.raw ?? node.text ?? "" });
@@ -114,13 +115,13 @@ function sourceFromAttrs(node: PmNode, dirty: boolean): SourceSpan | undefined {
   const from = node.attrs.mdfnFrom;
   const to = node.attrs.mdfnTo;
   if (typeof from !== "number" || typeof to !== "number") return undefined;
-  return {
+  const source: SourceSpan = {
     from,
     to,
-    raw: typeof node.attrs.mdfnRaw === "string" ? node.attrs.mdfnRaw : undefined,
     preservation: ["exact", "semantic", "opaque"].includes(node.attrs.mdfnPreservation) ? node.attrs.mdfnPreservation : "semantic",
     dirty,
   };
+  return !dirty && typeof node.attrs.mdfnRaw === "string" ? { ...source, raw: node.attrs.mdfnRaw } : source;
 }
 
 function wrapMarks(node: MdfnNode, marks: readonly Mark[]): MdfnNode {
@@ -156,9 +157,9 @@ function pmToBlock(node: PmNode, dirty: boolean): MdfnNode {
   if (node.type === mdfnSchema.nodes.blockquote) return { type: "blockquote", source, content: node.content.content.map((child) => pmToBlock(child, dirty)) };
   if (node.type === mdfnSchema.nodes.horizontal_rule) return { type: "thematicBreak", source };
   if (node.type === mdfnSchema.nodes.code_block) return { type: "codeBlock", source, text: node.textContent, attrs: { language: node.attrs.language, meta: node.attrs.meta } };
-  if (node.type === mdfnSchema.nodes.bullet_list || node.type === mdfnSchema.nodes.ordered_list) return { type: "list", source, attrs: { ordered: node.type === mdfnSchema.nodes.ordered_list, start: node.attrs.order ?? 1 }, content: node.content.content.map((child) => pmToBlock(child, dirty)) };
+  if (node.type === mdfnSchema.nodes.bullet_list || node.type === mdfnSchema.nodes.ordered_list) return { type: "list", source, attrs: { ordered: node.type === mdfnSchema.nodes.ordered_list, start: node.attrs.order ?? 1, spread: node.attrs.spread === true }, content: node.content.content.map((child) => pmToBlock(child, dirty)) };
   if (node.type === mdfnSchema.nodes.list_item) return { type: "listItem", attrs: { checked: node.attrs.checked }, content: node.content.content.map((child) => pmToBlock(child, dirty)) };
-  if (node.type === mdfnSchema.nodes.table) return { type: "table", source, content: node.content.content.map((child) => pmToBlock(child, dirty)) };
+  if (node.type === mdfnSchema.nodes.table) return { type: "table", source, attrs: { align: Array.isArray(node.attrs.mdfnAlign) ? node.attrs.mdfnAlign : [] }, content: node.content.content.map((child) => pmToBlock(child, dirty)) };
   if (node.type === mdfnSchema.nodes.table_row) return { type: "tableRow", content: node.content.content.map((child) => pmToBlock(child, dirty)) };
   if (node.type === mdfnSchema.nodes.table_cell || node.type === mdfnSchema.nodes.table_header) return { type: "tableCell", content: node.content.content.map((child) => pmToBlock(child, dirty)) };
   if (node.type === mdfnSchema.nodes.opaque_block) return { type: "opaque", source, text: node.attrs.raw, attrs: { syntax: node.attrs.syntax } };

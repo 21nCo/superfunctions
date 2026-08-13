@@ -123,6 +123,7 @@ describe("compileMarkdown – html fields", () => {
     if (block.type === "paragraph") {
       expect(block.html).toContain("<code>");
       expect(block.html).toContain("npm install");
+      expect(block.html).not.toContain("</p>");
     }
   });
 

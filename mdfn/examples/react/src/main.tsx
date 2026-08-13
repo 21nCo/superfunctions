@@ -7,7 +7,12 @@ import "../../shared.css";
 import { createExampleController, markdownForFiles, resetExample, type ExampleMode } from "../../shared";
 
 const controller = createExampleController();
-window.addEventListener("pagehide", () => controller.destroy(), { once: true });
+const destroyOnPageHide = (event: PageTransitionEvent): void => {
+  if (event.persisted) return;
+  controller.destroy();
+  window.removeEventListener("pagehide", destroyOnPageHide);
+};
+window.addEventListener("pagehide", destroyOnPageHide);
 
 function App(): React.ReactElement {
   const [mode, setMode] = React.useState<ExampleMode>("visual");

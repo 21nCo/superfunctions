@@ -9,6 +9,7 @@ import {
   restoreSnapshot,
   type EditorProjector,
   type MdfnDocument,
+  type MdfnExtension,
   createCommentThread,
   createSuggestion,
   decideSuggestion,
@@ -99,11 +100,28 @@ describe("@mdfn/core", () => {
     expect(() => resolveExtensions([base, { ...base, name: "unsafe", conflicts: ["base"] }])).toThrowError(/conflicts/);
   });
 
+  it("rejects non-adjacent migrations and applies every migration in a schema transition", () => {
+    const preservation = { noEdit: "exact", edited: "semantic", unsupported: "opaque" } as const;
+    try {
+      resolveExtensions([{ name: "invalid", version: "1", preservation, migrations: [{ from: 1, to: 1, migrate: (document) => document }] }]);
+      throw new Error("expected invalid migration to fail");
+    } catch (error) {
+      expect(error).toMatchObject({ code: "MDFN_EXTENSION_MIGRATION_INVALID" });
+    }
+    const registry = resolveExtensions([
+      { name: "first", version: "1", preservation, migrations: [{ from: 1, to: 2, migrate: (document) => ({ ...document, content: [...document.content, { type: "text", text: "first" }] }) }] },
+      { name: "second", version: "1", preservation, migrations: [{ from: 1, to: 2, migrate: (document) => ({ ...document, content: [...document.content, { type: "text", text: "second" }] }) }] },
+    ]);
+    const migrated = registry.migrate({ type: "doc", schemaVersion: 1, content: [] }, 1, 2);
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.content.map((node) => node.text)).toEqual(["first", "second"]);
+  });
+
   it("resolves executable extension keymaps, text rules, and plugin cleanup", () => {
     let setup = 0;
     let cleanup = 0;
     const command = () => true;
-    const extension = {
+    const extension: MdfnExtension = {
       name: "lifecycle",
       version: "1.0.0",
       preservation: { noEdit: "exact", edited: "semantic", unsupported: "opaque" } as const,
@@ -121,6 +139,25 @@ describe("@mdfn/core", () => {
     editor.destroy();
     expect(cleanup).toBe(1);
     expect(() => resolveExtensions([extension, { ...extension, name: "other" }])).toThrowError(/Duplicate key binding/);
+  });
+
+  it("checks dispatching commands without mutating editor state", () => {
+    const extension = {
+      name: "dispatching-command",
+      version: "1.0.0",
+      preservation: { noEdit: "exact", edited: "semantic", unsupported: "opaque" } as const,
+      commands: {
+        append: ({ state, dispatch }) => {
+          dispatch(new Transaction().replaceSource(state.markdown.length, state.markdown.length, "!"));
+          return true;
+        },
+      },
+    };
+    const editor = createEditor({ markdown: "safe", projector, extensions: [extension] });
+    expect(editor.can("dispatching-command:append")).toBe(true);
+    expect(editor.getState().markdown).toBe("safe");
+    expect(editor.run("dispatching-command:append")).toBe(true);
+    expect(editor.getState().markdown).toBe("safe!");
   });
 
   it("invalidates cached documents when source or schema identity changes", () => {
@@ -172,5 +209,19 @@ describe("@mdfn/core", () => {
     expect(() => validateMdfnSidecar({ comments: "invalid" })).toThrowError("MDFN_SIDECAR_COMMENTS_INVALID");
     expect(() => validateMdfnSidecar({ suggestions: [{ id: "s", anchor: { from: 0, to: 99 }, replacement: "", authorId: "a", status: "pending", createdAt: "2026-08-12T00:00:00.000Z" }] }, { markdownLength: 2 })).toThrowError("MDFN_SIDECAR_ANCHOR_INVALID");
     expect(() => validateMdfnSidecar({ assets: [{ id: "same", mediaType: "text/plain" }, { id: "same", mediaType: "text/plain" }] })).toThrowError("MDFN_SIDECAR_DUPLICATE_ID:same");
+    expect(() => validateMdfnSidecar({ comments: [{ id: "thread", anchor: { from: 0, to: 0 }, resolved: false, messages: [
+      { id: "one", authorId: "a", body: "one", createdAt: "2026-08-12T00:00:00.000Z" },
+      { id: "two", authorId: "a", body: "two", createdAt: "2026-08-12T00:00:00.000Z" },
+    ] }] }, { maxEntries: 2 })).toThrowError("MDFN_SIDECAR_ENTRY_LIMIT_EXCEEDED");
+  });
+
+  it("reports sidecar changes caused by source anchor mapping", () => {
+    const sidecar = {
+      comments: [{ id: "thread", anchor: { from: 1, to: 2 }, resolved: false, messages: [{ id: "message", authorId: "a", body: "note", createdAt: "2026-08-12T00:00:00.000Z" }] }],
+    } as const;
+    const editor = createEditor({ markdown: "abc", projector, sidecar });
+    const change = editor.dispatch(new Transaction().replaceSource(0, 0, "x"));
+    expect(change.sidecarChanged).toBe(true);
+    expect(editor.getState().sidecar?.comments?.[0]?.anchor).toEqual({ from: 2, to: 3 });
   });
 });

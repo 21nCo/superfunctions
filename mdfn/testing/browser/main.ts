@@ -19,7 +19,7 @@ editor = createDomEditor({
   attributes: { "aria-label": "Browser verification editor" },
   onFiles(incoming) {
     for (const file of incoming) files.push(file.name);
-    editor.insertMarkdown(`![${incoming[0]?.name ?? "asset"}](https://assets.example.test/file)\n`);
+    editor.insertMarkdown(`[${incoming[0]?.name ?? "asset"}](https://assets.example.test/file)\n`);
   },
 });
 

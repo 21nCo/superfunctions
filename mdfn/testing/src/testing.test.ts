@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { authoritativeGfmCorpus, deterministicFuzzCorpus, compareSemanticTraces, representativeCorpus, runPreservationCorpus, runSecurityCorpus, runSemanticCorpus } from "./index";
-import { parseMarkdown, serializeMarkdown } from "@mdfn/markdown";
+import { authoritativeGfmCorpus, certifyExtension, deterministicFuzzCorpus, compareSemanticTraces, representativeCorpus, runPreservationCorpus, runSecurityCorpus, runSemanticCorpus, traceState } from "./index";
+import { createEditor, resolveExtensions, Transaction } from "@mdfn/core";
+import { calloutExtension, commonmarkExtension } from "@mdfn/extensions";
+import { createMarkdownProjector, parseMarkdown, serializeMarkdown } from "@mdfn/markdown";
 import { renderHtml } from "@mdfn/render";
 import { tests as commonmarkSpecTests } from "commonmark-spec";
 
@@ -16,6 +18,29 @@ describe("@mdfn/testing", () => {
     const reference = { schemaVersion: 1 as const, framework: "vanilla" as const, fixture: "basic", steps: [], finalMarkdown: "a", finalSelection: null, diagnostics: [], cleanup: { subscriptions: 0, mounted: false } };
     const result = compareSemanticTraces(reference, [{ ...reference, framework: "react", finalMarkdown: "b" }]);
     expect(result.ok).toBe(false);
+    expect(compareSemanticTraces(reference, [{ ...reference, framework: "react", cleanup: { subscriptions: 1, mounted: true } }]).ok).toBe(false);
+  });
+
+  it("preserves resolved fixture dependencies during extension certification", () => {
+    const result = certifyExtension(calloutExtension, {
+      id: "directive-callout",
+      source: ":::callout\nBody\n:::\n",
+      options: { extensions: resolveExtensions([commonmarkExtension]) },
+    });
+    expect(result.findings.map((finding) => finding.code)).not.toContain("MDFN_CERT_LIFECYCLE_EXCEPTION");
+    expect(result.ok).toBe(true);
+  });
+
+  it("records selection and diagnostics in intermediate trace steps", () => {
+    const controller = createEditor({ markdown: "[bad](javascript:alert(1))", projector: createMarkdownProjector() });
+    const states = [controller.getState()];
+    controller.dispatch(new Transaction().setSelection({ kind: "text", anchor: 1, head: 2 }));
+    states.push(controller.getState());
+    const trace = traceState("vanilla", "intermediate", states);
+    expect(trace.steps[1].state).toMatchObject({
+      selection: { kind: "text", anchor: 1, head: 2 },
+      diagnostics: expect.arrayContaining(["MDFN_UNSAFE_URL"]),
+    });
   });
 
   it("passes a reproducible malformed and Unicode fuzz corpus", () => {

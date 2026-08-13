@@ -21,4 +21,21 @@ describe("markdown content", () => {
     expect(result.content.markdown).not.toContain("--> <");
     expect(result.content.markdown.match(/mdfn-migration-opaque/g)).toHaveLength(2);
   });
+
+  it("retains unsupported and cyclic descendants of supported rich-text blocks", () => {
+    const cyclic: Record<string, unknown> = { type: "widget" };
+    cyclic.children = [cyclic];
+    const result = migrateToMarkdownContent([{ type: "paragraph", children: [{ text: "kept" }, { type: "widget", value: 1 }, cyclic] }]);
+    expect(result.lossy).toBe(true);
+    expect(result.content.markdown).toContain("kept");
+    expect(result.content.markdown.match(/mdfn-migration-opaque/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(result.diagnostics[0]?.code).toBe("MDFN_CONTENT_RICHTEXT_LOSSY");
+  });
+
+  it("rejects malformed optional envelope fields", () => {
+    const valid = markdownContent("text");
+    expect(isMarkdownContent({ ...valid, schemaHash: 1 })).toBe(false);
+    expect(isMarkdownContent({ ...valid, sidecar: { comments: "invalid" } })).toBe(false);
+    expect(isMarkdownContent({ ...valid, sidecar: { comments: [{ id: "thread", anchor: { from: 0, to: 99 }, resolved: false, messages: [] }] } })).toBe(false);
+  });
 });

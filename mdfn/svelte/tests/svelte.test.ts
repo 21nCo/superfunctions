@@ -9,13 +9,19 @@ import ReactiveHarness from "./ReactiveHarness.svelte";
 describe("@mdfn/svelte", () => {
   it("updates and tears down its shared-state store", () => {
     const controller = createEditor({ markdown: "one", projector: createMarkdownProjector() });
+    const store = createMdfnStore(controller);
     const values: string[] = [];
-    const unsubscribe = createMdfnStore(controller).subscribe((snapshot) => values.push(snapshot.markdown));
+    const unsubscribe = store.subscribe((snapshot) => values.push(snapshot.markdown));
     controller.dispatch(new Transaction().replaceSource(0, 3, "two").withSource("parity"));
     expect(values).toEqual(["one", "two"]);
     unsubscribe();
     controller.dispatch(new Transaction().replaceSource(0, 3, "end").withSource("cleanup"));
     expect(values).toEqual(["one", "two"]);
+    const resumed: string[] = [];
+    const stopResumed = store.subscribe((snapshot) => resumed.push(snapshot.markdown));
+    controller.dispatch(new Transaction().replaceSource(0, 3, "back").withSource("resubscribe"));
+    expect(resumed).toEqual(["end", "back"]);
+    stopResumed();
   });
 
   it("mounts the real adapter, replays controller changes, and cleans up", async () => {

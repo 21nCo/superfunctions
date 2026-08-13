@@ -105,9 +105,13 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
       options.controller.dispatch(transaction);
     }),
   ];
+  const controllerSelection = options.controller.getState().selection;
+  const initialSelection = controllerSelection?.kind === "text"
+    ? { anchor: Math.min(controllerSelection.anchor, options.controller.getState().markdown.length), head: Math.min(controllerSelection.head, options.controller.getState().markdown.length) }
+    : undefined;
   const view = new EditorView({
     parent: options.target,
-    state: CodeMirrorState.create({ doc: options.controller.getState().markdown, extensions }),
+    state: CodeMirrorState.create({ doc: options.controller.getState().markdown, selection: initialSelection, extensions }),
   });
   const unsubscribe = options.controller.subscribe((change) => {
     if (change.source === "source") return;

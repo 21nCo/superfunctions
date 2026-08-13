@@ -59,7 +59,8 @@ export function createAssetGateway(provider: MdfnAssetProvider): Required<Pick<M
       await authorized(provider, "resolve", reference, context);
       const resolved = await provider.resolve(reference, context);
       if (resolved.reference.id !== reference.id || resolved.reference.documentId !== context.documentId) throw new Error("MDFN_ASSET_RESOLUTION_MISMATCH");
-      if (resolved.url && !inspectMdfnUrl(resolved.url, { allowedSchemes: ["http", "https"], allowRelative: true }).safe) throw new Error("MDFN_ASSET_URL_FORBIDDEN");
+      const allowedSchemes = resolved.state === "pending-local" ? ["http", "https", "blob"] : ["http", "https"];
+      if (resolved.url && !inspectMdfnUrl(resolved.url, { allowedSchemes, allowRelative: true }).safe) throw new Error("MDFN_ASSET_URL_FORBIDDEN");
       return resolved;
     },
     async delete(reference, context) {
@@ -79,7 +80,8 @@ function fileFnResolved(reference: AssetReference, descriptor: RenderDescriptor)
   const url = source.mode === "artifact" || source.mode === "original" ? source.url : undefined;
   const headers = source.mode === "artifact" || source.mode === "original" ? source.headers : undefined;
   const mediaType = descriptor.mimeType;
-  const embed = descriptor.state === "ready" || descriptor.state === "pending-local"
+  const embed = source.mode === "placeholder" ? "placeholder"
+    : descriptor.state === "ready" || descriptor.state === "pending-local"
     ? mediaType.startsWith("image/") ? "image"
       : mediaType.startsWith("audio/") ? "audio"
         : mediaType.startsWith("video/") ? "video"
@@ -150,6 +152,7 @@ export function resolvedAssetRenderNode(asset: ResolvedAsset): ExtensionRenderNo
   if (asset.state !== "ready" && asset.state !== "pending-local") {
     return { tag: "span", attrs: { "data-mdfn-asset-state": asset.state }, text: asset.reference.name ?? "Asset unavailable" };
   }
+  if (asset.embed === "placeholder") return { tag: "span", attrs: { "data-mdfn-asset-state": asset.state }, text: asset.reference.name ?? "Asset pending" };
   if (!asset.url) throw new Error("MDFN_ASSET_DELIVERY_URL_MISSING");
   if (asset.headers && Object.keys(asset.headers).length > 0) throw new Error("MDFN_ASSET_EMBED_HEADERS_UNSUPPORTED");
   if (asset.embed === "image") return { tag: "img", attrs: { src: asset.url, alt: asset.reference.name ?? "", loading: "lazy" } };

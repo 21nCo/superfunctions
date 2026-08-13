@@ -26,6 +26,13 @@ import { parseMarkdown } from "@mdfn/markdown";
 import { calloutExtension, commonmarkExtension, diagramExtension, gfmExtension } from "@mdfn/extensions";
 import { isMarkdownContent, markdownContent, type MarkdownContent, type MarkdownContentProfile } from "@mdfn/contentfn";
 
+const markdownExtensionByName = {
+  callout: calloutExtension,
+  "directive/callout": calloutExtension,
+  diagram: diagramExtension,
+  "directive/diagram": diagramExtension,
+} as const;
+
 export interface DocsStorageConfig {
   db: Adapter;
 }
@@ -78,6 +85,15 @@ function markdownProfile(fieldType: Extract<ContentfnFieldType, { kind: "markdow
   };
 }
 
+function markdownProfilesEqual(left: MarkdownContentProfile, right: MarkdownContentProfile): boolean {
+  return left.id === right.id
+    && left.dialect === right.dialect
+    && left.allowRawHtml === right.allowRawHtml
+    && left.schemaVersion === right.schemaVersion
+    && left.extensions.length === right.extensions.length
+    && left.extensions.every((extension, index) => extension === right.extensions[index]);
+}
+
 function normalizeMarkdownFields(schema: ContentfnSchema, docType: string, doc: Record<string, unknown>): { ok: true; value: Record<string, unknown> } | { ok: false; field: string; error: string } {
   const type = schema.documentTypes.find((candidate) => candidate.name === docType);
   if (!type) return { ok: false, field: "_type", error: `document type ${docType} not found` };
@@ -85,8 +101,10 @@ function normalizeMarkdownFields(schema: ContentfnSchema, docType: string, doc: 
   for (const field of type.fields) {
     if (field.type.kind !== "markdown" || !(field.name in value) || value[field.name] == null) continue;
     const current = value[field.name];
-    if (typeof current === "string") value[field.name] = markdownContent(current, { profile: markdownProfile(field.type) });
+    const expectedProfile = markdownProfile(field.type);
+    if (typeof current === "string") value[field.name] = markdownContent(current, { profile: expectedProfile });
     else if (!isMarkdownContent(current)) return { ok: false, field: field.name, error: "expected a versioned Markdown value or legacy string" };
+    else if (!markdownProfilesEqual(current.profile, expectedProfile)) return { ok: false, field: field.name, error: "markdown profile does not match the field schema" };
   }
   return { ok: true, value };
 }
@@ -166,8 +184,7 @@ function validateFieldType(
       try {
         const content = value as MarkdownContent;
         const dialect = content.profile.dialect;
-        const available = { callout: calloutExtension, diagram: diagramExtension } as const;
-        const configured = content.profile.extensions.map((name) => available[name as keyof typeof available]);
+        const configured = content.profile.extensions.map((name) => markdownExtensionByName[name as keyof typeof markdownExtensionByName]);
         if (configured.some((extension) => !extension)) return { ok: false, error: "unknown markdown extension" };
         parseMarkdown(content.markdown, { dialect, allowRawHtml: content.profile.allowRawHtml, schemaVersion: content.profile.schemaVersion, extensions: [commonmarkExtension, ...(dialect === "gfm" ? [gfmExtension] : []), ...configured] });
         return { ok: true };

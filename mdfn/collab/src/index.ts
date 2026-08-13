@@ -77,6 +77,7 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
   const source = doc.getText("markdown");
   const sidecar = doc.getMap<string>("sidecar");
   const metadata = doc.getMap<string>("metadata");
+  const sharedDocumentInitialized = options.doc !== undefined && (source.length > 0 || sidecar.size > 0 || metadata.size > 0);
   const localOrigin = Object.freeze({ session: options.user.id });
   let applyingRemote = false;
   let destroyed = false;
@@ -143,12 +144,19 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
     }
   };
 
-  if (source.length === 0) source.insert(0, options.controller.getState().markdown);
-  else if (source.toString() !== options.controller.getState().markdown) {
-    const current = options.controller.getState().markdown;
-    options.controller.dispatch(new Transaction().replaceSource(0, current.length, source.toString()).withSource("collab:initial"));
+  if (!sharedDocumentInitialized) {
+    if (source.length === 0) source.insert(0, options.controller.getState().markdown);
+    if (!sidecar.has("value") && options.controller.getState().sidecar) sidecar.set("value", JSON.stringify(options.controller.getState().sidecar));
+  } else {
+    assertContract(doc);
+    const state = options.controller.getState();
+    const sharedMarkdown = source.toString();
+    const sharedSidecar = parseSidecar(sidecar.get("value"), sharedMarkdown.length);
+    let initial = new Transaction().withSource("collab:initial").withMetadata({ addToHistory: false });
+    if (sharedMarkdown !== state.markdown) initial = initial.replaceSource(0, state.markdown.length, sharedMarkdown);
+    if (JSON.stringify(sharedSidecar) !== JSON.stringify(state.sidecar)) initial = initial.setSidecar(sharedSidecar);
+    if (initial.operations.length > 0) options.controller.dispatch(initial);
   }
-  if (!sidecar.has("value") && options.controller.getState().sidecar) sidecar.set("value", JSON.stringify(options.controller.getState().sidecar));
 
   awareness.setLocalState({ user: options.user, documentId: options.documentId });
 
@@ -174,7 +182,7 @@ export function createCollaborationSession(options: CollaborationSessionOptions)
     try {
       const state = options.controller.getState();
       const nextSource = source.toString();
-      let edit = new Transaction().withSource("collab:remote");
+      let edit = new Transaction().withSource("collab:remote").withMetadata({ addToHistory: false });
       if (nextSource !== state.markdown) edit = edit.replaceSource(0, state.markdown.length, nextSource);
       assertContract(doc);
       const nextSidecar = parseSidecar(sidecar.get("value"), nextSource.length);

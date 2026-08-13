@@ -57,4 +57,13 @@ describe("@mdfn/render", () => {
     } as unknown as MdfnExtension;
     expect(() => renderHtml(document, { extensions: [malicious] })).toThrowError("MDFN_EXTENSION_RENDER_RESULT_INVALID");
   });
+
+  it("enforces node limits for manually rendered empty list items", () => {
+    const list: MdfnDocument = {
+      type: "doc",
+      schemaVersion: 1,
+      content: [{ type: "list", content: [{ type: "listItem", content: [] }, { type: "listItem", content: [] }] }],
+    };
+    expect(() => renderHtml(list, { maxNodes: 2 })).toThrowError("MDFN_RENDER_NODE_LIMIT_EXCEEDED:2");
+  });
 });

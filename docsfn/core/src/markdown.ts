@@ -721,7 +721,7 @@ function canonicalHtml(node: MdfnNode, schemaVersion: number): string {
 function stripOuterElement(html: string, tag: string): string {
   const start = new RegExp(`^<${tag}(?:\\s[^>]*)?>`, "i");
   const end = new RegExp(`</${tag}>$`, "i");
-  return html.replace(start, "").replace(end, "");
+  return html.trimEnd().replace(start, "").replace(end, "");
 }
 
 function findComponentRegion(source: string, node: MdfnNode): { raw: string; end: number; name: string } | null {

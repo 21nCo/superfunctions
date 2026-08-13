@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { assetReferenceMarkdown, createAssetGateway, createAuthoringAssetHandler, createMemoryAssetProvider, resolvedAssetRenderNode } from "./index";
+import { describe, expect, it, vi } from "vitest";
+import { assetReferenceMarkdown, createAssetGateway, createAuthoringAssetHandler, createFileFnAssetProvider, createMemoryAssetProvider, resolvedAssetRenderNode } from "./index";
 
 describe("filefn bridge", () => {
   it("stores bytes and enforces provider policy", async () => {
@@ -41,5 +41,37 @@ describe("filefn bridge", () => {
     });
     const markdown = await handler([new Blob(["image"], { type: "image/png" })]);
     expect(markdown).toBe("![asset](mdfn-asset:memory/inserted?document=document)");
+  });
+
+  it("renders pending-local placeholders without requiring a delivery URL", async () => {
+    const client = {
+      resolveRenderable: vi.fn().mockResolvedValue({
+        fileId: "asset",
+        versionId: "pending-version",
+        intent: "preview",
+        state: "pending-local",
+        mimeType: "application/pdf",
+        name: "draft.pdf",
+        size: 10,
+        source: { mode: "placeholder", placeholderKind: "pdf-processing" },
+      }),
+    };
+    const provider = createFileFnAssetProvider({ client: client as never, uploadPolicy: "documents" });
+    const resolved = await provider.resolve!({ id: "asset", provider: "filefn", documentId: "document" }, { documentId: "document" });
+    expect(resolved.embed).toBe("placeholder");
+    expect(resolvedAssetRenderNode(resolved)).toMatchObject({ tag: "span", attrs: { "data-mdfn-asset-state": "pending-local" } });
+  });
+
+  it("allows blob delivery URLs only for pending-local assets", async () => {
+    const reference = { id: "asset", provider: "filefn", documentId: "document", mediaType: "image/png" } as const;
+    const gateway = createAssetGateway({
+      resolve: async () => ({ reference, state: "pending-local", url: "blob:pending-local", embed: "image" }),
+    });
+    const resolved = await gateway.resolve(reference, { documentId: "document" });
+    expect(resolvedAssetRenderNode(resolved)).toMatchObject({ tag: "img", attrs: { src: "blob:pending-local" } });
+    const durable = createAssetGateway({
+      resolve: async () => ({ reference, state: "ready", url: "blob:durable", embed: "image" }),
+    });
+    await expect(durable.resolve(reference, { documentId: "document" })).rejects.toThrow("MDFN_ASSET_URL_FORBIDDEN");
   });
 });

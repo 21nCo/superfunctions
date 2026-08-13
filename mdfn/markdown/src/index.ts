@@ -233,10 +233,30 @@ function scanExtensionBlocks(source: string, registry: ResolvedExtensionRegistry
     }
     return null;
   };
+  let codeFence: { readonly marker: "`" | "~"; readonly length: number } | null = null;
   while (offset < source.length) {
-    const lineEnd = source.indexOf("\n", offset);
-    const end = lineEnd === -1 ? source.length : lineEnd + 1;
+    const lineBreak = /\r\n|\r|\n/g;
+    lineBreak.lastIndex = offset;
+    const nextBreak = lineBreak.exec(source);
+    const end = nextBreak ? nextBreak.index + nextBreak[0].length : source.length;
     const line = source.slice(offset, end);
+    const lineContent = line.replace(/\r\n|\r|\n$/, "");
+    if (codeFence) {
+      const closing = new RegExp(`^[ \\t]{0,3}${codeFence.marker === "`" ? "`" : "~"}{${codeFence.length},}[ \\t]*$`);
+      if (closing.test(lineContent)) codeFence = null;
+      offset = end;
+      continue;
+    }
+    const opening = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(lineContent);
+    if (opening) {
+      codeFence = { marker: opening[1][0] as "`" | "~", length: opening[1].length };
+      offset = end;
+      continue;
+    }
+    if (/^(?: {4}|\t)/.test(lineContent)) {
+      offset = end;
+      continue;
+    }
     let matched = false;
     for (const extension of registry.extensions) {
       const result = extension.parseMarkdown?.({ source, offset, line });

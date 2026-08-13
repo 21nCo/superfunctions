@@ -68,21 +68,36 @@ export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
     const editorRef = local.editorRef;
     const onLoadError = local.onLoadError;
     let cancelled = false;
+    let mountedVisual: DomEditor | undefined;
+    let mountedSource: SourceEditor | undefined;
+    const destroyMounted = (): void => {
+      mountedVisual?.destroy();
+      mountedSource?.destroy();
+      if (visual === mountedVisual) visual = undefined;
+      if (source === mountedSource) source = undefined;
+      mountedVisual = undefined;
+      mountedSource = undefined;
+    };
     visual?.destroy();
     source?.destroy();
     visual = undefined;
     source = undefined;
+    setLoadError(null);
     const mount = async (): Promise<void> => {
       try {
+        await Promise.resolve();
+        if (cancelled) return;
         if ((mode === "visual" || mode === "split") && visualTarget) {
           const module = await import("@mdfn/dom");
           if (cancelled) return;
-          visual = module.createDomEditor({ target: visualTarget, controller, readOnly, attributes: { "aria-label": ariaLabel }, onFiles });
+          mountedVisual = module.createDomEditor({ target: visualTarget, controller, readOnly, attributes: { "aria-label": ariaLabel }, onFiles });
+          visual = mountedVisual;
         }
         if ((mode === "source" || mode === "split") && sourceTarget) {
           const module = await import("@mdfn/source");
           if (cancelled) return;
-          source = module.createSourceEditor({ target: sourceTarget, controller, readOnly, ariaLabel: `${ariaLabel} source` });
+          mountedSource = module.createSourceEditor({ target: sourceTarget, controller, readOnly, ariaLabel: `${ariaLabel} source` });
+          source = mountedSource;
         }
         if ((mode === "preview" || mode === "read-only") && previewTarget) {
           const module = await import("@mdfn/source");
@@ -91,13 +106,15 @@ export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
         }
         editorRef?.(handle);
       } catch (error) {
+        destroyMounted();
+        if (cancelled) return;
         const resolved = error instanceof Error ? error : new Error(String(error));
         setLoadError(resolved);
         onLoadError?.(resolved);
       }
     };
     void mount();
-    onCleanup(() => { cancelled = true; editorRef?.(null); visual?.destroy(); source?.destroy(); visual = undefined; source = undefined; });
+    onCleanup(() => { cancelled = true; editorRef?.(null); destroyMounted(); });
   });
 
   createEffect(() => {
@@ -106,13 +123,16 @@ export const MdfnEditor: Component<MdfnEditorProps> = (props) => {
     const controller = local.controller;
     const onLoadError = local.onLoadError;
     if ((mode !== "preview" && mode !== "read-only") || !previewTarget) return;
+    let cancelled = false;
     void import("@mdfn/source").then((module) => {
-      if (previewTarget) previewTarget.innerHTML = module.createPreview(controller).html;
+      if (!cancelled && previewTarget) previewTarget.innerHTML = module.createPreview(controller).html;
     }).catch((error: unknown) => {
+      if (cancelled) return;
       const resolved = error instanceof Error ? error : new Error(String(error));
       setLoadError(resolved);
       onLoadError?.(resolved);
     });
+    onCleanup(() => { cancelled = true; });
   });
 
   const updateFallback: JSX.EventHandler<HTMLTextAreaElement, InputEvent> = (event) => {

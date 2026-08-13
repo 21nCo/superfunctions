@@ -15,6 +15,7 @@ describe("@mdfn/source", () => {
     const target = document.createElement("div");
     document.body.append(target);
     const editor = createSourceEditor({ target, controller });
+    expect(editor.view.state.selection.main).toMatchObject({ anchor: 2, head: 2 });
     controller.dispatch(
       new Transaction()
         .replaceSource(2, 8, "Changed")

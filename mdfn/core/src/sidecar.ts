@@ -44,6 +44,11 @@ export function validateMdfnSidecar(value: unknown, options: SidecarValidationOp
   if (!record(value)) throw new Error("MDFN_SIDECAR_INVALID");
   const maxEntries = options.maxEntries ?? 10_000;
   const maxText = options.maxTextLength ?? 256 * 1024;
+  let entryCount = 0;
+  const countEntry = (): void => {
+    entryCount += 1;
+    if (entryCount > maxEntries) throw new Error("MDFN_SIDECAR_ENTRY_LIMIT_EXCEEDED");
+  };
   const seen = new Set<string>();
   const unique = (id: string): void => {
     if (seen.has(id)) throw new Error(`MDFN_SIDECAR_DUPLICATE_ID:${id}`);
@@ -56,12 +61,14 @@ export function validateMdfnSidecar(value: unknown, options: SidecarValidationOp
   };
 
   for (const candidate of bounded(value.comments, "MDFN_SIDECAR_COMMENTS_INVALID")) {
+    countEntry();
     if (!record(candidate) || typeof candidate.resolved !== "boolean") throw new Error("MDFN_SIDECAR_COMMENT_INVALID");
     unique(text(candidate.id, "MDFN_SIDECAR_COMMENT_INVALID", 256));
     anchor(candidate.anchor, options.markdownLength);
     const messages = bounded(candidate.messages, "MDFN_SIDECAR_COMMENT_MESSAGES_INVALID");
     if (messages.length === 0) throw new Error("MDFN_SIDECAR_COMMENT_MESSAGES_INVALID");
     for (const message of messages) {
+      countEntry();
       if (!record(message)) throw new Error("MDFN_SIDECAR_COMMENT_MESSAGE_INVALID");
       unique(text(message.id, "MDFN_SIDECAR_COMMENT_MESSAGE_INVALID", 256));
       text(message.authorId, "MDFN_SIDECAR_COMMENT_MESSAGE_INVALID", 256);
@@ -72,6 +79,7 @@ export function validateMdfnSidecar(value: unknown, options: SidecarValidationOp
   }
 
   for (const candidate of bounded(value.suggestions, "MDFN_SIDECAR_SUGGESTIONS_INVALID")) {
+    countEntry();
     if (!record(candidate) || !["pending", "accepted", "rejected"].includes(String(candidate.status))) throw new Error("MDFN_SIDECAR_SUGGESTION_INVALID");
     unique(text(candidate.id, "MDFN_SIDECAR_SUGGESTION_INVALID", 256));
     anchor(candidate.anchor, options.markdownLength);
@@ -81,6 +89,7 @@ export function validateMdfnSidecar(value: unknown, options: SidecarValidationOp
   }
 
   for (const candidate of bounded(value.assets, "MDFN_SIDECAR_ASSETS_INVALID")) {
+    countEntry();
     if (!record(candidate)) throw new Error("MDFN_SIDECAR_ASSET_INVALID");
     unique(text(candidate.id, "MDFN_SIDECAR_ASSET_INVALID", 256));
     text(candidate.mediaType, "MDFN_SIDECAR_ASSET_INVALID", 256);
@@ -90,6 +99,7 @@ export function validateMdfnSidecar(value: unknown, options: SidecarValidationOp
   }
 
   for (const candidate of bounded(value.audit, "MDFN_SIDECAR_AUDIT_INVALID")) {
+    countEntry();
     if (!record(candidate) || !["comment-created", "comment-replied", "comment-resolved", "comment-reopened", "suggestion-created", "suggestion-accepted", "suggestion-rejected", "review-transitioned"].includes(String(candidate.action))) throw new Error("MDFN_SIDECAR_AUDIT_ENTRY_INVALID");
     unique(text(candidate.id, "MDFN_SIDECAR_AUDIT_ENTRY_INVALID", 256));
     text(candidate.actorId, "MDFN_SIDECAR_AUDIT_ENTRY_INVALID", 256);

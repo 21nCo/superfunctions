@@ -52,6 +52,20 @@ describe("@mdfn/dom", () => {
     editor.destroy();
   });
 
+  it("reconciles command-driven Markdown insertion into the visual view", () => {
+    const controller = createEditor({
+      markdown: "a\n",
+      projector: createMarkdownProjector(),
+      selection: { kind: "text", anchor: 1, head: 1 },
+    });
+    const target = document.createElement("div");
+    const editor = createDomEditor({ target, controller });
+    expect(editor.insertMarkdown("b")).toBe(true);
+    expect(controller.getState().markdown).toBe("ab\n");
+    expect(editor.view.state.doc.textContent).toBe("ab");
+    editor.destroy();
+  });
+
   it("round-trips inline code from visual projection", () => {
     const projector = createMarkdownProjector();
     const source = "Use `value` here.\n";
@@ -59,6 +73,25 @@ describe("@mdfn/dom", () => {
     const pm = documentToProseMirror(parsed.document);
     const visual = proseMirrorToDocument(pm, undefined);
     expect(projector.serialize(visual, source).markdown).toContain("`value`");
+  });
+
+  it("preserves table alignment and loose-list semantics through visual projection", () => {
+    const source = "| Left | Right |\n| :--- | ---: |\n| A | B |\n\n- first\n\n- second\n";
+    const parsed = parseMarkdown(source);
+    const visual = documentToProseMirror(parsed.document);
+    const roundTrip = proseMirrorToDocument(visual, visual);
+    expect(roundTrip.content[0].attrs?.align).toEqual(["left", "right"]);
+    expect(roundTrip.content[1].attrs?.spread).toBe(true);
+  });
+
+  it("does not retain stale raw source on visually edited nodes", () => {
+    const parsed = parseMarkdown("Paragraph.\n");
+    const before = documentToProseMirror(parsed.document);
+    const state = EditorState.create({ schema: before.type.schema, doc: before });
+    const after = state.apply(state.tr.insertText("Changed ", 1)).doc;
+    const changed = proseMirrorToDocument(after, before);
+    expect(changed.content[0].source).toMatchObject({ dirty: true });
+    expect(changed.content[0].source).not.toHaveProperty("raw");
   });
 
   it("preserves unsupported inline source and reference links through nearby visual edits", () => {

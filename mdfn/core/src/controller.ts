@@ -79,7 +79,7 @@ export function createEditor(input: CreateEditorInput): EditorController {
       assertAlive();
       const change = applyTransaction(state, transaction, input.projector);
       if (change.current !== state) {
-        if (change.documentChanged || change.sidecarChanged) {
+        if ((change.documentChanged || change.sidecarChanged) && transaction.metadata.addToHistory !== false) {
           undoStack.push(state);
           if (undoStack.length > historyLimit) undoStack.shift();
           redoStack.length = 0;
@@ -98,7 +98,10 @@ export function createEditor(input: CreateEditorInput): EditorController {
       assertAlive();
       const resolved = extensions.commands[command];
       if (!resolved) return false;
-      return resolved({ state, dispatch: () => { throw new Error("MDFN_COMMAND_CAN_DISPATCH_FORBIDDEN"); } });
+      return resolved({
+        state,
+        dispatch: (transaction) => applyTransaction(state, transaction as Transaction, input.projector),
+      });
     },
     run(command) {
       assertAlive();

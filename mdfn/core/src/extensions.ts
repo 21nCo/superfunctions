@@ -64,6 +64,15 @@ export function resolveExtensions(input: readonly MdfnExtension[]): ResolvedExte
   }
 
   for (const extension of input) {
+    for (const migration of extension.migrations ?? []) {
+      if (!Number.isInteger(migration.from) || !Number.isInteger(migration.to) || migration.from < 1 || migration.to !== migration.from + 1) {
+        throw new ExtensionGraphError(
+          "MDFN_EXTENSION_MIGRATION_INVALID",
+          `Extension ${extension.name} migrations must advance exactly one positive schema version`,
+          extension.name,
+        );
+      }
+    }
     for (const dependency of extension.dependencies ?? []) {
       if (!byName.has(dependency)) {
         throw new ExtensionGraphError(
@@ -178,17 +187,16 @@ export function resolveExtensions(input: readonly MdfnExtension[]): ResolvedExte
       while (version < toVersion) {
         const migrations = ordered
           .flatMap((extension) => extension.migrations ?? [])
-          .filter((migration) => migration.from === version)
-          .sort((a, b) => a.to - b.to);
-        const next = migrations.find((migration) => migration.to <= toVersion);
-        if (!next) {
+          .filter((migration) => migration.from === version && migration.to === version + 1);
+        if (migrations.length === 0) {
           throw new ExtensionGraphError(
             "MDFN_SCHEMA_MIGRATION_MISSING",
             `No schema migration from version ${version} to ${toVersion}`,
           );
         }
-        current = next.migrate(current);
-        version = next.to;
+        for (const migration of migrations) current = migration.migrate({ ...current, schemaVersion: version });
+        version += 1;
+        current = { ...current, schemaVersion: version };
       }
       return current;
     },

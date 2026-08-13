@@ -42,6 +42,15 @@ export interface MdfnEditorShellProps extends MdfnEditorProps {
   readonly onRestoreVersion?: (version: number) => void | Promise<void>;
 }
 
+function insertMarkdown(controller: EditorController, editor: MdfnEditorHandle | null | undefined, markdown: string): void {
+  if (editor?.insertMarkdown(markdown)) return;
+  const state = controller.getState();
+  const selection = state.selection?.kind === "text" ? state.selection : { anchor: state.markdown.length, head: state.markdown.length };
+  const from = Math.min(selection.anchor, selection.head);
+  const to = Math.max(selection.anchor, selection.head);
+  controller.dispatch(new Transaction().replaceSource(from, to, markdown).setSelection({ kind: "text", anchor: from + markdown.length, head: from + markdown.length }).withSource("components:file-insert"));
+}
+
 export const MdfnEditorShell = React.forwardRef<React.ElementRef<typeof MdfnEditor>, MdfnEditorShellProps>(function MdfnEditorShell(
   { toolbarGroups, hideToolbar, hideAuthoringChrome, actor, onSelectFiles, onModeChange, versions, onRestoreVersion, className, onReady, ...props }, forwardedRef,
 ) {
@@ -67,9 +76,9 @@ export const MdfnEditorShell = React.forwardRef<React.ElementRef<typeof MdfnEdit
   }, [onReady]);
   const handleFiles = React.useCallback(async (files: readonly File[]) => {
     const markdown = await onSelectFiles?.(files);
-    if (markdown) editorHandleRef.current?.insertMarkdown(markdown);
+    if (markdown) insertMarkdown(props.controller, editorHandleRef.current, markdown);
     await props.onFiles?.(files);
-  }, [onSelectFiles, props.onFiles]);
+  }, [onSelectFiles, props.controller, props.onFiles]);
   return (
     <div className={className} data-mdfn-component="editor-shell">
       {!hideToolbar && !props.readOnly && <MdfnToolbar controller={props.controller} groups={toolbarGroups} commandTarget={commandTarget} />}
@@ -162,7 +171,7 @@ export function MdfnAuthoringChrome({ controller, editor, mode = "visual", readO
         <Card.Header><Card.Title>Files</Card.Title></Card.Header>
         <Card.Content><Input type="file" aria-label="Select files" multiple onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
           const files = [...(event.currentTarget.files ?? [])];
-          void onSelectFiles?.(files).then((markdown) => { if (markdown) editor?.insertMarkdown(markdown); });
+          void onSelectFiles?.(files).then((markdown) => { if (markdown) insertMarkdown(controller, editor, markdown); });
         }} /></Card.Content>
       </Card>}
       <MdfnOutline controller={controller} />

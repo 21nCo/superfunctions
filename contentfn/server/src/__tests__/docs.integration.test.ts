@@ -96,6 +96,26 @@ describe("PHASE_02 docs create/get/delete + perspectives", () => {
       expect(rejected.ok).toBe(false);
       if (!rejected.ok) expect(rejected.error).toMatchObject({ code: "VALIDATION_FAILED", details: { path: "markdownBody" } });
     });
+
+    it("accepts canonical directive profiles and rejects envelope policy mismatches", async () => {
+      await api.schema.upsert({ dataset: "prod", schema: {
+        version: 2,
+        documentTypes: [{
+          name: "page",
+          fields: [{ name: "body", type: { kind: "markdown" as const, dialect: "gfm" as const, allowRawHtml: false, extensions: ["directive/callout"], schemaVersion: 1 }, required: true }],
+        }],
+      } });
+      const accepted = await api.docs.create({ dataset: "prod", id: "canonical", type: "page", doc: { body: ":::callout\nBody\n:::\n" } });
+      expect(accepted.ok).toBe(true);
+      const mismatched = await api.docs.create({ dataset: "prod", id: "mismatch", type: "page", doc: { body: {
+        type: "text/markdown",
+        version: 1,
+        markdown: "<script>unsafe</script>",
+        profile: { id: "mdfn:gfm", dialect: "gfm", allowRawHtml: true, extensions: ["directive/callout"], schemaVersion: 1 },
+      } } });
+      expect(mismatched.ok).toBe(false);
+      if (!mismatched.ok) expect(mismatched.error).toMatchObject({ code: "VALIDATION_FAILED", details: { path: "body" } });
+    });
   });
 
   describe("TV-DOC-GET-001: get existing doc", () => {

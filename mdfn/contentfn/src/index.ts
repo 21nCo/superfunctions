@@ -1,4 +1,4 @@
-import type { MdfnDiagnostic, MdfnSidecar, MdfnSnapshot } from "@mdfn/core";
+import { validateMdfnSidecar, type MdfnDiagnostic, type MdfnSidecar, type MdfnSnapshot } from "@mdfn/core";
 
 export interface MarkdownContentProfile {
   readonly id: string;
@@ -46,7 +46,7 @@ export function snapshotToContent(snapshot: MdfnSnapshot, profile: MarkdownConte
 export function isMarkdownContent(value: unknown): value is MarkdownContent {
   const candidate = value as Partial<MarkdownContent> | null;
   const profile = candidate?.profile as Partial<MarkdownContentProfile> | undefined;
-  return candidate?.type === "text/markdown"
+  const shapeValid = candidate?.type === "text/markdown"
     && candidate.version === 1
     && typeof candidate.markdown === "string"
     && typeof profile?.id === "string"
@@ -55,7 +55,15 @@ export function isMarkdownContent(value: unknown): value is MarkdownContent {
     && Array.isArray(profile.extensions)
     && profile.extensions.every((extension) => typeof extension === "string")
     && Number.isInteger(profile.schemaVersion)
-    && (profile.schemaVersion ?? 0) > 0;
+    && (profile.schemaVersion ?? 0) > 0
+    && (candidate.schemaHash === undefined || typeof candidate.schemaHash === "string");
+  if (!shapeValid) return false;
+  try {
+    validateMdfnSidecar(candidate.sidecar, { markdownLength: candidate.markdown!.length });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export interface ContentMigrationDiagnostic {
@@ -69,14 +77,6 @@ export interface ContentMigrationResult {
   readonly content: MarkdownContent;
   readonly diagnostics: readonly ContentMigrationDiagnostic[];
   readonly lossy: boolean;
-}
-
-function textFromRichNode(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object") return "";
-  const node = value as Record<string, unknown>;
-  if (typeof node.text === "string") return node.text;
-  return Array.isArray(node.children) ? node.children.map(textFromRichNode).join("") : "";
 }
 
 function opaqueMigrationComment(value: unknown): string {
@@ -101,19 +101,57 @@ function opaqueMigrationComment(value: unknown): string {
   return `<!-- mdfn-migration-opaque:${encoded} -->`;
 }
 
+interface RichTextProjection {
+  readonly text: string;
+  readonly opaque: readonly string[];
+  readonly unsupported: number;
+}
+
+function textFromRichNode(value: unknown, ancestors = new WeakSet<object>(), depth = 0): RichTextProjection {
+  if (typeof value === "string") return { text: value, opaque: [], unsupported: 0 };
+  if (!value || typeof value !== "object") return { text: "", opaque: [opaqueMigrationComment(value)], unsupported: 1 };
+  if (depth >= 64 || ancestors.has(value)) return { text: "", opaque: [opaqueMigrationComment(value)], unsupported: 1 };
+  const node = value as Record<string, unknown>;
+  // WeakSet is not iterable, so add/remove on the current traversal path.
+  ancestors.add(value);
+  try {
+    const ownText = typeof node.text === "string" ? node.text : "";
+    if (node.children === undefined) {
+      return ownText
+        ? { text: ownText, opaque: [], unsupported: 0 }
+        : { text: "", opaque: [opaqueMigrationComment(value)], unsupported: 1 };
+    }
+    if (!Array.isArray(node.children)) return { text: ownText, opaque: [opaqueMigrationComment(node.children)], unsupported: 1 };
+    const children = node.children.map((child) => textFromRichNode(child, ancestors, depth + 1));
+    return {
+      text: ownText + children.map((child) => child.text).join(""),
+      opaque: children.flatMap((child) => child.opaque),
+      unsupported: children.reduce((total, child) => total + child.unsupported, 0),
+    };
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
 function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; unsupported: number } {
   let unsupported = 0;
   const blocks = value.map((entry) => {
     if (!entry || typeof entry !== "object") { unsupported += 1; return opaqueMigrationComment(entry); }
     const block = entry as Record<string, unknown>;
     const type = typeof block.type === "string" ? block.type : "paragraph";
-    const text = textFromRichNode(block);
-    if (type === "paragraph") return text;
-    if (/^h[1-6]$/.test(type)) return `${"#".repeat(Number(type[1]))} ${text}`;
-    if (type === "blockquote") return text.split("\n").map((line) => `> ${line}`).join("\n");
-    if (type === "code") return `\`\`\`${typeof block.language === "string" ? block.language : ""}\n${text}\n\`\`\``;
-    if (type === "list-item") return `- ${text}`;
-    unsupported += 1;
+    if (type !== "paragraph" && !/^h[1-6]$/.test(type) && type !== "blockquote" && type !== "code" && type !== "list-item") {
+      unsupported += 1;
+      return opaqueMigrationComment(entry);
+    }
+    const projected = textFromRichNode(block);
+    unsupported += projected.unsupported;
+    const retained = projected.opaque.join("\n\n");
+    const withOpaque = (markdown: string): string => retained ? `${markdown}\n\n${retained}` : markdown;
+    if (type === "paragraph") return withOpaque(projected.text);
+    if (/^h[1-6]$/.test(type)) return withOpaque(`${"#".repeat(Number(type[1]))} ${projected.text}`);
+    if (type === "blockquote") return withOpaque(projected.text.split("\n").map((line) => `> ${line}`).join("\n"));
+    if (type === "code") return withOpaque(`\`\`\`${typeof block.language === "string" ? block.language : ""}\n${projected.text}\n\`\`\``);
+    if (type === "list-item") return withOpaque(`- ${projected.text}`);
     return opaqueMigrationComment(entry);
   });
   return { markdown: blocks.join("\n\n"), unsupported };

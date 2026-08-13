@@ -81,7 +81,9 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
       const mappedSelection = mapSelection(selection, [range]);
       selectionChanged ||= mappedSelection !== selection;
       selection = mappedSelection;
-      sidecar = mapSidecar(sidecar, [range]);
+      const mappedSidecar = mapSidecar(sidecar, [range]);
+      sidecarChanged ||= mappedSidecar !== sidecar;
+      sidecar = mappedSidecar;
       const parsed = projector.parse(markdown);
       document = parsed.document;
       diagnostics = parsed.diagnostics;
