@@ -4,26 +4,25 @@
 </div>
 <div align="center">
 
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](/LICENSE)
 [![Discord](https://img.shields.io/discord/831815510563749889?logo=discord&logoColor=white)](https://discord.com/invite/9HJqKYTZKg)
-[![YouTube](https://img.shields.io/youtube/channel/views/UCEE8Uvy4krxIGXAGy2q5wrA?style=flat&logo=youtube&logoColor=white&color=FF0000&label=@21nCo)](https://www.youtube.com/@21nCo)
-[![Twitter Follow](https://img.shields.io/twitter/follow/superFunctions?style=flat&logo=twitter&logoColor=white&color=1DA1F2&label=X%20@superFunctions)](https://twitter.com/superFunctions)
 
 </div>
 
+> [!WARNING]
+> **Alpha software**.
+> Super functions is currently in alpha and is not yet fully ready for production use. APIs and behavior may change without notice, and some features may be incomplete or unstable. Evaluate it carefully and use it at your own risk.
+
 # Functions
-
-## Swift Platform Requirements
-
-The Swift package in `Package.swift` targets iOS 16 or later and macOS 13 or later.
 
 ## Data and storage
 
-| Function | Description | Comparable to | Packages |
-| --- | --- | --- | --- |
-| [dataFn](https://datafn.dev) | Full stack data management framework with offline-first sync, reactive signals, sharing capability, and auto REST API. | — | [npm](https://www.npmjs.com/package/@datafn/client) · [PyPI](https://pypi.org/project/datafn/) |
-| [fileFn](https://filefn.com) | Complete file management with resumability, multi-part uploads, security, processing, versioning, storage quota and analytics. | TUS + UploadThing | [npm](https://www.npmjs.com/package/@filefn/client) · [PyPI](https://pypi.org/project/filefn/) |
-| [searchFn](https://searchfn.com) | Adapter-first full-text search for browser, native mobile apps and server with offline IndexedDB and DataFn integration. | — | [npm](https://www.npmjs.com/package/@searchfn/client) |
+| Function | Description |
+| --- | --- |
+| dataFn | Full stack data management framework with offline-first sync, reactive signals, sharing capability, and auto REST API.<br><br>**Packages:** [npm](https://www.npmjs.com/package/@datafn/client) · [PyPI](https://pypi.org/project/datafn/) |
+| fileFn | Complete file management with resumability, multi-part uploads, security, processing, versioning, storage quota and analytics.<br><br>**Packages:** [npm](https://www.npmjs.com/package/@filefn/client) · [PyPI](https://pypi.org/project/filefn/) |
+| searchFn | Adapter-first full-text search for browser, native mobile apps and server with offline IndexedDB and DataFn integration.<br><br>**Packages:** [npm](https://www.npmjs.com/package/@searchfn/client) |
 
 ## Application core
 
@@ -33,6 +32,26 @@ The Swift package in `Package.swift` targets iOS 16 or later and macOS 13 or lat
 | [billFn](https://billfn.com) | Complete billing infrastructure. Subscriptions, one-time payments, usage-based billing, analytics, store integrations and invoicing. | Stripe Billing + Metronome + RevenueCat | [npm](https://www.npmjs.com/package/billfn) |
 | [mailFn](./mailfn) | Programmable real inboxes for products, agents, and deterministic email testing, with Cloudflare deployment and SendFn composition. | MailSlurp + Mailtrap Inbound + AgentMail | `mailfn` + `@mailfn/*` |
 | [mcpFn](./mcpfn/README.md) | Build and regression-test MCP servers with full protocol contracts, OAuth/API-key testkits, Playwright auth fixtures, host profiles, official conformance, and safe DataFn exposure. | MCP SDK + contract testing | `@mcpfn/core` · `@mcpfn/auth` · `@mcpfn/testing` · `@mcpfn/datafn` · `@mcpfn/cli` |
+| [plugFn](./plugfn) | Universal API integration SDK with standardized provider interfaces and managed authentication. | Nango + Pipedream Connect | [npm](https://www.npmjs.com/package/plugfn) |
+
+## User interface
+
+| Function | Description | Packages |
+| --- | --- | --- |
+| [uiFn](./uifn) | Reusable frontend component primitives, themes, catalogs and design-system tooling. | [npm](https://www.npmjs.com/package/uifn) |
+| [docsFn](./docsfn) | AI-native documentation platform and reusable documentation UI. | [npm](https://www.npmjs.com/package/docsfn) |
+
+## Infrastructure and meta
+
+| Function | Description | Packages |
+| --- | --- | --- |
+| [hostFn](./hostfn) | Hosting and deployment tooling for projects, environments and providers. | [npm](https://www.npmjs.com/package/hostfn) |
+| [extFn](./extfn) | Cross-framework extension development with hot reload, bundling, scanning and publishing. | [npm](https://www.npmjs.com/org/extfn) |
+| [apiFn](./apifn) | API design, exploration, testing and documentation tooling. | [npm](https://www.npmjs.com/org/apifn) |
+
+## Contributing
+
+Due to the current size of our team, we are not accepting external contributions at this time. We appreciate your interest and understanding.
 
 ### License
 

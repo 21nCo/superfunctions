@@ -26,6 +26,7 @@
     "datafn/extfn",
     "datafn/server",
     "datafn/svelte",
+    "billfn/*",
     "filefn/*",
     "logfn/*",
     "mailfn/*",
