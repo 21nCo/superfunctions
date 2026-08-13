@@ -5,18 +5,17 @@ The inventory defines the minimum real operator model for each module. Commercia
 The comparison tables are the product target, not an implementation claim.
 The live manifest is authoritative for what can be enabled today: it exposes a
 truthful subset with exact domain handlers and schemas. Unsupported target
-capabilities are omitted. A function with no canonical operator service is
-`unavailable` and exposes nothing; ContentFn is folded into CmsFn rather than
-duplicating its server. This deliberately leaves roadmap gaps visible instead
-of filling them with generic payload/execute façades.
+capabilities are omitted. ContentFn is folded into CmsFn rather than duplicating
+its server. Roadmap gaps remain visible instead of being filled with generic
+payload/execute façades.
 
 ## Live implementation status
 
-The catalog contains 29 administration packages: 18 required selectable
-modules, 2 optional selectable modules, 2 real nested modules, 1 folded empty
-module, and 6 unavailable empty modules. Only required and optional modules are
-independently selectable. Nested modules mount under their owner, folded
-modules cannot be selected independently, and unavailable modules fail closed.
+The catalog contains 29 administration packages: 20 required selectable
+modules, 6 optional selectable modules, 2 real nested modules, and 1 folded
+empty module. Required and optional modules are independently selectable.
+Nested modules mount under their owner; folded modules cannot be selected
+independently.
 
 | Module | Live availability | Real implemented subset |
 | --- | --- | --- |
@@ -29,6 +28,7 @@ modules cannot be selected independently, and unavailable modules fail closed.
 | DataFn | Required selectable | Schemas, resources, relations, indices, capabilities, records, and query execution; query, mutate, and transact through the configured DataFn executor. |
 | FileFn | Required selectable | Authorized files, versions, upload sessions, grants, share links, policies, and processing artifacts; upload lifecycle, deletion, grants, one-time share creation/revocation, and processing through FileFn services. |
 | FlowFn | Required selectable | Environment-owned queues, jobs, workers, dead letters, and event log; pause/resume, enqueue, run/close workers, and redrive/delete/clean dead letters through FlowFn APIs. |
+| HostFn | Required selectable | Scope-owned targets, deployments, domains, and write-only variables through an injected HostFn operator store and deployment executor; deploy/cancel/rollback, attach/detach domains, and manage variables. |
 | MailFn | Required selectable | Project-scoped projects, inboxes, messages, threads, drafts, attachments, credentials, domains, webhooks, retention, quotas, and audit events; the implemented inbox, message, draft, domain, webhook, credential, and retention actions. |
 | MemoryFn | Required selectable | Environment-scoped memory search and ingestion through the configured MemoryFn pipeline and storage adapter. |
 | PlugFn | Required selectable | Project-owned providers, connections, provider installations, workflows, webhook receipts/deliveries, and sync jobs; OAuth authorization, connection lifecycle, installation lifecycle, workflow controls, and sync-job controls. |
@@ -37,18 +37,17 @@ modules cannot be selected independently, and unavailable modules fail closed.
 | SecFn | Required selectable | Environments, namespaces, secret sets and members, secrets, audit events, scanner, and rate limits; lifecycle operations delegate to SecFn vault, scanner, audit, and limiter services. |
 | SendFn | Required selectable | Templates, delivery events, channel sends, suppressions, and device tokens; explicit email/SMS/WhatsApp/push, template, suppression, and device-token operations through SendFn. |
 | TestFn | Required selectable | Project-scoped persisted runs, redacted artifact metadata, analytics, visual diffs, and visual baselines; start/clean runs, compare screenshots, and update a confirmed baseline. |
+| UserFn | Required selectable | Scope-owned users, segments, flags, campaigns, surveys, and feedback through UserFn's injected self-hosted operator store; exact lifecycle and targeting actions are exposed per resource. |
 | WatchFn | Required selectable | WatchFn events, exception/message capture, and alert list/create backed by the configured WatchFn instance; it owns the CatchFn and LogFn navigation surfaces. |
+| ApiFn | Optional selectable | Validated OpenAPI specifications and non-secret API environments through an injected store and real ApiFn parsing, validation, and diff primitives. |
+| BotFn | Optional selectable | Scope-owned bot definitions and channel installations through an injected durable store and mandatory platform verifier; credential references are write-only. |
 | CacheFn | Optional selectable | Environment/namespace-scoped key metadata and cache statistics; set/delete keys, invalidate tags, and clear a namespace without exposing cached values in reads. |
+| DocsFn | Optional selectable | Scope-owned documentation sites and build results through an injected store/content provider and real DocsFn manifest compilation; explicit build execution returns sanitized build state. |
+| LangFn | Optional selectable | Scope-owned model profiles, prompt templates, redacted traces, and confirmed real model invocations through an injected store, trace reader, and LangFn client. |
 | ProbeFn | Optional selectable; workspace-private | Sessions, checkpoints, event deltas, reports, and repository-relative artifact paths; session transitions, evidence capture/diff, checkpoint capture, and report export. The admin package remains workspace-private because ProbeFn's runtime dependencies are private. |
 | CatchFn | Nested real under WatchFn | Persisted bug reports: cursor list, get, and create through CatchFn storage, mounted at WatchFn errors. |
 | LogFn | Nested real under WatchFn | Emit structured events and flush configured LogFn sinks, mounted at WatchFn logs. |
 | ContentFn | Folded empty into CmsFn | No standalone resources, navigation, or operations. CmsFn owns the real ContentFn server-backed surface. |
-| ApiFn | Unavailable empty | No canonical persistent operator store/service; exposes no resources, navigation, or operations. |
-| BotFn | Unavailable empty | No canonical aggregate for bots, channels, deployments, commands, and conversations; exposes no resources, navigation, or operations. |
-| DocsFn | Unavailable empty | No canonical site CRUD or deployment control plane; exposes no resources, navigation, or operations. |
-| HostFn | Unavailable empty | CLI and command primitives do not form a reusable deployment/domain/traffic/secret operator API; exposes no resources, navigation, or operations. |
-| LangFn | Unavailable empty | Execution, model, and tracing primitives do not provide the advertised persistent operator registry; exposes no resources, navigation, or operations. |
-| UserFn | Unavailable empty | The client/UI engine cannot prove server-side scope or persistence ownership; exposes no resources, navigation, or operations. |
 
 ## Commercial comparison roadmap
 

@@ -55,7 +55,7 @@ Generated artifacts remain with their source change. Root lockfile is regenerate
 
 ## Completion gate
 
-- every selectable function has a real function-owned domain binding and every function without one is explicitly unavailable with no exposed operations;
+- every required and optional function has a real function-owned or mandatory injected operator boundary, and unsupported operations are omitted;
 - one registry controls all exposure surfaces;
 - disabled modules are absent everywhere;
 - tenant, namespace, region, permission, idempotency, and audit semantics converge;

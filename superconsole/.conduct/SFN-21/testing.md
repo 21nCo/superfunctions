@@ -12,7 +12,8 @@
 - schema validation and normalized errors;
 - cursor encoding/scope binding plus provider-supplied integrity where hostile clients can submit cursors;
 - idempotency replay and collision;
-- audit redaction and outcome recording;
+- stable-ID audit reconciliation across repeated post-write failures;
+- schema-bound one-time-secret redaction and outcome recording;
 - OpenAPI and McpFn projection.
 
 ### Function contract tests
@@ -24,7 +25,7 @@ Every function admin package proves that:
 - exact handlers delegate through the owning function's service rather than a caller-supplied generic executor;
 - actor, scope, namespace/region, request identity, and idempotency reach the real domain boundary;
 - operation-specific schemas reject unsupported fields before domain execution;
-- functions without a canonical operator service are explicitly unavailable and expose no operations;
+- each required/optional function binds a real function-owned or mandatory injected operator boundary and exposes no unsupported operations;
 - destructive/sensitive operations carry the required metadata;
 - nested modules declare the correct parent;
 - representative integration tests exercise public domain services/adapters and cross-scope denial.
@@ -37,6 +38,9 @@ Every function admin package proves that:
 - identical normalized error code;
 - identical request and audit identity;
 - disabled-module absence on all surfaces.
+- exact 20 required / 6 optional / 2 nested / 1 folded catalog coverage;
+- all function clients preserve availability, invoke, pages, raw response, and exact operation maps;
+- machine-reviewed credential lifecycle and external-side-effect confirmation assurance.
 
 ### Integration tests
 

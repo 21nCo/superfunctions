@@ -48,10 +48,9 @@ The separate `dev` worktree contains uncommitted AuthFn, DataFn, FileFn, SearchF
 The architecture and capability contract are normative. Verification records what was actually run and must be read before treating the branch as releasable.
 
 An admin package is not considered available merely because it exists in the
-workspace. Available modules must expose exact handlers backed by their public
-domain service. Packages whose functions do not yet own a canonical operator
-service are registered as `unavailable`, expose no operations/navigation, and
-are rejected if a self-hoster attempts to enable them.
+workspace. Every required and optional SFN-21 module now exposes exact handlers
+backed by a function-owned operator service or an injected durable/provider
+boundary; the executable 29-package contract gate verifies this before release.
 ContentFn is `folded` into CmsFn and cannot be enabled independently; this
 prevents the old generic ContentFn package from duplicating CmsFn's real
 ContentFnServer-backed resources.

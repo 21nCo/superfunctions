@@ -2,127 +2,132 @@
 
 ## Current verdict
 
-**BLOCKED at audited commit `f46cf63f`.** The read-only re-audit found that the
-live Linear completion contract remained broader than this branch's local
-delivery gate. The historical green commands below remain useful evidence for
-that commit, but they do not establish SFN-21 completion. A new exact-HEAD
-verification record will replace this verdict only after every re-audit exit
-criterion is satisfied.
+**PASS for the local self-hosted SFN-21 contract.** The implementation and lock
+used by the final production probe are committed at
+`078dfec7c1db1daa2a4cae965963c80a0e4cd994`. The durable evidence manifest names
+that exact commit. Later changes in this completion commit are documentation and
+evidence records only.
 
-## Source and external state
+## Delivered contract
 
-- Linear issue: [SFN-21](https://linear.app/21n/issue/SFN-21/build-super-console-as-the-modular-self-hosted-administration-control), with the ideation and architecture/delivery documents created, attached, and read back during project setup.
-- Fetched `sf-next/next`: `8dddd865ee9b86571c70db87efd918152cf682fb`.
-- Fetched `origin/dev`: `04230e1462d85fe7aa0157fa26eca707681872ee`.
-- Local `next` merge: `da0720a508eb86e3680f433dee17474670c41b27`.
-- The feature worktree was fast-forwarded to that merge before implementation.
-- The dirty `dev` worktree was inspected read-only for forward compatibility and was not changed.
-
-## Implementation contract
-
-- Super Console is a self-hosted SvelteKit operator control plane whose enabled modules are explicitly selected by the consumer.
-- The enabled registry is authoritative for navigation, REST, OpenAPI, TypeScript clients, and McpFn discovery. Disabled modules are absent on every surface.
-- UIFn powers the shared visual system. Operator administration remains separate from embedded or customer-facing portals.
-- AuthFn owns operator authentication and CSRF; the admin kernel owns scope, policy, confirmation, audit, idempotency, redaction, REST/OpenAPI, TypeScript transport, and McpFn projection.
-- CatchFn and LogFn are nested under WatchFn. ContentFn is folded into CmsFn and cannot be selected independently.
-- Every selectable module exposes only operations backed by a real function-owned service. A function without a canonical operator service is explicitly unavailable and exposes no resources, navigation, or operations.
+- 29 function-owned administration packages.
+- 20 independently selectable required modules.
+- 6 independently selectable optional modules.
+- CatchFn and LogFn nested under WatchFn.
+- ContentFn folded into CmsFn with no duplicate surface.
+- No unavailable SFN-21 module.
+- 130 real operator resources and 347 globally unique operations.
+- One registry controls UI, dispatch, REST/OpenAPI, TypeScript SDK discovery,
+  and McpFn projection; disabled modules are absent from every surface.
+- Every required/optional operation delegates to a function-owned service or a
+  mandatory injected durable/provider boundary. Unsupported roadmap breadth is
+  omitted.
 
 ## Shared administration kernel
 
-Final Node 22 verification:
+Node `v22.22.0`, npm `10.9.4`:
 
-- `npm run typecheck --workspace=@superfunctions/admin` — passed.
-- `npm test --workspace=@superfunctions/admin -- --pool=forks --poolOptions.forks.singleFork=true` — 53/53 tests passed.
-- `npm run build --workspace=@superfunctions/admin` — passed.
+- `npm run typecheck --workspace=@superfunctions/admin` — PASS.
+- `npm test --workspace=@superfunctions/admin -- --pool=forks --poolOptions.forks.singleFork=true` — PASS, 65/65.
+- `npm run build --workspace=@superfunctions/admin` — PASS.
 
-Coverage includes:
+Coverage includes immutable typed scope/context, composed caller cancellation
+and timeouts, raw responses, policy and confirmation binding, SHA-256
+idempotency fingerprints, stable-ID terminal-audit reconciliation, recursive
+outward redaction, schema-bound one-time secret paths, OpenAPI, REST, SDK, and
+McpFn parity.
 
-- strict installation → workspace → project → environment scope with `organizationId` as a compatibility alias;
-- manifest/resource/operation minimum scope and actor-projected discovery;
-- declared permission AND custom policy evaluation;
-- immutable validated request/context snapshots;
-- confirmation binding and strong-confirmation metadata;
-- SHA-256 idempotency fingerprints, read exclusion, replay, release, and durable recovery;
-- attempted/terminal audit ordering and explicit resource targets;
-- recursive outward secret redaction plus the validated one-time-output exception;
-- OpenAPI, language-neutral REST, TypeScript transport, and McpFn parity.
+The fault-injected reconciliation test performs three failed post-audit
+reconciliation attempts and proves one logical terminal audit event and one
+domain invocation. Audit sinks must be durable first-write-wins by event ID and
+idempotency stores must atomically finalize that ID.
 
 ## Function administration packages
 
-All 29 function-owned admin packages were verified sequentially from the frozen source:
+All 29 admin workspaces were checked sequentially:
 
 - 29/29 typechecks passed;
-- 101/101 tests passed;
+- 122/122 tests passed;
 - 29/29 production builds passed.
 
-Direct import and manifest readback from built packages found:
+`npm run verify:superconsole-admin-contracts` imported every built package and
+reported:
 
 - 29 valid manifests;
-- 111 real resources;
-- 283/283 globally unique operations;
-- availability split: 18 required selectable, 2 optional selectable, 2 nested, 1 folded, and 6 unavailable;
-- folded and unavailable packages expose zero resources and zero operations;
-- exactly one validated one-time credential response: `filefn.share-links.create-share` field `token`.
+- 130 resources;
+- 347 unique operations;
+- availability `20 required / 6 optional / 2 nested / 1 folded`;
+- every selectable module has resources and operations;
+- every resource has identity/display metadata and an operation route/target;
+- every named client preserves `availability`, `invoke`, `pages`, `raw`, its
+  exact `operations` map, and its function-owned named methods.
 
-The function packages publish exact service methods, handler maps, operation-specific schemas, and named TypeScript clients. Public caller-supplied `execute({ operationId, input: unknown })` façades and generated commercial-placeholder inventories were removed. Representative domain integration tests use the real function services/adapters and prove scope ownership or cross-scope rejection.
+The independent SDK review passed 28/28 available/nested named factories; the
+folded ContentFn factory is covered by the 29-package gate. The machine mutation
+risk review passed 58/58 credential-lifecycle and external-side-effect
+operations with zero exceptions.
 
-Current live module breadth is recorded in [capability-inventory.md](capability-inventory.md). The commercial comparison tables are explicitly roadmap targets, not implementation claims.
+Focused owning-runtime evidence:
+
+- HostFn CLI — 63/63 tests and build passed.
+- UserFn core — 17/17 tests, typecheck, and build passed.
+- ApiFn core — 93/93 tests and typecheck passed.
+- DocsFn core — 147/147 tests and build passed.
+- LangFn core — 56/56 tests, typecheck, and build passed. The run also fixed
+  MCP SDK protocol failures so unknown tools normalize to `MCPProtocolError`.
 
 ## Super Console and UIFn
 
-- `npm run check --workspace=superconsole` — Svelte check passed with 0 errors and 0 warnings.
-- `npm test --workspace=superconsole -- --maxWorkers=1` — 74/74 tests passed.
-- `npm run build --workspace=superconsole` — adapter-node production build passed.
-- `npm run verify:uifn-governance` — `ok: true`, 10/10 checks passed.
+- `npm run check --workspace=superconsole` — PASS, 0 errors and 0 warnings.
+- `npm test --workspace=superconsole -- --maxWorkers=1` — PASS, 74/74.
+- `npm run build --workspace=superconsole` — PASS, adapter-node production build.
+- `npm run verify:uifn-governance` — PASS, 10/10 checks, `ok: true`.
 
-The UIFn governance output still reports the repository's recorded `baselineVerdict: "FAIL"`; that baseline is preserved rather than relabeled. The enforcement command itself passed every positive and negative fixture.
+The UIFn gate intentionally preserves its repository baseline verdict of
+`FAIL`; the governance command itself passed every positive and negative
+fixture. Super Console consumes public UIFn packages without aliases or a
+secondary component system. Operator administration remains separate from
+customer portals and embedded UI.
 
-UI verification covers:
+## Durable production browser evidence
 
-- public UIFn package consumption with no source aliases or secondary component system;
-- authenticated shell and hierarchy switching;
-- selected-module navigation and unavailable/folded rejection;
-- UIFn Drawer keyboard/focus behavior and source-owned Drawer/Avatar fixes;
-- action schema forms, confirmation, stable idempotency, receipts, and refresh-failure semantics;
-- CiFn run, job log, retry/cancel, and audited artifact-download flows;
-- safe internal navigation/download/avatar handling and AuthFn CSRF/2FA behavior.
+The final production-build Playwright probe ran:
 
-## Production browser probe
+```bash
+SUPERCONSOLE_PROBE_SOURCE_COMMIT=$(git rev-parse HEAD) \
+  SUPERCONSOLE_PROBE_ARTIFACTS=superconsole/.conduct/SFN-21/evidence/final \
+  npm run probe:smoke --workspace=superconsole
+```
 
-A production-build Playwright probe used the real `createCiFnAdminAdapter`, selected only CiFn, loaded overview/run/log surfaces, executed cancel and retry, and exercised the mobile UIFn Drawer including Escape close and focus restoration.
+Result: `ok: true` at source commit
+`078dfec7c1db1daa2a4cae965963c80a0e4cd994`. The probe uses the real CiFn
+admin adapter and an in-memory CiFn control plane. It verifies selected-module
+discovery, overview, run and log views, audited cancel/retry mutations, mobile
+UIFn Drawer behavior, Escape handling, and focus restoration.
 
-- Result: `ok: true`.
-- Evidence was retained in a temporary local probe directory and is not part of the source tree.
-- Evidence set: `result.json`, empty browser-error log, server log, desktop overview, CiFn run-detail, and mobile Drawer screenshots.
+Committed evidence:
 
-The final probe caught and verified the fix for a successful mutation receipt being lost when route invalidation remounted the action component. Mutation success is now published to the shell-level status surface before refresh.
+- [result manifest](evidence/final/result.json)
+- [desktop overview](evidence/final/01-overview-desktop.png)
+- [CiFn run detail](evidence/final/02-cifn-run-detail.png)
+- [mobile Drawer](evidence/final/03-mobile-drawer.png)
+- sanitized [server output](evidence/final/server.txt)
+- empty [browser error output](evidence/final/browser.txt)
 
-## Dependency and lockfile reproducibility
+The evidence contains no machine path, local host, or local port.
 
-- Final command: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --no-audit --no-fund`.
-- Lockfile SHA-256 before and after: `9d19e07dac12a7f4e2cea4c3cb47315372c842b7dbef791a448acad548ae66f7`.
-- Result: unchanged; final manifests and lockfile are synchronized.
-- Node: `v22.22.0`; npm: `10.9.4`.
-- `--legacy-peer-deps` remains necessary because of an unrelated pre-existing DocsFn/Svelte peer conflict in the merged monorepo.
-- ProbeFn's workspace-private admin package bundles its private source-only ProbeFn dependencies and was directly imported successfully from its built ESM output.
+## Dependency and lock reproducibility
 
-## Audit remediation outcomes
+- Canonical graph install: `npm install --legacy-peer-deps --ignore-scripts --no-audit --no-fund` — PASS.
+- Final stability command: `npm install --package-lock-only --legacy-peer-deps --ignore-scripts --no-audit --no-fund` — PASS with an unchanged second-run SHA-256.
+- Final `package-lock.json` SHA-256: `c88650b9cc5ab64a7e7a3d81abfeaa29766755ac2913e519d503191afdd96ee5`.
+- `--legacy-peer-deps` remains necessary because of a pre-existing DocsFn/Svelte peer conflict in the merged monorepo.
 
-The read-only audit was treated as a valid release-blocking assessment. Remediation closed the material findings rather than masking them:
+## Evidence boundaries
 
-- generic generated module façades were replaced by real domain bindings or truthful unavailable packages;
-- registry selection became availability-aware and manifest-driven;
-- policy, audit, confirmation, idempotency, redaction, target, scope, and MCP/OpenAPI parity gaps were fixed in the shared kernel;
-- function-specific clients and operation schemas replaced unknown-input public SDKs;
-- CiFn uses its real control-plane adapter, typed operations, audited downloads, and defensive views;
-- UIFn Drawer/Avatar defects were fixed at the source and local UI workarounds removed;
-- mutation success receipts survive route refresh/remount;
-- CmsFn is independently selectable while folded ContentFn remains an implementation dependency only;
-- the package lock was regenerated from the final manifests.
-
-## Final evidence boundaries
-
-- Final `git diff --check` is required immediately before the completion commit.
-- Work remains local on `codex/super-console`; no push, pull request, deployment, or publication was performed.
-- Generated `dist`, `.svelte-kit`, browser artifacts, and `node_modules` are ignored and are not source changes.
-- Local verification does not prove a deployed installation, external provider credentials, DNS, live email delivery, hosted database durability, npm publication, or remote CI.
+- Work remains local on `codex/super-console`; no push, pull request,
+  deployment, publication, or live provider mutation was performed.
+- Generated `dist`, `.svelte-kit`, and `node_modules` remain ignored.
+- Local proof does not establish remote CI, npm publication, production DNS,
+  external provider credentials, hosted durability, or a deployed self-hosted
+  installation.

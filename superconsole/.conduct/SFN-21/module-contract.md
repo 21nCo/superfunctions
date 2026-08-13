@@ -64,10 +64,10 @@ client, and MCP all project the same manifest and therefore cannot invent
 fields that the domain service does not support.
 
 A caller-supplied `execute({ operationId, input: unknown })` facade is not an
-available admin implementation. If a function lacks a canonical operator
-service/store, its manifest uses `availability: "unavailable"`, declares a
-reason, and exposes zero resources, navigation entries, and operations. The
-registry refuses to enable it.
+available admin implementation. The kernel reserves `availability:
+"unavailable"` for a future function that lacks a canonical operator boundary;
+such a manifest must be empty and cannot be enabled. No SFN-21 module uses that
+state in the final catalog.
 
 When a function's domain is intentionally owned by another product module,
 the child uses `availability: "folded"`, declares its owner, and exposes no
@@ -123,7 +123,13 @@ Audit events carry:
 - phase/outcome, normalized error code, and duration when terminal;
 - function observation references when supplied.
 
-The manifest provides explicit input/output redaction hints. The kernel applies global secret-key detection to audit values as defense in depth and applies declared output redaction before response or idempotency storage.
+The manifest provides explicit input/output redaction hints. The kernel applies global secret-key detection to audit values as defense in depth and applies declared output redaction before response or idempotency storage. A one-time secret exception is an exact schema-resolved JSON path through closed non-union objects to a string leaf; it is valid only for audited, strongly confirmed, non-idempotent operations and never applies to audit, error, metadata, or replay output.
+
+Idempotent mutations persist a stable terminal audit ID with their durable
+result before the first terminal sink write. Audit sinks are first-write-wins by
+event ID, and idempotency stores atomically finalize that same ID. Recovery
+therefore redelivers one logical terminal event without invoking the domain
+again, even when reconciliation acknowledgement repeatedly fails.
 
 ## Nested ownership
 

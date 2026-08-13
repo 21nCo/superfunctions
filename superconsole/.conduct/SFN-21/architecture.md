@@ -39,8 +39,9 @@ Every available function's `admin` package declares:
 - an adapter factory that delegates to an injected domain service.
 
 The package does not create fake product data or embed framework-specific handlers.
-An unavailable function instead declares a stable reason and an empty operator
-surface; package presence never implies deployable administration.
+The registry still supports an empty `unavailable` state for future catalog
+entries, but SFN-21's final 29-package catalog contains no unavailable module;
+package presence alone never implies deployable administration.
 
 ### Shared administration kernel
 

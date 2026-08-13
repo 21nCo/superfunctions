@@ -11,9 +11,13 @@ Construction accepts:
 - base URL;
 - a static header set or asynchronous header callback for AuthFn/API-key authentication and scope headers;
 - fetch implementation;
-- optional default idempotency and confirmation values.
+- immutable typed default scope and optional default idempotency/confirmation values;
+- a deterministic default timeout, or an explicit opt-out when the caller owns cancellation.
 
-Per-request options accept additional headers, an abort signal, an idempotency key, and a confirmation token. Scope is carried in the canonical query parameters or headers documented by the REST API; the client does not keep mutable global scope.
+Per-request options accept additional headers, an abort signal, a timeout override,
+an idempotency key, and a confirmation token. `withScope(...)` creates a new
+client with an immutable typed scope; it never mutates an existing client. A
+caller abort signal is composed with the timeout rather than replaced by it.
 
 ## Surfaces
 
@@ -23,6 +27,8 @@ Per-request options accept additional headers, an abort signal, an idempotency k
 - `client.issueConfirmation(operationId, input)` requests an actor/scope/operation/input-bound confirmation token.
 - `client.invoke(moduleId, route, input)` calls a discovered module route.
 - `client.invokeOperation(operationId, input)` calls the operation-ID transport.
+- `client.invokeOperationRaw(operationId, input)` returns the unconsumed HTTP
+  response and parsed envelope without normalizing non-success statuses.
 
 The shared `AdminClient` remains the language-neutral REST transport boundary.
 Each available function package publishes `create<Function>AdminClient(...)`,
@@ -32,12 +38,12 @@ which wraps it with:
 - `availability()` against the live enabled registry;
 - typed `invoke(...)` where the function preserves operation input/output types;
 - `pages(...)`, an async cursor iterator that retains request/audit receipts.
+- `raw(...)`, the function-scoped raw-response equivalent.
 
-Functions migrated to real domain bindings also export operation input/output
-maps and typed service/adapter constructors. Generic `unknown` domain payloads
-are not accepted as proof that a function has a commercial admin API. A
-function without a canonical server/store is marked unavailable rather than
-publishing fictional generated methods.
+All required and optional functions export operation-specific named methods,
+typed service/adapter constructors, and the shared capability methods without
+dropping them. Generic `unknown` domain payloads are not accepted as proof that
+a function has a commercial admin API.
 
 ## Mutations
 
@@ -60,7 +66,7 @@ The v1 client performs no automatic retries. Callers may retry an idempotent mut
 
 ## Capability typing
 
-Manifest, operation, scope, result, and error types are exported by `@superfunctions/admin`. Runtime discovery determines which function capabilities are enabled. The server remains authoritative: disabled modules are absent, while explicitly unavailable packages fail startup selection with their domain-binding reason. Function clients expose this through `availability()` without treating package installation as runtime enablement.
+Manifest, operation, scope, result, and error types are exported by `@superfunctions/admin`. Runtime discovery determines which function capabilities are enabled. The server remains authoritative: disabled modules are absent. Function clients expose this through `availability()` without treating package installation as runtime enablement.
 
 ## Verification
 
