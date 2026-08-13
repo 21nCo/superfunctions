@@ -86,7 +86,7 @@ const operations = [
   {
     id: "cmsfn.documents.publish", title: "Publish document", description: "Publish a draft through ContentFn and deliver its events/webhooks.",
     inputSchema: { type: "object", properties: { id: { type: "string", minLength: 1 }, ifRev: { type: "string" } }, required: ["id"], additionalProperties: false }, outputSchema: documentResultSchema,
-    route: { method: "POST", path: "/resources/documents/actions/publish" }, permission: "cmsfn.documents.publish", safety: { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" }, mcp: { readOnlyHint: false, idempotentHint: true }, target: { resource: "documents", idInput: "id" },
+    route: { method: "POST", path: "/resources/documents/actions/publish" }, permission: "cmsfn.documents.publish", safety: { classification: "write", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "explicit", reason: "Publishing changes the public document and delivers configured events or webhooks.", maxAgeSeconds: 300 }, audit: "required" }, mcp: { readOnlyHint: false, idempotentHint: true }, target: { resource: "documents", idInput: "id" },
   },
   {
     id: "cmsfn.documents.unpublish", title: "Unpublish document", description: "Remove a published document from the active ContentFn dataset.",
@@ -203,8 +203,7 @@ export function createCmsFnAdminAdapter(service: CmsFnAdminService) {
 
 export function createCmsFnAdminClient(adminClient: AdminClient) {
   const capability = createCapabilityAdminClient(cmsFnAdminCapability, adminClient);
-  return {
-    manifest: capability.manifest,
+  return Object.assign(capability, {
     datasets: {
       list: (options?: AdminClientRequestOptions) => capability.invoke("cmsfn.datasets.list", {}, options),
       create: (options?: AdminClientRequestOptions) => capability.invoke("cmsfn.datasets.create", {}, options),
@@ -224,7 +223,7 @@ export function createCmsFnAdminClient(adminClient: AdminClient) {
       revisions: (input: ListRevisionsInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.list-revisions", input, options),
       restore: (input: RestoreRevisionInput, options?: AdminClientRequestOptions) => capability.invoke("cmsfn.documents.restore-revision", input, options),
     },
-  };
+  });
 }
 
 export const adminCapability = cmsFnAdminCapability;

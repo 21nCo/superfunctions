@@ -192,7 +192,7 @@ const getJob = {
 const enqueueJob = {
   id: "flowfn.jobs.enqueue", title: "Enqueue job", description: "Enqueue and persist a job through the mounted FlowFn Queue and JobStorage.", inputSchema: enqueueJobInputSchema, outputSchema: itemSchema(jobSchema),
   route: { method: "POST", path: "/resources/jobs/actions/enqueue" }, permission: "flowfn.jobs.enqueue", minimumScope: "environment",
-  safety: { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" }, redaction: jobRedaction, mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }, target: { resource: "jobs", collection: true },
+  safety: { classification: "write", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "explicit", reason: "Enqueueing schedules a job whose worker may perform external side effects.", maxAgeSeconds: 300 }, audit: "required" }, redaction: jobRedaction, mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }, target: { resource: "jobs", collection: true },
 } as const satisfies AdminOperationDefinition<FlowFnEnqueueJobInput, FlowFnJobOutput>;
 
 const listWorkers = {

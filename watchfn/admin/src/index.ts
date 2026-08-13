@@ -162,14 +162,13 @@ export function createWatchFnAdminAdapter(service: WatchFnAdminService) {
 
 export function createWatchFnAdminClient(adminClient: AdminClient) {
   const capability = createCapabilityAdminClient(watchFnAdminCapability, adminClient);
-  return {
-    manifest: capability.manifest,
+  return Object.assign(capability, {
     listEvents: (input: ListWatchEventsInput = {}, options?: AdminClientRequestOptions) => capability.invoke("watchfn.events.list", input, options),
     captureMessage: (input: CaptureMessageInput, options?: AdminClientRequestOptions) => capability.invoke("watchfn.events.capture-message", input, options),
     captureException: (input: CaptureExceptionInput, options?: AdminClientRequestOptions) => capability.invoke("watchfn.errors.capture", input, options),
     listAlerts: (input: ListAlertsInput = {}, options?: AdminClientRequestOptions) => capability.invoke("watchfn.alerts.list", input, options),
     createAlert: (input: CreateAlertInput, options?: AdminClientRequestOptions) => capability.invoke("watchfn.alerts.create", input, options),
-  };
+  });
 }
 
 export const adminCapability = watchFnAdminCapability;

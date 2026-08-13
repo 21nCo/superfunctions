@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/testing";
 import { CatchFnService } from "@catchfn/server";
-import { catchFnAdminCapability, createCatchFnAdminAdapter, createCatchFnAdminService } from "../index.js";
+import type { AdminClient } from "@superfunctions/admin";
+import { catchFnAdminCapability, createCatchFnAdminAdapter, createCatchFnAdminClient, createCatchFnAdminService } from "../index.js";
 
 const scope = { organizationId: "org_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "env_1", namespace: "tenant_1" };
 const context = { scope, actor: { id: "operator_1" }, requestId: "request_1", source: "console" as const };
 
 describe("@catchfn/admin", () => {
+  it("preserves the uniform capability client alongside named methods", () => {
+    const client = createCatchFnAdminClient({} as AdminClient);
+    expect(Object.keys(client.operations)).toHaveLength(catchFnAdminCapability.operations.length);
+    expect(typeof client.availability).toBe("function");
+    expect(typeof client.invoke).toBe("function");
+    expect(typeof client.raw).toBe("function");
+    expect(typeof client.pages).toBe("function");
+    expect(typeof client.listBugReports).toBe("function");
+  });
   it("persists, reads, and lists bug reports through CatchFnService", async () => {
     const service = createCatchFnAdminService(new CatchFnService({ db: memoryAdapter({ debug: false }) }), scope);
     const adapter = createCatchFnAdminAdapter(service);

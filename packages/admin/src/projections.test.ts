@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAdminCapabilityAdapter } from "./adapter.js";
+import { MemoryAdminAuditSink } from "./audit.js";
 import { createAdminClient, createCapabilityAdminClient, AdminClientError } from "./client.js";
 import { createAdminDispatcher } from "./dispatcher.js";
 import { projectAdminMcpTools, registerAdminMcpTools } from "./mcp.js";
@@ -67,7 +68,7 @@ describe("OpenAPI projection", () => {
     expect(JSON.stringify(operation)).not.toContain("_admin");
   });
 
-  it("projects one-time secret outputs without exposing the internal redaction bypass name", () => {
+  it("projects and enforces schema-bound one-time secret paths across OpenAPI and MCP", async () => {
     const base = testManifest("examplefn").operations[0]!;
     const manifest = testManifest("examplefn", {
       operations: [{
@@ -81,8 +82,19 @@ describe("OpenAPI projection", () => {
         },
         outputSchema: {
           type: "object",
-          properties: { token: { type: "string" } },
-          required: ["token"],
+          properties: {
+            item: {
+              type: "object",
+              properties: {
+                token: { type: "string" },
+                nested: { type: "object", properties: { token: { type: "string" } }, additionalProperties: false },
+              },
+              required: ["token"],
+              additionalProperties: false,
+            },
+            token: { type: "string" },
+          },
+          required: ["item", "token"],
           additionalProperties: false,
         },
         route: { method: "POST", path: "/records/:id/token" },
@@ -95,26 +107,46 @@ describe("OpenAPI projection", () => {
           confirmation: { risk: "high", method: "recent-auth", reason: "Issue a one-time access token." },
         },
         target: { resource: "records", idInput: "id" },
-        redaction: { allowOutputFields: ["token"] },
+        redaction: { allowOutputPaths: ["$.item.token"] },
         mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
       }],
     });
     const registry = createAdminRegistry({
       adapters: [createAdminCapabilityAdapter(manifest, {
-        "examplefn.records.issue-token": async () => ({ ok: true as const, data: { token: "secret" } }),
+        "examplefn.records.issue-token": async () => ({ ok: true as const, data: {
+          item: { token: "one-time", nested: { token: "nested-secret" } },
+          token: "root-secret",
+        } }),
       })],
       enabledModules: ["examplefn"],
     });
     const document = createAdminOpenApiDocument(registry);
     const projected = document.paths["/api/admin/v1/modules/examplefn/records/{id}/token"]?.post as Record<string, unknown>;
-    expect(projected["x-superfunctions-redaction"]).toEqual({ oneTimeOutputFields: ["token"] });
-    expect(JSON.stringify(projected)).not.toContain("allowOutputFields");
+    expect(projected["x-superfunctions-redaction"]).toEqual({ oneTimeOutputPaths: ["$.item.token"] });
+    expect(JSON.stringify(projected)).not.toContain("allowOutputPaths");
 
-    const tools = projectAdminMcpTools({ registry, dispatcher: createAdminDispatcher({ registry }) });
+    const tools = projectAdminMcpTools({ registry, dispatcher: createAdminDispatcher({
+      registry,
+      audit: new MemoryAdminAuditSink(),
+      confirmation: { verify: () => true },
+    }) });
     expect(tools[0]?.metadata["mcpfn/superconsole"]).toMatchObject({
-      redaction: { oneTimeOutputFields: ["token"] },
+      redaction: { oneTimeOutputPaths: ["$.item.token"] },
     });
-    expect(JSON.stringify(tools[0]?.metadata)).not.toContain("allowOutputFields");
+    expect(JSON.stringify(tools[0]?.metadata)).not.toContain("allowOutputPaths");
+    const mcpResult = await tools[0]!.handler({ id: "record_1", _admin: { confirmationToken: "confirmed" } }, {
+      scope,
+      actor: { id: "agent", permissions: ["examplefn.records.write"] },
+      requestId: "mcp_one_time",
+      source: "mcp",
+    }, {} as never);
+    expect(mcpResult.structuredContent).toMatchObject({
+      ok: true,
+      data: {
+        item: { token: "one-time", nested: { token: "[REDACTED]" } },
+        token: "[REDACTED]",
+      },
+    });
   });
 
   it("rejects dangling security overrides and documents JSON query encoding and full envelopes", () => {
@@ -236,6 +268,70 @@ describe("AdminClient", () => {
     await expect(client.openApi()).rejects.toMatchObject<Partial<AdminClientError>>({ status: 403, message: "Denied" });
   });
 
+  it("binds an immutable typed scope and preserves it across all request methods", async () => {
+    const observed: string[] = [];
+    const initialScope = { installationId: "install_1", workspaceId: "workspace_1", projectId: "project_1" };
+    const client = createAdminClient({
+      baseUrl: "https://console.example.test/api/admin/v1",
+      scope: initialScope,
+      fetch: (async (input) => {
+        observed.push(String(input));
+        return Response.json({ ok: true, data: { enabledModules: [] } });
+      }) as typeof fetch,
+    });
+    initialScope.projectId = "mutated";
+    expect(Object.isFrozen(client.context)).toBe(true);
+    expect(Object.isFrozen(client.context.scope)).toBe(true);
+    expect(client.context.scope?.projectId).toBe("project_1");
+    await client.registry();
+    await client.invokeOperation("examplefn.records.list", {});
+    for (const url of observed.map((value) => new URL(value))) {
+      expect(url.searchParams.get("installationId")).toBe("install_1");
+      expect(url.searchParams.get("workspaceId")).toBe("workspace_1");
+      expect(url.searchParams.get("projectId")).toBe("project_1");
+    }
+    const environmentClient = client.withScope({ ...client.context.scope, environmentId: "env_1" });
+    expect(environmentClient.context.scope?.environmentId).toBe("env_1");
+    expect(client.context.scope?.environmentId).toBeUndefined();
+  });
+
+  it("composes deterministic timeout and caller cancellation signals", async () => {
+    const waitingFetch = vi.fn((_: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    const timed = createAdminClient({
+      baseUrl: "https://console.example.test/api/admin/v1",
+      fetch: waitingFetch as typeof fetch,
+      timeoutMs: 5,
+    });
+    await expect(timed.registry()).rejects.toMatchObject({ name: "TimeoutError" });
+
+    const caller = new AbortController();
+    const cancelled = createAdminClient({
+      baseUrl: "https://console.example.test/api/admin/v1",
+      fetch: waitingFetch as typeof fetch,
+      timeoutMs: 60_000,
+    }).registry({ signal: caller.signal });
+    const reason = new DOMException("caller stopped", "AbortError");
+    caller.abort(reason);
+    await expect(cancelled).rejects.toBe(reason);
+  });
+
+  it("offers an unconsumed raw-response escape hatch for success and error envelopes", async () => {
+    const client = createAdminClient({
+      baseUrl: "https://console.example.test/api/admin/v1",
+      fetch: (async () => new Response(JSON.stringify({ ok: false, error: { code: "teapot", message: "Raw", status: 418 } }), {
+        status: 418,
+        headers: { "content-type": "application/json", "x-trace": "trace_1" },
+      })) as typeof fetch,
+    });
+    const raw = await client.invokeOperationRaw("examplefn.records.list", {});
+    expect(raw.response.status).toBe(418);
+    expect(raw.response.headers.get("x-trace")).toBe("trace_1");
+    expect(raw.payload).toMatchObject({ ok: false, error: { code: "teapot" } });
+    await expect(raw.response.json()).resolves.toMatchObject({ ok: false, error: { status: 418 } });
+  });
+
   it("covers shell surfaces and confirmation issuance with canonical envelopes", async () => {
     const observed: Array<{ url: string; init?: RequestInit }> = [];
     const client = createAdminClient({
@@ -293,6 +389,8 @@ describe("AdminClient", () => {
       }) as typeof fetch,
     });
     const capability = createCapabilityAdminClient(manifest, client);
+
+    expect(typeof capability.raw).toBe("function");
 
     await expect(capability.availability()).resolves.toMatchObject({
       available: true,

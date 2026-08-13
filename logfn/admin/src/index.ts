@@ -112,11 +112,10 @@ export function createLogFnAdminAdapter(service: LogFnAdminService) {
 
 export function createLogFnAdminClient(adminClient: AdminClient) {
   const capability = createCapabilityAdminClient(logFnAdminCapability, adminClient);
-  return {
-    manifest: capability.manifest,
+  return Object.assign(capability, {
     emit: (input: EmitLogInput, options?: AdminClientRequestOptions) => capability.invoke("logfn.events.emit", input, options),
     flush: (options?: AdminClientRequestOptions) => capability.invoke("logfn.sinks.flush", {}, options),
-  };
+  });
 }
 
 export const adminCapability = logFnAdminCapability;

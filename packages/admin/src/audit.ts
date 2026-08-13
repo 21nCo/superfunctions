@@ -46,6 +46,12 @@ export interface AdminAuditEvent {
 }
 
 export interface AdminAuditSink {
+  /**
+   * Runtime capability marker. `write` must be durable and first-write-wins by
+   * `event.id`: retrying the same ID must not append another logical event,
+   * including after an acknowledgement is lost.
+   */
+  readonly idempotentById: true;
   write(event: AdminAuditEvent): Promise<void> | void;
 }
 
@@ -66,10 +72,10 @@ export function redactAdminValue(
 export function redactAdminOutputValue(
   value: unknown,
   sensitiveFields: readonly string[] = [],
-  allowOutputFields: readonly string[] = [],
+  allowOutputPaths: readonly string[] = [],
   seen = new WeakSet<object>(),
 ): unknown {
-  return redactValue(value, sensitiveFields, true, allowOutputFields, seen);
+  return redactValue(value, sensitiveFields, true, allowOutputPaths, seen);
 }
 
 export function redactDeclaredAdminValue(
@@ -84,28 +90,41 @@ function redactValue(
   value: unknown,
   sensitiveFields: readonly string[],
   redactImplicitSecrets: boolean,
-  allowedFields: readonly string[],
+  allowedPaths: readonly string[],
   seen: WeakSet<object>,
 ): unknown {
   const normalizeKey = (field: string) =>
     field.replace(/[-_\s]/g, "").toLowerCase();
   const explicit = new Set(sensitiveFields.map(normalizeKey));
-  const allowed = new Set(allowedFields.map(normalizeKey));
-  const visit = (current: unknown): unknown => {
+  const allowed = new Set(allowedPaths);
+  const visit = (current: unknown, path: string): unknown => {
     if (!current || typeof current !== "object") return current;
     if (seen.has(current)) return "[Circular]";
     seen.add(current);
-    const redacted = Array.isArray(current) ? current.map(visit) : Object.fromEntries(Object.entries(current as Record<string, unknown>).map(([key, item]) => [
-      key,
-      explicit.has(normalizeKey(key)) || ((redactImplicitSecrets && isImplicitSecretKey(key)) && !allowed.has(normalizeKey(key))) ? "[REDACTED]" : visit(item),
-    ]));
+    const redacted = Array.isArray(current)
+      ? current.map((item, index) => visit(item, `${path}[${index}]`))
+      : Object.fromEntries(Object.entries(current as Record<string, unknown>).map(([key, item]) => {
+          const itemPath = `${path}.${key}`;
+          const wildcardPath = itemPath.replace(/\[\d+\]/g, "[*]");
+          const explicitlyAllowed = allowed.has(itemPath) || allowed.has(wildcardPath);
+          return [
+            key,
+            explicit.has(normalizeKey(key)) || ((redactImplicitSecrets && isImplicitSecretKey(key)) && !explicitlyAllowed)
+              ? "[REDACTED]"
+              : visit(item, itemPath),
+          ];
+        }));
     seen.delete(current);
     return redacted;
   };
-  return visit(value);
+  return visit(value, "$" );
 }
 
 export class MemoryAdminAuditSink implements AdminAuditSink {
+  readonly idempotentById = true as const;
   readonly events: AdminAuditEvent[] = [];
-  write(event: AdminAuditEvent): void { this.events.push(structuredClone(event)); }
+  write(event: AdminAuditEvent): void {
+    if (this.events.some((existing) => existing.id === event.id)) return;
+    this.events.push(structuredClone(event));
+  }
 }

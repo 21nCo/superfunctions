@@ -17,6 +17,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "review:mutation-risk": "node scripts/risk-review.mjs",
+    "verify:sdk-contracts": "node scripts/verify-sdk-contracts.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

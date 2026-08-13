@@ -24,6 +24,12 @@ export interface MailFnAdminActionDefinition {
   description: string;
   classification: "write" | "destructive";
   requiresConfirmation: boolean;
+  confirmation?: {
+    risk: "high" | "critical";
+    method: "explicit" | "recent-auth" | "mfa" | "approval";
+    reason: string;
+    maxAgeSeconds?: number;
+  };
   idempotent: true;
   target: "resource" | "collection";
 }
@@ -271,6 +277,12 @@ export const mailFnAdminActions = [
     description: "Expire Inbox for inboxes.",
     classification: "destructive",
     requiresConfirmation: true,
+    confirmation: {
+      risk: "critical",
+      method: "explicit",
+      reason: "Expiring an inbox stops future delivery and changes externally visible addressing.",
+      maxAgeSeconds: 300,
+    },
     idempotent: true,
     target: "resource",
   },
@@ -290,7 +302,13 @@ export const mailFnAdminActions = [
     title: "Send Draft",
     description: "Send Draft for drafts.",
     classification: "write",
-    requiresConfirmation: false,
+    requiresConfirmation: true,
+    confirmation: {
+      risk: "high",
+      method: "explicit",
+      reason: "Sending a draft delivers an irreversible message to external recipients.",
+      maxAgeSeconds: 300,
+    },
     idempotent: true,
     target: "resource",
   },
@@ -310,7 +328,13 @@ export const mailFnAdminActions = [
     title: "Manage Domain",
     description: "Manage Domain for domains routes.",
     classification: "write",
-    requiresConfirmation: false,
+    requiresConfirmation: true,
+    confirmation: {
+      risk: "critical",
+      method: "recent-auth",
+      reason: "Domain verification or disablement changes externally visible inbound mail routing.",
+      maxAgeSeconds: 300,
+    },
     idempotent: true,
     target: "resource",
   },
@@ -320,7 +344,13 @@ export const mailFnAdminActions = [
     title: "Create Webhook",
     description: "Create a project or inbox-scoped webhook.",
     classification: "write",
-    requiresConfirmation: false,
+    requiresConfirmation: true,
+    confirmation: {
+      risk: "high",
+      method: "recent-auth",
+      reason: "A webhook creates durable outbound delivery of scoped MailFn events to an external endpoint.",
+      maxAgeSeconds: 300,
+    },
     idempotent: true,
     target: "collection",
   },
@@ -330,7 +360,13 @@ export const mailFnAdminActions = [
     title: "Rotate Credential",
     description: "Rotate Credential for credentials.",
     classification: "write",
-    requiresConfirmation: false,
+    requiresConfirmation: true,
+    confirmation: {
+      risk: "critical",
+      method: "mfa",
+      reason: "Credential rotation issues a replacement and revokes the active credential.",
+      maxAgeSeconds: 300,
+    },
     idempotent: true,
     target: "resource",
   },
@@ -341,6 +377,12 @@ export const mailFnAdminActions = [
     description: "Purge for retention.",
     classification: "destructive",
     requiresConfirmation: true,
+    confirmation: {
+      risk: "critical",
+      method: "mfa",
+      reason: "Retention purge irreversibly deletes retained mail evidence.",
+      maxAgeSeconds: 300,
+    },
     idempotent: true,
     target: "resource",
   },
@@ -362,6 +404,7 @@ export interface MailFnAdminOperationPolicy {
   safety: {
     classification: "write" | "destructive";
     requiresConfirmation: boolean;
+    confirmation?: MailFnAdminActionDefinition["confirmation"];
   };
   idempotency: {
     mode: "required";
@@ -409,6 +452,7 @@ export const mailFnAdminOperationPolicies = Object.freeze(
         safety: {
           classification: action.classification,
           requiresConfirmation: action.requiresConfirmation,
+          ...("confirmation" in action ? { confirmation: action.confirmation } : {}),
         },
         idempotency: {
           mode: "required",
@@ -648,6 +692,7 @@ function actionOperation(
       classification: action.classification,
       idempotent: action.idempotent,
       requiresConfirmation: action.requiresConfirmation,
+      ...("confirmation" in action ? { confirmation: action.confirmation } : {}),
       audit: "required",
     },
     mcp: {

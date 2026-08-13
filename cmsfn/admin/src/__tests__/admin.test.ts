@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/testing";
-import { createAdminRegistry } from "@superfunctions/admin";
+import { createAdminRegistry, type AdminClient } from "@superfunctions/admin";
 import { createContentfnServer } from "@contentfn/server";
-import { cmsFnAdminCapability, createCmsFnAdminAdapter, createCmsFnAdminService } from "../index.js";
+import { cmsFnAdminCapability, createCmsFnAdminAdapter, createCmsFnAdminClient, createCmsFnAdminService } from "../index.js";
 
 const context = { scope: { installationId: "install_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "prod" }, actor: { id: "operator_1" }, requestId: "request_1", source: "console" as const };
 const schema = { version: 1, documentTypes: [{ name: "post", fields: [{ name: "title", type: { kind: "primitive" as const, type: "string" as const }, required: true }] }] };
@@ -13,6 +13,11 @@ function setup() {
 }
 
 describe("@cmsfn/admin", () => {
+  it("preserves the uniform capability client alongside named methods", () => {
+    const client = createCmsFnAdminClient({} as AdminClient);
+    expect(Object.keys(client.operations)).toHaveLength(cmsFnAdminCapability.operations.length);
+    for (const method of [client.availability, client.invoke, client.raw, client.pages, client.documents.list]) expect(typeof method).toBe("function");
+  });
   it("folds ContentFn into CmsFn and advertises only backed operations", () => {
     expect(cmsFnAdminCapability.dependencies).toEqual([]);
     expect(createAdminRegistry({ adapters: [setup()], enabledModules: ["cmsfn"] }).enabledModuleIds).toEqual(["cmsfn"]);

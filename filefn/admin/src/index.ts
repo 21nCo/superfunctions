@@ -12,6 +12,8 @@ import {
   type AdminOperationDefinition,
   type AdminOperationRequest,
   type AdminOperationResult,
+  type AdminRawResponse,
+  type AdminResult,
 } from "@superfunctions/admin";
 import type { FileRecord, FileVersionRecord, FilePermissionRecord, FileArtifactRecord } from "@filefn/server";
 
@@ -134,6 +136,23 @@ const entitySchema: AdminObjectSchema = { type: "object", additionalProperties: 
 const pageOutputSchema: AdminObjectSchema = { type: "object", properties: { items: { type: "array", items: entitySchema }, nextCursor: { type: ["string", "null"] } }, required: ["items", "nextCursor"], additionalProperties: false };
 const itemOutputSchema: AdminObjectSchema = { type: "object", properties: { item: entitySchema }, required: ["item"], additionalProperties: false };
 const acceptedOutputSchema: AdminObjectSchema = { type: "object", properties: { accepted: { type: "boolean" }, item: entitySchema }, required: ["accepted"], additionalProperties: false };
+const createShareOutputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    accepted: { type: "boolean" },
+    item: {
+      type: "object",
+      properties: {
+        token: { type: "string", minLength: 1 },
+        expiresAt: { type: ["string", "null"] },
+      },
+      required: ["token"],
+      additionalProperties: false,
+    },
+  },
+  required: ["accepted"],
+  additionalProperties: false,
+};
 const pageProperties = { cursor: { type: "string", minLength: 1 }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 } } as const;
 const pageInputSchema: AdminObjectSchema = { type: "object", properties: pageProperties, additionalProperties: false };
 const idInputSchema: AdminObjectSchema = { type: "object", properties: { id: { type: "string", minLength: 1 } }, required: ["id"], additionalProperties: false };
@@ -153,11 +172,11 @@ export const fileFnAdminSchemas = { entity: entitySchema, pageInput: pageInputSc
 function readOperation(id: FileFnAdminOperationId, title: string, description: string, resource: string, inputSchema: AdminObjectSchema, outputSchema: AdminObjectSchema, route: string, collection: boolean, idInput = "id", pagination = false, sensitiveFields: readonly string[] = []): AdminOperationDefinition {
   return { id, title, description, inputSchema, outputSchema, route: { method: "GET", path: route }, permission: `filefn.${resource}.read`, minimumScope: "project", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: sensitiveFields.length ? "required" : "optional" }, ...(pagination ? { pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 100 } as const } : {}), mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }, ...(sensitiveFields.length ? { redaction: { outputFields: sensitiveFields } } : {}), target: collection ? { resource, collection: true } : { resource, idInput } };
 }
-function mutationOperation(options: { id: FileFnAdminOperationId; title: string; description: string; resource: string; inputSchema: AdminObjectSchema; route: string; destructive?: boolean; confirmation?: "explicit" | "recent-auth" | "mfa"; collection?: boolean; idInput?: string; inputFields?: readonly string[]; allowOutputFields?: readonly string[]; idempotent?: boolean }): AdminOperationDefinition {
+function mutationOperation(options: { id: FileFnAdminOperationId; title: string; description: string; resource: string; inputSchema: AdminObjectSchema; outputSchema?: AdminObjectSchema; route: string; destructive?: boolean; confirmation?: "explicit" | "recent-auth" | "mfa"; collection?: boolean; idInput?: string; inputFields?: readonly string[]; allowOutputPaths?: readonly string[]; idempotent?: boolean }): AdminOperationDefinition {
   const destructive = options.destructive ?? false;
   const confirmation = options.confirmation;
   const idempotent = options.idempotent ?? true;
-  return { id: options.id, title: options.title, description: options.description, inputSchema: options.inputSchema, outputSchema: acceptedOutputSchema, route: { method: "POST", path: options.route }, permission: options.id, minimumScope: "project", safety: { classification: destructive ? "destructive" : "write", idempotent, requiresConfirmation: Boolean(confirmation), ...(confirmation ? { confirmation: { risk: destructive ? "critical" : "high", method: confirmation, reason: options.description } as const } : {}), audit: "required" }, mcp: { readOnlyHint: false, destructiveHint: destructive, idempotentHint: idempotent }, ...(options.inputFields || options.allowOutputFields ? { redaction: { ...(options.inputFields ? { inputFields: options.inputFields } : {}), ...(options.allowOutputFields ? { allowOutputFields: options.allowOutputFields } : {}) } } : {}), target: options.collection ? { resource: options.resource, collection: true } : { resource: options.resource, idInput: options.idInput ?? "id" } };
+  return { id: options.id, title: options.title, description: options.description, inputSchema: options.inputSchema, outputSchema: options.outputSchema ?? acceptedOutputSchema, route: { method: "POST", path: options.route }, permission: options.id, minimumScope: "project", safety: { classification: destructive ? "destructive" : "write", idempotent, requiresConfirmation: Boolean(confirmation), ...(confirmation ? { confirmation: { risk: destructive ? "critical" : "high", method: confirmation, reason: options.description } as const } : {}), audit: "required" }, mcp: { readOnlyHint: false, destructiveHint: destructive, idempotentHint: idempotent }, ...(options.inputFields || options.allowOutputPaths ? { redaction: { ...(options.inputFields ? { inputFields: options.inputFields } : {}), ...(options.allowOutputPaths ? { allowOutputPaths: options.allowOutputPaths } : {}) } } : {}), target: options.collection ? { resource: options.resource, collection: true } : { resource: options.resource, idInput: options.idInput ?? "id" } };
 }
 
 const operations: AdminOperationDefinition[] = [
@@ -175,7 +194,7 @@ const operations: AdminOperationDefinition[] = [
   mutationOperation({ id: "filefn.grants.create-grant", title: "Create grant", description: "Grant file permissions through FileFn authorization services.", resource: "grants", inputSchema: createGrantInputSchema, route: "/resources/grants/actions/create-grant", collection: true, confirmation: "recent-auth" }),
   mutationOperation({ id: "filefn.grants.revoke-grant", title: "Revoke grant", description: "Revoke a file permission grant.", resource: "grants", inputSchema: revokeGrantInputSchema, route: "/resources/grants/actions/revoke-grant", destructive: true, confirmation: "recent-auth" }),
   readOperation("filefn.share-links.list", "List share links", "List redacted share links for a shareable file.", "share-links", fileChildListInputSchema, pageOutputSchema, "/resources/share-links", true, "id", true, ["token", "tokenHash"]),
-  mutationOperation({ id: "filefn.share-links.create-share", title: "Create share", description: "Create a FileFn share link; its plaintext token is returned once.", resource: "share-links", inputSchema: createShareInputSchema, route: "/resources/share-links/actions/create-share", collection: true, confirmation: "recent-auth", idempotent: false, allowOutputFields: ["token"] }),
+  mutationOperation({ id: "filefn.share-links.create-share", title: "Create share", description: "Create a FileFn share link; its plaintext token is returned once.", resource: "share-links", inputSchema: createShareInputSchema, outputSchema: createShareOutputSchema, route: "/resources/share-links/actions/create-share", collection: true, confirmation: "recent-auth", idempotent: false, allowOutputPaths: ["$.item.token"] }),
   mutationOperation({ id: "filefn.share-links.revoke-share", title: "Revoke share", description: "Revoke a share link using its original plaintext token.", resource: "share-links", inputSchema: revokeShareInputSchema, route: "/resources/share-links/actions/revoke-share", destructive: true, confirmation: "recent-auth", idInput: "token", inputFields: ["token"] }),
   readOperation("filefn.policies.list", "List policies", "List configured FileFn policies.", "policies", pageInputSchema, pageOutputSchema, "/resources/policies", true, "id", true, ["storagePath"]),
   readOperation("filefn.policies.get", "Get policy", "Get one configured FileFn policy.", "policies", idInputSchema, itemOutputSchema, "/resources/policies/:id", false, "id", false, ["storagePath"]),
@@ -193,6 +212,7 @@ interface FileFnAdminClientCore {
   readonly operations: FileFnAdminClientOperationMethods;
   availability(options?: AdminClientRequestOptions): Promise<AdminCapabilityAvailability>;
   invoke<K extends FileFnAdminOperationId>(operationId: K, input: FileFnAdminOperationInputMap[K], options?: AdminClientRequestOptions): Promise<AdminOperationResult<FileFnAdminOperationOutputMap[K]>>;
+  raw<K extends FileFnAdminOperationId>(operationId: K, input: FileFnAdminOperationInputMap[K], options?: AdminClientRequestOptions): Promise<AdminRawResponse<AdminResult<FileFnAdminOperationOutputMap[K]>>>;
   pages<K extends FileFnAdminOperationId>(operationId: K, input: FileFnAdminOperationInputMap[K], options?: AdminClientRequestOptions): AsyncGenerator<AdminOperationResult<FileFnAdminOperationOutputMap[K]>>;
 }
 export interface FileFnAdminClient extends FileFnAdminClientCore {

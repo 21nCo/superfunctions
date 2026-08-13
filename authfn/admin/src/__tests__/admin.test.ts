@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { memoryAdapter } from "../../../../packages/db/src/testing/index.js";
+import type { AdminClient } from "@superfunctions/admin";
 import {
   authFnMultiRegionPlugin,
   authFnPasswordPlugin,
@@ -8,7 +9,7 @@ import {
   type AuthFnRegionLookupStore,
   type AuthFnUserRecord,
 } from "@authfn/core";
-import { createAuthFnAdmin, createStaticAdminKeyAuthorizer } from "../index.js";
+import { authFnAdminCapability, createAuthFnAdmin, createAuthFnAdminClient, createStaticAdminKeyAuthorizer } from "../index.js";
 
 function createConfig(plugins: AuthFnConfig["plugins"] = []): AuthFnConfig {
   return {
@@ -49,6 +50,11 @@ function authHeaders(token = "top-secret"): Record<string, string> {
 }
 
 describe("@authfn/admin", () => {
+  it("preserves the uniform capability client alongside named methods", () => {
+    const client = createAuthFnAdminClient({} as AdminClient);
+    expect(Object.keys(client.operations)).toHaveLength(authFnAdminCapability.operations.length);
+    for (const method of [client.availability, client.invoke, client.raw, client.pages, client.users.list]) expect(typeof method).toBe("function");
+  });
   it("requires an authorize hook before creating admin routes", () => {
     const config = createConfig();
     expect(() =>

@@ -53,6 +53,7 @@ function dispatcher(client = domainClient()) {
       registry: createAdminRegistry({ adapters: [adapter], enabledModules: ["sendfn"] }),
       audit,
       idempotency: new MemoryAdminIdempotencyStore(),
+      confirmation: { verify: ({ token }) => token === "confirmed" },
     }),
   };
 }
@@ -106,7 +107,7 @@ describe("@sendfn/admin", () => {
     const templates = await dispatch.dispatch<{ items: Array<{ id: string }> }>({
       operationId: "sendfn.templates.list",
       input: {},
-      context: context(),
+      context: context({ confirmationToken: "confirmed" }),
     });
     expect(templates).toMatchObject({ ok: true });
     if (templates.ok) {
@@ -158,7 +159,7 @@ describe("@sendfn/admin", () => {
     const registeredDevice = await dispatch.dispatch({
       operationId: "sendfn.device-tokens.register",
       input: { userId: "user_1", token: "private-device-token", platform: "ios" },
-      context: context({ idempotencyKey: "device_user_1_ios" }),
+      context: context({ idempotencyKey: "device_user_1_ios", confirmationToken: "confirmed" }),
     });
     expect(registeredDevice).toMatchObject({
       ok: true,
@@ -168,7 +169,7 @@ describe("@sendfn/admin", () => {
     const devices = await dispatch.dispatch({
       operationId: "sendfn.device-tokens.list",
       input: { userId: "user_1", platform: "ios" },
-      context: context(),
+      context: context({ confirmationToken: "confirmed" }),
     });
     expect(devices).toMatchObject({
       ok: true,
@@ -186,7 +187,7 @@ describe("@sendfn/admin", () => {
     const sent = await dispatch.dispatch<{ item: { id: string; status: string; provider: string } }>({
       operationId: "sendfn.messages.send-sms",
       input: { userId: "user_2", to: "+15555550100", message: "Hello from Super Console" },
-      context: context(),
+      context: context({ confirmationToken: "confirmed" }),
     });
     expect(sent).toMatchObject({
       ok: true,

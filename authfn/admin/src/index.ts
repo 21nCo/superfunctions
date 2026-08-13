@@ -213,8 +213,7 @@ export function createAuthFnAdminAdapter(service: AuthFnAdminService) {
 
 export function createAuthFnAdminClient(adminClient: AdminClient) {
   const capability = createCapabilityAdminClient(authFnAdminCapability, adminClient);
-  return {
-    manifest: capability.manifest,
+  return Object.assign(capability, {
     users: {
       list: (input: ListUsersInput = {}, options?: AdminClientRequestOptions) => capability.invoke("authfn.users.list", input, options),
       get: (input: UserIdInput, options?: AdminClientRequestOptions) => capability.invoke("authfn.users.get", input, options),
@@ -224,7 +223,7 @@ export function createAuthFnAdminClient(adminClient: AdminClient) {
       list: (input: ListSessionsInput, options?: AdminClientRequestOptions) => capability.invoke("authfn.users.list-sessions", input, options),
       revoke: (input: RevokeSessionInput, options?: AdminClientRequestOptions) => capability.invoke("authfn.sessions.revoke", input, options),
     },
-  };
+  });
 }
 
 export const adminCapability = authFnAdminCapability;

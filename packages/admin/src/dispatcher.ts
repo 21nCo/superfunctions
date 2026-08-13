@@ -106,7 +106,7 @@ function outwardAdminResult<T>(
   entry: AdminRegistryOperation,
 ): AdminResult<T> {
   const fields = entry.operation.redaction?.outputFields ?? [];
-  const allowed = entry.operation.redaction?.allowOutputFields ?? [];
+  const allowed = entry.operation.redaction?.allowOutputPaths ?? [];
   if (result.ok === false) {
     return result.error.details === undefined
       ? result
@@ -120,7 +120,7 @@ function outwardAdminResult<T>(
     data: redactAdminOutputValue(result.data, fields, allowed) as T,
     ...(result.meta === undefined
       ? {}
-      : { meta: redactAdminOutputValue(result.meta, fields, allowed) as Readonly<Record<string, unknown>> }),
+      : { meta: redactAdminOutputValue(result.meta, fields) as Readonly<Record<string, unknown>> }),
   };
 }
 
@@ -134,6 +134,18 @@ export class AdminDispatcher {
   private readonly now: () => Date;
 
   constructor(options: CreateAdminDispatcherOptions) {
+    if (options.audit && options.audit.idempotentById !== true) {
+      throw new AdminError(
+        "invalid_argument",
+        "Administration audit sinks must provide durable first-write-wins idempotency by event ID.",
+      );
+    }
+    if (options.idempotency && typeof options.idempotency.finalizeAudit !== "function") {
+      throw new AdminError(
+        "invalid_argument",
+        "Administration idempotency storage must implement atomic terminal-audit reconciliation.",
+      );
+    }
     this.registry = options.registry;
     this.policy = options.policy;
     this.confirmation = options.confirmation;
@@ -215,7 +227,12 @@ export class AdminDispatcher {
           let replayAuditId: string | undefined;
           if (this.shouldAudit(entry)) {
             terminalAuditAttempted = true;
-            const candidateAuditId = this.createAuditId();
+            const candidateAuditId = recoveringAudit
+              ? reservation.record.audit?.auditId
+              : this.createAuditId();
+            if (!candidateAuditId) {
+              throw new AdminError("internal", "A pending terminal audit is missing its stable event ID.");
+            }
             try {
               await this.writeAudit(
                 entry,
@@ -229,16 +246,11 @@ export class AdminDispatcher {
               terminalAuditWritten = true;
               replayAuditId = candidateAuditId;
               if (recoveringAudit) {
-                try {
-                  await this.idempotency.finalizeAudit?.(
-                    reservation.record.identity,
-                    reservation.record.fingerprint,
-                    { auditId: candidateAuditId, completedAt: this.now().toISOString() },
-                  );
-                } catch {
-                  // The durable domain result and audit receipt remain valid.
-                  // A later replay may repeat the terminal audit at-least-once.
-                }
+                await this.idempotency.finalizeAudit(
+                  reservation.record.identity,
+                  reservation.record.fingerprint,
+                  { auditId: candidateAuditId, completedAt: this.now().toISOString() },
+                );
               }
             } catch (error) {
               if (entry.operation.safety.audit === "required") throw error;
@@ -310,13 +322,13 @@ export class AdminDispatcher {
       ) {
         throw new AdminError("internal", "The administration service returned invalid metadata.");
       }
-      const externalData = redactAdminOutputValue(result.data, entry.operation.redaction?.outputFields ?? [], entry.operation.redaction?.allowOutputFields ?? []) as T;
+      const externalData = redactAdminOutputValue(result.data, entry.operation.redaction?.outputFields ?? [], entry.operation.redaction?.allowOutputPaths ?? []) as T;
       const externalMeta = result.meta === undefined
         ? undefined
         : redactAdminOutputValue(
             result.meta,
             entry.operation.redaction?.outputFields ?? [],
-            entry.operation.redaction?.allowOutputFields ?? [],
+            [],
           ) as Readonly<Record<string, unknown>>;
       domainCompleted = true;
 
@@ -329,6 +341,7 @@ export class AdminDispatcher {
         correlationId: request.context.correlationId,
         ...(externalMeta ? { meta: externalMeta } : {}),
       };
+      const terminalAuditId = this.shouldAudit(entry) ? this.createAuditId() : undefined;
       if (idempotencyClaim && idempotencyIdentity && this.idempotency) {
         try {
           await this.persistDomainOutcome(
@@ -336,6 +349,7 @@ export class AdminDispatcher {
             idempotencyIdentity,
             domainResponse,
             this.shouldAudit(entry) ? "pending" : "not-required",
+            terminalAuditId,
           );
           idempotencyPersisted = true;
         } catch (cause) {
@@ -352,7 +366,7 @@ export class AdminDispatcher {
       }
 
       if (this.shouldAudit(entry)) {
-        const candidateAuditId = this.createAuditId();
+        const candidateAuditId = terminalAuditId ?? this.createAuditId();
         terminalAuditAttempted = true;
         try {
           await this.writeAudit(entry, request, startedAt, candidateAuditId, "succeeded", undefined, policyMetadata);
@@ -368,10 +382,16 @@ export class AdminDispatcher {
       };
       if (idempotencyPersisted && idempotencyClaim && idempotencyIdentity && this.idempotency) {
         try {
-          await this.persistDomainOutcome(idempotencyClaim, idempotencyIdentity, response, "completed", auditId);
+          if (auditId) {
+            await this.idempotency.finalizeAudit(
+              idempotencyIdentity,
+              idempotencyClaim.fingerprint,
+              { auditId, completedAt: this.now().toISOString() },
+            );
+          }
         } catch {
-          // The domain result was already persisted before terminal audit. The
-          // response is safe; replay can reconcile the pending audit marker.
+          // The stable terminal event ID was persisted before its idempotent
+          // sink write. Replay safely redelivers the same logical event ID.
         }
       }
       return response;

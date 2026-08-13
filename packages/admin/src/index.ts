@@ -10,5 +10,6 @@ export * from "./mcp.js";
 export * from "./openapi.js";
 export * from "./pagination.js";
 export * from "./registry.js";
+export * from "./risk-review.js";
 export * from "./scope.js";
 export * from "./validator.js";

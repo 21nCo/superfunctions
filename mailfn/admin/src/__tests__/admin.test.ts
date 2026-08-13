@@ -55,6 +55,19 @@ describe("@mailfn/admin", () => {
         idempotent: true,
       },
     });
+    expect(mailFnAdminCapability.operations.find((operation) => operation.id === "mailfn.credentials.rotate-credential")?.safety).toMatchObject({
+      requiresConfirmation: true,
+      confirmation: { risk: "critical", method: "mfa", maxAgeSeconds: 300 },
+    });
+    for (const operationId of [
+      "mailfn.inboxes.expire-inbox",
+      "mailfn.drafts.send-draft",
+      "mailfn.domains-routes.manage-domain",
+      "mailfn.webhooks.create-webhook",
+      "mailfn.retention.purge",
+    ]) {
+      expect(mailFnAdminCapability.operations.find((operation) => operation.id === operationId)?.safety.confirmation).toBeDefined();
+    }
   });
 
   it("delegates the operation and complete scope to the injected domain service", async () => {

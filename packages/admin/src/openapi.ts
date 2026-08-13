@@ -206,7 +206,7 @@ export function createAdminOpenApiDocument(
       ...(entry.operation.redaction ? { "x-superfunctions-redaction": {
         ...(entry.operation.redaction.inputFields ? { inputFields: entry.operation.redaction.inputFields } : {}),
         ...(entry.operation.redaction.outputFields ? { outputFields: entry.operation.redaction.outputFields } : {}),
-        ...(entry.operation.redaction.allowOutputFields ? { oneTimeOutputFields: entry.operation.redaction.allowOutputFields } : {}),
+        ...(entry.operation.redaction.allowOutputPaths ? { oneTimeOutputPaths: entry.operation.redaction.allowOutputPaths } : {}),
       } } : {}),
     };
     paths[path] ??= {};

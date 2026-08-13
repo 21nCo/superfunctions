@@ -251,7 +251,7 @@ export const billFnAdminActions = [
     title: "Change Subscription",
     description: "Change Subscription for subscriptions.",
     classification: "write",
-    requiresConfirmation: false,
+    requiresConfirmation: true,
     idempotent: true,
     target: "resource",
   },
@@ -291,7 +291,7 @@ export const billFnAdminActions = [
     title: "Reconcile Provider",
     description: "Reconcile Provider for reconciliation.",
     classification: "write",
-    requiresConfirmation: false,
+    requiresConfirmation: true,
     idempotent: true,
     target: "collection",
   },
@@ -606,7 +606,13 @@ function actionOperation(
               maxAgeSeconds: 300,
             },
           }
-        : {}),
+        : action.id === "change-subscription"
+          ? { confirmation: { risk: "high" as const, method: "recent-auth" as const, reason: "Changing a subscription updates externally billed recurring service.", maxAgeSeconds: 300 } }
+          : action.id === "reconcile-provider"
+            ? { confirmation: { risk: "high" as const, method: "explicit" as const, reason: "Provider reconciliation imports and persists external billing state.", maxAgeSeconds: 300 } }
+            : action.id === "cancel-subscription"
+              ? { confirmation: { risk: "critical" as const, method: "mfa" as const, reason: "Cancellation changes externally billed recurring service and access.", maxAgeSeconds: 300 } }
+            : {}),
       audit: "required",
     },
     mcp: {

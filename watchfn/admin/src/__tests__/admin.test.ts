@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { WatchFn } from "@watchfn/core";
-import { createWatchFnAdminAdapter, createWatchFnAdminService, watchFnAdminCapability } from "../index.js";
+import type { AdminClient } from "@superfunctions/admin";
+import { createWatchFnAdminAdapter, createWatchFnAdminClient, createWatchFnAdminService, watchFnAdminCapability } from "../index.js";
 
 const scope = { organizationId: "org_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "env_1", namespace: "tenant_1" };
 const context = { scope, actor: { id: "operator_1" }, requestId: "request_1", source: "console" as const };
@@ -12,6 +13,11 @@ function setup() {
 }
 
 describe("@watchfn/admin", () => {
+  it("preserves the uniform capability client alongside named methods", () => {
+    const client = createWatchFnAdminClient({} as AdminClient);
+    expect(Object.keys(client.operations)).toHaveLength(watchFnAdminCapability.operations.length);
+    for (const method of [client.availability, client.invoke, client.raw, client.pages, client.listEvents]) expect(typeof method).toBe("function");
+  });
   it("captures and queries events through the real WatchFn runtime", async () => {
     const { watch, adapter } = setup();
     await adapter.invoke("watchfn.events.capture-message", { message: "deployment complete" }, context);

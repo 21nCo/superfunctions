@@ -126,11 +126,12 @@ export interface AdminRedactionDefinition {
   inputFields?: readonly string[];
   outputFields?: readonly string[];
   /**
-   * Explicit one-time outward secret fields. These are only valid for audited,
-   * confirmed, non-idempotent operations so plaintext never enters the durable
-   * idempotency result store.
+   * Exact JSON paths for one-time outward secrets, rooted at the operation
+   * output (for example `$.item.token` or `$.items[*].token`). Paths must resolve
+   * through the declared output schema and are only valid for audited,
+   * strongly-confirmed, non-idempotent operations.
    */
-  allowOutputFields?: readonly string[];
+  allowOutputPaths?: readonly string[];
 }
 
 export type AdminOperationTargetDefinition =

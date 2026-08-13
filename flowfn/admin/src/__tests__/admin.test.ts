@@ -134,7 +134,7 @@ describe("@flowfn/admin", () => {
     const enqueued = await dispatch.dispatch<{ item: { id: string; data: unknown } }>({
       operationId: "flowfn.jobs.enqueue",
       input: { queue: "emails", name: "deliver", data: { to: "private@example.com", apiKey: "private-key" } },
-      context: context({ idempotencyKey: "job_campaign_1" }),
+      context: context({ idempotencyKey: "job_campaign_1", confirmationToken: "confirmed" }),
     });
     expect(enqueued).toMatchObject({
       ok: true,

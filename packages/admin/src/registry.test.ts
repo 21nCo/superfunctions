@@ -433,13 +433,58 @@ describe("manifest validation", () => {
     const base = testManifest("examplefn").operations[0]!;
     const invalid = testManifest("examplefn", { operations: [{
       ...base,
-      redaction: { allowOutputFields: ["token"] },
+      outputSchema: { type: "object", properties: { token: { type: "string" } }, required: ["token"], additionalProperties: false },
+      redaction: { allowOutputPaths: ["$.token"] },
       safety: { classification: "write", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "recent-auth", reason: "Issue one token." }, audit: "required" },
       mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
     }] });
     expect(validateAdminCapabilityManifest(invalid)).toContainEqual(expect.objectContaining({
-      path: "$.operations[0].redaction.allowOutputFields",
+      path: "$.operations[0].redaction.allowOutputPaths",
       message: "one-time output secrets require audited, confirmed, non-idempotent recent-auth, MFA, or approval",
+    }));
+  });
+
+  it("rejects non-exact, dangling, and structurally invalid one-time output paths", () => {
+    const base = testManifest("examplefn").operations[0]!;
+    const invalid = testManifest("examplefn", { operations: [{
+      ...base,
+      outputSchema: {
+        type: "object",
+        properties: {
+          item: { type: "object", properties: { token: { type: "string" } }, additionalProperties: false },
+          items: { type: "array", items: { type: "object", properties: { token: { type: "string" } }, additionalProperties: false } },
+        },
+        additionalProperties: false,
+      },
+      redaction: { allowOutputPaths: ["token", "$.missing.token", "$.items.token", "$.items[*]"] },
+      safety: { classification: "write", idempotent: false, requiresConfirmation: true, confirmation: { risk: "high", method: "mfa", reason: "Issue one-time credentials." }, audit: "required" },
+      mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    }] });
+    expect(validateAdminCapabilityManifest(invalid)).toContainEqual({
+      path: "$.operations[0].redaction.allowOutputPaths",
+      message: "must contain exact JSON paths through closed non-union objects and explicit array wildcards to string scalar leaves",
+    });
+  });
+
+  it("rejects one-time paths through open or union schemas and non-string leaves", () => {
+    const base = testManifest("examplefn").operations[0]!;
+    const invalid = testManifest("examplefn", { operations: [{
+      ...base,
+      outputSchema: {
+        type: "object",
+        properties: {
+          open: { type: "object", properties: { token: { type: "string" } }, additionalProperties: true },
+          union: { type: "object", additionalProperties: false, oneOf: [{ type: "object" }], properties: { token: { type: "string" } } },
+          numeric: { type: "object", properties: { token: { type: "integer" } }, additionalProperties: false },
+        },
+        additionalProperties: false,
+      },
+      redaction: { allowOutputPaths: ["$.open.token", "$.union.token", "$.numeric.token"] },
+      safety: { classification: "write", idempotent: false, requiresConfirmation: true, confirmation: { risk: "high", method: "mfa", reason: "Issue credentials." }, audit: "required" },
+      mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+    }] });
+    expect(validateAdminCapabilityManifest(invalid)).toContainEqual(expect.objectContaining({
+      path: "$.operations[0].redaction.allowOutputPaths",
     }));
   });
 

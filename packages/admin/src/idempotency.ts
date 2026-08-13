@@ -17,6 +17,7 @@ export interface AdminIdempotencyRecord<T = unknown> {
   /** Domain completion is durable before the terminal audit is attempted. */
   audit?: {
     status: "pending" | "completed" | "not-required";
+    /** Stable logical terminal event ID, persisted before the first sink write. */
     auditId?: string;
     updatedAt: string;
   };
@@ -59,11 +60,12 @@ export interface AdminIdempotencyStore {
     record: AdminIdempotencyRecord<T>,
   ): Promise<void> | void;
   /**
-   * Optional reconciliation hook. Implementations atomically update only a
-   * completed record with the same identity and fingerprint. It lets a replay
-   * close a terminal-audit gap without re-running the domain mutation.
+   * Mandatory atomic reconciliation hook. Implementations may transition only
+   * a matching pending terminal-audit marker to completed, and must be
+   * idempotent for the same audit ID. This prevents every replay from emitting
+   * another terminal event after the domain result was already durable.
    */
-  finalizeAudit?(
+  finalizeAudit(
     identity: AdminIdempotencyIdentity,
     fingerprint: string,
     input: { auditId: string; completedAt: string },
@@ -154,6 +156,13 @@ export class MemoryAdminIdempotencyStore implements AdminIdempotencyStore {
     const existing = this.entries.get(adminIdempotencyStorageKey(identity));
     if (!existing || existing.status !== "completed" || existing.fingerprint !== fingerprint) {
       throw new AdminError("conflict", "The idempotency record is unavailable for audit reconciliation.");
+    }
+    if (existing.record.audit?.status === "completed") {
+      if (existing.record.audit.auditId === input.auditId) return;
+      throw new AdminError("conflict", "The terminal audit was already reconciled with a different audit ID.");
+    }
+    if (existing.record.audit?.status !== "pending") {
+      throw new AdminError("conflict", "The idempotency record has no pending terminal audit to reconcile.");
     }
     existing.record = {
       ...existing.record,

@@ -15,6 +15,32 @@ export interface AdminValidationIssue {
 const ID_PATTERN = /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/;
 const MODULE_PATTERN = /^[a-z][a-z0-9-]*$/;
 const COMPILED_PATTERNS = new WeakMap<AdminJsonSchema, RegExp>();
+const EXACT_OUTPUT_PATH_PATTERN = /^\$(?:\.[A-Za-z][A-Za-z0-9_-]*|\[\*\])+$/;
+
+function outputPathResolves(schema: AdminJsonSchema, path: string): boolean {
+  if (!EXACT_OUTPUT_PATH_PATTERN.test(path) || path.endsWith("[*]")) return false;
+  const segments = path.slice(1).match(/\.[A-Za-z][A-Za-z0-9_-]*|\[\*\]/g) ?? [];
+  let current: AdminJsonSchema | undefined = schema;
+  for (const segment of segments) {
+    if (!current) return false;
+    if (current.anyOf?.length || current.oneOf?.length || current.allOf?.length) return false;
+    if (segment === "[*]") {
+      if (!allowedTypes(current).includes("array") || !current.items) return false;
+      current = current.items;
+      continue;
+    }
+    if (!allowedTypes(current).includes("object") || current.additionalProperties !== false) return false;
+    current = current.properties?.[segment.slice(1)];
+  }
+  return Boolean(
+    current &&
+    !current.anyOf?.length &&
+    !current.oneOf?.length &&
+    !current.allOf?.length &&
+    allowedTypes(current).length === 1 &&
+    allowedTypes(current)[0] === "string",
+  );
+}
 
 function compiledPattern(schema: AdminJsonSchema): RegExp | undefined {
   if (schema.pattern === undefined) return undefined;
@@ -644,7 +670,10 @@ export function validateAdminCapabilityManifest(
         issues.push({ path: `$.operations[${index}].safety.confirmation.maxAgeSeconds`, message: "must be a positive integer" });
       }
     }
-    for (const [kind, fields] of Object.entries(operation.redaction ?? {}) as Array<[string, readonly string[] | undefined]>) {
+    for (const [kind, fields] of Object.entries({
+      inputFields: operation.redaction?.inputFields,
+      outputFields: operation.redaction?.outputFields,
+    }) as Array<[string, readonly string[] | undefined]>) {
       const normalized = (fields ?? []).map((field) =>
         field.trim().replace(/[-_\s]/g, "").toLowerCase(),
       );
@@ -664,8 +693,8 @@ export function validateAdminCapabilityManifest(
           message: "must contain unique normalized field names",
         });
     }
-    const allowOutputFields = operation.redaction?.allowOutputFields ?? [];
-    if (allowOutputFields.length > 0) {
+    const allowOutputPaths = operation.redaction?.allowOutputPaths ?? [];
+    if (allowOutputPaths.length > 0) {
       const confirmation = operation.safety.confirmation;
       if (
         operation.safety.audit !== "required" ||
@@ -675,12 +704,24 @@ export function validateAdminCapabilityManifest(
         operation.safety.idempotent !== false
       ) {
         issues.push({
-          path: `$.operations[${index}].redaction.allowOutputFields`,
+          path: `$.operations[${index}].redaction.allowOutputPaths`,
           message: "one-time output secrets require audited, confirmed, non-idempotent recent-auth, MFA, or approval",
         });
       }
+      if (new Set(allowOutputPaths).size !== allowOutputPaths.length) {
+        issues.push({
+          path: `$.operations[${index}].redaction.allowOutputPaths`,
+          message: "must contain unique exact JSON paths",
+        });
+      }
+      if (!operation.outputSchema || allowOutputPaths.some((path) => !outputPathResolves(operation.outputSchema!, path))) {
+        issues.push({
+          path: `$.operations[${index}].redaction.allowOutputPaths`,
+          message: "must contain exact JSON paths through closed non-union objects and explicit array wildcards to string scalar leaves",
+        });
+      }
       const denied = new Set((operation.redaction?.outputFields ?? []).map((field) => field.replace(/[-_\s]/g, "").toLowerCase()));
-      if (allowOutputFields.some((field) => denied.has(field.replace(/[-_\s]/g, "").toLowerCase()))) {
+      if (allowOutputPaths.some((path) => denied.has((path.split(".").at(-1) ?? "").replace(/[-_\s]/g, "").toLowerCase()))) {
         issues.push({ path: `$.operations[${index}].redaction`, message: "cannot both redact and allow the same output field" });
       }
     }
@@ -688,7 +729,7 @@ export function validateAdminCapabilityManifest(
       [
         ...(operation.redaction?.inputFields ?? []),
         ...(operation.redaction?.outputFields ?? []),
-        ...(operation.redaction?.allowOutputFields ?? []),
+        ...(operation.redaction?.allowOutputPaths ?? []),
       ].length > 0 &&
       operation.safety.audit !== "required"
     ) {

@@ -135,12 +135,11 @@ export function createCatchFnAdminAdapter(service: CatchFnAdminService) {
 
 export function createCatchFnAdminClient(adminClient: AdminClient) {
   const capability = createCapabilityAdminClient(catchFnAdminCapability, adminClient);
-  return {
-    manifest: capability.manifest,
+  return Object.assign(capability, {
     listBugReports: (input: ListBugReportsInput = {}, options?: AdminClientRequestOptions) => capability.invoke("catchfn.bug-reports.list", input, options),
     getBugReport: (input: GetBugReportInput, options?: AdminClientRequestOptions) => capability.invoke("catchfn.bug-reports.get", input, options),
     createBugReport: (input: CreateBugReportInput, options?: AdminClientRequestOptions) => capability.invoke("catchfn.bug-reports.create", input, options),
-  };
+  });
 }
 
 export const adminCapability = catchFnAdminCapability;
