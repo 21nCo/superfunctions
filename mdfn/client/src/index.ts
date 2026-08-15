@@ -16,6 +16,11 @@ export interface MdfnRemoteDocument {
 
 export interface MdfnRemoteVersion extends MdfnRemoteDocument { readonly documentId: string; readonly authorId: string; readonly changeSource: string; }
 
+export interface MdfnRemoteCollaborationUpdateBatch {
+  readonly updates: readonly string[];
+  readonly includedUpdateIds: readonly string[];
+}
+
 export class MdfnClientError extends Error {
   constructor(readonly status: number, readonly code: string, readonly response: Response) { super(code); this.name = "MdfnClientError"; }
 }
@@ -45,8 +50,8 @@ export interface MdfnClient {
   decideSuggestion(id: string, suggestionId: string, input: { readonly expectedVersion: number; readonly decision: "accepted" | "rejected"; readonly idempotencyKey?: string }): Promise<MdfnRemoteDocument>;
   transitionReview(id: string, input: { readonly expectedVersion: number; readonly state: ReviewState; readonly idempotencyKey?: string }): Promise<MdfnRemoteDocument>;
   appendCollaborationUpdate(id: string, update: string): Promise<string>;
-  getCollaborationUpdates(id: string): Promise<readonly string[]>;
-  compactCollaborationUpdates(id: string, snapshot: string): Promise<string>;
+  getCollaborationUpdates(id: string): Promise<MdfnRemoteCollaborationUpdateBatch>;
+  compactCollaborationUpdates(id: string, snapshot: string, includedUpdateIds: readonly string[]): Promise<string>;
 }
 
 export function createMdfnClient(options: MdfnClientOptions = {}): MdfnClient {
@@ -87,8 +92,8 @@ export function createMdfnClient(options: MdfnClientOptions = {}): MdfnClient {
     decideSuggestion: (id, suggestionId, input) => request(`/documents/${encode(id)}/suggestions/${encode(suggestionId)}`, { method: "PATCH", headers: input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : undefined, body: JSON.stringify(input) }),
     transitionReview: (id, input) => request(`/documents/${encode(id)}/review`, { method: "PUT", headers: input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : undefined, body: JSON.stringify(input) }),
     async appendCollaborationUpdate(id, update) { return (await request<{ id: string }>(`/documents/${encode(id)}/collaboration-updates`, { method: "POST", body: JSON.stringify({ update }) })).id; },
-    async getCollaborationUpdates(id) { return (await request<{ updates: string[] }>(`/documents/${encode(id)}/collaboration-updates`)).updates; },
-    async compactCollaborationUpdates(id, snapshot) { return (await request<{ id: string }>(`/documents/${encode(id)}/collaboration-updates/compact`, { method: "PUT", body: JSON.stringify({ snapshot }) })).id; },
+    getCollaborationUpdates: (id) => request(`/documents/${encode(id)}/collaboration-updates`),
+    async compactCollaborationUpdates(id, snapshot, includedUpdateIds) { return (await request<{ id: string }>(`/documents/${encode(id)}/collaboration-updates/compact`, { method: "PUT", body: JSON.stringify({ snapshot, includedUpdateIds }) })).id; },
   };
 }
 

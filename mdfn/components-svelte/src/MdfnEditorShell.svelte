@@ -1,6 +1,6 @@
 <script lang="ts">
   import { MdfnEditor } from '@mdfn/svelte';
-  import type { AuthoringVersion, ToolbarGroup } from '@mdfn/components';
+  import { insertMarkdownAtSelection, type AuthoringVersion, type ToolbarGroup } from '@mdfn/components';
   import type { MdfnEditorHandle, MdfnEditorProps } from '@mdfn/svelte';
   import type { ToolbarCommandTarget } from '@mdfn/components';
   import MdfnToolbar from './MdfnToolbar.svelte';
@@ -21,5 +21,5 @@
 <div class={className} data-mdfn-component="editor-shell">
   {#if !hideToolbar && !editorProps.readOnly}<MdfnToolbar controller={editorProps.controller} groups={toolbarGroups} {commandTarget} />{/if}
   {#if !hideAuthoringChrome}<MdfnAuthoringChrome controller={editorProps.controller} {editor} mode={editorProps.mode} readOnly={editorProps.readOnly} {actor} {onSelectFiles} {onModeChange} {versions} {onRestoreVersion} />{/if}
-  <MdfnEditor {...editorProps} onFiles={async (files) => { const markdown = await onSelectFiles?.(files); if (markdown) editor?.insertMarkdown(markdown); await editorProps.onFiles?.(files); }} editorRef={setEditor} />
+  <MdfnEditor {...editorProps} onFiles={async (files) => { const markdown = await onSelectFiles?.(files); if (markdown) insertMarkdownAtSelection(editorProps.controller, editor, markdown); await editorProps.onFiles?.(files); }} editorRef={setEditor} />
 </div>

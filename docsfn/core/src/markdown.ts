@@ -712,9 +712,10 @@ function canonicalText(node: MdfnNode): string {
   return (node.content ?? []).map(canonicalText).join("");
 }
 
-function canonicalHtml(node: MdfnNode, schemaVersion: number): string {
+function canonicalHtml(node: MdfnNode, schemaVersion: number, allowRawHtml = false): string {
   return renderHtml(canonicalDocument(node, schemaVersion), {
     extensions: defaultExtensions,
+    ...(allowRawHtml ? { rawHtml: { enabled: true, sanitize: sanitizeMarkdownHtml } } : {}),
   }).html;
 }
 
@@ -758,6 +759,7 @@ function findComponentRegion(source: string, node: MdfnNode): { raw: string; end
 
 interface ProjectCanonicalOptions extends ParseBlocksOptions {
   document: MdfnDocument;
+  allowRawHtml?: boolean;
 }
 
 /**
@@ -767,6 +769,7 @@ interface ProjectCanonicalOptions extends ParseBlocksOptions {
  */
 function projectCanonicalBlocks(input: ProjectCanonicalOptions): CompiledContentBlock[] {
   const blocks: CompiledContentBlock[] = [];
+  const renderCanonicalHtml = (node: MdfnNode): string => canonicalHtml(node, input.document.schemaVersion, input.allowRawHtml);
   const createHeadingSlug = createSlugger();
   let mermaidCount = 0;
   const componentIslandCounts = new Map<string, number>();
@@ -803,7 +806,7 @@ function projectCanonicalBlocks(input: ProjectCanonicalOptions): CompiledContent
       blocks.push({
         type: "paragraph",
         text: sourceRaw || node.text || "",
-        html: canonicalHtml(node, input.document.schemaVersion),
+        html: renderCanonicalHtml(node),
       });
       index += 1;
       continue;
@@ -817,7 +820,7 @@ function projectCanonicalBlocks(input: ProjectCanonicalOptions): CompiledContent
         type: "heading",
         level,
         text,
-        html: stripOuterElement(canonicalHtml(node, input.document.schemaVersion), `h${level}`),
+        html: stripOuterElement(renderCanonicalHtml(node), `h${level}`),
         slug: createHeadingSlug(text),
       });
       index += 1;
@@ -828,7 +831,7 @@ function projectCanonicalBlocks(input: ProjectCanonicalOptions): CompiledContent
       blocks.push({
         type: "paragraph",
         text: canonicalText(node).trim(),
-        html: stripOuterElement(canonicalHtml(node, input.document.schemaVersion), "p"),
+        html: stripOuterElement(renderCanonicalHtml(node), "p"),
       });
       index += 1;
       continue;
@@ -841,7 +844,7 @@ function projectCanonicalBlocks(input: ProjectCanonicalOptions): CompiledContent
         items: (node.content ?? [])
           .filter((child) => child.type === "listItem")
           .map((child) => ({ text: canonicalText(child).trim() })),
-        html: canonicalHtml(node, input.document.schemaVersion),
+        html: renderCanonicalHtml(node),
       });
       index += 1;
       continue;
@@ -884,7 +887,7 @@ function projectCanonicalBlocks(input: ProjectCanonicalOptions): CompiledContent
         blocks.push({
           type: "paragraph",
           text: canonicalText(node).trim(),
-          html: canonicalHtml(node, input.document.schemaVersion),
+          html: renderCanonicalHtml(node),
         });
       }
       index += 1;
@@ -902,7 +905,7 @@ function projectCanonicalBlocks(input: ProjectCanonicalOptions): CompiledContent
     blocks.push({
       type: "paragraph",
       text: canonicalText(node).trim(),
-      html: canonicalHtml(node, input.document.schemaVersion),
+      html: renderCanonicalHtml(node),
     });
     index += 1;
   }
@@ -971,6 +974,7 @@ export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArt
       sourcePath: input.sourcePath,
       resolvedComponents,
       idPrefix: normalizeRouteLikeId(input.sourcePath, "inline"),
+      allowRawHtml: input.allowRawHtml,
     });
     const headings = blocks
       .filter((block): block is Extract<CompiledContentBlock, { type: "heading" }> => block.type === "heading")

@@ -141,6 +141,20 @@ describe("compileMarkdown – html fields", () => {
     }
   });
 
+  it("renders opted-in raw HTML through the canonical sanitizer", () => {
+    const compiled = compileMarkdown({
+      source: '<span class="note" onclick="alert(1)">safe</span>',
+      sourcePath: "content/docs/raw-html.mdx",
+      allowRawHtml: true,
+    });
+    const block = compiled.blocks[0];
+    expect(block.type).toBe("paragraph");
+    if (block.type === "paragraph") {
+      expect(block.html).toContain('<span class="note">safe</span>');
+      expect(block.html).not.toContain("onclick");
+    }
+  });
+
   it("projects the canonical MDFN URL policy into DocsFn output and diagnostics", () => {
     const compiled = compileMarkdown({
       source: "Click [here](java%0ascript:alert(1)) for info.",

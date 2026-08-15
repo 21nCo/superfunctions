@@ -63,4 +63,24 @@ describe("Svelte authoring components", () => {
     expect(restore).toHaveBeenCalledWith(1);
     await unmount(component);
   });
+
+  it("inserts selected-file Markdown in source mode without a visual editor", async () => {
+    const controller = createEditor({
+      markdown: "before",
+      projector: createMarkdownProjector(),
+      selection: { kind: "text", anchor: 6, head: 6 },
+    });
+    const target = document.createElement("div");
+    const component = mount(MdfnAuthoringChrome, {
+      target,
+      props: { controller, mode: "source", onSelectFiles: async () => "![asset](mdfn-asset:filefn/id)" },
+    });
+    await tick();
+    const input = target.querySelector<HTMLInputElement>('[aria-label="Select files"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], "x.png", { type: "image/png" })] });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+    expect(controller.getState().markdown).toBe("before![asset](mdfn-asset:filefn/id)");
+    await unmount(component);
+  });
 });

@@ -44,6 +44,12 @@ export interface MdfnDocumentRecord {
 
 export interface MdfnVersionRecord extends MdfnDocumentRecord { readonly documentId: string; readonly authorId: string; readonly changeSource: string; }
 
+export interface MdfnCollaborationUpdateBatch {
+  readonly updates: readonly string[];
+  /** Exact persisted update ids represented by `updates` and therefore safe to compact. */
+  readonly includedUpdateIds: readonly string[];
+}
+
 export interface MdfnServerConfig {
   readonly database: Adapter;
   readonly authorize: (action: MdfnServerAction, principal: MdfnPrincipal, document?: MdfnDocumentRecord) => boolean | Promise<boolean>;
@@ -87,8 +93,8 @@ export interface MdfnService {
   decideSuggestion(principal: MdfnPrincipal, id: string, suggestionId: string, input: { readonly expectedVersion: number; readonly decision: "accepted" | "rejected"; readonly idempotencyKey?: string }): Promise<MdfnDocumentRecord>;
   transitionReview(principal: MdfnPrincipal, id: string, input: { readonly expectedVersion: number; readonly state: ReviewState; readonly idempotencyKey?: string }): Promise<MdfnDocumentRecord>;
   appendCollaborationUpdate(principal: MdfnPrincipal, id: string, update: string): Promise<string>;
-  collaborationUpdates(principal: MdfnPrincipal, id: string): Promise<readonly string[]>;
-  compactCollaborationUpdates(principal: MdfnPrincipal, id: string, snapshot: string): Promise<string>;
+  collaborationUpdates(principal: MdfnPrincipal, id: string): Promise<MdfnCollaborationUpdateBatch>;
+  compactCollaborationUpdates(principal: MdfnPrincipal, id: string, snapshot: string, includedUpdateIds: readonly string[]): Promise<string>;
 }
 
 async function allowed(config: MdfnServerConfig, action: MdfnServerAction, principal: MdfnPrincipal, document?: MdfnDocumentRecord): Promise<void> {
@@ -219,7 +225,10 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
       const where = principal.tenantId ? [{ field: "tenantId", operator: "eq" as const, value: principal.tenantId }] : [{ field: "ownerId", operator: "eq" as const, value: principal.id }];
       const candidates = await database.findMany<MdfnDocumentRecord>({ model: DOCUMENTS, where, orderBy: [{ field: "updatedAt", direction: "desc" }] });
       const visible: MdfnDocumentRecord[] = [];
-      for (const document of candidates) if (await config.authorize("read", principal, document)) visible.push(document);
+      for (const document of candidates) {
+        if (!principal.tenantId && document.tenantId !== undefined && document.tenantId !== null) continue;
+        if (await config.authorize("read", principal, document)) visible.push(document);
+      }
       const offset = Math.max(0, options.offset ?? 0);
       const limit = Math.min(100, Math.max(1, options.limit ?? 50));
       return visible.slice(offset, offset + limit);
@@ -268,15 +277,26 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
       return mutateEditorial(principal, id, input.expectedVersion, "editorial:review-transitioned", input.idempotencyKey, (document) => ({ sidecar: transitionReview({ sidecar: document.sidecar, to: input.state, actor: editorialActor(principal) }) }));
     },
     async appendCollaborationUpdate(principal, id, update) { const document = await loadScoped(principal, id); await allowed(config, "collaborate", principal, document); const limit = config.maxCollaborationUpdateBytes ?? 1024 * 1024; if (new TextEncoder().encode(update).byteLength > limit) throw new MdfnServerError("MDFN_COLLAB_UPDATE_TOO_LARGE", 413); const updateId = createId(); await database.create({ model: COLLAB_UPDATES, data: { id: updateId, documentId: id, authorId: principal.id, update, createdAt: new Date() } }); return updateId; },
-    async collaborationUpdates(principal, id) { const document = await loadScoped(principal, id); await allowed(config, "collaborate", principal, document); const rows = await database.findMany<{ update: string }>({ model: COLLAB_UPDATES, where: [{ field: "documentId", operator: "eq", value: id }], orderBy: [{ field: "createdAt", direction: "asc" }] }); return rows.map((row) => row.update); },
-    async compactCollaborationUpdates(principal, id, snapshot) {
+    async collaborationUpdates(principal, id) {
+      const document = await loadScoped(principal, id);
+      await allowed(config, "collaborate", principal, document);
+      const rows = await database.findMany<{ id: string; update: string }>({ model: COLLAB_UPDATES, where: [{ field: "documentId", operator: "eq", value: id }], orderBy: [{ field: "createdAt", direction: "asc" }] });
+      return { updates: rows.map((row) => row.update), includedUpdateIds: rows.map((row) => row.id) };
+    },
+    async compactCollaborationUpdates(principal, id, snapshot, includedUpdateIds) {
       const document = await loadScoped(principal, id);
       await allowed(config, "collaborate", principal, document);
       const limit = config.maxCollaborationUpdateBytes ?? 1024 * 1024;
       if (new TextEncoder().encode(snapshot).byteLength > limit) throw new MdfnServerError("MDFN_COLLAB_UPDATE_TOO_LARGE", 413);
+      if (!Array.isArray(includedUpdateIds) || includedUpdateIds.some((updateId) => typeof updateId !== "string" || !updateId)) {
+        throw new MdfnServerError("MDFN_COLLAB_COMPACTION_INVALID", 422);
+      }
+      const uniqueUpdateIds = [...new Set(includedUpdateIds)];
       const updateId = createId();
       await withStorage(async (storage) => {
-        await storage.deleteMany({ model: COLLAB_UPDATES, where: [{ field: "documentId", operator: "eq", value: id }] });
+        if (uniqueUpdateIds.length > 0) {
+          await storage.deleteMany({ model: COLLAB_UPDATES, where: [{ field: "documentId", operator: "eq", value: id }, { field: "id", operator: "in", value: uniqueUpdateIds }] });
+        }
         await storage.create({ model: COLLAB_UPDATES, data: { id: updateId, documentId: id, authorId: principal.id, update: snapshot, createdAt: new Date() } });
       });
       return updateId;
@@ -315,9 +335,9 @@ export function createMdfnRouter(config: MdfnServerConfig, service = createMdfnS
       { method: "POST", path: "/documents/:id/suggestions", handler: async (request, context) => response(await service.createSuggestion(context.principal, context.params.id!, idempotent(request, await context.json()))) },
       { method: "PATCH", path: "/documents/:id/suggestions/:suggestionId", handler: async (request, context) => response(await service.decideSuggestion(context.principal, context.params.id!, context.params.suggestionId!, idempotent(request, await context.json()))) },
       { method: "PUT", path: "/documents/:id/review", handler: async (request, context) => response(await service.transitionReview(context.principal, context.params.id!, idempotent(request, await context.json()))) },
-      { method: "GET", path: "/documents/:id/collaboration-updates", handler: async (_request, context) => Response.json({ updates: await service.collaborationUpdates(context.principal, context.params.id!) }) },
+      { method: "GET", path: "/documents/:id/collaboration-updates", handler: async (_request, context) => Response.json(await service.collaborationUpdates(context.principal, context.params.id!)) },
       { method: "POST", path: "/documents/:id/collaboration-updates", handler: async (_request, context) => { const body = await context.json<{ update: string }>(); return Response.json({ id: await service.appendCollaborationUpdate(context.principal, context.params.id!, body.update) }, { status: 201 }); } },
-      { method: "PUT", path: "/documents/:id/collaboration-updates/compact", handler: async (_request, context) => { const body = await context.json<{ snapshot: string }>(); return Response.json({ id: await service.compactCollaborationUpdates(context.principal, context.params.id!, body.snapshot) }); } },
+      { method: "PUT", path: "/documents/:id/collaboration-updates/compact", handler: async (_request, context) => { const body = await context.json<{ snapshot: string; includedUpdateIds: string[] }>(); return Response.json({ id: await service.compactCollaborationUpdates(context.principal, context.params.id!, body.snapshot, body.includedUpdateIds) }); } },
     ],
   });
 }

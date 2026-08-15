@@ -77,4 +77,21 @@ describe("Solid authoring components", () => {
     expect(restore).toHaveBeenCalledWith(1);
     dispose();
   });
+
+  it("inserts selected-file Markdown in source mode without a visual editor", async () => {
+    const controller = createEditor({
+      markdown: "before",
+      projector: createMarkdownProjector(),
+      selection: { kind: "text", anchor: 6, head: 6 },
+    });
+    const target = document.createElement("div");
+    const dispose = render(() => <MdfnAuthoringChrome controller={controller} mode="source" onSelectFiles={async () => "![asset](mdfn-asset:filefn/id)"} />, target);
+    await Promise.resolve();
+    const input = target.querySelector<HTMLInputElement>('[aria-label="Select files"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["x"], "x.png", { type: "image/png" })] });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await Promise.resolve();
+    expect(controller.getState().markdown).toBe("before![asset](mdfn-asset:filefn/id)");
+    dispose();
+  });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createEditor } from "@mdfn/core";
 import { createMarkdownProjector } from "@mdfn/markdown";
-import { createAuthoringModel, createToolbarModel, filterSlashCommands, runToolbarAction } from "./index";
+import { createAuthoringModel, createToolbarModel, filterSlashCommands, insertMarkdownAtSelection, runToolbarAction } from "./index";
 
 describe("toolbar model", () => {
   it("reports actual history availability", () => {
@@ -38,5 +38,18 @@ describe("toolbar model", () => {
     const model = createAuthoringModel(caret);
     expect(model).toMatchObject({ bubbleVisible: false, floatingVisible: true, slashOpen: true });
     expect(model.slashCommands.map((entry) => entry.id)).toEqual(["table"]);
+  });
+
+  it("inserts Markdown at the canonical selection when no visual surface accepts it", () => {
+    const controller = createEditor({
+      markdown: "before after",
+      projector: createMarkdownProjector(),
+      selection: { kind: "text", anchor: 7, head: 12 },
+    });
+    insertMarkdownAtSelection(controller, { insertMarkdown: () => false }, "asset");
+    expect(controller.getState()).toMatchObject({
+      markdown: "before asset",
+      selection: { kind: "text", anchor: 12, head: 12 },
+    });
   });
 });

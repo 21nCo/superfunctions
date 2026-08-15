@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Button, Card, Input, ToolbarButton, ToolbarRoot } from "@uifn/components-react";
-import { createAuthoringModel, createToolbarModel, runToolbarAction, type AuthoringVersion, type SlashCommand, type ToolbarCommandTarget, type ToolbarGroup } from "@mdfn/components";
+import { createAuthoringModel, createToolbarModel, insertMarkdownAtSelection, runToolbarAction, type AuthoringVersion, type SlashCommand, type ToolbarCommandTarget, type ToolbarGroup } from "@mdfn/components";
 import { Transaction, canTransitionReview, createCommentThread, createSuggestion, decideSuggestion, replyToComment, setCommentResolved, transitionReview, type EditorController, type EditorialActor, type ReviewState } from "@mdfn/core";
 import { MdfnEditor, useMdfn, type MdfnEditorHandle, type MdfnEditorProps } from "@mdfn/react";
 
@@ -42,15 +42,6 @@ export interface MdfnEditorShellProps extends MdfnEditorProps {
   readonly onRestoreVersion?: (version: number) => void | Promise<void>;
 }
 
-function insertMarkdown(controller: EditorController, editor: MdfnEditorHandle | null | undefined, markdown: string): void {
-  if (editor?.insertMarkdown(markdown)) return;
-  const state = controller.getState();
-  const selection = state.selection?.kind === "text" ? state.selection : { anchor: state.markdown.length, head: state.markdown.length };
-  const from = Math.min(selection.anchor, selection.head);
-  const to = Math.max(selection.anchor, selection.head);
-  controller.dispatch(new Transaction().replaceSource(from, to, markdown).setSelection({ kind: "text", anchor: from + markdown.length, head: from + markdown.length }).withSource("components:file-insert"));
-}
-
 export const MdfnEditorShell = React.forwardRef<React.ElementRef<typeof MdfnEditor>, MdfnEditorShellProps>(function MdfnEditorShell(
   { toolbarGroups, hideToolbar, hideAuthoringChrome, actor, onSelectFiles, onModeChange, versions, onRestoreVersion, className, onReady, ...props }, forwardedRef,
 ) {
@@ -76,7 +67,7 @@ export const MdfnEditorShell = React.forwardRef<React.ElementRef<typeof MdfnEdit
   }, [onReady]);
   const handleFiles = React.useCallback(async (files: readonly File[]) => {
     const markdown = await onSelectFiles?.(files);
-    if (markdown) insertMarkdown(props.controller, editorHandleRef.current, markdown);
+    if (markdown) insertMarkdownAtSelection(props.controller, editorHandleRef.current, markdown);
     await props.onFiles?.(files);
   }, [onSelectFiles, props.controller, props.onFiles]);
   return (
@@ -171,7 +162,7 @@ export function MdfnAuthoringChrome({ controller, editor, mode = "visual", readO
         <Card.Header><Card.Title>Files</Card.Title></Card.Header>
         <Card.Content><Input type="file" aria-label="Select files" multiple onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
           const files = [...(event.currentTarget.files ?? [])];
-          void onSelectFiles?.(files).then((markdown) => { if (markdown) insertMarkdown(controller, editor, markdown); });
+          void onSelectFiles?.(files).then((markdown) => { if (markdown) insertMarkdownAtSelection(controller, editor, markdown); });
         }} /></Card.Content>
       </Card>}
       <MdfnOutline controller={controller} />

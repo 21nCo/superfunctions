@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ButtonRoot, CardContent, CardHeader, CardRoot, CardTitle, InputRoot } from '@uifn/components-svelte';
-  import { createAuthoringModel, type AuthoringVersion, type SlashCommand } from '@mdfn/components';
+  import { createAuthoringModel, insertMarkdownAtSelection, type AuthoringVersion, type SlashCommand } from '@mdfn/components';
   import { Transaction, canTransitionReview, createCommentThread, createSuggestion, decideSuggestion, replyToComment, setCommentResolved, transitionReview, type EditorController, type EditorialActor, type ReviewState } from '@mdfn/core';
   import type { MdfnEditorHandle, MdfnEditorProps } from '@mdfn/svelte';
   import MdfnToolbar from './MdfnToolbar.svelte';
@@ -68,7 +68,7 @@
   }
   function selectFiles(event: Event) {
     const files = [...((event.currentTarget as HTMLInputElement).files ?? [])];
-    void onSelectFiles?.(files).then((markdown) => { if (markdown) editor?.insertMarkdown(markdown); });
+    void onSelectFiles?.(files).then((markdown) => { if (markdown) insertMarkdownAtSelection(controller, editor, markdown); });
   }
 </script>
 

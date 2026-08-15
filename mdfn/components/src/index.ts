@@ -1,4 +1,4 @@
-import type { EditorController, MdfnDiagnostic, MdfnNode, ReviewState } from "@mdfn/core";
+import { Transaction, type EditorController, type MdfnDiagnostic, type MdfnNode, type ReviewState } from "@mdfn/core";
 
 export type EditorMode = "visual" | "source" | "split" | "preview" | "read-only";
 
@@ -25,6 +25,31 @@ export interface ToolbarModel {
 export interface ToolbarCommandTarget {
   can?(command: string): boolean;
   run(command: string): boolean;
+}
+
+export interface MarkdownInsertionTarget {
+  insertMarkdown(markdown: string): boolean;
+}
+
+/** Insert through the active visual surface, or fall back to the canonical controller selection. */
+export function insertMarkdownAtSelection(
+  controller: EditorController,
+  target: MarkdownInsertionTarget | null | undefined,
+  markdown: string,
+): void {
+  if (target?.insertMarkdown(markdown)) return;
+  const state = controller.getState();
+  const selection = state.selection?.kind === "text"
+    ? state.selection
+    : { anchor: state.markdown.length, head: state.markdown.length };
+  const from = Math.min(selection.anchor, selection.head);
+  const to = Math.max(selection.anchor, selection.head);
+  controller.dispatch(
+    new Transaction()
+      .replaceSource(from, to, markdown)
+      .setSelection({ kind: "text", anchor: from + markdown.length, head: from + markdown.length })
+      .withSource("components:file-insert"),
+  );
 }
 
 export const defaultToolbarGroups: readonly ToolbarGroup[] = Object.freeze([

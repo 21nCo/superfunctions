@@ -45,8 +45,9 @@ describe("mdfn server", () => {
     expect(reviewing.sidecar?.audit).toHaveLength(6);
     await service.appendCollaborationUpdate(principal, created.id, "one");
     await service.appendCollaborationUpdate(principal, created.id, "two");
-    await service.compactCollaborationUpdates(principal, created.id, "snapshot");
-    expect(await service.collaborationUpdates(principal, created.id)).toEqual(["snapshot"]);
+    const batch = await service.collaborationUpdates(principal, created.id);
+    await service.compactCollaborationUpdates(principal, created.id, "snapshot", batch.includedUpdateIds);
+    expect((await service.collaborationUpdates(principal, created.id)).updates).toEqual(["snapshot"]);
     const restored = await service.restoreVersion(principal, created.id, { version: 1, expectedVersion: 7 });
     expect(restored).toMatchObject({ markdown: "# One", version: 8 });
     expect(await service.versions(principal, created.id)).toHaveLength(8);
@@ -73,6 +74,37 @@ describe("mdfn server", () => {
     const restricted = await service.create(principal, { title: "restricted", markdown: "secret" });
     await expect(service.read(principal, restricted.id)).rejects.toMatchObject({ code: "MDFN_FORBIDDEN" });
     expect((await service.list(principal)).map((document) => document.title)).toEqual(["visible"]);
+  });
+
+  it("keeps tenant documents out of owner-only listings", async () => {
+    const service = createMdfnService({
+      database: memoryAdapter(),
+      durability: "ephemeral",
+      authorize: () => true,
+      createId: (() => { let id = 0; return () => `scope-${id++}`; })(),
+    });
+    await service.create({ id: "owner", tenantId: "tenant-a" }, { title: "tenant", markdown: "tenant" });
+    await service.create({ id: "owner" }, { title: "personal", markdown: "personal" });
+    expect((await service.list({ id: "owner" })).map((document) => document.title)).toEqual(["personal"]);
+  });
+
+  it("preserves collaboration updates appended after the compacted batch was read", async () => {
+    const service = createMdfnService({
+      database: memoryAdapter(),
+      durability: "ephemeral",
+      authorize: () => true,
+      createId: (() => { let id = 0; return () => `race-${id++}`; })(),
+    });
+    const principal = { id: "author" };
+    const document = await service.create(principal, { markdown: "body" });
+    await service.appendCollaborationUpdate(principal, document.id, "included-one");
+    await service.appendCollaborationUpdate(principal, document.id, "included-two");
+    const batch = await service.collaborationUpdates(principal, document.id);
+    await service.appendCollaborationUpdate(principal, document.id, "racing-update");
+    await service.compactCollaborationUpdates(principal, document.id, "snapshot", batch.includedUpdateIds);
+    const compacted = await service.collaborationUpdates(principal, document.id);
+    expect(compacted.updates).toEqual(expect.arrayContaining(["racing-update", "snapshot"]));
+    expect(compacted.updates).toHaveLength(2);
   });
 
   it("keeps editorial state and audit history server-authoritative", async () => {

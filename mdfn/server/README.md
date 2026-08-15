@@ -15,5 +15,8 @@ be selected explicitly and is intended only for memory-backed tests.
 The router exposes document and version CRUD, version restore, sidecar and
 audit reads, comment/reply/resolve, suggestion/decision, review transitions,
 and collaboration update append/read/compact routes under `/api/mdfn` by
-default. Every operation is tenant/owner scoped and passes through the host's
-authorization callback.
+default. Collaboration reads return both the updates and their exact
+`includedUpdateIds`; compaction requires those ids and removes only that
+represented batch, preserving updates that arrive concurrently. Every
+operation is tenant/owner scoped and passes through the host's authorization
+callback.
