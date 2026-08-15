@@ -203,4 +203,39 @@ describe("@filefn/admin", () => {
     expect(result.data).toMatchObject({ item: { fileId: "file_1", versionId: "version_1" } });
     expect((result.data as { item: object }).item).not.toHaveProperty("storageKey");
   });
+
+  it("pushes bounded child pagination into FileFn and binds cursors to the parent file", async () => {
+    const versions = Array.from({ length: 3 }, (_, index) => ({
+      fileId: "file_1",
+      versionId: `version_${index + 1}`,
+      storageKey: `private/${index + 1}`,
+      mimeType: "text/plain",
+      size: index + 1,
+      checksumSha256Base64: null,
+      createdAt: `2026-08-15T00:00:0${index}.000Z`,
+    }));
+    const listVersions = vi.fn(async (_fileId, _domainContext, page) => ({
+      versions: versions.slice(page?.offset ?? 0, (page?.offset ?? 0) + (page?.limit ?? versions.length)),
+    }));
+    const service = domain({ files: { listVersions } });
+
+    const first = await service.listVersions({ fileId: "file_1", limit: 2 }, context);
+    expect(first.data.items).toHaveLength(2);
+    expect(first.data.nextCursor).toEqual(expect.any(String));
+    expect(listVersions).toHaveBeenCalledWith(
+      "file_1",
+      expect.any(Object),
+      { limit: 3, offset: 0 },
+    );
+
+    await expect(service.listVersions({ fileId: "file_2", limit: 2, cursor: first.data.nextCursor! }, context))
+      .rejects.toMatchObject({ code: "invalid_argument" });
+    const second = await service.listVersions({ fileId: "file_1", limit: 2, cursor: first.data.nextCursor! }, context);
+    expect(second.data).toMatchObject({ items: [{ versionId: "version_3" }], nextCursor: null });
+    expect(listVersions).toHaveBeenLastCalledWith(
+      "file_1",
+      expect.any(Object),
+      { limit: 3, offset: 2 },
+    );
+  });
 });

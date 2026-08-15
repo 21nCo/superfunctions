@@ -100,6 +100,15 @@ describe("@userfn/admin", () => {
       ),
     ).resolves.toMatchObject({ data: { item: { traits: { name: "two" } } } });
   });
+  it("does not alias scope components that contain separators", async () => {
+    const store = new MemoryUserFnOperatorStore();
+    const first = { ...scope, installationId: "installation/a", workspaceId: "workspace" };
+    const second = { ...scope, installationId: "installation", workspaceId: "a/workspace" };
+    await store.putUser(first, { id: "same", traits: { owner: "first" } });
+    await store.putUser(second, { id: "same", traits: { owner: "second" } });
+    await expect(store.getUser(first, "same")).resolves.toMatchObject({ traits: { owner: "first" } });
+    await expect(store.getUser(second, "same")).resolves.toMatchObject({ traits: { owner: "second" } });
+  });
   it("paginates all handlers with scope-bound cursors", async () => {
     const store = new MemoryUserFnOperatorStore();
     for (let index = 0; index < 3; index++)

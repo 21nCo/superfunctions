@@ -188,20 +188,37 @@ export function createDataFnDomainAdminService<TContext>(
       const target = string(filter.resource, "filter.resource");
       const definition = executor.schema.resources.find((entry) => entry.name === target);
       if (!definition) throw new AdminError("not_found", "DataFn resource was not found in the active schema.");
+      const decoded = input.cursor
+        ? decodeAdminCursor<{
+            operationId: "datafn.records.list";
+            resource: string;
+            cursor: { after?: Record<string, unknown>; before?: Record<string, unknown> };
+          }>(input.cursor, context.scope)
+        : undefined;
+      if (decoded && (decoded.operationId !== "datafn.records.list" || decoded.resource !== target)) {
+        throw new AdminError("invalid_argument", "The DataFn admin cursor does not belong to this record collection.");
+      }
       const domain = await executor.query<DataFnAdminRecord>({
         ...filter,
         resource: target,
         version: String(filter.version ?? definition.version),
         limit: input.limit,
-        cursor: input.cursor,
+        ...(decoded ? { cursor: decoded.cursor } : {}),
       }, options.context(context));
       const values = Array.isArray(domain.data) ? domain.data : [];
+      const nextCursor = domain.nextCursor && typeof domain.nextCursor === "object" && !Array.isArray(domain.nextCursor)
+        ? encodeAdminCursor(context.scope, {
+            operationId: "datafn.records.list",
+            resource: target,
+            cursor: { after: domain.nextCursor as Record<string, unknown> },
+          })
+        : null;
       return {
         ok: true,
-        data: { items: values as DataFnAdminRecord[], nextCursor: typeof domain.nextCursor === "string" ? domain.nextCursor : null },
+        data: { items: values as DataFnAdminRecord[], nextCursor },
         page: {
-          nextCursor: typeof domain.nextCursor === "string" ? domain.nextCursor : null,
-          hasMore: typeof domain.nextCursor === "string",
+          nextCursor,
+          hasMore: nextCursor !== null,
         },
       };
     },

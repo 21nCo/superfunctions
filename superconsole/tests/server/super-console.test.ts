@@ -181,6 +181,19 @@ describe('Super Console server composition', () => {
     }));
   });
 
+  it('rejects malformed generic-operation JSON without dispatching the operation', async () => {
+    const { console, handler } = installation();
+    const result = await console.handle(request('/api/admin/v1/operations/examplefn.records.list', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{broken',
+    }));
+
+    expect(result.status).toBe(400);
+    expect(await result.json()).toMatchObject({ error: { code: 'INVALID_JSON' } });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('projects the actively authorized scope instead of stale singleton context labels', async () => {
     const switchedPrincipal: SuperConsolePrincipal = {
       ...principal,
@@ -296,6 +309,46 @@ describe('Super Console server composition', () => {
       collection: true,
       inputSchema: { required: ['name'] },
     });
+  });
+
+  it('models get-only resources with a detail URL and no collection endpoint', async () => {
+    const base = manifest().operations[0]!;
+    const getOnly = defineAdminCapability({
+      ...manifest(),
+      resources: [{
+        id: 'records', label: 'Records', description: 'Get one record by ID.', risk: 'standard',
+        minimumScope: 'environment', idField: 'id', displayFields: ['id'], searchableFields: ['id'],
+        filterableFields: [], sortableFields: [], sensitiveFields: [],
+      }],
+      operations: [{
+        ...base,
+        id: 'examplefn.records.get',
+        title: 'Get record',
+        inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+        outputSchema: { type: 'object', properties: { item: { type: 'object' } }, required: ['item'], additionalProperties: false },
+        route: { method: 'GET', path: '/resources/records/:id' },
+        permission: 'examplefn.records.read',
+        target: { resource: 'records', idInput: 'id' },
+      }],
+    });
+    const console = createSuperConsole({
+      adapters: [createAdminCapabilityAdapter(getOnly, {
+        'examplefn.records.get': async () => ({ ok: true as const, data: { item: { id: 'record_1' } } }),
+      })],
+      enabledModules: ['examplefn'],
+      auth: auth(),
+      shellPolicy: { authorize: () => true },
+    });
+
+    const view = await (await console.handle(request('/api/admin/v1/modules/examplefn'))).json();
+    expect(view.data.module.resources[0]).toMatchObject({
+      id: 'records',
+      listable: false,
+      detailIdInput: 'id',
+      detailApiHref: '/api/admin/v1/modules/examplefn/resources/records/:id',
+    });
+    expect(view.data.module.resources[0]).not.toHaveProperty('apiHref');
+    expect(view.data.module.resources[0]).not.toHaveProperty('listApiHref');
   });
 
   it('maps the settings policy alias into the function-owned generic action schema', async () => {
@@ -773,6 +826,35 @@ describe('AuthFn operator transport', () => {
     expect(cookies.some((cookie) => cookie.startsWith('authfn.session='))).toBe(true);
     expect(cookies.some((cookie) => cookie.startsWith('authfn.csrf='))).toBe(true);
     expect((await response.json()).data.session.csrfCookieName).toBe('authfn.csrf');
+  });
+
+  it('joins AuthFn routes correctly when basePath has a trailing slash', async () => {
+    const config = {
+      database: memoryAdapter({ debug: false }),
+      namespace: 'authfn-console-basepath',
+      basePath: '/account/auth/',
+      cookie: { secure: false },
+      plugins: [authFnPasswordPlugin()],
+    };
+    const bootstrap = createAuthFn(config);
+    await bootstrap.router.handle(request('/account/auth/sign-up/password', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'basepath@example.test', password: 'Sup3rConsolePassword!' }),
+    }));
+    const operatorAuth = createAuthFnOperatorAuth({
+      config,
+      resolveOperator: ({ session }) => ({ ...principal, actor: { ...principal.actor, id: session.actorId }, email: session.primaryEmail }),
+      authorizeScope: ({ requested }) => requested,
+    });
+    const console = createSuperConsole({ adapters: [], enabledModules: [], auth: operatorAuth, shellPolicy: { authorize: () => true } });
+
+    const response = await console.handle(request('/api/admin/v1/auth/sign-in', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'basepath@example.test', password: 'Sup3rConsolePassword!' }),
+    }));
+    expect(response.status).toBe(200);
   });
 
   it('enforces AuthFn CSRF on console mutations while valid cookie CSRF succeeds', async () => {

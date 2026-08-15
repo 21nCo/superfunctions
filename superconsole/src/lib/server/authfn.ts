@@ -128,7 +128,8 @@ async function resolveSuccessfulOperator(
 export function createAuthFnOperatorAuth(options: AuthFnOperatorAuthOptions): SuperConsoleOperatorAuth {
   const config = options.config;
   const authFn = createAuthFn(config);
-  const basePath = config.basePath ?? '/auth';
+  const basePath = (config.basePath ?? '/auth').replace(/\/+$/, '') || '/';
+  const route = (suffix: string) => `${basePath === '/' ? '' : basePath}${suffix}`;
 
   return {
     async authenticate(request) {
@@ -144,7 +145,7 @@ export function createAuthFnOperatorAuth(options: AuthFnOperatorAuthOptions): Su
       await authFn.authorizeMutation(request);
     },
     async signIn({ email, password, request }) {
-      const upstream = await authFn.router.handle(authRequest(request, `${basePath}/sign-in/password`, {
+      const upstream = await authFn.router.handle(authRequest(request, route('/sign-in/password'), {
         email,
         password,
         sessionMode: 'cookie',
@@ -155,12 +156,12 @@ export function createAuthFnOperatorAuth(options: AuthFnOperatorAuthOptions): Su
       return resolveSuccessfulOperator(authFn, options, upstream, payload, request);
     },
     async completeTwoFactor({ challengeId, code, request }) {
-      const upstream = await authFn.router.handle(authRequest(request, `${basePath}/2fa/challenge`, { challengeId, code }));
+      const upstream = await authFn.router.handle(authRequest(request, route('/2fa/challenge'), { challengeId, code }));
       const payload = await envelope(upstream);
       return resolveSuccessfulOperator(authFn, options, upstream, payload, request);
     },
     async signOut({ request }) {
-      const upstream = await authFn.router.handle(authRequest(request, `${basePath}/sign-out`, {}));
+      const upstream = await authFn.router.handle(authRequest(request, route('/sign-out'), {}));
       const payload = await envelope(upstream);
       if (!upstream.ok || payload.ok === false) throwAuthResponse(upstream, payload);
       return { headers: authResponseHeaders(upstream) };

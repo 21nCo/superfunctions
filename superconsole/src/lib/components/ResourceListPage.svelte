@@ -21,6 +21,7 @@
     const url = new URL(window.location.href);
     if (query.trim()) url.searchParams.set('q', query.trim());
     else url.searchParams.delete('q');
+    url.searchParams.delete('cursor');
     void goto(`${url.pathname}${url.search}`);
   }
 </script>

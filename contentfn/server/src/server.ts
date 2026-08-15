@@ -207,6 +207,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
           db,
           maxQueryLimit: limits.maxQueryLimit,
           maxExpandDepth: limits.maxExpandDepth,
+          maxFilterDepth: limits.maxFilterDepth,
         }, input),
         create: (input) => docCreate(storage, input),
         get: (input) => docGet(storage, input),

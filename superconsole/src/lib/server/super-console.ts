@@ -317,6 +317,10 @@ interface ConsoleResourceView {
   description?: string;
   href: string;
   apiHref?: string;
+  listApiHref?: string;
+  detailApiHref?: string;
+  detailIdInput?: string;
+  listable: boolean;
   actions: ConsoleActionView[];
 }
 
@@ -381,7 +385,11 @@ function moduleView(
       ...(resource?.icon ? { icon: resource.icon } : {}),
       ...(resource ? { resource } : {}),
       href: `${navigation?.path ?? `/modules/${manifest.id}`}/${id}`,
-      apiHref: list?.routePath ?? get?.routePath,
+      apiHref: list?.routePath,
+      listApiHref: list?.routePath,
+      detailApiHref: get?.routePath,
+      detailIdInput: get?.operation.target?.idInput,
+      listable: Boolean(list),
       actions,
     };
   });
@@ -951,8 +959,16 @@ export class SuperConsole {
     if (!(await this.operationDiscoverable(entry, state))) {
       throw new SuperConsoleHttpError('The requested administration operation is unavailable.', { status: 404, code: 'OPERATION_NOT_ENABLED' });
     }
-    const body = await request.json().catch(() => undefined);
-    return resultResponse(await this.dispatcher.dispatch({ operationId, input: body ?? {}, context: state.context }));
+    const text = await request.text();
+    let body: unknown = {};
+    if (text.trim()) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        throw new SuperConsoleHttpError('The request body must be valid JSON.', { status: 400, code: 'INVALID_JSON' });
+      }
+    }
+    return resultResponse(await this.dispatcher.dispatch({ operationId, input: body, context: state.context }));
   }
 
   private async issueConfirmation(request: Request, state: SuperConsoleRequestState): Promise<Response> {

@@ -1,5 +1,5 @@
 import { createMemoryStore } from "@recfn/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createRecFnDomainAdminAdapter,
   createRecFnDomainAdminService,
@@ -101,5 +101,24 @@ describe("@recfn/admin", () => {
 
     await expect(service.deleteBot({ botId: bot.id }, context)).resolves.toEqual({ botId: bot.id, deleted: true });
     expect(await store.getBot(bot.id, "tenant_1")).toBeNull();
+  });
+
+  it("does not start calendar polling for per-request admin routers", async () => {
+    const timer = vi.spyOn(globalThis, "setInterval");
+    const service = createRecFnDomainAdminService({
+      projectId: "project_1",
+      server: {
+        store: createMemoryStore(),
+        environment: "test",
+        tokenStore: {} as never,
+        googleCalendarClient: {} as never,
+        outlookCalendarClient: {} as never,
+        calendarRuntime: { enabled: true, namespaces: ["tenant_1"], pollIntervalMs: 1_000 },
+      },
+    });
+
+    await expect(service.listBots({}, context)).resolves.toMatchObject({ items: [] });
+    expect(timer).not.toHaveBeenCalled();
+    timer.mockRestore();
   });
 });

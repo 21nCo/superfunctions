@@ -48,7 +48,10 @@ describe('Super Console operator surface', () => {
     expect(read('src/routes/modules/cifn/+page.svelte')).not.toContain('iframe');
     expect(read('src/routes/modules/cifn/runs/[runId]/+page.svelte')).toContain('/jobs/${encodeURIComponent(job.jobKey)}/logs');
     expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.svelte')).toContain('Follow logs');
+    expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.svelte')).toContain('Next page');
+    expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.svelte')).toContain("url.searchParams.set('tail', '1000')");
     expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.ts')).toContain('/jobs/${encodeURIComponent(params.jobKey)}/logs');
+    expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.ts')).not.toContain('downloadUrl');
     expect(read('src/routes/modules/cifn/runs/[runId]/artifacts/+page.svelte')).toContain('FileFn');
     expect(read('src/routes/modules/cifn/runs/[runId]/artifacts/+page.svelte')).toContain("action.id.endsWith('.download-artifact')");
     expect(read('src/routes/modules/cifn/runs/[runId]/artifacts/+page.svelte')).not.toContain('openSafeAdminDownload');
@@ -105,5 +108,21 @@ describe('Super Console operator surface', () => {
     const transport = read('src/lib/components/cifn.ts');
     expect(transport).toContain("transport.set('filter', JSON.stringify({ status }))");
     expect(transport).not.toContain("transport.set('status'");
+  });
+
+  it('preserves scope in CiFn inspection and aligns command search with visible labels', () => {
+    const ci = read('src/routes/modules/cifn/+page.svelte');
+    expect(ci).toContain('scopedConsoleHref(');
+    expect(ci).toContain('page.url.searchParams');
+    const command = read('src/lib/components/CommandPalette.svelte');
+    expect(command).toContain('commandValue(command)');
+    expect(command).toContain('onValueChange');
+  });
+
+  it('renders registry and module failures before empty resource states', () => {
+    expect(read('src/routes/+page.svelte')).toContain("data.shell.error?.status === 403");
+    expect(read('src/routes/+page.svelte')).toContain('<StatePanel kind="error" error={data.shell.error}');
+    expect(read('src/routes/modules/[moduleId]/+page.svelte')).toContain('<StatePanel kind="error" error={data.loadError}');
+    expect(read('src/lib/components/ResourceListPage.svelte')).toContain("url.searchParams.delete('cursor')");
   });
 });

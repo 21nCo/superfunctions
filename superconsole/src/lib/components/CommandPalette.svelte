@@ -59,9 +59,16 @@
       shortcut: '',
     })),
   ]);
+  const commandValue = (command: (typeof commands)[number]) =>
+    `${command.label} ${command.group} ${command.id}`.toLowerCase();
   const filtered = $derived(commands.filter((command) =>
-    `${command.label} ${command.group}`.toLowerCase().includes(query.toLowerCase())
+    commandValue(command).includes(query.toLowerCase())
   ));
+
+  function selectCommand(value: string) {
+    const command = commands.find((candidate) => commandValue(candidate) === value);
+    if (command) choose(command.href);
+  }
 
   function choose(href: string) {
     open = false;
@@ -92,7 +99,7 @@
           <DialogTitle>Super Console command palette</DialogTitle>
           <DialogDescription>Search enabled modules and operator destinations.</DialogDescription>
         </div>
-        <CommandRoot inputValue={query} onInputValueChange={(value: string) => (query = value)}>
+        <CommandRoot inputValue={query} onInputValueChange={(value: string) => (query = value)} onValueChange={selectCommand}>
           <div class="command-dialog__search">
             <ConsoleIcon name="search" size={19} />
             <CommandInput placeholder="Search modules and actions…" aria-label="Search commands" autofocus />
@@ -110,7 +117,7 @@
                 <CommandGroup value={group.toLowerCase()}>
                   <CommandGroupHeading value={`${group.toLowerCase()}-heading`}>{group}</CommandGroupHeading>
                   {#each groupCommands as command (command.id)}
-                    <CommandItem value={command.id} onclick={() => choose(command.href)}>
+                    <CommandItem value={commandValue(command)}>
                       <span class="command-dialog__item-icon"><ConsoleIcon name={command.icon} /></span>
                       <span>{command.label}</span>
                       {#if command.shortcut}<CommandShortcut value={`${command.id}-shortcut`}>{command.shortcut}</CommandShortcut>{/if}

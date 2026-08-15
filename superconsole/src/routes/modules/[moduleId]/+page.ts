@@ -28,7 +28,7 @@ export const load: PageLoad = async ({ fetch, params, parent, depends, url }) =>
   const result = await fetchAdmin<ModuleOverviewResponse>(
     fetch,
     withAdminScope(
-      `${ADMIN_API_PREFIX}/modules/${encodeURIComponent(params.moduleId)}`,
+      `${ADMIN_API_PREFIX}/modules/${encodeURIComponent(registered.id)}`,
       url.searchParams
     )
   );

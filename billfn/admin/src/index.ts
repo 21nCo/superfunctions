@@ -495,8 +495,8 @@ const domainActionInputSchemas: Record<string, AdminObjectSchema> = {
     {
       payload: payloadSchema(
         {
-          kind: { type: "string", enum: ["webhook-event", "subscription-sync", "account-scan", "notification-history-backfill", "webhook-replay"] },
-          provider: { type: "string", minLength: 1 },
+          kind: { type: "string", enum: ["subscription-sync", "account-scan"] },
+          provider: { type: "string", enum: ["dodo", "apple", "stripe", "polar", "google-play", "microsoft-store"] },
           billingAccountId: { type: "string", minLength: 1 },
           subscriptionId: { type: "string", minLength: 1 },
           providerEventId: { type: "string", minLength: 1 },
@@ -707,8 +707,8 @@ export interface BillFnRefundPaymentInput {
 }
 export interface BillFnReconcileProviderInput {
   payload: {
-    kind: "webhook-event" | "subscription-sync" | "account-scan" | "notification-history-backfill" | "webhook-replay";
-    provider?: string;
+    kind: "subscription-sync" | "account-scan";
+    provider?: "dodo" | "apple" | "stripe" | "polar" | "google-play" | "microsoft-store";
     billingAccountId?: string;
     subscriptionId?: string;
     providerEventId?: string;

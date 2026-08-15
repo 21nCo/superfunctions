@@ -38,7 +38,7 @@
     type ActionDraftValue,
   } from './action-form';
   import { fetchConsole, materializeAdminActionHref, openSafeAdminDownload, safeAdminDownloadHref, scopedConsoleHref } from './admin-api';
-  import { publishMutationFeedback, refreshSuccessfulMutation } from './mutation-outcome';
+  import { beginMutationFeedback, publishMutationFeedback, refreshSuccessfulMutation } from './mutation-outcome';
   import type { AdminActionViewModel } from './view-models';
 
   let {
@@ -130,7 +130,7 @@
     }
     running = true;
     result = undefined;
-    publishMutationFeedback(undefined);
+    const feedbackGeneration = beginMutationFeedback();
     try {
       const token = await confirmationToken(input);
       const headers = new Headers({ accept: 'application/json', 'content-type': 'application/json' });
@@ -162,9 +162,9 @@
       idempotencyFingerprint = undefined;
       dialogOpen = false;
       const completed = { ok: true as const, message: successMessage, refreshed: false };
-      publishMutationFeedback(completed);
+      publishMutationFeedback(completed, feedbackGeneration);
       const refreshed = await refreshSuccessfulMutation(successMessage, invalidateAll);
-      publishMutationFeedback(refreshed);
+      publishMutationFeedback(refreshed, feedbackGeneration);
     } catch (cause) {
       result = {
         ok: false,

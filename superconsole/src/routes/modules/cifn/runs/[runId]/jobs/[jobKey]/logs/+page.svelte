@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { invalidate } from '$app/navigation';
+  import { goto, invalidate } from '$app/navigation';
+  import { page } from '$app/state';
   import { ButtonIcon, ButtonLabel, ButtonRoot } from '@uifn/components-svelte/button';
   import ConsoleIcon from '$lib/components/ConsoleIcon.svelte';
-  import { openSafeAdminDownload } from '$lib/components/admin-api';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import StatePanel from '$lib/components/StatePanel.svelte';
   import { onMount } from 'svelte';
@@ -10,7 +10,7 @@
 
   let { data }: { data: PageData } = $props();
   let wrap = $state(true);
-  let following = $state(false);
+  let following = $state(page.url.searchParams.get('follow') === '1');
   let refreshing = $state(false);
 
   async function refresh() {
@@ -23,8 +23,28 @@
     }
   }
 
-  function download() {
-    openSafeAdminDownload(data.downloadHref);
+  function toggleFollow() {
+    const url = new URL(window.location.href);
+    following = !following;
+    if (following) {
+      url.searchParams.set('follow', '1');
+      url.searchParams.set('tail', '1000');
+      url.searchParams.delete('cursor');
+    } else {
+      url.searchParams.delete('follow');
+      url.searchParams.delete('tail');
+    }
+    void goto(`${url.pathname}${url.search}`);
+  }
+
+  function nextPage() {
+    if (!data.nextCursor) return;
+    const url = new URL(window.location.href);
+    following = false;
+    url.searchParams.set('cursor', data.nextCursor);
+    url.searchParams.delete('follow');
+    url.searchParams.delete('tail');
+    void goto(`${url.pathname}${url.search}`);
   }
 
   onMount(() => {
@@ -38,7 +58,7 @@
 <PageHeader eyebrow={`CiFn run ${data.runId.slice(0, 10)}`} title={`${data.jobKey} logs`} description="Redacted log output provided by the CiFn and WatchFn administration contract." backHref={`/modules/cifn/runs/${encodeURIComponent(data.runId)}`}>
   {#snippet actions()}
     {#if data.followAvailable}
-      <ButtonRoot variant="outline" pressed={following} onclick={() => (following = !following)}>
+      <ButtonRoot variant="outline" pressed={following} onclick={toggleFollow}>
         <ButtonIcon><ConsoleIcon name={following ? 'pause' : 'activity'} /></ButtonIcon>
         <ButtonLabel>{following ? 'Pause follow' : 'Follow logs'}</ButtonLabel>
       </ButtonRoot>
@@ -47,11 +67,6 @@
       <ButtonIcon><ConsoleIcon name="refresh" /></ButtonIcon>
       <ButtonLabel>{refreshing ? 'Refreshing…' : 'Refresh'}</ButtonLabel>
     </ButtonRoot>
-    {#if data.downloadHref}
-      <ButtonRoot variant="outline" onclick={download}>
-        <ButtonIcon><ConsoleIcon name="download" /></ButtonIcon><ButtonLabel>Download logs</ButtonLabel>
-      </ButtonRoot>
-    {/if}
     <ButtonRoot variant="outline" pressed={wrap} onclick={() => (wrap = !wrap)}>
       <ButtonIcon><ConsoleIcon name="terminal" /></ButtonIcon><ButtonLabel>{wrap ? 'Disable wrap' : 'Wrap lines'}</ButtonLabel>
     </ButtonRoot>
@@ -79,4 +94,12 @@
       </ol>
     {/if}
   </div>
+  {#if data.nextCursor && !following}
+    <div class="pagination-bar">
+      <span>More log lines are available.</span>
+      <ButtonRoot variant="outline" onclick={nextPage}>
+        <ButtonLabel>Next page</ButtonLabel><ButtonIcon><ConsoleIcon name="arrow-right" /></ButtonIcon>
+      </ButtonRoot>
+    </div>
+  {/if}
 {/if}

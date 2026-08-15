@@ -5,6 +5,7 @@ import {
   browseFnAdminCapability,
   createBrowseFnAdminAdapter,
   createBrowseFnDomainAdminService,
+  type BrowseFnAdminService,
 } from "../index.js";
 
 const ownedScope = {
@@ -148,5 +149,32 @@ describe("@browsefn/admin", () => {
       browsefn: new BrowseFn(),
       scope: { ...ownedScope, environmentId: "*" },
     })).toThrowError(/scope.environmentId/);
+  });
+
+  it("normalizes provider aliases before reading rate-limit state", async () => {
+    const { adapter } = fixture();
+    await expect(adapter.execute("browsefn.rate-limits.get", { provider: "  googleMaps  " }, context()))
+      .resolves.toMatchObject({ data: { item: { id: "google-maps", provider: "google-maps" } } });
+  });
+
+  it("preserves service receivers through the generic adapter", async () => {
+    const fallback = async () => ({ accepted: true as const });
+    const service = {
+      marker: "bound",
+      async listProviders() {
+        if (this.marker !== "bound") throw new Error("lost receiver");
+        return { items: [], nextCursor: null };
+      },
+      getMetrics: async () => ({ item: { id: "current", totalRequests: 0, successRate: 0, avgResponseTime: 0, cacheHitRate: 0, byProvider: {} } }),
+      clearMetrics: fallback,
+      getRateLimit: async () => ({ item: { id: "cheerio", provider: "cheerio", allowed: true, remaining: null, resetAt: null, limit: null, retryAfterMs: null } }),
+      listLogs: async () => ({ items: [], nextCursor: null }),
+      clearLogs: fallback,
+      getCache: async () => ({ item: { id: "cache", enabled: false, hits: null, misses: null, hitRate: null, size: null } }),
+      clearCache: fallback,
+    } as BrowseFnAdminService & { marker: string };
+
+    await expect(createBrowseFnAdminAdapter(service).execute("browsefn.providers.list", {}, context()))
+      .resolves.toMatchObject({ data: { items: [] } });
   });
 });

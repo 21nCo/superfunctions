@@ -61,7 +61,7 @@ export function createAuthFnAdmin(options: AuthFnAdminOptions): AuthFnAdminInsta
   };
   const routes: Route[] = [
     {
-      method: "GET", path: "/users", handler: async (request, context) => {
+      method: "GET", path: "/users", meta: createAdminRouteMeta("listAuthFnAdminUsers", "List AuthFn users"), handler: async (request, context) => {
         try {
           const input: AuthFnAdminListUsersInput = {
             limit: parseOptionalInt(context.query.get("limit"), "limit"), cursor: context.query.get("cursor") ?? undefined,
@@ -74,7 +74,7 @@ export function createAuthFnAdmin(options: AuthFnAdminOptions): AuthFnAdminInsta
       },
     },
     {
-      method: "DELETE", path: "/users/:id", handler: async (request, context) => {
+      method: "DELETE", path: "/users/:id", meta: createAdminRouteMeta("deleteAuthFnAdminUserById", "Delete an AuthFn user by id"), handler: async (request, context) => {
         try {
           const id = context.params.id?.trim(); if (!id) throw new AuthFnValidationError("User id is required", { field: "id" });
           const actor = await authorize(request, "users.delete", { operationId: "deleteAuthFnAdminUserById", params: { id } });
@@ -83,7 +83,7 @@ export function createAuthFnAdmin(options: AuthFnAdminOptions): AuthFnAdminInsta
       },
     },
     {
-      method: "DELETE", path: "/users/by-email/:email", handler: async (request, context) => {
+      method: "DELETE", path: "/users/by-email/:email", meta: createAdminRouteMeta("deleteAuthFnAdminUsersByEmail", "Delete AuthFn user by email"), handler: async (request, context) => {
         try {
           const email = context.params.email?.trim(); if (!email) throw new AuthFnValidationError("Email is required", { field: "email" });
           const body = await parseOptionalBody(request);
@@ -105,9 +105,10 @@ export function createStaticAdminKeyAuthorizer(options: StaticAdminKeyAuthorizer
   return ({ request }) => ({ allowed: safeEqual(request.headers.get(options.headerName ?? "authorization")?.replace(/^Bearer\s+/i, "").trim() ?? "", expected), actorId: options.actorId ?? "authfn-admin-key" });
 }
 function safeEqual(actual: string, expected: string): boolean { const a = Buffer.from(actual); const b = Buffer.from(expected); return a.length === b.length && timingSafeEqual(a, b) }
-function parseOptionalInt(value: string | null, field: string): number | undefined { if (value === null) return undefined; const parsed = Number(value); if (!Number.isInteger(parsed)) throw new AuthFnValidationError(`${field} must be an integer`, { field }); return parsed }
+function parseOptionalInt(value: string | null, field: string): number | undefined { if (value === null || value.trim() === "") return undefined; const parsed = Number(value); if (!Number.isInteger(parsed)) throw new AuthFnValidationError(`${field} must be an integer`, { field }); return parsed }
 function parseDirection(value: string | null): "asc" | "desc" | undefined { if (value === null) return undefined; if (value !== "asc" && value !== "desc") throw new AuthFnValidationError("direction must be asc or desc", { field: "direction" }); return value }
 async function parseOptionalBody(request: Request): Promise<Record<string, unknown>> { const text = await request.text(); if (!text.trim()) return {}; try { const value = JSON.parse(text); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(); return value; } catch { throw new AuthFnValidationError("Request body must be a JSON object"); } }
+function createAdminRouteMeta(operationId: string, summary: string) { return { auth: { mode: "bearer" as const, scopes: ["authfn:admin"] }, openapi: { include: true, operationId, summary, tags: ["authfn-admin"] } }; }
 
 export type { AuthFnAccountDeletionResult, AuthFnAdminDeleteUsersByEmailResult, AuthFnAdminListUsersResult };
 

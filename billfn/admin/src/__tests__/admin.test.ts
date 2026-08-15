@@ -5,7 +5,7 @@ import {
   createBillFnDomainAdminService,
   type BillFnAdminService,
 } from "../index.js";
-import { createBillFn } from "@billfn/core";
+import { createBillFn, type BillFnInstance } from "@billfn/core";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 
 const context = {
@@ -129,6 +129,48 @@ describe("@billfn/admin", () => {
     });
     await expect(adapter.execute("billfn.prices.get", { id: "price_monthly" }, context)).resolves.toMatchObject({
       data: { item: { planKey: "pro", amount: 2900 } },
+    });
+  });
+
+  it("derives reconciliation targets from the active subject and rejects foreign targets/providers", async () => {
+    const enqueueReconciliationJob = vi.fn(async (input) => ({
+      ok: true as const,
+      data: { jobId: "reconcile_1", ...input },
+    }));
+    const billfn = {
+      getEntitlements: vi.fn(async () => ({
+        ok: true as const,
+        data: {
+          billingAccount: { id: "account_owned" },
+          subscription: { id: "subscription_owned" },
+        },
+      })),
+      enqueueReconciliationJob,
+    } as unknown as BillFnInstance;
+    const service = createBillFnDomainAdminService({
+      billfn,
+      subject: () => ({ tenantId: "tenant_owned" }),
+    });
+
+    await expect(service.reconcileProvider({
+      payload: { kind: "account-scan", billingAccountId: "account_foreign" },
+    }, context)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(service.reconcileProvider({
+      payload: { kind: "account-scan", provider: "not-a-provider" as never },
+    }, context)).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(service.reconcileProvider({
+      payload: { kind: "subscription-sync", subscriptionId: "subscription_foreign" },
+    }, context)).rejects.toMatchObject({ code: "forbidden" });
+
+    await expect(service.reconcileProvider({
+      payload: { kind: "subscription-sync", provider: "stripe" },
+    }, context)).resolves.toMatchObject({ data: { accepted: true } });
+    expect(enqueueReconciliationJob).toHaveBeenCalledTimes(1);
+    expect(enqueueReconciliationJob).toHaveBeenCalledWith({
+      kind: "subscription-sync",
+      provider: "stripe",
+      billingAccountId: "account_owned",
+      subscriptionId: "subscription_owned",
     });
   });
 });

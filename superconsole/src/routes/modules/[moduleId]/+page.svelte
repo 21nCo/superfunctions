@@ -12,6 +12,7 @@
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
+  const browseableResources = $derived((data.module?.resources ?? []).filter((resource) => resource.listable !== false));
 
   function openResource(href: string) {
     const safeHref = safeConsoleNavigationHref(href, page.url.origin);
@@ -34,13 +35,15 @@
     {/snippet}
   </PageHeader>
 
-  {#if data.loadError && data.loadError.status === 403}
+  {#if data.loadError?.status === 403}
     <StatePanel kind="forbidden" error={data.loadError} />
+  {:else if data.loadError}
+    <StatePanel kind="error" error={data.loadError} />
   {:else}
     <div class="module-status-bar">
       <StatusBadge status={data.module.health ?? 'unknown'} label={data.module.healthLabel ?? data.module.health ?? 'Unknown'} />
       {#if data.module.version}<span>Version <code>{data.module.version}</code></span>{/if}
-      <span>{data.module.resources?.length ?? 0} resource types</span>
+      <span>{browseableResources.length} resource types</span>
       <span>{data.module.capabilities?.length ?? 0} admin capabilities</span>
     </div>
 
@@ -67,11 +70,11 @@
       <div class="section-heading">
         <div><p class="eyebrow">Administration</p><h2 id="module-resources-heading">Resources</h2></div>
       </div>
-      {#if !data.module.resources?.length}
+      {#if !browseableResources.length}
         <StatePanel kind="empty" title="No browsable resources" message={`${data.module.name} exposes actions or status only in this deployment.`} />
       {:else}
         <div class="resource-card-grid">
-          {#each data.module.resources as resource (resource.href)}
+          {#each browseableResources as resource (resource.href)}
             <CardRoot class="resource-card">
               <CardHeader>
                 <div class="resource-card__icon"><ConsoleIcon name="module" size={20} /></div>

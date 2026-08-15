@@ -6,7 +6,7 @@ function cloneMemory(memory: Memory): Memory {
     ...memory,
     containerTags: [...memory.containerTags],
     embedding: memory.embedding ? [...memory.embedding] : null,
-    metadata: { ...memory.metadata },
+    metadata: structuredClone(memory.metadata),
   };
 }
 
@@ -35,7 +35,20 @@ function metadataMatches(
   filters: Record<string, unknown> | undefined,
 ): boolean {
   if (!filters) return true;
-  return Object.entries(filters).every(([key, value]) => Object.is(metadata[key], value));
+  return Object.entries(filters).every(([key, value]) => jsonContains(metadata[key], value));
+}
+
+function jsonContains(actual: unknown, expected: unknown): boolean {
+  if (Array.isArray(expected)) {
+    return Array.isArray(actual)
+      && expected.every((candidate) => actual.some((value) => jsonContains(value, candidate)));
+  }
+  if (expected && typeof expected === 'object') {
+    if (!actual || typeof actual !== 'object' || Array.isArray(actual)) return false;
+    return Object.entries(expected as Record<string, unknown>)
+      .every(([key, value]) => jsonContains((actual as Record<string, unknown>)[key], value));
+  }
+  return Object.is(actual, expected);
 }
 
 /**
@@ -59,14 +72,21 @@ export class MemoryStorageAdapter implements StorageAdapter {
         type: input.type ?? 'conversational',
         content: input.content ?? '',
         embedding: input.embedding ? [...input.embedding] : null,
-        metadata: { ...(input.metadata ?? {}) },
+        metadata: structuredClone(input.metadata ?? {}),
         isLatest: input.isLatest ?? true,
         createdAt: input.createdAt ?? now,
         updatedAt: input.updatedAt ?? now,
       };
-      this.memories.set(memory.id, cloneMemory(memory));
       return memory;
     });
+    const ids = new Set<string>();
+    for (const memory of saved) {
+      if (ids.has(memory.id) || this.memories.has(memory.id)) {
+        throw new Error(`Memory already exists: ${memory.id}`);
+      }
+      ids.add(memory.id);
+    }
+    for (const memory of saved) this.memories.set(memory.id, cloneMemory(memory));
     return saved.map(cloneMemory);
   }
 
@@ -108,7 +128,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
         memory,
         similarity: memory.embedding ? cosineSimilarity(params.embedding, memory.embedding) : 0,
       }))
-      .filter(({ similarity }) => params.threshold === undefined || similarity >= params.threshold)
+      .filter(({ similarity }) => Number.isFinite(similarity) && (params.threshold === undefined || similarity >= params.threshold))
       .sort((left, right) => right.similarity - left.similarity || right.memory.updatedAt - left.memory.updatedAt)
       .slice(0, Math.max(0, params.topK))
       .map(({ memory }) => cloneMemory(memory));

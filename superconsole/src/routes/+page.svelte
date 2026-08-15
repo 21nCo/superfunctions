@@ -60,6 +60,8 @@
   <StatePanel kind="forbidden" title="Authentication required" message="Sign in through AuthFn to access operator administration." actionHref="/sign-in" actionLabel="Sign in" />
   {:else if data.shell.error?.status === 403}
     <StatePanel kind="forbidden" error={data.shell.error} />
+  {:else if data.shell.error}
+    <StatePanel kind="error" error={data.shell.error} />
   {:else if data.shell.overviewError?.status === 403}
     <StatePanel kind="forbidden" title="Overview restricted" error={data.shell.overviewError} message="Your operator role can use permitted module surfaces, but not the platform overview." />
   {:else if data.shell.overviewError}

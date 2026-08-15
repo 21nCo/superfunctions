@@ -146,6 +146,29 @@ describe("@authfn/admin", () => {
     expect(secondBody.data.pageInfo.hasMore).toBe(false);
   });
 
+  it("treats a blank limit query as absent", async () => {
+    const config = createConfig();
+    await seedUser(config, {
+      id: "user_blank_limit",
+      primaryEmail: "blank-limit@example.com",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    const admin = createAuthFnAdmin({
+      authFnConfig: config,
+      authorize: createStaticAdminKeyAuthorizer({ token: "top-secret" }),
+    });
+
+    const response = await admin.router.handle(new Request(
+      "https://account.example.com/admin/users?limit=",
+      { headers: authHeaders() },
+    ));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      data: { users: [{ id: "user_blank_limit" }] },
+    });
+  });
+
   it("hard-deletes a user by id and runs multi-region lookup cleanup hooks", async () => {
     const lookupDeletes: string[] = [];
     const lookupStore: AuthFnRegionLookupStore = {

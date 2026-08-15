@@ -52,12 +52,12 @@ export interface UserFnOperatorStore {
 }
 
 function key(scope: UserFnOperatorScope) {
-  return [
+  return JSON.stringify([
     scope.installationId,
     scope.workspaceId,
     scope.projectId,
     scope.environmentId,
-  ].join("/");
+  ]);
 }
 function bucket<T>(
   map: Map<string, Map<string, T>>,

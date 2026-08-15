@@ -7,6 +7,7 @@ import {
 } from "../index.js";
 import { createAdminClient, validateAdminCapabilityManifest } from "@superfunctions/admin";
 import { createDatafnServer } from "@datafn/server";
+import type { DatafnExecutor } from "@datafn/server";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 
 const context = {
@@ -181,5 +182,28 @@ describe("@datafn/admin", () => {
       items: expect.arrayContaining([expect.objectContaining({ id: "tasks", version: 1 })]),
     });
     await server.close();
+  });
+
+  it("translates and binds opaque admin cursors to the DataFn record collection", async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ data: [{ id: "task-1" }], nextCursor: { createdAt: "2026-08-15", id: "task-1" } })
+      .mockResolvedValueOnce({ data: [{ id: "task-2" }], nextCursor: null });
+    const executor = {
+      schema: { version: 1, resources: [{ name: "tasks", version: 1 }, { name: "other", version: 1 }] },
+      query,
+    } as unknown as DatafnExecutor<{ namespace: string }>;
+    const service = createDataFnDomainAdminService({ executor, context: () => ({ namespace: "tenant_1" }) });
+
+    const first = await service.listRecords({ filter: { resource: "tasks" }, limit: 1 }, context);
+    const nextCursor = first.data.nextCursor;
+    expect(nextCursor).toEqual(expect.any(String));
+    await service.listRecords({ filter: { resource: "tasks" }, limit: 1, cursor: nextCursor! }, context);
+    expect(query.mock.calls[1]?.[0]).toMatchObject({
+      resource: "tasks",
+      cursor: { after: { createdAt: "2026-08-15", id: "task-1" } },
+    });
+
+    await expect(service.listRecords({ filter: { resource: "other" }, cursor: nextCursor! }, context))
+      .rejects.toMatchObject({ code: "invalid_argument" });
   });
 });

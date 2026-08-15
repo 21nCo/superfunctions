@@ -82,4 +82,44 @@ describe('schema-driven action input', () => {
     });
     expect(result.input.messageId).toBe('message-1');
   });
+
+  it('recursively validates nested object properties and array items', () => {
+    const candidate: AdminActionViewModel = {
+      id: 'flowfn.workflows.start',
+      label: 'Start workflow',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          payload: {
+            type: 'object',
+            properties: {
+              owner: { type: 'string', minLength: 3 },
+              steps: {
+                type: 'array',
+                minItems: 1,
+                items: {
+                  type: 'object',
+                  properties: { retries: { type: 'integer', minimum: 0 } },
+                  required: ['retries'],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ['owner', 'steps'],
+            additionalProperties: false,
+          },
+        },
+        required: ['payload'],
+        additionalProperties: false,
+      },
+    };
+
+    const invalid = validateActionInput(candidate, {
+      payload: JSON.stringify({ owner: 'ok', steps: [{ retries: -1 }] }),
+    });
+    expect(invalid).toMatchObject({ ok: false, errors: { payload: 'Payload.owner is too short.' } });
+    expect(validateActionInput(candidate, {
+      payload: JSON.stringify({ owner: 'ops', steps: [{ retries: 0 }] }),
+    })).toMatchObject({ ok: true });
+  });
 });

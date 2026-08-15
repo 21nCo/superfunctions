@@ -12,9 +12,26 @@ export interface SuccessfulMutationFeedback {
  * receipt must survive that component replacement.
  */
 export const mutationFeedback = writable<SuccessfulMutationFeedback | undefined>(undefined);
+let mutationGeneration = 0;
 
-export function publishMutationFeedback(feedback: SuccessfulMutationFeedback | undefined): void {
+export function beginMutationFeedback(): number {
+  mutationGeneration += 1;
+  mutationFeedback.set(undefined);
+  return mutationGeneration;
+}
+
+export function publishMutationFeedback(
+  feedback: SuccessfulMutationFeedback | undefined,
+  generation?: number
+): void {
+  if (generation !== undefined && generation !== mutationGeneration) return;
+  if (generation === undefined) mutationGeneration += 1;
   mutationFeedback.set(feedback);
+}
+
+export function clearMutationFeedback(): void {
+  mutationGeneration += 1;
+  mutationFeedback.set(undefined);
 }
 
 /**

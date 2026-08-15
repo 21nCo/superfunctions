@@ -1,4 +1,4 @@
-import { ADMIN_API_PREFIX, fetchAdmin, safeAdminDownloadHref, withAdminScope } from '$lib/components/admin-api';
+import { ADMIN_API_PREFIX, fetchAdmin, withAdminScope } from '$lib/components/admin-api';
 import type { CiLogLineViewModel } from '$lib/components/view-models';
 import type { PageLoad } from './$types';
 
@@ -13,8 +13,6 @@ interface CiLogResponse {
   nextCursor?: string;
   capabilities?: CiLogCapabilities;
   followIntervalMs?: number;
-  downloadHref?: string;
-  downloadSignedExternal?: boolean;
 }
 
 export const load: PageLoad = async ({ fetch, params, depends, url }) => {
@@ -31,24 +29,13 @@ export const load: PageLoad = async ({ fetch, params, depends, url }) => {
     withAdminScope(`${request.pathname}${request.search}`, url.searchParams)
   );
   const payload = result.ok ? result.data : undefined;
-  const safeDownload = payload?.capabilities?.download
-    ? safeAdminDownloadHref(payload.downloadHref, {
-        origin: url.origin,
-        signedExternal: payload.downloadSignedExternal === true,
-      })
-    : undefined;
-  const downloadHref = safeDownload?.startsWith('/api/admin/')
-    ? withAdminScope(safeDownload, url.searchParams)
-    : safeDownload;
-
   return {
     runId: params.runId,
     jobKey: params.jobKey,
     lines: payload?.lines ?? payload?.items ?? [],
-    nextCursor: payload?.nextCursor,
+    nextCursor: payload?.nextCursor ?? (result.ok ? result.page?.nextCursor ?? undefined : undefined),
     followAvailable: payload?.capabilities?.follow === true,
     followIntervalMs: Math.max(1_000, Math.min(payload?.followIntervalMs ?? 3_000, 30_000)),
-    downloadHref,
     dependencyKey,
     loadError: result.ok ? undefined : result.error,
   };

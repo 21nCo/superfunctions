@@ -183,6 +183,27 @@ describe("PHASE_12 hardening: auth, limits, logging, status", () => {
     });
   });
 
+  describe("TV-LIMIT-FILTER-DEPTH-001: docs.list respects the configured filter depth", () => {
+    it("rejects a nested filter before querying documents", async () => {
+      db = memoryAdapter();
+      const server = createContentfnServer({ db, limits: { maxFilterDepth: 0 } });
+      await server.api.datasets.create({ dataset: "prod" });
+
+      const result = await server.api.docs.list({
+        dataset: "prod",
+        filter: {
+          op: "and",
+          filters: [{ field: "title", op: "eq", value: "Hidden" }],
+        },
+      });
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "QUERY_TOO_COMPLEX" },
+      });
+    });
+  });
+
   describe("TV-OBS-LOGGING-001: mutation logs exclude document body", () => {
     it("logs action/dataset/docId but not document body content", async () => {
       db = memoryAdapter();

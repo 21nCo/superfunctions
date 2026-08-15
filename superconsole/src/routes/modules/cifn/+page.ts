@@ -21,7 +21,7 @@ export const load: PageLoad = async ({ fetch, parent, url, depends }) => {
   return {
     module,
     runs: result.ok ? result.data.runs ?? result.data.items ?? [] : [],
-    nextCursor: result.ok ? result.data.nextCursor : undefined,
+    nextCursor: result.ok ? result.data.nextCursor ?? result.page?.nextCursor ?? undefined : undefined,
     loadError: result.ok ? undefined : result.error,
     status: url.searchParams.get('status') ?? '',
   };

@@ -91,6 +91,9 @@ export function createRecFnDomainAdminService(
     const server = createRecFnServer({
       ...options.server,
       rateLimit: false,
+      calendarRuntime: options.server.calendarRuntime
+        ? { ...options.server.calendarRuntime, enabled: false }
+        : undefined,
       validateApiKey: (key) => key === INTERNAL_KEY ? { namespace, apiKey: key } : null,
     });
     const response = await server.router.handle(new Request(`http://recfn.local${path}`, {

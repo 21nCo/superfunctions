@@ -1,4 +1,4 @@
-import { createAdminClient } from "@superfunctions/admin";
+import { createAdminClient, validateAdminValue } from "@superfunctions/admin";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createApp,
@@ -106,7 +106,25 @@ describe("@cifn/admin", () => {
         },
         anyOf: [{ required: ["pipelineRef"] }, { required: ["pipelineSpec"] }],
       },
+      redaction: { inputFields: ["pipelineSpec"] },
+      safety: {
+        classification: "write",
+        requiresConfirmation: true,
+        confirmation: { risk: "high", method: "explicit" },
+      },
     });
+    const runOutput = ciFnAdminCapability.operations.find((operation) => operation.id === "cifn.runs.get")?.outputSchema;
+    expect(validateAdminValue(runOutput!, {
+      item: {
+        runId: "run_inline",
+        status: "queued",
+        trigger: { type: "workflow_dispatch" },
+        pipelineRef: { repo: "", ref: "" },
+        createdAt: "2026-08-15T00:00:00.000Z",
+        updatedAt: "2026-08-15T00:00:00.000Z",
+        jobs: [],
+      },
+    })).toEqual([]);
     expect(ciFnAdminCapability.operations.find((operation) => operation.id === "cifn.runs.cancel-run")).toMatchObject({
       safety: { classification: "destructive", requiresConfirmation: true },
       target: { resource: "runs", idInput: "id" },

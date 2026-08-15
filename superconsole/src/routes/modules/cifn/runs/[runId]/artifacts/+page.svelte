@@ -43,7 +43,7 @@
   <StatePanel kind="empty" title="No artifacts" message="This run did not publish any retained build outputs." />
 {:else}
   <div class="artifact-grid">
-    {#each data.artifacts as artifact (artifact.name)}
+    {#each data.artifacts as artifact (artifact.id ?? artifact.fileId ?? `${artifact.name}:${artifact.contentType ?? ''}:${artifact.size ?? ''}`)}
       <CardRoot class="artifact-card">
         <CardHeader><div class="artifact-card__icon"><ConsoleIcon name="download" size={22} /></div><CardTitle>{artifact.name}</CardTitle><CardDescription>{artifact.contentType ?? 'Build artifact'}{#if formatBytes(artifact.size)} · {formatBytes(artifact.size)}{/if}</CardDescription></CardHeader>
         <CardContent>{#if artifact.fileId}<span>FileFn ID</span><code>{artifact.fileId}</code>{/if}</CardContent>

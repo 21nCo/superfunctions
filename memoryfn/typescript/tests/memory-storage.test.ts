@@ -52,4 +52,47 @@ describe('MemoryStorageAdapter', () => {
       topK: 1,
     })).resolves.toEqual([expect.objectContaining({ content: 'visible' })]);
   });
+
+  it('matches nested JSON containment and deep-clones metadata in both directions', async () => {
+    const storage = new MemoryStorageAdapter();
+    const metadata = { profile: { roles: ['operator', 'auditor'], region: 'in-south' } };
+    const [inserted] = await storage.insertMemories([{
+      id: 'memory-nested',
+      containerTags: ['scope:a'],
+      embedding: [1, 0],
+      metadata,
+    }]);
+    metadata.profile.region = 'mutated';
+    inserted!.metadata.profile = { roles: [], region: 'mutated-again' };
+
+    const first = await storage.searchVectors({
+      embedding: [1, 0],
+      containerTags: ['scope:a'],
+      filters: { profile: { roles: ['auditor'], region: 'in-south' } },
+      topK: 10,
+    });
+    expect(first).toHaveLength(1);
+    (first[0]!.metadata.profile as { region: string }).region = 'outside';
+    await expect(storage.searchVectors({
+      embedding: [1, 0],
+      containerTags: ['scope:a'],
+      filters: { profile: { region: 'in-south' } },
+      topK: 10,
+    })).resolves.toHaveLength(1);
+  });
+
+  it('rejects duplicate IDs atomically', async () => {
+    const storage = new MemoryStorageAdapter();
+    await expect(storage.insertMemories([
+      { id: 'duplicate', embedding: [1, 0] },
+      { id: 'duplicate', embedding: [1, 0] },
+    ])).rejects.toThrow(/already exists/);
+    await expect(storage.searchVectors({ embedding: [1, 0], containerTags: [], topK: 10 })).resolves.toEqual([]);
+  });
+
+  it('excludes dimension-mismatched embeddings when no threshold is supplied', async () => {
+    const storage = new MemoryStorageAdapter();
+    await storage.insertMemories([{ id: 'wrong-dimension', embedding: [1, 0, 0] }]);
+    await expect(storage.searchVectors({ embedding: [1, 0], containerTags: [], topK: 10 })).resolves.toEqual([]);
+  });
 });

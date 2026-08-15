@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { ButtonIcon, ButtonLabel, ButtonRoot } from '@uifn/components-svelte/button';
   import {
     TableBody,
@@ -15,6 +16,7 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import StatePanel from '$lib/components/StatePanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
+  import { scopedConsoleHref } from '$lib/components/admin-api';
   import { formatValue } from '$lib/components/view-models';
   import type { PageData } from './$types';
 
@@ -75,7 +77,7 @@
               <TableCell value={`${run.runId}-jobs`}>{run.jobs?.length ?? 0}</TableCell>
               <TableCell value={`${run.runId}-created`}>{formatValue(run.createdAt, 'datetime')}</TableCell>
               <TableCell value={`${run.runId}-action`}>
-                <ButtonRoot variant="ghost" size="sm" aria-label={`Open run ${run.runId}`} onclick={() => void goto(`/modules/cifn/runs/${encodeURIComponent(run.runId)}`)}>
+                <ButtonRoot variant="ghost" size="sm" aria-label={`Open run ${run.runId}`} onclick={() => void goto(scopedConsoleHref(`/modules/cifn/runs/${encodeURIComponent(run.runId)}`, page.url.searchParams))}>
                   <ButtonLabel>Inspect</ButtonLabel><ButtonIcon><ConsoleIcon name="arrow-right" /></ButtonIcon>
                 </ButtonRoot>
               </TableCell>

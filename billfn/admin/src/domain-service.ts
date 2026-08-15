@@ -2,6 +2,7 @@ import type {
   BillableSubject,
   BillFnInstance,
   BillFnPlanDefinition,
+  BillingProviderName,
 } from "@billfn/core";
 import {
   AdminError,
@@ -64,6 +65,23 @@ function accepted(value: object): AdminOperationResult<JsonRecord> {
 
 function notFound(label: string): never {
   throw new AdminError("not_found", `${label} was not found for the active BillFn subject.`);
+}
+
+const BILLING_PROVIDERS = new Set<BillingProviderName>([
+  "dodo",
+  "apple",
+  "stripe",
+  "polar",
+  "google-play",
+  "microsoft-store",
+]);
+
+function billingProvider(value: string | undefined): BillingProviderName | undefined {
+  if (value === undefined) return undefined;
+  if (!BILLING_PROVIDERS.has(value as BillingProviderName)) {
+    throw new AdminError("invalid_argument", "provider must be a configured BillFn provider name.");
+  }
+  return value as BillingProviderName;
 }
 
 function products(plans: BillFnPlanDefinition[]): object[] {
@@ -166,14 +184,35 @@ export function createBillFnDomainAdminService(
         reason: input.reason,
       })));
     },
-    async reconcileProvider(input) {
+    async reconcileProvider(input, context) {
+      const subject = await options.subject(context);
+      const scoped = unwrap(await options.billfn.getEntitlements(subject));
+      if (input.payload.billingAccountId !== undefined && input.payload.billingAccountId !== scoped.billingAccount.id) {
+        throw new AdminError("forbidden", "The reconciliation billing account is outside the active BillFn subject.");
+      }
+
+      if (input.payload.kind !== "account-scan" && input.payload.kind !== "subscription-sync") {
+        throw new AdminError(
+          "forbidden",
+          "Provider-wide reconciliation jobs cannot be scheduled from a subject-scoped admin operation.",
+        );
+      }
+
+      const subscriptionId = input.payload.kind === "subscription-sync"
+        ? scoped.subscription?.id
+        : undefined;
+      if (input.payload.kind === "subscription-sync" && !subscriptionId) {
+        throw new AdminError("precondition_failed", "The active BillFn subject has no subscription to reconcile.");
+      }
+      if (input.payload.subscriptionId !== undefined && input.payload.subscriptionId !== subscriptionId) {
+        throw new AdminError("forbidden", "The reconciliation subscription is outside the active BillFn subject.");
+      }
+
       return accepted(unwrap(await options.billfn.enqueueReconciliationJob({
         kind: input.payload.kind,
-        provider: input.payload.provider as Parameters<BillFnInstance["enqueueReconciliationJob"]>[0]["provider"],
-        billingAccountId: input.payload.billingAccountId,
-        subscriptionId: input.payload.subscriptionId,
-        providerEventId: input.payload.providerEventId,
-        cursor: input.payload.cursor,
+        provider: billingProvider(input.payload.provider),
+        billingAccountId: scoped.billingAccount.id,
+        subscriptionId,
       })));
     },
   };

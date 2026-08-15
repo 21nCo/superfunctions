@@ -2,7 +2,10 @@ import {
   AdminError,
   createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
   createCapabilityAdminClient,
+  decodeAdminCursor,
   defineAdminCapability,
+  encodeAdminCursor,
+  normalizeAdminPageLimit,
   type AdminCapabilityAdapter,
   type AdminClient,
   type AdminObjectSchema,
@@ -24,6 +27,7 @@ const listInput: AdminObjectSchema = {
   type: "object",
   properties: {
     pattern: { type: "string" },
+    cursor: { type: "string", minLength: 1 },
     limit: { type: "integer", minimum: 1, maximum: 1000 },
   },
   additionalProperties: false,
@@ -38,7 +42,7 @@ const keyListSchema: AdminObjectSchema = {
   type: "object",
   properties: {
     items: { type: "array", items: keySchema },
-    nextCursor: { type: "null" },
+    nextCursor: { type: ["string", "null"] },
   },
   required: ["items", "nextCursor"],
   additionalProperties: false,
@@ -52,18 +56,19 @@ const keyOutput: AdminObjectSchema = {
 const statsSchema: AdminObjectSchema = {
   type: "object",
   properties: {
+    id: { type: "string", const: "current" },
     hits: { type: "integer", minimum: 0 }, misses: { type: "integer", minimum: 0 },
     hitRate: { type: "number", minimum: 0, maximum: 100 }, sets: { type: "integer", minimum: 0 },
     deletes: { type: "integer", minimum: 0 }, evictions: { type: "integer", minimum: 0 },
     size: { type: "integer", minimum: 0 }, memoryUsage: { type: "integer", minimum: 0 },
   },
-  required: ["hits", "misses", "hitRate", "sets", "deletes", "evictions", "size"],
+  required: ["id", "hits", "misses", "hitRate", "sets", "deletes", "evictions", "size"],
   additionalProperties: false,
 };
 const statsOutput: AdminObjectSchema = {
   type: "object",
-  properties: { item: statsSchema },
-  required: ["item"],
+  properties: { items: { type: "array", items: statsSchema }, nextCursor: { type: "null" } },
+  required: ["items", "nextCursor"],
   additionalProperties: false,
 };
 const acceptedOutput: AdminObjectSchema = {
@@ -133,7 +138,7 @@ export const cacheFnAdminCapability = defineAdminCapability({
   resources: cacheFnAdminResources,
   navigation: [{ id: "cachefn", label: "CacheFn", path: "/modules/cachefn", icon: "cachefn", description: "Operate the bound cache namespace.", order: 100 }],
   operations: [
-    { id: "cachefn.keys.list", title: "List cache keys", description: "List key names without returning cached values.", inputSchema: listInput, outputSchema: keyListSchema, route: { method: "GET", path: "/resources/keys" }, permission: "cachefn.keys.read", minimumScope: "environment", safety: readSafety, target: { resource: "keys", collection: true }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(true) },
+    { id: "cachefn.keys.list", title: "List cache keys", description: "List key names without returning cached values.", inputSchema: listInput, outputSchema: keyListSchema, route: { method: "GET", path: "/resources/keys" }, permission: "cachefn.keys.read", minimumScope: "environment", safety: readSafety, pagination: { mode: "cursor", defaultLimit: 100, maxLimit: 1000 }, target: { resource: "keys", collection: true }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(true) },
     { id: "cachefn.keys.get", title: "Inspect cache key", description: "Check whether a key exists without returning its cached value.", inputSchema: keyInput, outputSchema: keyOutput, route: { method: "GET", path: "/resources/keys/:id" }, permission: "cachefn.keys.read", minimumScope: "environment", safety: readSafety, target: { resource: "keys", idInput: "id" }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(true) },
     { id: "cachefn.stats.list", title: "Read cache statistics", description: "Read live cache counters and current size.", inputSchema: emptyInput, outputSchema: statsOutput, route: { method: "GET", path: "/resources/stats" }, permission: "cachefn.stats.read", minimumScope: "environment", safety: readSafety, target: { resource: "stats", collection: true }, redaction: { inputFields: [], outputFields: [] }, mcp: mcp(true) },
     { id: "cachefn.keys.set", title: "Set cache key", description: "Set one value in the bound cache namespace.", inputSchema: setInput, outputSchema: acceptedOutput, route: { method: "PUT", path: "/resources/keys/:id" }, permission: "cachefn.keys.set", minimumScope: "environment", safety: writeSafety, target: { resource: "keys", idInput: "id" }, redaction: { inputFields: ["value"], outputFields: [] }, mcp: mcp(false) },
@@ -144,13 +149,13 @@ export const cacheFnAdminCapability = defineAdminCapability({
 });
 
 export type CacheFnAdminOperationId = (typeof cacheFnAdminCapability.operations)[number]["id"];
-export interface CacheFnListKeysInput { pattern?: string; limit?: number }
+export interface CacheFnListKeysInput { pattern?: string; cursor?: string; limit?: number }
 export interface CacheFnKeyInput { id: string }
 export interface CacheFnSetKeyInput extends CacheFnKeyInput { value: unknown; ttl?: number; tags?: string[] }
 export interface CacheFnTagInput { id: string }
-export interface CacheFnKeyListOutput { items: Array<{ id: string; exists: true }>; nextCursor: null }
+export interface CacheFnKeyListOutput { items: Array<{ id: string; exists: true }>; nextCursor: string | null }
 export interface CacheFnKeyOutput { item: { id: string; exists: boolean } }
-export interface CacheFnStatsOutput { item: CacheStats }
+export interface CacheFnStatsOutput { items: Array<CacheStats & { id: "current" }>; nextCursor: null }
 export interface CacheFnAcceptedOutput { accepted: true; id?: string; deleted?: boolean }
 
 export interface CacheFnAdminService {
@@ -187,10 +192,39 @@ export function createCacheFnDomainAdminService(options: CacheFnDomainAdminServi
     if (context.scope.environmentId !== options.environmentId) throw new AdminError("forbidden", "The active environment cannot access this CacheFn instance.");
     if (options.namespace !== undefined && context.scope.namespace !== options.namespace) throw new AdminError("forbidden", "The active namespace cannot access this CacheFn instance.");
   };
+  const safeStats = (stats: CacheStats): CacheStats & { id: "current" } => ({
+    id: "current",
+    hits: stats.hits,
+    misses: stats.misses,
+    hitRate: stats.hitRate,
+    sets: stats.sets,
+    deletes: stats.deletes,
+    evictions: stats.evictions,
+    size: stats.size,
+    ...(stats.memoryUsage === undefined ? {} : { memoryUsage: stats.memoryUsage }),
+  });
   return {
-    async listKeys(input, context) { assertScope(context); const keys = await options.cache.keys(input.pattern); return { items: keys.slice(0, input.limit ?? 100).map((id) => ({ id, exists: true as const })), nextCursor: null }; },
+    async listKeys(input, context) {
+      assertScope(context);
+      const keys = (await options.cache.keys(input.pattern)).sort();
+      const decoded = input.cursor
+        ? decodeAdminCursor<{ operationId: "cachefn.keys.list"; pattern: string | null; offset: number }>(input.cursor, context.scope)
+        : undefined;
+      if (decoded && (decoded.operationId !== "cachefn.keys.list" || decoded.pattern !== (input.pattern ?? null))) {
+        throw new AdminError("invalid_argument", "The CacheFn cursor does not belong to this key query.");
+      }
+      const offset = decoded?.offset ?? 0;
+      if (!Number.isInteger(offset) || offset < 0) throw new AdminError("invalid_argument", "The CacheFn cursor is invalid.");
+      const limit = normalizeAdminPageLimit(input.limit, { defaultLimit: 100, maxLimit: 1000 });
+      const items = keys.slice(offset, offset + limit).map((id) => ({ id, exists: true as const }));
+      const nextOffset = offset + items.length;
+      const nextCursor = nextOffset < keys.length
+        ? encodeAdminCursor(context.scope, { operationId: "cachefn.keys.list", pattern: input.pattern ?? null, offset: nextOffset })
+        : null;
+      return { items, nextCursor };
+    },
     async getKey(input, context) { assertScope(context); return { item: { id: input.id, exists: await options.cache.has(input.id) } }; },
-    async stats(_input, context) { assertScope(context); return { item: await options.cache.getStats() }; },
+    async stats(_input, context) { assertScope(context); return { items: [safeStats(await options.cache.getStats())], nextCursor: null }; },
     async setKey(input, context) { assertScope(context); await options.cache.set(input.id, input.value, { ...(input.ttl ? { ttl: input.ttl } : {}), ...(input.tags ? { tags: input.tags } : {}) }); return { accepted: true, id: input.id }; },
     async deleteKey(input, context) { assertScope(context); return { accepted: true, id: input.id, deleted: await options.cache.delete(input.id) }; },
     async invalidateTag(input, context) { assertScope(context); await options.cache.invalidateByTag(input.id); return { accepted: true, id: input.id }; },

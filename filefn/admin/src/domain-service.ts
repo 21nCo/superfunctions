@@ -66,16 +66,51 @@ function accepted(value?: object): AdminOperationResult<JsonRecord> {
   return { ok: true, data: { accepted: true, ...(value ? { item: { ...value } } : {}) } };
 }
 
-function page<T extends object>(values: readonly T[], input: PageInput, admin: AdminOperationContext): AdminOperationResult<JsonRecord> {
+interface PageWindow {
+  limit: number;
+  offset: number;
+  operationId: FileFnAdminOperationId;
+  resource: string;
+  parentId: string | null;
+}
+
+function pageWindow(
+  input: PageInput,
+  admin: AdminOperationContext,
+  operationId: FileFnAdminOperationId,
+  parentId: string | null = null,
+): PageWindow {
   const limit = normalizeAdminPageLimit(input.limit, { defaultLimit: 50, maxLimit: 100 });
-  const offset = input.cursor ? decodeAdminCursor<{ offset: number }>(input.cursor, admin.scope).offset : 0;
-  if (!Number.isInteger(offset) || offset < 0) {
+  const resource = operationId.split(".")[1] ?? operationId;
+  const decoded = input.cursor
+    ? decodeAdminCursor<{ operationId?: unknown; resource?: unknown; parentId?: unknown; offset?: unknown }>(input.cursor, admin.scope)
+    : { operationId, resource, parentId, offset: 0 };
+  if (decoded.operationId !== operationId || decoded.resource !== resource || decoded.parentId !== parentId) {
+    throw new AdminError("invalid_argument", "The FileFn admin cursor does not belong to this collection.");
+  }
+  const offset = decoded.offset;
+  if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0) {
     throw new AdminError("invalid_argument", "The FileFn admin cursor is invalid.");
   }
-  const items = values.slice(offset, offset + limit).map((value) => ({ ...value }));
-  const nextOffset = offset + items.length;
-  const nextCursor = nextOffset < values.length ? encodeAdminCursor(admin.scope, { offset: nextOffset }) : null;
-  return { ok: true, data: { items, nextCursor }, page: { nextCursor, hasMore: nextOffset < values.length } };
+  return { limit, offset, operationId, resource, parentId };
+}
+
+function boundedPage<T extends object>(values: readonly T[], window: PageWindow, admin: AdminOperationContext): AdminOperationResult<JsonRecord> {
+  const hasMore = values.length > window.limit;
+  const items = values.slice(0, window.limit).map((value) => ({ ...value }));
+  const nextCursor = hasMore
+    ? encodeAdminCursor(admin.scope, {
+        operationId: window.operationId,
+        resource: window.resource,
+        parentId: window.parentId,
+        offset: window.offset + items.length,
+      })
+    : null;
+  return { ok: true, data: { items, nextCursor }, page: { nextCursor, hasMore } };
+}
+
+function localPage<T extends object>(values: readonly T[], window: PageWindow, admin: AdminOperationContext): AdminOperationResult<JsonRecord> {
+  return boundedPage(values.slice(window.offset, window.offset + window.limit + 1), window, admin);
 }
 
 function safeVersion(value: JsonRecord): JsonRecord {
@@ -125,8 +160,9 @@ export function createFileFnDomainAdminService(options: FileFnDomainAdminService
           await options.fileFn.deleteFile({ fileId: request.input.id }, ctx);
           return accepted();
         case "filefn.versions.list": {
-          const result = await files.listVersions(request.input.fileId, ctx);
-          return page(result.versions.map((version) => safeVersion({ ...version })), request.input, request.context);
+          const window = pageWindow(request.input, request.context, request.operationId, request.input.fileId);
+          const result = await files.listVersions(request.input.fileId, ctx, { limit: window.limit + 1, offset: window.offset });
+          return boundedPage(result.versions.map((version) => safeVersion({ ...version })), window, request.context);
         }
         case "filefn.versions.get":
           return item(safeVersion({ ...await files.getVersion(request.input.fileId, request.input.id, ctx) }));
@@ -147,29 +183,41 @@ export function createFileFnDomainAdminService(options: FileFnDomainAdminService
           await options.fileFn.abortUploadSession({ uploadSessionId: request.input.id }, uploadCtx);
           return accepted();
         }
-        case "filefn.grants.list":
-          return page(await grants.listGrants(request.input.fileId, ctx), request.input, request.context);
+        case "filefn.grants.list": {
+          const window = pageWindow(request.input, request.context, request.operationId, request.input.fileId);
+          return boundedPage(await grants.listGrants(request.input.fileId, ctx, { limit: window.limit + 1, offset: window.offset }), window, request.context);
+        }
         case "filefn.grants.create-grant":
           return accepted(await grants.createGrant(request.input, ctx));
         case "filefn.grants.revoke-grant":
           await grants.revokeGrant(request.input.fileId, request.input.id, ctx);
           return accepted();
-        case "filefn.share-links.list":
-          return page(await shares.listShareLinks(request.input.fileId, ctx), request.input, request.context);
+        case "filefn.share-links.list": {
+          const window = pageWindow(request.input, request.context, request.operationId, request.input.fileId);
+          return boundedPage(await shares.listShareLinks(request.input.fileId, ctx, { limit: window.limit + 1, offset: window.offset }), window, request.context);
+        }
         case "filefn.share-links.create-share":
           return accepted(await shares.createShareLink(request.input, ctx));
         case "filefn.share-links.revoke-share":
           await shares.revokeShareLink(request.input.fileId, request.input.token, ctx);
           return accepted();
-        case "filefn.policies.list":
-          return page(policies.list().map(safePolicy), request.input, request.context);
+        case "filefn.policies.list": {
+          const window = pageWindow(request.input, request.context, request.operationId);
+          return localPage(policies.list().map(safePolicy), window, request.context);
+        }
         case "filefn.policies.get": {
           const policy = policies.get(request.input.id);
           if (!policy) throw new AdminError("not_found", "Policy was not found in the active FileFn project.");
           return item(safePolicy(policy));
         }
-        case "filefn.artifacts.list":
-          return page((await processing.listArtifactsForFile(request.input.fileId, ctx)).map(safeArtifact), request.input, request.context);
+        case "filefn.artifacts.list": {
+          const window = pageWindow(request.input, request.context, request.operationId, request.input.fileId);
+          return boundedPage(
+            (await processing.listArtifactsForFile(request.input.fileId, ctx, { limit: window.limit + 1, offset: window.offset })).map(safeArtifact),
+            window,
+            request.context,
+          );
+        }
         case "filefn.artifacts.get": {
           const artifacts = await processing.listArtifactsForFile(request.input.fileId, ctx);
           return item(safeArtifact(findById(artifacts, (value) => value.artifactId === request.input.id, "Artifact")));

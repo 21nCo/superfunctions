@@ -1,4 +1,4 @@
-import { ADMIN_API_PREFIX, fetchAdmin, withAdminScope, type AdminFetch } from './admin-api';
+import { ADMIN_API_PREFIX, fetchAdmin, materializeAdminApiHref, withAdminScope, type AdminFetch } from './admin-api';
 import {
   inferAdminResourceColumns,
   inferAdminResourceFields,
@@ -58,7 +58,10 @@ export async function loadResourceList(input: ResourceRouteInput): Promise<{
 
   const apiModule = input.sourceModuleId ?? input.moduleId;
   const canonicalResource = resource.resourceId ?? input.resourceId;
-  const apiHref = resource.apiHref
+  if (resource.listable === false) {
+    return { view: undefined, loadError: unavailable(input.resourceId, input.moduleId), query: '' };
+  }
+  const apiHref = resource.listApiHref ?? resource.apiHref
     ?? `${ADMIN_API_PREFIX}/modules/${encodeURIComponent(apiModule)}/${encodeURIComponent(canonicalResource)}`;
   const requestHref = new URL(apiHref, 'http://superconsole.local');
   for (const [key, value] of input.url.searchParams) requestHref.searchParams.set(key, value);
@@ -96,11 +99,15 @@ export async function loadResourceDetail(
 
   const apiModule = input.sourceModuleId ?? input.moduleId;
   const canonicalResource = resource.resourceId ?? input.resourceId;
-  const base = resource.apiHref
-    ?? `${ADMIN_API_PREFIX}/modules/${encodeURIComponent(apiModule)}/${encodeURIComponent(canonicalResource)}`;
+  const defaultBase = `${ADMIN_API_PREFIX}/modules/${encodeURIComponent(apiModule)}/${encodeURIComponent(canonicalResource)}`;
+  const detailTemplate = resource.detailApiHref;
+  const base = detailTemplate
+    ? materializeAdminApiHref(detailTemplate, { [resource.detailIdInput ?? 'id']: input.identity })
+    : `${resource.apiHref ?? defaultBase}/${encodeURIComponent(input.identity)}`;
+  if (!base) return { view: undefined, loadError: unavailable(input.resourceId, input.moduleId) };
   const result = await fetchAdmin<Partial<ResourceDetailViewModel> & { item?: unknown }>(
     input.fetcher,
-    withAdminScope(`${base}/${encodeURIComponent(input.identity)}`, input.url.searchParams)
+    withAdminScope(base, input.url.searchParams)
   );
   const payload = result.ok ? result.data : {};
   const itemRecord = isAdminRecord(payload.item) ? payload.item : undefined;

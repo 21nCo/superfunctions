@@ -47,6 +47,17 @@ const pipelineRefSchema: AdminObjectSchema = {
   additionalProperties: false,
 };
 
+const pipelineRefOutputSchema: AdminObjectSchema = {
+  type: "object",
+  properties: {
+    repo: { type: "string", maxLength: 1000 },
+    ref: { type: "string", maxLength: 1000 },
+    configPath: { type: "string", maxLength: 1000 },
+  },
+  required: ["repo", "ref"],
+  additionalProperties: false,
+};
+
 const stepSchema: AdminObjectSchema = {
   type: "object",
   properties: {
@@ -79,7 +90,7 @@ const runSchema: AdminObjectSchema = {
   type: "object",
   properties: {
     runId: { type: "string" },
-    pipelineRef: pipelineRefSchema,
+    pipelineRef: pipelineRefOutputSchema,
     trigger: {
       type: "object",
       properties: {
@@ -427,8 +438,9 @@ export const ciFnAdminOperations = [
     outputSchema: triggerRunOutputSchema,
     route: { method: "POST", path: "/resources/runs/actions/trigger-run" },
     permission: "cifn.runs.trigger-run",
-    safety: { classification: "write", idempotent: true, requiresConfirmation: false, audit: "required" },
+    safety: { classification: "write", idempotent: true, requiresConfirmation: true, confirmation: { risk: "high", method: "explicit", reason: "Triggering starts a pipeline execution with repository-defined external effects.", maxAgeSeconds: 300 }, audit: "required" },
     mcp: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    redaction: { inputFields: ["pipelineSpec"] },
     target: { resource: "runs", collection: true },
   }),
   operation<CiFnRunTargetInput, CiFnRetryRunOutput>({

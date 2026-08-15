@@ -1,4 +1,9 @@
 import { AdminError, type AdminOperationContext } from "@superfunctions/admin";
+import {
+  normalizeGeoProviderId,
+  normalizeImageProviderId,
+  normalizeWebProviderId,
+} from "browsefn";
 import type {
   BrowseFnAcceptedOutput,
   BrowseFnAdminLogEntry,
@@ -37,6 +42,15 @@ function logId(entry: { event: string; operation?: string; timestamp: number }, 
 
 function assertTarget(actual: string, expected: string): void {
   if (actual !== expected) throw new AdminError("invalid_argument", `BrowseFn maintenance target must be ${expected}.`);
+}
+
+function canonicalProvider(value: string): string {
+  requireNonBlank(value, "provider");
+  const normalized = normalizeWebProviderId(value)
+    ?? normalizeImageProviderId(value)
+    ?? normalizeGeoProviderId(value);
+  if (!normalized) throw new AdminError("invalid_argument", "BrowseFn provider is not recognized.");
+  return normalized;
 }
 
 /**
@@ -108,11 +122,11 @@ export function createBrowseFnDomainAdminService(
 
     async getRateLimit(input: BrowseFnGetRateLimitInput, context) {
       assertScope(context);
-      requireNonBlank(input.provider, "provider");
-      const status = options.browsefn.getRateLimitStatus(input.provider);
+      const provider = canonicalProvider(input.provider);
+      const status = options.browsefn.getRateLimitStatus(provider);
       const item: BrowseFnAdminRateLimitStatus = {
-        id: input.provider,
-        provider: status.provider ?? input.provider,
+        id: provider,
+        provider: canonicalProvider(status.provider ?? provider),
         allowed: status.allowed !== false,
         remaining: finite(status.remaining),
         resetAt: finite(status.resetAt),

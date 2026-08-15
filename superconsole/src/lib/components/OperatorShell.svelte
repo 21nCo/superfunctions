@@ -23,7 +23,7 @@
   import ContextSwitcher from './ContextSwitcher.svelte';
   import OperatorNavigation from './OperatorNavigation.svelte';
   import StatusBadge from './StatusBadge.svelte';
-  import { mutationFeedback } from './mutation-outcome';
+  import { clearMutationFeedback, mutationFeedback } from './mutation-outcome';
   import {
     enabledNavigationModules,
     registryHasModule,
@@ -55,6 +55,9 @@
         ?? (auditEnabled ? '/audit' : settingsEnabled ? '/settings' : apiEnabled ? '/api' : mcpEnabled ? '/mcp' : '/')
   );
   $effect(() => setAuthFnCsrfCookieName(shell.session?.csrfCookieName));
+  $effect(() => {
+    if (!shell.session) clearMutationFeedback();
+  });
 
   beforeNavigate(({ to, cancel }) => {
     if (!to || to.url.origin !== page.url.origin) return;
@@ -83,6 +86,7 @@
       body: '{}',
     });
     if (response.ok) {
+      clearMutationFeedback();
       setAuthFnCsrfCookieName(undefined);
       await invalidateAll().catch(() => undefined);
       await goto('/sign-in');

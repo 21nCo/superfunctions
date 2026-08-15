@@ -63,6 +63,66 @@ function initialValue(field: ActionInputField, value: unknown): ActionDraftValue
   return String(candidate);
 }
 
+function schemaTypeMatches(schema: AdminJsonSchema, value: unknown): boolean {
+  const declared = schema.type ? (Array.isArray(schema.type) ? schema.type : [schema.type]) : [];
+  if (declared.length === 0) return true;
+  return declared.some((type) => {
+    if (type === 'null') return value === null;
+    if (type === 'array') return Array.isArray(value);
+    if (type === 'object') return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    if (type === 'integer') return typeof value === 'number' && Number.isInteger(value);
+    return typeof value === type;
+  });
+}
+
+function nestedSchemaError(schema: AdminJsonSchema, value: unknown, path: string): string | undefined {
+  if (!schemaTypeMatches(schema, value)) return `${path} has the wrong value type.`;
+  if (schema.const !== undefined && !Object.is(value, schema.const)) return `${path} must equal the declared constant.`;
+  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => Object.is(candidate, value))) {
+    return `${path} must be one of the declared values.`;
+  }
+  if (typeof value === 'string') {
+    if (typeof schema.minLength === 'number' && value.length < schema.minLength) return `${path} is too short.`;
+    if (typeof schema.maxLength === 'number' && value.length > schema.maxLength) return `${path} is too long.`;
+    if (schema.pattern && !new RegExp(schema.pattern).test(value)) return `${path} has an invalid format.`;
+  }
+  if (typeof value === 'number') {
+    if (typeof schema.minimum === 'number' && value < schema.minimum) return `${path} is below the minimum.`;
+    if (typeof schema.maximum === 'number' && value > schema.maximum) return `${path} exceeds the maximum.`;
+  }
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === 'number' && value.length < schema.minItems) return `${path} has too few items.`;
+    if (typeof schema.maxItems === 'number' && value.length > schema.maxItems) return `${path} has too many items.`;
+    if (schema.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) return `${path} must contain unique items.`;
+    if (schema.items) {
+      for (let index = 0; index < value.length; index += 1) {
+        const error = nestedSchemaError(schema.items, value[index], `${path}[${index}]`);
+        if (error) return error;
+      }
+    }
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    for (const required of schema.required ?? []) {
+      if (!(required in record)) return `${path}.${required} is required.`;
+    }
+    for (const [key, child] of Object.entries(record)) {
+      const property = schema.properties?.[key];
+      if (!property) {
+        if (schema.additionalProperties === false) return `${path}.${key} is not allowed.`;
+        if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
+          const error = nestedSchemaError(schema.additionalProperties, child, `${path}.${key}`);
+          if (error) return error;
+        }
+        continue;
+      }
+      const error = nestedSchemaError(property, child, `${path}.${key}`);
+      if (error) return error;
+    }
+  }
+  return undefined;
+}
+
 export function createActionDraft(action: AdminActionViewModel): ActionDraft {
   return Object.fromEntries(
     editableActionFields(action).map((field) => [
@@ -109,6 +169,8 @@ function parseField(field: ActionInputField, raw: ActionDraftValue): { value?: u
       if (field.type === 'array' ? !Array.isArray(value) : typeof value !== 'object' || value === null || Array.isArray(value)) {
         return { error: `${field.label} must be a JSON ${field.type}.` };
       }
+      const nestedError = nestedSchemaError(field.schema, value, field.label);
+      if (nestedError) return { error: nestedError };
       return { value };
     } catch {
       return { error: `${field.label} must contain valid JSON.` };

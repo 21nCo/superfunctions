@@ -1,6 +1,8 @@
 import { get } from 'svelte/store';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  beginMutationFeedback,
+  clearMutationFeedback,
   mutationFeedback,
   publishMutationFeedback,
   refreshSuccessfulMutation,
@@ -34,5 +36,16 @@ describe('completed administration mutations', () => {
       refreshed: true,
     });
     publishMutationFeedback(undefined);
+  });
+
+  it('does not let an older concurrent mutation overwrite the latest receipt', () => {
+    clearMutationFeedback();
+    const older = beginMutationFeedback();
+    const latest = beginMutationFeedback();
+
+    publishMutationFeedback({ ok: true, message: 'Older receipt', refreshed: true }, older);
+    expect(get(mutationFeedback)).toBeUndefined();
+    publishMutationFeedback({ ok: true, message: 'Latest receipt', refreshed: true }, latest);
+    expect(get(mutationFeedback)?.message).toBe('Latest receipt');
   });
 });

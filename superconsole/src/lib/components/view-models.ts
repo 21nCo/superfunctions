@@ -77,6 +77,10 @@ export interface AdminResourceViewModel {
   description?: string;
   href: string;
   apiHref?: string;
+  listApiHref?: string;
+  detailApiHref?: string;
+  detailIdInput?: string;
+  listable?: boolean;
   count?: number;
   createAction?: AdminActionViewModel;
   actions?: AdminActionViewModel[];
