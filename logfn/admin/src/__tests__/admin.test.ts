@@ -27,5 +27,9 @@ describe("@logfn/admin", () => {
     expect(logFnAdminCapability.owner).toEqual({ moduleId: "watchfn", mountPath: "/modules/watchfn/logs" });
     const adapter = createLogFnAdminAdapter(createLogFnAdminService(new Logger({ name: "admin", sinks: [() => undefined] }), scope));
     await expect(adapter.invoke("logfn.sinks.flush", {}, { ...context, scope: { ...scope, workspaceId: "other" } })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(adapter.invoke("logfn.sinks.flush", {}, {
+      ...context,
+      scope: { installationId: "org_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "env_1", namespace: "tenant_1" },
+    })).resolves.toMatchObject({ data: { flushed: true } });
   });
 });

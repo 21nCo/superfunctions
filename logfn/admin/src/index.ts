@@ -1,5 +1,6 @@
 import {
   AdminError,
+  adminScopeRootId,
   createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
   createCapabilityAdminClient,
   defineAdminCapability,
@@ -9,14 +10,17 @@ import {
 } from "@superfunctions/admin";
 import type { Logger, LogLevel } from "@logfn/core";
 
-export interface LogFnAdminScope {
-  organizationId: string;
+interface LogFnAdminScopeHierarchy {
   workspaceId: string;
   projectId: string;
   environmentId: string;
   namespace?: string;
   region?: string;
 }
+export type LogFnAdminScope = LogFnAdminScopeHierarchy & (
+  | { installationId: string; organizationId?: string }
+  | { installationId?: string; organizationId: string }
+);
 
 export interface EmitLogInput {
   level: LogLevel;
@@ -73,7 +77,10 @@ export interface LogFnAdminService {
 }
 
 function assertScope(expected: LogFnAdminScope, actual: AdminOperationContext["scope"]): void {
-  for (const key of ["organizationId", "workspaceId", "projectId", "environmentId", "namespace", "region"] as const) {
+  if (adminScopeRootId(expected) !== adminScopeRootId(actual)) {
+    throw new AdminError("forbidden", "LogFn is not bound to the active installationId.");
+  }
+  for (const key of ["workspaceId", "projectId", "environmentId", "namespace", "region"] as const) {
     if (expected[key] !== undefined && actual[key] !== expected[key]) throw new AdminError("forbidden", `LogFn is not bound to the active ${key}.`);
   }
 }
@@ -82,12 +89,14 @@ export function createLogFnAdminService(logger: Logger, scope: LogFnAdminScope):
   return {
     emit(input, context) {
       assertScope(scope, context.scope);
+      const installationId = adminScopeRootId(context.scope);
       const eventContext = {
         ...input.context,
         adminActorId: context.actor.id,
         adminRequestId: context.requestId,
         adminCorrelationId: context.correlationId,
-        organizationId: context.scope.organizationId,
+        installationId,
+        organizationId: installationId,
         workspaceId: context.scope.workspaceId,
         projectId: context.scope.projectId,
         environmentId: context.scope.environmentId,

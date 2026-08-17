@@ -137,6 +137,27 @@ function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
+function materializeRoutePath(path: string, input: unknown): string {
+  const values = input && typeof input === "object" && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : {};
+  return path.replace(
+    /:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
+    (_placeholder, colonName: string | undefined, braceName: string | undefined) => {
+      const name = colonName ?? braceName!;
+      const value = values[name];
+      if (
+        (typeof value !== "string" && typeof value !== "number")
+        || String(value).length === 0
+        || (typeof value === "number" && !Number.isFinite(value))
+      ) {
+        throw new TypeError(`AdminClient route parameter "${name}" requires a non-empty string or finite number input.`);
+      }
+      return encodeURIComponent(String(value));
+    },
+  );
+}
+
 function encodeQuery(input: unknown): string {
   if (!input || typeof input !== "object" || Array.isArray(input)) return "";
   const query = new URLSearchParams();
@@ -264,7 +285,8 @@ export class AdminClient {
     input?: unknown,
     options?: AdminClientRequestOptions,
   ): Promise<AdminOperationResult<T>> {
-    const path = `modules/${encodeURIComponent(moduleId)}${route.path.startsWith("/") ? route.path : `/${route.path}`}`;
+    const routePath = materializeRoutePath(route.path, input);
+    const path = `modules/${encodeURIComponent(moduleId)}${routePath.startsWith("/") ? routePath : `/${routePath}`}`;
     return this.request<AdminOperationResult<T>>(route.method, path, input, options, false);
   }
 
@@ -301,7 +323,8 @@ export class AdminClient {
     input?: unknown,
     options?: AdminClientRequestOptions,
   ): Promise<AdminRawResponse<AdminResult<T>>> {
-    const path = `modules/${encodeURIComponent(moduleId)}${route.path.startsWith("/") ? route.path : `/${route.path}`}`;
+    const routePath = materializeRoutePath(route.path, input);
+    const path = `modules/${encodeURIComponent(moduleId)}${routePath.startsWith("/") ? routePath : `/${routePath}`}`;
     return this.performRequest<AdminResult<T>>(route.method, path, input, options);
   }
 

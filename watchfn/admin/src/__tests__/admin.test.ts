@@ -6,10 +6,10 @@ import { createWatchFnAdminAdapter, createWatchFnAdminClient, createWatchFnAdmin
 const scope = { organizationId: "org_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "env_1", namespace: "tenant_1" };
 const context = { scope, actor: { id: "operator_1" }, requestId: "request_1", source: "console" as const };
 
-function setup() {
+function setup(boundScope = scope) {
   const watch = new WatchFn({ name: "admin-test", storage: "memory", infra: { enabled: false, interval: 30_000, system: false, process: false }, errors: { enabled: false, captureUnhandled: false, captureRejections: false }, apm: { enabled: false, sampleRate: 1, slowRequestThreshold: 1000 } });
   watch.start();
-  return { watch, adapter: createWatchFnAdminAdapter(createWatchFnAdminService(watch, scope)) };
+  return { watch, adapter: createWatchFnAdminAdapter(createWatchFnAdminService(watch, boundScope)) };
 }
 
 describe("@watchfn/admin", () => {
@@ -29,6 +29,8 @@ describe("@watchfn/admin", () => {
     const { watch, adapter } = setup();
     await adapter.invoke("watchfn.alerts.create", { name: "High latency", condition: { metric: "latency", operator: "gt", threshold: 500, window: "5m" }, channels: [] }, context);
     await expect(adapter.invoke("watchfn.alerts.list", {}, context)).resolves.toMatchObject({ data: { items: [{ name: "High latency" }] } });
+    await expect(adapter.invoke("watchfn.alerts.list", { status: "active" }, context)).rejects.toMatchObject({ code: "invalid_argument" });
+    expect(watchFnAdminCapability.operations.find(({ id }) => id === "watchfn.alerts.list")?.inputSchema.properties).toEqual({});
     expect(watchFnAdminCapability.dependencies).toEqual(expect.arrayContaining([expect.objectContaining({ moduleId: "catchfn" }), expect.objectContaining({ moduleId: "logfn" })]));
     watch.stop();
   });
@@ -36,6 +38,13 @@ describe("@watchfn/admin", () => {
   it("rejects access from a scope other than the runtime binding", async () => {
     const { watch, adapter } = setup();
     await expect(adapter.invoke("watchfn.events.list", {}, { ...context, scope: { ...scope, environmentId: "other" } })).rejects.toMatchObject({ code: "forbidden" });
+    watch.stop();
+  });
+
+  it("accepts the canonical installation root without the deprecated organization alias", async () => {
+    const installationScope = { installationId: "org_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "env_1", namespace: "tenant_1" };
+    const { watch, adapter } = setup(installationScope);
+    await expect(adapter.invoke("watchfn.events.list", {}, { ...context, scope: installationScope })).resolves.toMatchObject({ data: { items: [] } });
     watch.stop();
   });
 

@@ -259,6 +259,32 @@ describe("AdminClient", () => {
     expect(init?.headers).toSatisfy((headers: Headers) => headers.get("idempotency-key") === "idem" && headers.get("x-admin-confirmation") === "confirm");
   });
 
+  it("materializes and encodes module route parameters for normalized and raw requests", async () => {
+    const observed: string[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      observed.push(String(input));
+      return Response.json({ ok: true, data: { item: { id: "user" } }, requestId: "req" });
+    });
+    const client = createAdminClient({
+      baseUrl: "https://console.example.test/api/admin/v1",
+      fetch: fetcher as typeof fetch,
+    });
+
+    await client.invoke("authfn", { method: "GET", path: "/resources/users/:id" }, { id: "user/one" });
+    await client.invokeRaw("authfn", { method: "DELETE", path: "/resources/users/{id}" }, { id: "user two" });
+
+    expect(observed.map((value) => new URL(value).pathname)).toEqual([
+      "/api/admin/v1/modules/authfn/resources/users/user%2Fone",
+      "/api/admin/v1/modules/authfn/resources/users/user%20two",
+    ]);
+    await expect(client.invoke(
+      "authfn",
+      { method: "GET", path: "/resources/users/:id" },
+      {},
+    )).rejects.toThrowError(/route parameter "id"/);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("normalizes non-success API responses", async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ ok: false, error: { code: "forbidden", message: "Denied", status: 403 } }), {
       status: 403,

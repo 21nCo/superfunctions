@@ -1,5 +1,6 @@
 import {
   AdminError,
+  adminScopeRootId,
   createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
   createCapabilityAdminClient,
   defineAdminCapability,
@@ -9,14 +10,17 @@ import {
 } from "@superfunctions/admin";
 import type { AlertConfig, QueryOptions, WatchFn } from "@watchfn/core";
 
-export interface WatchFnAdminScope {
-  organizationId: string;
+interface WatchFnAdminScopeHierarchy {
   workspaceId: string;
   projectId: string;
   environmentId: string;
   namespace?: string;
   region?: string;
 }
+export type WatchFnAdminScope = WatchFnAdminScopeHierarchy & (
+  | { installationId: string; organizationId?: string }
+  | { installationId?: string; organizationId: string }
+);
 export interface ListWatchEventsInput {
   metric?: string;
   where?: Record<string, unknown>;
@@ -27,7 +31,7 @@ export interface WatchEventListResult { items: Record<string, unknown>[] }
 export interface CaptureMessageInput { message: string; context?: Record<string, unknown> }
 export interface CaptureExceptionInput { name: string; message: string; stack?: string; context?: Record<string, unknown> }
 export interface CaptureResult { captured: true }
-export interface ListAlertsInput { status?: string }
+export type ListAlertsInput = Record<string, never>;
 export interface AlertListResult { items: Array<AlertConfig & { id: string }> }
 export type CreateAlertInput = AlertConfig;
 export interface CreateAlertResult { item: AlertConfig & { id: string } }
@@ -68,7 +72,7 @@ const operations = [
   },
   {
     id: "watchfn.alerts.list", title: "List alerts", description: "List alerts registered with the WatchFn alert manager.",
-    inputSchema: { type: "object", properties: { status: { type: "string" } }, additionalProperties: false },
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
     outputSchema: { type: "object", properties: { items: { type: "array", items: alertSchema } }, required: ["items"], additionalProperties: false },
     route: { method: "GET", path: "/resources/alerts" }, permission: "watchfn.alerts.read",
     safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: "optional" }, mcp: { readOnlyHint: true }, target: { resource: "alerts", collection: true },
@@ -105,13 +109,17 @@ export interface WatchFnAdminService {
 }
 
 function assertScope(expected: WatchFnAdminScope, actual: AdminOperationContext["scope"]): void {
-  for (const key of ["organizationId", "workspaceId", "projectId", "environmentId", "namespace", "region"] as const) {
+  if (adminScopeRootId(expected) !== adminScopeRootId(actual)) {
+    throw new AdminError("forbidden", "WatchFn is not bound to the active installationId.");
+  }
+  for (const key of ["workspaceId", "projectId", "environmentId", "namespace", "region"] as const) {
     if (expected[key] !== undefined && actual[key] !== expected[key]) throw new AdminError("forbidden", `WatchFn is not bound to the active ${key}.`);
   }
 }
 
 function operatorContext(context: AdminOperationContext, supplied?: Record<string, unknown>): Record<string, unknown> {
-  return { ...supplied, adminActorId: context.actor.id, adminRequestId: context.requestId, organizationId: context.scope.organizationId, workspaceId: context.scope.workspaceId, projectId: context.scope.projectId, environmentId: context.scope.environmentId };
+  const installationId = adminScopeRootId(context.scope);
+  return { ...supplied, adminActorId: context.actor.id, adminRequestId: context.requestId, installationId, organizationId: installationId, workspaceId: context.scope.workspaceId, projectId: context.scope.projectId, environmentId: context.scope.environmentId };
 }
 
 export function createWatchFnAdminService(watch: WatchFn, scope: WatchFnAdminScope): WatchFnAdminService {
@@ -139,9 +147,12 @@ export function createWatchFnAdminService(watch: WatchFn, scope: WatchFnAdminSco
       watch.captureException(error, operatorContext(context, input.context));
       return { captured: true };
     },
-    async listAlerts(input, context) {
+    async listAlerts(_input, context) {
       assertScope(scope, context.scope);
-      return { items: await watch.alerts.list(input) };
+      if (Object.keys(_input).length > 0) {
+        throw new AdminError("invalid_argument", "WatchFn alert listing does not support filters.");
+      }
+      return { items: await watch.alerts.list() };
     },
     async createAlert(input, context) {
       assertScope(scope, context.scope);

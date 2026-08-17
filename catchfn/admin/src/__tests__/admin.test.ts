@@ -37,5 +37,9 @@ describe("@catchfn/admin", () => {
     expect(catchFnAdminCapability.owner).toEqual({ moduleId: "watchfn", mountPath: "/modules/watchfn/errors" });
     const adapter = createCatchFnAdminAdapter(createCatchFnAdminService(new CatchFnService({ db: memoryAdapter({ debug: false }) }), scope));
     await expect(adapter.invoke("catchfn.bug-reports.list", {}, { ...context, scope: { ...scope, projectId: "other" } })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(adapter.invoke("catchfn.bug-reports.list", {}, {
+      ...context,
+      scope: { installationId: "org_1", workspaceId: "workspace_1", projectId: "project_1", environmentId: "env_1", namespace: "tenant_1" },
+    })).resolves.toMatchObject({ data: { items: [] } });
   });
 });

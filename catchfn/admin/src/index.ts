@@ -1,5 +1,6 @@
 import {
   AdminError,
+  adminScopeRootId,
   createAdminCapabilityAdapter as createKernelAdminCapabilityAdapter,
   createCapabilityAdminClient,
   decodeAdminCursor,
@@ -12,14 +13,17 @@ import {
 import type { CatchFnService } from "@catchfn/server";
 import type { BugReportEvent } from "catchfn";
 
-export interface CatchFnAdminScope {
-  organizationId: string;
+interface CatchFnAdminScopeHierarchy {
   workspaceId: string;
   projectId: string;
   environmentId: string;
   namespace?: string;
   region?: string;
 }
+export type CatchFnAdminScope = CatchFnAdminScopeHierarchy & (
+  | { installationId: string; organizationId?: string }
+  | { installationId?: string; organizationId: string }
+);
 
 export interface ListBugReportsInput { limit?: number; cursor?: string }
 export interface GetBugReportInput { id: string }
@@ -87,7 +91,10 @@ export interface CatchFnAdminService {
 }
 
 function assertScope(expected: CatchFnAdminScope, actual: AdminOperationContext["scope"]): void {
-  for (const key of ["organizationId", "workspaceId", "projectId", "environmentId", "namespace", "region"] as const) {
+  if (adminScopeRootId(expected) !== adminScopeRootId(actual)) {
+    throw new AdminError("forbidden", "CatchFn is not bound to the active installationId.");
+  }
+  for (const key of ["workspaceId", "projectId", "environmentId", "namespace", "region"] as const) {
     if (expected[key] !== undefined && actual[key] !== expected[key]) {
       throw new AdminError("forbidden", `CatchFn is not bound to the active ${key}.`);
     }
