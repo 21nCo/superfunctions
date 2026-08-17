@@ -1,4 +1,4 @@
-import { applyExtensionTextRules, Transaction as MdfnTransaction, inspectMdfnUrl, type EditorController, type ExtensionRenderNode, type MdfnNode } from "@mdfn/core";
+import { applyExtensionTextRules, Transaction as MdfnTransaction, inspectMdfnUrl, type EditorController, type ExtensionRenderNode, type MdfnDocument, type MdfnNode } from "@mdfn/core";
 import { baseKeymap, createParagraphNear, exitCode, liftEmptyBlock, newlineInCode, setBlockType, splitBlock, toggleMark, wrapIn } from "prosemirror-commands";
 import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
@@ -72,44 +72,115 @@ function commandMap(controller: EditorController): Readonly<Record<DomCommand, P
   };
 }
 
-function topLevelStart(doc: import("prosemirror-model").Node, childIndex: number): number {
-  let position = 0;
-  for (let index = 0; index < childIndex; index += 1) position += doc.child(index).nodeSize;
-  return position;
+interface PositionSegment {
+  readonly pmFrom: number;
+  readonly pmTo: number;
+  readonly sourceFrom: number;
+  readonly sourceTo: number;
 }
 
-function pmPositionToSource(state: PmEditorState, position: number, fallback: number): number {
-  const resolved = state.doc.resolve(Math.max(0, Math.min(position, state.doc.content.size)));
-  const index = Math.min(resolved.index(0), state.doc.childCount - 1);
-  if (index < 0) return 0;
-  const node = state.doc.child(index);
-  const from = node.attrs.mdfnFrom;
-  const to = node.attrs.mdfnTo;
-  if (typeof from !== "number" || typeof to !== "number") return Math.max(0, Math.min(position, fallback));
-  const contentStart = topLevelStart(state.doc, index) + 1;
-  return Math.max(from, Math.min(to, from + Math.max(0, position - contentStart)));
+function inlineLeaves(node: MdfnNode): readonly MdfnNode[] {
+  if (["text", "inlineCode", "image", "asset", "opaque", "hardBreak"].includes(node.type)) return [node];
+  return (node.content ?? []).flatMap(inlineLeaves);
 }
 
-function selectionFromPm(state: PmEditorState, markdownLength: number) {
+function visualLength(node: MdfnNode): number {
+  if (node.type === "text" || node.type === "inlineCode" || node.type === "codeBlock") return node.text?.length ?? 0;
+  return 1;
+}
+
+function contentSourceRange(node: MdfnNode): { readonly from: number; readonly to: number } | undefined {
+  const source = node.source;
+  if (!source) return undefined;
+  const text = node.text ?? "";
+  const raw = source.raw;
+  if (text && raw === text) return { from: source.from, to: source.to };
+  if (text && typeof raw === "string") {
+    if (node.type === "inlineCode" || node.type === "codeBlock") {
+      const index = raw.indexOf(text);
+      if (index >= 0) return { from: source.from + index, to: source.from + index + text.length };
+    }
+    if (node.type === "text" && raw.startsWith("\\") && raw.slice(1) === text) {
+      return { from: source.from + 1, to: source.to };
+    }
+  }
+  return { from: source.from, to: source.to };
+}
+
+function positionSegments(pmDocument: import("prosemirror-model").Node, document: MdfnDocument): readonly PositionSegment[] {
+  const segments: PositionSegment[] = [];
+  const walk = (pmNode: import("prosemirror-model").Node, mdfnNode: MdfnNode | undefined, before: number, root = false): void => {
+    if (!mdfnNode) return;
+    if (pmNode.isTextblock) {
+      const segmentCount = segments.length;
+      const leaves = mdfnNode.type === "codeBlock" ? [mdfnNode] : inlineLeaves(mdfnNode);
+      let offset = 0;
+      for (const leaf of leaves) {
+        const length = visualLength(leaf);
+        const source = contentSourceRange(leaf);
+        if (source && length > 0 && offset < pmNode.content.size) {
+          const available = Math.min(length, pmNode.content.size - offset);
+          segments.push({ pmFrom: before + 1 + offset, pmTo: before + 1 + offset + available, sourceFrom: source.from, sourceTo: source.to });
+        }
+        offset += length;
+      }
+      if (segments.length === segmentCount && mdfnNode.source) {
+        segments.push({ pmFrom: before + 1, pmTo: before + 1, sourceFrom: mdfnNode.source.from, sourceTo: mdfnNode.source.to });
+      }
+      return;
+    }
+    if (pmNode.isAtom || pmNode.childCount === 0) {
+      if (mdfnNode.source) segments.push({ pmFrom: before, pmTo: before + pmNode.nodeSize, sourceFrom: mdfnNode.source.from, sourceTo: mdfnNode.source.to });
+      return;
+    }
+    pmNode.forEach((child, offset, index) => {
+      walk(child, mdfnNode.content?.[index], root ? offset : before + 1 + offset);
+    });
+  };
+  walk(pmDocument, document, -1, true);
+  return segments;
+}
+
+function interpolate(position: number, from: number, to: number, mappedFrom: number, mappedTo: number): number {
+  if (to <= from || mappedTo <= mappedFrom) return mappedFrom;
+  const ratio = Math.max(0, Math.min(1, (position - from) / (to - from)));
+  return Math.round(mappedFrom + ratio * (mappedTo - mappedFrom));
+}
+
+function pmPositionToSource(segments: readonly PositionSegment[], documentSize: number, position: number, fallback: number): number {
+  const resolved = Math.max(0, Math.min(position, documentSize));
+  const containing = segments.find((segment) => resolved >= segment.pmFrom && resolved <= segment.pmTo);
+  if (containing) return interpolate(resolved, containing.pmFrom, containing.pmTo, containing.sourceFrom, containing.sourceTo);
+  let nearest: { readonly distance: number; readonly source: number } | undefined;
+  for (const segment of segments) {
+    for (const [pm, source] of [[segment.pmFrom, segment.sourceFrom], [segment.pmTo, segment.sourceTo]] as const) {
+      const distance = Math.abs(resolved - pm);
+      if (!nearest || distance < nearest.distance) nearest = { distance, source };
+    }
+  }
+  return Math.max(0, Math.min(nearest?.source ?? resolved, fallback));
+}
+
+function selectionFromPm(state: PmEditorState, document: MdfnDocument, markdownLength: number) {
+  const segments = positionSegments(state.doc, document);
   return {
     kind: "text" as const,
-    anchor: pmPositionToSource(state, state.selection.anchor, markdownLength),
-    head: pmPositionToSource(state, state.selection.head, markdownLength),
+    anchor: pmPositionToSource(segments, state.doc.content.size, state.selection.anchor, markdownLength),
+    head: pmPositionToSource(segments, state.doc.content.size, state.selection.head, markdownLength),
   };
 }
 
-function sourcePositionToPm(doc: import("prosemirror-model").Node, sourcePosition: number): number {
-  let position = 0;
-  for (let index = 0; index < doc.childCount; index += 1) {
-    const child = doc.child(index);
-    const from = child.attrs.mdfnFrom;
-    const to = child.attrs.mdfnTo;
-    if (typeof from === "number" && typeof to === "number" && sourcePosition >= from && sourcePosition <= to) {
-      return Math.max(position + 1, Math.min(position + 1 + child.content.size, position + 1 + sourcePosition - from));
+function sourcePositionToPm(segments: readonly PositionSegment[], documentSize: number, sourcePosition: number): number {
+  const containing = segments.find((segment) => sourcePosition >= segment.sourceFrom && sourcePosition <= segment.sourceTo);
+  if (containing) return interpolate(sourcePosition, containing.sourceFrom, containing.sourceTo, containing.pmFrom, containing.pmTo);
+  let nearest: { readonly distance: number; readonly position: number } | undefined;
+  for (const segment of segments) {
+    for (const [source, position] of [[segment.sourceFrom, segment.pmFrom], [segment.sourceTo, segment.pmTo]] as const) {
+      const distance = Math.abs(sourcePosition - source);
+      if (!nearest || distance < nearest.distance) nearest = { distance, position };
     }
-    position += child.nodeSize;
   }
-  return Math.max(1, Math.min(doc.content.size, sourcePosition + 1));
+  return Math.max(1, Math.min(documentSize, nearest?.position ?? sourcePosition + 1));
 }
 
 export function sanitizePastedHtml(html: string): string {
@@ -132,21 +203,22 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
   let readOnly = options.readOnly ?? false;
   let syncing = false;
   const commands = commandMap(options.controller);
-  const extensionKeymap = Object.fromEntries(Object.entries(options.controller.extensions.keymap).map(([key, command]) => [key, () => options.controller.run(command)]));
+  const whenEditable = (command: PmCommand): PmCommand => (state, dispatch, view) => !readOnly && command(state, dispatch, view);
+  const extensionKeymap = Object.fromEntries(Object.entries(options.controller.extensions.keymap).map(([key, command]) => [key, () => !readOnly && options.controller.run(command)]));
   const plugins = [
     keymap(extensionKeymap),
     keymap({
-      "Mod-z": commands.undo,
-      "Shift-Mod-z": commands.redo,
-      "Mod-y": commands.redo,
-      "Mod-b": commands.bold,
-      "Mod-i": commands.italic,
-      "Mod-`": commands["inline-code"],
-      Enter: splitListItem(mdfnSchema.nodes.list_item),
-      "Mod-[": liftListItem(mdfnSchema.nodes.list_item),
-      "Mod-]": sinkListItem(mdfnSchema.nodes.list_item),
+      "Mod-z": whenEditable(commands.undo),
+      "Shift-Mod-z": whenEditable(commands.redo),
+      "Mod-y": whenEditable(commands.redo),
+      "Mod-b": whenEditable(commands.bold),
+      "Mod-i": whenEditable(commands.italic),
+      "Mod-`": whenEditable(commands["inline-code"]),
+      Enter: whenEditable(splitListItem(mdfnSchema.nodes.list_item)),
+      "Mod-[": whenEditable(liftListItem(mdfnSchema.nodes.list_item)),
+      "Mod-]": whenEditable(sinkListItem(mdfnSchema.nodes.list_item)),
     }),
-    keymap({ Enter: createParagraphNear, "Mod-Enter": exitCode, Backspace: liftEmptyBlock, "Shift-Enter": newlineInCode, "Mod-Shift-\\": splitBlock }),
+    keymap({ Enter: whenEditable(createParagraphNear), "Mod-Enter": whenEditable(exitCode), Backspace: whenEditable(liftEmptyBlock), "Shift-Enter": whenEditable(newlineInCode), "Mod-Shift-\\": whenEditable(splitBlock) }),
     keymap(baseKeymap),
     tableEditing(),
     gapCursor(),
@@ -228,7 +300,10 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
         edit = edit.replaceDocument(document);
         previousPmDocument = next.doc;
       }
-      if (transaction.selectionSet || transaction.docChanged) edit = edit.setSelection(selectionFromPm(next, options.controller.getState().markdown.length));
+      if (transaction.selectionSet || transaction.docChanged) {
+        const controllerState = options.controller.getState();
+        edit = edit.setSelection(selectionFromPm(next, controllerState.document, controllerState.markdown.length));
+      }
       if (edit.operations.length > 0) options.controller.dispatch(edit);
     },
   });
@@ -236,8 +311,9 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
   const unsubscribe = options.controller.subscribe((change) => {
     if (change.source.startsWith("visual:")) return;
     if (!change.documentChanged && change.selectionChanged && change.current.selection?.kind === "text") {
-      const anchor = sourcePositionToPm(view.state.doc, change.current.selection.anchor);
-      const head = sourcePositionToPm(view.state.doc, change.current.selection.head);
+      const segments = positionSegments(view.state.doc, change.current.document);
+      const anchor = sourcePositionToPm(segments, view.state.doc.content.size, change.current.selection.anchor);
+      const head = sourcePositionToPm(segments, view.state.doc.content.size, change.current.selection.head);
       const selection = PmTextSelection.create(view.state.doc, anchor, head);
       view.updateState(view.state.apply(view.state.tr.setSelection(selection).setMeta("addToHistory", false)));
       return;
@@ -248,8 +324,9 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
     previousPmDocument = nextDoc;
     const nextState = PmEditorState.create({ schema: mdfnSchema, doc: nextDoc, plugins });
     if (change.current.selection?.kind === "text") {
-      const anchor = sourcePositionToPm(nextDoc, change.current.selection.anchor);
-      const head = sourcePositionToPm(nextDoc, change.current.selection.head);
+      const segments = positionSegments(nextDoc, change.current.document);
+      const anchor = sourcePositionToPm(segments, nextDoc.content.size, change.current.selection.anchor);
+      const head = sourcePositionToPm(segments, nextDoc.content.size, change.current.selection.head);
       view.updateState(nextState.apply(nextState.tr.setSelection(PmTextSelection.create(nextDoc, anchor, head))));
     } else view.updateState(nextState);
     syncing = false;

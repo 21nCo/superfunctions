@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { createEditor } from "@mdfn/core";
+import { createEditor, Transaction } from "@mdfn/core";
 import { createMarkdownProjector, parseMarkdown } from "@mdfn/markdown";
 import { commonmarkExtension, createDirectiveExtension } from "@mdfn/extensions";
 import { EditorState, TextSelection } from "prosemirror-state";
@@ -52,6 +52,27 @@ describe("@mdfn/dom", () => {
     editor.destroy();
   });
 
+  it("does not dispatch controller history shortcuts while read-only", () => {
+    const controller = createEditor({ markdown: "a\n", projector: createMarkdownProjector() });
+    controller.dispatch(new Transaction().replaceSource(1, 1, "b"));
+    const target = document.createElement("div");
+    const editor = createDomEditor({ target, controller, readOnly: true });
+    const runUndoShortcut = (): void => {
+      const dispatch = (event: KeyboardEvent): void => {
+        editor.view.someProp("handleKeyDown", (handler) => handler(editor.view, event));
+      };
+      dispatch(new KeyboardEvent("keydown", { key: "z", metaKey: true }));
+      if (controller.getState().markdown === "ab\n") dispatch(new KeyboardEvent("keydown", { key: "z", ctrlKey: true }));
+    };
+
+    runUndoShortcut();
+    expect(controller.getState().markdown).toBe("ab\n");
+    editor.setReadOnly(false);
+    runUndoShortcut();
+    expect(controller.getState().markdown).toBe("a\n");
+    editor.destroy();
+  });
+
   it("reconciles command-driven Markdown insertion into the visual view", () => {
     const controller = createEditor({
       markdown: "a\n",
@@ -63,6 +84,19 @@ describe("@mdfn/dom", () => {
     expect(editor.insertMarkdown("b")).toBe(true);
     expect(controller.getState().markdown).toBe("ab\n");
     expect(editor.view.state.doc.textContent).toBe("ab");
+    editor.destroy();
+  });
+
+  it("maps visual selections through inline source spans instead of block delimiters", () => {
+    const controller = createEditor({ markdown: "# Hello\n", projector: createMarkdownProjector() });
+    const target = document.createElement("div");
+    const editor = createDomEditor({ target, controller });
+
+    editor.view.dispatch(editor.view.state.tr.setSelection(TextSelection.create(editor.view.state.doc, 6)));
+    expect(controller.getState().selection).toEqual({ kind: "text", anchor: 7, head: 7 });
+
+    controller.dispatch(new Transaction().setSelection({ kind: "text", anchor: 2, head: 2 }).withSource("external"));
+    expect(editor.view.state.selection).toMatchObject({ anchor: 1, head: 1 });
     editor.destroy();
   });
 

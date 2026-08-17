@@ -57,6 +57,21 @@ describe("mdfn server", () => {
     void resolved;
   });
 
+  it("restores the complete historical title, Markdown, and sidecar snapshot", async () => {
+    const service = createMdfnService({ database: memoryAdapter(), durability: "ephemeral", authorize: () => true, createId: (() => { let id = 0; return () => `restore-${id++}`; })() });
+    const principal = { id: "author" };
+    const created = await service.create(principal, { markdown: "historic" });
+    const titled = await service.update(principal, created.id, { expectedVersion: 1, title: "Current title", markdown: "current" });
+    const commented = await service.createComment(principal, created.id, { expectedVersion: titled.version, anchor: { from: 0, to: 7 }, body: "current comment" });
+
+    const restored = await service.restoreVersion(principal, created.id, { version: 1, expectedVersion: commented.version });
+
+    expect(restored).toMatchObject({ markdown: "historic", version: 4 });
+    expect(restored.title).toBeUndefined();
+    expect(restored.sidecar).toBeUndefined();
+    expect((await service.version(principal, created.id, 4)).sidecar).toBeUndefined();
+  });
+
   it("rejects untrusted sidecar structures before persistence", async () => {
     const service = createMdfnService({ database: memoryAdapter(), durability: "ephemeral", authorize: () => true });
     await expect(service.create({ id: "author" }, { markdown: "safe", sidecar: { comments: "invalid" } as never })).rejects.toMatchObject({ code: "MDFN_DOCUMENT_INVALID", status: 422 });

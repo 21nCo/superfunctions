@@ -333,7 +333,25 @@ export function extractLinks(document: MdfnDocument): Array<{ url: string; text:
   return links;
 }
 
+function splitBoundedText(value: string, maximum: number): readonly string[] {
+  const limit = Math.max(1, Math.floor(maximum));
+  const pieces: string[] = [];
+  let remaining = value.trim();
+  while (remaining.length > limit) {
+    let end = limit;
+    const previous = remaining.charCodeAt(end - 1);
+    const next = remaining.charCodeAt(end);
+    if (end > 1 && previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end -= 1;
+    const piece = remaining.slice(0, end).trim();
+    if (piece) pieces.push(piece);
+    remaining = remaining.slice(end).trimStart();
+  }
+  if (remaining) pieces.push(remaining);
+  return pieces;
+}
+
 export function extractChunks(document: MdfnDocument, maxCharacters = 2_000): Array<{ text: string; heading?: string }> {
+  const limit = Math.max(1, Math.floor(maxCharacters));
   const chunks: Array<{ text: string; heading?: string }> = [];
   let heading: string | undefined;
   let buffer = "";
@@ -348,10 +366,13 @@ export function extractChunks(document: MdfnDocument, maxCharacters = 2_000): Ar
       heading = plainText(node).trim();
       continue;
     }
-    const text = plainText(node).trim();
-    if (!text) continue;
-    if (buffer && buffer.length + text.length + 2 > maxCharacters) flush();
-    buffer += `${buffer ? "\n\n" : ""}${text}`;
+    const value = plainText(node).trim();
+    if (!value) continue;
+    for (const piece of splitBoundedText(value, limit)) {
+      if (buffer && buffer.length + piece.length + 2 > limit) flush();
+      buffer += `${buffer ? "\n\n" : ""}${piece}`;
+      if (buffer.length >= limit) flush();
+    }
   }
   flush();
   return chunks;
@@ -392,13 +413,18 @@ export function extractDocument(document: MdfnDocument, options: { readonly maxC
     }
     const value = plainText(node).trim();
     if (!value) continue;
-    if (text && text.length + value.length + 2 > maxChunkLength) flush();
-    text += `${text ? "\n\n" : ""}${value}`;
+    let nodeLinks: ExtractedDocument["chunks"][number]["links"] = [];
     const visitLinks = (candidate: MdfnNode): void => {
-      if (candidate.type === "link") chunkLinks = [...chunkLinks, { url: stringAttr(candidate, "url"), text: plainText(candidate), nodeId: candidate.id }];
+      if (candidate.type === "link") nodeLinks = [...nodeLinks, { url: stringAttr(candidate, "url"), text: plainText(candidate), nodeId: candidate.id }];
       candidate.content?.forEach(visitLinks);
     };
     visitLinks(node);
+    for (const piece of splitBoundedText(value, maxChunkLength)) {
+      if (text && text.length + piece.length + 2 > maxChunkLength) flush();
+      text += `${text ? "\n\n" : ""}${piece}`;
+      chunkLinks = [...chunkLinks, ...nodeLinks];
+      if (text.length >= maxChunkLength) flush();
+    }
   }
   flush();
   return { plainText: extractPlainText(document), headings, links, chunks };

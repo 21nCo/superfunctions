@@ -55,8 +55,9 @@ function smallestSourceChange(previous: string, next: string): { from: number; t
 export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
   if (typeof document === "undefined") throw new Error("MDFN_SOURCE_BROWSER_REQUIRED");
   let syncing = false;
+  let readOnly = options.readOnly ?? false;
   const editable = new Compartment();
-  const extensionKeys = Object.entries(options.controller.extensions.keymap).map(([key, command]) => ({ key, run: () => options.controller.run(command) }));
+  const extensionKeys = Object.entries(options.controller.extensions.keymap).map(([key, command]) => ({ key, run: () => !readOnly && options.controller.run(command) }));
   const extensions = [
     options.lineNumbers === false ? [] : lineNumbers(),
     drawSelection(),
@@ -69,14 +70,14 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
     linter(() => diagnostics(options.controller), { delay: 100 }),
     keymap.of([
       ...extensionKeys,
-      { key: "Mod-z", run: () => options.controller.undo() },
-      { key: "Mod-Shift-z", run: () => options.controller.redo() },
-      { key: "Mod-y", run: () => options.controller.redo() },
+      { key: "Mod-z", run: () => !readOnly && options.controller.undo() },
+      { key: "Mod-Shift-z", run: () => !readOnly && options.controller.redo() },
+      { key: "Mod-y", run: () => !readOnly && options.controller.redo() },
       indentWithTab,
       ...defaultKeymap,
       ...searchKeymap,
     ]),
-    editable.of(EditorView.editable.of(!(options.readOnly ?? false))),
+    editable.of(EditorView.editable.of(!readOnly)),
     EditorView.contentAttributes.of({ "aria-label": options.ariaLabel ?? "Markdown source", "data-mdfn-editor": "source" }),
     EditorView.domEventHandlers({
       focus: () => { options.onFocus?.(); return false; },
@@ -131,7 +132,7 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
   return {
     view,
     focus() { view.focus(); },
-    setReadOnly(readOnly) { view.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!readOnly)) }); },
+    setReadOnly(value) { readOnly = value; view.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!readOnly)) }); },
     destroy() { unsubscribe(); view.destroy(); },
   };
 }

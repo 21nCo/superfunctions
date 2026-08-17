@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractChunks, extractHeadings, extractLinks, renderHtml, type RenderPolicy } from "./index";
+import { extractChunks, extractDocument, extractHeadings, extractLinks, renderHtml, type RenderPolicy } from "./index";
 import type { MdfnDocument, MdfnExtension } from "@mdfn/core";
 
 const document: MdfnDocument = {
@@ -65,5 +65,16 @@ describe("@mdfn/render", () => {
       content: [{ type: "list", content: [{ type: "listItem", content: [] }, { type: "listItem", content: [] }] }],
     };
     expect(() => renderHtml(list, { maxNodes: 2 })).toThrowError("MDFN_RENDER_NODE_LIMIT_EXCEEDED:2");
+  });
+
+  it("splits oversized single blocks into bounded extraction chunks", () => {
+    const long: MdfnDocument = {
+      type: "doc",
+      schemaVersion: 1,
+      content: [{ type: "paragraph", content: [{ type: "text", text: "x".repeat(150) }] }],
+    };
+
+    expect(extractChunks(long, 64).map((chunk) => chunk.text.length)).toEqual([64, 64, 22]);
+    expect(extractDocument(long, { maxChunkLength: 64 }).chunks.map((chunk) => chunk.text.length)).toEqual([64, 64, 22]);
   });
 });

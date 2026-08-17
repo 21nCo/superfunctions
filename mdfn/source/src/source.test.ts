@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { createEditor, Transaction } from "@mdfn/core";
 import { undoDepth, redoDepth } from "@codemirror/commands";
+import { runScopeHandlers } from "@codemirror/view";
 import { createMarkdownProjector } from "@mdfn/markdown";
 import { createModeController, createPreview, createSourceEditor, sourceInternals } from "./index";
 
@@ -55,6 +56,24 @@ describe("@mdfn/source", () => {
     expect(redoDepth(editor.view.state)).toBe(0);
     expect(controller.redo()).toBe(true);
     expect(editor.view.state.doc.toString()).toBe("ab");
+    editor.destroy();
+  });
+
+  it("does not dispatch controller history shortcuts while read-only", () => {
+    const controller = createEditor({ markdown: "a", projector: createMarkdownProjector() });
+    controller.dispatch(new Transaction().replaceSource(1, 1, "b"));
+    const target = document.createElement("div");
+    const editor = createSourceEditor({ target, controller, readOnly: true });
+    const runUndoShortcut = (): void => {
+      runScopeHandlers(editor.view, new KeyboardEvent("keydown", { key: "z", metaKey: true }), "editor");
+      if (controller.getState().markdown === "ab") runScopeHandlers(editor.view, new KeyboardEvent("keydown", { key: "z", ctrlKey: true }), "editor");
+    };
+
+    runUndoShortcut();
+    expect(controller.getState().markdown).toBe("ab");
+    editor.setReadOnly(false);
+    runUndoShortcut();
+    expect(controller.getState().markdown).toBe("a");
     editor.destroy();
   });
 
