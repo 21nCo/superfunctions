@@ -70,6 +70,10 @@ function context(
   };
 }
 
+function legacyContext(projectId: string): AdminOperationContext {
+  return { ...context(projectId), scope: { organizationId: "installation", workspaceId: "workspace", projectId } };
+}
+
 describe("@docsfn/admin", () => {
   it("publishes a valid optional operator surface", () => {
     expect(validateAdminCapabilityManifest(docsFnAdminCapability)).toEqual([]);
@@ -98,6 +102,7 @@ describe("@docsfn/admin", () => {
     );
     expect(first.data.nextCursor).toBe("1");
     expect(second.data.nextCursor).toBeNull();
+    expect((await adapter.execute<any>("docsfn.sites.list", {}, legacyContext("same-project"))).data.items).toHaveLength(2);
 
     const otherWorkspace = await adapter.execute<any>(
       "docsfn.sites.list",

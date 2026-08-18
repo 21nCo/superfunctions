@@ -15,6 +15,9 @@ import {
 function context(projectId: string, workspaceId = "workspace", environmentId?: string): AdminOperationContext {
   return { scope: { installationId: "installation", workspaceId, projectId, environmentId }, actor: { id: "operator", permissions: ["*"] }, requestId: crypto.randomUUID(), source: "console", idempotencyKey: crypto.randomUUID() };
 }
+function legacyContext(projectId: string): AdminOperationContext {
+  return { ...context(projectId), scope: { organizationId: "installation", workspaceId: "workspace", projectId } };
+}
 function scopeKey(scope: LangFnOperatorScope): string {
   return `${scope.installationId}/${scope.workspaceId}/${scope.projectId}/${scope.environmentId ?? ""}`;
 }
@@ -52,6 +55,7 @@ describe("@langfn/admin", () => {
     const otherEnvironment = await adapter.execute<any>("langfn.profiles.list", {}, context("same-project", "workspace", "production"));
     expect(otherWorkspace.data.items).toEqual([]);
     expect(otherEnvironment.data.items).toEqual([]);
+    expect((await adapter.execute<any>("langfn.profiles.list", {}, legacyContext("same-project"))).data.items).toHaveLength(2);
   });
 
   it("exposes named typed methods and common capability methods", async () => {

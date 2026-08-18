@@ -181,6 +181,28 @@ describe('Super Console server composition', () => {
     }));
   });
 
+  it('does not restore default namespace or region after switching the scope hierarchy', async () => {
+    const { console, handler } = installation();
+    const switched = await console.handle(request('/api/admin/v1/modules/examplefn/records?organizationId=org_2&workspaceId=workspace_2&projectId=project_2&environmentId=environment_2'));
+    expect(switched.status).toBe(200);
+    expect(handler).toHaveBeenLastCalledWith(expect.objectContaining({
+      context: expect.objectContaining({
+        scope: {
+          organizationId: 'org_2',
+          workspaceId: 'workspace_2',
+          projectId: 'project_2',
+          environmentId: 'environment_2',
+        },
+      }),
+    }));
+
+    const unchanged = await console.handle(request('/api/admin/v1/modules/examplefn/records'));
+    expect(unchanged.status).toBe(200);
+    expect(handler).toHaveBeenLastCalledWith(expect.objectContaining({
+      context: expect.objectContaining({ scope }),
+    }));
+  });
+
   it('rejects malformed generic-operation JSON without dispatching the operation', async () => {
     const { console, handler } = installation();
     const result = await console.handle(request('/api/admin/v1/operations/examplefn.records.list', {

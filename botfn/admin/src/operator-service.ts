@@ -1,4 +1,4 @@
-import { AdminError, type AdminOperationContext } from "@superfunctions/admin";
+import { AdminError, adminScopeRootId, type AdminOperationContext } from "@superfunctions/admin";
 
 export type BotFnPlatform = "discord" | "slack" | "github" | "linear";
 
@@ -112,7 +112,8 @@ export interface BotFnOperatorServiceOptions {
 }
 
 function requireScope(context: AdminOperationContext): BotFnOperatorScope {
-  const { installationId, workspaceId, projectId, environmentId } = context.scope;
+  const { workspaceId, projectId, environmentId } = context.scope;
+  const installationId = adminScopeRootId(context.scope);
   if (!installationId || !workspaceId || !projectId) {
     throw new AdminError(
       "invalid_argument",

@@ -133,6 +133,10 @@ function requestedScope(request: Request, principal: SuperConsolePrincipal): Adm
   const workspaceChanged = Boolean(workspace && workspace !== principal.defaultScope.workspaceId);
   const requestedProject = project ?? (rootChanged || workspaceChanged ? undefined : principal.defaultScope.projectId);
   const projectChanged = Boolean(project && project !== principal.defaultScope.projectId);
+  const environmentChanged = Boolean(environment && environment !== principal.defaultScope.environmentId);
+  const hierarchyChanged = rootChanged || workspaceChanged || projectChanged || environmentChanged;
+  const namespace = url.searchParams.get('namespace') ?? request.headers.get('x-superconsole-namespace');
+  const region = url.searchParams.get('region') ?? request.headers.get('x-superconsole-region');
   return {
     ...(installation ? { installationId: requestedRoot } : organization ? { organizationId: requestedRoot } : {
       ...(principal.defaultScope.installationId ? { installationId: requestedRoot } : {}),
@@ -143,8 +147,8 @@ function requestedScope(request: Request, principal: SuperConsolePrincipal): Adm
     ...((environment ?? (rootChanged || workspaceChanged || projectChanged ? undefined : principal.defaultScope.environmentId))
       ? { environmentId: environment ?? principal.defaultScope.environmentId }
       : {}),
-    namespace: url.searchParams.get('namespace') ?? request.headers.get('x-superconsole-namespace') ?? principal.defaultScope.namespace,
-    region: url.searchParams.get('region') ?? request.headers.get('x-superconsole-region') ?? principal.defaultScope.region,
+    namespace: namespace ?? (hierarchyChanged ? undefined : principal.defaultScope.namespace),
+    region: region ?? (hierarchyChanged ? undefined : principal.defaultScope.region),
   };
 }
 

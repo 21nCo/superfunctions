@@ -31,6 +31,10 @@ function context(
   };
 }
 
+function legacyContext(projectId: string): AdminOperationContext {
+  return { ...context(projectId), scope: { organizationId: "installation", workspaceId: "workspace", projectId } };
+}
+
 describe("@apifn/admin", () => {
   it("publishes a valid optional exact operator surface", () => {
     expect(validateAdminCapabilityManifest(apiFnAdminCapability)).toEqual([]);
@@ -69,6 +73,7 @@ describe("@apifn/admin", () => {
     );
     expect(otherWorkspace.data.items).toEqual([]);
     expect(otherEnvironment.data.items).toEqual([]);
+    expect((await adapter.execute<any>("apifn.specs.list", {}, legacyContext("same-project"))).data.items).toHaveLength(2);
 
     const compared = await adapter.execute<any>(
       "apifn.specs.compare",

@@ -17,6 +17,8 @@ import {
 } from "@superfunctions/admin";
 import {
   createFlowFnDomainAdminAdapter,
+  createFlowFnAdminAdapter,
+  createFlowFnDomainAdminService,
   flowFnAdminCapability,
   flowFnAdminResources,
 } from "../index.js";
@@ -111,6 +113,29 @@ describe("@flowfn/admin", () => {
       classification: "destructive",
       confirmation: { method: "mfa", risk: "critical" },
     });
+  });
+
+  it("preserves the receiver for class-style administration services", async () => {
+    const { flow, jobs, dlq, events, worker } = deployment();
+    const base = createFlowFnDomainAdminService({
+      flow,
+      jobs,
+      dlq,
+      events,
+      workers: [{ id: "worker_1", worker, queues: ["emails"] }],
+      workspaceId: "workspace_1",
+      projectId: "project_1",
+      environmentId: "environment_1",
+      namespace: "tenant_1",
+    });
+    const original = base.listQueues;
+    base.listQueues = async function (input, operationContext) {
+      expect(this).toBe(base);
+      return original.call(this, input, operationContext);
+    };
+
+    await expect(createFlowFnAdminAdapter(base).invoke("flowfn.queues.list", {}, context()))
+      .resolves.toMatchObject({ data: { items: [{ id: "emails" }] } });
   });
 
   it("uses real createFlow, Queue, JobStorage, Worker, and EventLog contracts", async () => {

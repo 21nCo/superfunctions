@@ -4,7 +4,7 @@ import {
   validateOpenAPI,
   type OpenAPIDocument,
 } from "@apifn/core";
-import { AdminError, type AdminOperationContext } from "@superfunctions/admin";
+import { AdminError, adminScopeRootId, type AdminOperationContext } from "@superfunctions/admin";
 
 export interface ApiFnOperatorScope {
   installationId: string;
@@ -123,7 +123,8 @@ export interface ApiFnCompareSpecInput { id: string; candidate: string | Record<
 export interface ApiFnUpsertEnvironmentInput { id: string; name: string; baseUrl: string; enabled?: boolean }
 
 function requireScope(context: AdminOperationContext): ApiFnOperatorScope {
-  const { installationId, workspaceId, projectId, environmentId } = context.scope;
+  const { workspaceId, projectId, environmentId } = context.scope;
+  const installationId = adminScopeRootId(context.scope);
   if (!installationId || !workspaceId || !projectId) {
     throw new AdminError(
       "invalid_argument",

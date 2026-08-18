@@ -1,5 +1,5 @@
 import type { CompletionResponse, LangFn, ProviderName } from "langfn";
-import { AdminError, type AdminOperationContext } from "@superfunctions/admin";
+import { AdminError, adminScopeRootId, type AdminOperationContext } from "@superfunctions/admin";
 
 export interface LangFnOperatorScope {
   installationId: string;
@@ -132,7 +132,8 @@ export interface LangFnOperatorServiceOptions {
 }
 
 function requireScope(context: AdminOperationContext): LangFnOperatorScope {
-  const { installationId, workspaceId, projectId, environmentId } = context.scope;
+  const { workspaceId, projectId, environmentId } = context.scope;
+  const installationId = adminScopeRootId(context.scope);
   if (!installationId || !workspaceId || !projectId) {
     throw new AdminError(
       "invalid_argument",

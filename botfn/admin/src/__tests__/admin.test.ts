@@ -26,6 +26,10 @@ function context(
   };
 }
 
+function legacyContext(projectId: string): AdminOperationContext {
+  return { ...context(projectId), scope: { organizationId: "installation", workspaceId: "workspace", projectId } };
+}
+
 describe("@botfn/admin", () => {
   it("publishes a valid optional operator surface", () => {
     expect(validateAdminCapabilityManifest(botFnAdminCapability)).toEqual([]);
@@ -68,6 +72,7 @@ describe("@botfn/admin", () => {
     expect(own.data.items).toHaveLength(1);
     expect(other.data.items).toEqual([]);
     expect(otherEnvironment.data.items).toEqual([]);
+    expect((await adapter.execute<any>("botfn.channels.list", {}, legacyContext("project-a"))).data.items).toHaveLength(1);
 
     await adapter.execute("botfn.bots.upsert", { id: "sales", name: "Sales Bot" }, context("project-a"));
     const firstPage = await adapter.execute<any>("botfn.bots.list", { limit: 1 }, context("project-a"));

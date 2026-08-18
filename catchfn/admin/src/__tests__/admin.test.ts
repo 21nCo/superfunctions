@@ -34,7 +34,8 @@ describe("@catchfn/admin", () => {
   });
 
   it("is explicitly nested under WatchFn and enforces its bound scope", async () => {
-    expect(catchFnAdminCapability.owner).toEqual({ moduleId: "watchfn", mountPath: "/modules/watchfn/errors" });
+    expect(catchFnAdminCapability.owner).toEqual({ moduleId: "watchfn", mountPath: "/modules/watchfn/catchfn" });
+    expect(catchFnAdminCapability.navigation[0]?.path).toBe("/modules/watchfn/catchfn");
     const adapter = createCatchFnAdminAdapter(createCatchFnAdminService(new CatchFnService({ db: memoryAdapter({ debug: false }) }), scope));
     await expect(adapter.invoke("catchfn.bug-reports.list", {}, { ...context, scope: { ...scope, projectId: "other" } })).rejects.toMatchObject({ code: "forbidden" });
     await expect(adapter.invoke("catchfn.bug-reports.list", {}, {

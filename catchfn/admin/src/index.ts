@@ -77,10 +77,10 @@ const operations = [
 export const catchFnAdminCapability = defineAdminCapability({
   schemaVersion: "1.0", id: "catchfn", displayName: "CatchFn", version: "1.1.0",
   description: "Function-owned administration for persisted CatchFn bug reports.", category: "observability",
-  availability: "nested", owner: { moduleId: "watchfn", mountPath: "/modules/watchfn/errors" },
+  availability: "nested", owner: { moduleId: "watchfn", mountPath: "/modules/watchfn/catchfn" },
   scopeLevels: ["organization", "workspace", "project", "environment"], dependencies: ["watchfn"],
   resources: [{ id: "bug-reports", label: "Bug reports", description: "Captured product feedback and bug evidence.", icon: "catchfn:bugs", risk: "sensitive", idField: "id", displayFields: ["id", "title", "severity", "timestamp"], searchableFields: ["id", "title"], filterableFields: ["severity", "environment", "timestamp"], sortableFields: ["timestamp", "severity"], sensitiveFields: ["user", "metadata", "attachments"] }],
-  navigation: [{ id: "catchfn", label: "Bug reports", path: "/modules/watchfn/errors", parentId: "watchfn", group: "WatchFn", order: 30 }],
+  navigation: [{ id: "catchfn", label: "Bug reports", path: "/modules/watchfn/catchfn", parentId: "watchfn", group: "WatchFn", order: 30 }],
   operations,
 });
 
