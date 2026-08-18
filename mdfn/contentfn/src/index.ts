@@ -67,7 +67,7 @@ export function isMarkdownContent(value: unknown): value is MarkdownContent {
 }
 
 export interface ContentMigrationDiagnostic {
-  readonly code: "MDFN_CONTENT_MIGRATED_STRING" | "MDFN_CONTENT_MIGRATED_LEGACY_MARKDOWN" | "MDFN_CONTENT_RICHTEXT_LOSSY" | "MDFN_CONTENT_UNSUPPORTED";
+  readonly code: "MDFN_CONTENT_MIGRATED_STRING" | "MDFN_CONTENT_MIGRATED_LEGACY_MARKDOWN" | "MDFN_CONTENT_LEGACY_METADATA_DROPPED" | "MDFN_CONTENT_RICHTEXT_LOSSY" | "MDFN_CONTENT_UNSUPPORTED";
   readonly severity: "info" | "warning" | "error";
   readonly message: string;
   readonly path?: string;
@@ -172,11 +172,25 @@ export function migrateToMarkdownContent(
     };
   }
   if (value && typeof value === "object" && (value as { type?: unknown }).type === "text/markdown" && typeof (value as { markdown?: unknown }).markdown === "string") {
-    const legacy = value as { markdown: string; schemaHash?: string; sidecar?: MdfnSidecar };
+    const legacy = value as { markdown: string; schemaHash?: unknown; sidecar?: unknown };
+    const schemaHash = typeof legacy.schemaHash === "string" ? legacy.schemaHash : undefined;
+    let sidecar: MdfnSidecar | undefined;
+    let invalidMetadata = legacy.schemaHash !== undefined && schemaHash === undefined;
+    if (legacy.sidecar !== undefined) {
+      try {
+        validateMdfnSidecar(legacy.sidecar as MdfnSidecar, { markdownLength: legacy.markdown.length });
+        sidecar = legacy.sidecar as MdfnSidecar;
+      } catch {
+        invalidMetadata = true;
+      }
+    }
     return {
-      content: markdownContent(legacy.markdown, { profile, schemaHash: legacy.schemaHash, sidecar: legacy.sidecar }),
-      diagnostics: [{ code: "MDFN_CONTENT_MIGRATED_LEGACY_MARKDOWN", severity: "info", message: "Legacy Markdown envelope was upgraded to version 1 with an explicit profile" }],
-      lossy: false,
+      content: markdownContent(legacy.markdown, { profile, schemaHash, sidecar }),
+      diagnostics: [
+        { code: "MDFN_CONTENT_MIGRATED_LEGACY_MARKDOWN", severity: "info", message: "Legacy Markdown envelope was upgraded to version 1 with an explicit profile" },
+        ...(invalidMetadata ? [{ code: "MDFN_CONTENT_LEGACY_METADATA_DROPPED" as const, severity: "warning" as const, message: "Invalid legacy Markdown metadata was omitted during migration" }] : []),
+      ],
+      lossy: invalidMetadata,
     };
   }
   if (Array.isArray(value)) {

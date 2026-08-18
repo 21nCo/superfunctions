@@ -28,6 +28,18 @@
   });
 
   $effect(() => {
+    // A load failure swaps the editor targets for the fallback. Clear that
+    // failure only when a new prop-driven mount is requested, so a transient
+    // import or mount error can recover without creating a retry loop.
+    void controller;
+    void mode;
+    void readOnly;
+    void ariaLabel;
+    void onFiles;
+    loadError = null;
+  });
+
+  $effect(() => {
     const currentMode = mode;
     const currentVisual = visualTarget;
     const currentSource = sourceTarget;

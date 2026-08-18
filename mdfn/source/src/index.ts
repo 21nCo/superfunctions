@@ -56,7 +56,7 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
   if (typeof document === "undefined") throw new Error("MDFN_SOURCE_BROWSER_REQUIRED");
   let syncing = false;
   let readOnly = options.readOnly ?? false;
-  const editable = new Compartment();
+  const readOnlyConfig = new Compartment();
   const extensionKeys = Object.entries(options.controller.extensions.keymap).map(([key, command]) => ({ key, run: () => !readOnly && options.controller.run(command) }));
   const extensions = [
     options.lineNumbers === false ? [] : lineNumbers(),
@@ -77,7 +77,10 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
       ...defaultKeymap,
       ...searchKeymap,
     ]),
-    editable.of(EditorView.editable.of(!readOnly)),
+    readOnlyConfig.of([
+      CodeMirrorState.readOnly.of(readOnly),
+      EditorView.editable.of(!readOnly),
+    ]),
     EditorView.contentAttributes.of({ "aria-label": options.ariaLabel ?? "Markdown source", "data-mdfn-editor": "source" }),
     EditorView.domEventHandlers({
       focus: () => { options.onFocus?.(); return false; },
@@ -132,7 +135,15 @@ export function createSourceEditor(options: SourceEditorOptions): SourceEditor {
   return {
     view,
     focus() { view.focus(); },
-    setReadOnly(value) { readOnly = value; view.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!readOnly)) }); },
+    setReadOnly(value) {
+      readOnly = value;
+      view.dispatch({
+        effects: readOnlyConfig.reconfigure([
+          CodeMirrorState.readOnly.of(readOnly),
+          EditorView.editable.of(!readOnly),
+        ]),
+      });
+    },
     destroy() { unsubscribe(); view.destroy(); },
   };
 }

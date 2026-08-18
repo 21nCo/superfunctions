@@ -77,6 +77,25 @@ describe("@mdfn/source", () => {
     editor.destroy();
   });
 
+  it("blocks editing keymaps while read-only and enables them after reconfiguration", () => {
+    const controller = createEditor({ markdown: "item", projector: createMarkdownProjector() });
+    const target = document.createElement("div");
+    const editor = createSourceEditor({ target, controller, readOnly: true });
+    editor.view.dispatch({ selection: { anchor: 0, head: 4 } });
+
+    expect(editor.view.state.readOnly).toBe(true);
+    runScopeHandlers(editor.view, new KeyboardEvent("keydown", { key: "Tab" }), "editor");
+    expect(editor.view.state.doc.toString()).toBe("item");
+    expect(controller.getState().markdown).toBe("item");
+
+    editor.setReadOnly(false);
+    expect(editor.view.state.readOnly).toBe(false);
+    runScopeHandlers(editor.view, new KeyboardEvent("keydown", { key: "Tab" }), "editor");
+    expect(editor.view.state.doc.toString()).toBe("  item");
+    expect(controller.getState().markdown).toBe("  item");
+    editor.destroy();
+  });
+
   it("computes the smallest UTF-16 source replacement", () => {
     expect(sourceInternals.smallestSourceChange("prefix old suffix", "prefix new suffix")).toEqual({ from: 7, to: 10, insert: "new" });
     expect(sourceInternals.smallestSourceChange("👋 old", "👋 new")).toEqual({ from: 3, to: 6, insert: "new" });

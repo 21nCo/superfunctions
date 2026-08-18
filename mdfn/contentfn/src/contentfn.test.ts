@@ -38,4 +38,23 @@ describe("markdown content", () => {
     expect(isMarkdownContent({ ...valid, sidecar: { comments: "invalid" } })).toBe(false);
     expect(isMarkdownContent({ ...valid, sidecar: { comments: [{ id: "thread", anchor: { from: 0, to: 99 }, resolved: false, messages: [] }] } })).toBe(false);
   });
+
+  it("omits invalid legacy metadata and returns a valid lossy migration", () => {
+    const result = migrateToMarkdownContent({
+      type: "text/markdown",
+      markdown: "text",
+      schemaHash: 1,
+      sidecar: { comments: [{ id: "thread", anchor: { from: 0, to: 99 }, resolved: false, messages: [] }] },
+    });
+
+    expect(result).toMatchObject({
+      content: { markdown: "text", schemaHash: undefined, sidecar: undefined },
+      lossy: true,
+    });
+    expect(result.diagnostics.map((entry) => entry.code)).toEqual([
+      "MDFN_CONTENT_MIGRATED_LEGACY_MARKDOWN",
+      "MDFN_CONTENT_LEGACY_METADATA_DROPPED",
+    ]);
+    expect(isMarkdownContent(result.content)).toBe(true);
+  });
 });
