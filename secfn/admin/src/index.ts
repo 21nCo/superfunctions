@@ -41,10 +41,10 @@ export const secFnAdminResources = [
 ] as const satisfies readonly SecFnAdminResourceDefinition[];
 
 export interface PageInput { limit?: number; cursor?: string }
-export interface NamespaceListInput { limit?: number; search?: string }
+export interface NamespaceListInput extends PageInput { search?: string }
 export interface CreateNamespaceInput { slug: string; label?: string; description?: string; metadata?: JsonRecord }
 export interface UpdateNamespaceInput { id: string; slug?: string; label?: string; description?: string | null; metadata?: JsonRecord | null }
-export interface EnvironmentListInput { limit?: number; search?: string }
+export interface EnvironmentListInput extends PageInput { search?: string }
 export interface CreateEnvironmentInput { name: string; description?: string; metadata?: JsonRecord }
 export interface UpdateEnvironmentInput { id: string; name?: string; description?: string | null; metadata?: JsonRecord | null }
 export interface SecretListInput extends PageInput { search?: string; tag?: string }
@@ -100,7 +100,7 @@ const itemOutputSchema: AdminObjectSchema = { type: "object", properties: { item
 const acceptedOutputSchema: AdminObjectSchema = { type: "object", properties: { accepted: { type: "boolean" }, item: entitySchema }, required: ["accepted"], additionalProperties: true };
 const idInputSchema: AdminObjectSchema = { type: "object", properties: { id: stringSchema("Domain resource identifier.") }, required: ["id"], additionalProperties: false };
 const pageInputSchema: AdminObjectSchema = { type: "object", properties: { cursor: stringSchema(), limit: { type: "integer", minimum: 1, maximum: 200, default: 50 } }, additionalProperties: false };
-const searchListInputSchema: AdminObjectSchema = { type: "object", properties: { limit: { type: "integer", minimum: 1, maximum: 200, default: 50 }, search: { type: "string", maxLength: 500 } }, additionalProperties: false };
+const searchListInputSchema: AdminObjectSchema = { type: "object", properties: { cursor: stringSchema(), limit: { type: "integer", minimum: 1, maximum: 200, default: 50 }, search: { type: "string", maxLength: 500 } }, additionalProperties: false };
 const createNamespaceInputSchema: AdminObjectSchema = { type: "object", properties: { slug: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,62}$" }, label: { type: "string", maxLength: 200 }, description: { type: "string", maxLength: 2000 }, metadata: metadataSchema }, required: ["slug"], additionalProperties: false };
 const updateNamespaceInputSchema: AdminObjectSchema = { type: "object", properties: { id: stringSchema(), slug: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,62}$" }, label: { type: "string", maxLength: 200 }, description: nullableStringSchema, metadata: { type: ["object", "null"], additionalProperties: true } }, required: ["id"], additionalProperties: false };
 const createEnvironmentInputSchema: AdminObjectSchema = { type: "object", properties: { name: { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{0,62}$" }, description: { type: "string", maxLength: 2000 }, metadata: metadataSchema }, required: ["name"], additionalProperties: false };
@@ -174,10 +174,10 @@ function operation<TId extends SecFnAdminOperationId>(options: OperationOptions<
 }
 
 const operations = [
-  operation({ id: "secfn.namespaces.list", title: "List namespaces", description: "List namespaces in the active SecFn project tenant.", resource: "namespaces", inputSchema: searchListInputSchema, outputSchema: listOutputSchema, route: "/resources/namespaces", read: true, collection: true }),
+  operation({ id: "secfn.namespaces.list", title: "List namespaces", description: "List namespaces in the active SecFn project tenant.", resource: "namespaces", inputSchema: searchListInputSchema, outputSchema: listOutputSchema, route: "/resources/namespaces", read: true, collection: true, pagination: true }),
   operation({ id: "secfn.namespaces.create", title: "Create namespace", description: "Create a namespace inside the active project tenant.", resource: "namespaces", inputSchema: createNamespaceInputSchema, outputSchema: acceptedOutputSchema, route: "/resources/namespaces/actions/create", collection: true, confirmation: "recent-auth" }),
   operation({ id: "secfn.namespaces.update", title: "Update namespace", description: "Update an existing namespace inside the active project tenant.", resource: "namespaces", inputSchema: updateNamespaceInputSchema, outputSchema: acceptedOutputSchema, route: "/resources/namespaces/actions/update", confirmation: "recent-auth" }),
-  operation({ id: "secfn.environments.list", title: "List environments", description: "List environments in the active SecFn namespace.", resource: "environments", inputSchema: searchListInputSchema, outputSchema: listOutputSchema, route: "/resources/environments", read: true, collection: true }),
+  operation({ id: "secfn.environments.list", title: "List environments", description: "List environments in the active SecFn namespace.", resource: "environments", inputSchema: searchListInputSchema, outputSchema: listOutputSchema, route: "/resources/environments", read: true, collection: true, pagination: true }),
   operation({ id: "secfn.environments.create", title: "Create environment", description: "Create an environment in the active SecFn namespace.", resource: "environments", inputSchema: createEnvironmentInputSchema, outputSchema: acceptedOutputSchema, route: "/resources/environments/actions/create", collection: true, confirmation: "recent-auth" }),
   operation({ id: "secfn.environments.update", title: "Update environment", description: "Update an environment in the active SecFn namespace.", resource: "environments", inputSchema: updateEnvironmentInputSchema, outputSchema: acceptedOutputSchema, route: "/resources/environments/actions/update", confirmation: "recent-auth" }),
   operation({ id: "secfn.secrets.list", title: "List secrets", description: "List redacted secret metadata in the active SecFn scope.", resource: "secrets", inputSchema: secretListInputSchema, outputSchema: listOutputSchema, route: "/resources/secrets", read: true, collection: true, pagination: true, outputFields: ["value", "encryptedPayload", "token", "tokenHash"] }),

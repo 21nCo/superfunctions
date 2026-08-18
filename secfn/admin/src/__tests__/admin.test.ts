@@ -152,4 +152,41 @@ describe("@secfn/admin", () => {
     const rate = await adapter.execute("secfn.rate-limits.check", { endpoint: "/admin" }, baseContext);
     expect((rate.data as { item: { allowed: boolean } }).item.allowed).toBe(true);
   });
+
+  it("paginates namespace and environment arrays with collection-bound cursors", async () => {
+    const { adapter } = fixture();
+    await adapter.execute("secfn.namespaces.create", { slug: "team-a", label: "Team A" }, baseContext);
+    await adapter.execute("secfn.namespaces.create", { slug: "team-b", label: "Team B" }, baseContext);
+
+    const firstNamespaces = await adapter.execute("secfn.namespaces.list", { limit: 1 }, baseContext);
+    const namespacePage = firstNamespaces.data as { items: Array<{ id: string }>; nextCursor: string | null };
+    expect(namespacePage.items).toHaveLength(1);
+    expect(namespacePage.nextCursor).toEqual(expect.any(String));
+    const secondNamespaces = await adapter.execute(
+      "secfn.namespaces.list",
+      { limit: 1, cursor: namespacePage.nextCursor! },
+      baseContext,
+    );
+    expect((secondNamespaces.data as { items: Array<{ id: string }> }).items[0]?.id)
+      .not.toBe(namespacePage.items[0]?.id);
+
+    await adapter.execute("secfn.environments.create", { name: "development" }, baseContext);
+    await adapter.execute("secfn.environments.create", { name: "production" }, baseContext);
+    const firstEnvironments = await adapter.execute("secfn.environments.list", { limit: 1 }, baseContext);
+    const environmentPage = firstEnvironments.data as { items: Array<{ id: string }>; nextCursor: string | null };
+    expect(environmentPage.nextCursor).toEqual(expect.any(String));
+    const secondEnvironments = await adapter.execute(
+      "secfn.environments.list",
+      { limit: 1, cursor: environmentPage.nextCursor! },
+      baseContext,
+    );
+    expect((secondEnvironments.data as { items: Array<{ id: string }> }).items[0]?.id)
+      .not.toBe(environmentPage.items[0]?.id);
+
+    await expect(adapter.execute(
+      "secfn.environments.list",
+      { limit: 1, cursor: namespacePage.nextCursor! },
+      baseContext,
+    )).rejects.toMatchObject({ code: "invalid_argument" });
+  });
 });

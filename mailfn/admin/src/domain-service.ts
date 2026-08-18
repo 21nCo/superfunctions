@@ -2,7 +2,9 @@ import {
   MAILFN_SCOPES,
   type Actor,
   type MailFn,
+  MailFnError,
   type MailFnStore,
+  type Message,
   type MessageFilter,
 } from "@mailfn/core";
 import {
@@ -31,6 +33,7 @@ export interface MailFnDomainAdminServiceOptions {
 interface ListInput {
   cursor?: string;
   limit?: number;
+  search?: string;
   filter?: JsonRecord;
 }
 
@@ -102,30 +105,31 @@ function page<T extends object>(
   input: ListInput,
   context: AdminOperationContext,
 ): AdminOperationResult<MailFnListOutput> {
+  const query = optionalString(input.search, "search")?.trim().toLowerCase();
+  const filtered = query
+    ? items.filter((value) => JSON.stringify(value).toLowerCase().includes(query))
+    : items;
   const limit = normalizeAdminPageLimit(input.limit);
-  const offset = input.cursor
-    ? decodeAdminCursor<{ offset: number }>(input.cursor, context.scope).offset
-    : 0;
-  if (!Number.isInteger(offset) || offset < 0) {
+  const position = input.cursor
+    ? decodeAdminCursor<{ offset: number; search: string | null }>(input.cursor, context.scope)
+    : { offset: 0, search: query ?? null };
+  if (!Number.isInteger(position.offset) || position.offset < 0 || position.search !== (query ?? null)) {
     throw new AdminError("invalid_argument", "The pagination cursor is invalid.");
   }
-  const selected = items.slice(offset, offset + limit);
-  const nextOffset = offset + selected.length;
+  const selected = filtered.slice(position.offset, position.offset + limit);
+  const nextOffset = position.offset + selected.length;
+  const nextCursor = nextOffset < filtered.length
+    ? encodeAdminCursor(context.scope, { offset: nextOffset, search: query ?? null })
+    : null;
   return {
     ok: true,
     data: {
       items: selected.map(asJson) as MailFnAdminRecord[],
-      nextCursor:
-        nextOffset < items.length
-          ? encodeAdminCursor(context.scope, { offset: nextOffset })
-          : null,
+      nextCursor,
     },
     page: {
-      nextCursor:
-        nextOffset < items.length
-          ? encodeAdminCursor(context.scope, { offset: nextOffset })
-          : null,
-      hasMore: nextOffset < items.length,
+      nextCursor,
+      hasMore: nextOffset < filtered.length,
     },
   };
 }
@@ -153,17 +157,69 @@ async function allProjectMessages(
   mailfn: MailFn,
   adminActor: Actor,
   filter: MessageFilter = {},
-): Promise<object[]> {
-  const messages: object[] = [];
+): Promise<Message[]> {
+  const messages: Message[] = [];
   for (const inbox of await mailfn.listInboxes(adminActor)) {
-    const result = await mailfn.listMessages(adminActor, {
-      inboxId: inbox.id,
-      limit: 100,
-      ...filter,
-    });
-    messages.push(...result.items);
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    do {
+      const result = await mailfn.listMessages(adminActor, {
+        inboxId: inbox.id,
+        limit: 100,
+        ...filter,
+        ...(cursor ? { cursor } : {}),
+      });
+      messages.push(...result.items);
+      cursor = result.nextCursor;
+      if (cursor && seenCursors.has(cursor)) {
+        throw new AdminError("dependency_unavailable", "MailFn returned a repeated message cursor.");
+      }
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
   }
   return messages;
+}
+
+function mapMailFnError(error: unknown): never {
+  if (error instanceof AdminError) throw error;
+  if (!(error instanceof MailFnError)) throw error;
+  const code = error.status === 401
+    ? "unauthenticated"
+    : error.status === 403
+      ? "forbidden"
+      : error.status === 404
+        ? "not_found"
+        : error.status === 409
+          ? "conflict"
+          : error.status === 429
+            ? "rate_limited"
+            : error.status === 410 || error.status === 412 || error.status === 499
+              ? "precondition_failed"
+              : error.status >= 500 || error.status === 408
+                ? "dependency_unavailable"
+                : "invalid_argument";
+  throw new AdminError(code, error.message, {
+    status: error.status,
+    details: error.details,
+    retryable: error.retryable,
+    cause: error,
+  });
+}
+
+function translateMailFnErrors(service: MailFnAdminService): MailFnAdminService {
+  return new Proxy(service, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        try {
+          return await Reflect.apply(value, target, args);
+        } catch (error) {
+          return mapMailFnError(error);
+        }
+      };
+    },
+  });
 }
 
 /**
@@ -181,7 +237,7 @@ export function createMailFnDomainAdminService(
     adminActor: actor(context),
   });
 
-  return {
+  return translateMailFnErrors({
     async listProjects(input, context) {
       const { activeProjectId } = state(context);
       const project = await store.getProject(activeProjectId);
@@ -410,5 +466,5 @@ export function createMailFnDomainAdminService(
     async purgeRetention(_input, context) {
       return accepted(await mailfn.runRetention(state(context).activeProjectId));
     },
-  };
+  });
 }

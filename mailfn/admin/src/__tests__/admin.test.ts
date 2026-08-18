@@ -11,6 +11,7 @@ import {
   DEFAULT_PROJECT_QUOTA,
   DEFAULT_STABLE_RETENTION,
   MailFn,
+  MailFnError,
   MemoryMailFnObjectStore,
   MemoryMailFnStore,
 } from "@mailfn/core";
@@ -99,6 +100,24 @@ describe("@mailfn/admin", () => {
       region: "in-south",
     });
     expect(listProjects).toHaveBeenCalledWith({ limit: 25 }, context);
+  });
+
+  it("preserves the receiver for class-based administration services", async () => {
+    class ReceiverService {
+      readonly marker = "receiver-preserved";
+
+      async listProjects() {
+        return {
+          ok: true as const,
+          data: { items: [{ marker: this.marker }], nextCursor: null },
+        };
+      }
+    }
+    const adapter = createMailFnAdminAdapter(new ReceiverService() as unknown as MailFnAdminService);
+
+    const result = await adapter.execute("mailfn.projects.list", {}, context);
+
+    expect(result.data.items).toEqual([{ marker: "receiver-preserved" }]);
   });
 
   it("exposes named typed clients for mutations instead of generic operation dispatch", async () => {
@@ -205,5 +224,54 @@ describe("@mailfn/admin", () => {
     await expect(
       adapter.execute("mailfn.projects.get", { id: "project_other" }, context),
     ).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("exhausts domain message pages before applying the declared admin search", async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: `message_${index}`,
+      subject: `Routine message ${index}`,
+    }));
+    const listMessages = vi.fn(async (_actor, input: { cursor?: string }) => (
+      input.cursor
+        ? { items: [{ id: "message_needle", subject: "Needle on the later page" }] }
+        : { items: firstPage, nextCursor: "domain-page-2" }
+    ));
+    const service = createMailFnDomainAdminService({
+      mailfn: {
+        listInboxes: vi.fn(async () => [{ id: "inbox_1" }]),
+        listMessages,
+      } as unknown as MailFn,
+      store: new MemoryMailFnStore(),
+    });
+
+    const result = await service.listMessages({ search: "needle", limit: 10 }, context);
+
+    expect(result.data).toEqual({
+      items: [{ id: "message_needle", subject: "Needle on the later page" }],
+      nextCursor: null,
+    });
+    expect(listMessages).toHaveBeenCalledTimes(2);
+    expect(listMessages.mock.calls[1]?.[1]).toMatchObject({ cursor: "domain-page-2", limit: 100 });
+  });
+
+  it("translates MailFn domain failures into canonical admin errors", async () => {
+    const service = createMailFnDomainAdminService({
+      mailfn: {
+        getInbox: vi.fn(async () => {
+          throw new MailFnError({
+            code: "MAILFN_NOT_FOUND",
+            message: "Inbox not found",
+            status: 404,
+          });
+        }),
+      } as unknown as MailFn,
+      store: new MemoryMailFnStore(),
+    });
+
+    await expect(service.getInbox({ id: "missing" }, context)).rejects.toMatchObject({
+      code: "not_found",
+      status: 404,
+      message: "Inbox not found",
+    });
   });
 });

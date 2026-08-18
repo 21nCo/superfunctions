@@ -1,5 +1,12 @@
 import type { SecFnServer } from "@secfn/server";
-import { AdminError, type AdminOperationContext, type AdminOperationResult } from "@superfunctions/admin";
+import {
+  AdminError,
+  decodeAdminCursor,
+  encodeAdminCursor,
+  normalizeAdminPageLimit,
+  type AdminOperationContext,
+  type AdminOperationResult,
+} from "@superfunctions/admin";
 import type {
   AuditEventListInput,
   SecFnAdminOperationInputMap,
@@ -67,6 +74,40 @@ function item(value: object): AdminOperationResult<JsonRecord> {
 
 function list(values: readonly object[], nextCursor?: string): AdminOperationResult<JsonRecord> {
   return { ok: true, data: { items: values.map((value) => ({ ...value })), nextCursor: nextCursor ?? null } };
+}
+
+function paginatedList(
+  values: readonly object[],
+  input: JsonRecord,
+  context: AdminOperationContext,
+  resource: "namespaces" | "environments",
+): AdminOperationResult<JsonRecord> {
+  const limit = normalizeAdminPageLimit(input.limit);
+  const search = optionalText(input.search, "search")?.toLowerCase() ?? null;
+  const position = input.cursor === undefined
+    ? { offset: 0, resource, search }
+    : decodeAdminCursor<{ offset: number; resource: string; search: string | null }>(
+      text(input.cursor, "cursor"),
+      context.scope,
+    );
+  if (
+    !Number.isInteger(position.offset)
+    || position.offset < 0
+    || position.resource !== resource
+    || position.search !== search
+  ) {
+    throw new AdminError("invalid_argument", "The pagination cursor is invalid for this SecFn collection.");
+  }
+  const items = values.slice(position.offset, position.offset + limit);
+  const nextOffset = position.offset + items.length;
+  const nextCursor = nextOffset < values.length
+    ? encodeAdminCursor(context.scope, { offset: nextOffset, resource, search })
+    : null;
+  return {
+    ok: true,
+    data: { items: items.map((value) => ({ ...value })), nextCursor },
+    page: { nextCursor, hasMore: nextCursor !== null },
+  };
 }
 
 function accepted(value?: object): AdminOperationResult<JsonRecord> {
@@ -187,8 +228,7 @@ export function createSecFnDomainAdminService(options: SecFnDomainAdminServiceOp
             let values = await server.vault.listNamespaces({ tenantId: scope.tenantId });
             const search = optionalText(input.search, "search")?.toLowerCase();
             if (search) values = values.filter((value) => value.slug.toLowerCase().includes(search) || value.label.toLowerCase().includes(search));
-            const limit = isNumber(input.limit) ? input.limit : 50;
-            return list(values.slice(0, limit));
+            return paginatedList(values, input, request.context, "namespaces");
           }
           case "secfn.namespaces.create":
             return accepted(await server.vault.createNamespace({
@@ -214,8 +254,7 @@ export function createSecFnDomainAdminService(options: SecFnDomainAdminServiceOp
             values = values.filter((value) => belongsToScope(value, scope));
             const search = optionalText(input.search, "search")?.toLowerCase();
             if (search) values = values.filter((value) => value.name.toLowerCase().includes(search) || (value.description ?? "").toLowerCase().includes(search));
-            const limit = isNumber(input.limit) ? input.limit : 50;
-            return list(values.slice(0, limit));
+            return paginatedList(values, input, request.context, "environments");
           }
           case "secfn.environments.create":
             return accepted(await server.vault.createEnvironment({
