@@ -73,6 +73,28 @@ describe("@mdfn/dom", () => {
     editor.destroy();
   });
 
+  it("blocks fallback visual keymaps and document transactions while read-only", () => {
+    const controller = createEditor({ markdown: "Text\n", projector: createMarkdownProjector() });
+    const target = document.createElement("div");
+    const editor = createDomEditor({ target, controller, readOnly: true });
+    editor.view.dispatch(editor.view.state.tr.setSelection(TextSelection.create(editor.view.state.doc, 3)));
+    const pressEnter = (): boolean | undefined => editor.view.someProp("handleKeyDown", (handler) => (
+      handler(editor.view, new KeyboardEvent("keydown", { key: "Enter" }))
+    ));
+
+    expect(pressEnter()).toBeFalsy();
+    expect(controller.getState().markdown).toBe("Text\n");
+    expect(editor.view.state.doc.childCount).toBe(1);
+    editor.view.dispatch(editor.view.state.tr.insertText("X", 3));
+    expect(editor.view.state.doc.textContent).toBe("Text");
+
+    editor.setReadOnly(false);
+    expect(pressEnter()).toBe(true);
+    expect(controller.getState().markdown).not.toBe("Text\n");
+    expect(editor.view.state.doc.childCount).toBe(2);
+    editor.destroy();
+  });
+
   it("reconciles command-driven Markdown insertion into the visual view", () => {
     const controller = createEditor({
       markdown: "a\n",
@@ -197,6 +219,36 @@ describe("@mdfn/dom", () => {
     });
     expect(handled).toBe(true);
     expect(controller.getState().markdown).toContain("→");
+    editor.destroy();
+  });
+
+  it("passes canonical source offsets to visual input rules", () => {
+    let observed: { readonly source: string; readonly from: number; readonly to: number } | undefined;
+    const rules = {
+      name: "source-position-rule",
+      version: "1.0.0",
+      preservation: { noEdit: "exact", edited: "semantic", unsupported: "opaque" } as const,
+      inputRules: [{
+        name: "position",
+        match: /x/,
+        replace: (_match: RegExpMatchArray, input: { readonly source: string; readonly from: number; readonly to: number }) => {
+          observed = input;
+          return "X";
+        },
+      }],
+    };
+    const controller = createEditor({ markdown: "# Hello\n", projector: createMarkdownProjector({ extensions: [rules] }), extensions: [rules] });
+    const target = document.createElement("div");
+    const editor = createDomEditor({ target, controller });
+    let handled = false;
+    editor.view.someProp("handleTextInput", (handler) => {
+      handled = handler(editor.view, 6, 6, "x");
+      return handled;
+    });
+
+    expect(handled).toBe(true);
+    expect(observed).toEqual({ text: "x", source: "# Hello\n", from: 7, to: 7 });
+    expect(controller.getState().markdown).toBe("# HelloX\n");
     editor.destroy();
   });
 });

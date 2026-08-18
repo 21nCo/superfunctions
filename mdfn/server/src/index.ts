@@ -26,7 +26,7 @@ const COLLAB_UPDATES = "mdfnCollaborationUpdates";
 export const MDFN_SERVER_SCHEMA_VERSION = 1;
 
 export interface MdfnPrincipal { readonly id: string; readonly tenantId?: string; readonly roles?: readonly string[]; }
-export type MdfnServerAction = "create" | "read" | "update" | "delete" | "history" | "collaborate";
+export type MdfnServerAction = "create" | "read" | "update" | "delete" | "history" | "collaborate" | "compact-collaboration";
 
 export interface MdfnDocumentRecord {
   readonly id: string;
@@ -298,7 +298,7 @@ export function createMdfnService(config: MdfnServerConfig): MdfnService {
     },
     async compactCollaborationUpdates(principal, id, snapshot, includedUpdateIds) {
       const document = await loadScoped(principal, id);
-      await allowed(config, "collaborate", principal, document);
+      await allowed(config, "compact-collaboration", principal, document);
       const limit = config.maxCollaborationUpdateBytes ?? 1024 * 1024;
       if (new TextEncoder().encode(snapshot).byteLength > limit) throw new MdfnServerError("MDFN_COLLAB_UPDATE_TOO_LARGE", 413);
       if (!Array.isArray(includedUpdateIds) || includedUpdateIds.some((updateId) => typeof updateId !== "string" || !updateId)) {

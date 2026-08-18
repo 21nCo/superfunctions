@@ -4,7 +4,7 @@ import { dropCursor } from "prosemirror-dropcursor";
 import { gapCursor } from "prosemirror-gapcursor";
 import { keymap } from "prosemirror-keymap";
 import { liftListItem, sinkListItem, splitListItem, wrapInList } from "prosemirror-schema-list";
-import { EditorState as PmEditorState, TextSelection as PmTextSelection, type Command as PmCommand } from "prosemirror-state";
+import { EditorState as PmEditorState, Plugin as PmPlugin, TextSelection as PmTextSelection, type Command as PmCommand } from "prosemirror-state";
 import { addColumnAfter, addRowAfter, deleteColumn, deleteRow, tableEditing } from "prosemirror-tables";
 import { EditorView } from "prosemirror-view";
 import { documentToProseMirror, mdfnSchema, proseMirrorToDocument } from "./schema";
@@ -205,7 +205,9 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
   const commands = commandMap(options.controller);
   const whenEditable = (command: PmCommand): PmCommand => (state, dispatch, view) => !readOnly && command(state, dispatch, view);
   const extensionKeymap = Object.fromEntries(Object.entries(options.controller.extensions.keymap).map(([key, command]) => [key, () => !readOnly && options.controller.run(command)]));
+  const editableBaseKeymap = Object.fromEntries(Object.entries(baseKeymap).map(([key, command]) => [key, whenEditable(command)]));
   const plugins = [
+    new PmPlugin({ filterTransaction: (transaction) => !readOnly || !transaction.docChanged }),
     keymap(extensionKeymap),
     keymap({
       "Mod-z": whenEditable(commands.undo),
@@ -219,7 +221,7 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
       "Mod-]": whenEditable(sinkListItem(mdfnSchema.nodes.list_item)),
     }),
     keymap({ Enter: whenEditable(createParagraphNear), "Mod-Enter": whenEditable(exitCode), Backspace: whenEditable(liftEmptyBlock), "Shift-Enter": whenEditable(newlineInCode), "Mod-Shift-\\": whenEditable(splitBlock) }),
-    keymap(baseKeymap),
+    keymap(editableBaseKeymap),
     tableEditing(),
     gapCursor(),
     dropCursor(),
@@ -284,7 +286,11 @@ export function createDomEditor(options: DomEditorOptions): DomEditor {
       },
     },
     handleTextInput(_view, from, to, text) {
-      const replacement = applyExtensionTextRules(text, options.controller.getState().markdown, from, to, options.controller.extensions.inputRules);
+      const controllerState = options.controller.getState();
+      const segments = positionSegments(_view.state.doc, controllerState.document);
+      const sourceFrom = pmPositionToSource(segments, _view.state.doc.content.size, from, controllerState.markdown.length);
+      const sourceTo = pmPositionToSource(segments, _view.state.doc.content.size, to, controllerState.markdown.length);
+      const replacement = applyExtensionTextRules(text, controllerState.markdown, sourceFrom, sourceTo, options.controller.extensions.inputRules);
       if (replacement === text) return false;
       view.dispatch(view.state.tr.insertText(replacement, from, to));
       return true;

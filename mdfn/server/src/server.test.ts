@@ -122,6 +122,29 @@ describe("mdfn server", () => {
     expect(compacted.updates).toHaveLength(2);
   });
 
+  it("authorizes destructive collaboration compaction separately", async () => {
+    const actions: string[] = [];
+    const service = createMdfnService({
+      database: memoryAdapter(),
+      durability: "ephemeral",
+      authorize: (action) => {
+        actions.push(action);
+        return action !== "compact-collaboration";
+      },
+      createId: (() => { let id = 0; return () => `compact-auth-${id++}`; })(),
+    });
+    const principal = { id: "editor" };
+    const document = await service.create(principal, { markdown: "body" });
+    await service.appendCollaborationUpdate(principal, document.id, "update");
+    const batch = await service.collaborationUpdates(principal, document.id);
+
+    await expect(service.compactCollaborationUpdates(principal, document.id, "snapshot", batch.includedUpdateIds))
+      .rejects.toMatchObject({ code: "MDFN_FORBIDDEN", status: 403 });
+    expect(actions).toContain("collaborate");
+    expect(actions).toContain("compact-collaboration");
+    expect((await service.collaborationUpdates(principal, document.id)).updates).toEqual(["update"]);
+  });
+
   it("keeps editorial state and audit history server-authoritative", async () => {
     const service = createMdfnService({ database: memoryAdapter(), durability: "ephemeral", authorize: () => true, createId: (() => { let id = 0; return () => `integrity-${id++}`; })() });
     const principal = { id: "author" };
