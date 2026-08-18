@@ -123,6 +123,7 @@ describe("compileMarkdown – html fields", () => {
     if (block.type === "paragraph") {
       expect(block.html).toContain("<code>");
       expect(block.html).toContain("npm install");
+      expect(block.html).not.toContain("</p>");
     }
   });
 
@@ -138,6 +139,40 @@ describe("compileMarkdown – html fields", () => {
     if (block.type === "paragraph") {
       expect(block.html).not.toContain("javascript:");
     }
+  });
+
+  it("renders opted-in raw HTML through the canonical sanitizer", () => {
+    const compiled = compileMarkdown({
+      source: '<span class="note" onclick="alert(1)">safe</span>',
+      sourcePath: "content/docs/raw-html.mdx",
+      allowRawHtml: true,
+    });
+    const block = compiled.blocks[0];
+    expect(block.type).toBe("paragraph");
+    if (block.type === "paragraph") {
+      expect(block.html).toContain('<span class="note">safe</span>');
+      expect(block.html).not.toContain("onclick");
+    }
+  });
+
+  it("projects the canonical MDFN URL policy into DocsFn output and diagnostics", () => {
+    const compiled = compileMarkdown({
+      source: "Click [here](java%0ascript:alert(1)) for info.",
+      sourcePath: "content/docs/canonical-policy.mdx",
+      allowRawHtml: true,
+    });
+    const block = compiled.blocks[0];
+    expect(block.type).toBe("paragraph");
+    if (block.type === "paragraph") {
+      expect(block.html).toContain("data-mdfn-blocked-link");
+      expect(block.html).not.toContain("href=");
+    }
+    expect(compiled.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "DOCS_MARKDOWN_DIAGNOSTIC",
+        details: expect.objectContaining({ mdfnCode: "MDFN_UNSAFE_URL" }),
+      }),
+    ]));
   });
 
   it("callout block has an html field", () => {

@@ -6,6 +6,7 @@ export { JsonWidget } from "./JsonWidget.js";
 export { ObjectWidget } from "./ObjectWidget.js";
 export { ArrayWidget } from "./ArrayWidget.js";
 export { RichtextWidget } from "./RichtextWidget.js";
+export { MarkdownWidget } from "./MarkdownWidget.js";
 export { ReferenceWidget } from "./ReferenceWidget.js";
 export { ReferenceField } from "./reference/ReferenceField.js";
 export { AssetWidget } from "./AssetWidget.js";

@@ -40,14 +40,19 @@
     "test:watch": "vitest watch"
   },
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=20 <25"
   },
   "dependencies": {
+    "@mdfn/components-react": "0.1.0",
+    "@mdfn/core": "0.1.0",
+    "@mdfn/contentfn": "0.1.0",
+    "@mdfn/extensions": "0.1.0",
     "cmsfn": "0.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "@contentfn/core": "0.0.2",
-    "@cmsfn/server": "0.0.2"
+    "@cmsfn/server": "0.0.2",
+    "mdfn": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",

@@ -4,6 +4,8 @@
     "lib": ["ES2021"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": { "cmsfn": ["../core/dist/index.d.ts"] },
     "strict": true,
     "declaration": true,
     "declarationMap": true,

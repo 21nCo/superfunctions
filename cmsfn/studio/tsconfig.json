@@ -4,6 +4,11 @@
     "lib": ["ES2021", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "cmsfn": ["../core/dist/index.d.ts"],
+      "@cmsfn/server": ["../server/dist/index.d.ts"]
+    },
     "strict": true,
     "declaration": true,
     "declarationMap": true,
@@ -17,5 +22,5 @@
     "jsx": "react-jsx"
   },
   "include": ["src"],
-  "exclude": ["dist", "node_modules"]
+  "exclude": ["dist", "node_modules", "src/__tests__"]
 }
