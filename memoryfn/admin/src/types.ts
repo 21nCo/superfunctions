@@ -12,7 +12,7 @@ export type MemoryFnAdminMemory = Pick<
   'id' | 'type' | 'content' | 'isLatest' | 'createdAt' | 'updatedAt'
 >;
 
-export type MemoryFnSearchMemoriesInput = Omit<SearchMemoryInput, 'containerTags'>;
+export type MemoryFnSearchMemoriesInput = Omit<SearchMemoryInput, 'containerTags' | 'tenantId'>;
 
 export interface MemoryFnSearchMemoriesOutput {
   items: MemoryFnAdminMemory[];

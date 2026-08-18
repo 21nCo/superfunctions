@@ -17,10 +17,10 @@ describe('CiFn console transport', () => {
     expect(JSON.parse(url.searchParams.get('filter') ?? 'null')).toEqual({ status: 'failure' });
     expect(url.searchParams.get('cursor')).toBe('next-1');
     expect(Object.fromEntries(
-      ['organizationId', 'workspaceId', 'projectId', 'environmentId']
+      ['installationId', 'workspaceId', 'projectId', 'environmentId']
         .map((key) => [key, url.searchParams.get(key)])
     )).toEqual({
-      organizationId: 'org-1',
+      installationId: 'org-1',
       workspaceId: 'workspace-1',
       projectId: 'project-1',
       environmentId: 'production',

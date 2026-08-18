@@ -86,7 +86,8 @@ export class MemoryFn implements IMemoryFn {
                 mem.embedding = embeddings[i];
 
                 // Deduplicate (Exact/High match)
-                const duplicate = await this.deduplicator.findDuplicate(mem.embedding!, mem.containerTags!);
+                const tenantId = mem.tenantId || 'default';
+                const duplicate = await this.deduplicator.findDuplicate(tenantId, mem.embedding!, mem.containerTags!);
                 if (duplicate) {
                     deduplicatedCount++;
                     console.log(`Duplicate found for: ${mem.content}`);
@@ -97,6 +98,7 @@ export class MemoryFn implements IMemoryFn {
                 if (this.resolver) {
                     // Find related memories (lower threshold)
                     const related = await this.storage.searchVectors({
+                        tenantId,
                         embedding: mem.embedding!,
                         containerTags: mem.containerTags!,
                         threshold: 0.75, // Lower threshold to find related facts
@@ -200,6 +202,7 @@ export class MemoryFn implements IMemoryFn {
 
     // 2. Vector search
     const results = await this.storage.searchVectors({
+      tenantId: input.tenantId || 'default',
       embedding,
       containerTags: input.containerTags,
       filters: input.filters,

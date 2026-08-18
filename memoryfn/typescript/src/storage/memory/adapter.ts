@@ -112,6 +112,7 @@ export class MemoryStorageAdapter implements StorageAdapter {
   }
 
   async searchVectors(params: {
+    tenantId?: string;
     embedding: number[];
     containerTags: string[];
     filters?: Record<string, unknown>;
@@ -121,7 +122,8 @@ export class MemoryStorageAdapter implements StorageAdapter {
     const requestedTags = new Set(params.containerTags);
     return [...this.memories.values()]
       .filter((memory) => (
-        (requestedTags.size === 0 || memory.containerTags.some((tag) => requestedTags.has(tag)))
+        memory.tenantId === (params.tenantId ?? 'default')
+        && (requestedTags.size === 0 || memory.containerTags.some((tag) => requestedTags.has(tag)))
         && metadataMatches(memory.metadata, params.filters)
       ))
       .map((memory) => ({

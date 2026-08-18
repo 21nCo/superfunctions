@@ -114,6 +114,9 @@ describe('Super Console operator surface', () => {
     const ci = read('src/routes/modules/cifn/+page.svelte');
     expect(ci).toContain('scopedConsoleHref(');
     expect(ci).toContain('page.url.searchParams');
+    const run = read('src/routes/modules/cifn/runs/[runId]/+page.svelte');
+    expect(run).toContain('scopedConsoleHref(');
+    expect(run).toContain('page.url.searchParams');
     const command = read('src/lib/components/CommandPalette.svelte');
     expect(command).toContain('commandValue(command)');
     expect(command).toContain('onValueChange');

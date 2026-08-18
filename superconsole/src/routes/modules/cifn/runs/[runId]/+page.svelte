@@ -1,8 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { ButtonIcon, ButtonLabel, ButtonRoot } from '@uifn/components-svelte/button';
   import { CardContent, CardDescription, CardHeader, CardRoot, CardTitle } from '@uifn/components-svelte/card';
   import ActionButton from '$lib/components/ActionButton.svelte';
+  import { scopedConsoleHref } from '$lib/components/admin-api';
   import ConsoleIcon from '$lib/components/ConsoleIcon.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import StatePanel from '$lib/components/StatePanel.svelte';
@@ -40,7 +42,7 @@
       {#if cancelAction && ['queued', 'running'].includes(run.status)}
         <ActionButton action={cancelAction} />
       {/if}
-      <ButtonRoot variant="outline" onclick={() => void goto(`/modules/cifn/runs/${encodeURIComponent(run.runId)}/artifacts`)}>
+      <ButtonRoot variant="outline" onclick={() => void goto(scopedConsoleHref(`/modules/cifn/runs/${encodeURIComponent(run.runId)}/artifacts`, page.url.searchParams))}>
         <ButtonIcon><ConsoleIcon name="download" /></ButtonIcon><ButtonLabel>Artifacts</ButtonLabel>
       </ButtonRoot>
     {/snippet}
@@ -73,7 +75,7 @@
                   <li><StatusBadge status={step.status} /><code>{step.stepKey}</code>{#if step.completedAt}<time>{formatValue(step.completedAt, 'datetime')}</time>{/if}</li>
                 {/each}
               </ol>
-              <ButtonRoot variant="outline" size="sm" onclick={() => void goto(`/modules/cifn/runs/${encodeURIComponent(run.runId)}/jobs/${encodeURIComponent(job.jobKey)}/logs`)}>
+              <ButtonRoot variant="outline" size="sm" onclick={() => void goto(scopedConsoleHref(`/modules/cifn/runs/${encodeURIComponent(run.runId)}/jobs/${encodeURIComponent(job.jobKey)}/logs`, page.url.searchParams))}>
                 <ButtonIcon><ConsoleIcon name="terminal" /></ButtonIcon><ButtonLabel>View logs</ButtonLabel>
               </ButtonRoot>
             </CardContent>

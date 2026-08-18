@@ -35,6 +35,7 @@ describe('MemoryStorageAdapter', () => {
     ]);
 
     const results = await storage.searchVectors({
+      tenantId: 'tenant-a',
       embedding: [1, 0],
       containerTags: ['scope:a'],
       filters: { kind: 'note' },
@@ -46,11 +47,47 @@ describe('MemoryStorageAdapter', () => {
     expect(results[0]).toMatchObject({ tenantId: 'tenant-a', content: 'visible' });
     results[0]!.content = 'mutated outside storage';
     await expect(storage.searchVectors({
+      tenantId: 'tenant-a',
       embedding: [1, 0],
       containerTags: ['scope:a'],
       filters: { kind: 'note' },
       topK: 1,
     })).resolves.toEqual([expect.objectContaining({ content: 'visible' })]);
+  });
+
+  it('enforces tenant isolation even when records share the same container tag', async () => {
+    const storage = new MemoryStorageAdapter();
+    await storage.insertMemories([
+      {
+        tenantId: 'tenant-a',
+        containerTags: ['shared'],
+        content: 'tenant a memory',
+        embedding: [1, 0],
+      },
+      {
+        tenantId: 'tenant-b',
+        containerTags: ['shared'],
+        content: 'tenant b memory',
+        embedding: [1, 0],
+      },
+    ]);
+
+    await expect(storage.searchVectors({
+      tenantId: 'tenant-a',
+      embedding: [1, 0],
+      containerTags: ['shared'],
+      topK: 10,
+    })).resolves.toEqual([
+      expect.objectContaining({ tenantId: 'tenant-a', content: 'tenant a memory' }),
+    ]);
+    await expect(storage.searchVectors({
+      tenantId: 'tenant-a',
+      embedding: [1, 0],
+      containerTags: [],
+      topK: 10,
+    })).resolves.toEqual([
+      expect.objectContaining({ tenantId: 'tenant-a', content: 'tenant a memory' }),
+    ]);
   });
 
   it('matches nested JSON containment and deep-clones metadata in both directions', async () => {
@@ -66,6 +103,7 @@ describe('MemoryStorageAdapter', () => {
     inserted!.metadata.profile = { roles: [], region: 'mutated-again' };
 
     const first = await storage.searchVectors({
+      tenantId: 'default',
       embedding: [1, 0],
       containerTags: ['scope:a'],
       filters: { profile: { roles: ['auditor'], region: 'in-south' } },
@@ -74,6 +112,7 @@ describe('MemoryStorageAdapter', () => {
     expect(first).toHaveLength(1);
     (first[0]!.metadata.profile as { region: string }).region = 'outside';
     await expect(storage.searchVectors({
+      tenantId: 'default',
       embedding: [1, 0],
       containerTags: ['scope:a'],
       filters: { profile: { region: 'in-south' } },
@@ -87,12 +126,12 @@ describe('MemoryStorageAdapter', () => {
       { id: 'duplicate', embedding: [1, 0] },
       { id: 'duplicate', embedding: [1, 0] },
     ])).rejects.toThrow(/already exists/);
-    await expect(storage.searchVectors({ embedding: [1, 0], containerTags: [], topK: 10 })).resolves.toEqual([]);
+    await expect(storage.searchVectors({ tenantId: 'default', embedding: [1, 0], containerTags: [], topK: 10 })).resolves.toEqual([]);
   });
 
   it('excludes dimension-mismatched embeddings when no threshold is supplied', async () => {
     const storage = new MemoryStorageAdapter();
     await storage.insertMemories([{ id: 'wrong-dimension', embedding: [1, 0, 0] }]);
-    await expect(storage.searchVectors({ embedding: [1, 0], containerTags: [], topK: 10 })).resolves.toEqual([]);
+    await expect(storage.searchVectors({ tenantId: 'default', embedding: [1, 0], containerTags: [], topK: 10 })).resolves.toEqual([]);
   });
 });

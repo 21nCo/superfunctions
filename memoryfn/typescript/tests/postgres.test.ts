@@ -50,6 +50,7 @@ runIfDb('PostgresAdapter Integration', () => {
 
     // Search close to A
     const results = await adapter.searchVectors({
+      tenantId: 't1',
       embedding: [0.9, 0.1, 0],
       containerTags: ['c1'],
       topK: 1

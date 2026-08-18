@@ -23,7 +23,7 @@ import {
 } from '../../src/lib/components/view-models';
 
 describe('administration API boundary', () => {
-  it('propagates the complete tenant scope without retaining legacy aliases', () => {
+  it('propagates the complete tenant scope and canonicalizes the installation root', () => {
     const scope = new URLSearchParams({
       organization: 'org-1',
       workspaceId: 'ws-1',
@@ -33,10 +33,19 @@ describe('administration API boundary', () => {
       region: 'ap-south-1',
     });
     expect(withAdminScope('/api/admin/v1/overview?limit=10', scope)).toBe(
-      '/api/admin/v1/overview?limit=10&organizationId=org-1&workspaceId=ws-1&projectId=project-1&environmentId=production&namespace=primary&region=ap-south-1'
+      '/api/admin/v1/overview?limit=10&installationId=org-1&workspaceId=ws-1&projectId=project-1&environmentId=production&namespace=primary&region=ap-south-1'
     );
     expect(scopedConsoleHref('/modules/cifn', scope)).toBe(
-      '/modules/cifn?organizationId=org-1&workspaceId=ws-1&projectId=project-1&environmentId=production&namespace=primary&region=ap-south-1'
+      '/modules/cifn?installationId=org-1&workspaceId=ws-1&projectId=project-1&environmentId=production&namespace=primary&region=ap-south-1'
+    );
+  });
+
+  it('preserves an explicitly selected canonical installation across navigation', () => {
+    const scope = new URLSearchParams({
+      installationId: 'install-2', workspaceId: 'ws-2', projectId: 'project-2', environmentId: 'prod-2',
+    });
+    expect(scopedConsoleHref('/modules/cifn', scope)).toBe(
+      '/modules/cifn?installationId=install-2&workspaceId=ws-2&projectId=project-2&environmentId=prod-2'
     );
   });
 
@@ -52,14 +61,14 @@ describe('administration API boundary', () => {
       '/modules/authfn?organizationId=old-org&workspaceId=old-workspace&projectId=old-project&environmentId=old-environment&namespace=tenant-a&region=us-east-1',
       'organization',
       'new-org'
-    )).toBe('/modules/authfn?organizationId=new-org');
+    )).toBe('/modules/authfn?installationId=new-org');
   });
 
   it('scopes confirmation and action requests to the same four-level context', () => {
     const scope = new URLSearchParams({
       organizationId: 'org-1', workspaceId: 'ws-1', projectId: 'project-1', environmentId: 'prod',
     });
-    const suffix = '?organizationId=org-1&workspaceId=ws-1&projectId=project-1&environmentId=prod';
+    const suffix = '?installationId=org-1&workspaceId=ws-1&projectId=project-1&environmentId=prod';
     expect(scopedConsoleHref('/api/admin/v1/confirmations', scope)).toBe(`/api/admin/v1/confirmations${suffix}`);
     expect(scopedConsoleHref('/api/admin/v1/modules/sendfn/messages/send', scope)).toBe(`/api/admin/v1/modules/sendfn/messages/send${suffix}`);
   });
@@ -147,7 +156,7 @@ describe('administration API boundary', () => {
     expect(safeAdminDownloadHref('https://storage.example.test/signed', { signedExternal: true })).toBe('https://storage.example.test/signed');
     expect(safeAdminDownloadHref('/api/admin/v1/openapi.json', {
       scope: new URLSearchParams({ organizationId: 'org-1', environmentId: 'prod' }),
-    })).toBe('/api/admin/v1/openapi.json?organizationId=org-1&environmentId=prod');
+    })).toBe('/api/admin/v1/openapi.json?installationId=org-1&environmentId=prod');
     expect(safeAdminDownloadHref('https://storage.example.test/signed?token=one', {
       signedExternal: true,
       scope: new URLSearchParams({ organizationId: 'org-1' }),

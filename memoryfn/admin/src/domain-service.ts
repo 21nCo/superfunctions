@@ -75,7 +75,7 @@ export function createMemoryFnDomainAdminService(
     async searchMemories(input, context) {
       const { tenantId, scopeTag } = assertScope(options, context);
       const memory = await resolveMemory(options, context);
-      const result = await memory.search({ ...input, containerTags: [scopeTag] });
+      const result = await memory.search({ ...input, tenantId, containerTags: [scopeTag] });
       const scoped = result.results.filter((item) => isInScope(item, tenantId, scopeTag));
       return {
         items: scoped.map(outwardMemory),

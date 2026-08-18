@@ -8,12 +8,23 @@ import type {
 
 export const ADMIN_API_PREFIX = '/api/admin/v1';
 export const ADMIN_SCOPE_QUERY_KEYS = [
+  'installationId',
   'organizationId',
   'workspaceId',
   'projectId',
   'environmentId',
   'namespace',
   'region',
+] as const;
+
+const ADMIN_SCOPE_HIERARCHY = [
+  {
+    key: 'installationId',
+    aliases: ['installationId', 'installation', 'organizationId', 'organization'],
+  },
+  { key: 'workspaceId', aliases: ['workspaceId', 'workspace'] },
+  { key: 'projectId', aliases: ['projectId', 'project'] },
+  { key: 'environmentId', aliases: ['environmentId', 'environment'] },
 ] as const;
 
 export type AdminScopeQueryKey = (typeof ADMIN_SCOPE_QUERY_KEYS)[number];
@@ -96,19 +107,21 @@ export type AdminApiResult<T> =
 export function withAdminScope(path: string, scope?: URLSearchParams): string {
   if (!scope) return path;
   const url = new URL(path, 'http://superconsole.local');
-  const hierarchy = ['organizationId', 'workspaceId', 'projectId', 'environmentId'] as const;
-  const explicitBoundary = hierarchy.findIndex((key) => {
-    const legacyKey = key.slice(0, -2);
-    return url.searchParams.has(key) || url.searchParams.has(legacyKey);
-  });
-  for (const key of ADMIN_SCOPE_QUERY_KEYS) {
-    const legacyKey = key.endsWith('Id') ? key.slice(0, -2) : undefined;
-    if (url.searchParams.has(key) || (legacyKey && url.searchParams.has(legacyKey))) continue;
-    const hierarchyIndex = hierarchy.indexOf(key as (typeof hierarchy)[number]);
-    if (explicitBoundary >= 0 && hierarchyIndex > explicitBoundary) continue;
-    if (explicitBoundary >= 0 && (key === 'namespace' || key === 'region')) continue;
-    const value = scope.get(key) ?? (legacyKey ? scope.get(legacyKey) : null);
+  const explicitBoundary = ADMIN_SCOPE_HIERARCHY.findIndex(({ aliases }) =>
+    aliases.some((alias) => url.searchParams.has(alias))
+  );
+  for (const [index, { key, aliases }] of ADMIN_SCOPE_HIERARCHY.entries()) {
+    if (aliases.some((alias) => url.searchParams.has(alias))) continue;
+    if (explicitBoundary >= 0 && index > explicitBoundary) continue;
+    const value = aliases.map((alias) => scope.get(alias)).find(Boolean);
     if (value) url.searchParams.set(key, value);
+  }
+  if (explicitBoundary < 0) {
+    for (const key of ['namespace', 'region'] as const) {
+      if (url.searchParams.has(key)) continue;
+      const value = scope.get(key);
+      if (value) url.searchParams.set(key, value);
+    }
   }
   return `${url.pathname}${url.search}${url.hash}`;
 }
@@ -124,8 +137,13 @@ export function switchAdminContextHref(
 ): string {
   const url = new URL(href, 'http://superconsole.local');
   const hierarchy = ['organization', 'workspace', 'project', 'environment'] as const;
-  url.searchParams.set(`${level}Id`, value);
-  url.searchParams.delete(level);
+  if (level === 'organization') {
+    for (const alias of ADMIN_SCOPE_HIERARCHY[0].aliases) url.searchParams.delete(alias);
+    url.searchParams.set('installationId', value);
+  } else {
+    url.searchParams.set(`${level}Id`, value);
+    url.searchParams.delete(level);
+  }
   for (const dependent of hierarchy.slice(hierarchy.indexOf(level) + 1)) {
     url.searchParams.delete(`${dependent}Id`);
     url.searchParams.delete(dependent);

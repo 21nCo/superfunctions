@@ -4,6 +4,7 @@ export interface StorageAdapter {
   insertMemories(memories: Partial<Memory>[]): Promise<Memory[]>;
   insertRelationships(relationships: Partial<MemoryRelationship>[]): Promise<MemoryRelationship[]>;
   searchVectors(params: {
+    tenantId?: string;
     embedding: number[];
     containerTags: string[];
     filters?: Record<string, any>;

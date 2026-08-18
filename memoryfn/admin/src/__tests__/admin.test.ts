@@ -136,6 +136,7 @@ describe('@memoryfn/admin', () => {
       content: 'alpha scoped',
     }, context);
     const stored = await storage.searchVectors({
+      tenantId: 'sfn-scope:v1:project_1:environment_1:tenant_1:in-south',
       embedding: [1, 0],
       containerTags: [],
       topK: 10,
@@ -155,6 +156,7 @@ describe('@memoryfn/admin', () => {
       scope: { ...context.scope, projectId: 'project_2' },
     })).rejects.toMatchObject({ code: 'forbidden' });
     await expect(storage.searchVectors({
+      tenantId: 'sfn-scope:v1:project_1:environment_1:tenant_1:in-south',
       embedding: [1, 0],
       containerTags: [],
       topK: 10,
