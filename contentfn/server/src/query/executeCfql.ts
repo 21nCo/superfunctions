@@ -19,6 +19,7 @@ export interface ExecuteCfqlConfig {
   db: Adapter;
   maxQueryLimit?: number;
   maxExpandDepth?: number;
+  maxFilterDepth?: number;
 }
 
 function matchesFilter(doc: ContentfnDocument, filter: CfqlFilter | undefined): boolean {
@@ -161,7 +162,7 @@ export async function executeCfql(
   config: ExecuteCfqlConfig,
   query: CfqlQuery
 ): Promise<ContentfnEnvelope<CfqlResultPage>> {
-  const validation = validateCfql(query);
+  const validation = validateCfql(query, { maxFilterDepth: config.maxFilterDepth });
   if (!validation.ok) {
     return validation as ContentfnEnvelope<CfqlResultPage>;
   }

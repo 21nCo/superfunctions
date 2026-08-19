@@ -45,6 +45,7 @@
 
 | Function | Description | Packages |
 | --- | --- | --- |
+| [Super Console](./superconsole) | Self-hosted, UIFn-powered operator control plane for an explicitly selected set of Superfunctions, with one capability registry projected to UI, REST/OpenAPI, TypeScript, and McpFn. | `superconsole` · `@superfunctions/admin` · function-owned `@*fn/admin` packages |
 | [hostFn](./hostfn) | Hosting and deployment tooling for projects, environments and providers. | [npm](https://www.npmjs.com/package/hostfn) |
 | [extFn](./extfn) | Cross-framework extension development with hot reload, bundling, scanning and publishing. | [npm](https://www.npmjs.com/org/extfn) |
 | [apiFn](./apifn) | API design, exploration, testing and documentation tooling. | [npm](https://www.npmjs.com/org/apifn) |

@@ -2,15 +2,11 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 const plugFnCore = fileURLToPath(new URL('./src/index.ts', import.meta.url));
-const oauthProviders = fileURLToPath(
-  new URL('./node_modules/@superfunctions/oauth-providers/dist/index.js', import.meta.url),
-);
 
 export default defineConfig({
   resolve: {
     alias: {
       plugfn: plugFnCore,
-      '@superfunctions/oauth-providers': oauthProviders,
     },
   },
   test: {

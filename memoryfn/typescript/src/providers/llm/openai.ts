@@ -33,7 +33,9 @@ export class OpenAILLM implements LLMProvider {
       ],
       temperature: this.temperature,
       max_tokens: this.maxTokens,
-      response_format: { type: 'json_object' }
+      response_format: schema
+        ? { type: 'json_schema', json_schema: { name: 'memoryfn_output', strict: true, schema } }
+        : { type: 'json_object' }
     });
 
     const content = response.choices[0].message.content || '{}';

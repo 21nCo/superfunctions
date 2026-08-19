@@ -55,6 +55,19 @@ document.getElementById('feedback-btn').onclick = () => {
 
 ## Advanced Usage
 
+## Self-hosted operator API
+
+The `userfn/operator` export is the authoritative server-side boundary for UserFn administration. `UserFnOperatorService` accepts an injected `UserFnOperatorStore`, so self-hosted installations can use durable database persistence while retaining the same typed service. All records are keyed by the exact installation/workspace/project/environment scope.
+
+```typescript
+import { UserFnOperatorService } from "userfn/operator";
+
+const users = new UserFnOperatorService(durableStore);
+await users.setFlagEnabled(scope, "new-ui", true);
+```
+
+`MemoryUserFnOperatorStore` is intended for tests and single-process development. `@userfn/admin` exposes the operator service through the shared Super Console, REST/OpenAPI, SDK, and MCP contracts; customer-facing evaluation and rendering remain in `UserFnClient`.
+
 ### Segments
 Define segments in your configuration (loaded from server):
 ```typescript

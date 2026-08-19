@@ -1,8 +1,14 @@
 import type { AuthProvider } from '@superfunctions/auth';
 import { wrapWithSchema } from '@superfunctions/db';
 import { createPluginRunner } from './plugin-runner.js';
-import { createAuthFnRouter } from './http/router.js';
-import { authenticateRequest } from './core/sessions.js';
+import { cookieNamesForRequest, createAuthFnRouter } from './http/router.js';
+import {
+  assertValidCsrf,
+  authenticateRequest,
+  getCookieSessionState,
+  requireCookieSession,
+  revokeSessionById
+} from './core/sessions.js';
 import { getSchema } from './schema.js';
 import { createAuthFnOpenApiDocument } from './openapi.js';
 import type {
@@ -10,7 +16,7 @@ import type {
   AuthFnInstance,
   AuthFnSession
 } from './types.js';
-import { AuthFnConfigError } from './types.js';
+import { AuthFnConfigError, AuthFnUnauthenticatedError } from './types.js';
 
 export type * from './plugin-types.js';
 export type * from './types.js';
@@ -221,6 +227,25 @@ export function createAuthFn(config: AuthFnConfig): AuthFnInstance {
   const instance: AuthFnInstance = {
     router,
     provider,
+    authorizeMutation: async (request) => {
+      const cookieState = await getCookieSessionState(resolvedConfig, request);
+      // Cookie credential presence wins even when Authorization is also sent:
+      // an expired/revoked/invalid cookie must not become a CSRF bypass.
+      if (cookieState.sessionToken) {
+        const authenticated = cookieState.session && cookieState.sessionRecord
+          ? cookieState
+          : await requireCookieSession(resolvedConfig, request);
+        assertValidCsrf(request, authenticated);
+        return authenticated.session!;
+      }
+      const session = await authenticateRequest(resolvedConfig, request);
+      if (!session) throw new AuthFnUnauthenticatedError();
+      return session;
+    },
+    revokeSession: async (sessionId, options) => {
+      await revokeSessionById(resolvedConfig, sessionId, options);
+    },
+    cookieNamesForRequest: async (request) => cookieNamesForRequest(resolvedConfig, request),
     getSchema: () => schema
   };
 

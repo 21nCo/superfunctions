@@ -1,5 +1,9 @@
 # ApiFn
 
+## Operator administration
+
+`@apifn/admin` is an optional Super Console capability backed by a project-scoped `ApiFnOperatorStore`. It validates and versions OpenAPI documents with `@apifn/core`, compares candidate contracts, and manages non-secret API environment URLs. Production deployments must inject a durable store; the included memory store is intended for tests and local self-hosting only.
+
 ApiFn is a code-first, self-hosted API development toolkit. Generate OpenAPI specs from your router, diff them for breaking changes, run collection-based test suites, mock endpoints, embed interactive API docs, and gate it all in CI — without leaving your codebase.
 
 Your router is the source of truth: introspect it into OpenAPI 3.1, then drive validation, diffing, testing, mocking, snippets, and documentation from the same spec.
@@ -117,3 +121,14 @@ apifn test .apifn/collection --env development --reporter json
 ## License
 
 MIT
+
+## Operator administration
+
+`@apifn/admin` is ApiFn's optional Super Console capability. Applications inject
+a durable `ApiFnOperatorStore`; the package has no default backend. Specification
+registration and comparison use `@apifn/core` parsing, validation, and diffing.
+
+Specifications and environments are isolated by installation, workspace,
+project, and optional environment. Raw OpenAPI documents are write-only through
+the admin transport, while typed metadata and redacted diff summaries remain
+available to Console, REST, SDK, and MCP consumers.

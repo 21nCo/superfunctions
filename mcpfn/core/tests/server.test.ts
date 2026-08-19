@@ -61,6 +61,50 @@ describe("McpFnServer", () => {
     });
   });
 
+  it("filters tools per request and makes hidden calls indistinguishable from unknown tools", async () => {
+    const invoked: string[] = [];
+    const registry = new McpFnRegistry<{ permissions: readonly string[] }>()
+      .register({
+        name: "visible",
+        description: "Visible to readers.",
+        inputSchema: { type: "object" },
+        metadata: { permission: "records.read" },
+        handler: async () => { invoked.push("visible"); return structuredResult({ ok: true }); },
+      })
+      .register({
+        name: "hidden",
+        description: "Hidden from readers.",
+        inputSchema: { type: "object" },
+        metadata: { permission: "records.delete" },
+        handler: async () => { invoked.push("hidden"); return structuredResult({ ok: true }); },
+      });
+    const server = createMcpFnServer({
+      info: { name: "visibility", version: "1.0.0" },
+      registry,
+      context: () => ({ permissions: ["records.read"] }),
+      toolVisibility: ({ tool, context }) =>
+        context.permissions.includes(String(tool._meta?.permission)),
+    });
+    const client = new Client(
+      { name: "visibility-client", version: "1.0.0" },
+      { capabilities: {} },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+
+    expect((await client.listTools()).tools.map(({ name }) => name)).toEqual(["visible"]);
+    await expect(client.callTool({ name: "hidden" })).rejects.toMatchObject({ code: -32601 });
+    await expect(client.callTool({ name: "missing" })).rejects.toMatchObject({ code: -32601 });
+    expect(invoked).toEqual([]);
+    await expect(client.callTool({ name: "visible" })).resolves.toMatchObject({
+      structuredContent: { ok: true },
+    });
+    expect(invoked).toEqual(["visible"]);
+    expect(server.manifest().tools.map(({ name }) => name)).toEqual(["hidden", "visible"]);
+  });
+
   it("returns a tool error for invalid arguments without invoking the handler", async () => {
     let called = false;
     const registry = new McpFnRegistry().register({

@@ -23,7 +23,13 @@ describe("mdfn server", () => {
   });
 
   it("fails closed when durable storage lacks transaction support", () => {
-    expect(() => createMdfnService({ database: memoryAdapter(), authorize: () => true })).toThrowError("MDFN_TRANSACTIONAL_DATABASE_REQUIRED");
+    const database = memoryAdapter();
+    database.capabilities.transactions = {
+      ...database.capabilities.transactions,
+      supported: false,
+    };
+
+    expect(() => createMdfnService({ database, authorize: () => true })).toThrowError("MDFN_TRANSACTIONAL_DATABASE_REQUIRED");
   });
 
   it("persists editorial workflows, restores revisions, and compacts collaboration state", async () => {

@@ -13,6 +13,7 @@ import { webhookRegister, webhookList, webhookDelete } from "./storage/webhooks.
 import { enqueueForEvent, processWebhookQueue } from "./webhooks/deliver.js";
 import { exportDataset } from "./importExport/exportDataset.js";
 import { importDataset } from "./importExport/importDataset.js";
+import { executeCfql } from "./query/executeCfql.js";
 import { createRouter } from "./http/router.js";
 import { RealtimeServer, type AuthorizeFn } from "./realtime/server.js";
 import type { ContentfnEvent } from "./storage/events.js";
@@ -44,6 +45,7 @@ export interface ContentfnServer {
       get: (input: { dataset: string }) => ReturnType<typeof schemaGet>;
     };
     docs: {
+      list: (input: import("@contentfn/core").CfqlQuery) => ReturnType<typeof executeCfql>;
       create: (input: {
         dataset: string;
         id?: string;
@@ -201,6 +203,12 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
         get: (input) => schemaGet(storage, input),
       },
       docs: {
+        list: (input) => executeCfql({
+          db,
+          maxQueryLimit: limits.maxQueryLimit,
+          maxExpandDepth: limits.maxExpandDepth,
+          maxFilterDepth: limits.maxFilterDepth,
+        }, input),
         create: (input) => docCreate(storage, input),
         get: (input) => docGet(storage, input),
         delete: (input) => docDelete(storage, input),

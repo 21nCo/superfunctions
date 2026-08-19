@@ -42,7 +42,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const runStore = options.store ?? new MemoryStore();
   
   const queue = options.adapters?.queue ?? options.queue ?? new MemoryQueueClient();
-  const artifacts = options.adapters?.artifacts;
+  const artifactAdapter = options.adapters?.artifacts;
   const secFn = options.adapters?.secrets ?? options.secFn;
   const logs = options.adapters?.logs;
   const logClient = options.logClient;
@@ -275,15 +275,26 @@ export function createApp(options: CreateAppOptions = {}) {
     return c.json(success({ lines }));
   });
 
-  api.get('/runs/:runId/artifacts', (c) => {
+  api.get('/runs/:runId/artifacts', async (c) => {
     const runId = c.req.param('runId');
     const run = runStore.getRun(runId);
     if (!run) {
       return c.json(error('RUN_NOT_FOUND', `Run ${runId} not found`), 404);
     }
     const artifacts = runStore.getArtifacts(runId);
+    const projectedArtifacts = await Promise.all(artifacts.map(async (artifact) => {
+      const signedUrl = artifact.url
+        ?? (artifactAdapter?.getSignedUrl
+          ? await artifactAdapter.getSignedUrl(artifact.fileId, 300)
+          : undefined);
+      return {
+        name: artifact.name,
+        fileId: artifact.fileId,
+        ...(signedUrl ? { url: signedUrl } : {}),
+      };
+    }));
     return c.json(success({
-      artifacts: artifacts.map(a => ({ name: a.name, fileId: a.fileId, url: a.url })),
+      artifacts: projectedArtifacts,
     }));
   });
 

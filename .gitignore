@@ -11,6 +11,7 @@ build/
 *.tsbuildinfo
 **/*.js
 **/*.d.ts
+!superconsole/src/app.d.ts
 !apifn/docsfn/src/svelte/ApifnApiReference.svelte.d.ts
 **/*.d.ts.map
 **/*.js.map
@@ -32,6 +33,9 @@ datafn/swift-bridge/__tests__/**/*.d.ts.map
 
 # Logs
 logs
+# This is a SvelteKit route segment, not generated log output.
+!superconsole/src/routes/modules/cifn/runs/**/logs/
+!superconsole/src/routes/modules/cifn/runs/**/logs/**
 *.log
 npm-debug.log*
 yarn-debug.log*

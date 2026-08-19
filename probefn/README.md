@@ -14,6 +14,25 @@ The implementation spec for this repository lives under `.conduct/specs/2026-04-
 
 Core operation does not require a hosted Probefn service. Session orchestration, artifacts, design audits, baseline storage, report export, and auth profiles all live in the repository workspace.
 
+## Super Console Administration
+
+`@probefn/admin` mounts an explicitly configured repository and `ArtifactStore`
+at one exact installation/workspace/project/environment scope. Its REST, MCP,
+console, and TypeScript projections expose only the public local runtime APIs:
+
+- read, initialize, and transition a known session
+- capture event baselines and compute deltas
+- capture a checkpoint through a configured, already-authorized live source
+- export redacted JSON or Markdown reports
+- project repository-relative run and checkpoint paths
+
+The admin package intentionally does not advertise session enumeration, browser
+startup/cancellation, visual-baseline approval, flows, auth-profile mutation, or
+cloud control-plane operations because the current ProbeFn core has no matching
+scoped administration API for those features. Evidence capture and report export
+require confirmation and audit; bindings that overlap one artifact store are
+rejected to prevent cross-environment access.
+
 ## Quick Start
 
 ```bash

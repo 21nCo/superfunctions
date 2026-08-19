@@ -7,7 +7,7 @@ export function createMemoryRouter(memory: IMemoryFn) {
     {
       method: 'POST',
       path: '/v1/memories',
-      handler: async (req, ctx) => {
+      handler: async (_req, ctx) => {
         const body = await ctx.json();
         // Validate body (using Zod in a real implementation)
         const input = body as AddMemoryInput;
@@ -18,7 +18,7 @@ export function createMemoryRouter(memory: IMemoryFn) {
     {
       method: 'POST',
       path: '/v1/memories/search',
-      handler: async (req, ctx) => {
+      handler: async (_req, ctx) => {
         const body = await ctx.json();
         const input = body as SearchMemoryInput;
         const result = await memory.search(input);

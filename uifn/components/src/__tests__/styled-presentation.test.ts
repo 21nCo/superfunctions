@@ -41,4 +41,23 @@ describe('styled presentation contract', () => {
     expect(prefixed).toBeGreaterThanOrEqual(0);
     expect(standard).toBeGreaterThan(prefixed);
   });
+
+  it('sizes avatars through public UIFn size tokens', () => {
+    expect(sourceStyles).toContain('--uifn-avatar-size: 4rem');
+    expect(sourceStyles).toContain('inline-size: var(--uifn-avatar-size)');
+    expect(sourceStyles).toContain('[data-uifn-size="sm"], [data-uifn-size="icon-sm"]');
+    expect(sourceStyles).toContain('--uifn-avatar-size: var(--uifn-control-size-sm, 2rem)');
+    expect(sourceStyles).toContain('--uifn-avatar-size: var(--uifn-control-size-md, 2.5rem)');
+    expect(sourceStyles).toContain('--uifn-avatar-size: var(--uifn-control-size-lg, 3rem)');
+  });
+
+  it('positions every public Drawer side from the core data-side contract', () => {
+    for (const side of ['left', 'top', 'right', 'bottom']) {
+      expect(sourceStyles).toContain(`data-side="${side}"`);
+    }
+    expect(sourceStyles).toMatch(/part="positioner"\]\[data-side="left"\][\s\S]*?justify-content: flex-start/);
+    expect(sourceStyles).toMatch(/part="positioner"\]\[data-side="bottom"\][\s\S]*?align-items: flex-end/);
+    expect(sourceStyles).toMatch(/part="content"\]\[data-side="top"\][\s\S]*?border-block-end: 1px/);
+    expect(sourceStyles).toMatch(/part="content"\]\[data-side="bottom"\][\s\S]*?border-block-start: 1px/);
+  });
 });

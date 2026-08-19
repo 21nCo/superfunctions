@@ -27,6 +27,19 @@ hostfn status production
 hostfn logs production
 ```
 
+## Self-hosted operator API
+
+HostFn also exports `hostfn/operator` for server-side administration. `HostFnOperatorService` accepts an injected `HostFnOperatorStore` and `HostFnDeploymentExecutor`; production installations must supply durable persistence and an executor backed by their SSH/runtime boundary. Every target, deployment, domain, and variable key is owned by an exact installation/workspace/project/environment scope. Secret values are write-only.
+
+```typescript
+import { HostFnOperatorService } from "hostfn/operator";
+
+const host = new HostFnOperatorService(durableStore, sshExecutor);
+await host.deploy(scope, { targetId: "api", revision: "git:abc123" });
+```
+
+`MemoryHostFnOperatorStore` is a single-process reference implementation for tests and local development, not a production durability substitute. `@hostfn/admin` binds this API into Super Console, REST/OpenAPI, SDK, and MCP surfaces without moving deployment logic into the console.
+
 ---
 
 ## Table of Contents
@@ -1130,6 +1143,5 @@ hostfn --help
 ## License
 
 MIT
-
 
 

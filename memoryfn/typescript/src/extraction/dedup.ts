@@ -10,8 +10,9 @@ export class Deduplicator {
     this.threshold = threshold;
   }
 
-  async findDuplicate(embedding: number[], containerTags: string[]): Promise<Memory | null> {
+  async findDuplicate(tenantId: string, embedding: number[], containerTags: string[]): Promise<Memory | null> {
     const results = await this.storage.searchVectors({
+      tenantId,
       embedding,
       containerTags,
       threshold: this.threshold,

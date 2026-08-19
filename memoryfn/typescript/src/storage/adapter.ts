@@ -1,9 +1,10 @@
-import { Memory, MemoryRelationship, SearchMemoryInput, SearchMemoryResult } from '../core/types';
+import { Memory, MemoryRelationship } from '../core/types';
 
 export interface StorageAdapter {
   insertMemories(memories: Partial<Memory>[]): Promise<Memory[]>;
   insertRelationships(relationships: Partial<MemoryRelationship>[]): Promise<MemoryRelationship[]>;
   searchVectors(params: {
+    tenantId?: string;
     embedding: number[];
     containerTags: string[];
     filters?: Record<string, any>;

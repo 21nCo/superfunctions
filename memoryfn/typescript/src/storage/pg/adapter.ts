@@ -1,7 +1,7 @@
 import { StorageAdapter } from '../adapter';
-import { Memory, MemoryRelationship, SearchMemoryInput } from '../../core/types';
+import { Memory, MemoryRelationship } from '../../core/types';
 import { memories, memoryRelationships } from './schema';
-import { eq, and, sql, desc, inArray } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
 // We assume the DB passed is compatible with PostgresJsDatabase schema
@@ -68,13 +68,14 @@ export class PostgresAdapter implements StorageAdapter {
   }
 
   async searchVectors(params: {
+    tenantId?: string;
     embedding: number[];
     containerTags: string[];
     filters?: Record<string, any>;
     topK: number;
     threshold?: number;
   }): Promise<Memory[]> {
-    const { embedding, containerTags, topK, threshold } = params;
+    const { tenantId = 'default', embedding, containerTags, topK, threshold } = params;
 
     // pgvector cosine similarity operator is <=>
     // We want to sort by distance ascending (closest first)
@@ -90,7 +91,7 @@ export class PostgresAdapter implements StorageAdapter {
     .from(memories);
 
     // Build Where Clauses
-    const conditions = [];
+    const conditions = [eq(memories.tenantId, tenantId)];
 
     // Filter by container tags (overlap)
     // We want memory to have AT LEAST ONE of the requested tags? 

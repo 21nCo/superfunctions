@@ -64,6 +64,21 @@ const server = createMcpFnServer({
 });
 ```
 
+For tenant- or actor-specific discovery, use `toolVisibility`. McpFn applies
+the hook to both `tools/list` and `tools/call`; a hidden call returns the same
+protocol `MethodNotFound` response as an unknown tool. The static manifest
+continues to describe the complete server contract.
+
+```ts
+const server = createMcpFnServer({
+  info: { name: "admin", version: "1.0.0" },
+  registry,
+  context: (extra) => resolvePrincipal(extra.authInfo),
+  toolVisibility: ({ tool, context }) =>
+    context.permissions.includes(String(tool._meta?.permission)),
+});
+```
+
 Do not accept workspace, tenant, actor, or credential identifiers as tool arguments. The context factory receives the official SDK request metadata and runs before every tool call.
 
 Invalid input returns `MCPFN_INVALID_ARGUMENTS`; invalid declared output returns `MCPFN_INVALID_OUTPUT`; other handler failures return `MCPFN_TOOL_ERROR`. Error objects that already expose a string `code` keep it. `handleInvalidArguments` is available for existing domain packages that must map schema failures into a stable legacy envelope.

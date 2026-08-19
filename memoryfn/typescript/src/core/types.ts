@@ -89,6 +89,8 @@ export interface AddMemoryResult {
 
 export interface SearchMemoryInput {
   q: string;
+  /** Tenant boundary enforced by every storage adapter. Defaults to `default`. */
+  tenantId?: string;
   containerTags: string[];
   filters?: Record<string, any>;
   limit?: number; // topK
