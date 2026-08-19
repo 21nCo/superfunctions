@@ -55,7 +55,7 @@ async function seedItems(
     await Promise.all(
       Array.from({ length: end - start }, (_, j) => {
         const i = start + j;
-        return db.create({
+        return database.create({
           model: "item",
           data: {
             id: `item:${String(i).padStart(6, "0")}`,

@@ -249,6 +249,7 @@ describe("REL-003: Rolled-back step annotation", () => {
 describe("REL-002: Push change tracking failure propagation", () => {
   it("TV-REL-003: Change tracking failure makes mutation end up in errors", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
+    db.capabilities.transactions.supported = false;
     // Spy on change tracking: make recordChange always fail
     const recordChangeSpy = vi.spyOn(ChangeTrackingService.prototype, "recordChange")
       .mockRejectedValue(new Error("CAS failure"));
@@ -282,6 +283,7 @@ describe("REL-002: Push change tracking failure propagation", () => {
 
   it("TV-REL-004: Change tracking retry succeeds transparently", async () => {
     const db = memoryAdapter({ libraryNamespace: "datafn" });
+    db.capabilities.transactions.supported = false;
     let callCount = 0;
     const recordChangeSpy = vi.spyOn(ChangeTrackingService.prototype, "recordChange")
       .mockImplementation(async () => {
