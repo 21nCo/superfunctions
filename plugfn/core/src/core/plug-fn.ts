@@ -1,4 +1,5 @@
 import type { PlugFnConfig, MetricsOptions, PlugFnPrincipal } from '../types/config.js';
+import type { AuthSession } from '@superfunctions/auth';
 import { wrapWithSchema } from '@superfunctions/db';
 import type {
   ActionOptions,
@@ -21,6 +22,7 @@ import type { PlugFnSyncFetchResult, Provider } from '../types/provider.js';
 import type {
   PlugFnConnectionGrant,
   PlugFnConnectionOwner,
+  PlugFnActor,
   PlugFnProviderEvent,
   PlugFnProviderInstallation,
   PlugFnPersistenceSink,
@@ -56,11 +58,15 @@ import { AdapterWorkflowStorage } from '../storage/workflow-storage.js';
 import { ConsoleLogger } from '../utils/logger.js';
 import { validateEncryptionKey } from '../utils/crypto.js';
 import { getSchema } from '../schema.js';
+import { tenantMatches } from '../security/tenancy.js';
 
 /**
  * Main PlugFn SDK interface
  */
 export interface PlugFn {
+  /** Resolves only after persisted workflow triggers have been rehydrated. */
+  ready: Promise<void>;
+
   config: {
     auth: {
       authenticate(request: Request): Promise<PlugFnPrincipal | null>;
@@ -68,6 +74,7 @@ export interface PlugFn {
     baseUrl: string;
     integrations: Record<string, PlugFnConfig['integrations'][string]>;
     authorization?: PlugFnConfig['authorization'];
+    webhooks?: PlugFnConfig['webhooks'];
   };
 
   // Connection management
@@ -110,6 +117,7 @@ export interface PlugFn {
       getJob(id: string): Promise<PlugFnSyncJob | null>;
       listJobs(filters?: Record<string, unknown>, limit?: number): Promise<PlugFnSyncJob[]>;
       updateJob(id: string, updates: UpdateSyncJobProgressInput): Promise<PlugFnSyncJob>;
+      cancelJob(id: string): Promise<PlugFnSyncJob>;
       completeJob(id: string, updates?: Omit<UpdateSyncJobProgressInput, 'status' | 'error'>): Promise<PlugFnSyncJob>;
       failJob(id: string, error: string): Promise<PlugFnSyncJob>;
       processQueued(options?: PlugFnSyncWorkerOptions): Promise<PlugFnSyncWorkerResult>;
@@ -223,11 +231,7 @@ export interface PlugFnSyncRunOptions {
   checkpoint?: unknown;
   maxPages?: number;
   metadata?: Record<string, unknown>;
-  actor?: {
-    userId: string;
-    tenantId?: string;
-    organizationId?: string;
-  };
+  actor?: PlugFnActor;
 }
 
 export interface PlugFnSyncQueueOptions extends PlugFnSyncRunOptions {
@@ -236,11 +240,13 @@ export interface PlugFnSyncQueueOptions extends PlugFnSyncRunOptions {
 
 export interface PlugFnSyncWorkerOptions {
   limit?: number;
+  leaseMs?: number;
 }
 
 export interface PlugFnSyncWorkerResult {
   processed: number;
   completed: number;
+  cancelled: number;
   failed: number;
   jobs: PlugFnSyncJob[];
 }
@@ -249,6 +255,7 @@ export interface PlugFnWebhookDeliveryWorkerOptions {
   limit?: number;
   maxAttempts?: number;
   baseDelayMs?: number;
+  leaseMs?: number;
 }
 
 export interface PlugFnWebhookDeliveryWorkerResult {
@@ -262,6 +269,10 @@ export interface PlugFnWebhookDeliveryWorkerResult {
 export type PlugFnWebhookDeliveryHandler = (input: {
   delivery: PlugFnWebhookDelivery;
   receipt: PlugFnWebhookReceipt;
+  provider: string;
+  event: string;
+  headers: Record<string, string>;
+  rawBody: Uint8Array;
 }) => Promise<void> | void;
 
 /**
@@ -308,7 +319,8 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     config.baseUrl,
     config.encryptionKey,
     logger,
-    oauthFlowDependencies
+    oauthFlowDependencies,
+    config.authorization?.authorizeConnection
   );
 
   const actionExecutor = new ActionExecutor(
@@ -322,28 +334,59 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       enableLogging: true,
       enableMetrics: true,
       database,
+      cacheStore: config.cache?.store ?? config.cacheStore,
+      cacheTtl: config.cache?.ttl ?? config.cache?.defaultTTL,
+      cacheKeyPrefix: config.cache?.keyPrefix,
+      respectProviderLimits: config.rateLimit?.respectProviderLimits,
+      globalRateLimit: config.rateLimit?.global,
     }
   );
 
-  const webhookHandler = new WebhookHandler(providerRegistry, logger);
-
-  const workflowEngine = new WorkflowEngine(workflowStorage, webhookHandler, logger);
-  void workflowEngine.rehydrateEnabledTriggers().catch((error) => {
-    logger.error('PlugFn workflow trigger rehydration failed', { error });
+  const webhookHandler = new WebhookHandler(providerRegistry, logger, {
+    verifySignatures: config.webhooks?.verifySignatures,
   });
+
+  const workflowEngine = new WorkflowEngine(
+    workflowStorage,
+    webhookHandler,
+    logger,
+    config.workflows?.runtime
+  );
+  let readyAttempt: Promise<void> | undefined;
+  const ensureReady = (): Promise<void> => {
+    if (!readyAttempt) {
+      const attempt = workflowEngine.rehydrateEnabledTriggers().then((result) => {
+        if (result.failed > 0) {
+          throw new Error(`failed to rehydrate ${result.failed} workflow trigger(s)`);
+        }
+      });
+      readyAttempt = attempt;
+      void attempt.catch((error) => {
+        if (readyAttempt === attempt) {
+          readyAttempt = undefined;
+        }
+        logger.error('PlugFn workflow trigger rehydration failed', { error });
+      });
+    }
+    return readyAttempt!;
+  };
+  void ensureReady();
 
   // Event handlers
   const eventHandlers = new Map<string, Set<(event: any) => void>>();
   const persistenceSinks = new Map<string, PlugFnPersistenceSink>();
-  let proxyApi!: PlugFn;
 
   // Create the main API
   const api: PlugFn = {
+    get ready() {
+      return ensureReady();
+    },
     config: {
       auth: normalizedAuthProvider,
       baseUrl: config.baseUrl,
       integrations: config.integrations,
       authorization: config.authorization,
+      webhooks: config.webhooks,
     },
 
     // Connection management
@@ -384,6 +427,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         getJob: (id) => runtimeStorage.getSyncJob(id),
         listJobs: (filters, limit) => runtimeStorage.listSyncJobs(filters, limit),
         updateJob: (id, updates) => runtimeStorage.updateSyncJob(id, updates),
+        cancelJob: (id) => runtimeStorage.cancelSyncJob(id),
         completeJob: (id, updates) => runtimeStorage.completeSyncJob(id, updates),
         failJob: (id, error) => runtimeStorage.failSyncJob(id, error),
         processQueued: (options) => processQueuedSyncJobs(options),
@@ -501,26 +545,45 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     return executeQueuedSyncJob(job);
   }
 
+  async function assertSyncConnectionAuthorized(
+    connection: Connection,
+    actor: PlugFnActor
+  ): Promise<void> {
+    if (await connectionManager.canActorAccessConnection(connection, actor, 'sync')) {
+      return;
+    }
+
+    const tenantMismatch =
+      !config.authorization?.authorizeConnection &&
+      !tenantMatches(connection.tenantId, actor.tenantId);
+    throw new PlugFnRuntimeError(
+      'TENANT_ACCESS_DENIED',
+      tenantMismatch ? 'connection tenant mismatch' : 'connection owner mismatch',
+      403
+    );
+  }
+
   async function enqueueSyncJob(
     mode: PlugFnSyncJob['mode'],
     options: PlugFnSyncRunOptions
   ): Promise<PlugFnSyncJob> {
     const connection = await connectionManager.get(options.connectionId);
     if (connection.provider !== options.provider) {
-      throw {
-        code: 'VALIDATION_ERROR',
-        message: 'connection provider mismatch',
-        status: 400,
-      };
+      throw new PlugFnRuntimeError(
+        'VALIDATION_ERROR',
+        'connection provider mismatch',
+        400
+      );
     }
 
-    if (options.actor && !connectionMatchesActor(connection, options.actor.userId)) {
-      throw {
-        code: 'TENANT_ACCESS_DENIED',
-        message: 'connection owner mismatch',
-        status: 403,
-      };
+    if (options.actor) {
+      await assertSyncConnectionAuthorized(connection, options.actor);
     }
+
+    const persistedCheckpoint =
+      mode === 'incremental' && options.checkpoint === undefined
+        ? await runtimeStorage.getSyncCheckpoint(options.connectionId, options.resource)
+        : null;
 
     return runtimeStorage.createSyncJob({
       provider: options.provider,
@@ -529,7 +592,10 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       mode,
       owner: connectionToOwner(connection),
       cursor: options.cursor,
-      checkpoint: options.checkpoint,
+      checkpoint:
+        options.checkpoint !== undefined
+          ? options.checkpoint
+          : persistedCheckpoint?.checkpoint,
       metadata: {
         ...(options.metadata ?? {}),
         plugfnSync: {
@@ -544,16 +610,26 @@ export function plugFn(config: PlugFnConfig): PlugFn {
   async function processQueuedSyncJobs(
     options: PlugFnSyncWorkerOptions = {}
   ): Promise<PlugFnSyncWorkerResult> {
-    const queued = await runtimeStorage.claimQueuedSyncJobs(options.limit ?? 25);
+    const leaseMs = Math.max(30, options.leaseMs ?? 5 * 60 * 1000);
+    const queued = await runtimeStorage.claimQueuedSyncJobs(options.limit ?? 25, leaseMs);
     const jobs: PlugFnSyncJob[] = [];
     let completed = 0;
+    let cancelled = 0;
     let failed = 0;
 
     for (const job of queued) {
       try {
-        const completedJob = await executeSyncJob(job, { claimed: true });
-        jobs.push(completedJob);
-        completed += 1;
+        const processedJob = await executeSyncJob(job, { claimed: true, leaseMs });
+        if (processedJob.status === 'completed') {
+          completed += 1;
+        } else if (processedJob.status === 'cancelled') {
+          cancelled += 1;
+        } else if (processedJob.status === 'failed') {
+          failed += 1;
+        } else {
+          throw new Error(`Sync job ${processedJob.id} ended in ${processedJob.status}`);
+        }
+        jobs.push(processedJob);
       } catch {
         const updated = await runtimeStorage.getSyncJob(job.id);
         if (updated) {
@@ -566,44 +642,57 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     return {
       processed: queued.length,
       completed,
+      cancelled,
       failed,
       jobs,
     };
   }
 
   async function executeQueuedSyncJob(job: PlugFnSyncJob): Promise<PlugFnSyncJob> {
-    return executeSyncJob(job, { claimed: false });
+    return executeSyncJob(job, { claimed: false, leaseMs: 5 * 60 * 1000 });
   }
 
   async function executeSyncJob(
     job: PlugFnSyncJob,
-    options: { claimed: boolean }
+    options: { claimed: boolean; leaseMs: number }
   ): Promise<PlugFnSyncJob> {
-    const connection = await connectionManager.get(job.connectionId);
-    if (connection.provider !== job.provider) {
-      await runtimeStorage.failSyncJob(job.id, 'connection provider mismatch');
-      throw {
-        code: 'VALIDATION_ERROR',
-        message: 'connection provider mismatch',
-        status: 400,
-      };
-    }
-
-    const workerOptions = readSyncJobWorkerMetadata(job);
-    if (workerOptions.actor && !connectionMatchesActor(connection, workerOptions.actor.userId)) {
-      await runtimeStorage.failSyncJob(job.id, 'connection owner mismatch');
-      throw {
-        code: 'TENANT_ACCESS_DENIED',
-        message: 'connection owner mismatch',
-        status: 403,
-      };
-    }
-
+    let claimToken = job.claimToken;
     if (!options.claimed) {
-      await runtimeStorage.updateSyncJob(job.id, { status: 'running' });
+      claimToken = `direct:${job.id}:${Date.now()}`;
+      job = await runtimeStorage.updateSyncJob(job.id, { status: 'running', claimToken });
     }
+    if (!claimToken) throw syncJobClaimLostError(job.id);
+
+    let heartbeatError: unknown;
+    let heartbeatInFlight = false;
+    const renewClaim = async (): Promise<void> => {
+      if (heartbeatInFlight || heartbeatError) return;
+      heartbeatInFlight = true;
+      try {
+        if (!(await runtimeStorage.updateClaimedSyncJob(job.id, claimToken!, {}))) {
+          heartbeatError = syncJobClaimLostError(job.id);
+        }
+      } catch (error) { heartbeatError = error; }
+      finally { heartbeatInFlight = false; }
+    };
+    const heartbeatTimer = setInterval(() => { void renewClaim(); }, Math.max(10, Math.floor(options.leaseMs / 3)));
+    heartbeatTimer.unref?.();
 
     try {
+      const connection = await connectionManager.get(job.connectionId);
+      if (connection.provider !== job.provider) {
+        throw new PlugFnRuntimeError(
+          'VALIDATION_ERROR',
+          'connection provider mismatch',
+          400
+        );
+      }
+
+      const workerOptions = readSyncJobWorkerMetadata(job);
+      if (workerOptions.actor) {
+        await assertSyncConnectionAuthorized(connection, workerOptions.actor);
+      }
+
       const result = await executeSyncResource({
         providerRegistry,
         actionExecutor,
@@ -613,29 +702,43 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         resource: job.resource,
         mode: job.mode,
         userId: connection.userId,
+        tenantId: connection.tenantId ?? workerOptions.actor?.tenantId,
         sinkId: workerOptions.sinkId,
         cursor: job.cursor,
         checkpoint: job.checkpoint,
         maxPages: workerOptions.maxPages ?? 50,
-        onPage: async (progress) => {
-          await runtimeStorage.updateSyncJob(job.id, {
-            cursor: progress.cursor,
-            checkpoint: progress.checkpoint,
-            fetchedCount: progress.fetchedCount,
-            persistedCount: progress.persistedCount,
-            skippedCount: progress.skippedCount,
-          });
-          if (progress.checkpoint !== undefined) {
-            await runtimeStorage.upsertSyncCheckpoint({
-              provider: job.provider,
-              connectionId: job.connectionId,
-              resource: job.resource,
-              checkpoint: progress.checkpoint,
-            });
+        shouldContinue: async () => {
+          if (heartbeatError) throw heartbeatError;
+          const currentJob = await runtimeStorage.getSyncJob(job.id);
+          if (currentJob?.status === 'cancelled') return false;
+          if (currentJob?.status !== 'running' || currentJob.claimToken !== claimToken) {
+            throw syncJobClaimLostError(job.id);
           }
+          return true;
+        },
+        onPage: async (progress) => {
+          const updated = await runtimeStorage.checkpointClaimedSyncJob(
+            job.id, claimToken!, {
+              cursor: progress.cursor, checkpoint: progress.checkpoint,
+              fetchedCount: progress.fetchedCount, persistedCount: progress.persistedCount,
+              skippedCount: progress.skippedCount,
+            },
+            progress.checkpoint === undefined ? undefined : {
+              provider: job.provider, connectionId: job.connectionId,
+              resource: job.resource, checkpoint: progress.checkpoint,
+            }
+          );
+          if (!updated) throw syncJobClaimLostError(job.id);
         },
       });
 
+      clearInterval(heartbeatTimer);
+      if (heartbeatError) throw heartbeatError;
+      const completedJob = await runtimeStorage.completeSyncJob(job.id, {
+        cursor: result.cursor, checkpoint: result.checkpoint,
+        fetchedCount: result.fetchedCount, persistedCount: result.persistedCount,
+        skippedCount: result.skippedCount,
+      }, claimToken);
       if (result.checkpoint !== undefined) {
         await runtimeStorage.upsertSyncCheckpoint({
           provider: job.provider,
@@ -645,16 +748,34 @@ export function plugFn(config: PlugFnConfig): PlugFn {
         });
       }
 
-      return runtimeStorage.completeSyncJob(job.id, {
-        cursor: result.cursor,
-        checkpoint: result.checkpoint,
-        fetchedCount: result.fetchedCount,
-        persistedCount: result.persistedCount,
-        skippedCount: result.skippedCount,
-      });
+      return completedJob;
     } catch (error) {
-      await runtimeStorage.failSyncJob(job.id, error instanceof Error ? error.message : 'sync failed');
+      if (isSyncCancelledError(error)) {
+        const cancelledJob = await runtimeStorage.updateClaimedSyncJob(job.id, claimToken, {
+          status: 'cancelled',
+          error: undefined,
+        });
+        if (cancelledJob) return cancelledJob;
+        const currentJob = await runtimeStorage.getSyncJob(job.id);
+        if (currentJob?.status === 'cancelled') return currentJob;
+        throw syncJobClaimLostError(job.id);
+      }
+      const currentJob = await runtimeStorage.getSyncJob(job.id);
+      if (currentJob?.status === 'cancelled') return currentJob;
+      if (currentJob?.status !== 'running' || currentJob.claimToken !== claimToken) {
+        throw syncJobClaimLostError(job.id);
+      }
+      const failedJob = await runtimeStorage.failSyncJob(
+        job.id,
+        error instanceof Error ? error.message : 'sync failed',
+        claimToken
+      );
+      if (failedJob.status === 'cancelled') {
+        return failedJob;
+      }
       throw error;
+    } finally {
+      clearInterval(heartbeatTimer);
     }
   }
 
@@ -664,9 +785,12 @@ export function plugFn(config: PlugFnConfig): PlugFn {
   ): Promise<PlugFnWebhookDeliveryWorkerResult> {
     const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
     const baseDelayMs = Math.max(1000, options.baseDelayMs ?? 30_000);
+    const leaseMs = Math.max(30, options.leaseMs ?? 5 * 60 * 1000);
     const dueDeliveries = await runtimeStorage.claimWebhookDeliveriesForRetry(
       new Date(),
-      options.limit ?? 100
+      options.limit ?? 100,
+      undefined,
+      leaseMs
     );
     const deliveries: PlugFnWebhookDelivery[] = [];
     let succeeded = 0;
@@ -675,42 +799,133 @@ export function plugFn(config: PlugFnConfig): PlugFn {
 
     for (const delivery of dueDeliveries) {
       const attempt = delivery.attempts;
-      const receipt = await runtimeStorage.getWebhookReceipt(delivery.receiptId);
-      if (!receipt) {
-        const deadLetter = await runtimeStorage.updateWebhookDelivery(delivery.id, {
-          status: 'dead-lettered',
-          attempts: attempt,
-          error: 'webhook receipt not found',
-        });
-        deliveries.push(deadLetter);
-        deadLettered += 1;
+      const claimToken = delivery.claimToken;
+      if (!claimToken) {
+        failed += 1;
         continue;
       }
 
+      const updateClaimed = (updates: Partial<PlugFnWebhookDelivery>) =>
+        runtimeStorage.updateClaimedWebhookDelivery(delivery.id, claimToken, {
+          ...updates,
+          claimToken: undefined,
+        });
+      const receipt = await runtimeStorage.getWebhookReceipt(delivery.receiptId);
+      if (!receipt) {
+        const deadLetter = await updateClaimed({
+          status: 'dead-lettered',
+          attempts: attempt,
+          error: 'webhook receipt not found',
+          metadata: withoutWebhookReplayBody(delivery.metadata),
+        });
+        if (deadLetter) {
+          deliveries.push(deadLetter);
+          deadLettered += 1;
+        } else {
+          failed += 1;
+        }
+        continue;
+      }
+
+      const receiptDeliveries = await runtimeStorage.listWebhookDeliveries(receipt.id);
+      if (
+        receiptDeliveries.some(
+          (receiptDelivery) =>
+            receiptDelivery.id !== delivery.id &&
+            receiptDelivery.status === 'success' &&
+            receiptDelivery.sinkId === delivery.sinkId &&
+            receiptDelivery.handlerName === delivery.handlerName
+        )
+      ) {
+        const superseded = await updateClaimed({
+          status: 'dead-lettered',
+          attempts: attempt,
+          error: 'webhook receipt was already delivered successfully',
+          nextAttemptAt: undefined,
+          metadata: withoutWebhookReplayBody(delivery.metadata),
+        });
+        if (superseded) {
+          deliveries.push(superseded);
+          deadLettered += 1;
+        } else {
+          failed += 1;
+        }
+        continue;
+      }
+
+      let leaseLost = false;
+      let heartbeatInFlight: Promise<void> | undefined;
+      const heartbeat = () => {
+        if (heartbeatInFlight) return;
+        heartbeatInFlight = runtimeStorage
+          .updateClaimedWebhookDelivery(delivery.id, claimToken, {})
+          .then((renewed) => {
+            if (!renewed) leaseLost = true;
+          })
+          .catch(() => {
+            leaseLost = true;
+          })
+          .finally(() => {
+            heartbeatInFlight = undefined;
+          });
+      };
+      const heartbeatTimer = setInterval(heartbeat, Math.max(10, Math.floor(leaseMs / 3)));
+      const finishClaim = async (updates: Partial<PlugFnWebhookDelivery>) => {
+        clearInterval(heartbeatTimer);
+        await heartbeatInFlight;
+        if (leaseLost) return null;
+        return updateClaimed(updates);
+      };
+
       try {
-        await handler({ delivery, receipt });
-        const updated = await runtimeStorage.updateWebhookDelivery(delivery.id, {
+        if (webhookReplayBodyExpired(delivery)) {
+          throw new Error('webhook retry payload expired');
+        }
+        await handler({
+          delivery,
+          receipt,
+          provider: receipt.provider,
+          event: receipt.event,
+          headers: receipt.headersRedacted ?? {},
+          rawBody: decodeWebhookDeliveryBody(delivery),
+        });
+        const updated = await finishClaim({
           status: 'success',
           attempts: attempt,
+          metadata: withoutWebhookReplayBody(delivery.metadata),
         });
-        deliveries.push(updated);
-        succeeded += 1;
+        if (updated) {
+          deliveries.push(updated);
+          succeeded += 1;
+        } else {
+          failed += 1;
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'webhook delivery failed';
-        const status = attempt >= maxAttempts ? 'dead-lettered' : 'failed';
+        const status =
+          webhookReplayBodyExpired(delivery) || attempt >= maxAttempts
+            ? 'dead-lettered'
+            : 'failed';
         const nextAttemptAt =
           status === 'failed'
             ? new Date(Date.now() + baseDelayMs * 2 ** Math.max(0, attempt - 1))
             : undefined;
-        const updated = await runtimeStorage.updateWebhookDelivery(delivery.id, {
+        const updated = await finishClaim({
           status,
           attempts: attempt,
           error: errorMessage,
           nextAttemptAt,
+          ...(status === 'dead-lettered'
+            ? { metadata: withoutWebhookReplayBody(delivery.metadata) }
+            : {}),
         });
-        deliveries.push(updated);
-        if (status === 'dead-lettered') {
-          deadLettered += 1;
+        if (updated) {
+          deliveries.push(updated);
+          if (status === 'dead-lettered') {
+            deadLettered += 1;
+          } else {
+            failed += 1;
+          }
         } else {
           failed += 1;
         }
@@ -726,8 +941,32 @@ export function plugFn(config: PlugFnConfig): PlugFn {
     };
   }
 
+  function decodeWebhookDeliveryBody(delivery: PlugFnWebhookDelivery): Uint8Array {
+    const encoded = delivery.metadata?.rawBodyBase64;
+    if (typeof encoded !== 'string') {
+      return new Uint8Array();
+    }
+    return Buffer.from(encoded, 'base64');
+  }
+
+  function webhookReplayBodyExpired(delivery: PlugFnWebhookDelivery): boolean {
+    const expiresAt = delivery.metadata?.rawBodyExpiresAt;
+    return typeof expiresAt === 'string' && Date.parse(expiresAt) <= Date.now();
+  }
+
+  function withoutWebhookReplayBody(
+    metadata: Record<string, unknown> | undefined
+  ): Record<string, unknown> | undefined {
+    if (!metadata) return undefined;
+    return Object.fromEntries(
+      Object.entries(metadata).filter(
+        ([key]) => key !== 'rawBodyBase64' && key !== 'rawBodyExpiresAt'
+      )
+    );
+  }
+
   // Create dynamic provider proxies
-  proxyApi = new Proxy(api, {
+  const proxyApi = new Proxy(api, {
     get(target, prop: string) {
       // If property exists on target, return it
       if (prop in target) {
@@ -748,7 +987,7 @@ export function plugFn(config: PlugFnConfig): PlugFn {
       };
 
       // Add all actions
-      for (const [actionName, _action] of Object.entries(provider.actions)) {
+      for (const actionName of Object.keys(provider.actions)) {
         providerProxy[actionName] = async (options: ActionOptions) => {
           const result = await actionExecutor.execute(prop, actionName, options);
           if (!result.success) {
@@ -829,6 +1068,7 @@ async function executeSyncResource(input: {
   resource: string;
   mode: PlugFnSyncJob['mode'];
   userId: string;
+  tenantId?: string;
   sinkId?: string;
   cursor?: string;
   checkpoint?: unknown;
@@ -840,6 +1080,7 @@ async function executeSyncResource(input: {
     cursor?: string;
     checkpoint?: unknown;
   }) => Promise<void> | void;
+  shouldContinue?: () => Promise<boolean> | boolean;
 }): Promise<{
   fetchedCount: number;
   persistedCount: number;
@@ -870,10 +1111,15 @@ async function executeSyncResource(input: {
     };
   }
 
+  if (input.shouldContinue && !(await input.shouldContinue())) {
+    throw syncCancelledError();
+  }
+
   const result = await input.actionExecutor.execute(input.provider, fallbackAction, {
     userId: input.userId,
     connectionId: input.connectionId,
     params: {
+      tenantId: input.tenantId,
       mode: input.mode,
       checkpoint: input.checkpoint,
       cursor: input.cursor,
@@ -886,13 +1132,81 @@ async function executeSyncResource(input: {
   }
 
   const data = (result.data ?? {}) as Record<string, unknown>;
+  const fallbackItems = resolveFallbackSyncItems(data);
+  const fallbackSink = resolveFallbackSyncSink(input);
+  const persistedCount = fallbackSink
+    ? await persistFallbackSyncItems(fallbackSink, fallbackItems, input, fallbackAction)
+    : asNumber(data.upserted) ?? asNumber(data.persistedCount) ?? 0;
+
   return {
-    fetchedCount: asNumber(data.fetched) ?? asNumber(data.fetchedCount) ?? 0,
-    persistedCount: asNumber(data.upserted) ?? asNumber(data.persistedCount) ?? 0,
+    fetchedCount:
+      asNumber(data.fetched) ??
+      asNumber(data.fetchedCount) ??
+      asNumber(data.count) ??
+      fallbackItems?.length ??
+      0,
+    persistedCount,
     skippedCount: asNumber(data.skipped) ?? asNumber(data.skippedCount) ?? 0,
     checkpoint: data.checkpoint,
     cursor: typeof data.cursor === 'string' ? data.cursor : undefined,
   };
+}
+
+function resolveFallbackSyncSink(input: {
+  persistenceSinks: Map<string, PlugFnPersistenceSink>;
+  provider: string;
+  resource: string;
+  sinkId?: string;
+}): PlugFnPersistenceSink | undefined {
+  if (input.sinkId) {
+    const sink = input.persistenceSinks.get(input.sinkId);
+    if (!sink) {
+      throw new PlugFnRuntimeError(
+        'SYNC_SINK_NOT_FOUND',
+        `persistence sink ${input.sinkId} is not registered`,
+        404
+      );
+    }
+    return sink;
+  }
+
+  return [...input.persistenceSinks.values()].find((candidate) => {
+    return candidate.provider === input.provider && candidate.resource === input.resource;
+  });
+}
+
+async function persistFallbackSyncItems(
+  sink: PlugFnPersistenceSink,
+  items: unknown[] | undefined,
+  input: { provider: string; resource: string; connectionId: string },
+  fallbackAction: string
+): Promise<number> {
+  if (!items) {
+    throw new PlugFnRuntimeError(
+      'SYNC_FALLBACK_ITEMS_REQUIRED',
+      `fallback action ${input.provider}.${fallbackAction} must return items for persistence`,
+      500
+    );
+  }
+
+  for (const item of items) {
+    await persistSinkItem(sink, item, {
+      provider: input.provider,
+      resource: input.resource,
+      connectionId: input.connectionId,
+    });
+  }
+  return items.length;
+}
+
+function resolveFallbackSyncItems(data: Record<string, unknown>): unknown[] | undefined {
+  if (Array.isArray(data.items)) {
+    return data.items;
+  }
+  if (Array.isArray(data.messages)) {
+    return data.messages;
+  }
+  return undefined;
 }
 
 async function executeProviderSyncDefinition(input: {
@@ -913,6 +1227,7 @@ async function executeProviderSyncDefinition(input: {
     cursor?: string;
     checkpoint?: unknown;
   }) => Promise<void> | void;
+  shouldContinue?: () => Promise<boolean> | boolean;
 }): Promise<{
   fetchedCount: number;
   persistedCount: number;
@@ -920,6 +1235,14 @@ async function executeProviderSyncDefinition(input: {
   cursor?: string;
   checkpoint?: unknown;
 }> {
+  if (input.sinkId && !input.persistenceSinks.has(input.sinkId)) {
+    throw new PlugFnRuntimeError(
+      'SYNC_SINK_NOT_FOUND',
+      `persistence sink ${input.sinkId} is not registered`,
+      404
+    );
+  }
+
   let fetchedCount = 0;
   let persistedCount = 0;
   let skippedCount = 0;
@@ -928,6 +1251,10 @@ async function executeProviderSyncDefinition(input: {
   let pages = 0;
 
   while (pages < input.maxPages) {
+    if (input.shouldContinue && !(await input.shouldContinue())) {
+      throw syncCancelledError();
+    }
+
     pages += 1;
     const result: PlugFnSyncFetchResult = await input.syncDefinition.fetch({
       provider: input.provider,
@@ -938,11 +1265,16 @@ async function executeProviderSyncDefinition(input: {
       cursor,
     });
 
+    if (input.shouldContinue && !(await input.shouldContinue())) throw syncCancelledError();
+
     fetchedCount += result.items.length;
     checkpoint = result.checkpoint ?? checkpoint;
     cursor = result.cursor;
 
     const sinkId = input.sinkId ?? result.sinkId ?? input.syncDefinition.defaultSinkId;
+    if (sinkId && !input.persistenceSinks.has(sinkId)) {
+      throw new PlugFnRuntimeError('SYNC_SINK_NOT_FOUND', `persistence sink ${sinkId} is not registered`, 404);
+    }
     if (sinkId || input.persistenceSinks.size > 0) {
       const sink = sinkId
         ? input.persistenceSinks.get(sinkId)
@@ -952,6 +1284,7 @@ async function executeProviderSyncDefinition(input: {
 
       if (sink) {
         for (const item of result.items) {
+          if (input.shouldContinue && !(await input.shouldContinue())) throw syncCancelledError();
           const context: PlugFnSinkContext = {
             provider: input.provider,
             resource: input.resource,
@@ -996,6 +1329,40 @@ async function executeProviderSyncDefinition(input: {
   };
 }
 
+function syncCancelledError(): { code: string; message: string; status: number } {
+  return {
+    code: 'SYNC_CANCELLED',
+    message: 'sync job was cancelled',
+    status: 409,
+  };
+}
+
+function syncJobClaimLostError(jobId: string): PlugFnRuntimeError {
+  return new PlugFnRuntimeError('SYNC_JOB_CLAIM_LOST', `sync job ${jobId} claim is no longer owned by this worker`, 409);
+}
+
+class PlugFnRuntimeError extends Error {
+  readonly retryable = false;
+
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = 'PlugFnRuntimeError';
+  }
+}
+
+function isSyncCancelledError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'SYNC_CANCELLED'
+  );
+}
+
 function resolveSyncActionName(provider: Provider, resource: string): string | undefined {
   const candidates = [
     `${resource}.sync`,
@@ -1004,15 +1371,6 @@ function resolveSyncActionName(provider: Provider, resource: string): string | u
   ].filter((candidate): candidate is string => typeof candidate === 'string');
 
   return candidates.find((candidate) => candidate in provider.actions);
-}
-
-function connectionMatchesActor(connection: Connection, actorUserId: string): boolean {
-  return (
-    connection.userId === actorUserId ||
-    (connection.ownerKind === 'user' && connection.ownerId === actorUserId) ||
-    connection.installedByUserId === actorUserId ||
-    connection.delegatedToUserId === actorUserId
-  );
 }
 
 function readSyncJobWorkerMetadata(job: PlugFnSyncJob): {
@@ -1111,7 +1469,9 @@ function normalizeAuthProvider(configuredAuth: PlugFnConfig['auth']): {
   };
 }
 
-function normalizePrincipal(value: PlugFnPrincipal | string | null | undefined): PlugFnPrincipal | null {
+function normalizePrincipal(
+  value: PlugFnPrincipal | AuthSession | string | null | undefined
+): PlugFnPrincipal | null {
   if (!value) {
     return null;
   }
@@ -1120,8 +1480,33 @@ function normalizePrincipal(value: PlugFnPrincipal | string | null | undefined):
     return value.length > 0 ? { userId: value } : null;
   }
 
-  if (typeof value === 'object' && typeof value.userId === 'string' && value.userId.length > 0) {
-    return value;
+  if (
+    typeof value === 'object' &&
+    'userId' in value &&
+    typeof value.userId === 'string' &&
+    value.userId.length > 0
+  ) {
+    return value as PlugFnPrincipal;
+  }
+
+  const subject =
+    typeof value === 'object' && 'subject' in value
+      ? (value as Partial<AuthSession>).subject
+      : null;
+  if (
+    subject !== null &&
+    typeof subject === 'object' &&
+    typeof subject.actorId === 'string' &&
+    subject.actorId.length > 0
+  ) {
+    const session = value as AuthSession;
+    return {
+      userId: session.subject.actorId,
+      tenantId: session.subject.tenantId,
+      roles: session.resourceIds,
+      grants: session.scopes,
+      metadata: session.metadata,
+    };
   }
 
   return null;

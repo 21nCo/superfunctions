@@ -1,9 +1,21 @@
 """Slack provider implementation."""
 
 from typing import Any, Dict, Optional
+
 from pydantic import BaseModel, Field
 
-from ..types import Provider, AuthType
+from ..types import AuthType, Provider
+from ._shared import require_object_response
+
+
+def require_slack_response(value: Any) -> Dict[str, Any]:
+    """Validate Slack's HTTP-200 success envelope."""
+    payload = require_object_response(value)
+    if payload.get("ok") is not True:
+        error = payload.get("error")
+        detail = error if isinstance(error, str) and error else "unknown_error"
+        raise ValueError(f"Slack API request failed: {detail}")
+    return payload
 
 
 class SlackMessageParams(BaseModel):
@@ -33,7 +45,7 @@ class SlackUserParams(BaseModel):
 class SlackAction:
     """Slack action definition."""
 
-    def __init__(self, name: str, display_name: str, description: str):
+    def __init__(self, name: str, display_name: str, description: str) -> None:
         self.name = name
         self.display_name = display_name
         self.description = description
@@ -46,7 +58,7 @@ class SlackAction:
 class SlackChatPostMessageAction(SlackAction):
     """Post a message to Slack."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             name="chat.postMessage",
             display_name="Post Message",
@@ -57,7 +69,7 @@ class SlackChatPostMessageAction(SlackAction):
         """Post a message to Slack."""
         validated = SlackMessageParams(**params)
 
-        payload = {
+        payload: Dict[str, Any] = {
             "channel": validated.channel,
             "text": validated.text,
         }
@@ -70,13 +82,13 @@ class SlackChatPostMessageAction(SlackAction):
 
         response = await context.http.post("/chat.postMessage", json=payload)
 
-        return response
+        return require_slack_response(response)
 
 
 class SlackConversationsCreateAction(SlackAction):
     """Create a Slack channel."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             name="conversations.create",
             display_name="Create Channel",
@@ -95,13 +107,15 @@ class SlackConversationsCreateAction(SlackAction):
             },
         )
 
-        return response
+        return require_slack_response(response)
 
 
 class SlackUsersInfoAction(SlackAction):
     """Get Slack user information."""
 
-    def __init__(self):
+    idempotent = True
+
+    def __init__(self) -> None:
         super().__init__(
             name="users.info",
             display_name="Get User Info",
@@ -112,11 +126,9 @@ class SlackUsersInfoAction(SlackAction):
         """Get user information."""
         validated = SlackUserParams(**params)
 
-        response = await context.http.get(
-            "/users.info", params={"user": validated.user}
-        )
+        response = await context.http.get("/users.info", params={"user": validated.user})
 
-        return response
+        return require_slack_response(response)
 
 
 # Slack provider definition

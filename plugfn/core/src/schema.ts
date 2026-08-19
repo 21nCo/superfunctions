@@ -5,7 +5,7 @@ import {
 } from '@superfunctions/oauth-storage';
 import { DEFAULT_PLUGFN_STORAGE_MODELS, resolvePlugFnStorageModels, type PlugFnStorageModelMapping } from './storage/adapters/database.js';
 
-export const PLUGFN_SCHEMA_VERSION = 3;
+export const PLUGFN_SCHEMA_VERSION = 5;
 
 export interface PlugFnSchemaOptions {
   namespace?: string;
@@ -33,6 +33,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           grants: { type: 'json', required: false, fieldName: 'grants' },
           name: { type: 'string', required: false, fieldName: 'name' },
           status: { type: 'string', required: true, fieldName: 'status' },
+          claimToken: { type: 'string', required: false, fieldName: 'claim_token' },
           credentials: { type: 'json', required: true, fieldName: 'credentials' },
           scopes: { type: 'json', required: false, fieldName: 'scopes' },
           metadata: { type: 'json', required: false, fieldName: 'metadata' },
@@ -183,7 +184,11 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
         },
         indexes: [
           { name: 'idx_plugfn_webhook_receipts_provider_event', fields: ['provider', 'event'] },
-          { name: 'idx_plugfn_webhook_receipts_idempotency', fields: ['provider', 'idempotencyKey'] }
+          {
+            name: 'idx_plugfn_webhook_receipts_idempotency',
+            fields: ['provider', 'idempotencyKey'],
+            unique: true
+          }
         ]
       },
       {
@@ -194,6 +199,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           sinkId: { type: 'string', required: false, fieldName: 'sink_id' },
           handlerName: { type: 'string', required: false, fieldName: 'handler_name' },
           status: { type: 'string', required: true, fieldName: 'status' },
+          claimToken: { type: 'string', required: false, fieldName: 'claim_token' },
           attempts: { type: 'number', required: true, fieldName: 'attempts' },
           nextAttemptAt: { type: 'date', required: false, fieldName: 'next_attempt_at' },
           error: { type: 'string', required: false, fieldName: 'error' },

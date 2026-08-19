@@ -5,23 +5,30 @@ import {
 } from '../../src/policy/provider-policy-service.js';
 
 describe('provider policy service', () => {
-  it('contains capability and policy metadata for required forwarding and managed providers', () => {
+  it('contains inbound-only account policies plus forwarding and managed-mail policies', () => {
     const service = createProviderPolicyService();
-    const forwarding = service.getPolicy('forwarding');
-    const managed = service.getPolicy('managed-mail');
-
-    expect(forwarding.metadata).toEqual({
-      inbound: true,
-      outbound: false,
-      managed: false,
-    });
-    expect(managed.metadata).toEqual({
-      inbound: true,
-      outbound: true,
-      managed: true,
-    });
-    expect(forwarding.allowedOperations).toContain('mail.forwarding.enable');
-    expect(managed.allowedOperations).toContain('mail.managed.enable');
+    expect(service.listPolicies()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerId: 'gmail',
+          metadata: { inbound: true, outbound: false, managed: false },
+        }),
+        expect.objectContaining({
+          providerId: 'imap-smtp',
+          metadata: { inbound: true, outbound: false, managed: false },
+        }),
+        expect.objectContaining({
+          providerId: 'forwarding',
+          metadata: { inbound: true, outbound: false, managed: false },
+          allowedOperations: expect.arrayContaining(['mail.forwarding.enable']),
+        }),
+        expect.objectContaining({
+          providerId: 'managed-mail',
+          metadata: { inbound: true, outbound: true, managed: true },
+          allowedOperations: expect.arrayContaining(['mail.managed.enable']),
+        }),
+      ])
+    );
   });
 
   it('allows operations under the current policy version', () => {
@@ -59,27 +66,24 @@ describe('provider policy service', () => {
   it('audit-logs policy decisions and state transitions', () => {
     const service = createProviderPolicyService([], () => '2026-03-12T00:00:00.000Z');
     service.updatePolicy({
-      providerId: 'forwarding',
+      providerId: 'custom-inbound',
       policyVersion: '2026-03-11',
       metadata: {
         inbound: true,
         outbound: false,
         managed: false,
       },
-      allowedOperations: ['mail.forwarding.enable'],
-      blockedOperations: {
-        'mail.forwarding.enable.mandatory': 'forwarding cannot be mandatory',
-      },
+      allowedOperations: ['mail.sync'],
       actor: 'test',
     });
 
     service.assertOperationAllowed({
-      providerId: 'forwarding',
-      operation: 'mail.forwarding.enable',
+      providerId: 'custom-inbound',
+      operation: 'mail.sync',
     });
     service.recordStateTransition({
-      providerId: 'forwarding',
-      transition: 'forwarding.enabled',
+      providerId: 'custom-inbound',
+      transition: 'connection.enabled',
       details: {
         accountId: 'acct-1',
       },
@@ -90,7 +94,7 @@ describe('provider policy service', () => {
     expect(
       audit.some(
         (event) =>
-          event.type === 'state-transition' && event.transition === 'forwarding.enabled'
+          event.type === 'state-transition' && event.transition === 'connection.enabled'
       )
     ).toBe(true);
   });
@@ -102,7 +106,7 @@ describe('provider policy service', () => {
       policyVersion: '2026-03-12',
       metadata: {
         inbound: true,
-        outbound: true,
+        outbound: false,
         managed: false,
       },
       allowedOperations: ['mail.watch.create', 'mail.sync'],

@@ -1,9 +1,11 @@
 import type { Logger } from './action.js';
 import type { RetryOptions } from './action.js';
 import type { RateLimitConfig } from './provider.js';
-import type { Adapter as DbAdapter } from '@superfunctions/db';
+import type { Adapter as DbAdapter, KVStoreAdapter } from '@superfunctions/db';
+import type { AuthSession } from '@superfunctions/auth';
 import type { PlugFnOAuthClientConfig, PlugFnSecretResolverConfig } from './runtime.js';
 import type { Connection } from './connection.js';
+import type { WorkflowRuntimeRegistry } from './workflow.js';
 
 export type PlugFnDatabaseAdapter = DbAdapter;
 export type Adapter = PlugFnDatabaseAdapter;
@@ -11,16 +13,25 @@ export type Adapter = PlugFnDatabaseAdapter;
 export interface PlugFnPrincipal {
   userId: string;
   tenantId?: string;
+  organizationId?: string;
   roles?: string[];
   grants?: string[];
   metadata?: Record<string, unknown>;
 }
 
+export type PlugFnConnectionOperation =
+  | 'read'
+  | 'disconnect'
+  | 'revoke'
+  | 'sync'
+  | 'action'
+  | 'checkpoint';
+
 export interface PlugFnAuthorizationOptions {
   authorizeConnection?(input: {
     actor: PlugFnPrincipal;
     connection: Connection;
-    operation: 'read' | 'disconnect' | 'revoke' | 'sync' | 'action' | 'checkpoint';
+    operation: PlugFnConnectionOperation;
   }): Promise<boolean> | boolean;
 }
 
@@ -28,7 +39,7 @@ export interface PlugFnAuthorizationOptions {
  * Auth provider interface
  */
 export interface AuthProvider {
-  authenticate?(request: Request): Promise<PlugFnPrincipal | null> | PlugFnPrincipal | null;
+  authenticate?(request: Request): Promise<PlugFnPrincipal | AuthSession | null> | PlugFnPrincipal | AuthSession | null;
   getUserId?(request: any): Promise<string | null>;
   requireAuth?(request: any): Promise<string>;
 }
@@ -81,6 +92,8 @@ export interface GlobalCacheConfig {
   ttl?: number;
   instance?: any;
   defaultTTL?: number;
+  store?: KVStoreAdapter;
+  keyPrefix?: string;
 }
 
 /**
@@ -104,6 +117,7 @@ export interface GlobalRetryConfig extends RetryOptions {
  */
 export interface PlugFnConfig {
   database: DbAdapter;
+  cacheStore?: KVStoreAdapter;
   auth: AuthProvider;
   baseUrl: string;
   encryptionKey: string;
@@ -114,6 +128,10 @@ export interface PlugFnConfig {
   logger?: Logger;
   webhooks?: WebhookOptions;
   authorization?: PlugFnAuthorizationOptions;
+  workflows?: {
+    /** Runtime functions resolved by serializable workflow action/condition references. */
+    runtime?: WorkflowRuntimeRegistry;
+  };
 }
 
 /**

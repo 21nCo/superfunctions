@@ -1,5 +1,6 @@
 import type { CacheOptions } from '../types/action.js';
 import type { Logger } from '../types/action.js';
+import type { KVStoreAdapter } from '@superfunctions/db';
 import { hash } from '../utils/crypto.js';
 
 interface CacheEntry {
@@ -7,58 +8,128 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+interface SerializedCacheEntry {
+  data: any;
+}
+
+export type CacheLookup<T> = { hit: true; data: T } | { hit: false };
+
+interface CacheMiddlewareOptions {
+  store?: KVStoreAdapter;
+  keyPrefix?: string;
+}
+
+export class CacheClearUnsupportedError extends Error {
+  readonly code = 'PLUGFN_CACHE_CLEAR_UNSUPPORTED';
+
+  constructor() {
+    super('Cache clear is not supported for KV-backed caches without prefix invalidation support');
+    this.name = 'CacheClearUnsupportedError';
+  }
+}
+
 /**
- * Simple in-memory cache middleware
+ * Action cache middleware. Uses an injected KV store when available and falls
+ * back to an in-memory cache for local development/testing.
  */
 export class CacheMiddleware {
   private cache = new Map<string, CacheEntry>();
   private cleanupInterval: NodeJS.Timeout;
+  private readonly store?: KVStoreAdapter;
+  private readonly keyPrefix: string;
 
   constructor(
     private defaultTTL: number = 300000, // 5 minutes
-    private logger?: Logger
+    private logger?: Logger,
+    options: CacheMiddlewareOptions = {}
   ) {
+    this.store = options.store;
+    this.keyPrefix = options.keyPrefix ?? 'plugfn:action-cache:';
     // Cleanup expired entries every minute
     this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+    this.cleanupInterval.unref?.();
   }
 
   /**
    * Get cached value
    */
-  async get<T>(key: string): Promise<T | null> {
+  async get<T>(key: string): Promise<T | undefined> {
+    const lookup = await this.getEntry<T>(key);
+    return lookup.hit ? lookup.data : undefined;
+  }
+
+  async getEntry<T>(key: string): Promise<CacheLookup<T>> {
+    if (this.store) {
+      const raw = await this.store.get(this.cacheKey(key));
+      if (raw === null) {
+        return { hit: false };
+      }
+
+      try {
+        const entry = JSON.parse(raw) as SerializedCacheEntry;
+        this.logger?.debug(`Cache hit: ${key}`);
+        return { hit: true, data: entry.data as T };
+      } catch {
+        await this.store.delete(this.cacheKey(key));
+        return { hit: false };
+      }
+    }
+
     const entry = this.cache.get(key);
     
     if (!entry) {
-      return null;
+      return { hit: false };
     }
     
     if (Date.now() > entry.expiresAt) {
       this.cache.delete(key);
-      return null;
+      return { hit: false };
     }
     
     this.logger?.debug(`Cache hit: ${key}`);
-    return entry.data;
+    return { hit: true, data: entry.data };
   }
 
   /**
    * Set cached value
    */
   async set(key: string, value: any, ttl?: number): Promise<void> {
-    const expiresAt = Date.now() + (ttl || this.defaultTTL);
+    const ttlMs = ttl ?? this.defaultTTL;
+    if (ttlMs <= 0) {
+      await this.delete(key);
+      return;
+    }
+
+    if (this.store) {
+      await this.store.set({
+        key: this.cacheKey(key),
+        value: JSON.stringify({ data: value } satisfies SerializedCacheEntry),
+        ttlSeconds: Math.max(1, Math.ceil(ttlMs / 1000)),
+      });
+      this.logger?.debug(`Cache set: ${key} (TTL: ${ttlMs}ms)`);
+      return;
+    }
+
+    const expiresAt = Date.now() + ttlMs;
     
     this.cache.set(key, {
       data: value,
       expiresAt,
     });
     
-    this.logger?.debug(`Cache set: ${key} (TTL: ${ttl || this.defaultTTL}ms)`);
+    this.logger?.debug(`Cache set: ${key} (TTL: ${ttlMs}ms)`);
   }
 
   /**
    * Delete cached value
    */
   async delete(key: string): Promise<void> {
+    if (this.store) {
+      await this.store.delete(this.cacheKey(key));
+      this.logger?.debug(`Cache delete: ${key}`);
+      return;
+    }
+
     this.cache.delete(key);
     this.logger?.debug(`Cache delete: ${key}`);
   }
@@ -67,6 +138,10 @@ export class CacheMiddleware {
    * Clear all cache
    */
   async clear(): Promise<void> {
+    if (this.store) {
+      throw new CacheClearUnsupportedError();
+    }
+
     this.cache.clear();
     this.logger?.debug('Cache cleared');
   }
@@ -74,9 +149,27 @@ export class CacheMiddleware {
   /**
    * Generate cache key for action
    */
-  generateKey(provider: string, action: string, params: any, userId?: string): string {
+  generateKey(
+    provider: string,
+    action: string,
+    params: any,
+    userId?: string,
+    connectionId?: string
+  ): string {
     const paramsHash = hash(JSON.stringify(params));
-    return `${provider}:${action}:${userId || 'anonymous'}:${paramsHash}`;
+    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}:${paramsHash}`;
+  }
+
+  /** Generate a key in a namespace that cannot collide with parameter-derived keys. */
+  generateCustomKey(
+    provider: string,
+    action: string,
+    customKey: string,
+    userId?: string,
+    connectionId?: string
+  ): string {
+    const customKeyHash = hash(customKey);
+    return `${provider}:${action}:${userId || 'anonymous'}:${connectionId || 'default'}:custom:${customKeyHash}`;
   }
 
   /**
@@ -88,10 +181,10 @@ export class CacheMiddleware {
     options?: CacheOptions
   ): Promise<{ data: T; cached: boolean }> {
     // Check cache
-    const cached = await this.get<T>(key);
+    const cached = await this.getEntry<T>(key);
     
-    if (cached !== null) {
-      return { data: cached, cached: true };
+    if (cached.hit) {
+      return { data: cached.data, cached: true };
     }
     
     // Execute function
@@ -134,10 +227,20 @@ export class CacheMiddleware {
    * Get cache statistics
    */
   getStats(): { size: number; keys: string[] } {
+    if (this.store) {
+      return {
+        size: -1,
+        keys: [],
+      };
+    }
+
     return {
       size: this.cache.size,
       keys: Array.from(this.cache.keys()),
     };
   }
-}
 
+  private cacheKey(key: string): string {
+    return `${this.keyPrefix}${key}`;
+  }
+}

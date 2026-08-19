@@ -176,7 +176,7 @@
     "yaml": "^2.8.1"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.17.0"
   },
   "author": "21n",
   "repository": {

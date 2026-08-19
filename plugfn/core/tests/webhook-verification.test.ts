@@ -70,6 +70,38 @@ describe('Webhook verification and mapping', () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it('maps declared webhook route suffixes to canonical trigger keys', async () => {
+    const { webhookHandler } = createWebhookHarness();
+    const handler = vi.fn();
+    webhookHandler.on('gmail', 'mail.update', handler);
+
+    await webhookHandler.handleWebhook(
+      'gmail',
+      'mail-update',
+      { id: 'evt_declared_path' },
+      { 'x-signature': 'sig:secret' },
+      'secret'
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('normalizes repeated leading and trailing path separators without regex backtracking', async () => {
+    const { webhookHandler } = createWebhookHarness();
+    const handler = vi.fn();
+    webhookHandler.on('gmail', 'mail.update', handler);
+
+    await webhookHandler.handleWebhook(
+      'gmail',
+      `${'/'.repeat(10000)}mail/update${'/'.repeat(10000)}`,
+      { id: 'evt_many_separators' },
+      { 'x-signature': 'sig:secret' },
+      'secret'
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   it('returns deterministic validation error for unknown events', async () => {
     const { webhookHandler } = createWebhookHarness();
 
@@ -83,6 +115,28 @@ describe('Webhook verification and mapping', () => {
       )
     ).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',
+    });
+  });
+
+  it('propagates downstream handler failures so provider delivery can retry', async () => {
+    const { webhookHandler } = createWebhookHarness();
+    webhookHandler.on('gmail', 'mail.update', async () => {
+      throw new Error('database unavailable');
+    });
+
+    await expect(
+      webhookHandler.handleWebhook(
+        'gmail',
+        'mail.update',
+        { id: 'evt_failed_handler' },
+        { 'x-signature': 'sig:secret' },
+        'secret'
+      )
+    ).rejects.toMatchObject({
+      code: 'WEBHOOK_HANDLER_FAILED',
+      message: 'webhook handler failed',
+      status: 503,
+      details: {},
     });
   });
 });
@@ -110,7 +164,7 @@ function createWebhookHarness() {
         type: TriggerType.Webhook,
         schema: z.any(),
         webhookConfig: {
-          path: '/mail/update',
+          path: '/webhooks/gmail/mail-update',
           method: 'POST',
           verifySignature: async (_payload, signature, secret) => {
             return signature === `sig:${secret}`;

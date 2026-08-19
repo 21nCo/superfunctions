@@ -44,6 +44,49 @@ export interface SetCookieInput {
 }
 
 // ============================================================================
+// Client Transport Auth
+// ============================================================================
+
+export type HttpTransportAuthRetryDecision = 'retry' | 'fail' | void;
+
+export interface HttpTransportErrorEvent {
+  endpoint: string;
+  url: string;
+  status: number;
+  result: unknown;
+}
+
+/**
+ * Supplies authentication material for fetch-based Superfunctions transports.
+ */
+export interface HttpTransportAuthProvider {
+  getRequestHeaders?(): HeadersInit | null | undefined | Promise<HeadersInit | null | undefined>;
+  getCredentials?(): RequestCredentials | undefined | Promise<RequestCredentials | undefined>;
+  onUnauthorized?(
+    event: HttpTransportErrorEvent,
+  ): HttpTransportAuthRetryDecision | Promise<HttpTransportAuthRetryDecision>;
+}
+
+/**
+ * Adds auth-related request material to a transport auth provider without owning the base session.
+ */
+export interface HttpTransportAuthPlugin {
+  getRequestHeaders?(): HeadersInit | null | undefined | Promise<HeadersInit | null | undefined>;
+}
+
+/**
+ * Configures a transport auth provider implementation.
+ */
+export interface HttpTransportAuthOptions {
+  credentials?: RequestCredentials;
+  headers?: HeadersInit | (() => HeadersInit | null | undefined | Promise<HeadersInit | null | undefined>);
+  plugins?: HttpTransportAuthPlugin[];
+  onUnauthorized?(
+    event: HttpTransportErrorEvent,
+  ): HttpTransportAuthRetryDecision | Promise<HttpTransportAuthRetryDecision>;
+}
+
+// ============================================================================
 // Router Configuration
 // ============================================================================
 
@@ -65,6 +108,13 @@ export interface RouterOptions<TContext = any> {
 
   /** CORS configuration */
   cors?: CorsOptions | false;
+
+  /**
+   * Maximum request body size in bytes accepted by `ctx.json()`/`ctx.text()`/
+   * `ctx.formData()`. Bodies exceeding this (by Content-Length or by streamed
+   * size) are rejected with a 413 PayloadTooLargeError. Unset means no limit.
+   */
+  maxBodyBytes?: number;
 }
 
 // ============================================================================

@@ -1,17 +1,23 @@
 """Main PlugFn SDK class."""
 
-from typing import Any, Callable, Dict, List, Optional
-from datetime import datetime
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 from ..types import (
+    AuthProvider,
     Connection,
-    ConnectionStatus,
+    DatabaseAdapter,
+    Provider,
     Workflow,
     WorkflowStatus,
-    Provider,
-    AuthProvider,
-    DatabaseAdapter,
 )
+
+if TYPE_CHECKING:
+    from ..auth.token_store import TokenStore
+    from ..webhooks.webhook_handler import WebhookHandler
+    from .action_executor import ActionExecutor
+    from .connection_manager import ConnectionManager
+    from .provider_registry import ProviderRegistry
+    from .workflow_engine import WorkflowEngine
 
 
 class PlugFnConfig:
@@ -29,7 +35,8 @@ class PlugFnConfig:
         rate_limit: Optional[Dict[str, Any]] = None,
         cache: Optional[Dict[str, Any]] = None,
         webhooks: Optional[Dict[str, Any]] = None,
-    ):
+        oauth_state_store: Optional["TokenStore"] = None,
+    ) -> None:
         """Initialize PlugFn configuration.
 
         Args:
@@ -54,12 +61,13 @@ class PlugFnConfig:
         self.rate_limit = rate_limit or {"enabled": True}
         self.cache = cache or {"enabled": True}
         self.webhooks = webhooks or {}
+        self.oauth_state_store = oauth_state_store
 
 
 class ConnectionsAPI:
     """API for managing user connections."""
 
-    def __init__(self, manager: Any):
+    def __init__(self, manager: "ConnectionManager") -> None:
         self._manager = manager
 
     async def get_auth_url(
@@ -94,7 +102,7 @@ class ConnectionsAPI:
         )
 
     async def handle_callback(
-        self, provider: str, code: str, state: str
+        self, provider: Optional[str], code: str, state: str
     ) -> Connection:
         """Handle OAuth callback and create connection.
 
@@ -163,7 +171,7 @@ class ConnectionsAPI:
 class WorkflowsAPI:
     """API for managing workflows."""
 
-    def __init__(self, engine: Any):
+    def __init__(self, engine: "WorkflowEngine") -> None:
         self._engine = engine
 
     async def list(
@@ -230,10 +238,20 @@ class WorkflowsAPI:
 class WebhooksAPI:
     """API for managing webhooks."""
 
-    def __init__(self, handler: Any):
+    def __init__(
+        self,
+        handler: "WebhookHandler",
+        ensure_ready: Optional[Callable[[], Awaitable[None]]] = None,
+    ) -> None:
         self._handler = handler
+        self._ensure_ready = ensure_ready
 
-    def on(self, provider: str, event: str, handler: Callable) -> None:
+    def on(
+        self,
+        provider: str,
+        event: str,
+        handler: Optional[Callable[..., Any]] = None,
+    ) -> Callable[..., Any]:
         """Register a webhook handler.
 
         Args:
@@ -241,9 +259,20 @@ class WebhooksAPI:
             event: Event name (e.g., "issues.opened")
             handler: Async function to handle the event
         """
-        self._handler.register_handler(provider, event, handler)
+        if handler is None:
 
-    def off(self, provider: str, event: str, handler: Callable) -> None:
+            def decorator(callback: Callable[..., Any]) -> Callable[..., Any]:
+                self._handler.register_handler(provider, event, callback)
+                return callback
+
+            return decorator
+
+        self._handler.register_handler(provider, event, handler)
+        return handler
+
+    def off(
+        self, provider: str, event: str, handler: Callable[..., Any]
+    ) -> None:
         """Unregister a webhook handler.
 
         Args:
@@ -273,6 +302,8 @@ class WebhooksAPI:
         Returns:
             Handler result
         """
+        if self._ensure_ready is not None:
+            await self._ensure_ready()
         return await self._handler.handle_webhook(
             provider=provider,
             event=event,
@@ -285,7 +316,7 @@ class WebhooksAPI:
 class ProvidersAPI:
     """API for managing providers."""
 
-    def __init__(self, registry: Any):
+    def __init__(self, registry: "ProviderRegistry") -> None:
         self._registry = registry
 
     def list(self) -> List[Provider]:
@@ -347,7 +378,7 @@ class PlugFn:
         encryption_key: str,
         integrations: Dict[str, Dict[str, Any]],
         **kwargs: Any,
-    ):
+    ) -> None:
         """Initialize PlugFn instance.
 
         Args:
@@ -358,14 +389,14 @@ class PlugFn:
             integrations: Dict of provider configurations
             **kwargs: Additional configuration (logger, retry, rate_limit, cache, webhooks)
         """
-        from .connection_manager import ConnectionManager
-        from .provider_registry import ProviderRegistry
-        from .action_executor import ActionExecutor
-        from .workflow_engine import WorkflowEngine
-        from ..webhooks.webhook_handler import WebhookHandler
         from ..storage.connection_storage import ConnectionStorage
         from ..storage.workflow_storage import WorkflowStorage
         from ..utils.logger import ConsoleLogger
+        from ..webhooks.webhook_handler import WebhookHandler
+        from .action_executor import ActionExecutor
+        from .connection_manager import ConnectionManager
+        from .provider_registry import ProviderRegistry
+        from .workflow_engine import WorkflowEngine
 
         self.config = PlugFnConfig(
             database=database,
@@ -398,6 +429,7 @@ class PlugFn:
             base_url=base_url,
             encryption_key=encryption_key,
             logger=self._logger,
+            oauth_state_store=self.config.oauth_state_store,
         )
 
         self._action_executor = ActionExecutor(
@@ -407,6 +439,7 @@ class PlugFn:
             enable_retry=self.config.retry.get("enabled", True),
             enable_rate_limit=self.config.rate_limit.get("enabled", True),
             enable_cache=self.config.cache.get("enabled", True),
+            retry_options=self.config.retry,
         )
 
         self._webhook_handler = WebhookHandler(
@@ -417,19 +450,26 @@ class PlugFn:
             storage=self._workflow_storage,
             webhook_handler=self._webhook_handler,
             logger=self._logger,
+            action_executor=self._action_executor,
         )
 
         # Create public APIs
         self.connections = ConnectionsAPI(self._connection_manager)
         self.workflows = WorkflowsAPI(self._workflow_engine)
-        self.webhooks = WebhooksAPI(self._webhook_handler)
+        self.webhooks = WebhooksAPI(
+            self._webhook_handler, self._workflow_engine.ready
+        )
         self.providers = ProvidersAPI(self._provider_registry)
 
         # Event handlers
-        self._event_handlers: Dict[str, List[Callable]] = {}
+        self._event_handlers: Dict[str, List[Callable[..., Any]]] = {}
 
         # Provider proxies cache
-        self._provider_proxies: Dict[str, Any] = {}
+        self._provider_proxies: Dict[str, ProviderProxy] = {}
+
+    async def ready(self) -> None:
+        """Restore persisted enabled workflow triggers before serving traffic."""
+        await self._workflow_engine.ready()
 
     def __getattr__(self, name: str) -> Any:
         """Dynamic provider access via attribute.
@@ -491,7 +531,7 @@ class PlugFn:
             time_range=time_range, **filters
         )
 
-    def on(self, event: str, handler: Callable) -> None:
+    def on(self, event: str, handler: Callable[..., Any]) -> None:
         """Register an event handler.
 
         Args:
@@ -502,7 +542,7 @@ class PlugFn:
             self._event_handlers[event] = []
         self._event_handlers[event].append(handler)
 
-    def off(self, event: str, handler: Callable) -> None:
+    def off(self, event: str, handler: Callable[..., Any]) -> None:
         """Unregister an event handler.
 
         Args:
@@ -520,15 +560,15 @@ class ProviderProxy:
         self,
         provider_name: str,
         provider: Provider,
-        action_executor: Any,
-        webhook_handler: Any,
-    ):
+        action_executor: "ActionExecutor",
+        webhook_handler: "WebhookHandler",
+    ) -> None:
         self._provider_name = provider_name
         self._provider = provider
         self._action_executor = action_executor
         self._webhook_handler = webhook_handler
 
-    def on(self, event: str, handler: Callable) -> None:
+    def on(self, event: str, handler: Callable[..., Any]) -> None:
         """Register a webhook handler for this provider.
 
         Args:
@@ -537,7 +577,7 @@ class ProviderProxy:
         """
         self._webhook_handler.register_handler(self._provider_name, event, handler)
 
-    def __getattr__(self, action_name: str) -> Callable:
+    def __getattr__(self, action_name: str) -> Any:
         """Get an action executor function.
 
         Args:
@@ -596,9 +636,9 @@ class ProviderProxy:
 class ActionNamespaceProxy:
     """Nested proxy for dotted provider action groups such as issues.create."""
 
-    def __init__(self, provider_proxy: ProviderProxy, namespace: str):
+    def __init__(self, provider_proxy: ProviderProxy, namespace: str) -> None:
         self._provider_proxy = provider_proxy
         self._namespace = namespace
 
-    def __getattr__(self, action_name: str) -> Callable:
+    def __getattr__(self, action_name: str) -> Any:
         return getattr(self._provider_proxy, f"{self._namespace}.{action_name}")

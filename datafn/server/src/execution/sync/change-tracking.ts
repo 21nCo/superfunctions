@@ -8,7 +8,7 @@
  * - __datafn_meta: stores next_server_seq per namespace
  * - __datafn_changes: stores change entries with (namespace, resource, server_seq) index
  *
- * Supports pluggable sequence stores (Redis, KV, or database sequence path) for
+ * Supports pluggable sequence stores (atomic store or database sequence path) for
  * high-performance serverSeq generation.
  */
 
@@ -102,7 +102,7 @@ export interface ChangeEntryInput {
  * Service for managing serverSeq and change tracking
  *
  * When a sequenceStore is provided, serverSeq generation uses that store
- * (e.g., Redis for atomic INCR). Otherwise, uses the database
+   * (e.g., a distributed atomic store). Otherwise, uses the database
  * with CAS retry loop.
  */
 export class ChangeTrackingService {
@@ -115,15 +115,47 @@ export class ChangeTrackingService {
     private sequenceStore?: SequenceStore,
     private onChange?: (seq: number, namespace: string) => void,
     private logger?: DatafnLogger,
-  ) {}
+    metaEnsured = false,
+    changesEnsured = false,
+  ) {
+    this.metaEnsured = metaEnsured;
+    this.changesEnsured = changesEnsured;
+  }
+
+  /** Initialize every durable table before an enclosing transaction begins. */
+  async ensureReady(): Promise<void> {
+    if (!this.changesEnsured) {
+      await ensureInternalTable(this.db, "__datafn_changes");
+      this.changesEnsured = true;
+    }
+
+    if (this.sequenceStore) {
+      await this.sequenceStore.ensureReady?.();
+    }
+    // The service can fall back to its database sequence path if an external
+    // store fails, so its own metadata table must also exist before rebinding.
+    if (!this.metaEnsured) {
+      await ensureInternalTable(this.db, "__datafn_meta");
+      this.metaEnsured = true;
+    }
+  }
 
   /**
    * REL-011: Create a new ChangeTrackingService with a different db adapter.
    * Used to run change tracking within a transaction (pass tx db here).
    * The namespace and sequenceStore are inherited from the original instance.
    */
-  withDb(txDb: Adapter): ChangeTrackingService {
-    return new ChangeTrackingService(txDb, this.namespace, this.sequenceStore, this.onChange, this.logger);
+  withDb(txDb: Adapter, emitChanges = true): ChangeTrackingService {
+    const sequenceStore = this.sequenceStore?.withDb?.(txDb) ?? this.sequenceStore;
+    return new ChangeTrackingService(
+      txDb,
+      this.namespace,
+      sequenceStore,
+      emitChanges ? this.onChange : undefined,
+      this.logger,
+      this.metaEnsured,
+      this.changesEnsured,
+    );
   }
 
   /**
@@ -132,7 +164,7 @@ export class ChangeTrackingService {
    *
    * Implements SERVER-SEQ-001: atomic monotonic increment per namespace
    *
-   * When a sequenceStore is configured (Redis/KV), uses that for atomic increment.
+   * When a sequenceStore is configured, uses that for atomic increment.
    * Otherwise, uses compare-and-swap retry loop with the database.
    */
   async getNextServerSeq(): Promise<number> {
@@ -151,7 +183,7 @@ export class ChangeTrackingService {
 
   /**
    * Database-based sequence generation using CAS retry loop
-   * Used when no secondary database (Redis/KV) is configured
+   * Used when no atomic sequence store is configured
    */
   private async getNextServerSeqFromDb(): Promise<number> {
     return (await this.getNextServerSeqBatchFromDb(1))[0];

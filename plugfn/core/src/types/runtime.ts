@@ -87,6 +87,7 @@ export interface PlugFnWebhookDelivery {
   sinkId?: string;
   handlerName?: string;
   status: 'pending' | 'running' | 'success' | 'failed' | 'dead-lettered';
+  claimToken?: string;
   attempts: number;
   nextAttemptAt?: Date;
   error?: string;
@@ -102,6 +103,7 @@ export interface PlugFnSyncJob {
   resource: string;
   mode: 'full' | 'incremental';
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  claimToken?: string;
   ownerKind?: PlugFnOwnerKind;
   ownerId?: string;
   cursor?: string;

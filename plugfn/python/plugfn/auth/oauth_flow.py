@@ -1,7 +1,7 @@
 """OAuth 2.0 flow handler."""
 
 import secrets
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -128,7 +128,7 @@ class OAuthFlowHandler:
                     f"Token exchange failed: {response.status_code} {response.text}"
                 )
 
-            return response.json()
+            return _response_object(response)
 
     async def refresh_token(
         self,
@@ -172,4 +172,19 @@ class OAuthFlowHandler:
                     f"Token refresh failed: {response.status_code} {response.text}"
                 )
 
-            return response.json()
+            return _response_object(response)
+
+
+def _response_object(response: httpx.Response) -> Dict[str, Any]:
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise TypeError("OAuth token response must be a JSON object")
+    error = payload.get("error")
+    if isinstance(error, str) and error:
+        description = payload.get("error_description")
+        detail = description if isinstance(description, str) and description else error
+        raise ValueError(f"OAuth token response error: {detail}")
+    access_token = payload.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise ValueError("OAuth token response missing access_token")
+    return cast(Dict[str, Any], payload)

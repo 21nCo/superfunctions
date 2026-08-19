@@ -1,5 +1,11 @@
 // Main exports
 export { Sendfn, createSendFn, sendFn, sendfn } from './sendfn';
+export {
+  createSendFnDeliveryProvider,
+  type SendFnDeliveryProviderOptions,
+  type SendFnDeliveryRenderer,
+  type SendFnEmailClient
+} from './delivery';
 export { SENDFN_SCHEMA_VERSION, getSchema, getSendFnSchema } from './schema';
 export type { SendFnSchemaDefinition, SendfnSchemaOptions } from './schema';
 

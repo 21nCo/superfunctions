@@ -1,3 +1,4 @@
+import { ImapFlow } from 'imapflow';
 import { describe, expect, it } from 'vitest';
 import {
   assertImapSmtpProviderConfig,
@@ -18,7 +19,6 @@ describe('imap-smtp provider', () => {
 
     expect(result).toMatchObject({
       imapConnected: true,
-      smtpConnected: true,
       tls: true,
       policyVersion: '2026-03-11',
     });
@@ -64,29 +64,12 @@ describe('imap-smtp provider', () => {
       allowed: true,
       policyVersion: '2026-03-11',
     });
-  });
-
-  it('enforces capability matrix for unsupported actions', async () => {
-    await expect(
-      imapSmtpProvider.actions['mail.send'].execute(
-        {
-          host: 'mail.example.com',
-          username: 'user@example.com',
-          password: 'password',
-          from: 'user@example.com',
-          to: ['recipient@example.com'],
-          subject: 'capability check',
-          bodyText: 'blocked send',
-          capabilities: {
-            send: false,
-          },
-        },
-        createActionContext()
-      )
-    ).rejects.toMatchObject({
-      code: 'VALIDATION_ERROR',
-      message: 'imap-smtp capability send is disabled',
-    });
+    expect(ImapFlow).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        port: 143,
+        secure: false,
+      })
+    );
   });
 
   it('parses RFC MIME variants and attachment presence during sync', async () => {

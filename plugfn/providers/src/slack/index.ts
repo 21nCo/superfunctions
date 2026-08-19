@@ -1,8 +1,12 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import type { Provider } from 'plugfn';
-import { AuthType } from 'plugfn';
-import { TriggerType } from 'plugfn';
-import type { ActionContext } from 'plugfn';
+import {
+  AuthType,
+  TriggerType,
+  type ActionContext,
+  type Provider,
+  type WebhookVerificationContext,
+} from 'plugfn';
 
 /**
  * Slack provider
@@ -20,7 +24,14 @@ export const slackProvider: Provider = {
     config: {
       authorizationUrl: 'https://slack.com/oauth/v2/authorize',
       tokenUrl: 'https://slack.com/api/oauth.v2.access',
-      scopes: ['chat:write', 'channels:read', 'users:read'],
+      scopes: [
+        'chat:write',
+        'channels:read',
+        'channels:history',
+        'groups:read',
+        'groups:history',
+        'users:read',
+      ],
       scopeSeparator: ',',
     },
   },
@@ -84,6 +95,7 @@ export const slackProvider: Provider = {
       name: 'conversations.list',
       displayName: 'List Channels',
       description: 'List all channels in a Slack workspace',
+      idempotent: true,
 
       parameters: z.object({
         types: z.string().optional().describe('Channel types (public_channel, private_channel)'),
@@ -124,6 +136,7 @@ export const slackProvider: Provider = {
       name: 'users.info',
       displayName: 'Get User Info',
       description: 'Get information about a user',
+      idempotent: true,
 
       parameters: z.object({
         user: z.string().describe('User ID'),
@@ -198,20 +211,35 @@ export const slackProvider: Provider = {
       webhookConfig: {
         path: '/webhooks/slack/events',
         method: 'POST',
+        verifySignature: async (_payload, signature, secret, context) =>
+          verifySlackSignature(signature, secret, context),
+        shouldDispatch: (payload) => payload?.type !== 'url_verification',
       },
 
-      schema: z.object({
-        type: z.literal('event_callback'),
-        event: z.object({
-          type: z.literal('message'),
-          channel: z.string(),
-          user: z.string(),
-          text: z.string(),
-          ts: z.string(),
+      schema: z.discriminatedUnion('type', [
+        z.object({
+          type: z.literal('url_verification'),
+          challenge: z.string(),
         }),
-      }),
+        z.object({
+          type: z.literal('event_callback'),
+          event: z.object({
+            type: z.literal('message'),
+            channel: z.string(),
+            user: z.string(),
+            text: z.string(),
+            ts: z.string(),
+          }),
+        }),
+      ]),
 
       handler: async (payload) => {
+        if (payload.type === 'url_verification') {
+          return {
+            event: 'url_verification',
+            data: { challenge: payload.challenge },
+          };
+        }
         return {
           event: 'message.channels',
           data: payload.event,
@@ -226,3 +254,31 @@ export const slackProvider: Provider = {
   },
 };
 
+function verifySlackSignature(
+  signature: string,
+  secret: string,
+  context: WebhookVerificationContext
+): boolean {
+  const rawBody = context.rawBody;
+  const timestamp = context.headers['x-slack-request-timestamp'];
+  if (!signature || !secret || !rawBody || !timestamp) {
+    return false;
+  }
+
+  const timestampSeconds = Number(timestamp);
+  if (!Number.isFinite(timestampSeconds) || Math.abs(Date.now() / 1000 - timestampSeconds) > 300) {
+    return false;
+  }
+
+  const expected = `v0=${createHmac('sha256', secret)
+    .update(`v0:${timestamp}:`)
+    .update(Buffer.from(rawBody))
+    .digest('hex')}`;
+  return secureEqual(signature, expected);
+}
+
+function secureEqual(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}
