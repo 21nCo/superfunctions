@@ -45,6 +45,7 @@
     "glob": "^11.0.0"
   },
   "devDependencies": {
+    "@superfunctions/db": "0.1.4",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
