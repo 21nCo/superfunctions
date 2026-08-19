@@ -1,4 +1,4 @@
-import { ADMIN_API_PREFIX, fetchAdmin, materializeAdminApiHref, withAdminScope, type AdminFetch } from './admin-api';
+import { ADMIN_API_PREFIX, fetchAdmin, materializeAdminActionHref, withAdminScope, type AdminFetch } from './admin-api';
 import {
   inferAdminResourceColumns,
   inferAdminResourceFields,
@@ -45,6 +45,33 @@ function unavailable(resourceId: string, moduleId: string): AdminErrorViewModel 
     code: 'RESOURCE_NOT_ENABLED',
     message: `${resourceId} is not an enabled ${moduleId} administration resource.`,
   };
+}
+
+function detailInput(
+  resource: AdminResourceViewModel,
+  identity: string,
+  searchParams: URLSearchParams
+): { value?: Record<string, unknown>; missing?: string } {
+  const idInput = resource.detailIdInput ?? 'id';
+  const value: Record<string, unknown> = { [idInput]: identity };
+  const schema = resource.detailInputSchema;
+  const required = schema?.type === 'object' ? schema.required ?? [] : [];
+  for (const key of required) {
+    if (key === idInput) continue;
+    const raw = searchParams.get(key);
+    if (raw === null || raw === '') return { missing: key };
+    const property = schema?.type === 'object' ? schema.properties?.[key] : undefined;
+    if (!property || property.type === 'string') {
+      value[key] = raw;
+      continue;
+    }
+    try {
+      value[key] = JSON.parse(raw);
+    } catch {
+      return { missing: key };
+    }
+  }
+  return { value };
 }
 
 export async function loadResourceList(input: ResourceRouteInput): Promise<{
@@ -99,11 +126,20 @@ export async function loadResourceDetail(
 
   const apiModule = input.sourceModuleId ?? input.moduleId;
   const canonicalResource = resource.resourceId ?? input.resourceId;
-  const defaultBase = `${ADMIN_API_PREFIX}/modules/${encodeURIComponent(apiModule)}/${encodeURIComponent(canonicalResource)}`;
   const detailTemplate = resource.detailApiHref;
-  const base = detailTemplate
-    ? materializeAdminApiHref(detailTemplate, { [resource.detailIdInput ?? 'id']: input.identity })
-    : `${resource.apiHref ?? defaultBase}/${encodeURIComponent(input.identity)}`;
+  if (!detailTemplate) return { view: undefined, loadError: unavailable(input.resourceId, input.moduleId) };
+  const operationInput = detailInput(resource, input.identity, input.url.searchParams);
+  if (!operationInput.value) {
+    return {
+      view: undefined,
+      loadError: {
+        status: 400,
+        code: 'RESOURCE_DETAIL_INPUT_REQUIRED',
+        message: `${operationInput.missing ?? 'A required identifier'} is required to load this ${canonicalResource} detail.`,
+      },
+    };
+  }
+  const base = materializeAdminActionHref(detailTemplate, operationInput.value, 'GET');
   if (!base) return { view: undefined, loadError: unavailable(input.resourceId, input.moduleId) };
   const result = await fetchAdmin<Partial<ResourceDetailViewModel> & { item?: unknown }>(
     input.fetcher,

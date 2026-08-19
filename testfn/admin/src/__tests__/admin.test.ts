@@ -19,6 +19,8 @@ import {
 } from "@superfunctions/admin";
 import {
   createTestFnDomainAdminAdapter,
+  createTestFnAdminAdapter,
+  createTestFnDomainAdminService,
   testFnAdminCapability,
   testFnAdminResources,
   type TestFnDomainAdminBinding,
@@ -130,6 +132,19 @@ describe("@testfn/admin", () => {
     expect(testFnAdminCapability.operations.find(
       (operation) => operation.id === "testfn.visual-diffs.compare",
     )?.redaction?.inputFields).toContain("screenshotBase64");
+  });
+
+  it("preserves the receiver for class-style administration services", async () => {
+    const binding = domainBinding("project_1");
+    const service = createTestFnDomainAdminService({ resolve: async () => binding });
+    const original = service.listRuns;
+    service.listRuns = async function (input, operationContext) {
+      expect(this).toBe(service);
+      return original.call(this, input, operationContext);
+    };
+
+    await expect(createTestFnAdminAdapter(service).invoke("testfn.runs.list", {}, context("project_1")))
+      .resolves.toMatchObject({ data: { items: [] } });
   });
 
   it("runs, persists, reads, and analyzes through real TestFn APIs without crossing projects", async () => {

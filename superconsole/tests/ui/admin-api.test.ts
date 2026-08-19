@@ -21,6 +21,7 @@ import {
   inferAdminResourceTitle,
   normalizeAdminResourceRows,
 } from '../../src/lib/components/view-models';
+import { loadResourceDetail } from '../../src/lib/components/resource-pages';
 
 describe('administration API boundary', () => {
   it('propagates the complete tenant scope and canonicalizes the installation root', () => {
@@ -239,8 +240,11 @@ describe('administration API boundary', () => {
     expect(columns.map((column) => column.key)).toEqual(['id', 'email', 'status']);
     expect(normalizeAdminResourceRows(items, columns, {
       id: 'users',
+      idField: 'id',
       label: 'Users',
       href: '/modules/authfn/users',
+      detailApiHref: '/api/admin/v1/modules/authfn/resources/users/:id',
+      detailInputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
       actions: [{ id: 'authfn.users.disable', label: 'Disable', apiHref: '/actions/disable', method: 'POST', targetIdInput: 'userId' }],
     })).toEqual([expect.objectContaining({
       id: 'user-1',
@@ -250,5 +254,57 @@ describe('administration API boundary', () => {
     })]);
     expect(inferAdminResourceTitle(items[0], 'user-1')).toBe('admin@example.test');
     expect(inferAdminResourceFields(items[0]).map((field) => field.label)).not.toContain('Api Token');
+  });
+
+  it('uses declared identities, preserves composite detail keys, and omits list-only links', () => {
+    const columns = inferAdminResourceColumns([{ _id: 'document-1', queue: 'emails' }]);
+    expect(normalizeAdminResourceRows([{ _id: 'document-1' }], columns, {
+      id: 'documents', idField: '_id', label: 'Documents', href: '/modules/cmsfn/documents',
+      detailApiHref: '/api/admin/v1/modules/cmsfn/resources/documents/:id', detailIdInput: 'id',
+      detailInputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+    })[0]).toMatchObject({ id: 'document-1', href: '/modules/cmsfn/documents/document-1' });
+
+    expect(normalizeAdminResourceRows([{ id: 'job-1', queue: 'emails' }], columns, {
+      id: 'jobs', idField: 'id', label: 'Jobs', href: '/modules/flowfn/jobs',
+      detailApiHref: '/api/admin/v1/modules/flowfn/resources/jobs/:id', detailIdInput: 'id',
+      detailInputSchema: { type: 'object', properties: { queue: { type: 'string' }, id: { type: 'string' } }, required: ['queue', 'id'], additionalProperties: false },
+    })[0]).toMatchObject({ id: 'job-1', href: '/modules/flowfn/jobs/job-1?queue=emails' });
+
+    expect(normalizeAdminResourceRows([{ id: 'event-1' }], columns, {
+      id: 'events', idField: 'id', label: 'Events', href: '/modules/flowfn/events',
+    })[0]).not.toHaveProperty('href');
+  });
+
+  it('materializes every required composite detail input from the row URL', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('/api/admin/v1/modules/flowfn/resources/jobs/job-1?queue=emails');
+      return new Response(JSON.stringify({ ok: true, data: { item: { id: 'job-1', queue: 'emails' } } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const registry = { modules: [{
+      id: 'flowfn', name: 'FlowFn', description: 'Flows', href: '/modules/flowfn', enabled: true,
+      resources: [{
+        id: 'jobs', idField: 'id', label: 'Jobs', href: '/modules/flowfn/jobs',
+        detailApiHref: '/api/admin/v1/modules/flowfn/resources/jobs/:id', detailIdInput: 'id',
+        detailInputSchema: { type: 'object' as const, properties: { queue: { type: 'string' as const }, id: { type: 'string' as const } }, required: ['queue', 'id'], additionalProperties: false },
+      }],
+    }] };
+
+    const loaded = await loadResourceDetail({
+      fetcher, registry, moduleId: 'flowfn', resourceId: 'jobs', identity: 'job-1',
+      url: new URL('https://console.example.test/modules/flowfn/jobs/job-1?queue=emails'),
+    });
+    expect(loaded.loadError).toBeUndefined();
+    expect(loaded.view).toMatchObject({ id: 'job-1', title: 'job-1' });
+
+    const missingFetcher = vi.fn();
+    const missing = await loadResourceDetail({
+      fetcher: missingFetcher, registry, moduleId: 'flowfn', resourceId: 'jobs', identity: 'job-1',
+      url: new URL('https://console.example.test/modules/flowfn/jobs/job-1'),
+    });
+    expect(missing.loadError).toMatchObject({ status: 400, code: 'RESOURCE_DETAIL_INPUT_REQUIRED' });
+    expect(missingFetcher).not.toHaveBeenCalled();
   });
 });

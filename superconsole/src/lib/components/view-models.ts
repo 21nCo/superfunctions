@@ -70,6 +70,7 @@ export interface AdminActionViewModel {
 export interface AdminResourceViewModel {
   id: string;
   resourceId?: string;
+  idField?: string;
   sourceModuleId?: string;
   foldedIntoModuleId?: string;
   label: string;
@@ -80,6 +81,7 @@ export interface AdminResourceViewModel {
   listApiHref?: string;
   detailApiHref?: string;
   detailIdInput?: string;
+  detailInputSchema?: AdminJsonSchema;
   listable?: boolean;
   count?: number;
   createAction?: AdminActionViewModel;
@@ -317,18 +319,56 @@ export function inferAdminResourceColumns(items: readonly unknown[]): ResourceCo
   });
 }
 
-function adminItemId(item: Record<string, unknown>, resourceId: string): string | undefined {
+function adminItemId(
+  item: Record<string, unknown>,
+  resourceId: string,
+  idField?: string
+): string | undefined {
   const singular = resourceId.endsWith('ies')
     ? `${resourceId.slice(0, -3)}y`
     : resourceId.endsWith('s')
       ? resourceId.slice(0, -1)
       : resourceId;
-  for (const key of ['id', `${singular}Id`, 'runId', 'key', 'slug']) {
+  for (const key of [...new Set([idField, 'id', `${singular}Id`, 'runId', 'key', 'slug'].filter(Boolean))] as string[]) {
     const value = item[key];
     if (typeof value === 'string' && value) return value;
     if (typeof value === 'number') return String(value);
   }
   return undefined;
+}
+
+function detailInputForRow(
+  item: Record<string, unknown>,
+  source: Record<string, unknown>,
+  resource: AdminResourceViewModel,
+  identity: string
+): Record<string, unknown> | undefined {
+  if (!resource.detailApiHref) return undefined;
+  const idInput = resource.detailIdInput ?? 'id';
+  const input: Record<string, unknown> = { [idInput]: identity };
+  const required = resource.detailInputSchema?.type === 'object'
+    ? resource.detailInputSchema.required ?? []
+    : [];
+  for (const key of required) {
+    if (key === idInput) continue;
+    const value = source[key] ?? item[key];
+    if (value === undefined || value === null || value === '') return undefined;
+    input[key] = value;
+  }
+  return input;
+}
+
+function detailHref(
+  href: string,
+  input: Record<string, unknown>,
+  idInput: string
+): string {
+  const url = new URL(`${href}/${encodeURIComponent(String(input[idInput]))}`, 'http://superconsole.local');
+  for (const [key, value] of Object.entries(input)) {
+    if (key === idInput) continue;
+    url.searchParams.set(key, typeof value === 'string' ? value : JSON.stringify(value));
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 /** Normalize canonical admin items while retaining explicitly supplied row metadata. */
@@ -341,9 +381,11 @@ export function normalizeAdminResourceRows(
     if (!isAdminRecord(item)) return [];
     const explicitValues = isAdminRecord(item.values) ? item.values : undefined;
     const source = explicitValues ?? item;
-    const identity = adminItemId(item, resource.id) ?? adminItemId(source, resource.id);
+    const identity = adminItemId(item, resource.id, resource.idField)
+      ?? adminItemId(source, resource.id, resource.idField);
     const values = Object.fromEntries(columns.map(({ key }) => [key, source[key]]));
     const explicitHref = typeof item.href === 'string' ? item.href : undefined;
+    const detailInput = identity ? detailInputForRow(item, source, resource, identity) : undefined;
     const sourceActions = resource.actions ?? [];
     const boundActions = identity
       ? sourceActions.filter((action) => Boolean(action.targetIdInput)).map((action) => ({
@@ -351,9 +393,12 @@ export function normalizeAdminResourceRows(
           input: { ...(action.input ?? {}), [action.targetIdInput!]: identity },
         }))
       : [];
+    const href = explicitHref ?? (detailInput
+      ? detailHref(resource.href, detailInput, resource.detailIdInput ?? 'id')
+      : undefined);
     return [{
       id: identity ?? `row-${index}`,
-      href: explicitHref ?? (identity ? `${resource.href}/${encodeURIComponent(identity)}` : undefined),
+      ...(href ? { href } : {}),
       values,
       actions: boundActions,
     }];

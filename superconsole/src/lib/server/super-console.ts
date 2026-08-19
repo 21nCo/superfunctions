@@ -313,6 +313,7 @@ interface ConsoleActionView {
 interface ConsoleResourceView {
   id: string;
   resourceId: string;
+  idField?: string;
   moduleId: string;
   sourceModuleId: string;
   foldedIntoModuleId?: string;
@@ -324,6 +325,7 @@ interface ConsoleResourceView {
   listApiHref?: string;
   detailApiHref?: string;
   detailIdInput?: string;
+  detailInputSchema?: AdminJsonSchema;
   listable: boolean;
   actions: ConsoleActionView[];
 }
@@ -381,6 +383,7 @@ function moduleView(
     return {
       id,
       resourceId: id,
+      idField: resource?.idField,
       moduleId: manifest.id,
       sourceModuleId: manifest.id,
       label,
@@ -393,6 +396,7 @@ function moduleView(
       listApiHref: list?.routePath,
       detailApiHref: get?.routePath,
       detailIdInput: get?.operation.target?.idInput,
+      detailInputSchema: get?.operation.inputSchema,
       listable: Boolean(list),
       actions,
     };

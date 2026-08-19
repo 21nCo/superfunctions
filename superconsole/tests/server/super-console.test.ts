@@ -365,9 +365,11 @@ describe('Super Console server composition', () => {
     const view = await (await console.handle(request('/api/admin/v1/modules/examplefn'))).json();
     expect(view.data.module.resources[0]).toMatchObject({
       id: 'records',
+      idField: 'id',
       listable: false,
       detailIdInput: 'id',
       detailApiHref: '/api/admin/v1/modules/examplefn/resources/records/:id',
+      detailInputSchema: expect.objectContaining({ required: ['id'] }),
     });
     expect(view.data.module.resources[0]).not.toHaveProperty('apiHref');
     expect(view.data.module.resources[0]).not.toHaveProperty('listApiHref');
