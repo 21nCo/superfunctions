@@ -18,6 +18,7 @@ const VALID_PRIMITIVES = new Set([
 ]);
 
 const VALID_VALIDATION_RULES = new Set(["min", "max", "regex", "enum", "unique"]);
+const SUPPORTED_MARKDOWN_EXTENSIONS = new Set(["callout", "directive/callout", "diagram", "directive/diagram"]);
 
 function validateSchemaInternal(schema: unknown, path: string): ContentfnEnvelope<ContentfnSchema> {
   if (schema === null || typeof schema !== "object") {
@@ -211,6 +212,23 @@ function validateFieldType(
       }
       return { ok: true, result: undefined };
     case "richtext":
+      return { ok: true, result: undefined };
+    case "markdown":
+      if (ft.dialect !== undefined && ft.dialect !== "commonmark" && ft.dialect !== "gfm") {
+        return err("SCHEMA_INVALID", "markdown dialect must be commonmark or gfm", { path: `${path}.dialect` });
+      }
+      if (ft.allowRawHtml !== undefined && typeof ft.allowRawHtml !== "boolean") {
+        return err("SCHEMA_INVALID", "markdown allowRawHtml must be boolean", { path: `${path}.allowRawHtml` });
+      }
+      if (ft.extensions !== undefined && (!Array.isArray(ft.extensions) || ft.extensions.some((extension) => typeof extension !== "string" || !extension))) {
+        return err("SCHEMA_INVALID", "markdown extensions must be an array of non-empty strings", { path: `${path}.extensions` });
+      }
+      if (ft.extensions?.some((extension) => !SUPPORTED_MARKDOWN_EXTENSIONS.has(extension))) {
+        return err("SCHEMA_INVALID", "markdown extension is not supported by the configured server", { path: `${path}.extensions` });
+      }
+      if (ft.schemaVersion !== undefined && (!Number.isInteger(ft.schemaVersion) || ft.schemaVersion < 1)) {
+        return err("SCHEMA_INVALID", "markdown schemaVersion must be a positive integer", { path: `${path}.schemaVersion` });
+      }
       return { ok: true, result: undefined };
     case "asset":
       if (ft.assetType !== "file" && ft.assetType !== "image") {

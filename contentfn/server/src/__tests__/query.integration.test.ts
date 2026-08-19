@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { Adapter } from "@superfunctions/db";
+import type { CfqlQuery } from "@contentfn/core";
 import { datasetCreate } from "../storage/datasets.js";
 import { schemaUpsert } from "../storage/schemaStorage.js";
 import { docCreate } from "../storage/docs.js";
@@ -263,7 +264,7 @@ describe("Query (CFQL) integration tests", () => {
       );
       expect(c2.ok).toBe(true);
 
-      const query = {
+      const query: CfqlQuery = {
         dataset: "prod",
         types: ["post"],
         filter: { field: "_id", op: "in", value: ["det-1", "det-2"] },

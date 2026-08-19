@@ -1,4 +1,8 @@
 import { marked } from "marked";
+import { parseMarkdown } from "@mdfn/markdown";
+import { extractDocument, renderHtml } from "@mdfn/render";
+import { defaultExtensions } from "@mdfn/extensions";
+import type { MdfnDiagnostic, MdfnDocument, MdfnNode } from "@mdfn/core";
 import { transformFumadocsV15 } from "./compat/fumadocs";
 import { createDiagnostic, createDocsError, type DocsError } from "./diagnostics";
 import { assertSafeSource } from "./sanitize";
@@ -694,37 +698,243 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
   return blocks;
 }
 
-export function extractHeadings(markdown: string): DocHeading[] {
-  const lines = markdown.split(/\r?\n/);
-  const headings: DocHeading[] = [];
-  const createSlug = createSlugger();
-  let insideCodeFence = false;
+function canonicalDocument(node: MdfnNode, schemaVersion: number): MdfnDocument {
+  return { type: "doc", schemaVersion, content: [node] };
+}
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (CODE_FENCE_REGEX.test(trimmed)) {
-      insideCodeFence = !insideCodeFence;
-      continue;
-    }
+function canonicalText(node: MdfnNode): string {
+  if (node.type === "text" || node.type === "inlineCode" || node.type === "codeBlock") {
+    return node.text ?? "";
+  }
+  if (node.type === "image") {
+    return typeof node.attrs?.alt === "string" ? node.attrs.alt : "";
+  }
+  return (node.content ?? []).map(canonicalText).join("");
+}
 
-    if (insideCodeFence) {
-      continue;
-    }
+function canonicalHtml(node: MdfnNode, schemaVersion: number, allowRawHtml = false): string {
+  return renderHtml(canonicalDocument(node, schemaVersion), {
+    extensions: defaultExtensions,
+    ...(allowRawHtml ? { rawHtml: { enabled: true, sanitize: sanitizeMarkdownHtml } } : {}),
+  }).html;
+}
 
-    const match = trimmed.match(HEADING_REGEX);
-    if (!match) {
-      continue;
-    }
+function stripOuterElement(html: string, tag: string): string {
+  const start = new RegExp(`^<${tag}(?:\\s[^>]*)?>`, "i");
+  const end = new RegExp(`</${tag}>$`, "i");
+  return html.trimEnd().replace(start, "").replace(end, "");
+}
 
-    const text = match[2].trim();
-    headings.push({
-      level: match[1].length,
-      text,
-      slug: createSlug(text),
-    });
+function findComponentRegion(source: string, node: MdfnNode): { raw: string; end: number; name: string } | null {
+  const start = node.source?.from;
+  const openingRaw = node.source?.raw ?? node.text ?? "";
+  if (typeof start !== "number") return null;
+  const openingLine = openingRaw.split(/\r?\n|\r/, 1)[0]?.trim() ?? "";
+
+  const selfClosing = openingLine.match(COMPONENT_SELF_CLOSING_REGEX);
+  if (selfClosing) {
+    const end = node.source?.to ?? start + openingRaw.length;
+    return { raw: source.slice(start, end), end, name: selfClosing[1] };
   }
 
-  return headings;
+  const opening = openingLine.match(COMPONENT_START_REGEX);
+  const name = opening?.[1];
+  if (!name) return null;
+
+  const tagPattern = new RegExp(`<\\s*(/?)\\s*${name}\\b[^>]*>`, "gi");
+  tagPattern.lastIndex = start;
+  let depth = 0;
+  for (let match = tagPattern.exec(source); match; match = tagPattern.exec(source)) {
+    const closing = match[1] === "/";
+    const tag = match[0];
+    if (!closing && !/\/\s*>$/.test(tag)) depth += 1;
+    if (closing) depth -= 1;
+    if (depth === 0) {
+      const end = match.index + tag.length;
+      return { raw: source.slice(start, end), end, name };
+    }
+  }
+  return { raw: openingRaw, end: node.source?.to ?? start + openingRaw.length, name };
+}
+
+interface ProjectCanonicalOptions extends ParseBlocksOptions {
+  document: MdfnDocument;
+  allowRawHtml?: boolean;
+}
+
+/**
+ * Project the canonical MDFN document into DocsFn's stable render model.
+ * The legacy line parser is deliberately limited to documentation component
+ * islands because those are DocsFn semantics rather than Markdown semantics.
+ */
+function projectCanonicalBlocks(input: ProjectCanonicalOptions): CompiledContentBlock[] {
+  const blocks: CompiledContentBlock[] = [];
+  const renderCanonicalHtml = (node: MdfnNode): string => canonicalHtml(node, input.document.schemaVersion, input.allowRawHtml);
+  const createHeadingSlug = createSlugger();
+  let mermaidCount = 0;
+  const componentIslandCounts = new Map<string, number>();
+  let index = 0;
+
+  while (index < input.document.content.length) {
+    const node = input.document.content[index];
+    const sourceRaw = node.source?.raw ?? "";
+
+    const component = findComponentRegion(input.source, node);
+    if (component) {
+      const islandCount = (componentIslandCounts.get(component.name) ?? 0) + 1;
+      componentIslandCounts.set(component.name, islandCount);
+      const islandPrefix = islandCount === 1
+        ? input.idPrefix
+        : `${input.idPrefix ?? "inline"}-${component.name}-${String(islandCount).padStart(2, "0")}`;
+      blocks.push(...parseBlocks({
+        source: component.raw,
+        sourcePath: input.sourcePath,
+        resolvedComponents: input.resolvedComponents,
+        idPrefix: islandPrefix,
+      }));
+      index += 1;
+      while (
+        index < input.document.content.length &&
+        (input.document.content[index].source?.from ?? Number.POSITIVE_INFINITY) < component.end
+      ) {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (node.type === "opaque") {
+      blocks.push({
+        type: "paragraph",
+        text: sourceRaw || node.text || "",
+        html: renderCanonicalHtml(node),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (node.type === "heading") {
+      const levelValue = node.attrs?.level;
+      const level = typeof levelValue === "number" ? Math.min(6, Math.max(1, levelValue)) : 1;
+      const text = canonicalText(node).trim();
+      blocks.push({
+        type: "heading",
+        level,
+        text,
+        html: stripOuterElement(renderCanonicalHtml(node), `h${level}`),
+        slug: createHeadingSlug(text),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (node.type === "paragraph") {
+      blocks.push({
+        type: "paragraph",
+        text: canonicalText(node).trim(),
+        html: stripOuterElement(renderCanonicalHtml(node), "p"),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (node.type === "list") {
+      blocks.push({
+        type: "list",
+        ordered: node.attrs?.ordered === true,
+        items: (node.content ?? [])
+          .filter((child) => child.type === "listItem")
+          .map((child) => ({ text: canonicalText(child).trim() })),
+        html: renderCanonicalHtml(node),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (node.type === "table") {
+      // MDFN owns recognition and source boundaries. Marked is retained only as
+      // the presentation projector until DocsFn's render model grows table cells.
+      blocks.push({ type: "table", html: renderBlockHtml(sourceRaw) });
+      index += 1;
+      continue;
+    }
+
+    if (node.type === "codeBlock") {
+      const language = typeof node.attrs?.language === "string" ? node.attrs.language : undefined;
+      if (language?.toLowerCase() === "mermaid") {
+        mermaidCount += 1;
+        blocks.push({
+          type: "mermaid",
+          id: createMermaidId({ idPrefix: input.idPrefix, sourcePath: input.sourcePath, count: mermaidCount }),
+          code: node.text ?? "",
+        });
+      } else {
+        blocks.push({ type: "code", lang: language || undefined, code: node.text ?? "" });
+      }
+      index += 1;
+      continue;
+    }
+
+    if (node.type === "blockquote") {
+      const compatibility = parseBlocks({
+        source: sourceRaw,
+        sourcePath: input.sourcePath,
+        resolvedComponents: input.resolvedComponents,
+        idPrefix: input.idPrefix,
+      });
+      if (compatibility.length === 1 && compatibility[0].type === "callout") {
+        blocks.push(compatibility[0]);
+      } else {
+        blocks.push({
+          type: "paragraph",
+          text: canonicalText(node).trim(),
+          html: renderCanonicalHtml(node),
+        });
+      }
+      index += 1;
+      continue;
+    }
+
+    if (node.type === "thematicBreak") {
+      blocks.push({ type: "paragraph", text: "", html: "<hr>" });
+      index += 1;
+      continue;
+    }
+
+    // Extension and future canonical nodes remain visible and policy-rendered
+    // instead of silently disappearing from documentation output.
+    blocks.push({
+      type: "paragraph",
+      text: canonicalText(node).trim(),
+      html: renderCanonicalHtml(node),
+    });
+    index += 1;
+  }
+
+  return blocks;
+}
+
+function projectMarkdownDiagnostics(
+  diagnostics: readonly MdfnDiagnostic[],
+  sourcePath: string | undefined,
+): DocsDiagnostic[] {
+  return diagnostics.map((diagnostic) => createDiagnostic({
+    code: "DOCS_MARKDOWN_DIAGNOSTIC",
+    severity: diagnostic.severity,
+    message: diagnostic.message,
+    location: { absolutePath: sourcePath },
+    details: {
+      mdfnCode: diagnostic.code,
+      sourceFrom: diagnostic.source?.from,
+      sourceTo: diagnostic.source?.to,
+      extension: diagnostic.extension,
+    },
+  }));
+}
+
+export function extractHeadings(markdown: string): DocHeading[] {
+  const canonical = extractDocument(parseMarkdown(markdown, { extensions: defaultExtensions }).document);
+  const createSlug = createSlugger();
+  return canonical.headings.map((heading) => ({ level: heading.level, text: heading.text, slug: createSlug(heading.text) }));
 }
 
 export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArtifact {
@@ -752,11 +962,19 @@ export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArt
       allowRawHtml: input.allowRawHtml,
     });
 
-    const blocks = parseBlocks({
+    const canonical = parseMarkdown(transformedSource, {
+      dialect: "gfm",
+      allowRawHtml: input.allowRawHtml ?? false,
+      extensions: defaultExtensions,
+    });
+
+    const blocks = projectCanonicalBlocks({
+      document: canonical.document,
       source: transformedSource,
       sourcePath: input.sourcePath,
       resolvedComponents,
       idPrefix: normalizeRouteLikeId(input.sourcePath, "inline"),
+      allowRawHtml: input.allowRawHtml,
     });
     const headings = blocks
       .filter((block): block is Extract<CompiledContentBlock, { type: "heading" }> => block.type === "heading")
@@ -786,7 +1004,7 @@ export function compileMarkdown(input: CompileMarkdownInput): CompiledContentArt
       headings,
       toc: headings,
       componentsUsed: [...componentsUsed].sort((left, right) => left.localeCompare(right)),
-      diagnostics: [],
+      diagnostics: projectMarkdownDiagnostics(canonical.diagnostics, input.sourcePath),
     };
   } catch (error) {
     if (isDocsError(error)) {

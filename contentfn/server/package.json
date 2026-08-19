@@ -40,7 +40,7 @@
     "test:watch": "vitest watch"
   },
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=20 <25"
   },
   "keywords": [
     "contentfn",
@@ -50,6 +50,9 @@
   "sideEffects": false,
   "dependencies": {
     "@contentfn/core": "0.0.2",
+    "@mdfn/markdown": "0.1.0",
+    "@mdfn/extensions": "0.1.0",
+    "@mdfn/contentfn": "0.1.0",
     "@superfunctions/db": "0.1.4",
     "@superfunctions/http": "0.1.3"
   },

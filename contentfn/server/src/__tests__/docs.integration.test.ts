@@ -25,6 +25,7 @@ const schemaV1 = {
         { name: "views", type: { kind: "primitive" as const, type: "number" as const }, required: false },
         { name: "author", type: { kind: "reference" as const, to: ["author"] }, required: false },
         { name: "body", type: { kind: "richtext" as const }, required: false },
+        { name: "markdownBody", type: { kind: "markdown" as const, dialect: "gfm" as const, allowRawHtml: false }, required: false },
         { name: "heroImage", type: { kind: "asset" as const, assetType: "image" as const }, required: false },
       ],
     },
@@ -83,6 +84,37 @@ describe("PHASE_02 docs create/get/delete + perspectives", () => {
         expect(res.error.code).toBe("VALIDATION_FAILED");
         expect(res.error.details.path).toContain("title");
       }
+    });
+  });
+
+  describe("Markdown field validation", () => {
+    it("migrates legacy strings into versioned profile-bound Markdown values", async () => {
+      const accepted = await api.docs.create({ dataset: "prod", id: "markdown-1", type: "post", doc: { title: "Markdown", markdownBody: "# Heading\n" } });
+      expect(accepted.ok).toBe(true);
+      if (accepted.ok) expect(accepted.result.markdownBody).toMatchObject({ type: "text/markdown", version: 1, markdown: "# Heading\n", profile: { dialect: "gfm", allowRawHtml: false, schemaVersion: 1 } });
+      const rejected = await api.docs.create({ dataset: "prod", id: "markdown-2", type: "post", doc: { title: "Invalid", markdownBody: ["not source"] } });
+      expect(rejected.ok).toBe(false);
+      if (!rejected.ok) expect(rejected.error).toMatchObject({ code: "VALIDATION_FAILED", details: { path: "markdownBody" } });
+    });
+
+    it("accepts canonical directive profiles and rejects envelope policy mismatches", async () => {
+      await api.schema.upsert({ dataset: "prod", schema: {
+        version: 2,
+        documentTypes: [{
+          name: "page",
+          fields: [{ name: "body", type: { kind: "markdown" as const, dialect: "gfm" as const, allowRawHtml: false, extensions: ["directive/callout"], schemaVersion: 1 }, required: true }],
+        }],
+      } });
+      const accepted = await api.docs.create({ dataset: "prod", id: "canonical", type: "page", doc: { body: ":::callout\nBody\n:::\n" } });
+      expect(accepted.ok).toBe(true);
+      const mismatched = await api.docs.create({ dataset: "prod", id: "mismatch", type: "page", doc: { body: {
+        type: "text/markdown",
+        version: 1,
+        markdown: "<script>unsafe</script>",
+        profile: { id: "mdfn:gfm", dialect: "gfm", allowRawHtml: true, extensions: ["directive/callout"], schemaVersion: 1 },
+      } } });
+      expect(mismatched.ok).toBe(false);
+      if (!mismatched.ok) expect(mismatched.error).toMatchObject({ code: "VALIDATION_FAILED", details: { path: "body" } });
     });
   });
 

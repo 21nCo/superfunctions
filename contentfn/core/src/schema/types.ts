@@ -26,6 +26,13 @@ export type ContentfnFieldType =
       allowMarks?: string[];
       allowObjects?: string[];
     }
+  | {
+      kind: "markdown";
+      dialect?: "commonmark" | "gfm";
+      allowRawHtml?: boolean;
+      extensions?: string[];
+      schemaVersion?: number;
+    }
   | { kind: "asset"; assetType: "file" | "image" };
 
 export interface ContentfnField {

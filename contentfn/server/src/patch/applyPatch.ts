@@ -174,7 +174,9 @@ function applyOperation(
 
     default:
       // Should never happen if validatePatch is called first
-      return err("PATCH_INVALID", "Unknown patch operation", { path: op.path });
+      return err("PATCH_INVALID", "Unknown patch operation", {
+        path: (op as { path?: string }).path,
+      });
   }
 }
 

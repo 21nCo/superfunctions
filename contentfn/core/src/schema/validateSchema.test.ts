@@ -49,4 +49,28 @@ describe("validateSchema", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.result.documentTypes).toHaveLength(2);
   });
+
+  it("validates the explicit Markdown field contract", () => {
+    const valid = validateSchema({
+      version: 1,
+      documentTypes: [{ name: "page", fields: [{ name: "body", type: { kind: "markdown", dialect: "gfm", allowRawHtml: false, extensions: ["callout"], schemaVersion: 1 } }] }],
+    });
+    expect(valid.ok).toBe(true);
+    const invalid = validateSchema({
+      version: 1,
+      documentTypes: [{ name: "page", fields: [{ name: "body", type: { kind: "markdown", dialect: "unknown" } }] }],
+    });
+    expect(invalid.ok).toBe(false);
+    if (!invalid.ok) expect(invalid.error.details.path).toContain("dialect");
+    const unsupported = validateSchema({
+      version: 1,
+      documentTypes: [{ name: "page", fields: [{ name: "body", type: { kind: "markdown", extensions: ["unsupported"] } }] }],
+    });
+    expect(unsupported.ok).toBe(false);
+    if (!unsupported.ok) expect(unsupported.error.details.path).toContain("extensions");
+    expect(validateSchema({
+      version: 1,
+      documentTypes: [{ name: "page", fields: [{ name: "body", type: { kind: "markdown", extensions: ["directive/callout", "directive/diagram"] } }] }],
+    }).ok).toBe(true);
+  });
 });
