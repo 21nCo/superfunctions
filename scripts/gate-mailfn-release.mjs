@@ -32,6 +32,7 @@ function run(file, args, cwd = root) {
 // SendFn package, and its CLI consumes the repository's ClIFn package. Build
 // those workspace dependencies and peers before exercising MailFn packages.
 run("npm", ["run", "build"], path.join(root, "clifn/core"));
+run("npm", ["run", "build"], path.join(root, "packages/observability"));
 run("npm", ["run", "build"], path.join(root, "packages/db"));
 run("npm", ["run", "build"], path.join(root, "packages/http"));
 run("npm", ["run", "build"], path.join(root, "sendfn/typescript"));
