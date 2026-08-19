@@ -6,6 +6,7 @@
     "baseUrl": ".",
     "paths": {
       "@superfunctions/db": ["../../packages/db/src/index.ts"],
+      "@superfunctions/delivery": ["../../packages/delivery/src/index.ts"],
       "@superfunctions/http": ["../../packages/http/src/index.ts"]
     },
     "lib": ["ES2020", "DOM"],

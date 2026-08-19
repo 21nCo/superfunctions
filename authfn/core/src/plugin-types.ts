@@ -3,6 +3,7 @@ import type { OAuthFetchLike, OAuthTokenHttpClient } from '@superfunctions/oauth
 import type { AuthFnPlugin } from './types.js';
 import type {
   AuthFnCookieConfig,
+  AuthFnDeliveryMessageResolver,
   AuthFnPasswordCompromiseChecker,
   AuthFnRuntimeResolution,
   AuthFnDeliveryProvider,
@@ -21,6 +22,7 @@ export interface PasswordPluginConfig extends AuthFnBundledPluginConfig {
 }
 export interface EmailOtpPluginConfig extends AuthFnBundledPluginConfig {
   delivery?: AuthFnDeliveryProvider;
+  message?: AuthFnDeliveryMessageResolver;
   codeGenerator?: () => string;
   now?: () => Date;
   challengeTtlSeconds?: number;

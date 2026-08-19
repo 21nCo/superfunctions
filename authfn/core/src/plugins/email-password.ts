@@ -19,6 +19,7 @@ import {
 export function authFnPasswordPlugin(config: PasswordPluginConfig & {
   otp?: {
     delivery?: import('../types.js').AuthFnDeliveryProvider;
+    message?: import('../types.js').AuthFnDeliveryMessageResolver;
     codeGenerator?: () => string;
     now?: () => Date;
     challengeTtlSeconds?: number;
@@ -59,6 +60,7 @@ function createPasswordRoutes(
   config: PasswordPluginConfig & {
     otp?: {
       delivery?: import('../types.js').AuthFnDeliveryProvider;
+      message?: import('../types.js').AuthFnDeliveryMessageResolver;
       codeGenerator?: () => string;
       now?: () => Date;
       challengeTtlSeconds?: number;

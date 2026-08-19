@@ -1,4 +1,5 @@
 import type { AuthProvider, AuthSession } from '@superfunctions/auth';
+import type { DeliveryProvider, DeliveryResult, EmailDeliveryRequest } from '@superfunctions/delivery';
 import type { Adapter, KVStoreAdapter, TableSchema } from '@superfunctions/db';
 import type { Route, Router } from '@superfunctions/http';
 import type { OAuthClientSecretResolver, OAuthFetchLike, OAuthTokenHttpClient } from '@superfunctions/oauth-http';
@@ -248,24 +249,34 @@ export interface AuthFnObservabilityConfig {
   emit?(event: AuthFnEvent): Promise<void> | void;
 }
 
-export interface AuthFnDeliveryRequest {
+export interface AuthFnDeliveryRequest extends EmailDeliveryRequest {
   channel: 'email';
+  kind: 'authfn.otp';
   challengeId: string;
   purpose: AuthFnOtpPurpose;
   email: string;
   code: string;
-  metadata?: Record<string, unknown>;
 }
 
-export interface AuthFnDeliveryResult {
-  sent: boolean;
-  metadata?: Record<string, unknown>;
+export interface AuthFnDeliveryResult extends DeliveryResult {
 }
 
-export interface AuthFnDeliveryProvider {
-  send(input: AuthFnDeliveryRequest): Promise<AuthFnDeliveryResult> | AuthFnDeliveryResult;
-  emit?(event: AuthFnOtpChallengeLifecycleEvent): Promise<void> | void;
-}
+export type AuthFnDeliveryMessage = Partial<
+  Pick<
+    EmailDeliveryRequest,
+    'subject' | 'html' | 'text' | 'cc' | 'bcc' | 'attachments' | 'tags' | 'metadata'
+  >
+>;
+
+export type AuthFnDeliveryMessageResolver = (
+  input: AuthFnDeliveryRequest
+) => Promise<AuthFnDeliveryMessage | undefined> | AuthFnDeliveryMessage | undefined;
+
+export type AuthFnDeliveryProvider = DeliveryProvider<
+  AuthFnDeliveryRequest,
+  AuthFnDeliveryResult,
+  AuthFnOtpChallengeLifecycleEvent
+>;
 
 export interface AuthFnSocialProfile {
   providerAccountId: string;

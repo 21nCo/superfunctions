@@ -2,7 +2,9 @@ import { randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { NotFoundError } from '@superfunctions/db';
 import type {
   AuthFnConfig,
+  AuthFnDeliveryMessageResolver,
   AuthFnDeliveryProvider,
+  AuthFnDeliveryRequest,
   AuthFnHookContext,
   AuthFnHooks,
   AuthFnOtpChallengeRecord,
@@ -34,6 +36,7 @@ const DEFAULT_OTP_MAX_ATTEMPTS = 5;
 
 export interface OtpRuntimeOptions {
   delivery?: AuthFnDeliveryProvider;
+  message?: AuthFnDeliveryMessageResolver;
   codeGenerator?: () => string;
   now?: () => Date;
   challengeTtlSeconds?: number;
@@ -111,14 +114,19 @@ export async function sendOtpChallenge(
     namespace: namespace(config)
   });
 
-  const delivery = await deliverChallenge(runtimeOptions.delivery, {
+  const deliveryInput = await resolveDeliveryRequest(runtimeOptions, {
     channel: 'email',
+    kind: 'authfn.otp',
+    to: challenge.email,
+    userId: challenge.id,
     challengeId: challenge.id,
     purpose: challenge.purpose,
     email: challenge.email,
     code: challengeCode,
-    metadata: challenge.deliveryMetadata
+    metadata: challenge.deliveryMetadata,
+    ...defaultDeliveryMessage(challenge.purpose, challengeCode)
   });
+  const delivery = await deliverChallenge(runtimeOptions.delivery, deliveryInput);
 
   const challengeWithDelivery = delivery.metadata
     ? await config.database.update<AuthFnOtpChallengeRecord>({
@@ -176,6 +184,58 @@ export async function sendOtpChallenge(
       metadata: challengeWithDelivery.deliveryMetadata
     }
   };
+}
+
+async function resolveDeliveryRequest(
+  runtimeOptions: OtpRuntimeOptions,
+  input: AuthFnDeliveryRequest
+): Promise<AuthFnDeliveryRequest> {
+  const message = await runtimeOptions.message?.(input);
+  if (!message) {
+    return input;
+  }
+  return {
+    ...input,
+    ...message,
+    metadata: {
+      ...(input.metadata ?? {}),
+      ...(message.metadata ?? {})
+    }
+  };
+}
+
+function defaultDeliveryMessage(
+  purpose: AuthFnOtpPurpose,
+  code: string
+): Pick<AuthFnDeliveryRequest, 'subject' | 'text' | 'html'> {
+  const subject = defaultDeliverySubject(purpose);
+  const escapedCode = escapeHtml(code);
+  return {
+    subject,
+    text: `Your verification code is ${code}. It expires shortly.`,
+    html: `<p>Your verification code is <strong>${escapedCode}</strong>.</p><p>It expires shortly.</p>`
+  };
+}
+
+function defaultDeliverySubject(purpose: AuthFnOtpPurpose): string {
+  switch (purpose) {
+    case 'reset-password':
+      return 'Reset your password';
+    case 'sign-in':
+      return 'Your sign-in code';
+    case 'sign-up':
+      return 'Your sign-up code';
+    case 'verify-email':
+      return 'Verify your email';
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
 }
 
 export async function verifyOtpChallenge(
