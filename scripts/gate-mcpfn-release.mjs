@@ -174,7 +174,12 @@ try {
   npmStep("testing:playwright", ["run", "test:playwright", "--workspace", "@mcpfn/testing"]);
   npmStep("testing:build", ["run", "build", "--workspace", "@mcpfn/testing"]);
 
-  for (const workspace of ["@datafn/core", "@superfunctions/db", "@superfunctions/http"]) {
+  for (const workspace of [
+    "@datafn/core",
+    "@superfunctions/observability",
+    "@superfunctions/db",
+    "@superfunctions/http",
+  ]) {
     npmStep(`dependency:build:${workspace}`, ["run", "build", "--workspace", workspace]);
   }
   npmStep("datafn-server:typecheck", ["run", "typecheck", "--workspace", "@datafn/server"]);
