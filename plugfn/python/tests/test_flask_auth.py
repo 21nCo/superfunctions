@@ -21,6 +21,10 @@ class MockConnections:
         self.list_calls = []
         self.auth_url_calls = []
         self.disconnect_calls = []
+        self.callback_calls = []
+        self.webhook_calls = []
+        self.ready_calls = 0
+        self.call_order = []
 
     async def list(self, user_id, provider=None):
         self.list_calls.append({"user_id": user_id, "provider": provider})
@@ -50,7 +54,8 @@ class MockConnections:
         self.disconnect_calls.append({"connection_id": connection_id, "user_id": user_id})
 
     async def handle_callback(self, provider, code, state):
-        return SimpleNamespace(id="conn_1", provider=provider, status="active")
+        self.callback_calls.append({"provider": provider, "code": code, "state": state})
+        return SimpleNamespace(id="conn_1", provider=provider or "github", status="active")
 
 
 def create_app(principal):
@@ -65,6 +70,15 @@ def create_app(principal):
             version="1.0.0",
         )
     ]
+    async def ready():
+        connections.ready_calls += 1
+        connections.call_order.append("ready")
+
+    async def handle_webhook(**kwargs):
+        connections.webhook_calls.append(kwargs)
+        connections.call_order.append("webhook")
+        return [{"ok": True}]
+
     plug = SimpleNamespace(
         config=SimpleNamespace(
             auth=AsyncAuthProvider(principal),
@@ -74,7 +88,8 @@ def create_app(principal):
         connections=connections,
         providers=SimpleNamespace(list=lambda: providers),
         _connection_manager=SimpleNamespace(resolve_webhook_secret=lambda provider: "whsec_github"),
-        _webhook_handler=SimpleNamespace(handle_webhook=None),
+        _webhook_handler=SimpleNamespace(handle_webhook=handle_webhook),
+        ready=ready,
     )
     mount_plugfn(app, plug)
     return app, connections
@@ -107,6 +122,32 @@ def test_flask_exposes_canonical_route_inventory():
     assert "POST /api/plugfn/connections/auth" in routes
     assert "POST /api/plugfn/connections/disconnect" in routes
     assert "POST /api/plugfn/webhooks/<provider>/<event>" in routes
+
+
+def test_flask_waits_for_ready_before_webhook_dispatch():
+    app, connections = create_app({"userId": "user_from_auth"})
+
+    response = app.test_client().post(
+        "/api/plugfn/webhooks/github/issues.opened",
+        data=b'{"action":"opened"}',
+    )
+
+    assert response.status_code == 200
+    assert connections.ready_calls == 1
+    assert len(connections.webhook_calls) == 1
+    assert connections.call_order == ["ready", "webhook"]
+
+
+def test_flask_canonical_callback_allows_omitted_provider_query():
+    app, connections = create_app({"userId": "user_from_auth"})
+    client = app.test_client()
+
+    response = client.get("/api/plugfn/callback?code=oauth-code&state=oauth-state")
+
+    assert response.status_code == 200
+    assert connections.callback_calls == [
+        {"provider": None, "code": "oauth-code", "state": "oauth-state"}
+    ]
 
 
 def test_flask_rejects_query_user_spoofing():
@@ -156,3 +197,23 @@ def test_flask_disconnect_uses_authenticated_user():
     assert connections.disconnect_calls == [
         {"connection_id": "conn_1", "user_id": "user_from_auth"}
     ]
+
+
+def test_flask_redacts_unexpected_exception_details():
+    app, connections = create_app({"userId": "user_from_auth"})
+
+    async def fail_list(*_args, **_kwargs):
+        raise RuntimeError("database password is secret-value")
+
+    connections.list = fail_list
+    response = app.test_client().get("/api/plugfn/connections")
+
+    assert response.status_code == 500
+    body = response.get_json()
+    assert body["error"] == {
+        "code": "INTERNAL_ERROR",
+        "message": "An internal error occurred",
+        "status": 500,
+        "details": {},
+    }
+    assert "secret-value" not in response.get_data(as_text=True)

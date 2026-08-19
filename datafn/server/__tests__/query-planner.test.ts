@@ -24,6 +24,23 @@ import {
   classifyQuery,
 } from "../src/execution/query/planner.js";
 
+const polymorphicCollectionSchema = {
+  resources: [
+    { name: "collection", fields: [{ name: "label", type: "string" }] },
+    { name: "node", fields: [{ name: "label", type: "string" }] },
+    { name: "objective", fields: [{ name: "label", type: "string" }] },
+  ],
+  relations: [
+    {
+      from: ["node", "objective"],
+      to: "collection",
+      relation: "collections",
+      inverse: "items",
+      type: "many-many",
+    },
+  ],
+};
+
 // ---------------------------------------------------------------------------
 // convertDfqlFilters
 // ---------------------------------------------------------------------------
@@ -122,6 +139,27 @@ describe("convertDfqlFilters", () => {
     expect(result).toEqual([
       { field: "status", operator: "in", value: ["active", "pending"] },
     ]);
+  });
+
+  it("$is_null operator is converted to null equality", () => {
+    const result = convertDfqlFilters({ trashedAt: { $is_null: true } });
+    expect(result).toEqual([
+      { field: "trashedAt", operator: "eq", value: null },
+    ]);
+  });
+
+  it("normalizes false null predicates instead of forwarding booleans", () => {
+    expect(convertDfqlFilters({ trashedAt: { $is_null: false } })).toEqual([
+      { field: "trashedAt", operator: "ne", value: null },
+    ]);
+    expect(convertDfqlFilters({ trashedAt: { $is_not_null: false } })).toEqual([
+      { field: "trashedAt", operator: "eq", value: null },
+    ]);
+  });
+
+  it("$is_empty remains in-memory because empty semantics are field-type dependent", () => {
+    const result = convertDfqlFilters({ title: { $is_empty: true } });
+    expect(result).toBeNull();
   });
 
   // $like / $ilike operators
@@ -494,6 +532,13 @@ describe("classifyQuery", () => {
     ).toBe("IN_MEMORY");
   });
 
+  it("temporal clauses always use the normalized in-memory path", () => {
+    expect(classifyQuery({
+      resource: "task",
+      temporal: { mode: "asOf", at: "2026-08-19T00:00:00.000Z" },
+    })).toBe("IN_MEMORY");
+  });
+
   it("$all relation quantifier → IN_MEMORY", () => {
     expect(
       classifyQuery({ resource: "task", filters: { tags: { $all: { label: "urgent" } } } }),
@@ -545,6 +590,15 @@ describe("classifyQuery", () => {
   it("bare relation name 'tags' with schema → PARTIAL_PUSHDOWN", () => {
     expect(
       classifyQuery({ resource: "task", select: ["id", "tags"] }, taskSchema),
+    ).toBe("PARTIAL_PUSHDOWN");
+  });
+
+  it("bare inverse polymorphic relation name with schema → PARTIAL_PUSHDOWN", () => {
+    expect(
+      classifyQuery(
+        { resource: "collection", select: ["id", "items"] },
+        polymorphicCollectionSchema,
+      ),
     ).toBe("PARTIAL_PUSHDOWN");
   });
 

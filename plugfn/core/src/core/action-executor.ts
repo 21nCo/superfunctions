@@ -6,10 +6,11 @@ import type {
   BatchResult,
 } from '../types/action.js';
 import type { Provider } from '../types/provider.js';
+import type { RateLimitConfig } from '../types/provider.js';
 import { AuthType } from '../types/provider.js';
 import type { Logger } from '../types/action.js';
 import type { Credentials } from '../types/connection.js';
-import type { Adapter as DbAdapter } from '@superfunctions/db';
+import type { Adapter as DbAdapter, KVStoreAdapter } from '@superfunctions/db';
 import { ConnectionManager } from './connection-manager.js';
 import { ProviderRegistry } from './provider-registry.js';
 import { RetryMiddleware } from '../middleware/retry.js';
@@ -38,6 +39,8 @@ export class ActionExecutor {
   private readonly enableCache: boolean;
   private readonly enableLogging: boolean;
   private readonly enableMetrics: boolean;
+  private readonly respectProviderLimits: boolean;
+  private readonly globalRateLimit?: RateLimitConfig;
 
   constructor(
     private connectionManager: ConnectionManager,
@@ -51,12 +54,20 @@ export class ActionExecutor {
       enableMetrics?: boolean;
       maxConcurrentSyncPerConnection?: number;
       database?: DbAdapter;
+      cacheStore?: KVStoreAdapter;
+      cacheTtl?: number;
+      cacheKeyPrefix?: string;
+      respectProviderLimits?: boolean;
+      globalRateLimit?: RateLimitConfig;
     } = {}
   ) {
     this.httpClient = new FetchHttpClient();
     this.retryMiddleware = new RetryMiddleware({}, logger);
     this.rateLimiter = new RateLimiter();
-    this.cacheMiddleware = new CacheMiddleware(300000, logger);
+    this.cacheMiddleware = new CacheMiddleware(_options.cacheTtl ?? 300000, logger, {
+      store: _options.cacheStore,
+      keyPrefix: _options.cacheKeyPrefix,
+    });
     this.loggingMiddleware = new LoggingMiddleware(logger, _options.database);
     this.metricsMiddleware = new MetricsMiddleware();
     this.maxConcurrentSyncPerConnection = Math.max(1, _options.maxConcurrentSyncPerConnection ?? 1);
@@ -65,6 +76,8 @@ export class ActionExecutor {
     this.enableCache = _options.enableCache !== false;
     this.enableLogging = _options.enableLogging !== false;
     this.enableMetrics = _options.enableMetrics !== false;
+    this.respectProviderLimits = _options.respectProviderLimits !== false;
+    this.globalRateLimit = _options.globalRateLimit;
   }
 
   /**
@@ -77,7 +90,7 @@ export class ActionExecutor {
   ): Promise<ActionResult<T>> {
     const startTime = Date.now();
     let retries = 0;
-    let cached = false;
+    const cached = false;
 
     try {
       // Get provider
@@ -94,24 +107,50 @@ export class ActionExecutor {
 
       // Validate parameters
       const validatedParams = actionObj.parameters.parse(options.params);
+      const shouldUseCache =
+        this.enableCache &&
+        options.cache !== false &&
+        (options.cache !== undefined || actionObj.cacheable === true);
 
-      // Generate cache key
-      const cacheKey = this.cacheMiddleware.generateKey(
+      // Get or select connection
+      const connection = await this.connectionManager.resolveConnectionForAction({
+        userId: options.userId,
         provider,
-        action,
-        validatedParams,
-        options.userId
-      );
+        connectionId: options.connectionId,
+        actor: options.actor,
+      });
 
-      // Check cache
-      if (this.enableCache && options.cache !== false) {
-        const cachedResult = await this.cacheMiddleware.get<T>(cacheKey);
-        if (cachedResult !== null) {
+      if (!connection) {
+        throw new Error(`No connection found for provider ${provider} and user ${options.userId}`);
+      }
+
+      const cacheKey = shouldUseCache
+        ? typeof options.cache === 'object' && options.cache.key
+          ? this.cacheMiddleware.generateCustomKey(
+              provider,
+              action,
+              options.cache.key,
+              options.userId,
+              connection.id
+            )
+          : this.cacheMiddleware.generateKey(
+              provider,
+              action,
+              validatedParams,
+              options.userId,
+              connection.id
+            )
+        : undefined;
+
+      // Check cache only after resolving the concrete connection.
+      if (cacheKey) {
+        const cachedResult = await this.cacheMiddleware.getEntry<T>(cacheKey);
+        if (cachedResult.hit) {
           this.logger.debug(`Cache hit for ${provider}.${action}`);
           
           return {
             success: true,
-            data: cachedResult,
+            data: cachedResult.data,
             provider,
             action,
             cached: true,
@@ -122,25 +161,12 @@ export class ActionExecutor {
         }
       }
 
-      // Get or select connection
-      const connection = await this.connectionManager.resolveConnectionForAction({
-        userId: options.userId,
-        provider,
-        connectionId: options.connectionId,
-      });
-
-      if (!connection) {
-        throw new Error(`No connection found for provider ${provider} and user ${options.userId}`);
-      }
-
       // Get credentials
       const credentials = await this.connectionManager.getCredentials(connection.id);
 
       // Apply rate limiting
-      if (this.enableRateLimit && providerObj.rateLimit) {
-        await this.rateLimiter.acquire(`provider:${provider}`, providerObj.rateLimit);
-        await this.rateLimiter.acquire(`provider:${provider}:tenant:${options.userId}`, providerObj.rateLimit);
-      }
+      const acquireRateLimit = () =>
+        this.acquireRateLimits(providerObj, provider, options.userId);
 
       // Build action context
       const context: ActionContext = {
@@ -154,8 +180,14 @@ export class ActionExecutor {
           type: providerObj.auth.type,
           credentials,
         },
-        http: this.createAuthenticatedHttpClient(providerObj, credentials),
+        http: this.createAuthenticatedHttpClient(
+          providerObj,
+          credentials,
+          options.timeout,
+          acquireRateLimit
+        ),
         logger: this.logger,
+        acquireRateLimit,
       };
 
       // Execute action with retry
@@ -167,7 +199,11 @@ export class ActionExecutor {
         if (!this.enableRetry) {
           return { data: await executeAction(), retries: 0 };
         }
-        return this.retryMiddleware.execute(executeAction, `${provider}.${action}`);
+        return this.retryMiddleware.execute(
+          executeAction,
+          `${provider}.${action}`,
+          options.retry ?? (actionObj.idempotent === true ? {} : { maxAttempts: 1 })
+        );
       });
 
       retries = result.retries;
@@ -177,7 +213,7 @@ export class ActionExecutor {
       const validatedData = actionObj.returns.parse(data);
 
       // Cache result
-      if (this.enableCache && options.cache !== false) {
+      if (cacheKey) {
         const ttl = typeof options.cache === 'object' ? options.cache.ttl : undefined;
         await this.cacheMiddleware.set(cacheKey, validatedData, ttl);
       }
@@ -279,6 +315,8 @@ export class ActionExecutor {
         userId: action.userId,
         connectionId: action.connectionId,
         params: action.params,
+        cache: action.cache,
+        timeout: action.timeout,
       })
     );
 
@@ -295,7 +333,12 @@ export class ActionExecutor {
   /**
    * Create HTTP client with authentication
    */
-  private createAuthenticatedHttpClient(provider: Provider, credentials: Credentials): any {
+  private createAuthenticatedHttpClient(
+    provider: Provider,
+    credentials: Credentials,
+    defaultTimeout: number | undefined,
+    beforeRequest: () => Promise<void>
+  ): any {
     const baseHeaders: Record<string, string> = {
       ...provider.headers,
     };
@@ -331,32 +374,68 @@ export class ActionExecutor {
 
     // Return wrapped HTTP client with auth headers
     return {
-      get: (url: string, config?: any) =>
-        this.httpClient.get(url, {
+      get: async (url: string, config?: any) => {
+        await beforeRequest();
+        return this.httpClient.get(url, {
           ...config,
+          timeout: config?.timeout ?? defaultTimeout,
           headers: { ...baseHeaders, ...config?.headers },
-        }),
-      post: (url: string, data?: any, config?: any) =>
-        this.httpClient.post(url, data, {
+        });
+      },
+      post: async (url: string, data?: any, config?: any) => {
+        await beforeRequest();
+        return this.httpClient.post(url, data, {
           ...config,
+          timeout: config?.timeout ?? defaultTimeout,
           headers: { ...baseHeaders, ...config?.headers },
-        }),
-      put: (url: string, data?: any, config?: any) =>
-        this.httpClient.put(url, data, {
+        });
+      },
+      put: async (url: string, data?: any, config?: any) => {
+        await beforeRequest();
+        return this.httpClient.put(url, data, {
           ...config,
+          timeout: config?.timeout ?? defaultTimeout,
           headers: { ...baseHeaders, ...config?.headers },
-        }),
-      patch: (url: string, data?: any, config?: any) =>
-        this.httpClient.patch(url, data, {
+        });
+      },
+      patch: async (url: string, data?: any, config?: any) => {
+        await beforeRequest();
+        return this.httpClient.patch(url, data, {
           ...config,
+          timeout: config?.timeout ?? defaultTimeout,
           headers: { ...baseHeaders, ...config?.headers },
-        }),
-      delete: (url: string, config?: any) =>
-        this.httpClient.delete(url, {
+        });
+      },
+      delete: async (url: string, config?: any) => {
+        await beforeRequest();
+        return this.httpClient.delete(url, {
           ...config,
+          timeout: config?.timeout ?? defaultTimeout,
           headers: { ...baseHeaders, ...config?.headers },
-        }),
+        });
+      },
     };
+  }
+
+  private async acquireRateLimits(
+    providerObj: Provider,
+    provider: string,
+    userId: string
+  ): Promise<void> {
+    if (!this.enableRateLimit) {
+      return;
+    }
+
+    if (this.respectProviderLimits && providerObj.rateLimit) {
+      await this.rateLimiter.acquireMany(
+        [`provider:${provider}`, `provider:${provider}:tenant:${userId}`],
+        providerObj.rateLimit
+      );
+    }
+    const globalRateLimit = this.globalRateLimit;
+    if (globalRateLimit) {
+      await this.rateLimiter.acquire('global', globalRateLimit);
+    }
   }
 
   private async executeWithSyncConcurrencyGuard<T>(
@@ -373,10 +452,10 @@ export class ActionExecutor {
     const current = new Promise<void>((resolve) => {
       releaseCurrent = resolve;
     });
-    const queueTail = previous.then(() => current);
+    const queueTail = previous.catch(() => {}).then(() => current);
     this.syncExecutionQueue.set(connectionId, queueTail);
 
-    await previous;
+    await previous.catch(() => {});
     try {
       return await execute();
     } finally {

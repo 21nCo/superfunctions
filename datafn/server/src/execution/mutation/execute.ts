@@ -5,13 +5,29 @@
 import type { DatafnSchema, DatafnPlugin } from "../../core-types.js";
 import type { Adapter } from "@superfunctions/db";
 import { randomUUID } from "crypto";
-import type { IdempotencyStore, MutationResult } from "../idempotency.js";
+import { isRetryableMutationResult, type IdempotencyStore, type MutationResult } from "../idempotency.js";
 import { type DFQLMutation, buildReplaceRecord } from "./dfql.js";
-import { resolveCapabilities } from "@datafn/core";
-import { executeRelate, executeModifyRelation, executeUnrelate, extractJoinDeltas, extractRelationFkDeltas } from "./relations.js";
+import { normalizeRelationFkRecord, resolveCapabilities } from "@datafn/core";
+import {
+  applyInactivePropagation,
+  applyRelationDeletePolicies,
+  collectInactivePropagationSeeds,
+  executeRelate,
+  executeModifyRelation,
+  executeUnrelate,
+  extractJoinDeltas,
+  extractRelationRecordDeltasFromDB,
+} from "./relations.js";
 import { executeSchemaAwareMerge } from "./merge-decision.js";
-import { executeShare, executeUnshare, getPermissionsTable } from "./share.js";
-import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry } from "../sync/change-tracking.js";
+import {
+  executeShare,
+  executeUnshare,
+  getPermissionsTable,
+  syncDatafnPermissionGrantAfterCommit,
+} from "./share.js";
+import { getDatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
+import type { DatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
+import { ChangeTrackingService, recordChangeWithRetry, recordChangesWithRetry, type ChangeEntryInput } from "../sync/change-tracking.js";
 import {
   applyRelationInheritanceForRelate,
   applyRelationInheritanceForShare,
@@ -30,15 +46,31 @@ const SEARCH_UPSERT_OPS = new Set(["insert", "merge", "replace", "trash", "resto
 async function tryUpdateSearchIndex(
   searchProvider: SearchProvider,
   mutation: DFQLMutation,
+  db: Adapter,
+  namespace: string | undefined,
   logger?: DatafnLogger,
+  multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
 ): Promise<void> {
   const op = mutation.operation === "delete" ? "delete" : "upsert";
   const shouldIndex = op === "delete" || SEARCH_UPSERT_OPS.has(mutation.operation);
   if (!shouldIndex) return;
   try {
+    const storedRecord =
+      op === "upsert"
+        ? await db.findOne({
+            model: mutation.resource,
+            where: [{ field: "id", operator: "eq", value: mutation.id }],
+            namespace,
+          })
+        : null;
+    const record = storedRecord ?? { id: mutation.id, ...(mutation.record || {}) };
     await searchProvider.updateIndices({
       resource: mutation.resource,
-      records: [{ id: mutation.id, ...(mutation.record || {}) }],
+      records: [{
+        ...record,
+        __ns: namespace,
+        ...(multiRegionRuntime?.regionId ? { __region: multiRegionRuntime.regionId } : {}),
+      }],
       operation: op,
     });
   } catch (e) {
@@ -159,6 +191,7 @@ async function executeMutationCore(
   changeTracking: ChangeTrackingService,
   actorId?: string,
   logger?: DatafnLogger,
+  multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
 ): Promise<MutationResult> {
   const resolvedCapabilities = resolveCapabilitiesForResource(schema, mutation.resource);
   let opResult:
@@ -173,6 +206,12 @@ async function executeMutationCore(
         record: Record<string, unknown> | null;
       }
     | undefined;
+  let additionalChanges: Array<{
+    resource: string;
+    id: string;
+    op: "merge" | "delete";
+    record: Record<string, unknown> | null;
+  }> = [];
   // EXE-008: flag to skip change tracking when deleting a non-existent record
   let skipChangeTracking = false;
 
@@ -181,7 +220,7 @@ async function executeMutationCore(
       case "insert":
         try {
           const strippedRecord = stripReadonlyCapabilityFields(
-            mutation.record || {},
+            normalizeRelationFkRecord(schema, mutation.resource, mutation.record || {}),
             resolvedCapabilities,
           );
           const insertRecord = injectCapabilityFieldsOnInsert(
@@ -195,6 +234,12 @@ async function executeMutationCore(
             namespace,
           });
           resolvedRecord = insertRecord;
+          additionalChanges.push(...await applyInactivePropagation(
+            db,
+            schema,
+            [{ resource: mutation.resource, id: mutation.id }],
+            namespace,
+          ));
           opResult = { ok: true };
         } catch (error: any) {
           // EXE-010: Log original error for observability
@@ -217,7 +262,7 @@ async function executeMutationCore(
       case "merge":
         {
           const strippedRecord = stripReadonlyCapabilityFields(
-            mutation.record || {},
+            normalizeRelationFkRecord(schema, mutation.resource, mutation.record || {}),
             resolvedCapabilities,
           );
           const mergeData = injectCapabilityFieldsOnUpdate(
@@ -225,19 +270,23 @@ async function executeMutationCore(
             resolvedCapabilities,
             actorId,
           );
-          const strictUpdateNotFound = db.capabilities?.operations?.strictUpdateNotFound === true;
+          const strictUpdateNotFound =
+            db.capabilities?.operations?.strictUpdateNotFound === true;
           const mergeResult = await executeSchemaAwareMerge({
             schema,
             resource: mutation.resource,
             id: mutation.id,
             delta: mergeData,
             update: async () => {
-              await db.update({
+              const updated = await db.update({
                 model: mutation.resource,
                 where: [{ field: "id", operator: "eq", value: mutation.id }],
                 data: mergeData,
                 namespace,
               });
+              if (strictUpdateNotFound && updated === undefined) {
+                throw { name: "NotFoundError", message: "Record not found after update" };
+              }
             },
             create: async (record) => {
               await db.create({
@@ -260,6 +309,12 @@ async function executeMutationCore(
 
           if (mergeResult.ok) {
             resolvedRecord = mergeData;
+            additionalChanges.push(...await applyInactivePropagation(
+              db,
+              schema,
+              [{ resource: mutation.resource, id: mutation.id }],
+              namespace,
+            ));
             opResult = { ok: true };
           } else {
             if (mergeResult.code === "INTERNAL") {
@@ -291,7 +346,7 @@ async function executeMutationCore(
             break;
           }
           const strippedRecord = stripReadonlyCapabilityFields(
-            mutation.record || {},
+            normalizeRelationFkRecord(schema, mutation.resource, mutation.record || {}),
             resolvedCapabilities,
           );
           const updateRecord = injectCapabilityFieldsOnUpdate(
@@ -317,6 +372,12 @@ async function executeMutationCore(
             namespace,
           });
           resolvedRecord = buildResult.record;
+          additionalChanges.push(...await applyInactivePropagation(
+            db,
+            schema,
+            [{ resource: mutation.resource, id: mutation.id }],
+            namespace,
+          ));
           opResult = { ok: true };
         } catch (e: any) {
           // EXE-010: Log original error for observability
@@ -332,14 +393,44 @@ async function executeMutationCore(
           where: [{ field: "id", operator: "eq", value: mutation.id }],
           namespace,
         });
-        await db.delete({
-          model: mutation.resource,
-          where: [{ field: "id", operator: "eq", value: mutation.id }],
-          namespace,
-        });
         if (!existingForDelete) {
           // Record didn't exist — skip change tracking (no-op delete)
           skipChangeTracking = true;
+        } else {
+          // Relation policies must run before the parent disappears. In
+          // particular, a restrict result must leave the parent intact.
+          const relationPolicyResult = await applyRelationDeletePolicies(
+            db,
+            schema,
+            mutation.resource,
+            mutation.id,
+            namespace,
+          );
+          if (!relationPolicyResult.ok) {
+            opResult = {
+              ok: false,
+              code: relationPolicyResult.code,
+              message: relationPolicyResult.message,
+              path: relationPolicyResult.path,
+            };
+            break;
+          }
+          await db.delete({
+            model: mutation.resource,
+            where: [{ field: "id", operator: "eq", value: mutation.id }],
+            namespace,
+          });
+          additionalChanges = [
+            ...relationPolicyResult.changes,
+            ...await applyInactivePropagation(
+              db,
+              schema,
+              relationPolicyResult.changes
+                .filter((change) => change.op === "merge")
+                .map((change) => ({ resource: change.resource, id: change.id })),
+              namespace,
+            ),
+          ];
         }
         if (hasShareableCapability(resolvedCapabilities)) {
           const permissionRows = await db.findMany({
@@ -404,6 +495,12 @@ async function executeMutationCore(
           ...existing,
           ...trashPayload,
         };
+        additionalChanges.push(...await applyInactivePropagation(
+          db,
+          schema,
+          [{ resource: mutation.resource, id: mutation.id }],
+          namespace,
+        ));
         opResult = { ok: true };
         break;
       }
@@ -463,6 +560,12 @@ async function executeMutationCore(
           ...existingRecord,
           ...restorePayload,
         };
+        additionalChanges.push(...await applyInactivePropagation(
+          db,
+          schema,
+          [{ resource: mutation.resource, id: mutation.id }],
+          namespace,
+        ));
         opResult = { ok: true };
         break;
       }
@@ -512,6 +615,12 @@ async function executeMutationCore(
           ...(existing as Record<string, unknown>),
           ...archivePayload,
         };
+        additionalChanges.push(...await applyInactivePropagation(
+          db,
+          schema,
+          [{ resource: mutation.resource, id: mutation.id }],
+          namespace,
+        ));
         opResult = { ok: true };
         break;
       }
@@ -561,6 +670,12 @@ async function executeMutationCore(
           ...(existing as Record<string, unknown>),
           ...unarchivePayload,
         };
+        additionalChanges.push(...await applyInactivePropagation(
+          db,
+          schema,
+          [{ resource: mutation.resource, id: mutation.id }],
+          namespace,
+        ));
         opResult = { ok: true };
         break;
       }
@@ -573,6 +688,7 @@ async function executeMutationCore(
           namespace,
           actorId,
           logger,
+          multiRegionRuntime,
         );
         if (!shareResult.ok) {
           opResult = {
@@ -620,6 +736,7 @@ async function executeMutationCore(
           namespace,
           actorId,
           logger,
+          multiRegionRuntime,
         );
         if (!unshareResult.ok) {
           opResult = {
@@ -691,6 +808,14 @@ async function executeMutationCore(
               opResult = inheritanceRelateResult;
             }
           }
+          if (opResult.ok) {
+            additionalChanges.push(...await applyInactivePropagation(
+              db,
+              schema,
+              collectInactivePropagationSeeds(mutation, schema),
+              namespace,
+            ));
+          }
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation relate failed", { error: String(e), operation: "relate", resource: mutation.resource });
@@ -701,6 +826,14 @@ async function executeMutationCore(
       case "modifyRelation":
         try {
           opResult = await executeModifyRelation(db, schema, mutation, namespace, actorId);
+          if (opResult.ok) {
+            additionalChanges.push(...await applyInactivePropagation(
+              db,
+              schema,
+              collectInactivePropagationSeeds(mutation, schema),
+              namespace,
+            ));
+          }
         } catch (e: any) {
           // EXE-010: Log original error for observability
           logger?.error("Mutation modifyRelation failed", { error: String(e), operation: "modifyRelation", resource: mutation.resource });
@@ -728,6 +861,14 @@ async function executeMutationCore(
             if (!inheritanceUnrelateResult.ok) {
               opResult = inheritanceUnrelateResult;
             }
+          }
+          if (opResult.ok) {
+            additionalChanges.push(...await applyInactivePropagation(
+              db,
+              schema,
+              collectInactivePropagationSeeds(mutation, schema),
+              namespace,
+            ));
           }
         } catch (e: any) {
           // EXE-010: Log original error for observability
@@ -773,9 +914,13 @@ async function executeMutationCore(
         mutation.operation === "unrelate";
 
       if (isRelationMutation) {
-        const fkDeltas = extractRelationFkDeltas(mutation, schema);
+        const recordDeltas = await extractRelationRecordDeltasFromDB(db, mutation, schema, namespace);
         const joinDeltas = extractJoinDeltas(mutation, schema);
-        const allDeltas = [...fkDeltas, ...joinDeltas];
+        const deltaByRecord = new Map<string, typeof recordDeltas[number] | typeof joinDeltas[number] | typeof additionalChanges[number]>();
+        for (const delta of [...recordDeltas, ...joinDeltas, ...additionalChanges]) {
+          deltaByRecord.set(`${delta.resource}:${delta.id}`, delta);
+        }
+        const allDeltas = [...deltaByRecord.values()];
         if (allDeltas.length > 0) {
           const seqs = await changeTracking.getNextServerSeqBatch(allDeltas.length);
           const entries = allDeltas.map((delta, i) => ({
@@ -788,8 +933,7 @@ async function executeMutationCore(
           await recordChangesWithRetry(changeTracking, entries, 2, logger);
         }
       } else {
-        const serverSeq = await changeTracking.getNextServerSeq();
-        const changeOp = changeOverride
+        const changeOp: ChangeEntryInput["op"] = changeOverride
           ? changeOverride.op
           : mutation.operation === "delete" ? "delete" :
             mutation.operation === "insert" ? "insert" :
@@ -806,14 +950,38 @@ async function executeMutationCore(
             : mutation.operation === "replace" && resolvedRecord !== undefined
               ? { id: mutation.id, ...resolvedRecord }
               : { id: mutation.id, ...(resolvedRecord || mutation.record || {}) };
-        // FIX-REL-002: Use shared retry helper for change-tracking parity with push path
-        await recordChangeWithRetry(changeTracking, {
-          serverSeq,
+        const primaryChange: Omit<ChangeEntryInput, "serverSeq"> = {
           resource: changeOverride?.resource ?? mutation.resource,
           id: changeOverride?.id ?? mutation.id,
           op: changeOp,
           record: changeRecord,
-        }, 2, logger);
+        };
+        const allChanges = [
+          primaryChange,
+          ...additionalChanges,
+        ];
+        if (allChanges.length > 1) {
+          const seqs = await changeTracking.getNextServerSeqBatch(allChanges.length);
+          await recordChangesWithRetry(
+            changeTracking,
+            allChanges.map((change, i) => ({
+              serverSeq: seqs[i],
+              resource: change.resource,
+              id: change.id,
+              op: change.op,
+              record: change.record,
+            })),
+            2,
+            logger,
+          );
+        } else {
+          const serverSeq = await changeTracking.getNextServerSeq();
+          // FIX-REL-002: Use shared retry helper for change-tracking parity with push path
+          await recordChangeWithRetry(changeTracking, {
+            serverSeq,
+            ...primaryChange,
+          }, 2, logger);
+        }
       }
     } catch (error) {
       logger?.error("Change tracking failed", { error: String(error), operation: "changeTracking", resource: mutation.resource });
@@ -838,7 +1006,25 @@ export async function executeMutation(
   actorId?: string,
   logger?: DatafnLogger,
   searchProvider?: SearchProvider,
+  insideTransaction = false,
 ): Promise<MutationResult> {
+  const multiRegionRuntime = getDatafnMultiRegionRuntimeConfig(plugins);
+  const syncPermissionDirectoryAfterCommit = async () => {
+    try {
+      await syncDatafnPermissionGrantAfterCommit(
+        db,
+        mutation,
+        namespace,
+        multiRegionRuntime,
+      );
+    } catch (error) {
+      logger?.error("Permission directory reconciliation failed after commit", {
+        error: String(error),
+        operation: mutation.operation,
+        resource: mutation.resource,
+      });
+    }
+  };
   // clientId and mutationId are optional. When absent, skip idempotency tracking.
   // EXE-009: Use crypto.randomUUID() for unpredictable anonymous mutation IDs
   const effectiveMutationId = mutation.mutationId || randomUUID();
@@ -849,7 +1035,7 @@ export async function executeMutation(
       mutation.clientId,
       mutation.mutationId,
     );
-    if (cached) {
+    if (cached && !isRetryableMutationResult(cached)) {
       return { ...cached, deduped: true };
     }
   }
@@ -914,7 +1100,7 @@ export async function executeMutation(
             code: authzResult.code,
             message: authzResult.message,
             path: authzResult.path,
-            retryable: false,
+            retryable: authzResult.code === "FORBIDDEN",
           },
         ],
         deduped: false,
@@ -940,6 +1126,7 @@ export async function executeMutation(
   // capabilities.transactions.supported === false means explicitly no support (e.g. memoryAdapter).
   // If capabilities are absent/incomplete (e.g. test mocks), fall back to duck-typing.
   const hasTransaction =
+    !insideTransaction &&
     (db.capabilities?.transactions?.supported !== false) &&
     typeof db.transaction === "function";
 
@@ -949,6 +1136,7 @@ export async function executeMutation(
     let guardFailed = false;
 
     try {
+      await changeTracking.ensureReady();
       await (db as any).transaction(async (txDb: Adapter) => {
         // DI-002: Re-read record inside transaction to prevent TOCTOU
         const guardResult = await evaluateGuard(
@@ -976,12 +1164,19 @@ export async function executeMutation(
           changeTracking.withDb(txDb),
           actorId,
           logger,
+          multiRegionRuntime,
         );
+        if (!txMutationResult.ok) {
+          // A returned mutation failure is still an aborted transaction. Throw
+          // after retaining the public result so adapters roll back relation
+          // effects and change tracking together.
+          throw { __datafnMutationFailed: true };
+        }
       });
     } catch (err: any) {
       if (err?.__datafnGuardFailed) {
         guardFailed = true;
-      } else if (!txMutationResult) {
+      } else if (!err?.__datafnMutationFailed) {
         // Transaction aborted for another reason
         txMutationResult = {
           ok: false,
@@ -1008,8 +1203,11 @@ export async function executeMutation(
     }
 
     if (txMutationResult) {
+      if ((txMutationResult as MutationResult).ok) {
+        await syncPermissionDirectoryAfterCommit();
+      }
       if (searchProvider && (txMutationResult as MutationResult).ok) {
-        await tryUpdateSearchIndex(searchProvider, mutation, logger);
+        await tryUpdateSearchIndex(searchProvider, mutation, db, namespace, logger, multiRegionRuntime);
       }
       if (mutation.clientId && mutation.mutationId) {
         await idempotencyStore.set(mutation.clientId, mutation.mutationId, txMutationResult as MutationResult);
@@ -1053,6 +1251,55 @@ export async function executeMutation(
     }
   }
 
+  // Relation delete policies may update or cascade through several records.
+  // Keep those effects, the parent delete, and their change records atomic
+  // even when the caller did not supply a guard.
+  if (!hasGuard && hasTransaction) {
+    let txMutationResult: MutationResult | null = null;
+    try {
+      await changeTracking.ensureReady();
+      await (db as any).transaction(async (txDb: Adapter) => {
+        txMutationResult = await executeMutationCore(
+          mutation,
+          txDb,
+          schema,
+          namespace,
+          effectiveMutationId,
+          changeTracking.withDb(txDb),
+          actorId,
+          logger,
+          multiRegionRuntime,
+        );
+        if (!txMutationResult.ok) {
+          throw { __datafnMutationFailed: true };
+        }
+      });
+    } catch (err: any) {
+      if (!err?.__datafnMutationFailed) {
+        txMutationResult = {
+          ok: false,
+          mutationId: effectiveMutationId,
+          affectedIds: [],
+          errors: [{ code: "INTERNAL", message: err?.message || "Transaction failed", path: "$", retryable: false }],
+          deduped: false,
+        };
+      }
+    }
+
+    if (txMutationResult) {
+      if ((txMutationResult as MutationResult).ok) {
+        await syncPermissionDirectoryAfterCommit();
+      }
+      if (searchProvider && (txMutationResult as MutationResult).ok) {
+        await tryUpdateSearchIndex(searchProvider, mutation, db, namespace, logger, multiRegionRuntime);
+      }
+      if (mutation.clientId && mutation.mutationId) {
+        await idempotencyStore.set(mutation.clientId, mutation.mutationId, txMutationResult as MutationResult);
+      }
+      return txMutationResult as MutationResult;
+    }
+  }
+
   // REL-011: Execute operation + change tracking using executeMutationCore.
   // changeTracking.withDb(db) ensures the change tracking uses the same db as the
   // operation — when db is a tx adapter (from transact.ts), both are in the transaction.
@@ -1065,10 +1312,15 @@ export async function executeMutation(
     changeTracking.withDb(db),
     actorId,
     logger,
+    multiRegionRuntime,
   );
 
+  if (result.ok) {
+    await syncPermissionDirectoryAfterCommit();
+  }
+
   if (searchProvider && result.ok) {
-    await tryUpdateSearchIndex(searchProvider, mutation, logger);
+    await tryUpdateSearchIndex(searchProvider, mutation, db, namespace, logger, multiRegionRuntime);
   }
 
   // Store for idempotency only when IDs were provided

@@ -50,6 +50,53 @@ describe('gmail sync', () => {
     });
   });
 
+  it('exhausts baseline pagination while preserving the newest checkpoint', async () => {
+    const checkpointStore = new MemoryGmailCheckpointStore();
+    const pageTokens: Array<string | undefined> = [];
+    const pagesWritten: string[][] = [];
+
+    const result = await runGmailSync(
+      {
+        tenantId: 'tenant-1',
+        userId: 'user-1',
+        connectionId: 'conn-1',
+        mode: 'full',
+        pageSize: 1,
+      },
+      {
+        source: {
+          listBaseline: async ({ pageToken }) => {
+            pageTokens.push(pageToken);
+            return pageToken
+              ? {
+                  historyId: '100',
+                  messages: [createGmailMessage('g-2', 'gt-2', '100')],
+                }
+              : {
+                  historyId: '200',
+                  messages: [createGmailMessage('g-1', 'gt-1', '200')],
+                  nextPageToken: 'page-2',
+                };
+          },
+          listIncremental: async () => ({ historyId: 'h-3', messages: [] }),
+        },
+        checkpointStore,
+        messageStore: {
+          upsert: async (_connectionId, messages) => {
+            pagesWritten.push(messages.map((message) => message.providerMessageId));
+            return { upserted: messages.length, skipped: 0 };
+          },
+        },
+      }
+    );
+
+    expect(pageTokens).toEqual([undefined, 'page-2']);
+    expect(result).toMatchObject({ checkpoint: '200', fetched: 2, partial: false });
+    expect(result.messages).toHaveLength(1);
+    expect(pagesWritten).toEqual([['g-1'], ['g-2']]);
+    await expect(checkpointStore.get('conn-1')).resolves.toMatchObject({ historyId: '200' });
+  });
+
   it('uses checkpoint for incremental sync and dedupes already-upserted messages', async () => {
     const checkpointStore = new MemoryGmailCheckpointStore();
     const messageStore = new MemoryGmailMessageStore();
@@ -107,6 +154,34 @@ describe('gmail sync', () => {
     expect(incremental.fetched).toBe(2);
     expect(incremental.upserted).toBe(1);
     expect(incremental.skipped).toBe(1);
+  });
+
+  it('uses a durable runtime checkpoint when the local checkpoint store is empty', async () => {
+    const checkpointStore = new MemoryGmailCheckpointStore();
+    let receivedHistoryId: string | undefined;
+
+    const result = await runGmailSync(
+      {
+        tenantId: 'tenant-1',
+        userId: 'user-1',
+        connectionId: 'conn-1',
+        mode: 'incremental',
+        checkpoint: 'h-durable',
+      },
+      {
+        source: {
+          listBaseline: async () => ({ historyId: 'h-1', messages: [] }),
+          listIncremental: async ({ startHistoryId }) => {
+            receivedHistoryId = startHistoryId;
+            return { historyId: 'h-next', messages: [] };
+          },
+        },
+        checkpointStore,
+      }
+    );
+
+    expect(receivedHistoryId).toBe('h-durable');
+    expect(result.checkpoint).toBe('h-next');
   });
 
   it('returns canonical MAIL_SYNC_CHECKPOINT_INVALID when incremental checkpoint is invalid', async () => {
@@ -188,6 +263,41 @@ describe('gmail sync', () => {
       message: 'operation not allowed by policy',
     });
   });
+
+  it.each([
+    [undefined, false, false],
+    ['metadata-only', false, false],
+    ['snippet', true, false],
+    ['full-body', true, true],
+  ] as const)(
+    'enforces %s feature mode on normalized message content',
+    async (featureMode, expectSnippet, expectBody) => {
+      const result = await runGmailSync(
+        {
+          tenantId: 'tenant-feature-mode',
+          userId: 'user-feature-mode',
+          connectionId: `conn-${featureMode ?? 'default'}`,
+          mode: 'full',
+          featureMode,
+        },
+        {
+          source: {
+            listBaseline: async () => ({
+              historyId: 'history-feature-mode',
+              messages: [createGmailMessage('g-feature', 'gt-feature', 'history-feature-mode')],
+            }),
+            listIncremental: async () => ({ historyId: 'unused', messages: [] }),
+          },
+          checkpointStore: new MemoryGmailCheckpointStore(),
+          messageStore: new MemoryGmailMessageStore(),
+        }
+      );
+
+      expect(result.messages[0].snippet !== undefined).toBe(expectSnippet);
+      expect(result.messages[0].bodyText !== undefined).toBe(expectBody);
+      expect(result.messages[0].bodyHtml).toBeUndefined();
+    }
+  );
 });
 
 function createGmailMessage(id: string, threadId: string, historyId: string) {

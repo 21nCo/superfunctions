@@ -22,6 +22,7 @@ describe("createSearchProvider — factory creates valid SearchProvider", () => 
     expect(typeof provider.name).toBe("string");
     expect(typeof provider.search).toBe("function");
     expect(typeof provider.updateIndices).toBe("function");
+    expect(typeof provider.clearIndices).toBe("function");
     expect(typeof provider.searchAll).toBe("function");
     expect(typeof provider.initialize).toBe("function");
     expect(typeof provider.dispose).toBe("function");
@@ -111,9 +112,42 @@ describe("createSearchProvider — search delegates to adapter.search", () => {
       expect.objectContaining({ signal: controller.signal }),
     );
   });
+
+  it("rejects scope filters when the adapter cannot enforce them", async () => {
+    const provider = createSearchProvider(makeAdapter());
+    await expect(provider.search({
+      resource: "tasks",
+      query: "private",
+      namespaceFilter: ["tenant:1"],
+    })).rejects.toMatchObject({ code: "DFQL_UNSUPPORTED" });
+  });
+
+  it("forwards scope filters only to adapters that declare enforcement", async () => {
+    const adapter = makeAdapter({ capabilities: { metadataFilters: true } });
+    const provider = createSearchProvider(adapter);
+    await provider.search({
+      resource: "tasks",
+      query: "private",
+      namespaceFilter: ["tenant:1"],
+      regionFilter: ["eu-west"],
+    });
+    expect(adapter.search).toHaveBeenCalledWith(expect.objectContaining({
+      namespaceFilter: ["tenant:1"],
+      regionFilter: ["eu-west"],
+    }));
+  });
 });
 
 describe("createSearchProvider — updateIndices", () => {
+  it("clears a resource through the adapter before a full rebuild", async () => {
+    const adapter = makeAdapter();
+    const provider = createSearchProvider(adapter);
+
+    await provider.clearIndices?.("tasks");
+
+    expect(adapter.clear).toHaveBeenCalledWith("tasks");
+  });
+
   it("calls adapter.remove on delete operation", async () => {
     const adapter = makeAdapter();
     const provider = createSearchProvider(adapter);
@@ -149,7 +183,7 @@ describe("createSearchProvider — updateIndices", () => {
     });
     expect(adapter.index).toHaveBeenCalledWith({
       resource: "tasks",
-      documents: [{ id: "1", fields: { title: "Hello" } }],
+      documents: [{ id: "1", fields: { title: "Hello" }, metadata: {} }],
     });
   });
 
@@ -167,6 +201,7 @@ describe("createSearchProvider — updateIndices", () => {
           {
             id: "1",
             fields: { count: "42", active: "true", meta: '{"x":1}' },
+            metadata: {},
           },
         ],
       }),
@@ -187,7 +222,7 @@ describe("createSearchProvider — updateIndices", () => {
 
     expect(adapter.index).toHaveBeenCalledWith({
       resource: "tasks",
-      documents: [{ id: "1", fields: { title: "Hello" } }],
+      documents: [{ id: "1", fields: { title: "Hello" }, metadata: {} }],
     });
   });
 
@@ -205,7 +240,7 @@ describe("createSearchProvider — updateIndices", () => {
 
     expect(adapter.index).toHaveBeenCalledWith(
       expect.objectContaining({
-        documents: [{ id: "1", fields: { meta: "[object Object]" } }],
+        documents: [{ id: "1", fields: { meta: "[object Object]" }, metadata: {} }],
       }),
     );
   });

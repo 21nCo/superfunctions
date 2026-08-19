@@ -9,6 +9,12 @@ import type {
 } from './types';
 
 export { resendAdapter };
+export {
+  createSendFnDeliveryProvider,
+  type SendFnDeliveryProviderOptions,
+  type SendFnDeliveryRenderer,
+  type SendFnEmailClient
+} from './delivery';
 
 export interface SendFnEdgeConfig {
   emailProvider?: EmailProvider;

@@ -1,9 +1,12 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import type { Provider } from 'plugfn';
-import { AuthType } from 'plugfn';
-import { TriggerType } from 'plugfn';
-import type { ActionContext } from 'plugfn';
-import { verifyRawBodyHmac } from '../shared/signature.js';
+import {
+  AuthType,
+  TriggerType,
+  type ActionContext,
+  type Provider,
+  type WebhookVerificationContext,
+} from 'plugfn';
 
 /**
  * Stripe provider
@@ -46,13 +49,17 @@ export const stripeProvider: Provider = {
       }),
 
       execute: async (params: any, context: ActionContext) => {
+        const formData = new URLSearchParams({
+          email: params.email,
+          ...(params.name && { name: params.name }),
+          ...(params.description && { description: params.description }),
+        });
+        for (const [key, value] of Object.entries(params.metadata ?? {})) {
+          formData.append(`metadata[${key}]`, String(value));
+        }
         const response = await context.http.post(
           `${context.provider.baseUrl}/customers`,
-          new URLSearchParams({
-            email: params.email,
-            ...(params.name && { name: params.name }),
-            ...(params.description && { description: params.description }),
-          }).toString(),
+          formData.toString(),
           {
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
@@ -69,6 +76,7 @@ export const stripeProvider: Provider = {
       name: 'customers.list',
       displayName: 'List Customers',
       description: 'List all Stripe customers',
+      idempotent: true,
 
       parameters: z.object({
         limit: z.number().optional().describe('Number of customers to return'),
@@ -130,6 +138,9 @@ export const stripeProvider: Provider = {
 
         if (params.customer) formData.customer = params.customer;
         if (params.description) formData.description = params.description;
+        for (const [key, value] of Object.entries(params.metadata ?? {})) {
+          formData[`metadata[${key}]`] = String(value);
+        }
 
         const response = await context.http.post(
           `${context.provider.baseUrl}/payment_intents`,
@@ -207,6 +218,7 @@ export const stripeProvider: Provider = {
       name: 'paymentIntents.retrieve',
       displayName: 'Retrieve Payment Intent',
       description: 'Retrieve a payment intent by ID',
+      idempotent: true,
 
       parameters: z.object({
         id: z.string().describe('Payment intent ID'),
@@ -241,7 +253,7 @@ export const stripeProvider: Provider = {
         path: '/webhooks/stripe/payment',
         method: 'POST',
         verifySignature: async (_payload, signature, secret, context) =>
-          verifyRawBodyHmac({ signature, secret, context, algorithm: 'sha256', prefix: '' }),
+          verifyStripeSignature(signature, secret, context),
       },
 
       schema: z.object({
@@ -274,6 +286,8 @@ export const stripeProvider: Provider = {
       webhookConfig: {
         path: '/webhooks/stripe/customer',
         method: 'POST',
+        verifySignature: async (_payload, signature, secret, context) =>
+          verifyStripeSignature(signature, secret, context),
       },
 
       schema: z.object({
@@ -302,3 +316,39 @@ export const stripeProvider: Provider = {
     window: 1000, // 1 second
   },
 };
+
+function verifyStripeSignature(
+  signature: string,
+  secret: string,
+  context: WebhookVerificationContext
+): boolean {
+  const rawBody = context.rawBody;
+  if (!signature || !secret || !rawBody || rawBody.byteLength === 0) {
+    return false;
+  }
+
+  const parts = signature.split(',').map((part) => part.trim().split('=', 2));
+  const timestamp = parts.find(([key]) => key === 't')?.[1];
+  const candidates = parts.filter(([key]) => key === 'v1').map(([, value]) => value);
+  const timestampSeconds = Number(timestamp);
+  if (
+    !timestamp ||
+    candidates.length === 0 ||
+    !Number.isFinite(timestampSeconds) ||
+    Math.abs(Date.now() / 1000 - timestampSeconds) > 300
+  ) {
+    return false;
+  }
+
+  const expected = createHmac('sha256', secret)
+    .update(`${timestamp}.`)
+    .update(Buffer.from(rawBody))
+    .digest('hex');
+  return candidates.some((candidate) => secureEqual(candidate, expected));
+}
+
+function secureEqual(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}

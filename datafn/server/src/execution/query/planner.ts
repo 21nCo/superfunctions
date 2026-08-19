@@ -10,7 +10,9 @@
  */
 
 import type { WhereClause, OrderBy } from "@superfunctions/db";
+import { endpointIncludes } from "@datafn/core";
 import { parseSortTerms } from "./sort.js";
+import type { SortInputTerm } from "@datafn/core";
 
 // ---------------------------------------------------------------------------
 // Extended types
@@ -53,6 +55,8 @@ const DFQL_TO_ADAPTER_OP: Record<string, PushdownOperator | null> = {
   $in: "in",
   $like: "like",
   $ilike: "ilike",
+  $is_null: "eq",
+  $is_not_null: "ne",
   // Non-$-prefixed equivalents
   eq: "eq",
   ne: "ne",
@@ -63,6 +67,8 @@ const DFQL_TO_ADAPTER_OP: Record<string, PushdownOperator | null> = {
   in: "in",
   like: "like",
   ilike: "ilike",
+  is_null: "eq",
+  is_not_null: "ne",
   // Explicitly unpushable — relation quantifiers
   $any: null,
   $all: null,
@@ -156,6 +162,28 @@ export function convertDfqlFilters(
       if (adapterOp === null) {
         // Explicitly unpushable
         return null;
+      }
+      if (
+        op === "$is_null" ||
+        op === "is_null"
+      ) {
+        result.push({
+          field: key,
+          operator: opVal === false ? "ne" : "eq",
+          value: null,
+        });
+        continue;
+      }
+      if (
+        op === "$is_not_null" ||
+        op === "is_not_null"
+      ) {
+        result.push({
+          field: key,
+          operator: opVal === false ? "eq" : "ne",
+          value: null,
+        });
+        continue;
       }
       result.push({ field: key, operator: adapterOp, value: opVal });
     }
@@ -279,7 +307,7 @@ export function extractPushableFilters(
  * @param sort  Optional DFQL sort array (e.g. `["name:asc", "-priority", "id"]`)
  * @returns     OrderBy[] — never empty (defaults to `[{ field: "id", direction: "asc" }]`)
  */
-export function convertDfqlSort(sort?: string[]): OrderBy[] {
+export function convertDfqlSort(sort?: SortInputTerm[]): OrderBy[] {
   // parseSortTerms from sort.ts already applies the id:asc default.
   // SortTerm = { field: string; direction: "asc" | "desc" } is structurally
   // identical to OrderBy, so the cast is safe.
@@ -333,6 +361,7 @@ export function classifyQuery(
   query: Record<string, unknown>,
   schema?: unknown,
 ): QueryStrategy {
+  if (query.temporal) return "IN_MEMORY";
   // --- Rule 1: search ---
   if (query.search) return "IN_MEMORY";
 
@@ -439,13 +468,13 @@ function buildRelationNames(
   const names = new Set<string>();
   if (!resource) return names;
   const s = schema as
-    | { relations?: Array<{ from: string; to: string; relation: string; inverse?: string }> }
+    | { relations?: Array<{ from: string | readonly string[]; to: string | readonly string[]; relation: string; inverse?: string }> }
     | null
     | undefined;
   if (!s?.relations) return names;
   for (const rel of s.relations) {
-    if (rel.from === resource && rel.relation) names.add(rel.relation);
-    if (rel.to === resource && rel.inverse) names.add(rel.inverse);
+    if (endpointIncludes(rel.from, resource) && rel.relation) names.add(rel.relation);
+    if (endpointIncludes(rel.to, resource) && rel.inverse) names.add(rel.inverse);
   }
   return names;
 }
@@ -474,6 +503,22 @@ function convertSingleFilter(
     if (!(op in DFQL_TO_ADAPTER_OP)) return null;
     const adapterOp = DFQL_TO_ADAPTER_OP[op];
     if (adapterOp === null) return null;
+    if (op === "$is_null" || op === "is_null") {
+      result.push({
+        field: key,
+        operator: opVal === false ? "ne" : "eq",
+        value: null,
+      });
+      continue;
+    }
+    if (op === "$is_not_null" || op === "is_not_null") {
+      result.push({
+        field: key,
+        operator: opVal === false ? "eq" : "ne",
+        value: null,
+      });
+      continue;
+    }
     result.push({ field: key, operator: adapterOp, value: opVal });
   }
 
@@ -488,11 +533,11 @@ function isRelationKey(
   resource: string | undefined,
   schema: unknown,
 ): boolean {
-  const s = schema as { relations?: Array<{ from: string; to: string; relation: string; inverse?: string }> };
+  const s = schema as { relations?: Array<{ from: string | readonly string[]; to: string | readonly string[]; relation: string; inverse?: string }> };
   if (!s?.relations || !resource) return false;
   return s.relations.some(
     (r) =>
-      (r.from === resource && r.relation === key) ||
-      (r.to === resource && r.inverse === key),
+      (endpointIncludes(r.from, resource) && r.relation === key) ||
+      (endpointIncludes(r.to, resource) && r.inverse === key),
   );
 }

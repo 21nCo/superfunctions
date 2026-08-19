@@ -39,6 +39,157 @@ function createContext(responseData: any): ActionContext {
 }
 
 describe('linear provider actions', () => {
+  it('registers the expanded workspace read surface', () => {
+    expect(Object.keys(linearProvider.actions)).toEqual(
+      expect.arrayContaining([
+        'issueRelations.list',
+        'comments.list',
+        'initiatives.list',
+        'documents.list',
+        'customers.list',
+        'attachments.list',
+      ])
+    );
+  });
+
+  it('issues.list follows cursors and aggregates pages', async () => {
+    const context = createContext((body: any) => ({
+      team: {
+        issues: body.variables.after
+          ? {
+              nodes: [{ id: 'issue_2', identifier: 'ENG-2' }],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            }
+          : {
+              nodes: [{ id: 'issue_1', identifier: 'ENG-1' }],
+              pageInfo: { hasNextPage: true, endCursor: 'cursor_1' },
+            },
+      },
+    }));
+
+    const result = await linearProvider.actions['issues.list'].execute(
+      { teamId: 'team_1', first: 50, maxPages: 3 },
+      context
+    );
+
+    expect(result.nodes).toEqual([
+      { id: 'issue_1', identifier: 'ENG-1' },
+      { id: 'issue_2', identifier: 'ENG-2' },
+    ]);
+    expect(context.http.post).toHaveBeenCalledTimes(2);
+    expect((context.http.post as any).mock.calls[0][1].variables).toEqual({
+      teamId: 'team_1',
+      first: 50,
+      after: null,
+    });
+    expect((context.http.post as any).mock.calls[1][1].variables.after).toBe('cursor_1');
+  });
+
+  it.each([
+    ['issueRelations.list', 'issueRelations'],
+    ['comments.list', 'comments'],
+  ])('%s reads and returns its connection', async (actionName, field) => {
+    const context = createContext((body: any) => {
+      expect(body.query).toContain(`${field}(`);
+      if (actionName === 'issueRelations.list') {
+        expect(body.query).not.toContain('includeArchived');
+        expect(body.variables).toEqual({ first: 25, after: null });
+      }
+      return {
+        [field]: {
+          nodes: [{ id: `${field}_1` }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      };
+    });
+
+    const result = await linearProvider.actions[actionName].execute(
+      { first: 25, maxPages: 1, includeArchived: false },
+      context
+    );
+
+    expect(result).toEqual({
+      nodes: [{ id: `${field}_1` }],
+      pageInfo: { hasNextPage: false, endCursor: null },
+    });
+  });
+
+  it.each([
+    ['initiatives.list', 'initiatives'],
+    ['documents.list', 'documents'],
+    ['customers.list', 'customers'],
+    ['attachments.list', 'attachments'],
+  ])('%s reads its workspace connection through the shared paginator', async (actionName, field) => {
+    const context = createContext((body: any) => {
+      expect(body.query).toContain(`${field}(`);
+      expect(body.variables).toEqual({
+        first: 25,
+        after: null,
+        includeArchived: false,
+      });
+      return {
+        [field]: {
+          nodes: [{ id: `${field}_1` }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      };
+    });
+
+    const result = await linearProvider.actions[actionName].execute(
+      { first: 25, maxPages: 1, includeArchived: false },
+      context
+    );
+
+    expect(result).toEqual({
+      nodes: [{ id: `${field}_1` }],
+      pageInfo: { hasNextPage: false, endCursor: null },
+    });
+  });
+
+  it('customers.list requests and validates the needs connection shape', async () => {
+    const context = createContext((body: any) => {
+      expect(body.query).toContain('needs{nodes{');
+      return {
+        customers: {
+          nodes: [
+            {
+              id: 'customer_1',
+              name: 'Acme',
+              domains: ['acme.test'],
+              url: 'https://linear.app/customer/acme',
+              needs: { nodes: [{ id: 'need_1', body: 'SSO' }] },
+            },
+          ],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      };
+    });
+
+    const result = await linearProvider.actions['customers.list'].execute(
+      { first: 25, maxPages: 1 },
+      context
+    );
+
+    expect(() => linearProvider.actions['customers.list'].returns.parse(result)).not.toThrow();
+  });
+
+  it('leaves shared-paginator quota charging to the executor HTTP wrapper', async () => {
+    const context = createContext((body: any) => ({
+      initiatives: body.variables.after
+        ? { nodes: [{ id: 'initiative_2' }], pageInfo: { hasNextPage: false, endCursor: null } }
+        : { nodes: [{ id: 'initiative_1' }], pageInfo: { hasNextPage: true, endCursor: 'next' } },
+    }));
+    context.acquireRateLimit = vi.fn(async () => undefined);
+
+    await linearProvider.actions['initiatives.list'].execute(
+      { first: 25, maxPages: 2 },
+      context
+    );
+
+    expect(context.http.post).toHaveBeenCalledTimes(2);
+    expect(context.acquireRateLimit).not.toHaveBeenCalled();
+  });
+
   it('issues.get executes query and returns issue payload', async () => {
     const context = createContext(() => ({
       issue: {

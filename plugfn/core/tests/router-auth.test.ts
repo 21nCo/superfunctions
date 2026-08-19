@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createPlugFnRouter } from '../src/router/http-router.js';
+import { plugFn } from '../src/core/plug-fn.js';
+import { MemoryAdapter } from '../src/storage/adapters/memory.js';
+import { ConnectionStatus } from '../src/types/connection.js';
 
 describe('HTTP router auth boundaries', () => {
   it('exposes the canonical route inventory', () => {
@@ -220,6 +223,507 @@ describe('HTTP router auth boundaries', () => {
     expect(response.status).toBe(403);
     expect(createJob).not.toHaveBeenCalled();
   });
+
+  it('rejects org admins from a different organization in the same tenant', async () => {
+    const plug = createMockPlugFn({
+      authenticate: vi.fn(async () => ({
+        userId: 'org-admin',
+        tenantId: 'tenant_1',
+        organizationId: 'org_1',
+        roles: ['org:admin'],
+      })),
+      getConnection: vi.fn(async () => ({
+        id: 'conn_org_2',
+        userId: 'installer_2',
+        provider: 'gmail',
+        ownerKind: 'organization',
+        organizationId: 'org_2',
+        installedByUserId: 'installer_2',
+        tenantId: 'tenant_1',
+        status: 'active',
+      })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/connections/conn_org_2', { method: 'GET' })
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'TENANT_ACCESS_DENIED' },
+    });
+  });
+
+  it('requires authenticated organization context for organization-owned starts', async () => {
+    const plug = createMockPlugFn({
+      authenticate: vi.fn(async () => ({ userId: 'installer', tenantId: 'tenant_1' })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/connections/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'gmail',
+          redirectUri: 'https://app.example.com/callback',
+          owner: {
+            kind: 'organization',
+            organizationId: 'org_arbitrary',
+            installedByUserId: 'installer',
+            tenantId: 'tenant_1',
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'TENANT_ACCESS_DENIED' },
+    });
+    expect(plug.connections.start).not.toHaveBeenCalled();
+  });
+
+  it('requires authenticated organization context for delegated organization starts', async () => {
+    const plug = createMockPlugFn({
+      authenticate: vi.fn(async () => ({ userId: 'delegate', tenantId: 'tenant_1' })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/connections/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'gmail',
+          redirectUri: 'https://app.example.com/callback',
+          owner: {
+            kind: 'delegated',
+            organizationId: 'org_arbitrary',
+            installedByUserId: 'installer',
+            delegatedToUserId: 'delegate',
+            grants: ['read'],
+            tenantId: 'tenant_1',
+          },
+        }),
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(plug.connections.start).not.toHaveBeenCalled();
+  });
+
+  it('includes authorized organization-owned connections in admin listings', async () => {
+    const personal = {
+      id: 'conn_personal',
+      userId: 'admin',
+      provider: 'gmail',
+      tenantId: 'tenant_1',
+    };
+    const organization = {
+      id: 'conn_org',
+      userId: 'installer',
+      provider: 'gmail',
+      ownerKind: 'organization',
+      ownerId: 'org_1',
+      organizationId: 'org_1',
+      installedByUserId: 'installer',
+      tenantId: 'tenant_1',
+    };
+    const listConnections = vi.fn(async (options) =>
+      options.owner ? [organization] : [personal]
+    );
+    const plug = createMockPlugFn({
+      listConnections,
+      authenticate: vi.fn(async () => ({
+        userId: 'admin',
+        tenantId: 'tenant_1',
+        organizationId: 'org_1',
+        roles: ['org:admin'],
+      })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/connections?provider=gmail', { method: 'GET' })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { connections: [personal, organization] },
+    });
+    expect(listConnections).toHaveBeenCalledTimes(2);
+    expect(listConnections).toHaveBeenLastCalledWith({
+      userId: 'admin',
+      provider: 'gmail',
+      owner: {
+        kind: 'organization',
+        organizationId: 'org_1',
+        installedByUserId: 'admin',
+        tenantId: 'tenant_1',
+      },
+    });
+  });
+
+  it('filters same-user connections from other tenants', async () => {
+    const sameTenant = {
+      id: 'conn_tenant_1',
+      userId: 'user_1',
+      provider: 'gmail',
+      tenantId: 'tenant_1',
+    };
+    const otherTenant = {
+      id: 'conn_tenant_2',
+      userId: 'user_1',
+      provider: 'gmail',
+      tenantId: 'tenant_2',
+    };
+    const plug = createMockPlugFn({
+      listConnections: vi.fn(async () => [sameTenant, otherTenant]),
+      authenticate: vi.fn(async () => ({ userId: 'user_1', tenantId: 'tenant_1' })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/connections?provider=gmail', { method: 'GET' })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { connections: [sameTenant] },
+    });
+  });
+
+  it('requires an explicit connection for tenant-scoped disconnects', async () => {
+    const disconnect = vi.fn(async () => ({ disconnected: true }));
+    const plug = createMockPlugFn({
+      disconnect,
+      authenticate: vi.fn(async () => ({ userId: 'user_1', tenantId: 'tenant_1' })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/connections/disconnect', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'gmail' }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'connectionId is required for tenant-scoped disconnects',
+      },
+    });
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
+  it('preserves connection fallback for explicitly unscoped disconnects', async () => {
+    const disconnect = vi.fn(async () => ({ disconnected: true }));
+    const plug = createMockPlugFn({
+      disconnect,
+      authenticate: vi.fn(async () => ({ userId: 'legacy_user' })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/connections/disconnect', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'gmail' }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(disconnect).toHaveBeenCalledWith({
+      userId: 'legacy_user',
+      provider: 'gmail',
+      connectionId: undefined,
+      actor: { userId: 'legacy_user' },
+    });
+  });
+
+  it('preserves an explicit custom authorization allow through disconnect execution', async () => {
+    const database = new MemoryAdapter();
+    const authorizeConnection = vi.fn(
+      async ({ operation }: { operation: string }) => operation === 'disconnect'
+    );
+    const plug = plugFn({
+      database,
+      auth: {
+        async authenticate() {
+          return { userId: 'custom-admin', tenantId: 'tenant-admin' };
+        },
+      },
+      baseUrl: 'https://app.example.com',
+      encryptionKey: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      integrations: {},
+      authorization: { authorizeConnection },
+    });
+    const now = new Date();
+    await database.createConnection({
+      id: 'conn-custom-authorized',
+      userId: 'owner',
+      provider: 'custom-provider',
+      ownerKind: 'user',
+      ownerId: 'owner',
+      tenantId: 'tenant-owner',
+      status: ConnectionStatus.Active,
+      credentials: { encrypted: '{}', algorithm: 'none' },
+      connectedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/connections/disconnect', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'custom-provider',
+          connectionId: 'conn-custom-authorized',
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(plug.connections.get('conn-custom-authorized')).rejects.toMatchObject({
+      code: 'CONNECTION_NOT_FOUND',
+    });
+    expect(authorizeConnection).toHaveBeenCalledOnce();
+    expect(authorizeConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'disconnect' })
+    );
+  });
+
+  it('includes authorized organization-owned jobs in sync listings', async () => {
+    const personalJob = {
+      id: 'job_personal',
+      connectionId: 'conn_personal',
+      ownerKind: 'user',
+      ownerId: 'admin',
+    };
+    const organizationJob = {
+      id: 'job_org',
+      connectionId: 'conn_org',
+      ownerKind: 'organization',
+      ownerId: 'org_1',
+    };
+    const listSyncJobs = vi.fn(async (filters) =>
+      filters.ownerKind === 'organization' ? [organizationJob] : [personalJob]
+    );
+    const getSyncJob = vi.fn(async () => organizationJob);
+    const plug = createMockPlugFn({
+      listSyncJobs,
+      getSyncJob,
+      getConnection: vi.fn(async () => ({
+        id: 'conn_org',
+        userId: 'installer',
+        provider: 'gmail',
+        ownerKind: 'organization',
+        ownerId: 'org_1',
+        organizationId: 'org_1',
+        installedByUserId: 'installer',
+        tenantId: 'tenant_1',
+      })),
+      authenticate: vi.fn(async () => ({
+        userId: 'admin',
+        tenantId: 'tenant_1',
+        organizationId: 'org_1',
+        roles: ['org:admin'],
+      })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/sync/jobs?provider=gmail', { method: 'GET' })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { jobs: [personalJob, organizationJob] },
+    });
+    expect(listSyncJobs).toHaveBeenNthCalledWith(1, {
+      provider: 'gmail',
+      ownerKind: 'user',
+      ownerId: 'admin',
+    });
+    expect(listSyncJobs).toHaveBeenNthCalledWith(2, {
+      provider: 'gmail',
+      ownerKind: 'organization',
+      ownerId: 'org_1',
+    });
+    expect(getSyncJob).not.toHaveBeenCalled();
+  });
+
+  it('filters same-owner sync jobs whose connections belong to another tenant', async () => {
+    const sameTenantJob = {
+      id: 'job_tenant_1',
+      connectionId: 'conn_tenant_1',
+      ownerKind: 'user',
+      ownerId: 'user_1',
+    };
+    const otherTenantJob = {
+      id: 'job_tenant_2',
+      connectionId: 'conn_tenant_2',
+      ownerKind: 'user',
+      ownerId: 'user_1',
+    };
+    const plug = createMockPlugFn({
+      listSyncJobs: vi.fn(async () => [sameTenantJob, otherTenantJob]),
+      getConnection: vi.fn(async (connectionId) => ({
+        id: connectionId,
+        userId: 'user_1',
+        provider: 'gmail',
+        tenantId: connectionId === 'conn_tenant_1' ? 'tenant_1' : 'tenant_2',
+      })),
+      authenticate: vi.fn(async () => ({ userId: 'user_1', tenantId: 'tenant_1' })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/sync/jobs', { method: 'GET' })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { jobs: [sameTenantJob] },
+    });
+  });
+
+  it('omits historical sync jobs whose connection was deleted', async () => {
+    const historicalJob = {
+      id: 'job_deleted_connection',
+      connectionId: 'conn_deleted',
+      ownerKind: 'user',
+      ownerId: 'user_1',
+    };
+    const plug = createMockPlugFn({
+      listSyncJobs: vi.fn(async () => [historicalJob]),
+      getConnection: vi.fn(async () => {
+        throw Object.assign(new Error('Connection conn_deleted not found'), {
+          code: 'CONNECTION_NOT_FOUND',
+          status: 404,
+        });
+      }),
+      authenticate: vi.fn(async () => ({ userId: 'user_1' })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/sync/jobs', { method: 'GET' })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { jobs: [] },
+    });
+  });
+
+  it('rejects cancelling a same-owner sync job from another tenant', async () => {
+    const cancelSyncJob = vi.fn(async () => ({ id: 'job_other_tenant' }));
+    const plug = createMockPlugFn({
+      getSyncJob: vi.fn(async () => ({
+        id: 'job_other_tenant',
+        connectionId: 'conn_other_tenant',
+        ownerKind: 'user',
+        ownerId: 'user_1',
+      })),
+      getConnection: vi.fn(async () => ({
+        id: 'conn_other_tenant',
+        userId: 'user_1',
+        provider: 'gmail',
+        tenantId: 'tenant_2',
+      })),
+      cancelSyncJob,
+      authenticate: vi.fn(async () => ({ userId: 'user_1', tenantId: 'tenant_1' })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/sync/jobs/job_other_tenant/cancel', { method: 'POST' })
+    );
+
+    expect(response.status).toBe(403);
+    expect(cancelSyncJob).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'organization installer',
+      {
+        id: 'conn_org_other_tenant',
+        userId: 'installer',
+        provider: 'gmail',
+        ownerKind: 'organization',
+        ownerId: 'org_1',
+        organizationId: 'org_1',
+        installedByUserId: 'installer',
+        tenantId: 'tenant_2',
+      },
+      { userId: 'installer', tenantId: 'tenant_1' },
+    ],
+    [
+      'delegated grant holder',
+      {
+        id: 'conn_delegated_other_tenant',
+        userId: 'installer',
+        provider: 'gmail',
+        ownerKind: 'delegated',
+        ownerId: 'delegate',
+        delegatedToUserId: 'delegate',
+        grants: ['sync'],
+        tenantId: 'tenant_2',
+      },
+      { userId: 'grantee', tenantId: 'tenant_1', grants: ['sync'] },
+    ],
+  ])('does not let a %s shortcut bypass tenant isolation', async (_label, connection, actor) => {
+    const plug = createMockPlugFn({
+      getConnection: vi.fn(async () => connection),
+      authenticate: vi.fn(async () => actor),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request(`http://localhost/connections/${connection.id}`, { method: 'GET' })
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it('propagates unexpected sync authorization failures instead of returning a partial list', async () => {
+    const organizationJob = {
+      id: 'job_org',
+      connectionId: 'conn_org',
+      ownerKind: 'organization',
+      ownerId: 'org_1',
+    };
+    const plug = createMockPlugFn({
+      listSyncJobs: vi.fn(async (filters) =>
+        filters.ownerKind === 'organization' ? [organizationJob] : []
+      ),
+      getConnection: vi.fn(async () => ({ id: 'conn_org' })),
+      authorizeConnection: vi.fn(async () => {
+        throw new Error('authorization backend unavailable');
+      }),
+      authenticate: vi.fn(async () => ({
+        userId: 'admin',
+        organizationId: 'org_1',
+        roles: ['org:admin'],
+      })),
+    });
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/sync/jobs', { method: 'GET' })
+    );
+
+    expect(response.status).toBe(500);
+  });
 });
 
 function createMockPlugFn(overrides: {
@@ -229,6 +733,11 @@ function createMockPlugFn(overrides: {
   handleWebhook?: ReturnType<typeof vi.fn>;
   authenticate?: ReturnType<typeof vi.fn>;
   createJob?: ReturnType<typeof vi.fn>;
+  listSyncJobs?: ReturnType<typeof vi.fn>;
+  getSyncJob?: ReturnType<typeof vi.fn>;
+  updateSyncJob?: ReturnType<typeof vi.fn>;
+  cancelSyncJob?: ReturnType<typeof vi.fn>;
+  authorizeConnection?: ReturnType<typeof vi.fn>;
 } = {}) {
   const listConnections = overrides.listConnections ?? vi.fn(async () => []);
   const getConnection = overrides.getConnection ?? vi.fn(async () => ({ id: 'conn_1', userId: 'u1' }));
@@ -244,7 +753,9 @@ function createMockPlugFn(overrides: {
       },
       baseUrl: 'https://app.example.com',
       integrations: {},
-      authorization: undefined,
+      authorization: overrides.authorizeConnection
+        ? { authorizeConnection: overrides.authorizeConnection }
+        : undefined,
     },
     connections: {
       start: vi.fn(async () => ({ authUrl: 'https://example.com/auth' })),
@@ -273,7 +784,12 @@ function createMockPlugFn(overrides: {
       handle: handleWebhook,
       verify: vi.fn(async () => ({ verified: true })),
     },
-    runtime: createMockRuntime(),
+    runtime: createMockRuntime({
+      listSyncJobs: overrides.listSyncJobs,
+      getSyncJob: overrides.getSyncJob,
+      updateSyncJob: overrides.updateSyncJob,
+      cancelSyncJob: overrides.cancelSyncJob,
+    }),
     providers: {
       list: vi.fn(() => []),
       get: vi.fn(() => undefined),
@@ -286,7 +802,12 @@ function createMockPlugFn(overrides: {
   } as any;
 }
 
-function createMockRuntime() {
+function createMockRuntime(overrides: {
+  listSyncJobs?: ReturnType<typeof vi.fn>;
+  getSyncJob?: ReturnType<typeof vi.fn>;
+  updateSyncJob?: ReturnType<typeof vi.fn>;
+  cancelSyncJob?: ReturnType<typeof vi.fn>;
+} = {}) {
   return {
     installations: {
       create: vi.fn(),
@@ -316,12 +837,19 @@ function createMockRuntime() {
     },
     sync: {
       createJob: vi.fn(async () => ({ id: 'job_1' })),
-      getJob: vi.fn(async () => ({ id: 'job_1' })),
-      listJobs: vi.fn(async () => []),
-      updateJob: vi.fn(async () => ({ id: 'job_1' })),
+      getJob: overrides.getSyncJob ?? vi.fn(async () => ({ id: 'job_1' })),
+      listJobs: overrides.listSyncJobs ?? vi.fn(async () => []),
+      updateJob: overrides.updateSyncJob ?? vi.fn(async () => ({ id: 'job_1' })),
+      cancelJob: overrides.cancelSyncJob ?? vi.fn(async () => ({ id: 'job_1' })),
       completeJob: vi.fn(async () => ({ id: 'job_1' })),
       failJob: vi.fn(async () => ({ id: 'job_1' })),
-      processQueued: vi.fn(async () => ({ processed: 0, completed: 0, failed: 0, jobs: [] })),
+      processQueued: vi.fn(async () => ({
+        processed: 0,
+        completed: 0,
+        cancelled: 0,
+        failed: 0,
+        jobs: [],
+      })),
       upsertCheckpoint: vi.fn(async () => ({ id: 'checkpoint_1' })),
       getCheckpoint: vi.fn(async () => null),
     },

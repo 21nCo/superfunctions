@@ -7,18 +7,30 @@ export class WebhookHandlerError extends Error {
   readonly code:
     | 'WEBHOOK_SECRET_NOT_FOUND'
     | 'WEBHOOK_SIGNATURE_INVALID'
+    | 'WEBHOOK_SIGNATURE_REQUIRED'
+    | 'WEBHOOK_HANDLER_FAILED'
     | 'VALIDATION_ERROR';
   readonly status: number;
+  readonly retryable: boolean;
+  readonly details: Record<string, unknown>;
 
   constructor(
-    code: 'WEBHOOK_SECRET_NOT_FOUND' | 'WEBHOOK_SIGNATURE_INVALID' | 'VALIDATION_ERROR',
+    code:
+      | 'WEBHOOK_SECRET_NOT_FOUND'
+      | 'WEBHOOK_SIGNATURE_INVALID'
+      | 'WEBHOOK_SIGNATURE_REQUIRED'
+      | 'WEBHOOK_HANDLER_FAILED'
+      | 'VALIDATION_ERROR',
     message: string,
-    status = 400
+    status = 400,
+    details: Record<string, unknown> = {}
   ) {
     super(message);
     this.name = 'WebhookHandlerError';
     this.code = code;
     this.status = status;
+    this.retryable = status >= 500;
+    this.details = details;
   }
 }
 
@@ -29,7 +41,8 @@ export class WebhookHandler {
 
   constructor(
     private providerRegistry: ProviderRegistry,
-    private logger: Logger
+    private logger: Logger,
+    private options: { verifySignatures?: boolean } = {}
   ) {}
 
   async handleWebhook(
@@ -55,6 +68,11 @@ export class WebhookHandler {
       verified,
       headers: normalizedHeaders,
     };
+
+    if (trigger.webhookConfig?.shouldDispatch?.(transformedPayload) === false) {
+      this.logger.info(`Webhook dispatch skipped: ${provider}.${triggerKey}`);
+      return webhookEvent;
+    }
 
     const eventId = getEventId(transformedPayload, normalizedHeaders);
     const idempotencyKey = eventId ? `${provider}:${eventId}` : null;
@@ -99,20 +117,30 @@ export class WebhookHandler {
     const { triggerKey, trigger } = this.resolveTrigger(provider, event, providerObj.triggers ?? {});
     const normalizedHeaders = normalizeHeaders(headers);
     const signature = getSignature(provider, normalizedHeaders);
+    const parsedPayload = payload ?? parseWebhookPayload(options.rawBody);
     const verificationContext: WebhookVerificationContext = {
       rawBody: options.rawBody,
       headers: normalizedHeaders,
     };
 
-    let verified = true;
-    if (trigger.webhookConfig?.verifySignature) {
+    const verifier = trigger.webhookConfig?.verifySignature;
+    if (this.options.verifySignatures === true && !verifier) {
+      throw new WebhookHandlerError(
+        'WEBHOOK_SIGNATURE_REQUIRED',
+        `signature verifier not configured for ${provider}.${triggerKey}`,
+        500
+      );
+    }
+
+    let verified = this.options.verifySignatures !== false;
+    if (this.options.verifySignatures !== false && verifier) {
       if (!secret) {
         throw new WebhookHandlerError('WEBHOOK_SECRET_NOT_FOUND', `secret not configured for ${provider}`);
       }
 
       try {
-        verified = await trigger.webhookConfig.verifySignature(
-          payload,
+        verified = await verifier(
+          parsedPayload,
           signature,
           secret,
           verificationContext
@@ -127,10 +155,14 @@ export class WebhookHandler {
       }
     }
 
-    const parsedPayload = payload ?? parseWebhookPayload(options.rawBody);
     const transformedPayload = trigger.webhookConfig?.transformPayload
       ? trigger.webhookConfig.transformPayload(parsedPayload)
       : parsedPayload;
+    try {
+      trigger.schema.parse(transformedPayload);
+    } catch {
+      throw new WebhookHandlerError('VALIDATION_ERROR', 'webhook payload validation failed');
+    }
 
     return {
       triggerKey,
@@ -212,17 +244,24 @@ export class WebhookHandler {
       return;
     }
 
-    const promises: Promise<void>[] = [];
+    const results = await Promise.allSettled(
+      [...handlers].map((handler) => Promise.resolve().then(() => handler(webhookEvent)))
+    );
+    const failures = results.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
 
-    for (const handler of handlers) {
-      promises.push(
-        Promise.resolve(handler(webhookEvent)).catch((error) => {
-          this.logger.error(`Handler error for ${provider}.${event}`, { error });
-        })
-      );
+    for (const failure of failures) {
+      this.logger.error(`Handler error for ${provider}.${event}`, { error: failure.reason });
     }
 
-    await Promise.all(promises);
+    if (failures.length > 0) {
+      throw new WebhookHandlerError(
+        'WEBHOOK_HANDLER_FAILED',
+        'webhook handler failed',
+        503
+      );
+    }
   }
 
   private resolveTrigger(
@@ -239,8 +278,12 @@ export class WebhookHandler {
 
       const path = trigger.webhookConfig?.path;
       if (typeof path === 'string' && path.length > 0) {
-        const normalizedPathKey = canonicalizeEvent(path.replace(/^\/+/, ''));
+        const normalizedPathKey = canonicalizeEvent(path);
         setEventMapping(eventMap, normalizedPathKey, triggerKey);
+        const routeSuffix = webhookRouteSuffix(provider, path);
+        if (routeSuffix) {
+          setEventMapping(eventMap, canonicalizeEvent(routeSuffix), triggerKey);
+        }
       }
     }
 
@@ -281,11 +324,29 @@ function setEventMapping(eventMap: Map<string, string>, canonicalEvent: string, 
 }
 
 function canonicalizeEvent(event: string): string {
-  return decodeURIComponent(event)
-    .replace(/^\/+|\/+$/g, '')
-    .replace(/\//g, '.')
-    .trim()
-    .toLowerCase();
+  const decodedEvent = decodeURIComponent(event);
+  let start = 0;
+  let end = decodedEvent.length;
+
+  while (start < end && decodedEvent.charCodeAt(start) === 47) {
+    start += 1;
+  }
+  while (end > start && decodedEvent.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+
+  return decodedEvent.slice(start, end).split('/').join('.').trim().toLowerCase();
+}
+
+function webhookRouteSuffix(provider: string, path: string): string | undefined {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const prefix = `/webhooks/${provider}/`;
+  if (!normalizedPath.toLowerCase().startsWith(prefix.toLowerCase())) {
+    return undefined;
+  }
+
+  const suffix = normalizedPath.slice(prefix.length);
+  return suffix.length > 0 ? suffix : undefined;
 }
 
 function normalizeHeaders(headers: Record<string, string>): Record<string, string> {

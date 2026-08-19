@@ -87,26 +87,50 @@ export function assertTelemetryRedacted(
   options: TelemetryRedactionOptions = {}
 ): void {
   const sensitiveKeys = buildSensitiveKeySet(options);
-  if (hasSensitiveLeak(telemetry, sensitiveKeys)) {
+  if (hasSensitiveLeak(telemetry, sensitiveKeys, new WeakSet<object>())) {
     throw new TelemetryRedactionError('INTERNAL_ERROR', 'sensitive telemetry leak detected');
   }
 }
 
 function redactValue(value: unknown, sensitiveKeys: Set<string>): unknown {
+  return redactValueInner(value, sensitiveKeys, new WeakSet<object>());
+}
+
+function redactValueInner(
+  value: unknown,
+  sensitiveKeys: Set<string>,
+  visited: WeakSet<object>
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((entry) => redactValue(entry, sensitiveKeys));
+    if (visited.has(value)) {
+      return '[Circular]';
+    }
+    visited.add(value);
+    try {
+      return value.map((entry) => redactValueInner(entry, sensitiveKeys, visited));
+    } finally {
+      visited.delete(value);
+    }
   }
 
   if (isPlainObject(value)) {
-    const output: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      if (isSensitiveKey(key, sensitiveKeys)) {
-        output[key] = REDACTED;
-        continue;
-      }
-      output[key] = redactValue(entry, sensitiveKeys);
+    if (visited.has(value)) {
+      return '[Circular]';
     }
-    return output;
+    visited.add(value);
+    try {
+      const output: Record<string, unknown> = {};
+      for (const [key, entry] of Object.entries(value)) {
+        if (isSensitiveKey(key, sensitiveKeys)) {
+          output[key] = REDACTED;
+          continue;
+        }
+        output[key] = redactValueInner(entry, sensitiveKeys, visited);
+      }
+      return output;
+    } finally {
+      visited.delete(value);
+    }
   }
 
   if (typeof value === 'string' && containsSensitiveValue(value)) {
@@ -116,21 +140,41 @@ function redactValue(value: unknown, sensitiveKeys: Set<string>): unknown {
   return value;
 }
 
-function hasSensitiveLeak(value: unknown, sensitiveKeys: Set<string>): boolean {
+function hasSensitiveLeak(
+  value: unknown,
+  sensitiveKeys: Set<string>,
+  visited: WeakSet<object>
+): boolean {
   if (Array.isArray(value)) {
-    return value.some((entry) => hasSensitiveLeak(entry, sensitiveKeys));
+    if (visited.has(value)) {
+      return false;
+    }
+    visited.add(value);
+    try {
+      return value.some((entry) => hasSensitiveLeak(entry, sensitiveKeys, visited));
+    } finally {
+      visited.delete(value);
+    }
   }
 
   if (isPlainObject(value)) {
-    for (const [key, entry] of Object.entries(value)) {
-      if (isSensitiveKey(key, sensitiveKeys) && entry !== REDACTED) {
-        return true;
-      }
-      if (hasSensitiveLeak(entry, sensitiveKeys)) {
-        return true;
-      }
+    if (visited.has(value)) {
+      return false;
     }
-    return false;
+    visited.add(value);
+    try {
+      for (const [key, entry] of Object.entries(value)) {
+        if (isSensitiveKey(key, sensitiveKeys) && entry !== REDACTED) {
+          return true;
+        }
+        if (hasSensitiveLeak(entry, sensitiveKeys, visited)) {
+          return true;
+        }
+      }
+      return false;
+    } finally {
+      visited.delete(value);
+    }
   }
 
   if (typeof value === 'string') {

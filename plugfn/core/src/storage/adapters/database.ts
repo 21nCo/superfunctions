@@ -1,4 +1,4 @@
-import type { Adapter as DbAdapter, WhereClause } from '@superfunctions/db';
+import { NotFoundError, type Adapter as DbAdapter, type WhereClause } from '@superfunctions/db';
 import type { Connection } from '../../types/connection.js';
 import type {
   PlugFnConnectionGrant,
@@ -12,6 +12,9 @@ import type {
 } from '../../types/runtime.js';
 import type { Workflow, WorkflowExecution } from '../../types/workflow.js';
 import type { WebhookRecord } from '../webhook-storage.js';
+
+const WEBHOOK_DELIVERY_LEASE_MS = 5 * 60 * 1000;
+const SYNC_JOB_LEASE_MS = 5 * 60 * 1000;
 
 export interface PlugFnStorageModelMapping {
   connections: string;
@@ -120,14 +123,20 @@ export interface PlugFnDatabaseStorageAdapter {
   updateWebhookReceipt(id: string, updates: Partial<PlugFnWebhookReceipt>): Promise<PlugFnWebhookReceipt>;
   createWebhookDelivery(delivery: PlugFnWebhookDelivery): Promise<PlugFnWebhookDelivery>;
   updateWebhookDelivery(id: string, updates: Partial<PlugFnWebhookDelivery>): Promise<PlugFnWebhookDelivery>;
+  updateClaimedWebhookDelivery(id: string, claimToken: string, updates: Partial<PlugFnWebhookDelivery>): Promise<PlugFnWebhookDelivery | null>;
   listWebhookDeliveries(receiptId: string): Promise<PlugFnWebhookDelivery[]>;
-  listWebhookDeliveriesForRetry(now: Date, limit?: number): Promise<PlugFnWebhookDelivery[]>;
-  claimWebhookDeliveriesForRetry(now: Date, limit: number, workerId: string): Promise<PlugFnWebhookDelivery[]>;
+  listWebhookDeliveriesForRetry(now: Date, limit?: number, leaseMs?: number): Promise<PlugFnWebhookDelivery[]>;
+  claimWebhookDeliveriesForRetry(now: Date, limit: number, workerId: string, leaseMs?: number): Promise<PlugFnWebhookDelivery[]>;
   createSyncJob(job: PlugFnSyncJob): Promise<PlugFnSyncJob>;
   getSyncJob(id: string): Promise<PlugFnSyncJob | null>;
   listSyncJobs(filters?: Record<string, unknown>, limit?: number): Promise<PlugFnSyncJob[]>;
-  claimQueuedSyncJobs(limit: number, workerId: string): Promise<PlugFnSyncJob[]>;
+  claimQueuedSyncJobs(
+    limit: number,
+    workerId: string,
+    leaseMs?: number
+  ): Promise<PlugFnSyncJob[]>;
   updateSyncJob(id: string, updates: Partial<PlugFnSyncJob>): Promise<PlugFnSyncJob>;
+  updateClaimedSyncJob(id: string, claimToken: string, updates: Partial<PlugFnSyncJob>): Promise<PlugFnSyncJob | null>;
   upsertSyncCheckpoint(checkpoint: PlugFnSyncCheckpoint): Promise<PlugFnSyncCheckpoint>;
   getSyncCheckpoint(connectionId: string, resource: string): Promise<PlugFnSyncCheckpoint | null>;
   createProviderEvent(event: PlugFnProviderEvent): Promise<PlugFnProviderEvent>;
@@ -290,9 +299,10 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
   }
 
   async createWorkflow(workflow: Workflow): Promise<Workflow> {
+    assertWorkflowRecordPersistable(this.database, workflow);
     return this.database.create<Workflow>({
       model: this.models.workflows,
-      data: cloneRecord(workflow),
+      data: cloneWorkflowRecord(workflow),
     });
   }
 
@@ -320,10 +330,11 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
   }
 
   async updateWorkflow(id: string, updates: Partial<Workflow>): Promise<Workflow> {
+    assertWorkflowRecordPersistable(this.database, updates);
     return this.database.update<Workflow>({
       model: this.models.workflows,
       where: [{ field: 'id', operator: 'eq', value: id }],
-      data: cloneRecord(updates),
+      data: cloneWorkflowRecord(updates),
     });
   }
 
@@ -504,6 +515,29 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     });
   }
 
+  async updateClaimedWebhookDelivery(
+    id: string,
+    claimToken: string,
+    updates: Partial<PlugFnWebhookDelivery>
+  ): Promise<PlugFnWebhookDelivery | null> {
+    try {
+      return await this.database.update<PlugFnWebhookDelivery>({
+        model: this.models.webhookDeliveries,
+        where: [
+          { field: 'id', operator: 'eq', value: id },
+          { field: 'status', operator: 'eq', value: 'running' },
+          { field: 'claimToken', operator: 'eq', value: claimToken },
+        ],
+        data: cloneRecord(updates),
+      });
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   async listWebhookDeliveries(receiptId: string): Promise<PlugFnWebhookDelivery[]> {
     return this.database.findMany<PlugFnWebhookDelivery>({
       model: this.models.webhookDeliveries,
@@ -514,7 +548,8 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
 
   async listWebhookDeliveriesForRetry(
     now: Date,
-    limit = 100
+    limit = 100,
+    leaseMs = WEBHOOK_DELIVERY_LEASE_MS
   ): Promise<PlugFnWebhookDelivery[]> {
     const pending = await this.database.findMany<PlugFnWebhookDelivery>({
       model: this.models.webhookDeliveries,
@@ -533,7 +568,18 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       limit,
     });
 
-    return [...pending, ...failed]
+    const staleBefore = new Date(now.getTime() - leaseMs);
+    const staleRunning = await this.database.findMany<PlugFnWebhookDelivery>({
+      model: this.models.webhookDeliveries,
+      where: [
+        { field: 'status', operator: 'eq', value: 'running' },
+        { field: 'updatedAt', operator: 'lte', value: staleBefore },
+      ],
+      orderBy: [{ field: 'updatedAt', direction: 'asc' }],
+      limit,
+    });
+
+    return [...pending, ...failed, ...staleRunning]
       .filter((delivery) => !delivery.nextAttemptAt || toTime(delivery.nextAttemptAt) <= now.getTime())
       .sort((left, right) => {
         const leftTime = toTime(left.nextAttemptAt ?? left.createdAt);
@@ -546,9 +592,10 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
   async claimWebhookDeliveriesForRetry(
     now: Date,
     limit: number,
-    workerId: string
+    workerId: string,
+    leaseMs = WEBHOOK_DELIVERY_LEASE_MS
   ): Promise<PlugFnWebhookDelivery[]> {
-    const candidates = await this.listWebhookDeliveriesForRetry(now, limit);
+    const candidates = await this.listWebhookDeliveriesForRetry(now, limit, leaseMs);
     const claimed: PlugFnWebhookDelivery[] = [];
     const claimedAt = new Date();
 
@@ -560,19 +607,28 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       if (delivery.nextAttemptAt) {
         where.push({ field: 'nextAttemptAt', operator: 'lte', value: now });
       }
+      if (delivery.status === 'running') {
+        where.push({
+          field: 'updatedAt',
+          operator: 'lte',
+          value: new Date(now.getTime() - leaseMs),
+        });
+      }
 
       try {
+        const claimToken = `${workerId}:${delivery.id}:${claimedAt.getTime()}`;
         const updated = await this.database.update<PlugFnWebhookDelivery>({
           model: this.models.webhookDeliveries,
           where,
           data: cloneRecord({
             status: 'running',
+            claimToken,
             attempts: delivery.attempts + 1,
             metadata: claimMetadata(delivery.metadata, workerId, claimedAt),
             updatedAt: claimedAt,
           }),
         });
-        if (updated.status === 'running') {
+        if (updated?.status === 'running') {
           claimed.push(updated);
         }
       } catch {
@@ -609,31 +665,56 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
     });
   }
 
-  async claimQueuedSyncJobs(limit: number, workerId: string): Promise<PlugFnSyncJob[]> {
-    const candidates = await this.database.findMany<PlugFnSyncJob>({
-      model: this.models.syncJobs,
-      where: [{ field: 'status', operator: 'eq', value: 'queued' }],
-      orderBy: [{ field: 'createdAt', direction: 'asc' }],
-      limit,
-    });
-    const claimed: PlugFnSyncJob[] = [];
+  async claimQueuedSyncJobs(
+    limit: number,
+    workerId: string,
+    leaseMs = SYNC_JOB_LEASE_MS
+  ): Promise<PlugFnSyncJob[]> {
     const claimedAt = new Date();
+    const staleBefore = new Date(claimedAt.getTime() - leaseMs);
+    const [queued, abandoned] = await Promise.all([
+      this.database.findMany<PlugFnSyncJob>({
+        model: this.models.syncJobs,
+        where: [{ field: 'status', operator: 'eq', value: 'queued' }],
+        orderBy: [{ field: 'createdAt', direction: 'asc' }],
+        limit,
+      }),
+      this.database.findMany<PlugFnSyncJob>({
+        model: this.models.syncJobs,
+        where: [
+          { field: 'status', operator: 'eq', value: 'running' },
+          { field: 'updatedAt', operator: 'lte', value: staleBefore },
+        ],
+        orderBy: [{ field: 'createdAt', direction: 'asc' }],
+        limit,
+      }),
+    ]);
+    const candidates = [...queued, ...abandoned]
+      .sort((left, right) => toTime(left.createdAt) - toTime(right.createdAt))
+      .slice(0, limit);
+    const claimed: PlugFnSyncJob[] = [];
 
     for (const job of candidates) {
       try {
+        const where: WhereClause[] = [
+          { field: 'id', operator: 'eq', value: job.id },
+          { field: 'status', operator: 'eq', value: job.status },
+        ];
+        if (job.status === 'running') {
+          where.push({ field: 'updatedAt', operator: 'lte', value: staleBefore });
+        }
+        const claimToken = `${workerId}:${job.id}:${claimedAt.getTime()}`;
         const updated = await this.database.update<PlugFnSyncJob>({
           model: this.models.syncJobs,
-          where: [
-            { field: 'id', operator: 'eq', value: job.id },
-            { field: 'status', operator: 'eq', value: 'queued' },
-          ],
+          where,
           data: cloneRecord({
             status: 'running',
+            claimToken,
             metadata: claimMetadata(job.metadata, workerId, claimedAt),
             updatedAt: claimedAt,
           }),
         });
-        if (updated.status === 'running') {
+        if (updated?.status === 'running') {
           claimed.push(updated);
         }
       } catch {
@@ -650,6 +731,27 @@ class DbBackedPlugFnDatabaseAdapter implements PlugFnDatabaseStorageAdapter {
       where: [{ field: 'id', operator: 'eq', value: id }],
       data: cloneRecord(updates),
     });
+  }
+
+  async updateClaimedSyncJob(
+    id: string,
+    claimToken: string,
+    updates: Partial<PlugFnSyncJob>
+  ): Promise<PlugFnSyncJob | null> {
+    try {
+      return await this.database.update<PlugFnSyncJob>({
+        model: this.models.syncJobs,
+        where: [
+          { field: 'id', operator: 'eq', value: id },
+          { field: 'status', operator: 'eq', value: 'running' },
+          { field: 'claimToken', operator: 'eq', value: claimToken },
+        ],
+        data: cloneRecord(updates),
+      });
+    } catch (error) {
+      if (error instanceof NotFoundError) return null;
+      throw error;
+    }
   }
 
   async upsertSyncCheckpoint(
@@ -736,6 +838,89 @@ function cloneRecord<T>(value: T): T {
   }
 
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneWorkflowRecord<T>(value: T, seen = new WeakMap<object, unknown>()): T {
+  if (typeof value === 'function' || value === undefined || value === null) {
+    return value;
+  }
+  if (value instanceof Date) {
+    return new Date(value.getTime()) as T;
+  }
+  if (Array.isArray(value)) {
+    const existing = seen.get(value);
+    if (existing) {
+      return existing as T;
+    }
+    const clone: unknown[] = [];
+    seen.set(value, clone);
+    for (const entry of value) {
+      clone.push(cloneWorkflowRecord(entry, seen));
+    }
+    return clone as T;
+  }
+  if (typeof value === 'object') {
+    const existing = seen.get(value);
+    if (existing) {
+      return existing as T;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return cloneRecord(value);
+    }
+    const clone: Record<string, unknown> = {};
+    seen.set(value, clone);
+    for (const [key, entry] of Object.entries(value)) {
+      clone[key] = cloneWorkflowRecord(entry, seen);
+    }
+    return clone as T;
+  }
+  return value;
+}
+
+function assertWorkflowRecordPersistable(database: DbAdapter, value: unknown): void {
+  if (database.id === 'memory') {
+    return;
+  }
+
+  const ancestors = new WeakSet<object>();
+  const visit = (entry: unknown, path: string): void => {
+    if (typeof entry === 'function') {
+      throw new TypeError(
+        `Persistent PlugFn workflow storage cannot serialize callback at ${path}; use a memory adapter for executable callback workflows`
+      );
+    }
+    if (typeof entry === 'bigint' || typeof entry === 'symbol') {
+      throw new TypeError(`Persistent PlugFn workflow storage cannot serialize ${typeof entry} at ${path}`);
+    }
+    if (entry === null || typeof entry !== 'object' || entry instanceof Date) {
+      return;
+    }
+    if (!Array.isArray(entry)) {
+      const prototype = Object.getPrototypeOf(entry);
+      if (prototype !== Object.prototype && prototype !== null) {
+        const typeName = entry.constructor?.name ?? 'object';
+        throw new TypeError(
+          `Persistent PlugFn workflow storage cannot serialize ${typeName} at ${path}; use plain JSON-compatible objects`
+        );
+      }
+    }
+    if (ancestors.has(entry)) {
+      throw new TypeError(`Persistent PlugFn workflow storage cannot serialize cyclic value at ${path}`);
+    }
+
+    ancestors.add(entry);
+    if (Array.isArray(entry)) {
+      entry.forEach((item, index) => visit(item, `${path}[${index}]`));
+    } else {
+      for (const [key, item] of Object.entries(entry)) {
+        visit(item, `${path}.${key}`);
+      }
+    }
+    ancestors.delete(entry);
+  };
+
+  visit(value, 'workflow');
 }
 
 function toWhereClauses(filters: Record<string, unknown>): WhereClause[] {

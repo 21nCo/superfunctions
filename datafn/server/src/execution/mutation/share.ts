@@ -6,6 +6,11 @@ import {
   mirrorGrantToLegacyV1,
   removeLegacyV1Grant,
 } from "../migration/spv2.js";
+import {
+  deleteDatafnPermissionGrant,
+  indexDatafnPermissionGrant,
+} from "../../plugins/multi-region.js";
+import type { DatafnMultiRegionRuntimeConfig } from "../../plugins/multi-region.js";
 
 type ShareableConfig = {
   levels: string[];
@@ -218,6 +223,7 @@ export async function executeShare(
   namespace: string,
   actorId?: string,
   logger?: DatafnLogger,
+  multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
 ): Promise<
   | { ok: true; permissionRecord: Record<string, unknown> }
   | { ok: false; code: string; message: string; path: string }
@@ -417,6 +423,7 @@ export async function executeUnshare(
   namespace: string,
   actorId?: string,
   logger?: DatafnLogger,
+  multiRegionRuntime?: DatafnMultiRegionRuntimeConfig | null,
 ): Promise<
   | { ok: true; deleted: boolean; changeId: string }
   | { ok: false; code: string; message: string; path: string }
@@ -519,6 +526,19 @@ export async function executeUnshare(
     namespace,
   });
 
+  // Invalidate the distributed authorization entry before deleting the
+  // authoritative grant. If invalidation fails, the database grant remains
+  // active, preventing a revoked-database/stale-directory authorization gap.
+  // Share indexing is deliberately post-commit; unshare invalidation is
+  // deliberately fail-closed before the database delete.
+  await deleteDatafnPermissionGrant({
+    id: changeId,
+    resourceType: mutation.resource,
+    resourceNs: namespace,
+    resourceId,
+    principalId: unsharePrincipalId,
+  }, multiRegionRuntime ?? null);
+
   if (!existingPermission) {
     return {
       ok: true,
@@ -539,12 +559,64 @@ export async function executeUnshare(
     resourceId,
     principalId: unsharePrincipalId,
   });
-
   return {
     ok: true,
     deleted: true,
     changeId,
   };
+}
+
+/** Reconciles the distributed permission directory from committed database state. */
+export async function syncDatafnPermissionGrantAfterCommit(
+  db: Adapter,
+  mutation: {
+    operation: string;
+    resource: string;
+    id?: string;
+    scope?: "record" | "resource";
+    shareWith?: { principalId?: string; userId?: string };
+  },
+  namespace: string,
+  multiRegionRuntime: DatafnMultiRegionRuntimeConfig | null,
+): Promise<void> {
+  if (
+    !multiRegionRuntime ||
+    (mutation.operation !== "share" && mutation.operation !== "unshare")
+  ) {
+    return;
+  }
+  const principal = canonicalizeSharePrincipal(
+    mutation.shareWith as Record<string, unknown> | undefined,
+  );
+  if (!principal.ok) return;
+  const resourceId = getShareScope(mutation.scope) === "resource"
+    ? null
+    : mutation.id ?? null;
+  const id = getPermissionEntryId(
+    mutation.resource,
+    namespace,
+    resourceId,
+    principal.principalId,
+  );
+  const permission = await db.findOne({
+    model: getPermissionsTableName(),
+    where: [{ field: "id", operator: "eq", value: id }],
+    namespace,
+  });
+  if (permission) {
+    await indexDatafnPermissionGrant(
+      permission as Record<string, unknown>,
+      multiRegionRuntime,
+    );
+    return;
+  }
+  await deleteDatafnPermissionGrant({
+    id,
+    resourceType: mutation.resource,
+    resourceNs: namespace,
+    resourceId,
+    principalId: principal.principalId,
+  }, multiRegionRuntime);
 }
 
 export function getPermissionsTable(resource: string): string {

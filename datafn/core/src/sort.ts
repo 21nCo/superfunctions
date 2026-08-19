@@ -3,6 +3,8 @@ export interface SortTerm {
   direction: "asc" | "desc";
 }
 
+export type SortInputTerm = string | SortTerm;
+
 function isSortDirection(direction: string): direction is SortTerm["direction"] {
   return direction === "asc" || direction === "desc";
 }
@@ -12,24 +14,41 @@ function isSortDirection(direction: string): direction is SortTerm["direction"] 
  * Handles "field", "field:asc", "field:desc", "-field".
  * Returns [] for undefined or empty input.
  */
-export function parseSortTerms(sort: string[] | undefined): SortTerm[] {
-  if (!sort || sort.length === 0) return [];
+export function parseSortTerm(term: unknown): SortTerm {
+  if (typeof term === "object" && term !== null && !Array.isArray(term)) {
+    const field = (term as { field?: unknown }).field;
+    const direction = (term as { direction?: unknown }).direction ?? "asc";
+    if (typeof field !== "string" || field.length === 0) {
+      throw new Error("Invalid sort field");
+    }
+    if (typeof direction !== "string" || !isSortDirection(direction)) {
+      throw new Error(`Invalid sort direction "${String(direction)}" for field "${field}"`);
+    }
+    return { field, direction };
+  }
+  if (typeof term !== "string" || term.length === 0) {
+    throw new Error("Invalid sort term");
+  }
+  if (term.startsWith("-")) {
+    if (term.length === 1) throw new Error("Invalid sort field");
+    return { field: term.slice(1), direction: "desc" };
+  }
+  const colonIdx = term.indexOf(":");
+  if (colonIdx !== -1) {
+    const field = term.slice(0, colonIdx);
+    const direction = term.slice(colonIdx + 1);
+    if (!field) throw new Error("Invalid sort field");
+    if (!isSortDirection(direction)) {
+      throw new Error(`Invalid sort direction "${direction}" for term "${term}"`);
+    }
+    return { field, direction };
+  }
+  return { field: term, direction: "asc" };
+}
 
-  return sort.map((term) => {
-    if (term.startsWith("-")) {
-      return { field: term.slice(1), direction: "desc" };
-    }
-    const colonIdx = term.indexOf(":");
-    if (colonIdx !== -1) {
-      const field = term.slice(0, colonIdx);
-      const direction = term.slice(colonIdx + 1);
-      if (!isSortDirection(direction)) {
-        throw new Error(`Invalid sort direction "${direction}" for term "${term}"`);
-      }
-      return { field, direction };
-    }
-    return { field: term, direction: "asc" };
-  });
+export function parseSortTerms(sort: SortInputTerm[] | undefined): SortTerm[] {
+  if (!sort || sort.length === 0) return [];
+  return sort.map(parseSortTerm);
 }
 
 /**

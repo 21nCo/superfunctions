@@ -51,10 +51,11 @@ export interface DrizzleAdapterConfig {
 
 /**
  * Escape SQL LIKE wildcards to prevent SQL injection
- * Escapes % and _ characters that have special meaning in LIKE patterns
+ * Uses ! as an explicit SQL LIKE escape character and escapes every input
+ * character that could otherwise alter the pattern, including backslashes.
  */
 function escapeLikeWildcards(value: string): string {
-  return value.replace(/[%_]/g, '\\$&');
+  return value.replace(/[\\!%_]/g, '!$&');
 }
 
 function loadDrizzleOps(): typeof import('drizzle-orm') {
@@ -97,11 +98,11 @@ function buildWhere(
       case 'not_in':
         return not(inArray(col, Array.isArray(val) ? val : [val]));
       case 'contains':
-        return sql`${col} LIKE ${'%' + escapeLikeWildcards(String(val)) + '%'}`;
+        return sql`${col} LIKE ${'%' + escapeLikeWildcards(String(val)) + '%'} ESCAPE '!'`;
       case 'starts_with':
-        return sql`${col} LIKE ${escapeLikeWildcards(String(val)) + '%'}`;
+        return sql`${col} LIKE ${escapeLikeWildcards(String(val)) + '%'} ESCAPE '!'`;
       case 'ends_with':
-        return sql`${col} LIKE ${'%' + escapeLikeWildcards(String(val))}`;
+        return sql`${col} LIKE ${'%' + escapeLikeWildcards(String(val))} ESCAPE '!'`;
       default:
         throw new Error(`Unsupported operator: ${op}`);
     }
@@ -229,6 +230,9 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
 
       async update<T = any>({ model, where, data, select }: UpdateParams): Promise<T> {
         const tbl = resolveTable(model);
+        if (!where || where.length === 0) {
+          throw new Error('update requires a non-empty where clause; use updateMany to update all rows');
+        }
         const cond = buildWhere(drizzleOps, tbl, where);
         const q = db.update(tbl).set(data as any).where(cond);
         if (dialect === 'mysql') {
@@ -257,6 +261,9 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
 
       async delete({ model, where }: DeleteParams): Promise<void> {
         const tbl = resolveTable(model);
+        if (!where || where.length === 0) {
+          throw new Error('delete requires a non-empty where clause; use deleteMany to delete all rows');
+        }
         const cond = buildWhere(drizzleOps, tbl, where);
         await db.delete(tbl).where(cond).execute();
       },
@@ -435,7 +442,7 @@ export function drizzleAdapter(config: DrizzleAdapterConfig): Adapter {
       namespace: config.namespace,
       capabilities: {
         types: { json: true, dates: true, booleans: true, bigint: true, uuid: true, enum: true },
-        operations: { batch: true, upsert: true, streaming: false, fulltext: false, returning: config.dialect !== 'mysql', strictUpdateNotFound: true },
+        operations: { batch: true, upsert: true, streaming: false, fulltext: true, returning: config.dialect !== 'mysql', strictUpdateNotFound: true },
         transactions: { supported: config.dialect !== 'sqlite', nested: false, isolation: undefined },
         performance: { supportsJoins: true, supportsPreparedStatements: true },
         schema: { migrations: false, constraints: true, indexes: true },

@@ -17,6 +17,8 @@ export interface ActionContext<TCredentials = any> {
   };
   http: HttpClient;
   logger: Logger;
+  /** Consume configured global/provider quota for an additional HTTP request. */
+  acquireRateLimit?: () => Promise<void>;
 }
 
 /**
@@ -61,6 +63,16 @@ export interface Action<TParams = any, TReturn = any> {
   name: string;
   displayName: string;
   description: string;
+  /**
+   * Opt in to caching when callers do not provide an explicit cache option.
+   * Mutating actions should leave this unset or set it to false.
+   */
+  cacheable?: boolean;
+  /**
+   * Opt in to automatic retries when callers do not provide retry options.
+   * Mutating actions should leave this unset or set it to false.
+   */
+  idempotent?: boolean;
   parameters: z.ZodSchema<TParams>;
   returns: z.ZodSchema<TReturn>;
   execute: (params: TParams, context: ActionContext) => Promise<TReturn>;
@@ -121,6 +133,8 @@ export interface BatchAction {
   userId: string;
   connectionId?: string;
   params: Record<string, any>;
+  cache?: boolean | CacheOptions;
+  timeout?: number;
 }
 
 /**

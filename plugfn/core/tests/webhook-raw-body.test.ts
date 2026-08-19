@@ -12,6 +12,93 @@ import { NoopLogger } from '../src/utils/logger.js';
 const encoder = new TextEncoder();
 
 describe('raw-body webhook verification', () => {
+  it('waits for workflow trigger rehydration before accepting a webhook', async () => {
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      resolveReady = resolve;
+    });
+    const handleWebhook = vi.fn(async () => ({ id: 'evt_ready', verified: true }));
+    const plug = createRouterPlugMock(handleWebhook);
+    plug.ready = ready;
+    const router = createPlugFnRouter(plug);
+
+    const responsePromise = router.handle(
+      new Request('http://localhost/webhooks/stripe/invoice.paid', {
+        method: 'POST',
+        body: JSON.stringify({ id: 'evt_ready', type: 'invoice.paid' }),
+      })
+    );
+    await Promise.resolve();
+    expect(handleWebhook).not.toHaveBeenCalled();
+
+    resolveReady();
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
+    expect(handleWebhook).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a retryable 503 when workflow trigger rehydration fails', async () => {
+    const handleWebhook = vi.fn();
+    const plug = createRouterPlugMock(handleWebhook);
+    plug.ready = Promise.reject(new Error('storage unavailable'));
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/webhooks/stripe/invoice.paid', {
+        method: 'POST',
+        body: JSON.stringify({ id: 'evt_not_ready', type: 'invoice.paid' }),
+      })
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'PLUGFN_NOT_READY', retryable: true },
+    });
+    expect(plug.runtime.webhooks.createReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: 'evt_not_ready' })
+    );
+    expect(handleWebhook).not.toHaveBeenCalled();
+  });
+
+  it('answers Outlook validation handshakes before workflow readiness', async () => {
+    const handleWebhook = vi.fn();
+    const plug = createRouterPlugMock(handleWebhook);
+    plug.ready = new Promise<void>(() => undefined);
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/webhooks/outlook?validationToken=outlook-token', {
+        method: 'POST',
+      })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe('outlook-token');
+    expect(handleWebhook).not.toHaveBeenCalled();
+  });
+
+  it('answers Slack URL verification handshakes before workflow readiness', async () => {
+    const handleWebhook = vi.fn();
+    const plug = createRouterPlugMock(handleWebhook);
+    plug.ready = new Promise<void>(() => undefined);
+    plug.webhooks.verify = vi.fn(async () => ({
+      verified: true,
+      transformedPayload: { type: 'url_verification', challenge: 'slack-token' },
+    }));
+    const router = createPlugFnRouter(plug);
+
+    const response = await router.handle(
+      new Request('http://localhost/webhooks/slack/url_verification', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url_verification', challenge: 'slack-token' }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ challenge: 'slack-token' });
+    expect(handleWebhook).not.toHaveBeenCalled();
+  });
+
   it('passes raw bytes from the router to webhook handling before verification', async () => {
     const handleWebhook = vi.fn(async () => ({ id: 'evt_1', verified: true }));
     const router = createPlugFnRouter(createRouterPlugMock(handleWebhook), {
@@ -40,6 +127,203 @@ describe('raw-body webhook verification', () => {
     expect(decodeBytes(handleWebhook.mock.calls[0]?.[5]?.rawBody)).toBe(rawBody);
   });
 
+  it('falls back to a registered GitHub family trigger for unknown actions', async () => {
+    const handleWebhook = vi.fn(async () => ({ id: 'evt_family', verified: true }));
+    const router = createPlugFnRouter(createRouterPlugMock(handleWebhook), {
+      webhookSecret: { github: 'router-secret' },
+    });
+    const rawBody = '{"action":"transferred","issue":{"id":1}}';
+
+    const response = await router.handle(
+      new Request('http://localhost/webhooks/github', {
+        method: 'POST',
+        headers: {
+          'x-github-event': 'issues',
+          'x-hub-signature-256': signRawBody(rawBody, 'router-secret'),
+        },
+        body: rawBody,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleWebhook).toHaveBeenCalledWith(
+      'github',
+      'issues',
+      undefined,
+      expect.any(Object),
+      'router-secret',
+      expect.any(Object)
+    );
+  });
+
+  it('infers Gmail Pub/Sub envelopes as the registered mail.update trigger', async () => {
+    const handleWebhook = vi.fn(async () => ({ id: 'evt_gmail', verified: true }));
+    const router = createPlugFnRouter(createRouterPlugMock(handleWebhook), {
+      webhookSecret: { gmail: 'gmail-verification-config' },
+    });
+    const rawBody = JSON.stringify({
+      message: {
+        data: 'eyJlbWFpbEFkZHJlc3MiOiJ1c2VyQGV4YW1wbGUuY29tIiwiaGlzdG9yeUlkIjoiMTIzIn0=',
+        messageId: 'pubsub-1',
+      },
+      subscription: 'projects/demo/subscriptions/gmail',
+    });
+
+    const response = await router.handle(
+      new Request('http://localhost/webhooks/gmail', {
+        method: 'POST',
+        headers: { authorization: 'Bearer token' },
+        body: rawBody,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleWebhook).toHaveBeenCalledWith(
+      'gmail',
+      'mail.update',
+      undefined,
+      expect.any(Object),
+      'gmail-verification-config',
+      expect.any(Object)
+    );
+  });
+
+  it('uses Stripe payload fields for event routing and retry deduplication', async () => {
+    const handleWebhook = vi.fn(async () => ({ id: 'evt_stripe', verified: true }));
+    const plug = createRouterPlugMock(handleWebhook);
+    const router = createPlugFnRouter(plug);
+    const rawBody = JSON.stringify({ id: 'evt_123', type: 'invoice.paid', data: {} });
+
+    const response = await router.handle(
+      new Request('http://localhost/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'stripe-signature': 't=1,v1=signature' },
+        body: rawBody,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleWebhook).toHaveBeenCalledWith(
+      'stripe',
+      'invoice.paid',
+      undefined,
+      expect.any(Object),
+      undefined,
+      expect.any(Object)
+    );
+    expect(plug.runtime.webhooks.findReceiptByIdempotencyKey).toHaveBeenCalledWith(
+      'stripe',
+      'evt_123'
+    );
+  });
+
+  it('does not dispatch when another request already claimed the delivery key', async () => {
+    const handleWebhook = vi.fn(async () => ({ id: 'evt_duplicate', verified: true }));
+    const plug = createRouterPlugMock(handleWebhook);
+    plug.runtime.webhooks.createReceipt = vi.fn(async () => ({
+      id: 'receipt_existing',
+      metadata: { receiptClaimToken: 'claim_from_other_request' },
+      verificationStatus: 'verified',
+      createdAt: new Date(),
+    }));
+    const router = createPlugFnRouter(plug, {
+      webhookSecret: { github: 'router-secret' },
+    });
+    const rawBody = '{"action":"opened","issue":{"id":1}}';
+
+    const response = await router.handle(
+      new Request('http://localhost/webhooks/github/issues', {
+        method: 'POST',
+        headers: {
+          'x-github-delivery': 'delivery_1',
+          'x-hub-signature-256': signRawBody(rawBody, 'router-secret'),
+        },
+        body: rawBody,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: { duplicate: true, receiptId: 'receipt_existing' },
+    });
+    expect(handleWebhook).not.toHaveBeenCalled();
+  });
+
+  it('retries an abandoned verified receipt after its delivery lease expires', async () => {
+    const handleWebhook = vi.fn(async () => ({ id: 'evt_retry', verified: true }));
+    const plug = createRouterPlugMock(handleWebhook);
+    plug.runtime.webhooks.createReceipt = vi.fn(async () => ({
+      id: 'receipt_abandoned',
+      metadata: { receiptClaimToken: 'claim_from_crashed_request' },
+      verificationStatus: 'verified',
+      createdAt: new Date(Date.now() - 10 * 60 * 1000),
+    }));
+    const router = createPlugFnRouter(plug, {
+      webhookSecret: { github: 'router-secret' },
+    });
+    const rawBody = '{"action":"opened","issue":{"id":1}}';
+
+    const response = await router.handle(
+      new Request('http://localhost/webhooks/github/issues', {
+        method: 'POST',
+        headers: {
+          'x-github-delivery': 'delivery_abandoned',
+          'x-hub-signature-256': signRawBody(rawBody, 'router-secret'),
+        },
+        body: rawBody,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(handleWebhook).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves receipt context when delivery creation fails', async () => {
+    const handleWebhook = vi.fn();
+    const plug = createRouterPlugMock(handleWebhook);
+    plug.runtime.webhooks.createReceipt = vi.fn(async () => ({
+      id: 'receipt_setup_failed',
+      metadata: {
+        contentType: 'application/json',
+        userAgent: 'test-agent',
+      },
+      verificationStatus: 'verified',
+      createdAt: new Date(),
+    }));
+    plug.runtime.webhooks.createDelivery = vi.fn(async () => {
+      throw new Error('delivery storage unavailable');
+    });
+    const router = createPlugFnRouter(plug, {
+      webhookSecret: { github: 'router-secret' },
+    });
+    const rawBody = '{"action":"opened","issue":{"id":1}}';
+
+    const response = await router.handle(
+      new Request('http://localhost/webhooks/github/issues', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'user-agent': 'test-agent',
+          'x-hub-signature-256': signRawBody(rawBody, 'router-secret'),
+        },
+        body: rawBody,
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(plug.runtime.webhooks.updateReceipt).toHaveBeenCalledWith(
+      'receipt_setup_failed',
+      expect.objectContaining({
+        verificationStatus: 'failed',
+        metadata: {
+          contentType: 'application/json',
+          userAgent: 'test-agent',
+          error: 'delivery storage unavailable',
+        },
+      })
+    );
+  });
+
   it.each([
     {
       provider: 'github',
@@ -62,13 +346,6 @@ describe('raw-body webhook verification', () => {
       header: 'x-signature',
       secret: 'clickup-secret',
       rawBody: '{"event":"taskUpdated","task_id":"task_1"}',
-    },
-    {
-      provider: 'gmail',
-      event: 'mail.update',
-      header: 'x-goog-signature-256',
-      secret: 'gmail-secret',
-      rawBody: '{"message":{"data":"eyJoaXN0b3J5SWQiOiIxMjMifQ=="}}',
     },
   ])(
     'verifies $provider signatures against raw bytes',
@@ -115,14 +392,6 @@ describe('raw-body webhook verification', () => {
       originalRawBody: '{"event":"taskUpdated","task_id":"task_1"}',
       alteredRawBody: '{"task_id":"task_1","event":"taskUpdated"}',
     },
-    {
-      provider: 'gmail',
-      event: 'mail.update',
-      header: 'x-goog-signature-256',
-      secret: 'gmail-secret',
-      originalRawBody: '{"message":{"data":"eyJoaXN0b3J5SWQiOiIxMjMifQ=="}}',
-      alteredRawBody: '{"message":{"data":"eyJoaXN0b3J5SWQiOiIxMjMifQ=="}, "historyId":"123"}',
-    },
   ])(
     'rejects $provider when parsed JSON matches but raw bytes differ',
     async ({ provider, event, header, secret, originalRawBody, alteredRawBody }) => {
@@ -142,6 +411,53 @@ describe('raw-body webhook verification', () => {
       });
     }
   );
+
+  it('rejects signed payloads that do not satisfy the trigger schema', async () => {
+    const webhookHandler = createWebhookHandler();
+    const rawBody = '{"action":"opened","issue":{"id":1}}';
+
+    await expect(
+      webhookHandler.handleWebhook(
+        'github',
+        'issues.opened',
+        undefined,
+        { 'x-hub-signature-256': signRawBody(rawBody, 'github-secret') },
+        'github-secret',
+        { rawBody: encoder.encode(rawBody) }
+      )
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'webhook payload validation failed',
+    });
+  });
+
+  it('retains provider payload fields not named by the validation schema', async () => {
+    const webhookHandler = createWebhookHandler();
+    const rawBody = JSON.stringify({
+      action: 'opened',
+      issue: {
+        id: 1,
+        number: 10,
+        title: 'Bug',
+        body: null,
+        html_url: 'https://example.test/issues/10',
+        user: { login: 'octo' },
+      },
+      repository: { name: 'repo', owner: { login: 'octo' } },
+      sender: { login: 'webhook-sender' },
+    });
+
+    const event = await webhookHandler.handleWebhook(
+      'github',
+      'issues.opened',
+      undefined,
+      { 'x-hub-signature-256': signRawBody(rawBody, 'github-secret') },
+      'github-secret',
+      { rawBody: encoder.encode(rawBody) }
+    );
+
+    expect(event.payload.sender).toEqual({ login: 'webhook-sender' });
+  });
 });
 
 function createWebhookHandler(): WebhookHandler {
@@ -206,7 +522,12 @@ function createRouterPlugMock(handleWebhook: ReturnType<typeof vi.fn>) {
     },
     providers: {
       list: vi.fn(() => []),
-      get: vi.fn(() => undefined),
+      get: vi.fn((provider: string) => {
+        if (provider === 'github') return githubProvider;
+        if (provider === 'gmail') return gmailProvider;
+        if (provider === 'stripe') return { triggers: { 'invoice.paid': {} } };
+        return undefined;
+      }),
       register: vi.fn(),
     },
     batch: vi.fn(async () => []),

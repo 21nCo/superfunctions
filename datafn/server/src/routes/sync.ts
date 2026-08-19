@@ -21,6 +21,7 @@ import { validateMutationAuthz } from "../validation/authz.js";
 import type { MutationValidationOpts } from "../validation/mutation.js";
 import { resolveCapabilities } from "@datafn/core";
 import { stripReadonlyCapabilityFields } from "../execution/mutation/execute.js";
+import { getDatafnMultiRegionRuntimeConfig } from "../plugins/multi-region.js";
 
 /**
  * Options for push handler (VAL-001, VAL-006–009)
@@ -384,6 +385,12 @@ export function createPushHandler(
         });
         if (!validationResult.valid) {
           const firstError = validationResult.errors[0];
+          logger?.warn("Push validation rejected", {
+            operation: "push",
+            clientId: payload.clientId,
+            count: payload.mutations.length,
+            error: firstError,
+          });
           // VAL-009: In production (debug: false), strip field/schema details from messages
           const debug = handlerOpts?.debug ?? true;
           const message = debug ? firstError.message : "Validation error";
@@ -443,19 +450,30 @@ export function createPushHandler(
         onChange,
         actorId,
         logger,
+        getDatafnMultiRegionRuntimeConfig(plugins),
         );
 
         timer?.startPhase("changeLog");
         // If validation failed at the request level, return error response
         if (!result.ok && result.errors.length > 0) {
-        return errorResponse(
-            {
+        logger?.warn("Push execution rejected", {
+            operation: "push",
+            clientId: body?.clientId,
+            count: body?.mutations?.length,
+            error: result.errors[0],
+        });
+        return new Response(JSON.stringify({
+          ok: false,
+          error: {
             code: result.errors[0].code as any,
             message: result.errors[0].message,
             details: { path: result.errors[0].path },
-            },
-            400,
-        );
+          },
+          result,
+        }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
         }
 
         // Run afterSync hooks

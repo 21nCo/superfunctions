@@ -1,10 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createRouter, type Middleware, type Route, type Router } from '@superfunctions/http';
+import type { AuthSession } from '@superfunctions/auth';
+import { ok as envelopeOk, err as envelopeErr } from '@superfunctions/envelope';
+import { SuperfunctionError } from '@superfunctions/errors';
 import type { PlugFn } from '../core/plug-fn.js';
 import type { PlugFnPrincipal } from '../types/config.js';
 import type { Connection, HandleCallbackResult } from '../types/connection.js';
 import type { PlugFnApiEnvelope, PlugFnResponseMeta } from '../types/protocol.js';
 import type { PlugFnConnectionOwner } from '../types/runtime.js';
+import { connectionMatchesActor, hasAny } from '../security/tenancy.js';
 
 export interface RouteAuthContext {
   userId: string;
@@ -25,6 +29,10 @@ export interface PlugFnRouterOptions {
         request: Request,
         headers: Record<string, string>
       ) => Promise<string | undefined> | string | undefined);
+  /** Resolve the direct client IP from trusted adapter/server metadata. */
+  resolveWebhookClientIp?: (
+    request: Request
+  ) => Promise<string | undefined> | string | undefined;
   maxWebhookPayloadBytes?: number;
 }
 
@@ -46,13 +54,19 @@ interface ParseJsonBodyOptions {
 }
 
 const DEFAULT_WEBHOOK_PAYLOAD_MAX_BYTES = 2 * 1024 * 1024;
+const WEBHOOK_DELIVERY_LEASE_MS = 5 * 60 * 1000;
+const WEBHOOK_INITIAL_RETRY_DELAY_MS = 30_000;
+const WEBHOOK_RETRY_PAYLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
 export function createPlugFnRouter(
   plugFn: PlugFn,
   options: PlugFnRouterOptions = {}
 ): Router<PlugFnContext> {
-  const maxWebhookPayloadBytes = options.maxWebhookPayloadBytes ?? DEFAULT_WEBHOOK_PAYLOAD_MAX_BYTES;
+  const maxWebhookPayloadBytes =
+    options.maxWebhookPayloadBytes ??
+    plugFn.config.webhooks?.maxPayloadSize ??
+    DEFAULT_WEBHOOK_PAYLOAD_MAX_BYTES;
   const authenticate = options.authenticate ?? plugFn.config.auth.authenticate;
 
   const requireAuth: Middleware<PlugFnContext> = async (request, context, next) => {
@@ -141,12 +155,11 @@ export function createPlugFnRouter(
       path: '/webhooks/:provider',
       handler: async (req, ctx) => {
         const { provider } = ctx.params;
-        const headers = normalizeHeaders(req.headers);
-        const event = inferWebhookEvent(provider, headers);
 
-        return handleWebhookRoute(req, ctx, provider, event, {
+        return handleWebhookRoute(req, ctx, provider, undefined, {
           maxWebhookPayloadBytes,
           webhookSecret: options.webhookSecret,
+          resolveWebhookClientIp: options.resolveWebhookClientIp,
         });
       },
     },
@@ -159,6 +172,7 @@ export function createPlugFnRouter(
         return handleWebhookRoute(req, ctx, provider, event, {
           maxWebhookPayloadBytes,
           webhookSecret: options.webhookSecret,
+          resolveWebhookClientIp: options.resolveWebhookClientIp,
         });
       },
     },
@@ -171,6 +185,19 @@ export function createPlugFnRouter(
       method: 'GET',
       path: '/readyz',
       handler: async (_req, ctx) => {
+        try {
+          await ctx.plugFn.ready;
+        } catch (error) {
+          return errorResponse({
+            code: 'PLUGFN_NOT_READY',
+            message: 'workflow trigger rehydration failed',
+            status: 503,
+            retryable: true,
+            details: {
+              error: error instanceof Error ? error.message : 'unknown initialization failure',
+            },
+          });
+        }
         const configuredProviders = Object.keys(ctx.plugFn.config.integrations ?? {});
         const missingProviders = configuredProviders.filter((provider) => !ctx.plugFn.providers.get(provider));
 
@@ -215,10 +242,30 @@ export function createPlugFnRouter(
         const provider = ctx.query.get('provider');
         const authContext = requireAuthContext(ctx);
 
-          const connections = await ctx.plugFn.connections.list({
+        const ownConnections = (
+          await ctx.plugFn.connections.list({
             userId: authContext.userId,
             provider: provider || undefined,
+          })
+        ).filter((connection) => connectionMatchesActor(connection, authContext));
+        let connections = ownConnections;
+        if (
+          authContext.organizationId &&
+          hasAny(authContext.roles, ['admin', 'owner', 'org:admin'])
+        ) {
+          const organizationConnections = await ctx.plugFn.connections.list({
+            userId: authContext.userId,
+            provider: provider || undefined,
+            owner: {
+              kind: 'organization',
+              organizationId: authContext.organizationId,
+              installedByUserId: authContext.userId,
+              tenantId: authContext.tenantId,
+            },
           });
+          connections = deduplicateConnections([...ownConnections, ...organizationConnections])
+            .filter((connection) => connectionMatchesActor(connection, authContext));
+        }
 
         return successResponse({
           connections,
@@ -350,7 +397,17 @@ export function createPlugFnRouter(
             });
           }
 
-          if (connectionId) {
+          if (!connectionId && authContext.tenantId) {
+            return errorResponse({
+              code: 'VALIDATION_ERROR',
+              message: 'connectionId is required for tenant-scoped disconnects',
+              status: 400,
+              retryable: false,
+              details: {},
+            });
+          }
+
+          if (connectionId && !ctx.plugFn.config.authorization?.authorizeConnection) {
             await requireAuthorizedConnection(ctx, connectionId, authContext, 'disconnect');
           }
 
@@ -453,10 +510,7 @@ export function createPlugFnRouter(
         const connectionId = asOptionalString(ctx.query.get('connectionId'));
         const status = asOptionalString(ctx.query.get('status'));
         const authContext = requireAuthContext(ctx);
-        const filters: Record<string, unknown> = {
-          ownerKind: 'user',
-          ownerId: authContext.userId,
-        };
+        const filters: Record<string, unknown> = {};
         if (provider) {
           filters.provider = provider;
         }
@@ -467,7 +521,29 @@ export function createPlugFnRouter(
           filters.status = status;
         }
 
-        const jobs = await ctx.plugFn.runtime.sync.listJobs(filters);
+        const ownJobs = await filterAuthorizedSyncJobs(
+          ctx,
+          await ctx.plugFn.runtime.sync.listJobs({
+            ...filters,
+            ownerKind: 'user',
+            ownerId: authContext.userId,
+          }),
+          authContext
+        );
+        let jobs = ownJobs;
+        if (authContext.organizationId) {
+          const organizationJobs = await ctx.plugFn.runtime.sync.listJobs({
+            ...filters,
+            ownerKind: 'organization',
+            ownerId: authContext.organizationId,
+          });
+          const authorizedOrganizationJobs = await filterAuthorizedSyncJobs(
+            ctx,
+            organizationJobs,
+            authContext
+          );
+          jobs = deduplicateSyncJobs([...ownJobs, ...authorizedOrganizationJobs]);
+        }
         return successResponse({ jobs });
       },
     },
@@ -489,9 +565,7 @@ export function createPlugFnRouter(
         try {
           const authContext = requireAuthContext(ctx);
           await requireAuthorizedSyncJob(ctx, ctx.params.jobId, authContext);
-          const job = await ctx.plugFn.runtime.sync.updateJob(ctx.params.jobId, {
-            status: 'cancelled',
-          });
+          const job = await ctx.plugFn.runtime.sync.cancelJob(ctx.params.jobId);
           return successResponse({ job });
         } catch (error) {
           return errorResponse(toDeterministicError(error));
@@ -620,6 +694,15 @@ async function requireAuthorizedConnection(
   operation: 'read' | 'disconnect' | 'revoke' | 'sync' | 'action' | 'checkpoint'
 ): Promise<Connection> {
   const connection = await context.plugFn.connections.get(connectionId);
+  return authorizeConnection(context, connection, authContext, operation);
+}
+
+async function authorizeConnection(
+  context: PlugFnContext,
+  connection: Connection,
+  authContext: RouteAuthContext,
+  operation: 'read' | 'disconnect' | 'revoke' | 'sync' | 'action' | 'checkpoint'
+): Promise<Connection> {
   const customAuthorizer = context.plugFn.config.authorization?.authorizeConnection;
   if (customAuthorizer) {
     const allowed = await customAuthorizer({
@@ -630,7 +713,7 @@ async function requireAuthorizedConnection(
     if (allowed) {
       return connection;
     }
-  } else if (connectionMatchesAuthContext(connection, authContext)) {
+  } else if (connectionMatchesActor(connection, authContext, operation)) {
     return connection;
   }
 
@@ -654,64 +737,67 @@ async function requireAuthorizedSyncJob(
       status: 404,
     };
   }
-
-  if (job.ownerKind === 'user' && job.ownerId === authContext.userId) {
-    return job;
-  }
-
-  if (job.connectionId) {
-    await requireAuthorizedConnection(context, job.connectionId, authContext, 'sync');
-    return job;
-  }
-
-  throw {
-    code: 'TENANT_ACCESS_DENIED',
-    message: 'sync job owner mismatch',
-    status: 403,
-  };
+  return authorizeSyncJob(context, job, authContext);
 }
 
-function connectionMatchesAuthContext(
-  connection: Connection,
+async function authorizeSyncJob(
+  context: PlugFnContext,
+  job: NonNullable<Awaited<ReturnType<PlugFn['runtime']['sync']['getJob']>>>,
+  authContext: RouteAuthContext,
+  connectionCache?: Map<string, Promise<Connection>>
+) {
+  let connectionPromise = connectionCache?.get(job.connectionId);
+  if (!connectionPromise) {
+    connectionPromise = context.plugFn.connections.get(job.connectionId);
+    connectionCache?.set(job.connectionId, connectionPromise);
+  }
+  const connection = await connectionPromise;
+  await authorizeConnection(context, connection, authContext, 'sync');
+  return job;
+}
+
+async function filterAuthorizedSyncJobs(
+  context: PlugFnContext,
+  jobs: Awaited<ReturnType<PlugFn['runtime']['sync']['listJobs']>>,
   authContext: RouteAuthContext
-): boolean {
-  if (connection.userId === authContext.userId) {
-    return tenantMatches(connection.tenantId, authContext.tenantId);
-  }
-
-  if (connection.ownerKind === 'user' && connection.ownerId === authContext.userId) {
-    return tenantMatches(connection.tenantId, authContext.tenantId);
-  }
-
-  if (connection.ownerKind === 'organization') {
-    return (
-      connection.installedByUserId === authContext.userId ||
-      (tenantMatches(connection.tenantId, authContext.tenantId) &&
-        hasAny(authContext.roles, ['admin', 'owner', 'org:admin']))
-    );
-  }
-
-  if (connection.ownerKind === 'delegated') {
-    return (
-      connection.delegatedToUserId === authContext.userId ||
-      connection.installedByUserId === authContext.userId ||
-      hasAny(authContext.grants, connection.grants ?? [])
-    );
-  }
-
-  return false;
+) {
+  const connectionCache = new Map<string, Promise<Connection>>();
+  const authorizationResults = await Promise.all(
+    jobs.map(async (job) => {
+      try {
+        await authorizeSyncJob(context, job, authContext, connectionCache);
+        return job;
+      } catch (error) {
+        if (!isExpectedAuthorizationMiss(error)) {
+          throw error;
+        }
+        return undefined;
+      }
+    })
+  );
+  return authorizationResults.filter((job): job is NonNullable<typeof job> => Boolean(job));
 }
 
-function tenantMatches(connectionTenantId: string | undefined, actorTenantId: string | undefined): boolean {
-  return !connectionTenantId || !actorTenantId || connectionTenantId === actorTenantId;
+function deduplicateConnections(connections: Connection[]): Connection[] {
+  return [...new Map(connections.map((connection) => [connection.id, connection])).values()];
 }
 
-function hasAny(values: string[] | undefined, candidates: string[]): boolean {
-  if (!values || values.length === 0) {
+function deduplicateSyncJobs(
+  jobs: Awaited<ReturnType<PlugFn['runtime']['sync']['listJobs']>>
+) {
+  return [...new Map(jobs.map((job) => [job.id, job])).values()];
+}
+
+function isExpectedAuthorizationMiss(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
     return false;
   }
-  const valueSet = new Set(values);
-  return candidates.some((candidate) => valueSet.has(candidate));
+  const code = (error as { code?: unknown }).code;
+  return (
+    code === 'TENANT_ACCESS_DENIED' ||
+    code === 'NOT_FOUND' ||
+    code === 'CONNECTION_NOT_FOUND'
+  );
 }
 
 async function resolveAuthContext(
@@ -754,29 +840,101 @@ async function handleWebhookRoute(
   req: Request,
   ctx: PlugFnContext,
   provider: string,
-  event: string,
-  options: Pick<PlugFnRouterOptions, 'webhookSecret'> & { maxWebhookPayloadBytes: number }
+  event: string | undefined,
+  options: Pick<PlugFnRouterOptions, 'webhookSecret' | 'resolveWebhookClientIp'> & {
+    maxWebhookPayloadBytes: number;
+  }
 ): Promise<Response> {
   let deliveryId: string | undefined;
+  let deliveryAttempts = 0;
   let receiptId: string | undefined;
+  let receiptMetadata: Record<string, unknown> | undefined;
   let rawBody: Uint8Array | undefined;
   let headers: Record<string, string> | undefined;
   let payloadHash: string | undefined;
   let idempotencyKey: string | undefined;
+  let resolvedEvent = event ?? 'event';
+  let verificationStatus: 'verified' | 'not-required';
 
   try {
-    rawBody = await readRequestBytes(req, { maxBytes: options.maxWebhookPayloadBytes });
     headers = normalizeHeaders(req.headers);
+    await assertWebhookSourceAllowed(
+      req,
+      ctx.plugFn.config.webhooks?.allowedIPs,
+      options.resolveWebhookClientIp
+    );
+    if (provider.toLowerCase() === 'outlook') {
+      const validationToken = new URL(req.url).searchParams.get('validationToken');
+      if (validationToken !== null) {
+        return new Response(validationToken, {
+          status: 200,
+          headers: { 'content-type': 'text/plain; charset=utf-8' },
+        });
+      }
+    }
+    rawBody = await readRequestBytes(req, { maxBytes: options.maxWebhookPayloadBytes });
+    if (!event || provider.toLowerCase() === 'github') {
+      const inferredEvent = inferWebhookEvent(
+        provider,
+        headers,
+        rawBody,
+        ctx.plugFn.providers.get(provider)?.triggers,
+        event
+      );
+      resolvedEvent =
+        event && inferredEvent !== event && !inferredEvent.startsWith(`${event}.`)
+          ? event
+          : inferredEvent;
+    }
     const secret = await resolveWebhookSecret(provider, req, headers, options.webhookSecret);
-    payloadHash = createHash('sha256').update(rawBody).digest('hex');
-    idempotencyKey = readWebhookIdempotencyKey(provider, headers);
+    const currentPayloadHash = createHash('sha256')
+      .update(webhookPayloadForHash(provider, rawBody))
+      .digest('hex');
+    payloadHash = currentPayloadHash;
+    const verification = await ctx.plugFn.webhooks.verify(
+      provider,
+      resolvedEvent,
+      undefined,
+      headers,
+      secret,
+      { rawBody }
+    );
+    verificationStatus = verification.verified === false ? 'not-required' : 'verified';
+
+    const slackChallenge = readSlackUrlVerificationChallenge(
+      provider,
+      verification.transformedPayload
+    );
+    if (slackChallenge !== undefined) {
+      return Response.json({ challenge: slackChallenge });
+    }
+
+    // Only verified payloads may claim a durable idempotency key. In
+    // particular, Stripe event ids come from the body and are untrusted until
+    // signature verification succeeds.
+    idempotencyKey = readWebhookIdempotencyKey(provider, headers, rawBody);
+
+    try {
+      await ctx.plugFn.ready;
+    } catch (error) {
+      throw {
+        code: 'PLUGFN_NOT_READY',
+        message: 'workflow trigger rehydration failed',
+        status: 503,
+        retryable: true,
+        details: {
+          error: error instanceof Error ? error.message : 'unknown initialization failure',
+        },
+      };
+    }
+
     if (idempotencyKey) {
       const existing = await ctx.plugFn.runtime.webhooks.findReceiptByIdempotencyKey(
         provider,
         idempotencyKey
       );
       if (existing) {
-        if (existing.payloadHash !== payloadHash) {
+        if (existing.payloadHash !== currentPayloadHash) {
           throw {
             code: 'WEBHOOK_IDEMPOTENCY_CONFLICT',
             message: 'webhook idempotency key was reused with a different payload',
@@ -787,56 +945,86 @@ async function handleWebhookRoute(
             },
           };
         }
-        if (existing.verificationStatus === 'verified') {
-          return successResponse({
-            duplicate: true,
-            receiptId: existing.id,
-            event: {
-              provider,
-              event,
-              verified: true,
-            },
-          });
+        if (
+          existing.verificationStatus === 'verified' ||
+          existing.verificationStatus === 'not-required'
+        ) {
+          const disposition = await webhookReceiptDisposition(ctx, existing);
+          if (disposition === 'retry') {
+            receiptId = existing.id;
+          } else {
+            return successResponse({
+              duplicate: true,
+              receiptId: existing.id,
+              event: {
+                provider,
+                event: resolvedEvent,
+                verified: true,
+              },
+            });
+          }
         }
       }
     }
 
-    await ctx.plugFn.webhooks.verify(provider, event, undefined, headers, secret, { rawBody });
-
+    const receiptClaimToken = idempotencyKey
+      ? `claim_${randomBytes(12).toString('hex')}`
+      : undefined;
     const receipt = await ctx.plugFn.runtime.webhooks.createReceipt({
       provider,
-      event,
-      payloadHash,
+      event: resolvedEvent,
+      payloadHash: currentPayloadHash,
       idempotencyKey,
       headersRedacted: redactHeaders(headers),
-      verificationStatus: secret ? 'verified' : 'not-required',
+      verificationStatus,
       metadata: {
         contentType: headers['content-type'],
         userAgent: headers['user-agent'],
+        ...(receiptClaimToken ? { receiptClaimToken } : {}),
       },
     });
+    receiptMetadata = receipt.metadata;
+    if (
+      receiptClaimToken &&
+      receipt.metadata?.receiptClaimToken !== receiptClaimToken &&
+      (receipt.verificationStatus === 'verified' || receipt.verificationStatus === 'not-required') &&
+      (await webhookReceiptDisposition(ctx, receipt)) !== 'retry'
+    ) {
+      return successResponse({
+        duplicate: true,
+        receiptId: receipt.id,
+        event: {
+          provider,
+          event: resolvedEvent,
+          verified: true,
+        },
+      });
+    }
     receiptId = receipt.id;
-    if (receipt.verificationStatus !== (secret ? 'verified' : 'not-required')) {
+    if (receipt.verificationStatus !== verificationStatus) {
       await ctx.plugFn.runtime.webhooks.updateReceipt(receipt.id, {
-        verificationStatus: secret ? 'verified' : 'not-required',
+        verificationStatus,
       });
     }
     const delivery = await ctx.plugFn.runtime.webhooks.createDelivery({
       receiptId: receipt.id,
-      handlerName: `${provider}.${event}`,
+      handlerName: `${provider}.${resolvedEvent}`,
       status: 'running',
       metadata: {
         provider,
-        event,
-        payloadHash,
+        event: resolvedEvent,
+        payloadHash: currentPayloadHash,
         idempotencyKey,
+        rawBodyBase64: Buffer.from(rawBody).toString('base64'),
+        rawBodyExpiresAt: new Date(Date.now() + WEBHOOK_RETRY_PAYLOAD_TTL_MS).toISOString(),
       },
     });
     deliveryId = delivery.id;
+    deliveryAttempts = delivery.attempts;
 
     const webhookEvent = await ctx.plugFn.webhooks.handle(
       provider,
-      event,
+      resolvedEvent,
       undefined,
       headers,
       secret,
@@ -846,6 +1034,7 @@ async function handleWebhookRoute(
     await ctx.plugFn.runtime.webhooks.updateDelivery(delivery.id, {
       status: 'success',
       attempts: delivery.attempts + 1,
+      metadata: withoutWebhookReplayBody(delivery.metadata),
     });
 
     return successResponse({
@@ -858,16 +1047,17 @@ async function handleWebhookRoute(
       await createFailedWebhookReceipt(
         ctx,
         provider,
-        event,
+        resolvedEvent,
         headers,
         payloadHash,
         idempotencyKey,
         error
       );
-    } else {
+    } else if (!deliveryId) {
       await ctx.plugFn.runtime.webhooks.updateReceipt(receiptId, {
         verificationStatus: 'failed',
         metadata: {
+          ...(receiptMetadata ?? {}),
           error: error instanceof Error ? error.message : 'webhook handler failed',
         },
       });
@@ -875,11 +1065,65 @@ async function handleWebhookRoute(
     if (deliveryId) {
       await ctx.plugFn.runtime.webhooks.updateDelivery(deliveryId, {
         status: 'failed',
+        attempts: deliveryAttempts + 1,
         error: error instanceof Error ? error.message : 'webhook handler failed',
+        nextAttemptAt: new Date(Date.now() + WEBHOOK_INITIAL_RETRY_DELAY_MS),
       });
     }
     return errorResponse(toDeterministicError(error));
   }
+}
+
+async function webhookReceiptDisposition(
+  ctx: PlugFnContext,
+  receipt: NonNullable<Awaited<ReturnType<PlugFn['runtime']['webhooks']['getReceipt']>>>
+): Promise<'complete' | 'active' | 'retry'> {
+  const deliveries = await ctx.plugFn.runtime.webhooks.listDeliveries(receipt.id);
+  if (deliveries.some((delivery) => delivery.status === 'success')) {
+    return 'complete';
+  }
+
+  const now = Date.now();
+  if (
+    deliveries.some(
+      (delivery) =>
+        delivery.status === 'running' &&
+        now - new Date(delivery.updatedAt).getTime() < WEBHOOK_DELIVERY_LEASE_MS
+    )
+  ) {
+    return 'active';
+  }
+
+  if (
+    deliveries.length === 0 &&
+    now - new Date(receipt.createdAt).getTime() < WEBHOOK_DELIVERY_LEASE_MS
+  ) {
+    return 'active';
+  }
+
+  return 'retry';
+}
+
+async function assertWebhookSourceAllowed(
+  request: Request,
+  allowedIPs: string[] | undefined,
+  resolver: PlugFnRouterOptions['resolveWebhookClientIp']
+): Promise<void> {
+  if (!allowedIPs || allowedIPs.length === 0) {
+    return;
+  }
+
+  const clientIp = await resolver?.(request);
+  if (clientIp && allowedIPs.includes(clientIp)) {
+    return;
+  }
+
+  throw {
+    code: 'WEBHOOK_SOURCE_DENIED',
+    message: 'webhook source is not allowed',
+    status: 403,
+    retryable: false,
+  };
 }
 
 async function createFailedWebhookReceipt(
@@ -912,34 +1156,204 @@ async function createFailedWebhookReceipt(
   }
 }
 
-function inferWebhookEvent(provider: string, headers: Record<string, string>): string {
+function inferWebhookEvent(
+  provider: string,
+  headers: Record<string, string>,
+  rawBody?: Uint8Array,
+  triggers: Record<string, unknown> = {},
+  explicitEvent?: string
+): string {
   if (provider === 'github') {
-    return headers['x-github-event'] || 'event';
+    const family = headers['x-github-event'] || explicitEvent || 'event';
+    const action = readWebhookAction(rawBody);
+    const actionEvent = action ? `${family}.${action}` : undefined;
+    return actionEvent && actionEvent in triggers ? actionEvent : family;
   }
   if (provider === 'linear') {
-    return headers['linear-event'] || headers['x-linear-event'] || 'event';
+    const family = (headers['linear-event'] || headers['x-linear-event'] || 'event')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_');
+    const action = readWebhookAction(rawBody)?.trim().toLowerCase();
+    const candidate =
+      family === 'issue' && action === 'create'
+        ? 'issue.created'
+        : family === 'issue' && action === 'update'
+          ? 'issue.updated'
+          : (family === 'comment' || family === 'issue_comment') && action === 'create'
+            ? 'issue_comment.created'
+            : undefined;
+    return candidate && candidate in triggers ? candidate : family;
   }
   if (provider === 'stripe') {
-    return headers['stripe-event-type'] || 'event';
+    return readWebhookStringField(rawBody, 'type') || 'event';
   }
   if (provider === 'gmail' || provider === 'google') {
-    return headers['x-goog-resource-state'] || 'message';
+    const resourceState = headers['x-goog-resource-state'];
+    if (resourceState) {
+      return resourceState;
+    }
+    if ('mail.update' in triggers && isGmailPubSubEnvelope(rawBody)) {
+      return 'mail.update';
+    }
+    return 'message';
   }
   return headers['x-plugfn-event'] || 'event';
 }
 
+function isGmailPubSubEnvelope(rawBody?: Uint8Array): boolean {
+  if (!rawBody || rawBody.byteLength === 0) {
+    return false;
+  }
+
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(rawBody)) as Record<string, unknown>;
+    const message = payload.message;
+    return (
+      typeof message === 'object' &&
+      message !== null &&
+      typeof (message as Record<string, unknown>).data === 'string'
+    );
+  } catch {
+    return false;
+  }
+}
+
+function readWebhookStringField(
+  rawBody: Uint8Array | undefined,
+  field: string
+): string | undefined {
+  if (!rawBody || rawBody.byteLength === 0) {
+    return undefined;
+  }
+
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(rawBody)) as Record<string, unknown>;
+    return typeof payload[field] === 'string' && payload[field].length > 0
+      ? payload[field]
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readWebhookAction(rawBody?: Uint8Array): string | undefined {
+  return readWebhookStringField(rawBody, 'action');
+}
+
+function readSlackUrlVerificationChallenge(
+  provider: string,
+  payload: unknown
+): string | undefined {
+  if (provider !== 'slack' || !payload || typeof payload !== 'object') {
+    return undefined;
+  }
+  const value = payload as Record<string, unknown>;
+  return value.type === 'url_verification' && typeof value.challenge === 'string'
+    ? value.challenge
+    : undefined;
+}
+
+function webhookPayloadForHash(provider: string, rawBody: Uint8Array): Uint8Array | string {
+  if (provider !== 'gmail') {
+    return rawBody;
+  }
+
+  try {
+    const envelope = JSON.parse(Buffer.from(rawBody).toString('utf8')) as unknown;
+    if (!envelope || typeof envelope !== 'object') {
+      return rawBody;
+    }
+    const message = (envelope as Record<string, unknown>).message;
+    if (!message || typeof message !== 'object') {
+      return rawBody;
+    }
+    // Pub/Sub can change deliveryAttempt and other envelope delivery metadata
+    // across retries. Hash only the immutable logical message so its stable
+    // messageId remains deduplicable while changed message content conflicts.
+    const logicalMessage = { ...(message as Record<string, unknown>) };
+    delete logicalMessage.deliveryAttempt;
+    return JSON.stringify(sortWebhookPayload(logicalMessage));
+  } catch {
+    return rawBody;
+  }
+}
+
+function sortWebhookPayload(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortWebhookPayload);
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, sortWebhookPayload(nested)])
+  );
+}
+
 function readWebhookIdempotencyKey(
   provider: string,
-  headers: Record<string, string>
+  headers: Record<string, string>,
+  rawBody?: Uint8Array
 ): string | undefined {
+  if (provider === 'stripe') {
+    const eventId = readWebhookStringField(rawBody, 'id');
+    if (eventId) {
+      return eventId;
+    }
+  }
+
+  if (provider === 'slack') {
+    const eventId = readWebhookStringField(rawBody, 'event_id');
+    if (eventId) {
+      return eventId;
+    }
+  }
+
+  if (provider === 'gmail') {
+    const messageId = readWebhookNestedStringField(rawBody, ['message', 'messageId']);
+    if (messageId) {
+      return messageId;
+    }
+  }
+
   return (
     headers['x-plugfn-delivery'] ||
     headers['x-github-delivery'] ||
     headers['linear-delivery'] ||
     headers['x-linear-delivery'] ||
-    headers['stripe-signature'] ||
     headers['x-goog-message-number'] ||
     headers[`${provider}-delivery`]
+  );
+}
+
+function readWebhookNestedStringField(
+  rawBody: Uint8Array | undefined,
+  path: string[]
+): string | undefined {
+  if (!rawBody) return undefined;
+  try {
+    let value: unknown = JSON.parse(Buffer.from(rawBody).toString('utf8'));
+    for (const key of path) {
+      if (!value || typeof value !== 'object') return undefined;
+      value = (value as Record<string, unknown>)[key];
+    }
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function withoutWebhookReplayBody(
+  metadata: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!metadata) return undefined;
+  return Object.fromEntries(
+    Object.entries(metadata).filter(
+      ([key]) => key !== 'rawBodyBase64' && key !== 'rawBodyExpiresAt'
+    )
   );
 }
 
@@ -1025,20 +1439,12 @@ function parseJsonText(body: string): Record<string, any> {
 function assertIdentityMatches(body: Record<string, any>, authContext: RouteAuthContext): void {
   const bodyUserId = asOptionalString(body.userId);
   if (bodyUserId && bodyUserId !== authContext.userId) {
-    throw {
-      code: 'TENANT_ACCESS_DENIED',
-      message: 'identity mismatch',
-      status: 403,
-    };
+    throw identityMismatchError();
   }
 
   const bodyTenantId = asOptionalString(body.tenantId);
   if (bodyTenantId && authContext.tenantId && bodyTenantId !== authContext.tenantId) {
-    throw {
-      code: 'TENANT_ACCESS_DENIED',
-      message: 'identity mismatch',
-      status: 403,
-    };
+    throw identityMismatchError();
   }
 
   const bodyOrganizationId = asOptionalString(body.organizationId);
@@ -1047,12 +1453,66 @@ function assertIdentityMatches(body: Record<string, any>, authContext: RouteAuth
     authContext.organizationId &&
     bodyOrganizationId !== authContext.organizationId
   ) {
-    throw {
-      code: 'TENANT_ACCESS_DENIED',
-      message: 'identity mismatch',
-      status: 403,
-    };
+    throw identityMismatchError();
   }
+
+  const owner = asConnectionOwner(body.owner);
+  if (!owner) {
+    return;
+  }
+
+  assertOwnerMatchesAuthContext(owner, authContext);
+}
+
+function assertOwnerMatchesAuthContext(
+  owner: PlugFnConnectionOwner,
+  authContext: RouteAuthContext
+): void {
+  if (owner.tenantId && authContext.tenantId && owner.tenantId !== authContext.tenantId) {
+    throw identityMismatchError();
+  }
+
+  if (owner.kind === 'user' && owner.userId !== authContext.userId) {
+    throw identityMismatchError();
+  }
+
+  if (
+    owner.kind === 'organization' &&
+    owner.installedByUserId !== authContext.userId
+  ) {
+    throw identityMismatchError();
+  }
+
+  if (
+    owner.kind === 'organization' &&
+    (!authContext.organizationId || owner.organizationId !== authContext.organizationId)
+  ) {
+    throw identityMismatchError();
+  }
+
+  if (
+    owner.kind === 'delegated' &&
+    owner.installedByUserId !== authContext.userId &&
+    owner.delegatedToUserId !== authContext.userId
+  ) {
+    throw identityMismatchError();
+  }
+
+  if (
+    'organizationId' in owner &&
+    (!authContext.organizationId || owner.organizationId !== authContext.organizationId)
+  ) {
+    throw identityMismatchError();
+  }
+}
+
+function identityMismatchError(): SuperfunctionError {
+  return new SuperfunctionError({
+    code: 'TENANT_ACCESS_DENIED',
+    message: 'identity mismatch',
+    status: 403,
+    retryable: false,
+  });
 }
 
 function assertIdentityMatchesQuery(
@@ -1069,15 +1529,27 @@ function assertIdentityMatchesQuery(
   );
 }
 
-function normalizeAuthContext(principal: PlugFnPrincipal | null): RouteAuthContext | null {
+function normalizeAuthContext(principal: PlugFnPrincipal | AuthSession | null): RouteAuthContext | null {
   if (!principal) {
     return null;
+  }
+
+  if ('subject' in principal) {
+    return {
+      userId: principal.subject.actorId,
+      tenantId: principal.subject.tenantId,
+      organizationId: asOptionalString(principal.metadata?.organizationId),
+      roles: principal.resourceIds,
+      grants: principal.scopes,
+    };
   }
 
   return {
     userId: principal.userId,
     tenantId: principal.tenantId,
-    organizationId: asOptionalString(principal.metadata?.organizationId),
+    organizationId:
+      asOptionalString(principal.organizationId) ??
+      asOptionalString(principal.metadata?.organizationId),
     roles: principal.roles,
     grants: principal.grants,
   };
@@ -1168,6 +1640,17 @@ function asConnectionOwner(value: unknown): PlugFnConnectionOwner | undefined {
 }
 
 function toDeterministicError(error: unknown): DeterministicError {
+  if (error instanceof SuperfunctionError) {
+    const superfunctionError = error as SuperfunctionError;
+    return {
+      code: superfunctionError.code,
+      message: superfunctionError.message,
+      status: superfunctionError.status,
+      retryable: superfunctionError.retryable,
+      details: superfunctionError.details ?? {},
+    };
+  }
+
   if (
     error &&
     typeof error === 'object' &&
@@ -1288,37 +1771,31 @@ function resolveReturnToRedirect(returnTo: string | undefined, baseUrl: string):
 }
 
 function successResponse(data: Record<string, unknown>): Response {
-  const envelope: PlugFnApiEnvelope<Record<string, unknown>> = {
-    ok: true,
-    data,
-    meta: createResponseMeta(),
-  };
+  const envelope = envelopeOk(data) as PlugFnApiEnvelope<Record<string, unknown>>;
+  envelope.meta = createResponseMeta(envelope.meta?.timestamp);
   return Response.json(envelope);
 }
 
 function errorResponse(error: DeterministicError): Response {
   const details = isPlainObject(error.details) ? error.details : {};
-  const envelope: PlugFnApiEnvelope = {
-    ok: false,
-    error: {
-      code: error.code,
-      message: error.message,
-      status: error.status,
-      retryable: error.retryable,
-      details,
-    },
-    meta: createResponseMeta(),
-  };
+  const envelope = envelopeErr({
+    code: error.code,
+    message: error.message,
+    status: error.status,
+    retryable: error.retryable,
+    details,
+  }) as PlugFnApiEnvelope;
+  envelope.meta = createResponseMeta(envelope.meta?.timestamp);
   return Response.json(
     envelope,
     { status: error.status }
   );
 }
 
-function createResponseMeta(): PlugFnResponseMeta {
+function createResponseMeta(timestamp = new Date().toISOString()): PlugFnResponseMeta {
   return {
     requestId: `req_${randomBytes(12).toString('hex')}`,
-    timestamp: new Date().toISOString(),
+    timestamp,
   };
 }
 

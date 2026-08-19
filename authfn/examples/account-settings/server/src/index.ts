@@ -1,10 +1,6 @@
 import type { RequestHandler, Request as ExpressRequest, Response as ExpressResponse } from 'express';
-import {
-  AuthFnUnauthenticatedError,
-  type AuthFnInstance,
-  jsonError,
-  jsonSuccess
-} from '@authfn/core';
+import { AuthFnUnauthenticatedError, type AuthFnServer } from 'authfn';
+import { jsonError, jsonSuccess } from 'authfn/http/envelopes';
 import {
   ExampleEventBuffer,
   createEventEmitter,
@@ -30,12 +26,14 @@ const HOST = process.env.HOST ?? '127.0.0.1';
 const PORT = Number(process.env.PORT ?? '4313');
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? 'http://127.0.0.1:4013';
 const SERVER_BASE_URL = process.env.SERVER_BASE_URL ?? `http://${HOST}:${PORT}`;
+const TWO_FACTOR_ENCRYPTION_KEY = readTwoFactorEncryptionKey();
 
 export async function createAccountSettingsServer() {
   const database = createAccountSettingsDatabase();
   const eventBuffer = new ExampleEventBuffer();
   const auth = createAccountSettingsAuth({
     database: database.adapter,
+    twoFactorEncryptionKeyResolver: () => TWO_FACTOR_ENCRYPTION_KEY,
     onEvent: createEventEmitter(eventBuffer)
   });
 
@@ -91,6 +89,19 @@ void main().catch((error: unknown) => {
   process.exit(1);
 });
 
+function readTwoFactorEncryptionKey(): Buffer {
+  const encoded = process.env.AUTHFN_TWO_FACTOR_ENCRYPTION_KEY_BASE64;
+  if (!encoded) {
+    throw new Error('AUTHFN_TWO_FACTOR_ENCRYPTION_KEY_BASE64 must be configured');
+  }
+
+  const key = Buffer.from(encoded, 'base64');
+  if (key.length !== 32) {
+    throw new Error('AUTHFN_TWO_FACTOR_ENCRYPTION_KEY_BASE64 must decode to exactly 32 bytes');
+  }
+  return key;
+}
+
 function createCorsMiddleware(allowedOrigin: string): RequestHandler {
   return (request, response, next) => {
     const origin = request.headers.origin;
@@ -111,7 +122,7 @@ function createCorsMiddleware(allowedOrigin: string): RequestHandler {
   };
 }
 
-function createApiKeyProtectedMiddleware(auth: AuthFnInstance, serverBaseUrl: string): RequestHandler {
+function createApiKeyProtectedMiddleware(auth: AuthFnServer, serverBaseUrl: string): RequestHandler {
   return async (request, response, next) => {
     if (request.method !== 'GET' || request.path !== '/demo/api-key/protected') {
       next();

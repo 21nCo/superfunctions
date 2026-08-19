@@ -9,8 +9,12 @@ import {
   DatabaseSequenceStore,
 } from "../src/execution/sync/sequence-store.js";
 import { ChangeTrackingService } from "../src/execution/sync/change-tracking.js";
+import { executePush } from "../src/execution/sync/push.js";
+import { DbIdempotencyStore } from "../src/execution/idempotency-db.js";
+import { MemoryIdempotencyStore } from "../src/execution/idempotency.js";
 import { executeModifyRelation } from "../src/execution/mutation/relations.js";
-import { RedisRateLimiter } from "../src/middleware/rate-limit.js";
+import { AtomicRateLimiter } from "../src/middleware/rate-limit.js";
+import { memoryAdapter } from "@superfunctions/db/adapters";
 import type { DatafnSchema } from "@datafn/core";
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
@@ -132,7 +136,7 @@ describe("DI-003: ChainedSequenceStore prevents duplicate sequences on Redis→D
         if (primaryCalls === 1) return [100];
         throw new Error("Redis unavailable");
       }),
-      getCurrent: vi.fn(),
+      getCurrent: vi.fn(async () => primaryCalls > 0 ? 100 : 0),
       isHealthy: vi.fn(async () => true),
     };
 
@@ -158,7 +162,7 @@ describe("DI-003: ChainedSequenceStore prevents duplicate sequences on Redis→D
     const mockPrimary = {
       getNext: vi.fn(),
       getNextN: vi.fn(async () => [50]),
-      getCurrent: vi.fn(),
+      getCurrent: vi.fn(async () => 0),
       isHealthy: vi.fn(async () => false), // unhealthy after first call
     };
 
@@ -187,7 +191,7 @@ describe("DI-003: ChainedSequenceStore prevents duplicate sequences on Redis→D
     const mockPrimary = {
       getNext: vi.fn(),
       getNextN: vi.fn(async () => { throw new Error("Redis down"); }),
-      getCurrent: vi.fn(),
+      getCurrent: vi.fn(async () => 0),
     };
 
     const mockDb = { internal: makeInternalApi() } as any;
@@ -228,70 +232,308 @@ describe("DI-003: ChainedSequenceStore prevents duplicate sequences on Redis→D
       { next_server_seq: 11 },
     );
   });
+
+  it("TV-DI-003e: primary allocations persist high water to database sequence", async () => {
+    const mockPrimary = {
+      getNext: vi.fn(),
+      getNextN: vi.fn(async () => [9459]),
+      getCurrent: vi.fn(async () => 9458),
+      ensureMinSeq: vi.fn(async () => {}),
+      isHealthy: vi.fn(async () => true),
+    };
+
+    const mockDb = { internal: makeInternalApi() } as any;
+    const dbStore = new DatabaseSequenceStore(mockDb);
+    const ensureMinSeqSpy = vi.spyOn(dbStore, "ensureMinSeq").mockResolvedValue();
+    vi.spyOn(dbStore, "getCurrent").mockResolvedValue(9458);
+
+    const store = new ChainedSequenceStore(mockPrimary, dbStore);
+    const seqs = await store.getNextN("default", 1);
+
+    expect(seqs).toEqual([9459]);
+    expect(ensureMinSeqSpy).toHaveBeenCalledWith("default", 9459);
+  });
+
+  it("TV-DI-003f: stale primary is synchronized before allocation", async () => {
+    const mockPrimary = {
+      getNext: vi.fn(),
+      getNextN: vi.fn(async () => [9459]),
+      getCurrent: vi.fn(async () => 0),
+      ensureMinSeq: vi.fn(async () => {}),
+      isHealthy: vi.fn(async () => true),
+    };
+
+    const mockDb = { internal: makeInternalApi() } as any;
+    const dbStore = new DatabaseSequenceStore(mockDb);
+    const ensureMinSeqSpy = vi.spyOn(dbStore, "ensureMinSeq").mockResolvedValue();
+    vi.spyOn(dbStore, "getCurrent").mockResolvedValue(9458);
+
+    const store = new ChainedSequenceStore(mockPrimary, dbStore);
+    const seqs = await store.getNextN("default", 1);
+
+    expect(seqs).toEqual([9459]);
+    expect(mockPrimary.ensureMinSeq).toHaveBeenCalledWith("default", 9458);
+    expect(ensureMinSeqSpy).toHaveBeenCalledWith("default", 9459);
+  });
+
+  it("TV-DI-003g: transaction rebinding preserves the primary high-water mark", async () => {
+    let primaryCalls = 0;
+    const primary = {
+      getNext: vi.fn(),
+      getNextN: vi.fn(async () => {
+        primaryCalls += 1;
+        if (primaryCalls === 1) return [100];
+        throw new Error("Redis unavailable");
+      }),
+      getCurrent: vi.fn(async () => 100),
+      isHealthy: vi.fn(async () => true),
+    };
+    const outerDb = { internal: makeInternalApi() } as any;
+    const txDb = { internal: makeInternalApi() } as any;
+    const ensureMinSeq = vi
+      .spyOn(DatabaseSequenceStore.prototype, "ensureMinSeq")
+      .mockResolvedValue();
+    vi.spyOn(DatabaseSequenceStore.prototype, "getNextN").mockResolvedValue([101]);
+    const store = new ChainedSequenceStore(primary, new DatabaseSequenceStore(outerDb));
+
+    await store.getNextN("default", 1);
+    await store.withDb(txDb).getNextN("default", 1);
+
+    expect(ensureMinSeq).toHaveBeenCalledWith("default", 100);
+    vi.restoreAllMocks();
+  });
 });
 
-// ─── REL-008: Redis rate limiter uses Lua eval for atomic TTL ─────────────
+describe("transaction-bound runtime state", () => {
+  it("does not re-run idempotency table DDL after rebinding an initialized store", async () => {
+    const outerInternal = makeInternalApi();
+    const txInternal = makeInternalApi();
+    const store = new DbIdempotencyStore({ internal: outerInternal } as any, "tenant");
 
-describe("REL-008: RedisRateLimiter uses Lua eval for atomic TTL on first request", () => {
-  it("TV-REL-011: eval() used when Redis client supports it — no separate incr+set", async () => {
-    const evalFn = vi.fn(async () => 1);
-    const incrFn = vi.fn(async () => 1);
-    const setFn = vi.fn(async () => {});
+    await store.get("client", "mutation");
+    await store.withDb({ internal: txInternal } as any).get("client", "mutation");
 
-    const mockRedis = { incr: incrFn, set: setFn, get: vi.fn(), isHealthy: vi.fn(), eval: evalFn } as any;
+    expect(outerInternal.ensureTable).toHaveBeenCalledOnce();
+    expect(txInternal.ensureTable).not.toHaveBeenCalled();
+  });
 
-    const limiter = new RedisRateLimiter(mockRedis);
+  it("does not run sequence-table DDL after rebinding an initialized store", async () => {
+    const outerInternal = makeInternalApi();
+    const txInternal = makeInternalApi();
+    const store = new DatabaseSequenceStore({ internal: outerInternal } as any);
+
+    await store.ensureReady();
+    await store.withDb({ internal: txInternal } as any).getCurrent("default");
+
+    expect(outerInternal.ensureTable).toHaveBeenCalledOnce();
+    expect(txInternal.ensureTable).not.toHaveBeenCalled();
+  });
+
+  it("does not run change-tracking DDL after rebinding an initialized service", async () => {
+    const outerInternal = makeInternalApi();
+    const txInternal = makeInternalApi();
+    const service = new ChangeTrackingService({ internal: outerInternal } as any, "tenant");
+
+    await service.ensureReady();
+    const txService = service.withDb({ internal: txInternal } as any);
+    await txService.recordChange({
+      serverSeq: 1,
+      resource: "tasks",
+      id: "task:1",
+      op: "insert",
+      record: { title: "ready" },
+    });
+    await txService.getCurrentServerSeq();
+
+    expect(outerInternal.ensureTable).toHaveBeenCalledTimes(2);
+    expect(txInternal.ensureTable).not.toHaveBeenCalled();
+  });
+
+  it("discards sequence-pool state when a mutation transaction rolls back", async () => {
+    const db = memoryAdapter() as any;
+    await db.initialize();
+    const originalTransaction = db.transaction.bind(db);
+    let changeWriteFailures = 0;
+    const transaction = (callback: (tx: any) => Promise<unknown>) =>
+      originalTransaction(async (tx: any) => {
+        const internal = new Proxy(tx.internal, {
+          get(target, property, receiver) {
+            if (property === "create" || property === "createMany") {
+              return async (table: string, data: Record<string, unknown> | Record<string, unknown>[]) => {
+                if (table === "__datafn_changes" && changeWriteFailures < 3) {
+                  changeWriteFailures += 1;
+                  throw new Error("forced change-write failure");
+                }
+                return property === "createMany"
+                  ? target.createMany(table, data as Record<string, unknown>[])
+                  : target.create(table, data as Record<string, unknown>);
+              };
+            }
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        const txProxy = new Proxy(tx, {
+          get(target, property, receiver) {
+            if (property === "internal") return internal;
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return callback(txProxy);
+      });
+    const transactionalDb = new Proxy(db, {
+      get(target, property, receiver) {
+        if (property === "capabilities") {
+          return {
+            ...target.capabilities,
+            transactions: { ...target.capabilities.transactions, supported: true },
+          };
+        }
+        if (property === "transaction") return transaction;
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+
+    const boundAllocations: number[][] = [];
+    const sequenceStore = {
+      getNext: vi.fn(async () => 1),
+      getNextN: vi.fn(async () => { throw new Error("outer allocation is unexpected"); }),
+      getCurrent: vi.fn(async () => 0),
+      withDb: vi.fn(() => ({
+        getNext: vi.fn(async () => 1),
+        getNextN: vi.fn(async (_namespace: string, count: number) => {
+          const allocation = Array.from({ length: count }, (_, index) => index + 1);
+          boundAllocations.push([...allocation]);
+          return allocation;
+        }),
+        getCurrent: vi.fn(async () => 0),
+      })),
+    };
+    const schema: DatafnSchema = {
+      resources: [{
+        name: "tasks",
+        version: 1,
+        fields: [{ name: "title", type: "string", required: true }],
+      }],
+      relations: [],
+    };
+    const result = await executePush({
+      clientId: "client",
+      mutations: [
+        {
+          resource: "tasks", version: 1, operation: "insert", id: "task:rolled-back",
+          clientId: "client", mutationId: "m1", record: { title: "first" },
+        },
+        {
+          resource: "tasks", version: 1, operation: "insert", id: "task:committed",
+          clientId: "client", mutationId: "m2", record: { title: "second" },
+        },
+      ],
+    }, schema, transactionalDb, new MemoryIdempotencyStore(), "default", sequenceStore as any);
+
+    expect(result.applied).toEqual(["m2"]);
+    expect(boundAllocations).toEqual([[1, 2], [1, 2]]);
+    const changes = await db.internal.findMany("__datafn_changes", []);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ record_id: "task:committed", server_seq: 1 });
+    await db.close();
+  });
+
+  it("does not publish change notifications when transaction commit fails", async () => {
+    const db = memoryAdapter() as any;
+    await db.initialize();
+    let transactionCalls = 0;
+    const transaction = async (callback: (tx: any) => Promise<unknown>) => {
+      transactionCalls += 1;
+      const result = await callback(db);
+      if (transactionCalls > 1) {
+        throw new Error("forced commit failure");
+      }
+      return result;
+    };
+    const transactionalDb = new Proxy(db, {
+      get(target, property, receiver) {
+        if (property === "capabilities") {
+          return {
+            ...target.capabilities,
+            transactions: { ...target.capabilities.transactions, supported: true },
+          };
+        }
+        if (property === "transaction") return transaction;
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const onChange = vi.fn();
+    const schema: DatafnSchema = {
+      resources: [{
+        name: "tasks",
+        version: 1,
+        fields: [{ name: "title", type: "string", required: true }],
+      }],
+      relations: [],
+    };
+
+    const result = await executePush({
+      clientId: "client",
+      mutations: [{
+        resource: "tasks",
+        version: 1,
+        operation: "insert",
+        id: "task:commit-fails",
+        clientId: "client",
+        mutationId: "m-commit-fails",
+        record: { title: "not published" },
+      }],
+    }, schema, transactionalDb, new MemoryIdempotencyStore(), "default", undefined, onChange);
+
+    expect(result.applied).toEqual([]);
+    expect(result.errors).toEqual([
+      expect.objectContaining({ mutationId: "m-commit-fails", code: "MUTATION_FAILED" }),
+    ]);
+    expect(onChange).not.toHaveBeenCalled();
+    await db.close();
+  });
+});
+
+// ─── REL-008: atomic rate limiter uses INCR with TTL ─────────────────────
+
+describe("REL-008: AtomicRateLimiter increments with an atomic TTL", () => {
+  it("TV-REL-011: one atomic increment records the request", async () => {
+    const incrFn = vi.fn(async () => ({ value: 1 }));
+    const atomicStore = { incr: incrFn } as any;
+
+    const limiter = new AtomicRateLimiter(atomicStore);
     const result = await limiter.check("endpoint:client1", 10, 60);
 
-    expect(evalFn).toHaveBeenCalledTimes(1);
-    // The Lua script handles both incr and expire atomically
-    expect(incrFn).not.toHaveBeenCalled();
-    expect(setFn).not.toHaveBeenCalled();
+    expect(incrFn).toHaveBeenCalledTimes(1);
+    expect(incrFn).toHaveBeenCalledWith(expect.objectContaining({ by: 1, ttlSeconds: 60 }));
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBe(9);
   });
 
-  it("TV-REL-011b: Lua script includes EXPIRE logic (key + argv shape)", async () => {
-    let capturedScript = "";
-    let capturedKeys = 0;
-    let capturedArgv = "";
-
-    const mockRedis = {
-      incr: vi.fn(),
-      set: vi.fn(),
-      get: vi.fn(),
-      isHealthy: vi.fn(),
-      eval: vi.fn(async (script: string, keys: number, key: string, windowArg: string) => {
-        capturedScript = script;
-        capturedKeys = keys;
-        capturedArgv = windowArg;
-        return 1;
-      }),
-    } as any;
-
-    const limiter = new RedisRateLimiter(mockRedis);
+  it("TV-REL-011b: the atomic key includes the logical key and time window", async () => {
+    const incrFn = vi.fn(async () => ({ value: 1 }));
+    const limiter = new AtomicRateLimiter({ incr: incrFn } as any);
     await limiter.check("test", 5, 30);
 
-    // Script must contain redis.call('incr') and redis.call('expire')
-    expect(capturedScript).toContain("incr");
-    expect(capturedScript).toContain("expire");
-    expect(capturedKeys).toBe(1);
-    expect(capturedArgv).toBe("30");
+    expect(incrFn).toHaveBeenCalledWith({
+      key: expect.stringMatching(/^ratelimit:test:\d+$/),
+      by: 1,
+      ttlSeconds: 30,
+    });
   });
 
-  it("TV-REL-011c: falls back to incr+set when eval not available", async () => {
-    const incrFn = vi.fn(async () => 1);
-    const setFn = vi.fn(async () => {});
-
-    const mockRedis = { incr: incrFn, set: setFn, get: vi.fn(), isHealthy: vi.fn() } as any;
-    // No eval method
-
-    const limiter = new RedisRateLimiter(mockRedis);
+  it("TV-REL-011c: requests above the limit are rejected", async () => {
+    const incrFn = vi.fn(async () => ({ value: 11 }));
+    const limiter = new AtomicRateLimiter({ incr: incrFn } as any);
     const result = await limiter.check("test", 10, 60);
 
     expect(incrFn).toHaveBeenCalledTimes(1);
-    expect(setFn).toHaveBeenCalledTimes(1);
-    expect(result.allowed).toBe(true);
+    expect(result.allowed).toBe(false);
+    expect(result.remaining).toBe(0);
   });
 });
 

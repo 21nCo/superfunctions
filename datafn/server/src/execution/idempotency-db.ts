@@ -4,7 +4,11 @@
  */
 
 import type { Adapter } from "@superfunctions/db";
-import type { IdempotencyStore, MutationResult } from "./idempotency.js";
+import {
+  isRetryableMutationResult,
+  type IdempotencyStore,
+  type MutationResult,
+} from "./idempotency.js";
 import { ensureInternalTable } from "./internal-tables.js";
 import type { DatafnLogger } from "../logger.js";
 
@@ -19,8 +23,24 @@ export class DbIdempotencyStore implements IdempotencyStore {
     private db: Adapter,
     private namespace: string = "datafn",
     logger?: DatafnLogger,
+    ensured = false,
   ) {
     this.logger = logger;
+    this.ensured = ensured;
+  }
+
+  withDb(db: Adapter): IdempotencyStore {
+    // The outer store performs initialization before transactional mutation
+    // execution. Preserve that state so rebinding does not issue DDL inside a
+    // transaction (which implicitly commits on MySQL).
+    return new DbIdempotencyStore(db, this.namespace, this.logger, this.ensured);
+  }
+
+  async ensureReady(): Promise<void> {
+    if (!this.ensured) {
+      await ensureInternalTable(this.db, "__datafn_idempotency");
+      this.ensured = true;
+    }
   }
 
   async get(
@@ -28,10 +48,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
     mutationId: string,
   ): Promise<MutationResult | null> {
     // EXE-007: DB errors propagate; only swallow JSON parse errors (SyntaxError)
-    if (!this.ensured) {
-      await ensureInternalTable(this.db, "__datafn_idempotency");
-      this.ensured = true;
-    }
+    await this.ensureReady();
 
     const record = await this.db.internal.findOne("__datafn_idempotency", [
       { field: "namespace", op: "eq", value: this.namespace },
@@ -62,10 +79,7 @@ export class DbIdempotencyStore implements IdempotencyStore {
    * Returns the number of rows deleted.
    */
   async pruneIdempotency(retentionDays: number): Promise<number> {
-    if (!this.ensured) {
-      await ensureInternalTable(this.db, "__datafn_idempotency");
-      this.ensured = true;
-    }
+    await this.ensureReady();
     const cutoff = new Date(Date.now() - retentionDays * 86400000).toISOString();
     return await this.db.internal.delete("__datafn_idempotency", [
       { field: "namespace", op: "eq", value: this.namespace },
@@ -79,9 +93,30 @@ export class DbIdempotencyStore implements IdempotencyStore {
     result: MutationResult,
   ): Promise<void> {
     try {
-      if (!this.ensured) {
-        await ensureInternalTable(this.db, "__datafn_idempotency");
-        this.ensured = true;
+      await this.ensureReady();
+
+      const where = [
+        { field: "namespace", op: "eq" as const, value: this.namespace },
+        { field: "client_id", op: "eq" as const, value: clientId },
+        { field: "mutation_id", op: "eq" as const, value: mutationId },
+      ];
+      const existing = await this.db.internal.findOne(
+        "__datafn_idempotency",
+        where,
+      );
+      if (existing) {
+        let existingResult: MutationResult | null = null;
+        try {
+          existingResult = JSON.parse(existing.result as string);
+        } catch {
+          existingResult = null;
+        }
+        if (!isRetryableMutationResult(existingResult)) return;
+        await this.db.internal.update("__datafn_idempotency", where, {
+          result: JSON.stringify(result),
+          created_at: new Date().toISOString(),
+        });
+        return;
       }
 
       await this.db.internal.create("__datafn_idempotency", {

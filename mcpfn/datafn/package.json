@@ -22,8 +22,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@datafn/core": "0.0.3",
-    "@datafn/server": "0.0.3",
+    "@datafn/core": "0.0.4",
+    "@datafn/server": "0.0.4",
     "@mcpfn/core": "0.0.1"
   },
   "devDependencies": {

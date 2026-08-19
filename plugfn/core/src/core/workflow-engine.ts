@@ -4,6 +4,11 @@ import type {
   WorkflowExecution,
   WorkflowStats,
   ListWorkflowsOptions,
+  WorkflowStep,
+  WorkflowAction,
+  WorkflowCondition,
+  WorkflowErrorHandlerFn,
+  WorkflowRuntimeRegistry,
 } from '../types/workflow.js';
 import { WorkflowStatus, WorkflowExecutionStatus } from '../types/workflow.js';
 import type { Logger } from '../types/action.js';
@@ -30,13 +35,17 @@ interface WorkflowTriggerBinding {
 export class WorkflowEngineError extends Error {
   readonly code:
     | 'WORKFLOW_TRIGGER_UNREGISTER_FAILED'
-    | 'WORKFLOW_DURABILITY_UNSUPPORTED';
+    | 'WORKFLOW_DURABILITY_UNSUPPORTED'
+    | 'WORKFLOW_DEFINITION_INVALID';
   readonly status: number;
   readonly retryable = false;
   readonly details: Record<string, unknown>;
 
   constructor(
-    code: 'WORKFLOW_TRIGGER_UNREGISTER_FAILED' | 'WORKFLOW_DURABILITY_UNSUPPORTED',
+    code:
+      | 'WORKFLOW_TRIGGER_UNREGISTER_FAILED'
+      | 'WORKFLOW_DURABILITY_UNSUPPORTED'
+      | 'WORKFLOW_DEFINITION_INVALID',
     message: string,
     details: Record<string, unknown> = {}
   ) {
@@ -50,14 +59,17 @@ export class WorkflowEngineError extends Error {
 
 export class WorkflowEngine {
   private readonly triggerBindings = new Map<string, WorkflowTriggerBinding>();
+  private readonly executionLocks = new Map<string, Promise<void>>();
 
   constructor(
     private workflowStorage: WorkflowStorage,
     private webhookHandler: WebhookHandler,
-    private logger: Logger
+    private logger: Logger,
+    private runtime: WorkflowRuntimeRegistry = {}
   ) {}
 
   async create(workflow: Omit<Workflow, 'id' | 'createdAt' | 'updatedAt'>): Promise<Workflow> {
+    assertUniqueWorkflowStepIds(workflow.definition.steps);
     const created = await this.workflowStorage.create(workflow);
 
     if (workflow.status === WorkflowStatus.Enabled) {
@@ -102,6 +114,7 @@ export class WorkflowEngine {
     if (!workflow) {
       throw new Error(`Workflow ${id} not found`);
     }
+    assertUniqueWorkflowStepIds(workflow.definition.steps);
 
     const updated = await this.workflowStorage.update(id, { status: WorkflowStatus.Enabled });
     await this.registerTrigger(updated);
@@ -140,81 +153,69 @@ export class WorkflowEngine {
     if (workflow.status !== WorkflowStatus.Enabled) {
       throw new Error(`Workflow ${workflowId} is not enabled`);
     }
+    assertUniqueWorkflowStepIds(workflow.definition.steps);
 
     const idempotencyKey = this.resolveIdempotencyKey(triggerPayload);
-    const existingExecution = idempotencyKey
-      ? await this.workflowStorage.findExecutionByIdempotencyKey(workflowId, idempotencyKey)
-      : null;
-
-    if (existingExecution && existingExecution.status === WorkflowExecutionStatus.Completed) {
-      return existingExecution;
-    }
-
-    const resumed = Boolean(existingExecution);
-    const execution =
-      existingExecution ??
-      (await this.workflowStorage.createExecution({
-        workflowId,
-        status: WorkflowExecutionStatus.Running,
-        input: this.buildExecutionInput(triggerPayload, idempotencyKey),
-      }));
-
-    if (existingExecution) {
-      await this.workflowStorage.updateExecution(existingExecution.id, {
-        status: WorkflowExecutionStatus.Running,
-        error: undefined,
+    const lockKey = idempotencyKey ? `${workflowId}:${idempotencyKey}` : undefined;
+    const previousExecution = lockKey
+      ? this.executionLocks.get(lockKey) ?? Promise.resolve()
+      : Promise.resolve();
+    let releaseExecutionLock: (() => void) | undefined;
+    let queueTail: Promise<void> | undefined;
+    if (lockKey) {
+      const current = new Promise<void>((resolve) => {
+        releaseExecutionLock = resolve;
       });
+      queueTail = previousExecution.catch(() => {}).then(() => current);
+      this.executionLocks.set(lockKey, queueTail);
     }
 
-    const executionState = this.readExecutionState(existingExecution ?? null);
-    const completedStepIds = [...executionState.completedStepIds];
-    const contextData = { ...executionState.data };
-
-    const context: WorkflowContext = {
-      workflowId,
-      executionId: execution.id,
-      userId: workflow.userId,
-      trigger: {
-        provider: workflow.definition.trigger.provider,
-        event: workflow.definition.trigger.event,
-        payload: triggerPayload,
-      },
-      data: contextData,
-    };
-
-    const startedAtMs = execution.startedAt ? execution.startedAt.getTime() : Date.now();
-    let activeStepId: string | undefined;
+    await previousExecution.catch(() => {});
 
     try {
-      if (workflow.definition.trigger.filter) {
-        const shouldRun = workflow.definition.trigger.filter(context);
-        if (!shouldRun) {
-          await this.workflowStorage.updateExecution(execution.id, {
-            status: WorkflowExecutionStatus.Completed,
-            output: this.buildExecutionOutput(context.data, {
-              idempotencyKey,
-              completedStepIds,
-              retriable: false,
-              resumed,
-            }),
-            completedAt: new Date(),
-            durationMs: Date.now() - startedAtMs,
-          });
+      const existingExecution = idempotencyKey
+        ? await this.workflowStorage.findExecutionByIdempotencyKey(workflowId, idempotencyKey)
+        : null;
 
-          const skippedExecution = await this.getExecutionById(workflowId, execution.id);
-          return skippedExecution ?? execution;
-        }
+      if (existingExecution && existingExecution.status === WorkflowExecutionStatus.Completed) {
+        return existingExecution;
       }
 
-      for (const step of workflow.definition.steps) {
-        activeStepId = step.id;
-        if (completedStepIds.includes(step.id)) {
-          continue;
+      const resumed = Boolean(existingExecution);
+      const execution =
+        existingExecution ??
+        (await this.workflowStorage.createExecution({
+          workflowId,
+          status: WorkflowExecutionStatus.Running,
+          input: this.buildExecutionInput(triggerPayload, idempotencyKey),
+        }));
+
+      if (existingExecution) {
+        await this.workflowStorage.updateExecution(existingExecution.id, {
+          status: WorkflowExecutionStatus.Running,
+          error: undefined,
+        });
+      }
+
+      const executionState = this.readExecutionState(existingExecution ?? null);
+      const completedStepIds = [...executionState.completedStepIds];
+      const contextData = { ...executionState.data };
+
+      const context: WorkflowContext = {
+        workflowId,
+        executionId: execution.id,
+        userId: workflow.userId,
+        trigger: {
+          provider: workflow.definition.trigger.provider,
+          event: workflow.definition.trigger.event,
+          payload: triggerPayload,
+        },
+        data: contextData,
+      };
+      const checkpointStep = async (stepId: string): Promise<void> => {
+        if (!completedStepIds.includes(stepId)) {
+          completedStepIds.push(stepId);
         }
-
-        await this.executeStep(step, context);
-        completedStepIds.push(step.id);
-
         await this.workflowStorage.updateExecution(execution.id, {
           status: WorkflowExecutionStatus.Running,
           output: this.buildExecutionOutput(context.data, {
@@ -224,76 +225,132 @@ export class WorkflowEngine {
             resumed,
           }),
         });
-      }
+      };
 
-      await this.workflowStorage.updateExecution(execution.id, {
-        status: WorkflowExecutionStatus.Completed,
-        output: this.buildExecutionOutput(context.data, {
-          idempotencyKey,
-          completedStepIds,
-          retriable: false,
-          resumed,
-        }),
-        completedAt: new Date(),
-        durationMs: Date.now() - startedAtMs,
-      });
+      const startedAtMs = execution.startedAt ? execution.startedAt.getTime() : Date.now();
+      let activeStepId: string | undefined;
 
-      this.logger.info(`Workflow executed successfully: ${workflow.name}`, {
-        workflowId,
-        executionId: execution.id,
-        duration: Date.now() - startedAtMs,
-        resumed,
-      });
+      try {
+        if (workflow.definition.trigger.filter) {
+          const shouldRun = this.resolveCondition(
+            workflow.definition.trigger.filter,
+            'workflow trigger filter'
+          )(context);
+          if (!shouldRun) {
+            await this.workflowStorage.updateExecution(execution.id, {
+              status: WorkflowExecutionStatus.Completed,
+              output: this.buildExecutionOutput(context.data, {
+                idempotencyKey,
+                completedStepIds,
+                retriable: false,
+                resumed,
+              }),
+              completedAt: new Date(),
+              durationMs: Date.now() - startedAtMs,
+            });
 
-      const completedExecution = await this.getExecutionById(workflowId, execution.id);
-      return completedExecution ?? execution;
-    } catch (error) {
-      const failure = normalizeWorkflowExecutionFailure(error);
-      this.logger.error(`Workflow execution failed: ${workflow.name}`, {
-        workflowId,
-        executionId: execution.id,
-        error: failure.error,
-      });
-
-      if (workflow.definition.errorHandlers) {
-        for (const errorHandler of workflow.definition.errorHandlers) {
-          try {
-            await errorHandler.handler(failure.error, context);
-          } catch (handlerError) {
-            this.logger.error('Error handler failed', { handlerError });
+            const skippedExecution = await this.getExecutionById(workflowId, execution.id);
+            return skippedExecution ?? execution;
           }
         }
-      }
 
-      await this.workflowStorage.updateExecution(execution.id, {
-        status: WorkflowExecutionStatus.Failed,
-        error: `${failure.code}:${failure.error.message}`,
-        output: this.buildExecutionOutput(context.data, {
-          idempotencyKey,
-          completedStepIds,
-          retriable: failure.retriable,
+        for (const step of workflow.definition.steps) {
+          activeStepId = step.id;
+          if (completedStepIds.includes(step.id)) {
+            continue;
+          }
+
+          await this.executeStep(step, context, completedStepIds, checkpointStep);
+          await checkpointStep(step.id);
+        }
+
+        await this.workflowStorage.updateExecution(execution.id, {
+          status: WorkflowExecutionStatus.Completed,
+          output: this.buildExecutionOutput(context.data, {
+            idempotencyKey,
+            completedStepIds,
+            retriable: false,
+            resumed,
+          }),
+          completedAt: new Date(),
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        this.logger.info(`Workflow executed successfully: ${workflow.name}`, {
+          workflowId,
+          executionId: execution.id,
+          duration: Date.now() - startedAtMs,
           resumed,
-          failedStepId: activeStepId,
-          errorCode: failure.code,
-        }),
-        completedAt: new Date(),
-        durationMs: Date.now() - startedAtMs,
-      });
+        });
 
-      throw failure.error;
+        const completedExecution = await this.getExecutionById(workflowId, execution.id);
+        return completedExecution ?? execution;
+      } catch (error) {
+        const failure = normalizeWorkflowExecutionFailure(error);
+        this.logger.error(`Workflow execution failed: ${workflow.name}`, {
+          workflowId,
+          executionId: execution.id,
+          error: failure.error,
+        });
+
+        if (workflow.definition.errorHandlers) {
+          for (const errorHandler of workflow.definition.errorHandlers) {
+            try {
+              await this.resolveErrorHandler(
+                errorHandler.handler,
+                `workflow error handler${errorHandler.stepId ? ` for ${errorHandler.stepId}` : ''}`
+              )(failure.error, context);
+            } catch (handlerError) {
+              this.logger.error('Error handler failed', { handlerError });
+            }
+          }
+        }
+
+        await this.workflowStorage.updateExecution(execution.id, {
+          status: WorkflowExecutionStatus.Failed,
+          error: `${failure.code}:${failure.error.message}`,
+          output: this.buildExecutionOutput(context.data, {
+            idempotencyKey,
+            completedStepIds,
+            retriable: failure.retriable,
+            resumed,
+            failedStepId: activeStepId,
+            errorCode: failure.code,
+          }),
+          completedAt: new Date(),
+          durationMs: Date.now() - startedAtMs,
+        });
+
+        throw failure.error;
+      }
+    } finally {
+      if (lockKey && releaseExecutionLock) {
+        releaseExecutionLock();
+        if (this.executionLocks.get(lockKey) === queueTail) {
+          this.executionLocks.delete(lockKey);
+        }
+      }
     }
   }
 
-  private async executeStep(step: any, context: WorkflowContext): Promise<void> {
+  private async executeStep(
+    step: WorkflowStep,
+    context: WorkflowContext,
+    completedStepIds: string[],
+    checkpointStep: (stepId: string) => Promise<void>
+  ): Promise<void> {
     switch (step.type) {
       case 'action': {
-        const result = await step.action(context);
+        const result = await this.resolveAction(step.action, `action step ${step.id}`)(context);
         Object.assign(context.data, result);
         break;
       }
 
       case 'filter': {
-        const shouldContinue = step.condition(context);
+        const shouldContinue = this.resolveCondition(
+          step.condition,
+          `filter step ${step.id}`
+        )(context);
         if (!shouldContinue) {
           throw new Error('Filter condition not met');
         }
@@ -301,18 +358,12 @@ export class WorkflowEngine {
       }
 
       case 'branch': {
-        const condition = step.condition(context);
-        const branch = condition ? step.then : step.else;
-        if (branch) {
-          for (const branchStep of branch) {
-            await this.executeStep(branchStep, context);
-          }
-        }
+        await this.executeBranchStep(step, context, completedStepIds, checkpointStep);
         break;
       }
 
       case 'parallel': {
-        await Promise.all(step.actions.map((action: any) => action(context)));
+        await this.executeParallelStep(step, context, completedStepIds, checkpointStep);
         break;
       }
 
@@ -328,8 +379,62 @@ export class WorkflowEngine {
         );
       }
 
-      default:
-        throw new Error(`Unknown workflow step type: ${step.type}`);
+      default: {
+        const unsupportedType = (step as { type?: unknown }).type;
+        throw new Error(`Unknown workflow step type: ${String(unsupportedType)}`);
+      }
+    }
+  }
+
+  private async executeBranchStep(
+    step: Extract<WorkflowStep, { type: 'branch' }>,
+    context: WorkflowContext,
+    completedStepIds: string[],
+    checkpointStep: (stepId: string) => Promise<void>
+  ): Promise<void> {
+    const branch = this.resolveCondition(step.condition, `branch step ${step.id}`)(context)
+      ? step.then
+      : step.else;
+    if (!branch) {
+      return;
+    }
+
+    for (const branchStep of branch) {
+      if (completedStepIds.includes(branchStep.id)) {
+        continue;
+      }
+      await this.executeStep(branchStep, context, completedStepIds, checkpointStep);
+      await checkpointStep(branchStep.id);
+    }
+  }
+
+  private async executeParallelStep(
+    step: Extract<WorkflowStep, { type: 'parallel' }>,
+    context: WorkflowContext,
+    completedStepIds: string[],
+    checkpointStep: (stepId: string) => Promise<void>
+  ): Promise<void> {
+    const pendingActions = step.actions
+      .map((action, index) => ({
+        action: this.resolveAction(action, `parallel step ${step.id} action ${index}`),
+        checkpointId: parallelActionCheckpointId(step.id, index),
+      }))
+      .filter(({ checkpointId }) => !completedStepIds.includes(checkpointId));
+    const results = await Promise.allSettled(
+      pendingActions.map(({ action }) => action(context))
+    );
+
+    for (const [index, result] of results.entries()) {
+      if (result.status === 'fulfilled') {
+        await checkpointStep(pendingActions[index].checkpointId);
+      }
+    }
+
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    );
+    if (failure) {
+      throw failure.reason;
     }
   }
 
@@ -350,6 +455,41 @@ export class WorkflowEngine {
       default:
         return duration;
     }
+  }
+
+  private resolveAction(action: string | WorkflowAction, location: string): WorkflowAction {
+    if (typeof action === 'function') return action;
+    const resolved = this.runtime.actions?.[action];
+    if (!resolved) throw this.missingRuntimeReference('action', action, location);
+    return resolved;
+  }
+
+  private resolveCondition(
+    condition: WorkflowCondition,
+    location: string
+  ): Exclude<WorkflowCondition, string> {
+    if (typeof condition === 'function') return condition;
+    const resolved = this.runtime.conditions?.[condition];
+    if (!resolved) throw this.missingRuntimeReference('condition', condition, location);
+    return resolved;
+  }
+
+  private resolveErrorHandler(
+    handler: string | WorkflowErrorHandlerFn,
+    location: string
+  ): WorkflowErrorHandlerFn {
+    if (typeof handler === 'function') return handler;
+    const resolved = this.runtime.errorHandlers?.[handler];
+    if (!resolved) throw this.missingRuntimeReference('error handler', handler, location);
+    return resolved;
+  }
+
+  private missingRuntimeReference(kind: string, reference: string, location: string): WorkflowEngineError {
+    return new WorkflowEngineError(
+      'WORKFLOW_DEFINITION_INVALID',
+      `${location} references unregistered ${kind} ${reference}`,
+      { kind, reference, location }
+    );
   }
 
   async getStats(workflowId: string): Promise<WorkflowStats> {
@@ -385,6 +525,7 @@ export class WorkflowEngine {
   }
 
   private async registerTrigger(workflow: Workflow): Promise<void> {
+    assertUniqueWorkflowStepIds(workflow.definition.steps);
     if (this.triggerBindings.has(workflow.id)) {
       await this.unregisterTrigger(workflow, { allowMissing: true });
     }
@@ -394,6 +535,7 @@ export class WorkflowEngine {
         await this.execute(workflow.id, event);
       } catch (error) {
         this.logger.error(`Workflow trigger execution failed`, { workflow: workflow.id, error });
+        throw error;
       }
     };
 
@@ -538,6 +680,64 @@ export class WorkflowEngine {
     }
 
     return execution;
+  }
+}
+
+const PARALLEL_ACTION_CHECKPOINT_PREFIX = '__parallel__:';
+
+function parallelActionCheckpointId(stepId: string, actionIndex: number): string {
+  return `${PARALLEL_ACTION_CHECKPOINT_PREFIX}${stepId}:${actionIndex}`;
+}
+
+function assertUniqueWorkflowStepIds(steps: WorkflowStep[]): void {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  const reserved = new Set<string>();
+
+  const visit = (step: WorkflowStep): void => {
+    if (typeof step.id !== 'string') {
+      throw new WorkflowEngineError(
+        'WORKFLOW_DEFINITION_INVALID',
+        'workflow step IDs must be strings',
+        { stepId: step.id }
+      );
+    }
+    if (step.id.startsWith(PARALLEL_ACTION_CHECKPOINT_PREFIX)) {
+      reserved.add(step.id);
+    }
+    if (seen.has(step.id)) {
+      duplicates.add(step.id);
+    } else {
+      seen.add(step.id);
+    }
+
+    if (step.type === 'branch') {
+      for (const nested of [...step.then, ...(step.else ?? [])]) {
+        visit(nested);
+      }
+    }
+  };
+
+  for (const step of steps) {
+    visit(step);
+  }
+
+  if (reserved.size > 0) {
+    const reservedStepIds = [...reserved].sort((left, right) => left.localeCompare(right));
+    throw new WorkflowEngineError(
+      'WORKFLOW_DEFINITION_INVALID',
+      `workflow step IDs cannot use the reserved ${PARALLEL_ACTION_CHECKPOINT_PREFIX} prefix: ${reservedStepIds.join(', ')}`,
+      { reservedStepIds }
+    );
+  }
+
+  if (duplicates.size > 0) {
+    const duplicateStepIds = [...duplicates].sort((left, right) => left.localeCompare(right));
+    throw new WorkflowEngineError(
+      'WORKFLOW_DEFINITION_INVALID',
+      `workflow step IDs must be unique: ${duplicateStepIds.join(', ')}`,
+      { duplicateStepIds }
+    );
   }
 }
 

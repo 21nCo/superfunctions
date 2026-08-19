@@ -8,7 +8,7 @@ try:
 except ImportError:
     raise ImportError(
         "FastAPI is required for this adapter. Install it with: pip install plugfn[fastapi]"
-    )
+    ) from None
 
 from ._shared import (
     AdapterSecurityError,
@@ -32,23 +32,27 @@ def mount_plugfn(
     router = APIRouter(prefix=prefix, tags=["plugfn"])
 
     @router.post("/connections/auth")
-    async def create_connection_auth(request: Request):
+    async def create_connection_auth(request: Request) -> JSONResponse:
         return await _handle_auth_url_request(request, plug, auth)
 
     @router.get("/auth/{provider}")
-    async def legacy_get_auth_url(provider: str, request: Request):
+    async def legacy_get_auth_url(provider: str, request: Request) -> JSONResponse:
         return await _handle_auth_url_request(request, plug, auth, provider_override=provider)
 
     @router.get("/callback")
-    async def canonical_callback(provider: str, code: str, state: str):
+    async def canonical_callback(
+        code: str, state: str, provider: Optional[str] = None
+    ) -> JSONResponse:
         return await _handle_callback(provider, code, state, plug)
 
     @router.get("/auth/{provider}/callback")
-    async def legacy_callback(provider: str, code: str, state: str):
+    async def legacy_callback(provider: str, code: str, state: str) -> JSONResponse:
         return await _handle_callback(provider, code, state, plug)
 
     @router.get("/connections")
-    async def list_connections(request: Request, provider: Optional[str] = None):
+    async def list_connections(
+        request: Request, provider: Optional[str] = None
+    ) -> JSONResponse:
         try:
             principal = await resolve_principal(request, plug, auth)
             requested_user_id = _request_value(request, "user_id") or _request_value(request, "userId")
@@ -59,7 +63,7 @@ def mount_plugfn(
             return _error_from_exception(error)
 
     @router.post("/connections/disconnect")
-    async def disconnect_connection(request: Request):
+    async def disconnect_connection(request: Request) -> JSONResponse:
         try:
             payload = await _read_json_body(request)
             principal = await resolve_principal(request, plug, auth)
@@ -73,7 +77,7 @@ def mount_plugfn(
             return _error_from_exception(error)
 
     @router.delete("/connections/{connection_id}")
-    async def legacy_disconnect(connection_id: str, request: Request):
+    async def legacy_disconnect(connection_id: str, request: Request) -> JSONResponse:
         try:
             principal = await resolve_principal(request, plug, auth)
             await plug.connections.disconnect(connection_id=connection_id, user_id=principal["user_id"])
@@ -82,11 +86,14 @@ def mount_plugfn(
             return _error_from_exception(error)
 
     @router.post("/webhooks/{provider}/{event}")
-    async def handle_webhook(provider: str, event: str, request: Request):
+    async def handle_webhook(
+        provider: str, event: str, request: Request
+    ) -> JSONResponse:
         try:
             raw_body = await request.body()
             headers = normalize_headers(dict(request.headers))
             secret = resolve_webhook_secret(plug, provider)
+            await plug.ready()
             results = await plug._webhook_handler.handle_webhook(
                 provider=provider,
                 event=event,
@@ -100,7 +107,7 @@ def mount_plugfn(
             return _error_from_exception(error)
 
     @router.get("/providers")
-    async def list_providers(request: Request):
+    async def list_providers(request: Request) -> JSONResponse:
         try:
             await resolve_principal(request, plug, auth)
             providers = plug.providers.list()
@@ -152,7 +159,9 @@ async def _handle_auth_url_request(
         return _error_from_exception(error)
 
 
-async def _handle_callback(provider: str, code: str, state: str, plug: Any) -> JSONResponse:
+async def _handle_callback(
+    provider: Optional[str], code: str, state: str, plug: Any
+) -> JSONResponse:
     try:
         connection = await plug.connections.handle_callback(provider=provider, code=code, state=state)
         return _success({"connection": {"id": connection.id, "provider": connection.provider, "status": connection.status}})

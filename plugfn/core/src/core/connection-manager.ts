@@ -13,7 +13,15 @@ import type {
   OAuth2Credentials,
 } from '../types/connection.js';
 import { ConnectionStatus } from '../types/connection.js';
-import type { PlugFnConnectionOwner, PlugFnProviderRuntimeContext } from '../types/runtime.js';
+import type {
+  PlugFnActor,
+  PlugFnConnectionOwner,
+  PlugFnProviderRuntimeContext,
+} from '../types/runtime.js';
+import type {
+  PlugFnAuthorizationOptions,
+  PlugFnConnectionOperation,
+} from '../types/config.js';
 import type { Provider, OAuth2Config } from '../types/provider.js';
 import { AuthType } from '../types/provider.js';
 import type { Logger } from '../types/action.js';
@@ -42,6 +50,7 @@ import {
   DEFAULT_TOKEN_KEY_REF,
 } from '../storage/oauth-token-vault.js';
 import { ownerFields } from '../storage/runtime-storage.js';
+import { connectionMatchesActor, tenantMatches } from '../security/tenancy.js';
 
 interface OAuthClientConfig {
   clientId: string;
@@ -86,6 +95,17 @@ export class ConnectionSelectionError extends Error {
   constructor(message = 'multiple active connections require explicit connectionId') {
     super(message);
     this.name = 'ConnectionSelectionError';
+  }
+}
+
+class ConnectionResolutionError extends Error {
+  constructor(
+    readonly code: 'TENANT_ACCESS_DENIED' | 'VALIDATION_ERROR',
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = 'ConnectionResolutionError';
   }
 }
 
@@ -161,6 +181,16 @@ export function createConnectionManagerOAuthDependencies(
   };
 }
 
+export class ConnectionNotFoundError extends Error {
+  readonly code = 'CONNECTION_NOT_FOUND';
+  readonly status = 404;
+
+  constructor(id: string) {
+    super(`Connection ${id} not found`);
+    this.name = 'ConnectionNotFoundError';
+  }
+}
+
 export class ConnectionManager {
   private readonly tokenStorage: SecureTokenStorage;
   private readonly oauthFlowService: OAuthFlowService;
@@ -168,6 +198,7 @@ export class ConnectionManager {
   private readonly encryptedTokenVault: EncryptedTokenVault;
   private readonly keyRef: string;
   private readonly actionLogAdapter: PlugFnDatabaseStorageAdapter;
+  private readonly refreshInFlight = new Map<string, Promise<Connection>>();
 
   constructor(
     private connectionStorage: ConnectionStorage,
@@ -176,7 +207,8 @@ export class ConnectionManager {
     private baseUrl: string,
     encryptionKey: string,
     private logger: Logger,
-    oauthDependencies: ConnectionManagerOAuthDependencies
+    oauthDependencies: ConnectionManagerOAuthDependencies,
+    private authorizeConnection?: PlugFnAuthorizationOptions['authorizeConnection']
   ) {
     this.tokenStorage = new SecureTokenStorage(encryptionKey);
     this.oauthFlowService = oauthDependencies.oauthFlowService;
@@ -291,21 +323,24 @@ export class ConnectionManager {
   }
 
   async list(options: ListConnectionsOptions): Promise<Connection[]> {
-    const connections = await this.connectionStorage.list(options.userId, options.provider, options.status);
     if (!options.owner) {
-      return connections;
+      return this.connectionStorage.list(options.userId, options.provider, options.status);
     }
 
     const expected = ownerFields(options.owner);
-    return connections.filter((connection) => {
-      return connection.ownerKind === expected.ownerKind && connection.ownerId === expected.ownerId;
-    });
+    return this.connectionStorage.listByOwner(
+      expected.ownerKind!,
+      expected.ownerId!,
+      options.provider,
+      options.status,
+      expected.tenantId
+    );
   }
 
   async get(id: string): Promise<Connection> {
     const connection = await this.connectionStorage.get(id);
     if (!connection) {
-      throw new Error(`Connection ${id} not found`);
+      throw new ConnectionNotFoundError(id);
     }
     return connection;
   }
@@ -318,15 +353,27 @@ export class ConnectionManager {
     userId: string;
     provider: string;
     connectionId?: string;
+    actor?: PlugFnActor;
   }): Promise<Connection | null> {
     if (options.connectionId) {
       const connection = await this.get(options.connectionId);
-      if (!connectionBelongsToUser(connection, options.userId)) {
-        throw {
-          code: 'TENANT_ACCESS_DENIED',
-          message: 'connection owner mismatch',
-          status: 403,
-        };
+      if (connection.provider !== options.provider) {
+        throw new ConnectionResolutionError(
+          'VALIDATION_ERROR',
+          'connection provider mismatch',
+          400
+        );
+      }
+      const actorAllowed = options.actor
+        ? options.actor.userId === options.userId &&
+          (await this.canActorAccessConnection(connection, options.actor, 'action'))
+        : connectionBelongsToUser(connection, options.userId);
+      if (!actorAllowed) {
+        throw new ConnectionResolutionError(
+          'TENANT_ACCESS_DENIED',
+          'connection owner mismatch',
+          403
+        );
       }
       return connection;
     }
@@ -338,14 +385,43 @@ export class ConnectionManager {
     );
 
     if (activeConnections.length === 0) {
-      return null;
+      return this.resolveConfiguredConnection(options);
     }
 
-    if (activeConnections.length === 1) {
-      return activeConnections[0];
+    if (options.actor && options.actor.userId !== options.userId) {
+      throw new ConnectionResolutionError(
+        'TENANT_ACCESS_DENIED',
+        'connection owner mismatch',
+        403
+      );
     }
 
-    const sortedConnections = [...activeConnections].sort(compareConnectionPriority);
+    const eligibleConnections = options.actor
+      ? (
+          await Promise.all(
+            activeConnections.map(async (connection) => ({
+              connection,
+              allowed: await this.canActorAccessConnection(connection, options.actor!, 'action'),
+            }))
+          )
+        )
+          .filter(({ allowed }) => allowed)
+          .map(({ connection }) => connection)
+      : activeConnections;
+
+    if (eligibleConnections.length === 0) {
+      throw new ConnectionResolutionError(
+        'TENANT_ACCESS_DENIED',
+        'connection owner mismatch',
+        403
+      );
+    }
+
+    if (eligibleConnections.length === 1) {
+      return eligibleConnections[0];
+    }
+
+    const sortedConnections = [...eligibleConnections].sort(compareConnectionPriority);
     if (compareConnectionPriority(sortedConnections[0], sortedConnections[1]) === 0) {
       throw new ConnectionSelectionError();
     }
@@ -369,11 +445,33 @@ export class ConnectionManager {
       };
     }
 
+    if (targetConnection.provider !== options.provider) {
+      throw new ConnectionResolutionError(
+        'VALIDATION_ERROR',
+        'connection provider mismatch',
+        400
+      );
+    }
+
+    const actor = options.actor ?? { userId: options.userId };
+    if (
+      actor.userId !== options.userId ||
+      !(await this.canActorAccessConnection(targetConnection, actor, 'disconnect'))
+    ) {
+      throw new ConnectionResolutionError(
+        'TENANT_ACCESS_DENIED',
+        'connection owner mismatch',
+        403
+      );
+    }
+
     if (options.owner) {
       const expected = ownerFields(options.owner);
       if (
         targetConnection.ownerKind &&
-        (targetConnection.ownerKind !== expected.ownerKind || targetConnection.ownerId !== expected.ownerId)
+        (targetConnection.ownerKind !== expected.ownerKind ||
+          targetConnection.ownerId !== expected.ownerId ||
+          !tenantMatches(targetConnection.tenantId, expected.tenantId))
       ) {
         throw {
           code: 'TENANT_ACCESS_DENIED',
@@ -482,6 +580,19 @@ export class ConnectionManager {
   }
 
   async refresh(connectionId: string): Promise<Connection> {
+    const existing = this.refreshInFlight.get(connectionId);
+    if (existing) {
+      return existing;
+    }
+
+    const refreshPromise = this.performRefresh(connectionId).finally(() => {
+      this.refreshInFlight.delete(connectionId);
+    });
+    this.refreshInFlight.set(connectionId, refreshPromise);
+    return refreshPromise;
+  }
+
+  private async performRefresh(connectionId: string): Promise<Connection> {
     const connection = await this.get(connectionId);
     const provider = this.providers.get(connection.provider);
 
@@ -512,6 +623,15 @@ export class ConnectionManager {
   }
 
   async getCredentials(connectionId: string): Promise<Credentials> {
+    const configuredProvider = parseConfiguredConnectionId(connectionId);
+    if (configuredProvider) {
+      const credentials = this.readConfiguredCredentials(configuredProvider);
+      if (!credentials) {
+        throw new Error(`Configured credentials missing for ${configuredProvider}`);
+      }
+      return credentials;
+    }
+
     const connection = await this.get(connectionId);
     const provider = this.providers.get(connection.provider);
 
@@ -541,6 +661,9 @@ export class ConnectionManager {
   }
 
   async markUsed(connectionId: string): Promise<void> {
+    if (parseConfiguredConnectionId(connectionId)) {
+      return;
+    }
     await this.connectionStorage.updateLastUsed(connectionId);
   }
 
@@ -623,31 +746,104 @@ export class ConnectionManager {
     try {
       return this.tokenStorage.decryptCredentials(connection.credentials);
     } catch (error) {
-      const integrationConfig = this.integrationConfigs.get(connection.provider);
-      if (integrationConfig?.type === 'api-key' && integrationConfig.apiKey) {
-        return {
-          type: 'api-key',
-          apiKey: integrationConfig.apiKey,
-        };
-      }
-
-      if (integrationConfig?.type === 'basic' && integrationConfig.username && integrationConfig.password) {
-        return {
-          type: 'basic',
-          username: integrationConfig.username,
-          password: integrationConfig.password,
-        };
-      }
-
-      if (integrationConfig?.type === 'jwt' && integrationConfig.privateKey) {
-        return {
-          type: 'jwt',
-          token: integrationConfig.privateKey,
-        };
-      }
-
+      const configuredCredentials = this.readConfiguredCredentials(connection.provider);
+      if (configuredCredentials) return configuredCredentials;
       throw error;
     }
+  }
+
+  private readConfiguredCredentials(provider: string): Credentials | null {
+    const integrationConfig = this.integrationConfigs.get(provider);
+    if (integrationConfig?.type === 'api-key' && integrationConfig.apiKey) {
+      return { type: 'api-key', apiKey: integrationConfig.apiKey };
+    }
+    if (integrationConfig?.type === 'basic' && integrationConfig.username && integrationConfig.password) {
+      return {
+        type: 'basic',
+        username: integrationConfig.username,
+        password: integrationConfig.password,
+      };
+    }
+    if (integrationConfig?.type === 'jwt' && integrationConfig.privateKey) {
+      return { type: 'jwt', token: integrationConfig.privateKey };
+    }
+    return null;
+  }
+
+  private async resolveConfiguredConnection(options: {
+    userId: string;
+    provider: string;
+    actor?: PlugFnActor;
+  }): Promise<Connection | null> {
+    if (!this.readConfiguredCredentials(options.provider)) {
+      return null;
+    }
+    if (options.actor && options.actor.userId !== options.userId) {
+      throw new ConnectionResolutionError(
+        'TENANT_ACCESS_DENIED',
+        'connection owner mismatch',
+        403
+      );
+    }
+
+    const tenantId = options.actor?.tenantId;
+    const id = [
+      'configured',
+      encodeURIComponent(options.provider),
+      encodeURIComponent(options.userId),
+      encodeURIComponent(tenantId ?? ''),
+    ].join(':');
+    const now = new Date();
+    const connection: Connection = {
+      id,
+      userId: options.userId,
+      provider: options.provider,
+      ownerKind: 'user',
+      ownerId: options.userId,
+      tenantId,
+      status: ConnectionStatus.Active,
+      credentials: { encrypted: '', algorithm: 'configured' },
+      connectedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    if (
+      options.actor &&
+      !(await this.canActorAccessConnection(connection, options.actor, 'action'))
+    ) {
+      throw new ConnectionResolutionError(
+        'TENANT_ACCESS_DENIED',
+        'connection owner mismatch',
+        403
+      );
+    }
+
+    return connection;
+  }
+
+  async canActorAccessConnection(
+    connection: Connection,
+    actor: PlugFnActor,
+    operation: PlugFnConnectionOperation
+  ): Promise<boolean> {
+    if (this.authorizeConnection) {
+      return this.authorizeConnection({ actor, connection, operation });
+    }
+    return connectionMatchesActor(connection, actor, operation);
+  }
+}
+
+function parseConfiguredConnectionId(connectionId: string): string | null {
+  const parts = connectionId.split(':');
+  if (parts.length !== 4 || parts[0] !== 'configured' || !parts[1]) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(parts[1]);
+  } catch {
+    return null;
   }
 }
 
@@ -1084,15 +1280,18 @@ function isConnectionOwner(value: unknown): value is PlugFnConnectionOwner {
 
 function isOAuthSecretResolverConfig(value: unknown): value is OAuthSecretResolverConfig {
   return (
+    !!value &&
     typeof value === 'object' &&
-    value !== null &&
     'resolveOAuthClient' in value &&
     typeof (value as OAuthSecretResolverConfig).resolveOAuthClient === 'function'
   );
 }
 
 function defaultOAuthRedirectUris(baseUrl: string, providerId: string): string[] {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  let normalizedBaseUrl = baseUrl;
+  while (normalizedBaseUrl.endsWith('/')) {
+    normalizedBaseUrl = normalizedBaseUrl.slice(0, -1);
+  }
   return [
     `${normalizedBaseUrl}/api/plugfn/callback`,
     `${normalizedBaseUrl}/api/plugfn/callback/${providerId}`,

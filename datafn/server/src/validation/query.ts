@@ -12,7 +12,12 @@ import {
   getRelationTarget,
   getRelation,
 } from "./schema.js";
-import { parseSelectToken, checkPrototypePollution } from "@datafn/core";
+import {
+  parseSelectToken,
+  checkPrototypePollution,
+  getTemporalGroupAliases,
+  parseSortTerm,
+} from "@datafn/core";
 import { validateFilterDepth, validateRelationDepth } from "./depth.js";
 
 /**
@@ -70,6 +75,29 @@ export function validateQuery(
   // Get field and relation sets for this resource
   const fieldNames = index.fieldsByResource.get(resourceName)!;
   const relationNames = index.relationsByResource.get(resourceName)!;
+  const temporalAliases = getTemporalGroupAliases(q);
+  const relationName = typeof q.relation === "string" ? q.relation : undefined;
+
+  if (q.relation !== undefined) {
+    if (typeof q.relation !== "string" || q.relation.length === 0) {
+      return vErr("DFQL_INVALID", "Invalid DFQL: relation must be string", `${basePath}.relation`);
+    }
+    if (!relationNames.has(q.relation)) {
+      return vErr("DFQL_UNKNOWN_RELATION", `Unknown relation: ${q.relation}`, `${basePath}.relation`);
+    }
+    if (typeof q.id !== "string" || q.id.length === 0) {
+      return vErr("DFQL_INVALID", "Invalid DFQL: id must be string", `${basePath}.id`);
+    }
+    for (const unsupportedKey of ["search", "groupBy", "aggregations", "having", "temporal", "cursor"]) {
+      if (q[unsupportedKey] !== undefined) {
+        return vErr(
+          "DFQL_UNSUPPORTED",
+          `Unsupported DFQL feature for relation query: ${unsupportedKey}`,
+          `${basePath}.${unsupportedKey}`,
+        );
+      }
+    }
+  }
 
         // Validate select tokens
 
@@ -101,9 +129,14 @@ export function validateQuery(
 
           }
 
+          const selectTokens = relationName
+            ? q.select.map((token) =>
+                typeof token === "string" ? `${relationName}.${token}` : token,
+              )
+            : q.select;
           const selectResult = validateSelectTokens(
 
-            q.select,
+            selectTokens,
 
             resourceName,
 
@@ -145,10 +178,8 @@ export function validateQuery(
         // Validate sort has id tie-breaker
         if (Array.isArray(q.sort)) {
             const lastSort = q.sort[q.sort.length - 1];
-            if (typeof lastSort === "string") {
-                const parts = lastSort.split(":");
-                const rawField = parts[0];
-                const field = rawField.startsWith("-") ? rawField.slice(1) : rawField;
+            try {
+                const field = parseSortTerm(lastSort).field;
                 if (field !== "id") {
                     return vErr(
                         "DFQL_INVALID",
@@ -156,7 +187,7 @@ export function validateQuery(
                         "sort",
                     );
                 }
-            } else {
+            } catch {
                  return vErr("DFQL_INVALID", "Invalid sort format", "sort");
             }
         }
@@ -228,12 +259,12 @@ export function validateQuery(
     }
     for (let i = 0; i < q.sort.length; i++) {
       const sortItem = q.sort[i];
-      if (typeof sortItem !== "string") continue;
-
-      // Parse sort field (can be "fieldName", "fieldName:asc/desc", or "-fieldName")
-      const parts = sortItem.split(":");
-      const rawField = parts[0];
-      const fieldName = rawField.startsWith("-") ? rawField.slice(1) : rawField;
+      let fieldName: string;
+      try {
+        fieldName = parseSortTerm(sortItem).field;
+      } catch {
+        return vErr("DFQL_INVALID", `Invalid sort format: sort[${i}]`, `sort[${i}]`);
+      }
 
       // Allow sorting by aggregation aliases
       if (q.aggregations && typeof q.aggregations === "object" && !Array.isArray(q.aggregations)) {
@@ -242,9 +273,19 @@ export function validateQuery(
           }
       }
 
-      if (!fieldNames.has(fieldName)) {
+        if (!fieldNames.has(fieldName)) {
+        if (temporalAliases.has(fieldName)) {
+          continue;
+        }
         return vErr("DFQL_UNKNOWN_FIELD", `Unknown field: sort[${i}]`, `sort[${i}]`);
       }
+    }
+  }
+
+  if (q.temporal) {
+    const temporalResult = validateTemporal(q, fieldNames);
+    if (!temporalResult.ok) {
+      return temporalResult;
     }
   }
 
@@ -262,6 +303,9 @@ export function validateQuery(
     for (const alias of Object.keys(q.aggregations as Record<string, unknown>)) {
       aggregationAliases.add(alias);
     }
+  }
+  for (const alias of temporalAliases) {
+    aggregationAliases.add(alias);
   }
 
   // Validate aggregations
@@ -396,7 +440,7 @@ export function validateQuery(
 function validateSelectTokens(
   select: unknown[],
   resourceName: string,
-  resource: { fields: Array<{ name: string }> },
+  resource: { fields: readonly { name: string }[] },
   index: SchemaIndex,
   fieldNames: Set<string>,
   relationNames: Set<string>,
@@ -411,15 +455,16 @@ function validateSelectTokens(
     // Parse token (e.g., "goal.*", "tags.#", "id", "tasks.tags.*")
     const { path: parts, baseName, directive } = parseSelectToken(token);
 
-    // HTREE support
-    const isHtreeToken = baseName === "parent" || baseName === "children";
+    const relationForToken = getRelation(index, resourceName, baseName);
+    const isHtreeToken = relationForToken?.type === "htree";
 
     if (isHtreeToken) {
-      const hasParentPath = resource.fields.some((f) => f.name === "parentPath");
-      if (!hasParentPath) {
+      const pathField = relationForToken.pathField || "parentPath";
+      const hasPathField = resource.fields.some((f) => f.name === pathField);
+      if (!hasPathField) {
         return vErr(
           "DFQL_UNSUPPORTED",
-          `Resource ${resourceName} does not support htree (missing parentPath)`,
+          `Resource ${resourceName} does not support htree (missing ${pathField})`,
           `select[${i}]`,
         );
       }
@@ -556,6 +601,68 @@ function validateGroupBy(
           "Relation expansion not allowed with groupBy",
           `select[${i}]`,
         );
+      }
+    }
+  }
+
+  return vOk(undefined);
+}
+
+function validateTemporal(
+  q: Record<string, unknown>,
+  fieldNames: Set<string>,
+): ValidationResult<void> {
+  const clauses = Array.isArray(q.temporal) ? q.temporal : [q.temporal];
+  const validScales = new Set(["hour", "day", "week", "month", "quarter", "year"]);
+  const validStorage = new Set(["unix-ms", "unix-s", "date", "iso"]);
+
+  for (let i = 0; i < clauses.length; i++) {
+    const clause = clauses[i];
+    const path = Array.isArray(q.temporal) ? `temporal[${i}]` : "temporal";
+    if (typeof clause !== "object" || clause === null || Array.isArray(clause)) {
+      return vErr("DFQL_INVALID", "Invalid DFQL: temporal clause must be object", path);
+    }
+    const temporal = clause as Record<string, unknown>;
+    if (typeof temporal.field !== "string" || !fieldNames.has(temporal.field)) {
+      return vErr("DFQL_UNKNOWN_FIELD", `Unknown field: ${path}.field`, `${path}.field`);
+    }
+    if (temporal.timezone !== undefined && typeof temporal.timezone !== "string") {
+      return vErr("DFQL_INVALID", "Invalid DFQL: temporal timezone must be string", `${path}.timezone`);
+    }
+    if (temporal.storage !== undefined && !validStorage.has(String(temporal.storage))) {
+      return vErr("DFQL_INVALID", "Invalid temporal storage", `${path}.storage`);
+    }
+    if (temporal.period !== undefined) {
+      if (typeof temporal.period !== "object" || temporal.period === null || Array.isArray(temporal.period)) {
+        return vErr("DFQL_INVALID", "Invalid DFQL: temporal period must be object", `${path}.period`);
+      }
+      const period = temporal.period as Record<string, unknown>;
+      if (!validScales.has(String(period.scale))) {
+        return vErr("DFQL_INVALID", "Invalid temporal period scale", `${path}.period.scale`);
+      }
+    }
+    if (temporal.range !== undefined) {
+      if (typeof temporal.range !== "object" || temporal.range === null || Array.isArray(temporal.range)) {
+        return vErr("DFQL_INVALID", "Invalid DFQL: temporal range must be object", `${path}.range`);
+      }
+      const range = temporal.range as Record<string, unknown>;
+      if (range.start === undefined || range.end === undefined) {
+        return vErr("DFQL_INVALID", "Invalid DFQL: temporal range requires start and end", `${path}.range`);
+      }
+    }
+    if (temporal.groupBy !== undefined) {
+      if (typeof temporal.groupBy !== "object" || temporal.groupBy === null || Array.isArray(temporal.groupBy)) {
+        return vErr("DFQL_INVALID", "Invalid DFQL: temporal groupBy must be object", `${path}.groupBy`);
+      }
+      const groupBy = temporal.groupBy as Record<string, unknown>;
+      if (!validScales.has(String(groupBy.scale))) {
+        return vErr("DFQL_INVALID", "Invalid temporal groupBy scale", `${path}.groupBy.scale`);
+      }
+      if (groupBy.alias !== undefined && typeof groupBy.alias !== "string") {
+        return vErr("DFQL_INVALID", "Invalid DFQL: temporal groupBy alias must be string", `${path}.groupBy.alias`);
+      }
+      if (groupBy.output !== undefined && !validStorage.has(String(groupBy.output))) {
+        return vErr("DFQL_INVALID", "Invalid temporal groupBy output", `${path}.groupBy.output`);
       }
     }
   }
@@ -863,9 +970,13 @@ function validateFilterOperators(
     "between",
     "not_between",
     "is_null",
+    "$is_null",
     "is_not_null",
+    "$is_not_null",
     "is_empty",
+    "$is_empty",
     "is_not_empty",
+    "$is_not_empty",
     "before",
     "after",
     "$any", "$all", "$none",
