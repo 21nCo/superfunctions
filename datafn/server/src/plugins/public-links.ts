@@ -620,7 +620,10 @@ async function createDatafnPublicLink(input: {
     level: validation.level,
     tokenHash: await hashPublicLinkToken(token),
     expiresAt: validation.expiresAt,
-    revokedAt: null,
+    // Keep the credential fail-closed until its permission grant succeeds.
+    // If later cleanup of a failed share is unavailable, the durable row can
+    // remain for recovery without becoming an authorizing credential.
+    revokedAt: now,
     __ns: input.namespace,
     ...(input.resourceRegion ? { resourceRegion: input.resourceRegion } : {}),
     createdAt: now,
@@ -790,6 +793,19 @@ async function createDatafnPublicLink(input: {
     }
     throw new DatafnPublicLinkInputError(shareResult.message, shareResult.path);
   }
+  const activatedAt = Date.now();
+  await input.database.update({
+    model: input.modelName,
+    where: [{ field: "id", operator: "eq", value: id }],
+    data: {
+      revokedAt: null,
+      updatedAt: activatedAt,
+      updatedBy: input.actorId,
+    },
+    namespace: input.namespace,
+  });
+  record.revokedAt = null;
+  record.updatedAt = activatedAt;
   if (permissionDirectoryRuntime) {
     await settlePermissionDirectoryTask();
   } else {

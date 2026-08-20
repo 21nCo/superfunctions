@@ -5,10 +5,10 @@ import {
 } from '@superfunctions/oauth-storage';
 import { DEFAULT_PLUGFN_STORAGE_MODELS, resolvePlugFnStorageModels, type PlugFnStorageModelMapping } from './storage/adapters/database.js';
 
-// Version 6 adds job-scoped claim tokens to sync jobs. Any legacy claim token on a
-// connection represented a different ownership domain, so migration must not copy it;
-// stale running jobs are reclaimed and assigned a fresh job-scoped token by the worker.
-export const PLUGFN_SCHEMA_VERSION = 6;
+// Version 7 constrains job-scoped claim tokens to their runtime length and adds
+// uniqueness. Legacy application-generated tokens include the unique job id,
+// so valid version-6 rows are already distinct before the index is created.
+export const PLUGFN_SCHEMA_VERSION = 7;
 
 export interface PlugFnSchemaOptions {
   namespace?: string;

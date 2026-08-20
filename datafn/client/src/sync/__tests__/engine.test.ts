@@ -1022,6 +1022,69 @@ describe("SyncEngine push", () => {
     expect(await storage.changelogList()).toEqual([]);
   });
 
+  it("preserves a legacy FK when the preferred relation alias is empty", async () => {
+    const storage = new MemoryStorageAdapter(["goal"]);
+    await storage.changelogAppend({
+      clientId: "client:1",
+      mutationId: "mut:legacy-fk",
+      timestampMs: 1,
+      mutation: {
+        resource: "goal",
+        version: 1,
+        operation: "insert",
+        id: "goal:legacy-fk",
+        record: {
+          id: "goal:legacy-fk",
+          type: "INDEFINITE",
+          status: "NOT_STARTED",
+          legacyParentId: "goal:parent",
+        },
+        clientId: "client:1",
+        mutationId: "mut:legacy-fk",
+      },
+    });
+    const push = vi.fn().mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        applied: ["mut:legacy-fk"],
+        cursor: "1",
+        cursorBefore: "0",
+      },
+    });
+    const remote: any = {
+      push,
+      pull: vi.fn(),
+      clone: vi.fn(),
+      query: vi.fn(),
+      mutation: vi.fn(),
+      transact: vi.fn(),
+      seed: vi.fn(),
+      reconcile: vi.fn(),
+    };
+    const legacyAliasSchema = {
+      ...schema,
+      relations: [{
+        ...schema.relations[0],
+        fkField: "",
+        foreignKey: "legacyParentId",
+      }],
+    };
+    const engine = new SyncEngine(
+      storage,
+      remote,
+      new EventBus(),
+      "client:1",
+      legacyAliasSchema,
+      { pushMaxRetries: 0 },
+    );
+
+    await engine.processPush();
+
+    expect(push.mock.calls[0][0].mutations[0].record.legacyParentId)
+      .toBe("goal:parent");
+  });
+
   it("sanitizes stale relation metadata against the current schema before push", async () => {
     const storage = new MemoryStorageAdapter(["goal"]);
     await storage.changelogAppend({

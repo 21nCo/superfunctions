@@ -215,6 +215,7 @@ export function createQueryHandler(
     grantedBy: row.grantedBy ?? row.granted_by,
     grantedAt: row.grantedAt ?? row.granted_at,
     revokedAt: row.revokedAt ?? row.revoked_at,
+    resourceRegion: row.resourceRegion ?? row.resource_region,
   });
 
   const resolveActorPrincipals = async (

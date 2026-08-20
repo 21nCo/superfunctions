@@ -1929,6 +1929,74 @@ describe("share SPV2 mutation semantics", () => {
       .resolves.toEqual({ processed: 1, pending: 0 });
   });
 
+  it("fences explicit settlement when an interval owner claims after lookup", async () => {
+    const localDb = memoryAdapter();
+    await localDb.initialize();
+    const backingDirectory = createMemoryIndexedDirectoryStore();
+    let signalDeleteStarted!: () => void;
+    let releaseDelete!: () => void;
+    const deleteStarted = new Promise<void>((resolve) => {
+      signalDeleteStarted = resolve;
+    });
+    const deleteReleased = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    let blockDelete = true;
+    const directory = {
+      ...backingDirectory,
+      delete: async (key: string) => {
+        if (blockDelete) {
+          blockDelete = false;
+          signalDeleteStarted();
+          await deleteReleased;
+        }
+        return backingDirectory.delete(key);
+      },
+    };
+    const runtime = { regionId: "region:test", directory };
+    const taskId = await enqueuePermissionDirectorySync(localDb, {
+      operation: "unshare",
+      resource: "notes",
+      id: "note:explicit-claim-race",
+      shareWith: { principalId: "user:partner" },
+    }, namespace, runtime.regionId);
+    const initialTask = await localDb.internal.findOne(
+      "__datafn_permission_directory_outbox",
+      [{ field: "id", op: "eq", value: taskId }],
+    );
+    const claimedLease = new Date(Date.now() + 60 * 1000).toISOString();
+
+    try {
+      const explicitDrain = drainPermissionDirectorySync(
+        localDb,
+        taskId,
+        runtime,
+      );
+      await deleteStarted;
+      await expect(localDb.internal.update(
+        "__datafn_permission_directory_outbox",
+        [
+          { field: "id", op: "eq", value: taskId },
+          {
+            field: "next_attempt_at",
+            op: "eq",
+            value: initialTask!.next_attempt_at,
+          },
+        ],
+        { next_attempt_at: claimedLease },
+      )).resolves.toBe(1);
+      releaseDelete();
+
+      await expect(explicitDrain).resolves.toBe(false);
+      await expect(localDb.internal.findOne(
+        "__datafn_permission_directory_outbox",
+        [{ field: "id", op: "eq", value: taskId }],
+      )).resolves.toMatchObject({ next_attempt_at: claimedLease });
+    } finally {
+      releaseDelete();
+    }
+  });
+
   it("prequeues sequential transact shares before committing their grants", async () => {
     const localDb = memoryAdapter();
     await localDb.initialize();
@@ -2269,6 +2337,81 @@ describe("share SPV2 mutation semantics", () => {
         value: "user:partner#notes",
       });
       expect(indexed.records).toHaveLength(1);
+    } finally {
+      await localServer.close();
+    }
+  });
+
+  it("keeps a directory grant when non-transactional push rejects unsharing the creator", async () => {
+    const localDb = memoryAdapter();
+    await localDb.initialize();
+    (localDb.capabilities.transactions as { supported: boolean }).supported = false;
+    const directory = createMemoryIndexedDirectoryStore();
+    const localServer = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      database: localDb,
+      plugins: [datafnMultiRegionPlugin({ regionId: "region:test", directory })],
+      namespaceProvider: {
+        getNamespace: () => namespace,
+        getActorId: () => "user:owner",
+      },
+    });
+    const request = async (path: string, payload: Record<string, unknown>) => {
+      const response = await localServer.router.handle(new Request(
+        `http://localhost/datafn/${path}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      ));
+      return response.json() as Promise<any>;
+    };
+
+    try {
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "insert",
+        clientId: "push-invalid-unshare",
+        mutationId: "push-invalid-unshare-insert",
+        id: "note:push-invalid-unshare",
+        record: { title: "Push invalid unshare" },
+      });
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "share",
+        clientId: "push-invalid-unshare",
+        mutationId: "push-invalid-unshare-share",
+        id: "note:push-invalid-unshare",
+        shareWith: { principalId: "user:owner", level: "viewer" },
+      });
+
+      const result = await request("push", {
+        clientId: "push-invalid-unshare",
+        mutations: [{
+          resource: "notes",
+          version: 1,
+          operation: "unshare",
+          clientId: "push-invalid-unshare",
+          mutationId: "push-invalid-unshare-unshare",
+          id: "note:push-invalid-unshare",
+          shareWith: { principalId: "user:owner" },
+        }],
+      });
+
+      expect(result.result.ok).toBe(false);
+      const indexed = await directory.query({
+        index: "datafn.permission.principalResource",
+        value: "user:owner#notes",
+      });
+      expect(indexed.records).toHaveLength(1);
+      await expect(localDb.internal.findMany(
+        "__datafn_permission_directory_outbox",
+        [],
+      )).resolves.toEqual([]);
     } finally {
       await localServer.close();
     }
@@ -2769,6 +2912,82 @@ describe("share SPV2 mutation semantics", () => {
         value: "user:partner#notes",
       });
       expect(indexed.records).toHaveLength(1);
+    } finally {
+      await localServer.close();
+    }
+  });
+
+  it("settles a prequeued transact task when unsharing the creator is rejected", async () => {
+    const localDb = memoryAdapter();
+    await localDb.initialize();
+    const directory = createMemoryIndexedDirectoryStore();
+    const localServer = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      database: localDb,
+      plugins: [datafnMultiRegionPlugin({ regionId: "region:test", directory })],
+      namespaceProvider: {
+        getNamespace: () => namespace,
+        getActorId: () => "user:owner",
+      },
+    });
+    const request = async (path: string, payload: Record<string, unknown>) => {
+      const response = await localServer.router.handle(new Request(
+        `http://localhost/datafn/${path}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      ));
+      return response.json() as Promise<any>;
+    };
+
+    try {
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "insert",
+        clientId: "transact-invalid-unshare",
+        mutationId: "transact-invalid-unshare-insert",
+        id: "note:transact-invalid-unshare",
+        record: { title: "Transact invalid unshare" },
+      });
+      await request("mutation", {
+        resource: "notes",
+        version: 1,
+        operation: "share",
+        clientId: "transact-invalid-unshare",
+        mutationId: "transact-invalid-unshare-share",
+        id: "note:transact-invalid-unshare",
+        shareWith: { principalId: "user:owner", level: "viewer" },
+      });
+
+      const result = await request("transact", {
+        atomic: true,
+        steps: [{
+          mutation: {
+            resource: "notes",
+            version: 1,
+            operation: "unshare",
+            clientId: "transact-invalid-unshare",
+            mutationId: "transact-invalid-unshare-unshare",
+            id: "note:transact-invalid-unshare",
+            shareWith: { principalId: "user:owner" },
+          },
+        }],
+      });
+
+      expect(result.result.ok).toBe(false);
+      const indexed = await directory.query({
+        index: "datafn.permission.principalResource",
+        value: "user:owner#notes",
+      });
+      expect(indexed.records).toHaveLength(1);
+      await expect(localDb.internal.findMany(
+        "__datafn_permission_directory_outbox",
+        [],
+      )).resolves.toEqual([]);
     } finally {
       await localServer.close();
     }

@@ -137,7 +137,7 @@ function buildWritableRecordFieldsByResource(
     for (const fromResource of fromResources) {
       const fields = fieldsByResource.get(fromResource);
       if (!fields) continue;
-      const fkField = relation.fkField ?? relation.foreignKey;
+      const fkField = relation.fkField || relation.foreignKey;
       if (typeof fkField === "string" && fkField.length > 0) {
         fields.add(fkField);
       }

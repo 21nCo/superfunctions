@@ -261,6 +261,7 @@ export const plugfn_sync_jobs = pgTable(
   'plugfn_sync_jobs',
   {
   checkpoint: json('checkpoint'),
+  claimToken: text('claim_token'),
   connectionId: text('connection_id').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
   cursor: text('cursor'),
@@ -279,6 +280,7 @@ export const plugfn_sync_jobs = pgTable(
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
   },
   (table) => ({
+    idx_plugfn_sync_jobs_claim_token: uniqueIndex('idx_plugfn_sync_jobs_claim_token').on(table.claimToken),
     idx_plugfn_sync_jobs_connection_resource: index('idx_plugfn_sync_jobs_connection_resource').on(table.connectionId, table.resource),
     idx_plugfn_sync_jobs_provider: index('idx_plugfn_sync_jobs_provider').on(table.provider),
     idx_plugfn_sync_jobs_status: index('idx_plugfn_sync_jobs_status').on(table.status)
