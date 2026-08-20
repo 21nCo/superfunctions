@@ -215,6 +215,7 @@ export function createQueryHandler(
     grantedBy: row.grantedBy ?? row.granted_by,
     grantedAt: row.grantedAt ?? row.granted_at,
     revokedAt: row.revokedAt ?? row.revoked_at,
+    resourceRegion: row.resourceRegion ?? row.resource_region,
   });
 
   const resolveActorPrincipals = async (
@@ -353,7 +354,14 @@ export function createQueryHandler(
           ).map((row) => normalizePermissionGrantRow(row as Record<string, unknown>)),
         );
       }
-      return rows;
+      return multiRegionRuntime
+        ? rows.filter(
+            (row) =>
+              row.resourceRegion === undefined ||
+              row.resourceRegion === null ||
+              row.resourceRegion === multiRegionRuntime.regionId,
+          )
+        : rows;
     };
     const seenGrantIds = new Set<string>();
     for (const principalId of principals) {

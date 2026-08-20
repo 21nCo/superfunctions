@@ -96,7 +96,7 @@ describe("Query routing", () => {
     ]);
   });
 
-  it("re-sorts and re-limits local overlays while preserving the remote envelope", async () => {
+  it("re-sorts unbounded local overlays while preserving the remote envelope", async () => {
     const storage = new MemoryStorageAdapter(["tasks"]);
     await storage.upsertRecord("tasks", { id: "task:local-a", title: "Alpha" });
     await storage.upsertRecord("tasks", { id: "task:local-b", title: "Bravo" });
@@ -122,7 +122,7 @@ describe("Query routing", () => {
 
     const result = await executeQuery(
       remote,
-      { resource: "tasks", select: ["id", "title"], sort: ["title:asc"], limit: 2 },
+      { resource: "tasks", select: ["id", "title"], sort: ["title:asc"] },
       storage,
       [],
       schema,
@@ -132,13 +132,14 @@ describe("Query routing", () => {
       data: [
         { id: "task:local-a", title: "Alpha" },
         { id: "task:local-b", title: "Bravo" },
+        { id: "task:remote-z", title: "Zulu" },
       ],
       nextCursor: "next-page",
       count: 20,
     });
   });
 
-  it("does not overlay local rows onto offset or cursor pages", async () => {
+  it("does not overlay local rows onto limited, offset, or cursor pages", async () => {
     const storage = new MemoryStorageAdapter(["tasks"]);
     await storage.upsertRecord("tasks", { id: "task:local", title: "Local" });
     await storage.setHydrationState("tasks", "hydrating");
@@ -159,6 +160,13 @@ describe("Query routing", () => {
 
     await expect(executeQuery(
       remote,
+      { resource: "tasks", sort: ["id:asc"], limit: 1 },
+      storage,
+      [],
+      schema,
+    )).resolves.toEqual(remoteResult);
+    await expect(executeQuery(
+      remote,
       { resource: "tasks", offset: 10, limit: 10 },
       storage,
       [],
@@ -171,6 +179,53 @@ describe("Query routing", () => {
       [],
       schema,
     )).resolves.toEqual(remoteResult);
+  });
+
+  it("preserves local overlays for zero offsets and no-op cursors", async () => {
+    const storage = new MemoryStorageAdapter(["tasks"]);
+    await storage.upsertRecord("tasks", { id: "task:local", title: "Local" });
+    await storage.setHydrationState("tasks", "hydrating");
+    const remote: DatafnRemoteAdapter = {
+      query: vi.fn().mockResolvedValue({
+        ok: true,
+        result: { data: [{ id: "task:remote", title: "Remote" }] },
+      }),
+      mutation: vi.fn(),
+      transact: vi.fn(),
+      seed: vi.fn(),
+      clone: vi.fn(),
+      pull: vi.fn(),
+      push: vi.fn(),
+      reconcile: vi.fn(),
+    };
+    const expected = {
+      data: [
+        { id: "task:remote", title: "Remote" },
+        { id: "task:local", title: "Local" },
+      ],
+    };
+
+    await expect(executeQuery(
+      remote,
+      { resource: "tasks", offset: 0 },
+      storage,
+      [],
+      schema,
+    )).resolves.toEqual(expected);
+    await expect(executeQuery(
+      remote,
+      { resource: "tasks", cursor: null } as any,
+      storage,
+      [],
+      schema,
+    )).resolves.toEqual(expected);
+    await expect(executeQuery(
+      remote,
+      { resource: "tasks", cursor: {} },
+      storage,
+      [],
+      schema,
+    )).resolves.toEqual(expected);
   });
 
   it("masks remotely stale rows changed by pending local mutations", async () => {

@@ -84,7 +84,11 @@ class SchemaIndex:
             rel_type = relation.get("type", "")
             if rel_type == "many-one":
                 rel_name = relation.get("relation", "")
-                fk_field = relation.get("fkField", f"{rel_name}Id") if rel_name else None
+                fk_field = (
+                    relation.get("fkField")
+                    or relation.get("foreignKey")
+                    or (f"{rel_name}Id" if rel_name else None)
+                )
                 if fk_field:
                     for from_res in from_res_list:
                         if from_res in self.fields_by_resource:
@@ -127,6 +131,7 @@ def validate_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Too many resources ({len(resources)}), maximum is 100", "details": {"path": "$.resources"}}}
 
     seen_names = set()
+    normalized_id_prefixes = {}
     for i, resource in enumerate(resources):
         rname = resource.get("name")
         if not rname:
@@ -135,6 +140,23 @@ def validate_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
         if rname in seen_names:
             return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Duplicate resource name: {rname}", "details": {"path": f"$.resources[{i}]"}}}
         seen_names.add(rname)
+
+        effective_id_prefix = f"{rname}:"
+        if "idPrefix" in resource:
+            id_prefix = resource["idPrefix"]
+            if not isinstance(id_prefix, str):
+                return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": "Resource idPrefix must be a string", "details": {"path": f"$.resources[{i}].idPrefix"}}}
+            if len(id_prefix) == 0:
+                return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": "Resource idPrefix must not be empty", "details": {"path": f"$.resources[{i}].idPrefix"}}}
+            effective_id_prefix = id_prefix
+
+        normalized_id_prefix = effective_id_prefix[:-1] if effective_id_prefix.endswith(":") else effective_id_prefix
+        if len(normalized_id_prefix) == 0:
+            return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": "Resource idPrefix must not normalize to empty", "details": {"path": f"$.resources[{i}].idPrefix"}}}
+        conflicting_resource = normalized_id_prefixes.get(normalized_id_prefix)
+        if conflicting_resource is not None:
+            return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Resource idPrefix '{effective_id_prefix}' conflicts with resource '{conflicting_resource}' after normalization", "details": {"path": f"$.resources[{i}].idPrefix"}}}
+        normalized_id_prefixes[normalized_id_prefix] = rname
 
         res_fields = resource.get("fields", [])
         if len(res_fields) > 200:
@@ -162,6 +184,9 @@ def validate_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
         for tr in to_list:
             if tr not in seen_names:
                 return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Relation references unknown resource '{tr}'", "details": {"path": f"$.relations[{i}].to"}}}
+        for fk_alias in ("fkField", "foreignKey"):
+            if fk_alias in rel and not isinstance(rel[fk_alias], str):
+                return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Relation {fk_alias} must be a string", "details": {"path": f"$.relations[{i}].{fk_alias}"}}}
 
     return {"ok": True, "result": schema}
 

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { memoryAdapter } from "@superfunctions/db/adapters";
+import {
+  createMemoryIndexedDirectoryStore,
+  memoryAdapter,
+} from "@superfunctions/db/adapters";
 import { createDatafnServer } from "../../../server.js";
 import type { DatafnSchema } from "../../../core-types.js";
+import { datafnMultiRegionPlugin } from "../../../plugins/multi-region.js";
 
 const schema = {
   resources: [
@@ -192,6 +196,61 @@ describe("shared-with-me query mode and permission inspection", () => {
     });
     expect(namespaceOnly.res.status).toBe(200);
     expect(namespaceOnly.body.result.data).toEqual([]);
+  });
+
+  it("rejects snake-case fallback grants assigned to another region", async () => {
+    await server.close();
+    server = await createDatafnServer({
+      allowUnknownResources: true,
+      schema,
+      database: db,
+      plugins: [datafnMultiRegionPlugin({
+        regionId: "region:local",
+        directory: createMemoryIndexedDirectoryStore(),
+      })],
+      namespaceProvider: {
+        getNamespace: () => namespace,
+        getActorId: () => actorId as any,
+      },
+    });
+    await db.create({
+      model: "collections",
+      data: {
+        id: "col_foreign_region",
+        title: "Foreign region",
+        createdBy: "alice",
+        __ns: "user:foreign",
+      },
+      namespace: "user:foreign",
+    });
+    await db.internal.create("__datafn_permissions_global", {
+      id: "foreign-region-grant",
+      resource_type: "collections",
+      resource_ns: "user:foreign",
+      resource_id: "col_foreign_region",
+      principal_id: "user:bob",
+      level: "viewer",
+      grant_kind: "record",
+      source_ref: null,
+      granted_by: "user:alice",
+      granted_at: 20,
+      revoked_at: null,
+      resource_region: "region:foreign",
+      __ns: "user:foreign",
+    });
+
+    const result = await query({
+      resource: "collections",
+      version: 1,
+      operation: "find",
+      metadata: {
+        accessMode: "sharedWithMe",
+        namespaceFilter: ["user:foreign"],
+      },
+    });
+
+    expect(result.res.status).toBe(200);
+    expect(result.body.result.data).toEqual([]);
   });
 
   it("rejects invalid accessMode values", async () => {

@@ -137,8 +137,9 @@ function buildWritableRecordFieldsByResource(
     for (const fromResource of fromResources) {
       const fields = fieldsByResource.get(fromResource);
       if (!fields) continue;
-      if (typeof relation.fkField === "string" && relation.fkField.length > 0) {
-        fields.add(relation.fkField);
+      const fkField = relation.fkField || relation.foreignKey;
+      if (typeof fkField === "string" && fkField.length > 0) {
+        fields.add(fkField);
       }
       if (
         relation.type === "htree" &&
@@ -316,14 +317,21 @@ function computeAckThroughSeq(
     mutationId?: string;
     mutation?: Record<string, unknown>;
   }>,
-  result: PushSyncResult,
+  result: PushSyncResult | readonly PushSyncResult[],
   omittedMutationIds: ReadonlySet<string> = new Set(),
 ): number | null {
-  const applied = new Set(result.applied ?? []);
+  const results = Array.isArray(result) ? result : [result];
+  const applied = new Set<string>();
   const errorsByMutationId = new Map<string, PushMutationError>();
-  for (const error of result.errors ?? []) {
-    if (typeof error.mutationId === "string") {
-      errorsByMutationId.set(error.mutationId, error);
+  for (const currentResult of results) {
+    for (const mutationId of currentResult.applied ?? []) {
+      applied.add(mutationId);
+      errorsByMutationId.delete(mutationId);
+    }
+    for (const error of currentResult.errors ?? []) {
+      if (typeof error.mutationId === "string" && !applied.has(error.mutationId)) {
+        errorsByMutationId.set(error.mutationId, error);
+      }
     }
   }
 
@@ -1048,27 +1056,47 @@ export class SyncEngine {
 
   private async compactDeletedRecordMutations(
     mutations: any[],
-  ): Promise<{ mutations: any[]; omittedMutationIds: Set<string> }> {
-    const deletedKeys = new Set<string>();
-    for (const mutation of mutations) {
+  ): Promise<{
+    mutations: any[];
+    omittedMutationIds: Set<string>;
+    replacingDeleteIdsByMutationId: Map<string, Set<string>>;
+    supersedingWriteIdsByMutationId: Map<string, Set<string>>;
+  }> {
+    const replacingDeletesByKey = new Map<
+      string,
+      Array<{ index: number; mutationId: string }>
+    >();
+    for (const [index, mutation] of mutations.entries()) {
       if (
         mutation &&
         typeof mutation.resource === "string" &&
         typeof mutation.id === "string" &&
         mutation.operation === "delete"
       ) {
-        deletedKeys.add(`${mutation.resource}\u0000${mutation.id}`);
+        const key = `${mutation.resource}\u0000${mutation.id}`;
+        if (typeof mutation.mutationId === "string") {
+          const deletes = replacingDeletesByKey.get(key) ?? [];
+          deletes.push({ index, mutationId: mutation.mutationId });
+          replacingDeletesByKey.set(key, deletes);
+        }
       }
     }
 
-    if (deletedKeys.size === 0) {
-      return { mutations, omittedMutationIds: new Set() };
+    if (replacingDeletesByKey.size === 0) {
+      return {
+        mutations,
+        omittedMutationIds: new Set(),
+        replacingDeleteIdsByMutationId: new Map(),
+        supersedingWriteIdsByMutationId: new Map(),
+      };
     }
 
     const existingByKey = new Map<string, boolean>();
     const compacted: any[] = [];
     const omittedMutationIds = new Set<string>();
-    for (const mutation of mutations) {
+    const replacingDeleteIdsByMutationId = new Map<string, Set<string>>();
+    const supersedingWriteIdsByMutationId = new Map<string, Set<string>>();
+    for (const [index, mutation] of mutations.entries()) {
       if (
         mutation &&
         typeof mutation.resource === "string" &&
@@ -1076,7 +1104,12 @@ export class SyncEngine {
         isRecordMutationOperation(mutation.operation)
       ) {
         const key = `${mutation.resource}\u0000${mutation.id}`;
-        if (deletedKeys.has(key)) {
+        const laterDeletes = (replacingDeletesByKey.get(key) ?? [])
+          .filter((candidate) => candidate.index > index);
+        const laterDeleteIds = laterDeletes.map(
+          (candidate) => candidate.mutationId,
+        );
+        if (laterDeleteIds.length > 0) {
           if (!existingByKey.has(key)) {
             const existing = await this.storage.getRecord(mutation.resource, mutation.id);
             existingByKey.set(key, existing !== null);
@@ -1084,6 +1117,25 @@ export class SyncEngine {
           if (existingByKey.get(key) === false) {
             if (typeof mutation.mutationId === "string") {
               omittedMutationIds.add(mutation.mutationId);
+              replacingDeleteIdsByMutationId.set(
+                mutation.mutationId,
+                new Set(laterDeleteIds),
+              );
+              const firstDeleteIndex = laterDeletes[0].index;
+              const supersedingWriteIds = mutations
+                .slice(firstDeleteIndex + 1)
+                .filter((candidate) =>
+                  candidate &&
+                  candidate.resource === mutation.resource &&
+                  candidate.id === mutation.id &&
+                  isRecordMutationOperation(candidate.operation) &&
+                  typeof candidate.mutationId === "string"
+                )
+                .map((candidate) => candidate.mutationId as string);
+              supersedingWriteIdsByMutationId.set(
+                mutation.mutationId,
+                new Set(supersedingWriteIds),
+              );
             }
             continue;
           }
@@ -1092,7 +1144,12 @@ export class SyncEngine {
       compacted.push(mutation);
     }
 
-    return { mutations: compacted, omittedMutationIds };
+    return {
+      mutations: compacted,
+      omittedMutationIds,
+      replacingDeleteIdsByMutationId,
+      supersedingWriteIdsByMutationId,
+    };
   }
 
   /**
@@ -1516,27 +1573,108 @@ export class SyncEngine {
         clientIdMismatchIndex === -1 ? pending.length : clientIdMismatchIndex,
       );
 
-      const sanitizedMutations = batchPending.map((p) =>
-        sanitizeChangelogMutationForSchema(
+      const sanitizedMutations = batchPending.map((p) => {
+        const mutation = sanitizeChangelogMutationForSchema(
           this.writableRecordFieldsByResource,
           this.writableRecordDefaultsByResource,
           this.writableRelationMetadataByResource,
           p.mutation,
-        ),
-      );
+        );
+        const mutationId = getChangelogMutationId(p);
+        if (
+          !mutationId ||
+          typeof mutation !== "object" ||
+          mutation === null ||
+          Array.isArray(mutation) ||
+          typeof (mutation as Record<string, unknown>).mutationId === "string"
+        ) {
+          return mutation;
+        }
+        return { ...mutation, mutationId };
+      });
       const compacted = await this.compactDeletedRecordMutations(
         sanitizedMutations,
       );
-      const mutations = compacted.mutations;
+      let mutations = compacted.mutations;
       const batchThroughSeq = batchPending[batchPending.length - 1].seq;
 
       // 2. Push with retries
-      const pushResult = await this.pushWithRetries(mutations, batchClientId);
+      let pushResult = await this.pushWithRetries(mutations, batchClientId);
+      const pushResults: PushSyncResult[] = pushResult ? [pushResult] : [];
+
+      if (
+        pushResult &&
+        !pushResult.ok &&
+        compacted.omittedMutationIds.size > 0
+      ) {
+        const initiallyApplied = new Set(pushResult.applied ?? []);
+        const preservedByAppliedSuccessor = new Set(
+          [...compacted.supersedingWriteIdsByMutationId.entries()]
+            .filter(([, writeMutationIds]) =>
+              [...writeMutationIds].some(
+                (writeMutationId) => initiallyApplied.has(writeMutationId),
+              )
+            )
+            .map(([mutationId]) => mutationId),
+        );
+        const replayableOmittedMutationIds = new Set(
+          [...compacted.replacingDeleteIdsByMutationId.entries()]
+            .filter(([mutationId, deleteMutationIds]) =>
+              !preservedByAppliedSuccessor.has(mutationId) &&
+              [...deleteMutationIds].every(
+                (deleteMutationId) => !initiallyApplied.has(deleteMutationId),
+              )
+            )
+            .map(([mutationId]) => mutationId),
+        );
+        if (replayableOmittedMutationIds.size > 0) {
+          // Replay only writes whose own replacing delete failed and whose
+          // post-delete successor has not already applied. Replaying a prefix
+          // ahead of an applied successor would let the successor deduplicate
+          // instead of restoring the client's intended final state.
+          mutations = sanitizedMutations.filter((mutation) => {
+            const candidate = mutation as { mutationId?: unknown };
+            const mutationId = typeof candidate.mutationId === "string"
+              ? candidate.mutationId
+              : null;
+            if (!mutationId) return true;
+            return !compacted.omittedMutationIds.has(mutationId) ||
+              replayableOmittedMutationIds.has(mutationId);
+          });
+          pushResult = await this.pushWithRetries(mutations, batchClientId);
+          if (!pushResult) {
+            this.pushConsecutiveFailures++;
+            this.applyPushIntervalBackoff();
+            return;
+          }
+          pushResults.push(pushResult);
+        }
+      }
 
       if (pushResult) {
+        const appliedAcrossAttempts = new Set(
+          pushResults.flatMap((result) => result.applied ?? []),
+        );
+        const acknowledgedOmittedMutationIds = new Set(
+          [...compacted.replacingDeleteIdsByMutationId.entries()]
+            .filter(([mutationId, deleteMutationIds]) =>
+              [...deleteMutationIds].some((deleteMutationId) =>
+                appliedAcrossAttempts.has(deleteMutationId),
+              ) ||
+              [...(compacted.supersedingWriteIdsByMutationId.get(mutationId) ?? [])]
+                .some((writeMutationId) =>
+                  appliedAcrossAttempts.has(writeMutationId),
+                )
+            )
+            .map(([mutationId]) => mutationId),
+        );
         const throughSeq = pushResult.ok
           ? batchThroughSeq
-          : computeAckThroughSeq(batchPending, pushResult, compacted.omittedMutationIds);
+          : computeAckThroughSeq(
+              batchPending,
+              pushResults,
+              acknowledgedOmittedMutationIds,
+            );
         if (throughSeq === null) {
           this.pushConsecutiveFailures++;
           this.applyPushIntervalBackoff();
