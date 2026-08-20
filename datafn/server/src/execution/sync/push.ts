@@ -1175,14 +1175,17 @@ export async function executePush(
         }
         mutationSucceeded = true;
       } catch (err: any) {
-        if (err?.__opFailed) {
-          await recordMutationFailure(mut, err.code, err.message, err.path);
-        } else {
-          logger?.error("Push atomic mutation failed", { error: formatUnknownError(err), operation: "push.transaction", resource: mut.resource });
-          await recordMutationFailure(mut, "MUTATION_FAILED", "Mutation failed", `mutations[${mut.mutationId}]`);
-        }
-        if (mut.operation === "unshare") {
-          await reconcilePermissionDirectoryAfterSettlement(true);
+        try {
+          if (err?.__opFailed) {
+            await recordMutationFailure(mut, err.code, err.message, err.path);
+          } else {
+            logger?.error("Push atomic mutation failed", { error: formatUnknownError(err), operation: "push.transaction", resource: mut.resource });
+            await recordMutationFailure(mut, "MUTATION_FAILED", "Mutation failed", `mutations[${mut.mutationId}]`);
+          }
+        } finally {
+          if (mut.operation === "unshare") {
+            await reconcilePermissionDirectoryAfterSettlement(true);
+          }
         }
       }
 
