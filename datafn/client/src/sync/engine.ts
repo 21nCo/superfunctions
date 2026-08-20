@@ -1060,6 +1060,7 @@ export class SyncEngine {
     mutations: any[];
     omittedMutationIds: Set<string>;
     replacingDeleteIdsByMutationId: Map<string, Set<string>>;
+    supersedingWriteIdsByMutationId: Map<string, Set<string>>;
   }> {
     const replacingDeletesByKey = new Map<
       string,
@@ -1086,6 +1087,7 @@ export class SyncEngine {
         mutations,
         omittedMutationIds: new Set(),
         replacingDeleteIdsByMutationId: new Map(),
+        supersedingWriteIdsByMutationId: new Map(),
       };
     }
 
@@ -1093,6 +1095,7 @@ export class SyncEngine {
     const compacted: any[] = [];
     const omittedMutationIds = new Set<string>();
     const replacingDeleteIdsByMutationId = new Map<string, Set<string>>();
+    const supersedingWriteIdsByMutationId = new Map<string, Set<string>>();
     for (const [index, mutation] of mutations.entries()) {
       if (
         mutation &&
@@ -1101,9 +1104,11 @@ export class SyncEngine {
         isRecordMutationOperation(mutation.operation)
       ) {
         const key = `${mutation.resource}\u0000${mutation.id}`;
-        const laterDeleteIds = (replacingDeletesByKey.get(key) ?? [])
-          .filter((candidate) => candidate.index > index)
-          .map((candidate) => candidate.mutationId);
+        const laterDeletes = (replacingDeletesByKey.get(key) ?? [])
+          .filter((candidate) => candidate.index > index);
+        const laterDeleteIds = laterDeletes.map(
+          (candidate) => candidate.mutationId,
+        );
         if (laterDeleteIds.length > 0) {
           if (!existingByKey.has(key)) {
             const existing = await this.storage.getRecord(mutation.resource, mutation.id);
@@ -1115,6 +1120,21 @@ export class SyncEngine {
               replacingDeleteIdsByMutationId.set(
                 mutation.mutationId,
                 new Set(laterDeleteIds),
+              );
+              const firstDeleteIndex = laterDeletes[0].index;
+              const supersedingWriteIds = mutations
+                .slice(firstDeleteIndex + 1)
+                .filter((candidate) =>
+                  candidate &&
+                  candidate.resource === mutation.resource &&
+                  candidate.id === mutation.id &&
+                  isRecordMutationOperation(candidate.operation) &&
+                  typeof candidate.mutationId === "string"
+                )
+                .map((candidate) => candidate.mutationId as string);
+              supersedingWriteIdsByMutationId.set(
+                mutation.mutationId,
+                new Set(supersedingWriteIds),
               );
             }
             continue;
@@ -1128,6 +1148,7 @@ export class SyncEngine {
       mutations: compacted,
       omittedMutationIds,
       replacingDeleteIdsByMutationId,
+      supersedingWriteIdsByMutationId,
     };
   }
 
@@ -1587,9 +1608,19 @@ export class SyncEngine {
         compacted.omittedMutationIds.size > 0
       ) {
         const initiallyApplied = new Set(pushResult.applied ?? []);
+        const preservedByAppliedSuccessor = new Set(
+          [...compacted.supersedingWriteIdsByMutationId.entries()]
+            .filter(([, writeMutationIds]) =>
+              [...writeMutationIds].some(
+                (writeMutationId) => initiallyApplied.has(writeMutationId),
+              )
+            )
+            .map(([mutationId]) => mutationId),
+        );
         const replayableOmittedMutationIds = new Set(
           [...compacted.replacingDeleteIdsByMutationId.entries()]
-            .filter(([, deleteMutationIds]) =>
+            .filter(([mutationId, deleteMutationIds]) =>
+              !preservedByAppliedSuccessor.has(mutationId) &&
               [...deleteMutationIds].every(
                 (deleteMutationId) => !initiallyApplied.has(deleteMutationId),
               )
@@ -1597,9 +1628,10 @@ export class SyncEngine {
             .map(([mutationId]) => mutationId),
         );
         if (replayableOmittedMutationIds.size > 0) {
-          // Replay only writes whose own replacing delete failed. Replaying a
-          // write after its delete succeeded can resurrect the record because
-          // the server correctly deduplicates the already-applied delete.
+          // Replay only writes whose own replacing delete failed and whose
+          // post-delete successor has not already applied. Replaying a prefix
+          // ahead of an applied successor would let the successor deduplicate
+          // instead of restoring the client's intended final state.
           mutations = sanitizedMutations.filter((mutation) => {
             const candidate = mutation as { mutationId?: unknown };
             const mutationId = typeof candidate.mutationId === "string"
@@ -1625,10 +1657,14 @@ export class SyncEngine {
         );
         const acknowledgedOmittedMutationIds = new Set(
           [...compacted.replacingDeleteIdsByMutationId.entries()]
-            .filter(([, deleteMutationIds]) =>
+            .filter(([mutationId, deleteMutationIds]) =>
               [...deleteMutationIds].some((deleteMutationId) =>
-                appliedAcrossAttempts.has(deleteMutationId)
-              )
+                appliedAcrossAttempts.has(deleteMutationId),
+              ) ||
+              [...(compacted.supersedingWriteIdsByMutationId.get(mutationId) ?? [])]
+                .some((writeMutationId) =>
+                  appliedAcrossAttempts.has(writeMutationId),
+                )
             )
             .map(([mutationId]) => mutationId),
         );

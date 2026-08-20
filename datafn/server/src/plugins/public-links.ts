@@ -794,16 +794,68 @@ async function createDatafnPublicLink(input: {
     throw new DatafnPublicLinkInputError(shareResult.message, shareResult.path);
   }
   const activatedAt = Date.now();
-  await input.database.update({
-    model: input.modelName,
-    where: [{ field: "id", operator: "eq", value: id }],
-    data: {
-      revokedAt: null,
-      updatedAt: activatedAt,
-      updatedBy: input.actorId,
-    },
-    namespace: input.namespace,
-  });
+  try {
+    await input.database.update({
+      model: input.modelName,
+      where: [{ field: "id", operator: "eq", value: id }],
+      data: {
+        revokedAt: null,
+        updatedAt: activatedAt,
+        updatedBy: input.actorId,
+      },
+      namespace: input.namespace,
+    });
+  } catch (activationError) {
+    const compensationSnapshot = {
+      ...permissionSnapshot,
+      compensationExpectedCanonical: shareResult.permissionRecord,
+    };
+    let compensationError: unknown;
+    try {
+      await rollbackDatafnPermissionGrantAfterFailedShare(
+        input.database,
+        permissionMutation,
+        input.namespace,
+        permissionDirectoryRuntime,
+        compensationSnapshot,
+      );
+    } catch (cleanupError) {
+      compensationError = cleanupError;
+    }
+    if (compensationError && permissionDirectoryTaskId) {
+      try {
+        await deferFailedShareCompensation(
+          input.database,
+          permissionDirectoryTaskId,
+          permissionMutation,
+          compensationSnapshot,
+          compensationError,
+          input.namespace,
+          permissionDirectoryRuntime!.regionId,
+        );
+      } catch (schedulingError) {
+        const combined = new Error(
+          `Public-link activation compensation failed and could not be made durable: ${String(schedulingError)}`,
+        );
+        (combined as Error & { causes?: unknown[] }).causes = [
+          compensationError,
+          schedulingError,
+        ];
+        compensationError = combined;
+      }
+    }
+    if (!compensationError) {
+      await settlePermissionDirectoryTask();
+    }
+    if (compensationError) {
+      const cleanupFailure = new Error(
+        `Public-link activation failed and permission compensation was incomplete: ${String(compensationError)}`,
+      );
+      (cleanupFailure as Error & { cause?: unknown }).cause = activationError;
+      throw cleanupFailure;
+    }
+    throw activationError;
+  }
   record.revokedAt = null;
   record.updatedAt = activatedAt;
   if (permissionDirectoryRuntime) {
