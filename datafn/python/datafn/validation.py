@@ -84,7 +84,11 @@ class SchemaIndex:
             rel_type = relation.get("type", "")
             if rel_type == "many-one":
                 rel_name = relation.get("relation", "")
-                fk_field = relation.get("fkField", f"{rel_name}Id") if rel_name else None
+                fk_field = (
+                    relation.get("fkField")
+                    or relation.get("foreignKey")
+                    or (f"{rel_name}Id" if rel_name else None)
+                )
                 if fk_field:
                     for from_res in from_res_list:
                         if from_res in self.fields_by_resource:

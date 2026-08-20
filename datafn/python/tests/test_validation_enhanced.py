@@ -132,6 +132,34 @@ class TestFKInjection:
         index = SchemaIndex(schema)
         assert "proj_id" in index.writable_fields_by_resource["tasks"]
 
+    def test_legacy_foreign_key_alias_is_injected_and_writable(self):
+        schema = {
+            "resources": [
+                {"name": "tasks", "fields": []},
+                {"name": "projects", "fields": []},
+            ],
+            "relations": [
+                {
+                    "from": "tasks",
+                    "to": "projects",
+                    "type": "many-one",
+                    "relation": "project",
+                    "fkField": "",
+                    "foreignKey": "legacyProjectId",
+                },
+            ],
+        }
+        index = SchemaIndex(schema)
+
+        assert "legacyProjectId" in index.fields_by_resource["tasks"]
+        assert "legacyProjectId" in index.writable_fields_by_resource["tasks"]
+        assert validate_record_keys(
+            index,
+            "tasks",
+            {"legacyProjectId": "project-1"},
+            "record",
+        ) is None
+
     def test_fk_schema_has_correct_type(self):
         schema = {
             "resources": [
