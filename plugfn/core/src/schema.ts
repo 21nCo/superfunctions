@@ -5,9 +5,9 @@ import {
 } from '@superfunctions/oauth-storage';
 import { DEFAULT_PLUGFN_STORAGE_MODELS, resolvePlugFnStorageModels, type PlugFnStorageModelMapping } from './storage/adapters/database.js';
 
-// Version 7 constrains job-scoped claim tokens to their runtime length and adds
-// uniqueness. Legacy application-generated tokens include the unique job id,
-// so valid version-6 rows are already distinct before the index is created.
+// Version 7 constrains job-scoped claim tokens to MySQL's portable full-column
+// index width and adds uniqueness. The wider bound preserves legacy version-6
+// worker/job/timestamp tokens while current tokens remain fixed at 54 chars.
 export const PLUGFN_SCHEMA_VERSION = 7;
 
 export interface PlugFnSchemaOptions {
@@ -223,7 +223,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
           resource: { type: 'string', required: true, fieldName: 'resource' },
           mode: { type: 'string', required: true, fieldName: 'mode' },
           status: { type: 'string', required: true, fieldName: 'status' },
-          claimToken: { type: 'string', required: false, fieldName: 'claim_token', maxLength: 64 },
+          claimToken: { type: 'string', required: false, fieldName: 'claim_token', maxLength: 768 },
           ownerKind: { type: 'string', required: false, fieldName: 'owner_kind' },
           ownerId: { type: 'string', required: false, fieldName: 'owner_id' },
           cursor: { type: 'string', required: false, fieldName: 'cursor' },
