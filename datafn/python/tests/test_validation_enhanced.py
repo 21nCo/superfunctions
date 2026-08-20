@@ -51,6 +51,43 @@ class TestValidateSchema:
         assert result["ok"] is False
         assert result["error"]["code"] == "SCHEMA_INVALID"
 
+    def test_id_prefix_collision_after_trailing_colon_normalization(self):
+        schema = {
+            "resources": [
+                {"name": "projects", "version": 1, "idPrefix": "project:", "fields": []},
+                {"name": "projectAliases", "version": 1, "idPrefix": "project", "fields": []},
+            ],
+            "relations": [],
+        }
+        result = validate_schema(schema)
+        assert result["ok"] is False
+        assert "conflicts" in result["error"]["message"]
+        assert result["error"]["details"]["path"] == "$.resources[1].idPrefix"
+
+    def test_implicit_id_prefix_participates_in_collision_checks(self):
+        schema = {
+            "resources": [
+                {"name": "documents", "version": 1, "fields": []},
+                {"name": "documentAliases", "version": 1, "idPrefix": "documents:", "fields": []},
+            ],
+            "relations": [],
+        }
+        result = validate_schema(schema)
+        assert result["ok"] is False
+        assert "documents" in result["error"]["message"]
+
+    @pytest.mark.parametrize("id_prefix", ["", ":"])
+    def test_empty_id_prefixes_are_rejected(self, id_prefix):
+        result = validate_schema({
+            "resources": [
+                {"name": "documents", "version": 1, "idPrefix": id_prefix, "fields": []},
+            ],
+            "relations": [],
+        })
+        assert result["ok"] is False
+        assert "empty" in result["error"]["message"]
+        assert result["error"]["details"]["path"] == "$.resources[0].idPrefix"
+
     def test_missing_resources(self):
         result = validate_schema({})
         assert result["ok"] is False

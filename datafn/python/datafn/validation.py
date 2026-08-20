@@ -131,6 +131,7 @@ def validate_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Too many resources ({len(resources)}), maximum is 100", "details": {"path": "$.resources"}}}
 
     seen_names = set()
+    normalized_id_prefixes = {}
     for i, resource in enumerate(resources):
         rname = resource.get("name")
         if not rname:
@@ -139,6 +140,23 @@ def validate_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
         if rname in seen_names:
             return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Duplicate resource name: {rname}", "details": {"path": f"$.resources[{i}]"}}}
         seen_names.add(rname)
+
+        effective_id_prefix = f"{rname}:"
+        if "idPrefix" in resource:
+            id_prefix = resource["idPrefix"]
+            if not isinstance(id_prefix, str):
+                return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": "Resource idPrefix must be a string", "details": {"path": f"$.resources[{i}].idPrefix"}}}
+            if len(id_prefix) == 0:
+                return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": "Resource idPrefix must not be empty", "details": {"path": f"$.resources[{i}].idPrefix"}}}
+            effective_id_prefix = id_prefix
+
+        normalized_id_prefix = effective_id_prefix[:-1] if effective_id_prefix.endswith(":") else effective_id_prefix
+        if len(normalized_id_prefix) == 0:
+            return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": "Resource idPrefix must not normalize to empty", "details": {"path": f"$.resources[{i}].idPrefix"}}}
+        conflicting_resource = normalized_id_prefixes.get(normalized_id_prefix)
+        if conflicting_resource is not None:
+            return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Resource idPrefix '{effective_id_prefix}' conflicts with resource '{conflicting_resource}' after normalization", "details": {"path": f"$.resources[{i}].idPrefix"}}}
+        normalized_id_prefixes[normalized_id_prefix] = rname
 
         res_fields = resource.get("fields", [])
         if len(res_fields) > 200:

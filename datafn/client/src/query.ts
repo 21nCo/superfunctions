@@ -307,6 +307,7 @@ async function overlayLocalQueryResult(
     ((cursor as Record<string, unknown>).after != null ||
       (cursor as Record<string, unknown>).before != null);
   if (
+    typeof query.limit === "number" ||
     (typeof query.offset === "number" && query.offset > 0) ||
     hasActiveCursor
   ) {
