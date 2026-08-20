@@ -282,7 +282,7 @@ export function validateQuery(
     }
   }
 
-  if (q.temporal) {
+  if (q.temporal !== undefined) {
     const temporalResult = validateTemporal(q, fieldNames);
     if (!temporalResult.ok) {
       return temporalResult;
@@ -989,6 +989,17 @@ function validateFilterOperators(
       return vErr(
         "DFQL_UNSUPPORTED",
         `Unsupported DFQL feature: filters.${fieldKey}.${opKey}`,
+        `filters.${fieldKey}.${opKey}`,
+      );
+    }
+    if (
+      (opKey === "is_null" || opKey === "$is_null" ||
+        opKey === "is_not_null" || opKey === "$is_not_null") &&
+      typeof ops[opKey] !== "boolean"
+    ) {
+      return vErr(
+        "DFQL_INVALID",
+        `Null predicate must be boolean: filters.${fieldKey}.${opKey}`,
         `filters.${fieldKey}.${opKey}`,
       );
     }

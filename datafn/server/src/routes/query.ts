@@ -353,7 +353,14 @@ export function createQueryHandler(
           ).map((row) => normalizePermissionGrantRow(row as Record<string, unknown>)),
         );
       }
-      return rows;
+      return multiRegionRuntime
+        ? rows.filter(
+            (row) =>
+              row.resourceRegion === undefined ||
+              row.resourceRegion === null ||
+              row.resourceRegion === multiRegionRuntime.regionId,
+          )
+        : rows;
     };
     const seenGrantIds = new Set<string>();
     for (const principalId of principals) {

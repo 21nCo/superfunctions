@@ -66,6 +66,7 @@ export async function indexDatafnPermissionGrant(
   const normalized = normalizeGrant(grant, config?.regionId);
   if (!config || !normalized) return;
   await config.directory.put(permissionGrantRecord(normalized));
+  await deleteMatchingLegacyPermissionGrant(normalized.id, config);
 }
 
 export async function deleteDatafnPermissionGrant(
@@ -80,6 +81,7 @@ export async function deleteDatafnPermissionGrant(
 ): Promise<void> {
   if (!config) return;
   await config.directory.delete(permissionDirectoryKey(config.regionId, input.id));
+  await deleteMatchingLegacyPermissionGrant(input.id, config);
 }
 
 export async function queryDatafnPermissionGrants(
@@ -182,5 +184,29 @@ function parseGrant(value: string): DatafnPermissionDirectoryGrant | null {
 }
 
 function permissionDirectoryKey(regionId: string, id: string): string {
-  return `datafn:permission:${regionId}:${id}`;
+  return `datafn:permission:${encodeURIComponent(regionId)}:${id}`;
+}
+
+function legacyPermissionDirectoryKey(id: string): string {
+  return `datafn:permission:${id}`;
+}
+
+async function deleteMatchingLegacyPermissionGrant(
+  id: string,
+  config: DatafnMultiRegionRuntimeConfig,
+): Promise<void> {
+  const currentKey = permissionDirectoryKey(config.regionId, id);
+  const candidateKeys = new Set([
+    legacyPermissionDirectoryKey(id),
+    `datafn:permission:${config.regionId}:${id}`,
+  ]);
+  candidateKeys.delete(currentKey);
+  for (const legacyKey of candidateKeys) {
+    const legacyRecord = await config.directory.get(legacyKey);
+    if (!legacyRecord) continue;
+    const legacyGrant = parseGrant(legacyRecord.value);
+    if (legacyGrant?.id === id && legacyGrant.resourceRegion === config.regionId) {
+      await config.directory.delete(legacyKey);
+    }
+  }
 }

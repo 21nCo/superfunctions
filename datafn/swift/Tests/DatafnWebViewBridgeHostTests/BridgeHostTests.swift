@@ -69,7 +69,13 @@ struct BridgeHostTests {
         #expect(result["syncOwner"] == "native")
         #expect(result["remoteMode"] == "datafn-server")
         #expect(result["indexedDbDisabled"] == true)
-        #expect(result["capabilities"] == ["storage", "remote", "sync", "events", "health"])
+        #expect(
+            result["capabilities"]
+                == ["storage", "storage.atomicMergeIfMissing", "sync", "events", "health"]
+        )
+        try await waitUntil {
+            self.extractEventNames(from: outbound.get()).contains("bridge.ready")
+        }
         #expect(extractEventNames(from: outbound.get()) == ["bridge.ready"])
     }
 
@@ -185,6 +191,9 @@ struct BridgeHostTests {
         #expect(remoteResponse.ok)
         #expect(remoteResponse.result == ["source": "native-remote-adapter"])
         #expect(syncResponse.ok)
+        try await waitUntil {
+            self.extractEventNames(from: outbound.get()).contains("sync.status")
+        }
         #expect(extractEventNames(from: outbound.get()).contains("sync.status"))
     }
 
@@ -221,9 +230,43 @@ struct BridgeHostTests {
 
         #expect(response.ok)
         #expect(swiftObserverInvalidated.get())
+        try await waitUntil {
+            self.extractEvent(named: "storage.changed", from: outbound.get()) != nil
+        }
         let storageChanged = try #require(extractEvent(named: "storage.changed", from: outbound.get()))
         #expect(storageChanged["resource"] == "tasks")
         #expect(storageChanged["ids"] == ["task:1"])
+    }
+
+    @Test("Native merge preserves the atomic missing-record payload")
+    func nativeMergePreservesMissingRecordPayload() async throws {
+        let store = try makeStore(namespace: "org-1:user-merge")
+        let host = makeHost(store: store)
+
+        let response = await host.handleMessageForTesting([
+            "protocol": DATAFN_BRIDGE_PROTOCOL,
+            "id": "req-merge",
+            "method": "storage.mergeRecord",
+            "payload": [
+                "resource": "tasks",
+                "id": "task:new",
+                "partial": ["title": "Patch"],
+                "options": [
+                    "ifMissing": [
+                        "id": "task:new",
+                        "title": "Patch",
+                        "status": "draft",
+                        "createdBy": "user:1",
+                    ],
+                ],
+            ],
+        ])
+
+        #expect(response.ok)
+        let result = try #require(response.result?.objectValue)
+        #expect(result["status"] == "draft")
+        #expect(result["createdBy"] == "user:1")
+        #expect(try store.getRecord(resource: "tasks", id: "task:new")?["status"] == "draft")
     }
 
     @Test("TV-SEC-001: Sensitive auth headers are redacted before events leave native code")
@@ -362,5 +405,19 @@ struct BridgeHostTests {
             .first(where: { ($0["event"] as? String) == eventName })
             .flatMap { ($0["payload"] as? [String: Any]) }
             .flatMap { try? $0.mapValues(DatafnJSONValue.init(any:)) }
+    }
+
+    private func waitUntil(
+        timeoutNanoseconds: UInt64 = 1_000_000_000,
+        condition: @escaping @Sendable () async -> Bool
+    ) async throws {
+        let start = DispatchTime.now().uptimeNanoseconds
+        while !(await condition()) {
+            if DispatchTime.now().uptimeNanoseconds - start > timeoutNanoseconds {
+                Issue.record("Timed out waiting for bridge event delivery")
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 }

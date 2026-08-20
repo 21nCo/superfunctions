@@ -116,4 +116,85 @@ describe('DataFn multi-region runtime', () => {
     expect(grants.map((grant) => grant.id)).toEqual(['grant:1', 'grant:2']);
     expect(query).toHaveBeenNthCalledWith(2, expect.objectContaining({ cursor: 'page-2' }));
   });
+
+  it('removes only matching-region legacy keys during migration and revocation', async () => {
+    const directory = directoryStore();
+    const legacyKey = 'datafn:permission:grant:legacy';
+    const legacyRecord = (resourceRegion: string): IndexedDirectoryRecord => ({
+      key: legacyKey,
+      value: JSON.stringify({
+        id: 'grant:legacy',
+        resourceType: 'document',
+        resourceNs: 'tenant:1',
+        resourceId: 'document:1',
+        principalId: 'user:1',
+        resourceRegion,
+      }),
+      indexes: {},
+    });
+    await directory.put(legacyRecord('eu-west'));
+
+    await deleteDatafnPermissionGrant({
+      id: 'grant:legacy',
+      resourceType: 'document',
+      resourceNs: 'tenant:1',
+      resourceId: 'document:1',
+      principalId: 'user:1',
+    }, { regionId: 'eu-west', directory });
+    await expect(directory.get(legacyKey)).resolves.toBeNull();
+
+    await directory.put(legacyRecord('us-east'));
+    await deleteDatafnPermissionGrant({
+      id: 'grant:legacy',
+      resourceType: 'document',
+      resourceNs: 'tenant:1',
+      resourceId: 'document:1',
+      principalId: 'user:1',
+    }, { regionId: 'eu-west', directory });
+    await expect(directory.get(legacyKey)).resolves.not.toBeNull();
+  });
+
+  it('encodes region boundaries and removes the prior raw qualified key', async () => {
+    const directory = directoryStore();
+    const rawKey = 'datafn:permission:region:west:grant:encoded';
+    await directory.put({
+      key: rawKey,
+      value: JSON.stringify({
+        id: 'grant:encoded',
+        resourceType: 'document',
+        resourceNs: 'tenant:1',
+        resourceId: 'document:1',
+        principalId: 'user:1',
+        resourceRegion: 'region:west',
+      }),
+      indexes: {},
+    });
+
+    await indexDatafnPermissionGrant({
+      id: 'grant:encoded',
+      resourceType: 'document',
+      resourceNs: 'tenant:1',
+      resourceId: 'document:1',
+      principalId: 'user:1',
+    }, { regionId: 'region:west', directory });
+
+    await expect(directory.get(rawKey)).resolves.toBeNull();
+    await expect(
+      directory.get('datafn:permission:region%3Awest:grant:encoded'),
+    ).resolves.not.toBeNull();
+
+    await indexDatafnPermissionGrant({
+      id: 'west:grant:encoded',
+      resourceType: 'document',
+      resourceNs: 'tenant:1',
+      resourceId: 'document:2',
+      principalId: 'user:2',
+    }, { regionId: 'region', directory });
+    await expect(
+      directory.get('datafn:permission:region:west:grant:encoded'),
+    ).resolves.not.toBeNull();
+    await expect(
+      directory.get('datafn:permission:region%3Awest:grant:encoded'),
+    ).resolves.not.toBeNull();
+  });
 });

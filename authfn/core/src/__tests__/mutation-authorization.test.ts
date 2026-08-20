@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { authFnApiKeyPlugin } from '@authfn/api-keys';
 import { memoryAdapter } from '../../../../packages/db/src/testing/index.js';
-import {
-  authFnApiKeyPlugin,
-  createAuthFn,
-  createUser,
-  hashSecret,
-  issueSession,
-  issueSessionCookies,
-  type AuthFnConfig,
-} from '../index.js';
+import type { AuthFnRuntimeConfig } from '../index.js';
+import { issueSessionCookies } from '../core/cookies.js';
+import { hashSecret, issueSession } from '../core/sessions.js';
+import { createUser } from '../core/users.js';
+import { createTestServer } from './test-server.js';
 
 function cookieHeader(values: string[]): string {
   return values.map((value) => value.slice(0, value.indexOf(';'))).join('; ');
@@ -16,12 +13,12 @@ function cookieHeader(values: string[]): string {
 
 describe('AuthFn mutation authorization', () => {
   it('requires AuthFn CSRF for cookies and never downgrades a cookie to Authorization', async () => {
-    const config: AuthFnConfig = {
+    const config: AuthFnRuntimeConfig = {
       database: memoryAdapter({ debug: false }),
       namespace: 'authfn-mutation-authorization',
       plugins: [authFnApiKeyPlugin()],
     };
-    const auth = createAuthFn(config);
+    const auth = createTestServer(config);
     const user = await createUser(config, { primaryEmail: 'operator@example.test' });
     const issued = await issueSession(config, {}, {
       request: new Request('https://console.example.test/api/admin/v1'),
@@ -52,12 +49,12 @@ describe('AuthFn mutation authorization', () => {
   });
 
   it('allows an authenticated API key mutation without browser CSRF', async () => {
-    const config: AuthFnConfig = {
+    const config: AuthFnRuntimeConfig = {
       database: memoryAdapter({ debug: false }),
       namespace: 'authfn-api-key-mutation',
       plugins: [authFnApiKeyPlugin()],
     };
-    const auth = createAuthFn(config);
+    const auth = createTestServer(config);
     await config.database.create({
       model: 'api_keys',
       namespace: config.namespace,
