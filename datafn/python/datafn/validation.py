@@ -184,6 +184,9 @@ def validate_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
         for tr in to_list:
             if tr not in seen_names:
                 return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Relation references unknown resource '{tr}'", "details": {"path": f"$.relations[{i}].to"}}}
+        for fk_alias in ("fkField", "foreignKey"):
+            if fk_alias in rel and not isinstance(rel[fk_alias], str):
+                return {"ok": False, "error": {"code": "SCHEMA_INVALID", "message": f"Relation {fk_alias} must be a string", "details": {"path": f"$.relations[{i}].{fk_alias}"}}}
 
     return {"ok": True, "result": schema}
 

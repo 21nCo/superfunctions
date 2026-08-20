@@ -131,6 +131,25 @@ class TestValidateSchema:
         assert result["ok"] is False
         assert "nonexistent" in result["error"]["message"]
 
+    @pytest.mark.parametrize("fk_alias", ["fkField", "foreignKey"])
+    def test_relation_fk_alias_must_be_a_string(self, fk_alias):
+        schema = {
+            "resources": [
+                {"name": "tasks", "fields": []},
+                {"name": "projects", "fields": []},
+            ],
+            "relations": [{
+                "from": "tasks",
+                "to": "projects",
+                "type": "many-one",
+                "relation": "project",
+                fk_alias: 123,
+            }],
+        }
+        result = validate_schema(schema)
+        assert result["ok"] is False
+        assert result["error"]["details"]["path"] == f"$.relations[0].{fk_alias}"
+
     def test_server_raises_on_invalid_schema(self):
         from tests.mock_db import MockAdapter
         with pytest.raises(DatafnError) as exc_info:
