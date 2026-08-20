@@ -218,6 +218,69 @@ describe("@datafn/swift-bridge native sync controller", () => {
     expect(storage.capabilities?.atomicMergeIfMissing).toBe(true);
   });
 
+  it("preserves successful capabilities while renegotiation is pending or fails", async () => {
+    const pending: Array<{
+      message: BridgeRequest;
+      resolve: (response: any) => void;
+    }> = [];
+    const bus: DatafnBridgeBus = {
+      __datafnNativeBacked: true,
+      request(message) {
+        return new Promise((resolve) => {
+          pending.push({ message, resolve });
+        });
+      },
+      subscribe() {
+        return () => {};
+      },
+    };
+    const storage = createNativeBackedStorageAdapter(bus);
+    const controller = createNativeSyncController(bus);
+    const handshake = (clientId: string) => controller.handshake({
+      schemaHash: "abc123",
+      namespace: "org-1:user-1",
+      clientId,
+      remoteMode: "datafn-server",
+    });
+
+    const initial = handshake("device-initial");
+    pending[0].resolve({
+      protocol: DATAFN_BRIDGE_PROTOCOL,
+      id: pending[0].message.id,
+      ok: true,
+      result: {
+        bridgeVersion: 1,
+        schemaHash: "abc123",
+        namespace: "org-1:user-1",
+        storageBackend: "coredata",
+        syncOwner: "native",
+        remoteMode: "datafn-server",
+        indexedDbDisabled: true,
+        capabilities: [
+          "storage",
+          DATAFN_BRIDGE_CAPABILITY_ATOMIC_MERGE_IF_MISSING,
+        ],
+      },
+    });
+    await initial;
+    expect(storage.capabilities?.atomicMergeIfMissing).toBe(true);
+
+    const replacement = handshake("device-replacement");
+    expect(storage.capabilities?.atomicMergeIfMissing).toBe(true);
+    pending[1].resolve({
+      protocol: DATAFN_BRIDGE_PROTOCOL,
+      id: pending[1].message.id,
+      ok: false,
+      error: {
+        code: "BRIDGE_PROTOCOL_MISMATCH",
+        message: "Replacement host rejected the handshake",
+      },
+    });
+    await replacement;
+
+    expect(storage.capabilities?.atomicMergeIfMissing).toBe(true);
+  });
+
   it("TV-BRG-003N: handshake fails fast when namespace is missing", async () => {
     installSyncHost();
     const controller = createNativeSyncController(createWKWebViewBridgeBus());
