@@ -106,6 +106,11 @@ export const superConsole = createSuperConsole({
     authorizeMutation: async () => undefined,
   },
   shellPolicy: { authorize: () => true },
+  openApiSecuritySchemes: {
+    operatorSession: { type: 'apiKey', in: 'cookie', name: 'probe.session' },
+    operatorApiKey: { type: 'http', scheme: 'bearer', bearerFormat: 'Operator API key' },
+  },
+  openApiCsrfHeader: { name: 'X-Probe-CSRF' },
   audit: new MemoryAdminAuditSink(),
   idempotency: new MemoryAdminIdempotencyStore(),
   confirmation,

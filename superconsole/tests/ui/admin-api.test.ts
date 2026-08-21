@@ -137,6 +137,8 @@ describe('administration API boundary', () => {
     expect(operatorCsrfToken(
       '__Secure-east.csrf=east; __Secure-west.csrf=west-secure; authfn.csrf=default'
     )).toBe('west-secure');
+    setOperatorCsrf('custom-xsrf-token', 'x-provider-csrf');
+    expect(operatorCsrfToken('authfn.csrf=wrong; custom-xsrf-token=custom-value')).toBe('custom-value');
     setOperatorCsrf(undefined, undefined);
     expect(operatorCsrfToken('east.csrf=east; west.csrf=west')).toBeUndefined();
     expect(operatorCsrfToken('only.csrf=only')).toBe('only');

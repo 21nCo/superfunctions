@@ -525,6 +525,7 @@ export const ciFnAdminResources = [
     sortableFields: ["startedAt", "completedAt"],
     sensitiveFields: [],
     presentation: {
+      standaloneList: false,
       listOperationId: "cifn.jobs.list",
       detailOperationId: "cifn.jobs.get",
       titleField: "jobKey",
@@ -551,6 +552,7 @@ export const ciFnAdminResources = [
     sortableFields: ["timestamp"],
     sensitiveFields: ["secret", "token", "credential", "password", "authorization"],
     presentation: {
+      standaloneList: false,
       listOperationId: "cifn.logs.list",
       titleField: "id",
       columns: [
@@ -574,6 +576,7 @@ export const ciFnAdminResources = [
     sortableFields: ["name"],
     sensitiveFields: [],
     presentation: {
+      standaloneList: false,
       listOperationId: "cifn.artifacts.list",
       titleField: "name",
       columns: [

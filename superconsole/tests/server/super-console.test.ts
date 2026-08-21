@@ -5,10 +5,11 @@ import {
   AdminClient,
   createAdminCapabilityAdapter,
   defineAdminCapability,
+  validateAdminCapabilityManifest,
   type AdminCapabilityManifest,
   type AdminOperationContext,
 } from '@superfunctions/admin';
-import { clearSuperConsoleForTesting, createSuperConsole, loadSuperConsoleInstallation, resolveSuperConsoleInstallationUrl, type SuperConsoleOperatorAuth, type SuperConsolePrincipal } from '../../src/lib/server';
+import { clearSuperConsoleForTesting, createSuperConsole as createSuperConsoleBase, loadSuperConsoleInstallation, resolveSuperConsoleInstallationUrl, type SuperConsoleOperatorAuth, type SuperConsoleOptions, type SuperConsolePrincipal } from '../../src/lib/server';
 import { authfn, type AuthFnRuntimeConfig } from 'authfn';
 import { authFnPasswordPlugin } from '@authfn/password';
 import { authFnTwoFactorPlugin } from '@authfn/two-factor';
@@ -36,6 +37,21 @@ const principal: SuperConsolePrincipal = {
   role: 'installation administrator',
   defaultScope: scope,
 };
+
+const defaultOpenApi = {
+  openApiSecuritySchemes: {
+    operatorSession: { type: 'apiKey', in: 'cookie', name: 'provider.session' },
+    operatorApiKey: { type: 'http', scheme: 'bearer', bearerFormat: 'Operator API key' },
+  },
+  openApiCsrfHeader: { name: 'X-Provider-CSRF' },
+} as const;
+
+function createSuperConsole(
+  options: Omit<SuperConsoleOptions, 'openApiSecuritySchemes'>
+    & Partial<Pick<SuperConsoleOptions, 'openApiSecuritySchemes'>>
+) {
+  return createSuperConsoleBase({ ...defaultOpenApi, ...options } as SuperConsoleOptions);
+}
 
 function auth(overrides: Partial<SuperConsoleOperatorAuth> = {}): SuperConsoleOperatorAuth {
   return {
@@ -144,7 +160,7 @@ describe('Super Console server composition', () => {
     const genericInvoke = console.openApi.paths['/api/admin/v1/operations/{operationId}']?.post as { security?: unknown[]; parameters?: Array<{ name: string }> };
     expect(genericInvoke.security).toHaveLength(2);
     expect(genericInvoke.parameters?.map(({ name }) => name)).toEqual(expect.arrayContaining(['operationId', 'organizationId', 'workspaceId', 'projectId', 'environmentId', 'namespace', 'region']));
-    expect(console.openApi.components.securitySchemes).toMatchObject({ operatorSession: { name: '__Secure-superconsole.session' } });
+    expect(console.openApi.components.securitySchemes).toMatchObject({ operatorSession: { name: 'provider.session' } });
     expect(console.mcpTools.map((tool) => tool.name)).toEqual(['superconsole_examplefn_records_list']);
     expect((await console.handle(request('/api/admin/v1/modules/disabledfn'))).status).toBe(404);
   });
@@ -162,12 +178,16 @@ describe('Super Console server composition', () => {
         operatorSession: { type: 'apiKey', in: 'cookie', name: 'custom-operator.session' },
         operatorApiKey: { type: 'http', scheme: 'bearer', bearerFormat: 'Operator API key' },
       },
+      openApiCsrfHeader: { name: 'X-Custom-CSRF' },
     });
 
     expect(console.openApi.components.securitySchemes).toEqual({
       operatorSession: { type: 'apiKey', in: 'cookie', name: 'custom-operator.session' },
       operatorApiKey: { type: 'http', scheme: 'bearer', bearerFormat: 'Operator API key' },
     });
+    const generic = console.openApi.paths['/api/admin/v1/operations/{operationId}']?.post as { parameters: Array<{ name: string }> };
+    expect(generic.parameters.map(({ name }) => name)).toContain('X-Custom-CSRF');
+    expect(generic.parameters.map(({ name }) => name)).not.toContain('X-Operator-CSRF');
     expect(() => createSuperConsole({
       adapters: [],
       enabledModules: [],
@@ -436,8 +456,8 @@ describe('Super Console server composition', () => {
         id: 'records', label: 'Records', description: 'Presented records.', risk: 'standard', idField: 'recordId',
         sortableFields: ['createdAt'],
         presentation: {
-          listOperationId: 'examplefn.records.browse',
-          detailOperationId: 'examplefn.records.inspect',
+          listOperationId: 'examplefn.enumerate',
+          detailOperationId: 'examplefn.inspect',
           titleField: 'name',
           statusField: 'state',
           columns: [{ field: 'recordId', label: 'Record', format: 'code' }, { field: 'state', label: 'State', format: 'status' }],
@@ -447,14 +467,14 @@ describe('Super Console server composition', () => {
       operations: [
         {
           ...base,
-          id: 'examplefn.records.browse',
+          id: 'examplefn.enumerate',
           outputSchema: { type: 'object', properties: { items: { type: 'array', items: recordSchema } }, required: ['items'], additionalProperties: false },
           route: { method: 'GET', path: '/resources/records' },
           target: { resource: 'records', collection: true },
         },
         {
           ...base,
-          id: 'examplefn.records.inspect',
+          id: 'examplefn.inspect',
           inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
           outputSchema: { type: 'object', properties: { item: recordSchema }, required: ['item'], additionalProperties: false },
           route: { method: 'GET', path: '/resources/records/:id' },
@@ -466,6 +486,7 @@ describe('Super Console server composition', () => {
       operation.id,
       async () => ({ ok: true as const, data: { items: [] } }),
     ])));
+    expect(validateAdminCapabilityManifest(presentedManifest)).toEqual([]);
     const console = createSuperConsole({ adapters: [adapter], enabledModules: ['examplefn'], auth: auth(), shellPolicy: { authorize: () => true } });
     const view = await (await console.handle(request('/api/admin/v1/modules/examplefn'))).json();
     expect(view.data.module.resources[0]).toMatchObject({
@@ -473,6 +494,30 @@ describe('Super Console server composition', () => {
       detailApiHref: '/api/admin/v1/modules/examplefn/resources/records/:id',
       presentation: expect.objectContaining({ titleField: 'name', statusField: 'state' }),
     });
+  });
+
+  it('does not expose context-bound resources as standalone collection pages', async () => {
+    const base = manifest().operations[0]!;
+    const contextual = defineAdminCapability({
+      ...manifest(),
+      resources: [{
+        id: 'records',
+        label: 'Records',
+        description: 'Records that require parent context.',
+        risk: 'standard',
+        idField: 'id',
+        presentation: { standaloneList: false, listOperationId: base.id },
+      }],
+    });
+    const console = createSuperConsole({
+      adapters: [createAdminCapabilityAdapter(contextual, { [base.id]: async () => ({ ok: true as const, data: { items: [] } }) })],
+      enabledModules: ['examplefn'],
+      auth: auth(),
+      shellPolicy: { authorize: () => true },
+    });
+    const view = await (await console.handle(request('/api/admin/v1/modules/examplefn'))).json();
+    expect(view.data.module.resources[0]).toMatchObject({ listable: false });
+    expect(view.data.module.resources[0].listApiHref).toBeUndefined();
   });
 
   it('folds enabled nested resources into their owner while preserving child routes and identity', async () => {
@@ -864,6 +909,30 @@ describe('AuthFn operator transport', () => {
     expect(cookies.some((cookie) => cookie.startsWith('authfn.session='))).toBe(true);
     expect(cookies.some((cookie) => cookie.startsWith('authfn.csrf='))).toBe(true);
     expect((await response.json()).data.session.csrfCookieName).toBe('authfn.csrf');
+  });
+
+  it('splits combined provider cookies when getSetCookie is unavailable', async () => {
+    const providerHeaders = new Headers();
+    providerHeaders.append('set-cookie', 'provider.session=session-token; Path=/; HttpOnly; Expires=Wed, 21 Oct 2026 07:28:00 GMT');
+    providerHeaders.append('set-cookie', 'provider.csrf=csrf-token; Path=/; SameSite=Lax');
+    Object.defineProperty(providerHeaders, 'getSetCookie', { value: undefined });
+    const console = createSuperConsole({
+      adapters: [],
+      enabledModules: [],
+      auth: auth({ signIn: async () => ({ principal, headers: providerHeaders }) }),
+      shellPolicy: { authorize: () => true },
+    });
+
+    const signedIn = await console.handle(request('/api/admin/v1/auth/sign-in', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'operator@example.test', password: 'password' }),
+    }));
+
+    expect(signedIn.headers.getSetCookie()).toEqual([
+      'provider.session=session-token; Path=/; HttpOnly; Expires=Wed, 21 Oct 2026 07:28:00 GMT',
+      'provider.csrf=csrf-token; Path=/; SameSite=Lax',
+    ]);
   });
 
   it('joins AuthFn routes correctly when basePath has a trailing slash', async () => {

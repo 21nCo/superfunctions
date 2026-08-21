@@ -64,7 +64,7 @@ export function operatorCsrfToken(
   const candidates: Array<{ name: string; value: string }> = [];
   for (const part of cookieHeader.split(';')) {
     const [rawName, ...rawValue] = part.trim().split('=');
-    if (!rawName.endsWith('.csrf')) continue;
+    if (cookieName ? rawName !== cookieName : !rawName.endsWith('.csrf')) continue;
     const encoded = rawValue.join('=');
     try {
       candidates.push({ name: rawName, value: decodeURIComponent(encoded) });
@@ -72,7 +72,7 @@ export function operatorCsrfToken(
       candidates.push({ name: rawName, value: encoded });
     }
   }
-  if (cookieName) return candidates.find((candidate) => candidate.name === cookieName)?.value;
+  if (cookieName) return candidates[0]?.value;
   return candidates.length === 1 ? candidates[0]?.value : undefined;
 }
 

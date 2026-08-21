@@ -86,6 +86,8 @@ describe("@cifn/admin", () => {
       "logs",
       "artifacts",
     ]);
+    expect(ciFnAdminCapability.resources?.filter((resource) => resource.id !== "runs")
+      .every((resource) => resource.presentation?.standaloneList === false)).toBe(true);
     expect(ciFnAdminCapability.operations.map((operation) => operation.id)).toEqual([
       "cifn.runs.list",
       "cifn.runs.get",

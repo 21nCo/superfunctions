@@ -98,17 +98,9 @@ export async function loadResourceList(input: ResourceRouteInput): Promise<{
     withAdminScope(`${requestHref.pathname}${requestHref.search}`, input.url.searchParams)
   );
   const payload = result.ok ? result.data : {};
-  const canonicalItems = Array.isArray(payload.items) ? [...payload.items] : [];
-  const defaultSort = resource.presentation?.defaultSort;
-  if (defaultSort) {
-    canonicalItems.sort((left, right) => {
-      if (!isAdminRecord(left) || !isAdminRecord(right)) return 0;
-      const leftValue = readAdminPresentationField(left, defaultSort.field);
-      const rightValue = readAdminPresentationField(right, defaultSort.field);
-      const compared = String(leftValue ?? '').localeCompare(String(rightValue ?? ''), undefined, { numeric: true });
-      return defaultSort.direction === 'desc' ? -compared : compared;
-    });
-  }
+  // List operations own global ordering because cursor pagination must be sorted before slicing.
+  // Preserve the provider's order unless the operation contract explicitly accepts a sort input.
+  const canonicalItems = Array.isArray(payload.items) ? payload.items : [];
   const explicitRows = Array.isArray(payload.rows) ? payload.rows : undefined;
   const columnSource = explicitRows?.map((row) => ({ values: row.values })) ?? canonicalItems;
   const columns = resource.presentation?.columns?.length

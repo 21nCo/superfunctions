@@ -35,6 +35,7 @@ export const superConsole = createSuperConsole({
     operatorSession: services.operatorSessionScheme,
     operatorApiKey: services.operatorApiKeyScheme,
   },
+  openApiCsrfHeader: { name: services.operatorCsrfHeaderName },
 });
 ```
 

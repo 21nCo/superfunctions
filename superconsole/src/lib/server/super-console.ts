@@ -64,10 +64,32 @@ function response(body: unknown, status = 200, extraHeaders?: HeadersInit): Resp
   incoming.forEach((value, key) => {
     if (key !== 'set-cookie') headers.append(key, value);
   });
-  const cookieHeaders = incoming as Headers & { getSetCookie?: () => string[] };
-  for (const cookie of cookieHeaders.getSetCookie?.() ?? []) headers.append('set-cookie', cookie);
-  if (!cookieHeaders.getSetCookie && incoming.has('set-cookie')) headers.append('set-cookie', incoming.get('set-cookie')!);
+  for (const cookie of readSetCookieHeaders(incoming)) headers.append('set-cookie', cookie);
   return new Response(JSON.stringify(body), { status, headers });
+}
+
+function splitCombinedSetCookieHeader(value: string): string[] {
+  const cookies: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === '"' && value[index - 1] !== '\\') quoted = !quoted;
+    if (character !== ',' || quoted) continue;
+    const remainder = value.slice(index + 1);
+    if (!/^\s*[!#$%&'*+\-.^_`|~0-9A-Za-z]+=/.test(remainder)) continue;
+    cookies.push(value.slice(start, index).trim());
+    start = index + 1;
+  }
+  cookies.push(value.slice(start).trim());
+  return cookies.filter(Boolean);
+}
+
+function readSetCookieHeaders(headers: Headers): string[] {
+  const source = headers as Headers & { getSetCookie?: () => string[] };
+  if (typeof source.getSetCookie === 'function') return source.getSetCookie();
+  const combined = headers.get('set-cookie');
+  return combined ? splitCombinedSetCookieHeader(combined) : [];
 }
 
 function success(data: unknown, requestId?: string, headers?: HeadersInit, status = 200): Response {
@@ -86,9 +108,7 @@ function failure(error: unknown, requestId?: string, auth?: SuperConsoleOperator
   if (providerResponse) {
     const source = providerResponse;
     const headers = new Headers();
-    const sourceCookies = source.headers as Headers & { getSetCookie?: () => string[] };
-    for (const cookie of sourceCookies.getSetCookie?.() ?? []) headers.append('set-cookie', cookie);
-    if (!sourceCookies.getSetCookie && source.headers.has('set-cookie')) headers.append('set-cookie', source.headers.get('set-cookie')!);
+    for (const cookie of readSetCookieHeaders(source.headers)) headers.append('set-cookie', cookie);
     for (const name of ['retry-after', 'x-request-id']) {
       const value = source.headers.get(name);
       if (value) headers.set(name, value);
@@ -279,7 +299,7 @@ function routeDefinition(operation: AdminOperationDefinition): { method: string;
 }
 
 function resourceId(entry: AdminRegistryOperation): string {
-  return entry.operation.id.split('.')[1] ?? entry.operation.id;
+  return entry.operation.target?.resource ?? entry.operation.id.split('.')[1] ?? entry.operation.id;
 }
 
 interface ConsoleActionView {
@@ -365,7 +385,9 @@ function moduleView(
   const ownResources = [...new Set(entries.map(resourceId))].map((id) => {
     const operations = entries.filter((entry) => resourceId(entry) === id);
     const resource = declaredResources.find((candidate) => candidate.id === id);
-    const list = resource?.presentation?.listOperationId
+    const list = resource?.presentation?.standaloneList === false
+      ? undefined
+      : resource?.presentation?.listOperationId
       ? operations.find((entry) => entry.operation.id === resource.presentation?.listOperationId)
       : operations.find((entry) => entry.operation.id.endsWith('.list'));
     const get = resource?.presentation?.detailOperationId
@@ -1235,6 +1257,7 @@ export class SuperConsole {
       version: '1.0.0',
       description: 'Self-hosted operator administration powered by enabled Superfunctions.',
       securitySchemes: this.options.openApiSecuritySchemes,
+      csrfHeader: this.options.openApiCsrfHeader,
     });
     const authenticated = [{ operatorSession: [] }, { operatorApiKey: [] }];
     const scopeParameters = () => adminOpenApiScopeParameters();
@@ -1263,6 +1286,14 @@ export class SuperConsole {
     });
     const stringQuery = (name: string, required = false) => ({ name, in: 'query', required, schema: { type: 'string' } });
     const pageQueries = [stringQuery('cursor'), { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 200 } }];
+    const csrfParameters = this.options.openApiCsrfHeader ? [{
+      name: this.options.openApiCsrfHeader.name,
+      in: 'header',
+      required: false,
+      description: this.options.openApiCsrfHeader.description
+        ?? "Required for unsafe requests authenticated by the provider's cookie session.",
+      schema: { type: 'string', minLength: 1 },
+    }] : [];
     const sessionSchema = {
       type: 'object',
       properties: { userId: { type: 'string' }, displayName: { type: 'string' }, email: { type: 'string' }, role: { type: 'string' }, permissions: { type: 'array', items: { type: 'string' } }, csrfCookieName: { type: 'string', description: 'Exact non-HttpOnly operator-auth CSRF cookie name selected for this runtime request.' }, csrfHeaderName: { type: 'string', description: 'Exact operator-auth CSRF request header selected for this runtime request.' } },
@@ -1277,7 +1308,7 @@ export class SuperConsole {
       [`${this.registry.apiBasePath}/mcp`]: { get: { operationId: 'superconsole.mcp.get', summary: 'Read McpFn tool metadata', security: authenticated, parameters: scopeParameters(), responses: { '200': jsonResponse('MCP metadata', { type: 'object', properties: { endpoint: { type: 'string' }, tools: { type: 'array', items: { type: 'object' } } }, required: ['endpoint', 'tools'] }) } } },
       [`${this.registry.apiBasePath}/mcp/transport`]: { post: { operationId: 'superconsole.mcp.transport', summary: 'Authenticated McpFn streamable HTTP transport', security: authenticated, parameters: scopeParameters(), requestBody: jsonBody({ oneOf: [{ type: 'object' }, { type: 'array', items: { type: 'object' }, minItems: 1 }], description: 'MCP JSON-RPC request or batch.' }), responses: { '200': { description: 'MCP JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } }, 'text/event-stream': { schema: { type: 'string' } } } } } } },
       [`${this.registry.apiBasePath}/confirmations`]: { post: { operationId: 'superconsole.confirmations.issue', summary: 'Issue an actor/scope/operation/input-bound confirmation token', security: authenticated, parameters: scopeParameters(), requestBody: jsonBody({ type: 'object', properties: { operationId: { type: 'string' }, input: { type: 'object' } }, required: ['operationId', 'input'], additionalProperties: false }), responses: { '201': jsonResponse('Confirmation receipt', { type: 'object', properties: { token: { type: 'string' }, expiresAt: { type: 'string', format: 'date-time' } }, required: ['token', 'expiresAt'] }) } } },
-      [`${this.registry.apiBasePath}/operations/{operationId}`]: { post: { operationId: 'superconsole.operations.invoke', summary: 'Invoke one enabled operation by ID', security: authenticated, parameters: [{ name: 'operationId', in: 'path', required: true, schema: { type: 'string' } }, { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string', minLength: 1 } }, { name: 'X-Admin-Confirmation', in: 'header', required: false, schema: { type: 'string', minLength: 1 } }, { name: 'X-Operator-CSRF', in: 'header', required: false, description: 'Required by cookie-authenticated mutation providers when configured.', schema: { type: 'string', minLength: 1 } }, ...scopeParameters()], requestBody: jsonBody({ type: 'object', additionalProperties: true }), responses: { '200': jsonResponse('Administration operation envelope', {}), '4XX': errorResponse('Administration request rejected'), '5XX': errorResponse('Administration dependency or server failure') } } },
+      [`${this.registry.apiBasePath}/operations/{operationId}`]: { post: { operationId: 'superconsole.operations.invoke', summary: 'Invoke one enabled operation by ID', security: authenticated, parameters: [{ name: 'operationId', in: 'path', required: true, schema: { type: 'string' } }, { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string', minLength: 1 } }, { name: 'X-Admin-Confirmation', in: 'header', required: false, schema: { type: 'string', minLength: 1 } }, ...csrfParameters, ...scopeParameters()], requestBody: jsonBody({ type: 'object', additionalProperties: true }), responses: { '200': jsonResponse('Administration operation envelope', {}), '4XX': errorResponse('Administration request rejected'), '5XX': errorResponse('Administration dependency or server failure') } } },
       [`${this.registry.apiBasePath}/auth/sign-in`]: { post: { operationId: 'superconsole.auth.signIn', summary: 'Sign in through the configured operator-auth provider', security: [], requestBody: jsonBody({ type: 'object', properties: { email: { type: 'string', format: 'email' }, password: { type: 'string', format: 'password' } }, required: ['email', 'password'], additionalProperties: false }), responses: { '200': jsonResponse('Operator session', { type: 'object', properties: { session: sessionSchema }, required: ['session'] }), '401': { description: 'Invalid credentials or two-factor challenge' } } } },
       [`${this.registry.apiBasePath}/auth/2fa`]: { post: { operationId: 'superconsole.auth.completeTwoFactor', summary: 'Complete a provider-defined two-factor sign-in challenge', security: [], requestBody: jsonBody({ type: 'object', properties: { challengeId: { type: 'string' }, code: { type: 'string' } }, required: ['challengeId', 'code'], additionalProperties: false }), responses: { '200': jsonResponse('Operator session', { type: 'object', properties: { session: sessionSchema }, required: ['session'] }) } } },
       [`${this.registry.apiBasePath}/auth/sign-out`]: { post: { operationId: 'superconsole.auth.signOut', summary: 'Sign out through the configured operator-auth provider', security: authenticated, parameters: scopeParameters(), responses: { '200': jsonResponse('Session revoked', { type: 'object', properties: { signedOut: { type: 'boolean', const: true } }, required: ['signedOut'] }) } } },

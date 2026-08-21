@@ -19,6 +19,11 @@ export const superConsole = createSuperConsole({
   search: installation.search,
   overview: installation.overview,
   settings: installation.settings,
+  openApiSecuritySchemes: {
+    operatorSession: installation.operatorSessionScheme,
+    operatorApiKey: installation.operatorApiKeyScheme,
+  },
+  openApiCsrfHeader: { name: installation.operatorCsrfHeaderName },
 });
 ```
 

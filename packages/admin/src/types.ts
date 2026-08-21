@@ -201,6 +201,8 @@ export interface AdminHealthDefinition {
 export type AdminPresentationFormat = "text" | "status" | "datetime" | "number" | "code";
 
 export interface AdminResourcePresentation {
+  /** Whether this resource can be browsed without parent context. Defaults to true. */
+  standaloneList?: boolean;
   /** Read operation used for the generic collection page. Inference remains available when omitted. */
   listOperationId?: string;
   /** Read operation used for the generic detail page. Inference remains available when omitted. */
@@ -213,6 +215,7 @@ export interface AdminResourcePresentation {
     label: string;
     format?: AdminPresentationFormat;
   }[];
+  /** Provider-side collection order; the console never reorders an already-paginated page. */
   defaultSort?: {
     field: string;
     direction: "asc" | "desc";

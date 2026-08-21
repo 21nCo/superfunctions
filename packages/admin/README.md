@@ -28,6 +28,8 @@ const manifest = defineAdminCapability({
   resources: [{
     id: "records",
     label: "Records",
+    description: "Example records managed in the active scope.",
+    risk: "standard",
     idField: "id",
     displayFields: ["id", "name", "status"],
     searchableFields: ["id", "name"],
@@ -81,7 +83,13 @@ const dispatcher = createAdminDispatcher({
   idempotency: new MemoryAdminIdempotencyStore(),
 });
 
-const openapi = createAdminOpenApiDocument(registry);
+const openapi = createAdminOpenApiDocument(registry, {
+  securitySchemes: {
+    operatorSession: deployment.operatorSessionScheme,
+    operatorApiKey: deployment.operatorApiKeyScheme,
+  },
+  csrfHeader: { name: deployment.operatorCsrfHeaderName },
+});
 
 const client = createAdminClient({
   baseUrl: "https://console.example.com/api/admin/v1",

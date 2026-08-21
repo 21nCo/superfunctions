@@ -601,7 +601,7 @@ export function validateAdminCapabilityManifest(
       ] as const) {
         if (operationId && !operation) {
           issues.push({ path: `${basePath}.presentation.${kind}OperationId`, message: "must name an operation in the same manifest" });
-        } else if (operation && (operation.target.resource !== resource.id || operation.safety.classification !== "read")) {
+        } else if (operation && (operation.target?.resource !== resource.id || operation.safety.classification !== "read")) {
           issues.push({ path: `${basePath}.presentation.${kind}OperationId`, message: "must name a read operation targeting this resource" });
         }
       }
@@ -622,17 +622,22 @@ export function validateAdminCapabilityManifest(
       (presentation.columns ?? []).forEach((column, columnIndex) => {
         if (!column.label.trim()) issues.push({ path: `${basePath}.presentation.columns[${columnIndex}].label`, message: "must not be empty" });
       });
-      if (presentation.defaultSort && resource.sortableFields?.length
-        && !resource.sortableFields.includes(presentation.defaultSort.field)) {
+      if (presentation.defaultSort && !resource.sortableFields?.includes(presentation.defaultSort.field)) {
         issues.push({ path: `${basePath}.presentation.defaultSort.field`, message: "must be declared in sortableFields" });
       }
-      const schemas = [
-        presentationRecordSchema(listOperation, "list"),
-        presentationRecordSchema(detailOperation, "detail"),
-      ].filter((schema): schema is AdminJsonSchema => Boolean(schema));
-      for (const field of fields) {
-        if (schemas.some((schema) => !presentationFieldSchema(schema, field).compatible)) {
-          issues.push({ path: `${basePath}.presentation`, message: `field ${field} is incompatible with a declared operation output schema` });
+      const listSchema = presentationRecordSchema(listOperation, "list");
+      const detailSchema = presentationRecordSchema(detailOperation, "detail");
+      const sharedFields = (presentation.columns ?? []).map((column) => column.field);
+      const listFields = [presentation.defaultSort?.field, ...sharedFields]
+        .filter((field): field is string => field !== undefined);
+      const detailFields = [presentation.titleField, presentation.subtitleField, presentation.statusField, ...sharedFields]
+        .filter((field): field is string => field !== undefined);
+      for (const [schema, surfaceFields] of [[listSchema, listFields], [detailSchema, detailFields]] as const) {
+        if (!schema) continue;
+        for (const field of surfaceFields) {
+          if (!presentationFieldSchema(schema, field).compatible) {
+            issues.push({ path: `${basePath}.presentation`, message: `field ${field} is incompatible with a declared operation output schema` });
+          }
         }
       }
     }
@@ -825,16 +830,6 @@ export function validateAdminCapabilityManifest(
           path: `$.operations[${index}].target.resource`,
           message: "must not be blank",
         });
-      const operationResource = operation.id.split(".")[1];
-      if (
-        operationResource &&
-        operation.target.resource !== operationResource
-      ) {
-        issues.push({
-          path: `$.operations[${index}].target.resource`,
-          message: "must match the resource segment in the operation id",
-        });
-      }
       if (
         operation.target.idInput !== undefined &&
         !operation.target.idInput.trim()

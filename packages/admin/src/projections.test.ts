@@ -11,6 +11,13 @@ import { testAdapter, testManifest } from "./test-fixtures.js";
 import type { AdminOperationContext } from "./types.js";
 
 const scope = { organizationId: "org", workspaceId: "workspace", projectId: "project", environmentId: "environment" };
+const openApiOptions = {
+  securitySchemes: {
+    operatorSession: { type: "apiKey", in: "cookie", name: "provider.session" },
+    operatorApiKey: { type: "http", scheme: "bearer" },
+  },
+  csrfHeader: { name: "X-Provider-CSRF" },
+} as const;
 
 describe("OpenAPI projection", () => {
   it("projects only enabled operations with safety, permission, tenant auth, and path parameters", () => {
@@ -30,7 +37,7 @@ describe("OpenAPI projection", () => {
       }],
     }), { [operation.id]: async () => ({ ok: true as const, data: { items: [] } }) });
     const registry = createAdminRegistry({ adapters: [firstAdapter, testAdapter("disabledfn")], enabledModules: ["firstfn"] });
-    const document = createAdminOpenApiDocument(registry, { serverUrl: "https://console.example.test" });
+    const document = createAdminOpenApiDocument(registry, { ...openApiOptions, serverUrl: "https://console.example.test" });
     const projected = document.paths["/api/admin/v1/modules/firstfn/records/{id}"]?.get as Record<string, unknown>;
     expect(projected.operationId).toBe("firstfn.records.list");
     expect(projected["x-superfunctions-permission"]).toBe("firstfn.records.read");
@@ -60,10 +67,14 @@ describe("OpenAPI projection", () => {
       adapters: [createAdminCapabilityAdapter(destructive, { "examplefn.records.delete": async () => ({ ok: true as const, data: { deleted: true } }) })],
       enabledModules: ["examplefn"],
     });
-    const operation = createAdminOpenApiDocument(registry).paths["/api/admin/v1/modules/examplefn/records/{id}"]?.delete as { parameters?: Array<{ name: string; in: string; required: boolean }> };
+    const operation = createAdminOpenApiDocument(registry, openApiOptions).paths["/api/admin/v1/modules/examplefn/records/{id}"]?.delete as { parameters?: Array<{ name: string; in: string; required: boolean }> };
     expect(operation.parameters).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "Idempotency-Key", in: "header", required: true }),
       expect.objectContaining({ name: "X-Admin-Confirmation", in: "header", required: true }),
+      expect.objectContaining({ name: "X-Provider-CSRF", in: "header", required: false }),
+    ]));
+    expect(operation.parameters).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "X-AuthFn-CSRF" }),
     ]));
     expect(JSON.stringify(operation)).not.toContain("_admin");
   });
@@ -120,7 +131,7 @@ describe("OpenAPI projection", () => {
       })],
       enabledModules: ["examplefn"],
     });
-    const document = createAdminOpenApiDocument(registry);
+    const document = createAdminOpenApiDocument(registry, openApiOptions);
     const projected = document.paths["/api/admin/v1/modules/examplefn/records/{id}/token"]?.post as Record<string, unknown>;
     expect(projected["x-superfunctions-redaction"]).toEqual({ oneTimeOutputPaths: ["$.item.token"] });
     expect(JSON.stringify(projected)).not.toContain("allowOutputPaths");
@@ -154,7 +165,7 @@ describe("OpenAPI projection", () => {
     expect(() => createAdminOpenApiDocument(registry, {
       securitySchemes: { operatorSession: { type: "apiKey" } },
     })).toThrow(/operatorSession and operatorApiKey/);
-    const document = createAdminOpenApiDocument(registry);
+    const document = createAdminOpenApiDocument(registry, openApiOptions);
     const operation = document.paths["/api/admin/v1/modules/examplefn/resources/records"]?.get as {
       parameters: Array<Record<string, unknown>>;
       responses: Record<string, unknown>;

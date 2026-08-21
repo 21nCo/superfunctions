@@ -154,13 +154,16 @@ export interface SuperConsoleOptions {
   settings?: SuperConsoleSettingsService;
   serverName?: string;
   apiBasePath?: string;
-  /**
-   * Override the provider-neutral OpenAPI authentication schemes.
-   */
-  openApiSecuritySchemes?: Readonly<{
+  /** Deployment/provider-owned OpenAPI authentication schemes. */
+  openApiSecuritySchemes: Readonly<{
     operatorSession: unknown;
     operatorApiKey: unknown;
     [name: string]: unknown;
+  }>;
+  /** Exact provider-owned CSRF header projected for unsafe operations. */
+  openApiCsrfHeader?: Readonly<{
+    name: string;
+    description?: string;
   }>;
   now?: () => Date;
 }
