@@ -50,12 +50,30 @@ function unavailable(resourceId: string, moduleId: string): AdminErrorViewModel 
 
 function parseQueryValue(raw: string, schema: AdminResourceViewModel['listInputSchema']): unknown {
   const types = schema?.type ? (Array.isArray(schema.type) ? schema.type : [schema.type]) : [];
-  if (types.includes('integer') || types.includes('number')) return Number(raw);
+  if (types.includes('null') && raw === 'null') return null;
+  if (types.includes('integer') || types.includes('number')) {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : raw;
+  }
   if (types.includes('boolean')) return raw === 'true' ? true : raw === 'false' ? false : raw;
   if (types.includes('object') || types.includes('array')) {
     try { return JSON.parse(raw); } catch { return raw; }
   }
   return raw;
+}
+
+function inputSchemaAtPath(
+  schema: AdminResourceViewModel['listInputSchema'],
+  path: string,
+): AdminResourceViewModel['listInputSchema'] {
+  let current = schema;
+  for (const segment of path.split('.')) {
+    if (!current) return undefined;
+    const types = current.type ? (Array.isArray(current.type) ? current.type : [current.type]) : [];
+    if (!types.includes('object')) return undefined;
+    current = current.properties?.[segment];
+  }
+  return current;
 }
 
 function setInputPath(target: Record<string, unknown>, path: string, value: unknown): void {
@@ -90,7 +108,9 @@ function listRequestHref(
   if (searchPath && query) setInputPath(input, searchPath, query);
   for (const filter of resource.presentation?.query?.filters ?? []) {
     const raw = searchParams.get(filter.field);
-    if (raw !== null && raw !== '') setInputPath(input, filter.inputPath, raw);
+    if (raw !== null && raw !== '') {
+      setInputPath(input, filter.inputPath, parseQueryValue(raw, inputSchemaAtPath(schema, filter.inputPath)));
+    }
   }
   for (const [key, value] of Object.entries(input)) {
     requestHref.searchParams.set(key, typeof value === 'string' ? value : JSON.stringify(value));

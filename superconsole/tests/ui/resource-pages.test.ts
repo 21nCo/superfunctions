@@ -64,12 +64,26 @@ describe('generic resource list ordering', () => {
             type: 'object',
             properties: {
               limit: { type: 'integer' },
-              filter: { type: 'object', properties: { status: { type: 'string' } }, additionalProperties: false },
+              filter: {
+                type: 'object',
+                properties: {
+                  status: { type: 'string' },
+                  enabled: { type: 'boolean' },
+                  retries: { type: 'integer' },
+                  cleared: { type: ['string', 'null'] },
+                },
+                additionalProperties: false,
+              },
             },
             additionalProperties: false,
           },
           presentation: {
-            query: { filters: [{ field: 'status', inputPath: 'filter.status', label: 'Status', options: ['running', 'success'] }] },
+            query: { filters: [
+              { field: 'status', inputPath: 'filter.status', label: 'Status', options: ['running', 'success'] },
+              { field: 'enabled', inputPath: 'filter.enabled', options: [true, false] },
+              { field: 'retries', inputPath: 'filter.retries' },
+              { field: 'cleared', inputPath: 'filter.cleared', options: [null] },
+            ] },
           },
         }],
       }],
@@ -77,21 +91,26 @@ describe('generic resource list ordering', () => {
 
     const loaded = await loadResourceList({
       fetcher,
-      url: new URL('https://console.example.test/modules/examplefn/records?q=ignored&status=running&limit=25&unsupported=value'),
+      url: new URL('https://console.example.test/modules/examplefn/records?q=ignored&status=running&enabled=false&retries=3&cleared=null&limit=25&unsupported=value'),
       registry: mappedRegistry,
       moduleId: 'examplefn',
       resourceId: 'records',
     });
 
     const requested = new URL(String(fetcher.mock.calls[0]![0]), 'https://console.example.test');
-    expect(requested.searchParams.get('filter')).toBe(JSON.stringify({ status: 'running' }));
+    expect(requested.searchParams.get('filter')).toBe(JSON.stringify({
+      status: 'running', enabled: false, retries: 3, cleared: null,
+    }));
     expect(requested.searchParams.get('limit')).toBe('25');
     expect(requested.searchParams.has('q')).toBe(false);
     expect(requested.searchParams.has('unsupported')).toBe(false);
-    expect(loaded.view).toMatchObject({
-      searchEnabled: false,
-      filters: [{ field: 'status', label: 'Status', value: 'running', options: ['running', 'success'] }],
-    });
+    expect(loaded.view?.searchEnabled).toBe(false);
+    expect(loaded.view?.filters).toEqual(expect.arrayContaining([
+      { field: 'status', label: 'Status', value: 'running', options: ['running', 'success'] },
+      { field: 'enabled', label: 'Enabled', value: 'false', options: [true, false] },
+      { field: 'retries', label: 'Retries', value: '3', options: undefined },
+      { field: 'cleared', label: 'Cleared', value: 'null', options: [null] },
+    ]));
   });
 
   it('builds parent-bound related resource links from generic detail records', async () => {

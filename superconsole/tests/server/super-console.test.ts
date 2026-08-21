@@ -188,6 +188,17 @@ describe('Super Console server composition', () => {
     const generic = console.openApi.paths['/api/admin/v1/operations/{operationId}']?.post as { parameters: Array<{ name: string }> };
     expect(generic.parameters.map(({ name }) => name)).toContain('X-Custom-CSRF');
     expect(generic.parameters.map(({ name }) => name)).not.toContain('X-Operator-CSRF');
+    const protectedMutations = [
+      console.openApi.paths['/api/admin/v1/mcp/transport']?.post,
+      console.openApi.paths['/api/admin/v1/mcp/transport']?.delete,
+      console.openApi.paths['/api/admin/v1/confirmations']?.post,
+      console.openApi.paths['/api/admin/v1/settings/policies/{policyId}']?.patch,
+      console.openApi.paths['/api/admin/v1/auth/sign-out']?.post,
+    ] as Array<{ parameters?: Array<{ name: string }> } | undefined>;
+    for (const operation of protectedMutations) {
+      expect(operation?.parameters?.map(({ name }) => name)).toContain('X-Custom-CSRF');
+    }
+    expect((console.openApi.paths['/api/admin/v1/auth/sign-in']?.post as { parameters?: unknown[] }).parameters).toBeUndefined();
     expect(() => createSuperConsole({
       adapters: [],
       enabledModules: [],
