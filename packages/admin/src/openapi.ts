@@ -8,7 +8,13 @@ export interface AdminOpenApiOptions {
   version?: string;
   description?: string;
   serverUrl?: string;
-  securitySchemes?: Readonly<Record<string, unknown>>;
+  /** Deployment/provider-owned schemes referenced by every protected operation. */
+  securitySchemes: Readonly<Record<string, unknown>>;
+  /** Exact provider-owned CSRF header to document for unsafe cookie-authenticated requests. */
+  csrfHeader?: Readonly<{
+    name: string;
+    description?: string;
+  }>;
 }
 
 export interface AdminOpenApiDocument {
@@ -108,17 +114,17 @@ function parametersFor(schema: AdminJsonSchema, parameterNames: readonly string[
 
 export function createAdminOpenApiDocument(
   registry: AdminCapabilityRegistry,
-  options: AdminOpenApiOptions = {},
+  options: AdminOpenApiOptions,
 ): AdminOpenApiDocument {
-  const securitySchemes = options.securitySchemes ?? {
-    authFnSession: { type: "apiKey", in: "cookie", name: "__Secure-authfn.session" },
-    authFnApiKey: { type: "http", scheme: "bearer", bearerFormat: "AuthFn session or API key" },
-  };
-  if (!securitySchemes.authFnSession || !securitySchemes.authFnApiKey) {
+  const securitySchemes = options?.securitySchemes;
+  if (!securitySchemes?.operatorSession || !securitySchemes.operatorApiKey) {
     throw new AdminError(
       "invalid_argument",
-      "OpenAPI security schemes must define authFnSession and authFnApiKey because protected operations reference both schemes.",
+      "OpenAPI security schemes must define operatorSession and operatorApiKey because protected operations reference both schemes.",
     );
+  }
+  if (options.csrfHeader && !options.csrfHeader.name.trim()) {
+    throw new AdminError("invalid_argument", "OpenAPI CSRF header metadata must define a nonblank provider header name.");
   }
   const paths: Record<string, Record<string, unknown>> = {};
   for (const entry of registry.operations) {
@@ -142,12 +148,13 @@ export function createAdminOpenApiDocument(
         schema: { type: "string", minLength: 1 },
       });
     }
-    if (entry.operation.safety.classification !== "read") {
+    if (entry.operation.safety.classification !== "read" && options.csrfHeader) {
       parameters.push({
-        name: "X-AuthFn-CSRF",
+        name: options.csrfHeader.name,
         in: "header",
         required: false,
-        description: "Required for unsafe requests authenticated by an AuthFn cookie session; bearer/API-key authentication does not use CSRF validation.",
+        description: options.csrfHeader.description
+          ?? "Required for unsafe requests authenticated by the provider's cookie session; bearer/API-key authentication does not use CSRF validation.",
         schema: { type: "string", minLength: 1 },
       });
     }
@@ -188,7 +195,7 @@ export function createAdminOpenApiDocument(
       summary: entry.operation.title,
       description: entry.operation.description,
       tags: [entry.manifest.displayName],
-      security: [{ authFnSession: [] }, { authFnApiKey: [] }],
+      security: [{ operatorSession: [] }, { operatorApiKey: [] }],
       ...(parameters.length ? { parameters } : {}),
       ...(bodySchema ? { requestBody: { required: true, content: { "application/json": { schema: bodySchema } } } } : {}),
       responses: {

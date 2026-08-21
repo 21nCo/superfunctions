@@ -125,7 +125,7 @@
       </AvatarRoot>
       <div>
         <strong>{shell.session?.displayName ?? shell.session?.email ?? (shell.error?.status === 401 ? 'Sign in required' : 'Authorized operator')}</strong>
-        <span>{shell.session?.role ?? (shell.error?.status === 401 ? 'AuthFn operator realm' : 'Session protected')}</span>
+        <span>{shell.session?.role ?? (shell.error?.status === 401 ? 'Operator realm' : 'Session protected')}</span>
       </div>
       {#if shell.session}
         <ButtonRoot variant="ghost" size="icon-sm" aria-label="Sign out" onclick={onSignOut}>

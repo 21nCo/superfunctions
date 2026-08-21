@@ -86,15 +86,19 @@ try {
 
   await page.getByRole('button', { name: 'Open CiFn' }).click();
   await page.waitForURL('**/modules/cifn');
+  await page.getByRole('heading', { name: 'Resources' }).waitFor();
+  await page.getByRole('button', { name: 'Open Runs' }).click();
+  await page.waitForURL('**/modules/cifn/runs');
   await page.getByRole('heading', { name: 'Runs' }).waitFor();
+  await page.getByRole('columnheader', { name: 'Repository' }).waitFor();
   await page.getByText('21nCo/super-functions').waitFor();
-  await page.getByRole('button', { name: /^Open run / }).first().click();
+  const openRun = page.getByRole('table').getByRole('button', { name: /^Open / }).first();
+  const runId = (await openRun.getAttribute('aria-label'))?.replace(/^Open /, '');
+  assert.ok(runId, 'The generic resource row must expose its manifest-defined identity.');
+  await openRun.click();
   await page.waitForURL(/\/modules\/cifn\/runs\/[^/]+$/);
-  await page.getByRole('heading', { name: 'Jobs' }).waitFor();
-  await page.getByText('verify', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'View logs' }).click();
-  await page.getByText('CiFn control-plane probe run started').waitFor();
-  await page.goBack({ waitUntil: 'networkidle' });
+  await page.getByRole('heading', { name: runId }).waitFor();
+  await page.getByRole('heading', { name: 'Properties' }).waitFor();
   await page.getByRole('button', { name: 'Cancel run' }).click();
   await page.getByRole('button', { name: 'Confirm Cancel run' }).click();
   await page.getByRole('status').filter({ hasText: 'Cancel run completed.' }).waitFor();
@@ -138,7 +142,7 @@ try {
     schemaVersion: 1,
     evidenceSet: basename(artifactDirectory),
     sourceCommit,
-    scenario: 'real-cifn-selected-module-production-smoke',
+    scenario: 'real-adapter-through-manifest-driven-generic-routes',
     failure: failure instanceof Error
       ? {
           name: failure.name,

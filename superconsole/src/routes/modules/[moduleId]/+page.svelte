@@ -12,7 +12,8 @@
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
-  const browseableResources = $derived((data.module?.resources ?? []).filter((resource) => resource.listable !== false));
+  const browseableResources = $derived((data.module?.resources ?? []).filter((resource) =>
+    resource.listable !== false && resource.standaloneList !== false));
 
   function openResource(href: string) {
     const safeHref = safeConsoleNavigationHref(href, page.url.origin);

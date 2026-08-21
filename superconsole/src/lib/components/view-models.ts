@@ -1,4 +1,4 @@
-import type { AdminJsonSchema } from '@superfunctions/admin';
+import type { AdminJsonPrimitive, AdminJsonSchema, AdminResourcePresentation } from '@superfunctions/admin';
 
 export type AdminStateKind =
   | 'ready'
@@ -30,6 +30,7 @@ export interface OperatorSessionViewModel {
   role: string;
   permissions?: string[];
   csrfCookieName?: string;
+  csrfHeaderName?: string;
 }
 
 export interface ContextOptionViewModel {
@@ -79,10 +80,13 @@ export interface AdminResourceViewModel {
   href: string;
   apiHref?: string;
   listApiHref?: string;
+  listInputSchema?: AdminJsonSchema;
   detailApiHref?: string;
   detailIdInput?: string;
   detailInputSchema?: AdminJsonSchema;
   listable?: boolean;
+  standaloneList?: boolean;
+  presentation?: AdminResourcePresentation;
   count?: number;
   createAction?: AdminActionViewModel;
   actions?: AdminActionViewModel[];
@@ -175,8 +179,7 @@ export type ShellSurface = keyof NonNullable<RegistryViewModel['surfaces']>;
 
 export function shellSurfaceEnabled(registry: RegistryViewModel, surface: ShellSurface): boolean {
   if (registry.surfaces) return registry.surfaces[surface] === true;
-  // Older embedded adapters expose module availability but no shell projection.
-  if (surface === 'search') return registryHasModule(registry, 'searchfn');
+  // Older embedded registries did not project optional shell services.
   return surface === 'overview';
 }
 
@@ -200,7 +203,21 @@ export interface ResourceListViewModel {
   rows: ResourceRowViewModel[];
   total?: number;
   nextCursor?: string;
+  searchEnabled?: boolean;
+  filters?: Array<{
+    field: string;
+    label: string;
+    value: string;
+    options?: readonly AdminJsonPrimitive[];
+  }>;
   error?: AdminErrorViewModel;
+}
+
+export interface RelatedResourceViewModel {
+  resourceId: string;
+  label: string;
+  description?: string;
+  href: string;
 }
 
 export interface ResourceDetailViewModel {
@@ -212,53 +229,9 @@ export interface ResourceDetailViewModel {
   status?: string;
   fields: Array<{ label: string; value: unknown; format?: ResourceColumnViewModel['format'] }>;
   actions?: AdminActionViewModel[];
+  related?: RelatedResourceViewModel[];
   audit?: ActivityViewModel[];
   error?: AdminErrorViewModel;
-}
-
-export type CiStatus = 'queued' | 'pending' | 'running' | 'success' | 'failure' | 'cancelled' | 'skipped';
-
-export interface CiStepViewModel {
-  id: string;
-  stepKey: string;
-  status: CiStatus;
-  startedAt?: string;
-  completedAt?: string;
-}
-
-export interface CiJobViewModel {
-  id: string;
-  jobKey: string;
-  status: CiStatus;
-  steps: CiStepViewModel[];
-  startedAt?: string;
-  completedAt?: string;
-}
-
-export interface CiRunViewModel {
-  runId: string;
-  pipelineRef: { repo: string; ref: string; configPath?: string };
-  trigger: { type: string };
-  status: CiStatus;
-  createdAt: string;
-  updatedAt?: string;
-  jobs: CiJobViewModel[];
-}
-
-export interface CiArtifactViewModel {
-  id?: string;
-  name: string;
-  fileId?: string;
-  url?: string;
-  size?: number;
-  contentType?: string;
-  signedExternal?: boolean;
-}
-
-export interface CiLogLineViewModel {
-  line: string;
-  timestamp?: string;
-  stepKey?: string;
 }
 
 export interface AuditEventViewModel extends ActivityViewModel {
@@ -296,6 +269,11 @@ function safeScalarEntries(record: Record<string, unknown>): Array<[string, unkn
   return Object.entries(record).filter(
     ([key, value]) => !SENSITIVE_ADMIN_FIELD.test(key) && isDisplayScalar(value)
   );
+}
+
+export function readAdminPresentationField(record: Record<string, unknown>, field: string): unknown {
+  return field.split('.').reduce<unknown>((value, segment) =>
+    isAdminRecord(value) ? value[segment] : undefined, record);
 }
 
 /** Infer a compact, scalar-only table shape from the canonical `{ items }` contract. */
@@ -383,15 +361,21 @@ export function normalizeAdminResourceRows(
     const source = explicitValues ?? item;
     const identity = adminItemId(item, resource.id, resource.idField)
       ?? adminItemId(source, resource.id, resource.idField);
-    const values = Object.fromEntries(columns.map(({ key }) => [key, source[key]]));
+    const values = Object.fromEntries(columns.map(({ key }) => [key, readAdminPresentationField(source, key)]));
     const explicitHref = typeof item.href === 'string' ? item.href : undefined;
     const detailInput = identity ? detailInputForRow(item, source, resource, identity) : undefined;
     const sourceActions = resource.actions ?? [];
     const boundActions = identity
-      ? sourceActions.filter((action) => Boolean(action.targetIdInput)).map((action) => ({
-          ...action,
-          input: { ...(action.input ?? {}), [action.targetIdInput!]: identity },
-        }))
+      ? sourceActions.filter((action) => Boolean(action.targetIdInput)).map((action) => {
+          const actionInput = { ...(action.input ?? {}), [action.targetIdInput!]: identity };
+          const required = action.inputSchema?.type === 'object' ? action.inputSchema.required ?? [] : [];
+          for (const key of required) {
+            if (actionInput[key] !== undefined) continue;
+            const value = source[key] ?? item[key];
+            if (value !== undefined) actionInput[key] = value;
+          }
+          return { ...action, input: actionInput };
+        })
       : [];
     const href = explicitHref ?? (detailInput
       ? detailHref(resource.href, detailInput, resource.detailIdInput ?? 'id')
@@ -431,16 +415,13 @@ export function inferAdminResourceStatus(item: unknown): string | undefined {
   return undefined;
 }
 
-const FOLDED_MODULE_IDS = new Set(['catchfn', 'contentfn', 'logfn']);
-
 export function enabledNavigationModules(registry: RegistryViewModel): AdminModuleViewModel[] {
   return registry.modules
     .filter(
       (module) =>
         module.enabled &&
         module.visibleInNavigation !== false &&
-        !module.parentModuleId &&
-        !FOLDED_MODULE_IDS.has(module.id.toLowerCase())
+        !module.parentModuleId
     )
     .sort((left, right) => {
       const groupOrder = (left.group ?? '').localeCompare(right.group ?? '');
@@ -476,7 +457,7 @@ export function consoleDestinationEnabled(registry: RegistryViewModel, href: str
   if (pathname === '/api' || pathname.startsWith('/api/')) return shellSurfaceEnabled(registry, 'api');
   if (pathname === '/mcp' || pathname.startsWith('/mcp/')) return shellSurfaceEnabled(registry, 'mcp');
   if (pathname === '/search' || pathname.startsWith('/search/')) {
-    return shellSurfaceEnabled(registry, 'search') && registryHasModule(registry, 'searchfn');
+    return shellSurfaceEnabled(registry, 'search');
   }
   if (pathname === '/settings' || pathname.startsWith('/settings/')) return shellSurfaceEnabled(registry, 'settings');
   const moduleMatch = /^\/modules\/([^/]+)/.exec(pathname);

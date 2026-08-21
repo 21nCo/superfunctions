@@ -1,3 +1,5 @@
+export * from './superconsole.js';
+
 import { wrapWithSchema } from '@superfunctions/db';
 import { createRouter, type Route, type Router } from '@superfunctions/http';
 import {

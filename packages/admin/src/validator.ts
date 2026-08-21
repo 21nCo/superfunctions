@@ -380,6 +380,46 @@ function operationRoutePath(
   )?.[1];
 }
 
+function presentationRecordSchema(
+  operation: AdminOperationDefinition | undefined,
+  kind: "list" | "detail",
+): AdminJsonSchema | undefined {
+  const output = operation?.outputSchema;
+  if (!output) return undefined;
+  const envelopeProperty = output.properties?.[kind === "list" ? "items" : "item"];
+  if (kind === "list" && envelopeProperty?.items) return envelopeProperty.items;
+  if (kind === "detail" && envelopeProperty) return envelopeProperty;
+  return output;
+}
+
+function presentationFieldSchema(
+  schema: AdminJsonSchema | undefined,
+  field: string,
+): { compatible: boolean; schema?: AdminJsonSchema } {
+  let current = schema;
+  for (const segment of field.split(".")) {
+    if (!current) return { compatible: true };
+    const types = allowedTypes(current);
+    if (types.length > 0 && !types.includes("object")) return { compatible: false, schema: current };
+    const next = current.properties?.[segment];
+    if (!next) return { compatible: current.additionalProperties !== false, schema: current };
+    current = next;
+  }
+  return { compatible: true, schema: current };
+}
+
+function presentationInputPathSchema(
+  schema: AdminJsonSchema | undefined,
+  path: string,
+): AdminJsonSchema | undefined {
+  let current = schema;
+  for (const segment of path.split(".")) {
+    if (!current || !allowedTypes(current).includes("object")) return undefined;
+    current = current.properties?.[segment];
+  }
+  return current;
+}
+
 export function validateAdminCapabilityManifest(
   manifest: AdminCapabilityManifest,
 ): AdminValidationIssue[] {
@@ -557,6 +597,108 @@ export function validateAdminCapabilityManifest(
     })) {
       if ((values ?? []).some((value) => !value.trim())) issues.push({ path: `${basePath}.${field}`, message: "must not contain blank fields" });
       if (new Set(values ?? []).size !== (values ?? []).length) issues.push({ path: `${basePath}.${field}`, message: "must not contain duplicate fields" });
+    }
+    const presentation = resource.presentation;
+    if (presentation) {
+      const operationById = new Map(manifest.operations.map((operation) => [operation.id, operation]));
+      const listOperation = presentation.listOperationId
+        ? operationById.get(presentation.listOperationId)
+        : undefined;
+      const detailOperation = presentation.detailOperationId
+        ? operationById.get(presentation.detailOperationId)
+        : undefined;
+      for (const [kind, operationId, operation] of [
+        ["list", presentation.listOperationId, listOperation],
+        ["detail", presentation.detailOperationId, detailOperation],
+      ] as const) {
+        if (operationId && !operation) {
+          issues.push({ path: `${basePath}.presentation.${kind}OperationId`, message: "must name an operation in the same manifest" });
+        } else if (operation && (operation.target?.resource !== resource.id || operation.safety.classification !== "read")) {
+          issues.push({ path: `${basePath}.presentation.${kind}OperationId`, message: "must name a read operation targeting this resource" });
+        }
+      }
+      const fields = [
+        presentation.titleField,
+        presentation.subtitleField,
+        presentation.statusField,
+        presentation.defaultSort?.field,
+        ...(presentation.columns ?? []).map((column) => column.field),
+      ].filter((field): field is string => field !== undefined);
+      if (fields.some((field) => !/^[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)*$/.test(field))) {
+        issues.push({ path: `${basePath}.presentation`, message: "field references must be nonblank dotted property paths" });
+      }
+      const columnFields = (presentation.columns ?? []).map((column) => column.field);
+      if (new Set(columnFields).size !== columnFields.length) {
+        issues.push({ path: `${basePath}.presentation.columns`, message: "must not contain duplicate fields" });
+      }
+      (presentation.columns ?? []).forEach((column, columnIndex) => {
+        if (!column.label.trim()) issues.push({ path: `${basePath}.presentation.columns[${columnIndex}].label`, message: "must not be empty" });
+      });
+      if (presentation.defaultSort && !resource.sortableFields?.includes(presentation.defaultSort.field)) {
+        issues.push({ path: `${basePath}.presentation.defaultSort.field`, message: "must be declared in sortableFields" });
+      }
+      const queryFilters = presentation.query?.filters ?? [];
+      const queryFields = queryFilters.map((filter) => filter.field);
+      if (new Set(queryFields).size !== queryFields.length) {
+        issues.push({ path: `${basePath}.presentation.query.filters`, message: "must not contain duplicate fields" });
+      }
+      queryFilters.forEach((filter, filterIndex) => {
+        const filterPath = `${basePath}.presentation.query.filters[${filterIndex}]`;
+        if (!resource.filterableFields?.includes(filter.field)) {
+          issues.push({ path: `${filterPath}.field`, message: "must be declared in filterableFields" });
+        }
+        if (!filter.label?.trim() && filter.label !== undefined) {
+          issues.push({ path: `${filterPath}.label`, message: "must not be empty" });
+        }
+        if (!presentationInputPathSchema(listOperation?.inputSchema, filter.inputPath)) {
+          issues.push({ path: `${filterPath}.inputPath`, message: "must resolve in the list operation input schema" });
+        }
+      });
+      if (presentation.query?.searchInputPath
+        && !presentationInputPathSchema(listOperation?.inputSchema, presentation.query.searchInputPath)) {
+        issues.push({ path: `${basePath}.presentation.query.searchInputPath`, message: "must resolve in the list operation input schema" });
+      }
+      if (presentation.standaloneList === false && !presentation.parent) {
+        issues.push({ path: `${basePath}.presentation.parent`, message: "is required when standaloneList is false" });
+      }
+      if (presentation.parent) {
+        const parentPath = `${basePath}.presentation.parent`;
+        if (presentation.parent.resourceId === resource.id
+          || !(manifest.resources ?? []).some((candidate) => candidate.id === presentation.parent!.resourceId)) {
+          issues.push({ path: `${parentPath}.resourceId`, message: "must name a different resource in the same manifest" });
+        }
+        if (presentation.parent.bindings.length === 0) {
+          issues.push({ path: `${parentPath}.bindings`, message: "must not be empty" });
+        }
+        const bindingFields = presentation.parent.bindings.map((binding) => binding.queryField);
+        if (new Set(bindingFields).size !== bindingFields.length) {
+          issues.push({ path: `${parentPath}.bindings`, message: "must not contain duplicate query fields" });
+        }
+        presentation.parent.bindings.forEach((binding, bindingIndex) => {
+          const bindingPath = `${parentPath}.bindings[${bindingIndex}]`;
+          if (!/^[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)*$/.test(binding.sourceField)) {
+            issues.push({ path: `${bindingPath}.sourceField`, message: "must be a nonblank dotted property path" });
+          }
+          if (!queryFields.includes(binding.queryField)) {
+            issues.push({ path: `${bindingPath}.queryField`, message: "must name a declared query filter field" });
+          }
+        });
+      }
+      const listSchema = presentationRecordSchema(listOperation, "list");
+      const detailSchema = presentationRecordSchema(detailOperation, "detail");
+      const sharedFields = (presentation.columns ?? []).map((column) => column.field);
+      const listFields = [presentation.defaultSort?.field, ...sharedFields]
+        .filter((field): field is string => field !== undefined);
+      const detailFields = [presentation.titleField, presentation.subtitleField, presentation.statusField, ...sharedFields]
+        .filter((field): field is string => field !== undefined);
+      for (const [schema, surfaceFields] of [[listSchema, listFields], [detailSchema, detailFields]] as const) {
+        if (!schema) continue;
+        for (const field of surfaceFields) {
+          if (!presentationFieldSchema(schema, field).compatible) {
+            issues.push({ path: `${basePath}.presentation`, message: `field ${field} is incompatible with a declared operation output schema` });
+          }
+        }
+      }
     }
   }
   const ids = new Set<string>();
@@ -747,16 +889,6 @@ export function validateAdminCapabilityManifest(
           path: `$.operations[${index}].target.resource`,
           message: "must not be blank",
         });
-      const operationResource = operation.id.split(".")[1];
-      if (
-        operationResource &&
-        operation.target.resource !== operationResource
-      ) {
-        issues.push({
-          path: `$.operations[${index}].target.resource`,
-          message: "must match the resource segment in the operation id",
-        });
-      }
       if (
         operation.target.idInput !== undefined &&
         !operation.target.idInput.trim()

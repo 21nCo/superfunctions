@@ -668,6 +668,55 @@
     color: var(--uifn-color-text-muted);
   }
 
+  .resource-toolbar__filter {
+    @apply flex items-center gap-2 text-xs font-semibold;
+    color: var(--uifn-color-text-secondary);
+  }
+
+  .resource-toolbar__filter-trigger {
+    @apply flex min-h-9 min-w-28 items-center justify-between gap-2 rounded-md border px-3 text-sm;
+    border-color: var(--uifn-color-border-default);
+    background: var(--uifn-color-surface-default);
+    color: var(--uifn-color-text-primary);
+  }
+
+  .resource-toolbar__filter-content {
+    @apply z-50 min-w-32 rounded-lg border p-1 shadow-overlay;
+    border-color: var(--uifn-color-border-default);
+    background: var(--uifn-color-surface-overlay);
+    color: var(--uifn-color-text-primary);
+  }
+
+  .resource-toolbar__filter-item {
+    @apply flex cursor-pointer items-center justify-between gap-4 rounded-md px-2.5 py-2 text-xs;
+  }
+
+  .resource-toolbar__filter-item:hover,
+  .resource-toolbar__filter-item[data-highlighted='true'] {
+    background: var(--uifn-color-accent-subtle);
+  }
+
+  .resource-toolbar__filter [data-uifn-component='input'] {
+    @apply min-w-32;
+  }
+
+  .related-resource-list {
+    @apply grid gap-2;
+  }
+
+  .related-resource-list > div {
+    @apply flex items-center justify-between gap-4 rounded-md border p-3;
+    border-color: var(--uifn-color-border-subtle);
+  }
+
+  .related-resource-list span {
+    @apply grid gap-0.5;
+  }
+
+  .related-resource-list small {
+    color: var(--uifn-color-text-muted);
+  }
+
   .resource-table__actions {
     @apply flex items-center justify-end gap-1;
   }

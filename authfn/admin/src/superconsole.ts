@@ -1,23 +1,41 @@
 import {
-  createAuthFn,
+  AuthFnError,
+  authfn,
   type AuthFnConfig,
+  type AuthFnPluginList,
+  type AuthFnServer,
+  type AuthFnTypedServerConfig,
   type AuthFnSession,
-} from '@authfn/core';
-import type { AdminScope } from '@superfunctions/admin';
-import type {
-  SuperConsoleOperatorAuth,
-  SuperConsolePrincipal,
-  SuperConsoleSignInResult,
-} from './types.js';
+} from 'authfn';
+import type { AdminActor, AdminScope } from '@superfunctions/admin';
 
-export interface AuthFnOperatorAuthOptions {
-  config: AuthFnConfig;
+export interface AuthFnOperatorPrincipal {
+  actor: AdminActor;
+  displayName: string;
+  email?: string;
+  avatarUrl?: string;
+  role: string;
+  defaultScope: AdminScope;
+  authentication?: Readonly<{
+    sessionId?: string;
+    type?: string;
+    methods?: readonly string[];
+    csrfCookieName?: string;
+    csrfHeaderName?: string;
+  }>;
+}
+
+export interface AuthFnOperatorAuthOptions<
+  TPrincipal extends AuthFnOperatorPrincipal = AuthFnOperatorPrincipal,
+  TPlugins extends AuthFnPluginList = AuthFnPluginList,
+> {
+  config: AuthFnConfig<TPlugins> & AuthFnTypedServerConfig<TPlugins>;
   resolveOperator(input: {
     session: AuthFnSession;
     request: Request;
-  }): Promise<SuperConsolePrincipal | null> | SuperConsolePrincipal | null;
+  }): Promise<TPrincipal | null> | TPrincipal | null;
   authorizeScope(input: {
-    principal: SuperConsolePrincipal;
+    principal: TPrincipal;
     requested: AdminScope;
     request: Request;
   }): Promise<AdminScope | null> | AdminScope | null;
@@ -30,17 +48,10 @@ interface AuthFnEnvelope {
   requestId?: string;
 }
 
-class SuperConsoleAuthFnResponseError extends Error {
-  readonly authFnResponse: Response;
-  readonly authFnCode?: string;
-  readonly authFnStatus: number;
-
-  constructor(response: Response, payload: AuthFnEnvelope) {
-    super(payload.error?.message ?? 'AuthFn rejected the authentication request.');
-    this.name = 'SuperConsoleAuthFnResponseError';
-    this.authFnResponse = response;
-    this.authFnCode = payload.error?.code;
-    this.authFnStatus = response.status;
+class AuthFnOperatorResponseError extends Error {
+  constructor(readonly response: Response, readonly payload: AuthFnEnvelope) {
+    super(payload.error?.message ?? 'The authentication provider rejected the request.');
+    this.name = 'AuthFnOperatorResponseError';
   }
 }
 
@@ -63,7 +74,7 @@ async function envelope(response: Response): Promise<AuthFnEnvelope> {
 }
 
 function throwAuthResponse(response: Response, payload: AuthFnEnvelope): never {
-  throw new SuperConsoleAuthFnResponseError(response, payload);
+  throw new AuthFnOperatorResponseError(response, payload);
 }
 
 function authResponseHeaders(upstream: Response): Headers {
@@ -78,28 +89,32 @@ function authResponseHeaders(upstream: Response): Headers {
   return headers;
 }
 
-async function withCookieNames(
-  authFn: ReturnType<typeof createAuthFn>,
-  principal: SuperConsolePrincipal,
+async function withCookieNames<TPrincipal extends AuthFnOperatorPrincipal>(
+  authFn: AuthFnServer,
+  principal: TPrincipal,
   request: Request,
-): Promise<SuperConsolePrincipal> {
+): Promise<TPrincipal> {
   const names = await authFn.cookieNamesForRequest(request);
   return {
     ...principal,
     authentication: {
       ...principal.authentication,
       csrfCookieName: names.csrfCookieName,
+      csrfHeaderName: 'x-authfn-csrf',
     },
   };
 }
 
-async function resolveSuccessfulOperator(
-  authFn: ReturnType<typeof createAuthFn>,
-  options: AuthFnOperatorAuthOptions,
+async function resolveSuccessfulOperator<
+  TPrincipal extends AuthFnOperatorPrincipal,
+  TPlugins extends AuthFnPluginList,
+>(
+  authFn: AuthFnServer,
+  options: AuthFnOperatorAuthOptions<TPrincipal, TPlugins>,
   upstream: Response,
   payload: AuthFnEnvelope,
   request: Request,
-): Promise<SuperConsoleSignInResult> {
+): Promise<{ principal: TPrincipal; headers?: HeadersInit }> {
   if (!upstream.ok || payload.ok === false || !payload.data?.session) throwAuthResponse(upstream, payload);
   const principal = await options.resolveOperator({ session: payload.data.session, request });
   if (!principal) {
@@ -122,53 +137,71 @@ async function resolveSuccessfulOperator(
 }
 
 /**
- * Uses AuthFn's composed router for sign-in/sign-out, preserving plugins,
- * hooks, rate limits, 2FA challenge semantics, CSRF and cookie behavior.
+ * Function-owned Super Console integration. It preserves provider plugins,
+ * hooks, rate limits, two-factor semantics, CSRF, and cookie behavior while
+ * satisfying the console's provider-neutral operator-auth contract.
  */
-export function createAuthFnOperatorAuth(options: AuthFnOperatorAuthOptions): SuperConsoleOperatorAuth {
-  const config = options.config;
-  const authFn = createAuthFn(config);
-  const basePath = (config.basePath ?? '/auth').replace(/\/+$/, '') || '/';
+export function createAuthFnOperatorAuth<
+  TPrincipal extends AuthFnOperatorPrincipal,
+  TPlugins extends AuthFnPluginList,
+>(
+  options: AuthFnOperatorAuthOptions<TPrincipal, TPlugins>,
+) {
+  const authFn = authfn(options.config).createServer(options.config);
+  const basePath = (options.config.basePath ?? '/auth').replace(/\/+$/, '') || '/';
   const route = (suffix: string) => `${basePath === '/' ? '' : basePath}${suffix}`;
 
   return {
-    async authenticate(request) {
+    async authenticate(request: Request) {
       const session = await authFn.provider.authenticate(request);
       if (!session) return null;
       const principal = await options.resolveOperator({ session, request });
       return principal ? withCookieNames(authFn, principal, request) : null;
     },
-    async authorizeScope(input) {
+    async authorizeScope(input: { principal: TPrincipal; requested: AdminScope; request: Request }) {
       return options.authorizeScope(input);
     },
-    async authorizeMutation({ request }) {
+    async authorizeMutation({ request }: { principal: TPrincipal; request: Request }) {
       await authFn.authorizeMutation(request);
     },
-    async signIn({ email, password, request }) {
+    async signIn({ email, password, request }: { email: string; password: string; request: Request }) {
       const upstream = await authFn.router.handle(authRequest(request, route('/sign-in/password'), {
         email,
         password,
         sessionMode: 'cookie',
       }));
-      const payload = await envelope(upstream);
-      // A 2FA-required response is non-success and contains no session/cookies;
-      // preserve it as an AuthFn response instead of issuing a Console session.
-      return resolveSuccessfulOperator(authFn, options, upstream, payload, request);
+      return resolveSuccessfulOperator(authFn, options, upstream, await envelope(upstream), request);
     },
-    async completeTwoFactor({ challengeId, code, request }) {
+    async completeTwoFactor({ challengeId, code, request }: { challengeId: string; code: string; request: Request }) {
       const upstream = await authFn.router.handle(authRequest(request, route('/2fa/challenge'), { challengeId, code }));
-      const payload = await envelope(upstream);
-      return resolveSuccessfulOperator(authFn, options, upstream, payload, request);
+      return resolveSuccessfulOperator(authFn, options, upstream, await envelope(upstream), request);
     },
-    async signOut({ request }) {
+    async signOut({ request }: { principal: TPrincipal | null; request: Request }) {
       const upstream = await authFn.router.handle(authRequest(request, route('/sign-out'), {}));
       const payload = await envelope(upstream);
       if (!upstream.ok || payload.ok === false) throwAuthResponse(upstream, payload);
       return { headers: authResponseHeaders(upstream) };
     },
+    mapError(error: unknown): Response | undefined {
+      if (error instanceof AuthFnOperatorResponseError) {
+        if (error.payload.error?.code !== 'AUTHFN_2FA_REQUIRED') return error.response;
+        return new Response(JSON.stringify({
+          ...error.payload,
+          error: { ...error.payload.error, code: 'OPERATOR_2FA_REQUIRED' },
+        }), { status: error.response.status, headers: authResponseHeaders(error.response) });
+      }
+      if (error instanceof AuthFnError) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: {
+            code: error.code,
+            message: error.message,
+            status: error.status,
+            retryable: error.retryable,
+          },
+        }), { status: error.status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+      }
+      return undefined;
+    },
   };
-}
-
-export function isAuthFnResponseError(error: unknown): error is Error & { authFnResponse: Response } {
-  return error instanceof SuperConsoleAuthFnResponseError;
 }

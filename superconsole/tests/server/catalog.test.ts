@@ -1,75 +1,89 @@
 import { describe, expect, it } from 'vitest';
+import type { AdminCapabilityManifest } from '@superfunctions/admin';
 import {
-  KNOWN_MODULE_IDS,
-  FOLDED_MODULE_IDS,
-  MODULE_CATALOG,
   ModuleSelectionError,
-  NESTED_MODULE_IDS,
-  OPTIONAL_MODULE_IDS,
-  REQUIRED_MODULE_IDS,
-  UNAVAILABLE_MODULE_IDS,
   catalogForSelection,
+  createConsoleModuleCatalog,
   parseModuleSelection,
 } from '../../src/lib/server/catalog';
 
-describe('Super Console module catalog', () => {
-  it('contains all 29 product and nested administration capabilities exactly once', () => {
-    expect(KNOWN_MODULE_IDS).toHaveLength(29);
-    expect(new Set(KNOWN_MODULE_IDS)).toHaveLength(29);
-    expect(MODULE_CATALOG).toHaveLength(29);
-    expect(REQUIRED_MODULE_IDS).toHaveLength(20);
-    expect(OPTIONAL_MODULE_IDS).toHaveLength(6);
-    expect(NESTED_MODULE_IDS).toHaveLength(2);
-    expect(FOLDED_MODULE_IDS).toHaveLength(1);
-    expect(UNAVAILABLE_MODULE_IDS).toHaveLength(0);
-    expect(new Set([...REQUIRED_MODULE_IDS, ...OPTIONAL_MODULE_IDS, ...NESTED_MODULE_IDS, ...FOLDED_MODULE_IDS, ...UNAVAILABLE_MODULE_IDS])).toHaveLength(29);
-  });
+function manifest(
+  id: string,
+  overrides: Partial<AdminCapabilityManifest> = {},
+): AdminCapabilityManifest {
+  return {
+    schemaVersion: '1.0',
+    id,
+    displayName: id === 'custom-product' ? 'Custom Product' : id,
+    version: '1.0.0',
+    description: `Operate ${id}.`,
+    category: 'test',
+    availability: 'optional-product',
+    scopeLevels: ['installation'],
+    operations: [],
+    ...overrides,
+  };
+}
 
-  it('parses an explicit, deterministic selection without auto-enabling modules', () => {
-    expect(parseModuleSelection('watchfn,catchfn,logfn, authfn,watchfn')).toEqual([
-      'authfn',
-      'catchfn',
-      'logfn',
-      'watchfn',
-    ]);
-    expect(() => parseModuleSelection(undefined)).toThrow(/explicit module selection/);
-    expect(parseModuleSelection([])).toEqual([]);
-  });
+const manifests = [
+  manifest('owner-module'),
+  manifest('examplefn', {
+    availability: 'nested',
+    owner: { moduleId: 'owner-module', mountPath: '/modules/owner-module/example' },
+    dependencies: ['owner-module'],
+  }),
+  manifest('custom-product', {
+    dependencies: [{ moduleId: 'owner-module', required: true, reason: 'Shared runtime' }],
+  }),
+  manifest('folded-module', {
+    availability: 'folded',
+    owner: { moduleId: 'owner-module' },
+    dependencies: ['owner-module'],
+  }),
+  manifest('future-module', {
+    availability: 'unavailable',
+    unavailableReason: 'No administration service.',
+  }),
+];
 
-  it('rejects unknown modules', () => {
-    expect(() => parseModuleSelection('authfn,unknownfn')).toThrow(ModuleSelectionError);
-  });
-
-  it('rejects a nested module without its owner', () => {
-    expect(() => parseModuleSelection('catchfn')).toThrow(
-      'Nested modules require their owning module to be selected.'
-    );
-    expect(parseModuleSelection('watchfn,catchfn,logfn')).toEqual([
-      'catchfn',
-      'logfn',
-      'watchfn',
-    ]);
-  });
-
-  it('allows owners without unused nested products and rejects independently selected folded modules', () => {
-    expect(parseModuleSelection('watchfn')).toEqual(['watchfn']);
-    expect(parseModuleSelection('cmsfn')).toEqual(['cmsfn']);
-    expect(parseModuleSelection('watchfn,catchfn')).toEqual(['catchfn', 'watchfn']);
-    expect(() => parseModuleSelection('cmsfn,contentfn')).toThrow('Folded modules are provided by their owner');
-    expect(parseModuleSelection('hostfn')).toEqual(['hostfn']);
-    expect(parseModuleSelection('apifn,botfn,docsfn,langfn')).toEqual([
-      'apifn',
-      'botfn',
-      'docsfn',
-      'langfn',
+describe('Super Console manifest catalog', () => {
+  it('derives all catalog metadata from arbitrary supplied manifests', () => {
+    expect(createConsoleModuleCatalog(manifests)).toEqual([
+      expect.objectContaining({ id: 'owner-module', displayName: 'owner-module', dependencies: [] }),
+      expect.objectContaining({ id: 'examplefn', availability: 'nested', owner: { moduleId: 'owner-module', mountPath: '/modules/owner-module/example' } }),
+      expect.objectContaining({ id: 'custom-product', displayName: 'Custom Product', dependencies: [{ moduleId: 'owner-module', required: true, reason: 'Shared runtime' }] }),
+      expect.objectContaining({ id: 'folded-module', availability: 'folded' }),
+      expect.objectContaining({ id: 'future-module', availability: 'unavailable' }),
     ]);
   });
 
-  it('returns only explicitly selected catalog entries', () => {
-    expect(catalogForSelection(['authfn', 'cmsfn', 'contentfn']).map(({ id }) => id)).toEqual([
-      'authfn',
-      'cmsfn',
-      'contentfn',
+  it('parses an explicit deterministic selection without auto-enabling modules', () => {
+    expect(parseModuleSelection('custom-product,owner-module,examplefn,owner-module', manifests)).toEqual([
+      'owner-module',
+      'examplefn',
+      'custom-product',
     ]);
+    expect(() => parseModuleSelection(undefined, manifests)).toThrow(/explicit module selection/);
+    expect(parseModuleSelection([], manifests)).toEqual([]);
+  });
+
+  it('rejects unknown, unavailable, folded, ownerless, and dependency-incomplete selections', () => {
+    expect(() => parseModuleSelection('unknown-module', manifests)).toThrow(ModuleSelectionError);
+    expect(() => parseModuleSelection('future-module', manifests)).toThrow(/domain-backed/);
+    expect(() => parseModuleSelection('owner-module,folded-module', manifests)).toThrow(/cannot be selected independently/);
+    expect(() => parseModuleSelection('examplefn', manifests)).toThrow(/owning module/);
+    expect(() => parseModuleSelection('custom-product', manifests)).toThrow(/additional enabled dependencies/);
+  });
+
+  it('returns only selected derived catalog entries', () => {
+    const catalog = createConsoleModuleCatalog(manifests);
+    expect(catalogForSelection(catalog, ['owner-module', 'custom-product']).map(({ id }) => id)).toEqual([
+      'owner-module',
+      'custom-product',
+    ]);
+  });
+
+  it('rejects duplicate supplied manifest IDs', () => {
+    expect(() => createConsoleModuleCatalog([manifest('examplefn'), manifest('examplefn')])).toThrow(/duplicate module IDs/);
   });
 });

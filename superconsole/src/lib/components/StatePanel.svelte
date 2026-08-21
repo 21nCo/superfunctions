@@ -35,7 +35,7 @@
   const copy = $derived.by(() => {
     if (kind === 'loading') return { title: title ?? 'Loading', message: message ?? 'Retrieving the latest operator data.' };
     if (kind === 'empty') return { title: title ?? 'Nothing here yet', message: message ?? 'There are no resources in this scope.' };
-    if (kind === 'forbidden') return { title: title ?? 'Access restricted', message: message ?? 'Your AuthFn role does not grant access to this operator surface.' };
+    if (kind === 'forbidden') return { title: title ?? 'Access restricted', message: message ?? 'Your operator role does not grant access to this surface.' };
     if (kind === 'not-found') return { title: title ?? 'Not found', message: message ?? 'This resource does not exist or is not enabled for this deployment.' };
     return { title: title ?? 'Unable to load this view', message: message ?? error?.message ?? 'The administration service returned an unexpected error.' };
   });

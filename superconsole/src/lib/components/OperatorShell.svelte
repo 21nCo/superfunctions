@@ -18,7 +18,7 @@
   import { mountTheme, type FirstPartyThemeName } from '@uifn/theme';
   import { onMount, type Snippet } from 'svelte';
   import CommandPalette from './CommandPalette.svelte';
-  import { fetchConsole, safeConsoleNavigationHref, scopedConsoleHref, setAuthFnCsrfCookieName } from './admin-api';
+  import { fetchConsole, safeConsoleNavigationHref, scopedConsoleHref, setOperatorCsrf } from './admin-api';
   import ConsoleIcon from './ConsoleIcon.svelte';
   import ContextSwitcher from './ContextSwitcher.svelte';
   import OperatorNavigation from './OperatorNavigation.svelte';
@@ -26,7 +26,6 @@
   import { clearMutationFeedback, mutationFeedback } from './mutation-outcome';
   import {
     enabledNavigationModules,
-    registryHasModule,
     shellSurfaceEnabled,
     type ShellViewModel,
   } from './view-models';
@@ -41,9 +40,7 @@
   let theme = $state<FirstPartyThemeName>('uifn-light');
   const modules = $derived(enabledNavigationModules(shell.registry));
   const overviewEnabled = $derived(shellSurfaceEnabled(shell.registry, 'overview'));
-  const searchEnabled = $derived(
-    registryHasModule(shell.registry, 'searchfn') && shellSurfaceEnabled(shell.registry, 'search')
-  );
+  const searchEnabled = $derived(shellSurfaceEnabled(shell.registry, 'search'));
   const apiEnabled = $derived(shellSurfaceEnabled(shell.registry, 'api'));
   const mcpEnabled = $derived(shellSurfaceEnabled(shell.registry, 'mcp'));
   const auditEnabled = $derived(shellSurfaceEnabled(shell.registry, 'audit'));
@@ -54,7 +51,7 @@
       : modules[0]?.href
         ?? (auditEnabled ? '/audit' : settingsEnabled ? '/settings' : apiEnabled ? '/api' : mcpEnabled ? '/mcp' : '/')
   );
-  $effect(() => setAuthFnCsrfCookieName(shell.session?.csrfCookieName));
+  $effect(() => setOperatorCsrf(shell.session?.csrfCookieName, shell.session?.csrfHeaderName));
   $effect(() => {
     if (!shell.session) clearMutationFeedback();
   });
@@ -87,7 +84,7 @@
     });
     if (response.ok) {
       clearMutationFeedback();
-      setAuthFnCsrfCookieName(undefined);
+      setOperatorCsrf(undefined, undefined);
       await invalidateAll().catch(() => undefined);
       await goto('/sign-in');
     }

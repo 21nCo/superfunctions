@@ -31,7 +31,7 @@
   }
 </script>
 
-<PageHeader eyebrow="AuthFn + WatchFn" title="Audit trail" description="Immutable operator, REST, and MCP activity across every enabled Superfunction." />
+<PageHeader eyebrow="Operator audit" title="Audit trail" description="Immutable operator, REST, and MCP activity across every enabled module." />
 
 {#if data.loadError?.status === 403}
   <StatePanel kind="forbidden" error={data.loadError} />

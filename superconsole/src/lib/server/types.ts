@@ -41,8 +41,10 @@ export interface SuperConsolePrincipal {
     sessionId?: string;
     type?: string;
     methods?: readonly string[];
-    /** Exact AuthFn CSRF cookie selected for this request/runtime. */
+    /** Exact provider-defined CSRF cookie selected for this request/runtime. */
     csrfCookieName?: string;
+    /** Exact provider-defined CSRF request header. */
+    csrfHeaderName?: string;
   }>;
 }
 
@@ -70,6 +72,8 @@ export interface SuperConsoleOperatorAuth {
   signIn?(input: { email: string; password: string; request: Request }): Promise<SuperConsoleSignInResult>;
   completeTwoFactor?(input: { challengeId: string; code: string; request: Request }): Promise<SuperConsoleSignInResult>;
   signOut?(input: { principal: SuperConsolePrincipal | null; request: Request }): Promise<SuperConsoleSignOutResult>;
+  /** Optionally translate provider-owned errors into a safe HTTP response. */
+  mapError?(error: unknown): Response | undefined;
 }
 
 export interface SuperConsoleShellPolicy {
@@ -92,26 +96,26 @@ export interface SuperConsoleSearchResult {
 }
 
 export interface SuperConsoleSearchService {
-  /** Inject a SearchFn-backed scoped query service. */
+  /** Inject a provider-neutral scoped query service. */
   search(input: {
     query: string;
     limit: number;
     cursor?: string;
     context: AdminOperationContext;
   }): Promise<{ results: readonly SuperConsoleSearchResult[]; total?: number; nextCursor?: string }>;
-  /** Permission enforced before the SearchFn query service is called. */
+  /** Permission enforced before the query service is called. */
   permission: string;
 }
 
 export interface SuperConsoleAuditQuery {
-  /** Inject a WatchFn/audit-store-backed query. */
+  /** Inject an audit-store-backed query. */
   list(input: {
     cursor?: string;
     limit: number;
     filters: Readonly<Record<string, string>>;
     context: AdminOperationContext;
   }): Promise<{ events: readonly AdminAuditEvent[]; total?: number; nextCursor?: string }>;
-  /** Permission enforced before the WatchFn/audit query service is called. */
+  /** Permission enforced before the audit query service is called. */
   permission: string;
 }
 
@@ -150,15 +154,16 @@ export interface SuperConsoleOptions {
   settings?: SuperConsoleSettingsService;
   serverName?: string;
   apiBasePath?: string;
-  /**
-   * Override OpenAPI auth schemes when AuthFn uses a custom cookie prefix or
-   * policy. Preserve the `authFnSession` and `authFnApiKey` keys referenced by
-   * protected operations.
-   */
-  openApiSecuritySchemes?: Readonly<{
-    authFnSession: unknown;
-    authFnApiKey: unknown;
+  /** Deployment/provider-owned OpenAPI authentication schemes. */
+  openApiSecuritySchemes: Readonly<{
+    operatorSession: unknown;
+    operatorApiKey: unknown;
     [name: string]: unknown;
+  }>;
+  /** Exact provider-owned CSRF header projected for unsafe operations. */
+  openApiCsrfHeader?: Readonly<{
+    name: string;
+    description?: string;
   }>;
   now?: () => Date;
 }

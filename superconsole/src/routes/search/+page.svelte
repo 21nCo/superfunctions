@@ -27,7 +27,7 @@
   }
 </script>
 
-<PageHeader eyebrow="SearchFn" title="Global search" description="Find resources across only the Superfunctions enabled in the active operator scope." />
+<PageHeader eyebrow="Operator search" title="Global search" description="Find resources across only the modules enabled in the active operator scope." />
 
 <form class="global-search" onsubmit={(event) => { event.preventDefault(); submit(); }}>
   <ConsoleIcon name="search" size={22} />

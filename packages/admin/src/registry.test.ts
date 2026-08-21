@@ -359,23 +359,19 @@ describe("manifest validation", () => {
     ).toContain("must require the target idInput");
   });
 
-  it("binds targets to the operation resource segment", () => {
+  it("treats the declared target as authoritative over operation-id segments", () => {
     const manifest = testManifest("examplefn");
-    const invalid = testManifest("examplefn", {
+    const valid = testManifest("examplefn", {
       operations: [
         {
           ...manifest.operations[0]!,
-          target: { resource: "other-records", collection: true },
+          id: "examplefn.enumerate",
+          target: { resource: "records", collection: true },
         },
       ],
     });
 
-    expect(validateAdminCapabilityManifest(invalid)).toContainEqual(
-      expect.objectContaining({
-        path: "$.operations[0].target.resource",
-        message: "must match the resource segment in the operation id",
-      }),
-    );
+    expect(validateAdminCapabilityManifest(valid)).toEqual([]);
   });
 
   it("requires audit whenever an operation declares sensitive fields", () => {
@@ -582,6 +578,180 @@ describe("manifest validation", () => {
     expect(validateAdminCapabilityManifest(invalid)).toContainEqual(expect.objectContaining({
       path: "$.operations[0].safety.requiresConfirmation",
       message: "must be true when high-risk confirmation metadata is declared",
+    }));
+  });
+
+  it("validates non-authoritative generic resource presentation metadata", () => {
+    const base = testManifest("examplefn");
+    const valid = testManifest("examplefn", {
+      resources: [{
+        id: "records",
+        label: "Records",
+        description: "Presented records.",
+        risk: "standard",
+        idField: "id",
+        sortableFields: ["createdAt"],
+        presentation: {
+          listOperationId: "examplefn.records.list",
+          titleField: "name",
+          columns: [{ field: "id", label: "Record", format: "code" }],
+          defaultSort: { field: "createdAt", direction: "desc" },
+        },
+      }],
+    });
+    expect(validateAdminCapabilityManifest(valid)).toEqual([]);
+
+    const invalid = testManifest("examplefn", {
+      resources: [{
+        ...valid.resources![0]!,
+        presentation: {
+          listOperationId: "examplefn.records.missing",
+          columns: [{ field: "id", label: "" }, { field: "id", label: "Duplicate" }],
+          defaultSort: { field: "undeclared", direction: "asc" },
+        },
+      }],
+      operations: base.operations,
+    });
+    const messages = validateAdminCapabilityManifest(invalid).map((issue) => issue.message);
+    expect(messages).toContain("must name an operation in the same manifest");
+    expect(messages).toContain("must not contain duplicate fields");
+    expect(messages).toContain("must not be empty");
+    expect(messages).toContain("must be declared in sortableFields");
+  });
+
+  it("requires defaultSort fields to be explicitly sortable", () => {
+    const invalid = testManifest("examplefn", {
+      resources: [{
+        id: "records",
+        label: "Records",
+        description: "Presented records.",
+        risk: "standard",
+        idField: "id",
+        presentation: {
+          listOperationId: "examplefn.records.list",
+          defaultSort: { field: "createdAt", direction: "desc" },
+        },
+      }],
+    });
+    expect(validateAdminCapabilityManifest(invalid)).toContainEqual(expect.objectContaining({
+      path: "$.resources[0].presentation.defaultSort.field",
+      message: "must be declared in sortableFields",
+    }));
+  });
+
+  it("collects a presentation target issue instead of throwing for malformed operations", () => {
+    const base = testManifest("examplefn");
+    const malformed = testManifest("examplefn", {
+      resources: [{
+        id: "records",
+        label: "Records",
+        description: "Presented records.",
+        risk: "standard",
+        idField: "id",
+        presentation: { listOperationId: "examplefn.records.list" },
+      }],
+      operations: [{ ...base.operations[0]!, target: undefined }],
+    });
+    expect(() => validateAdminCapabilityManifest(malformed)).not.toThrow();
+    expect(validateAdminCapabilityManifest(malformed)).toContainEqual(expect.objectContaining({
+      path: "$.resources[0].presentation.listOperationId",
+      message: "must name a read operation targeting this resource",
+    }));
+  });
+
+  it("validates list and detail presentation fields against their consuming surfaces", () => {
+    const base = testManifest("examplefn").operations[0]!;
+    const recordId = { type: "object" as const, properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false };
+    const recordDetail = { type: "object" as const, properties: { id: { type: "string" }, name: { type: "string" } }, required: ["id", "name"], additionalProperties: false };
+    const valid = testManifest("examplefn", {
+      resources: [{
+        id: "records",
+        label: "Records",
+        description: "Presented records.",
+        risk: "standard",
+        idField: "id",
+        presentation: {
+          listOperationId: "examplefn.enumerate",
+          detailOperationId: "examplefn.inspect",
+          titleField: "name",
+          columns: [{ field: "id", label: "Record" }],
+        },
+      }],
+      operations: [
+        {
+          ...base,
+          id: "examplefn.enumerate",
+          outputSchema: { type: "object", properties: { items: { type: "array", items: recordId } }, required: ["items"], additionalProperties: false },
+          target: { resource: "records", collection: true },
+        },
+        {
+          ...base,
+          id: "examplefn.inspect",
+          inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
+          outputSchema: { type: "object", properties: { item: recordDetail }, required: ["item"], additionalProperties: false },
+          route: { method: "GET", path: "/resources/records/:id" },
+          target: { resource: "records", idInput: "id" },
+        },
+      ],
+    });
+    expect(validateAdminCapabilityManifest(valid)).toEqual([]);
+  });
+
+  it("validates contextual resource bindings and list query mappings", () => {
+    const base = testManifest("examplefn").operations[0]!;
+    const operation = {
+      ...base,
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          filter: {
+            type: "object" as const,
+            properties: { parentId: { type: "string" as const } },
+            required: ["parentId"],
+            additionalProperties: false,
+          },
+        },
+        required: ["filter"],
+        additionalProperties: false,
+      },
+    };
+    const valid = testManifest("examplefn", {
+      resources: [
+        { id: "parents", label: "Parents", description: "Parent records.", risk: "standard", idField: "id" },
+        {
+          id: "records", label: "Records", description: "Child records.", risk: "standard", idField: "id",
+          filterableFields: ["parentId"],
+          presentation: {
+            standaloneList: false,
+            listOperationId: operation.id,
+            query: { filters: [{ field: "parentId", inputPath: "filter.parentId" }] },
+            parent: { resourceId: "parents", bindings: [{ sourceField: "id", queryField: "parentId" }] },
+          },
+        },
+      ],
+      operations: [operation],
+    });
+    expect(validateAdminCapabilityManifest(valid)).toEqual([]);
+
+    const invalid = testManifest("examplefn", {
+      resources: [{
+        id: "records", label: "Records", description: "Child records.", risk: "standard", idField: "id",
+        presentation: {
+          standaloneList: false,
+          listOperationId: operation.id,
+          query: { filters: [{ field: "missing", inputPath: "filter.missing" }] },
+        },
+      }],
+      operations: [operation],
+    });
+    const issues = validateAdminCapabilityManifest(invalid);
+    expect(issues).toContainEqual(expect.objectContaining({
+      path: "$.resources[0].presentation.parent",
+      message: "is required when standaloneList is false",
+    }));
+    expect(issues).toContainEqual(expect.objectContaining({
+      path: "$.resources[0].presentation.query.filters[0].inputPath",
+      message: "must resolve in the list operation input schema",
     }));
   });
 });

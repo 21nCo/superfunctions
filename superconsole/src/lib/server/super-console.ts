@@ -22,12 +22,11 @@ import {
   type AdminResult,
   type AdminScope,
 } from '@superfunctions/admin';
-import { AuthFnError } from '@authfn/core';
 import { createMcpFnServer, McpFnRegistry, type McpFnListedTool, type McpFnRequestExtra, type McpFnServer, type McpFnToolDefinition } from '@mcpfn/core';
 import { parseModuleSelection } from './catalog.js';
-import { isAuthFnResponseError } from './authfn.js';
 import type {
   SuperConsoleOptions,
+  SuperConsoleOperatorAuth,
   SuperConsolePrincipal,
   SuperConsoleRequestState,
 } from './types.js';
@@ -58,24 +57,46 @@ class SuperConsoleHttpError extends Error {
 
 function response(body: unknown, status = 200, extraHeaders?: HeadersInit): Response {
   const headers = new Headers(JSON_HEADERS);
-  // AuthFn can emit both a session cookie and a CSRF cookie. Read an incoming
+  // An auth provider can emit both a session cookie and a CSRF cookie. Read an incoming
   // Headers instance directly so constructing a second Headers object cannot
   // coalesce Set-Cookie values containing Expires commas.
   const incoming = extraHeaders instanceof Headers ? extraHeaders : new Headers(extraHeaders);
   incoming.forEach((value, key) => {
     if (key !== 'set-cookie') headers.append(key, value);
   });
-  const cookieHeaders = incoming as Headers & { getSetCookie?: () => string[] };
-  for (const cookie of cookieHeaders.getSetCookie?.() ?? []) headers.append('set-cookie', cookie);
-  if (!cookieHeaders.getSetCookie && incoming.has('set-cookie')) headers.append('set-cookie', incoming.get('set-cookie')!);
+  for (const cookie of readSetCookieHeaders(incoming)) headers.append('set-cookie', cookie);
   return new Response(JSON.stringify(body), { status, headers });
+}
+
+function splitCombinedSetCookieHeader(value: string): string[] {
+  const cookies: string[] = [];
+  let start = 0;
+  let quoted = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === '"' && value[index - 1] !== '\\') quoted = !quoted;
+    if (character !== ',' || quoted) continue;
+    const remainder = value.slice(index + 1);
+    if (!/^\s*[!#$%&'*+\-.^_`|~0-9A-Za-z]+=/.test(remainder)) continue;
+    cookies.push(value.slice(start, index).trim());
+    start = index + 1;
+  }
+  cookies.push(value.slice(start).trim());
+  return cookies.filter(Boolean);
+}
+
+function readSetCookieHeaders(headers: Headers): string[] {
+  const source = headers as Headers & { getSetCookie?: () => string[] };
+  if (typeof source.getSetCookie === 'function') return source.getSetCookie();
+  const combined = headers.get('set-cookie');
+  return combined ? splitCombinedSetCookieHeader(combined) : [];
 }
 
 function success(data: unknown, requestId?: string, headers?: HeadersInit, status = 200): Response {
   return response({ ok: true, data, ...(requestId ? { requestId } : {}) }, status, headers);
 }
 
-function failure(error: unknown, requestId?: string): Response {
+function failure(error: unknown, requestId?: string, auth?: SuperConsoleOperatorAuth): Response {
   if (error instanceof SuperConsoleHttpError) {
     return response({
       ok: false,
@@ -83,23 +104,11 @@ function failure(error: unknown, requestId?: string): Response {
       ...(requestId ? { requestId } : {}),
     }, error.status);
   }
-  if (error instanceof AuthFnError) {
-    return response({
-      ok: false,
-      error: {
-        code: error.code,
-        message: error.message,
-        status: error.status,
-        retryable: error.retryable,
-      },
-      ...(requestId ? { requestId } : {}),
-    }, error.status);
-  }
-  if (isAuthFnResponseError(error)) {
-    const source = error.authFnResponse;
+  const providerResponse = auth?.mapError?.(error);
+  if (providerResponse) {
+    const source = providerResponse;
     const headers = new Headers();
-    const sourceCookies = source.headers as Headers & { getSetCookie?: () => string[] };
-    for (const cookie of sourceCookies.getSetCookie?.() ?? []) headers.append('set-cookie', cookie);
+    for (const cookie of readSetCookieHeaders(source.headers)) headers.append('set-cookie', cookie);
     for (const name of ['retry-after', 'x-request-id']) {
       const value = source.headers.get(name);
       if (value) headers.set(name, value);
@@ -216,6 +225,7 @@ function sessionView(principal: SuperConsolePrincipal) {
     role: principal.role,
     permissions: principal.actor.permissions ?? [],
     csrfCookieName: principal.authentication?.csrfCookieName,
+    csrfHeaderName: principal.authentication?.csrfHeaderName,
   };
 }
 
@@ -289,7 +299,7 @@ function routeDefinition(operation: AdminOperationDefinition): { method: string;
 }
 
 function resourceId(entry: AdminRegistryOperation): string {
-  return entry.operation.id.split('.')[1] ?? entry.operation.id;
+  return entry.operation.target?.resource ?? entry.operation.id.split('.')[1] ?? entry.operation.id;
 }
 
 interface ConsoleActionView {
@@ -323,10 +333,13 @@ interface ConsoleResourceView {
   href: string;
   apiHref?: string;
   listApiHref?: string;
+  listInputSchema?: AdminJsonSchema;
   detailApiHref?: string;
   detailIdInput?: string;
   detailInputSchema?: AdminJsonSchema;
   listable: boolean;
+  standaloneList: boolean;
+  presentation?: NonNullable<AdminCapabilityManifest['resources']>[number]['presentation'];
   actions: ConsoleActionView[];
 }
 
@@ -374,8 +387,12 @@ function moduleView(
   const ownResources = [...new Set(entries.map(resourceId))].map((id) => {
     const operations = entries.filter((entry) => resourceId(entry) === id);
     const resource = declaredResources.find((candidate) => candidate.id === id);
-    const list = operations.find((entry) => entry.operation.id.endsWith('.list'));
-    const get = operations.find((entry) => entry.operation.id.endsWith('.get'));
+    const list = resource?.presentation?.listOperationId
+      ? operations.find((entry) => entry.operation.id === resource.presentation?.listOperationId)
+      : operations.find((entry) => entry.operation.id.endsWith('.list'));
+    const get = resource?.presentation?.detailOperationId
+      ? operations.find((entry) => entry.operation.id === resource.presentation?.detailOperationId)
+      : operations.find((entry) => entry.operation.id.endsWith('.get'));
     const actions = operations
       .filter((entry) => entry.operation.safety.classification !== 'read' && Boolean(entry.operation.target?.idInput))
       .map(actionView);
@@ -394,10 +411,13 @@ function moduleView(
       href: `${navigation?.path ?? `/modules/${manifest.id}`}/${id}`,
       apiHref: list?.routePath,
       listApiHref: list?.routePath,
+      listInputSchema: list?.operation.inputSchema,
       detailApiHref: get?.routePath,
       detailIdInput: get?.operation.target?.idInput,
       detailInputSchema: get?.operation.inputSchema,
       listable: Boolean(list),
+      standaloneList: resource?.presentation?.standaloneList !== false,
+      presentation: resource?.presentation,
       actions,
     };
   });
@@ -411,7 +431,7 @@ function moduleView(
     moduleId: child.id,
     sourceModuleId: child.id,
     foldedIntoModuleId: manifest.id,
-    href: `${childManifest.owner?.mountPath ?? `${navigation?.path ?? `/modules/${manifest.id}`}/${child.id}`}/${resource.resourceId}`,
+    href: `${navigation?.path ?? `/modules/${manifest.id}`}/${encodeURIComponent(`${child.id}:${resource.resourceId}`)}`,
     actions: resource.actions.map((action) => ({
       ...action,
       sourceModuleId: child.id,
@@ -508,7 +528,7 @@ export class SuperConsole {
   constructor(options: SuperConsoleOptions) {
     const enabledModules = parseModuleSelection(
       options.enabledModules,
-      options.adapters.map((adapter) => adapter.manifest.id),
+      options.adapters.map((adapter) => adapter.manifest),
     );
     this.options = options;
     this.now = options.now ?? (() => new Date());
@@ -560,15 +580,15 @@ export class SuperConsole {
       throw new Error('Super Console startup requires an atomic idempotency store because enabled mutations declare idempotent execution.');
     }
     if (operations.some((operation) => operation.safety.classification !== 'read') && typeof options.auth.authorizeMutation !== 'function') {
-      throw new Error('Super Console startup requires AuthFn-backed mutation authorization because enabled operations can mutate state.');
+      throw new Error('Super Console startup requires operator-auth mutation authorization because enabled operations can mutate state.');
     }
     if (operations.some((operation) => operation.safety.requiresConfirmation)
       && (typeof options.confirmation?.issue !== 'function' || typeof options.confirmation?.verify !== 'function')) {
       throw new Error('Super Console startup requires a confirmation issuer and verifier because enabled operations require confirmation.');
     }
     if (options.openApiSecuritySchemes
-      && (!options.openApiSecuritySchemes.authFnSession || !options.openApiSecuritySchemes.authFnApiKey)) {
-      throw new Error('Super Console OpenAPI security overrides must define authFnSession and authFnApiKey.');
+      && (!options.openApiSecuritySchemes.operatorSession || !options.openApiSecuritySchemes.operatorApiKey)) {
+      throw new Error('Super Console OpenAPI security overrides must define operatorSession and operatorApiKey.');
     }
   }
 
@@ -610,7 +630,7 @@ export class SuperConsole {
       if (this.isKnownEndpoint(relative)) throw new SuperConsoleHttpError('This administration endpoint does not support the requested method.', { status: 405, code: 'METHOD_NOT_ALLOWED' });
       throw new SuperConsoleHttpError('No administration endpoint exists at this path.', { status: 404, code: 'ADMIN_ROUTE_NOT_FOUND' });
     } catch (error) {
-      return failure(error, identity.requestId);
+      return failure(error, identity.requestId, this.options.auth);
     }
   }
 
@@ -852,7 +872,7 @@ export class SuperConsole {
     const handler = await this.mcpHandlerPromise;
     return handler(request, {
       authInfo: {
-        token: `authfn:${state.principal.actor.id}`,
+        token: `operator:${state.principal.actor.id}`,
         clientId: state.principal.actor.id,
         scopes: [...(state.principal.actor.permissions ?? [])],
         extra: { adminContext: state.context, adminPrincipal: state.principal },
@@ -905,8 +925,7 @@ export class SuperConsole {
 
   private async search(request: Request, state: SuperConsoleRequestState) {
     await this.authorizeShell('search', state);
-    if (!this.registry.hasModule('searchfn')) throw new SuperConsoleHttpError('SearchFn is not enabled.', { status: 404, code: 'MODULE_NOT_ENABLED' });
-    if (!this.options.search) throw new SuperConsoleHttpError('The SearchFn-backed console search service is unavailable.', { status: 503, code: 'SEARCH_UNAVAILABLE' });
+    if (!this.options.search) throw new SuperConsoleHttpError('The console search service is unavailable.', { status: 503, code: 'SEARCH_UNAVAILABLE' });
     this.requirePermission(state.principal, this.options.search.permission);
     const url = new URL(request.url);
     const query = url.searchParams.get('q')?.trim() ?? '';
@@ -938,7 +957,7 @@ export class SuperConsole {
       this.requirePermission(state.principal, this.options.auditQuery.permission);
       return this.options.auditQuery.list({ cursor: url.searchParams.get('cursor') ?? undefined, limit, filters, context: state.context });
     }
-    throw new SuperConsoleHttpError('The WatchFn-backed audit query service is unavailable.', { status: 503, code: 'AUDIT_UNAVAILABLE' });
+    throw new SuperConsoleHttpError('The audit query service is unavailable.', { status: 503, code: 'AUDIT_UNAVAILABLE' });
   }
 
   private async settings(state: SuperConsoleRequestState) {
@@ -1173,55 +1192,22 @@ export class SuperConsole {
       ? `${this.registry.apiBasePath}/modules/${encodeURIComponent(moduleId)}/resources/${rest.join('/')}`
       : undefined;
     let entry = this.registry.matchRoute(request.method, matchedPath);
-    let ciAliasKind: 'artifacts' | 'logs' | undefined;
     if (!entry && resourceAliasPath) {
       entry = this.registry.matchRoute(request.method, resourceAliasPath);
       if (entry) matchedPath = resourceAliasPath;
     }
-    let aliasInput: Record<string, unknown> = {};
-    if (moduleId === 'cifn' && request.method === 'GET') {
-      const artifactMatch = /^runs\/([^/]+)\/artifacts$/.exec(rest.join('/'));
-      const logMatch = /^runs\/([^/]+)\/jobs\/([^/]+)\/logs$/.exec(rest.join('/'));
-      if (artifactMatch) {
-        entry = this.registry.getOperation('cifn.artifacts.list');
-        matchedPath = entry?.routePath ?? matchedPath;
-        aliasInput = { filter: { runId: decodeURIComponent(artifactMatch[1]!) } };
-        ciAliasKind = 'artifacts';
-      } else if (logMatch) {
-        entry = this.registry.getOperation('cifn.logs.list');
-        matchedPath = entry?.routePath ?? matchedPath;
-        aliasInput = { filter: { runId: decodeURIComponent(logMatch[1]!), jobKey: decodeURIComponent(logMatch[2]!) } };
-        ciAliasKind = 'logs';
-      }
-    }
     if (!entry) {
-      const ciAliasExists = moduleId === 'cifn' && (
-        (/^runs\/[^/]+\/artifacts$/.test(rest.join('/')) && Boolean(this.registry.getOperation('cifn.artifacts.list')))
-        || (/^runs\/[^/]+\/jobs\/[^/]+\/logs$/.test(rest.join('/')) && Boolean(this.registry.getOperation('cifn.logs.list')))
-      );
       const methodExists = this.registry.operations.some((candidate) => candidate.moduleId === moduleId &&
         [matchedPath, resourceAliasPath].filter((path): path is string => Boolean(path)).some((path) =>
           this.registry.matchRoute(routeDefinition(candidate.operation).method, path)?.operation.id === candidate.operation.id));
-      if (methodExists || ciAliasExists) throw new SuperConsoleHttpError('This module operation does not support the requested method.', { status: 405, code: 'METHOD_NOT_ALLOWED' });
+      if (methodExists) throw new SuperConsoleHttpError('This module operation does not support the requested method.', { status: 405, code: 'METHOD_NOT_ALLOWED' });
     }
     if (!entry || entry.moduleId !== moduleId) throw new SuperConsoleHttpError('The requested module operation is not enabled.', { status: 404, code: 'OPERATION_NOT_ENABLED' });
     if (!(await this.operationDiscoverable(entry, state))) {
       throw new SuperConsoleHttpError('The requested module operation is not enabled.', { status: 404, code: 'OPERATION_NOT_ENABLED' });
     }
-    const input = { ...(await operationInput(request, entry, matchedPath)), ...aliasInput };
+    const input = await operationInput(request, entry, matchedPath);
     const dispatched = await this.dispatcher.dispatch({ operationId: entry.operation.id, input, context: state.context });
-    if (dispatched.ok !== false && ciAliasKind === 'artifacts') {
-      const data = dispatched.data && typeof dispatched.data === 'object' && !Array.isArray(dispatched.data)
-        ? dispatched.data as Record<string, unknown>
-        : { value: dispatched.data };
-      return response({ ...dispatched, data: { ...data, artifacts: (data.items as unknown[] | undefined) ?? [] } }, 200);
-    }
-    if (dispatched.ok !== false && ciAliasKind === 'logs') {
-      const data = dispatched.data && typeof dispatched.data === 'object' && !Array.isArray(dispatched.data)
-        ? dispatched.data as Record<string, unknown>
-        : { value: dispatched.data };
-      return response({ ...dispatched, data: { ...data, lines: (data.items as unknown[] | undefined) ?? [] } }, 200);
-    }
     return resultResponse(dispatched);
   }
 
@@ -1263,7 +1249,7 @@ export class SuperConsole {
       mcp: Boolean(mcp) && toolVisibility.some(Boolean),
       settings: Boolean(settings) && hasPermission(this.options.settings?.permission),
       audit: Boolean(audit) && Boolean(this.options.auditQuery) && hasPermission(this.options.auditQuery?.permission),
-      search: Boolean(search) && this.registry.hasModule('searchfn') && Boolean(this.options.search) && hasPermission(this.options.search?.permission),
+      search: Boolean(search) && Boolean(this.options.search) && hasPermission(this.options.search?.permission),
     };
   }
 
@@ -1273,8 +1259,9 @@ export class SuperConsole {
       version: '1.0.0',
       description: 'Self-hosted operator administration powered by enabled Superfunctions.',
       securitySchemes: this.options.openApiSecuritySchemes,
+      csrfHeader: this.options.openApiCsrfHeader,
     });
-    const authenticated = [{ authFnSession: [] }, { authFnApiKey: [] }];
+    const authenticated = [{ operatorSession: [] }, { operatorApiKey: [] }];
     const scopeParameters = () => adminOpenApiScopeParameters();
     const jsonBody = (schema: Record<string, unknown>) => ({
       required: true,
@@ -1301,24 +1288,36 @@ export class SuperConsole {
     });
     const stringQuery = (name: string, required = false) => ({ name, in: 'query', required, schema: { type: 'string' } });
     const pageQueries = [stringQuery('cursor'), { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 200 } }];
+    const csrfParameters = this.options.openApiCsrfHeader ? [{
+      name: this.options.openApiCsrfHeader.name,
+      in: 'header',
+      required: false,
+      description: this.options.openApiCsrfHeader.description
+        ?? "Required for unsafe requests authenticated by the provider's cookie session.",
+      schema: { type: 'string', minLength: 1 },
+    }] : [];
     const sessionSchema = {
       type: 'object',
-      properties: { userId: { type: 'string' }, displayName: { type: 'string' }, email: { type: 'string' }, role: { type: 'string' }, permissions: { type: 'array', items: { type: 'string' } }, csrfCookieName: { type: 'string', description: 'Exact non-HttpOnly AuthFn CSRF cookie name selected for this runtime request.' } },
+      properties: { userId: { type: 'string' }, displayName: { type: 'string' }, email: { type: 'string' }, role: { type: 'string' }, permissions: { type: 'array', items: { type: 'string' } }, csrfCookieName: { type: 'string', description: 'Exact non-HttpOnly operator-auth CSRF cookie name selected for this runtime request.' }, csrfHeaderName: { type: 'string', description: 'Exact operator-auth CSRF request header selected for this runtime request.' } },
       required: ['userId', 'displayName', 'role', 'permissions'],
     };
     Object.assign(document.paths, {
       [`${this.registry.apiBasePath}/registry`]: { get: { operationId: 'superconsole.registry.get', summary: 'Discover enabled modules', security: authenticated, parameters: scopeParameters(), responses: { '200': jsonResponse('Enabled registry', { type: 'object', properties: { enabledModules: { type: 'array', items: { type: 'object' } }, modules: { type: 'array', items: { type: 'object' } }, surfaces: { type: 'object' } }, required: ['enabledModules', 'modules', 'surfaces'] }) } } },
       [`${this.registry.apiBasePath}/overview`]: { get: { operationId: 'superconsole.overview.get', summary: 'Read operator overview', security: authenticated, parameters: scopeParameters(), responses: { '200': jsonResponse('Overview', { type: 'object' }) } } },
-      [`${this.registry.apiBasePath}/search`]: { get: { operationId: 'superconsole.search.query', summary: 'Search through SearchFn', security: authenticated, parameters: [stringQuery('q', true), ...pageQueries, ...scopeParameters()], responses: { '200': jsonResponse('Search results', { type: 'object', properties: { results: { type: 'array', items: { type: 'object' } }, total: { type: 'integer' }, nextCursor: { type: 'string' } }, required: ['results'] }) } } },
+      [`${this.registry.apiBasePath}/search`]: { get: { operationId: 'superconsole.search.query', summary: 'Search administration resources', security: authenticated, parameters: [stringQuery('q', true), ...pageQueries, ...scopeParameters()], responses: { '200': jsonResponse('Search results', { type: 'object', properties: { results: { type: 'array', items: { type: 'object' } }, total: { type: 'integer' }, nextCursor: { type: 'string' } }, required: ['results'] }) } } },
       [`${this.registry.apiBasePath}/audit`]: { get: { operationId: 'superconsole.audit.list', summary: 'Query the audit stream', security: authenticated, parameters: [...pageQueries, ...['actor', 'module', 'outcome', 'q'].map((name) => stringQuery(name)), ...scopeParameters()], responses: { '200': jsonResponse('Audit events', { type: 'object', properties: { events: { type: 'array', items: { type: 'object' } }, total: { type: 'integer' }, nextCursor: { type: 'string' } }, required: ['events'] }) } } },
       [`${this.registry.apiBasePath}/settings`]: { get: { operationId: 'superconsole.settings.get', summary: 'Read deployment settings', security: authenticated, parameters: scopeParameters(), responses: { '200': jsonResponse('Settings', { type: 'object' }) } } },
       [`${this.registry.apiBasePath}/mcp`]: { get: { operationId: 'superconsole.mcp.get', summary: 'Read McpFn tool metadata', security: authenticated, parameters: scopeParameters(), responses: { '200': jsonResponse('MCP metadata', { type: 'object', properties: { endpoint: { type: 'string' }, tools: { type: 'array', items: { type: 'object' } } }, required: ['endpoint', 'tools'] }) } } },
-      [`${this.registry.apiBasePath}/mcp/transport`]: { post: { operationId: 'superconsole.mcp.transport', summary: 'Authenticated McpFn streamable HTTP transport', security: authenticated, parameters: scopeParameters(), requestBody: jsonBody({ oneOf: [{ type: 'object' }, { type: 'array', items: { type: 'object' }, minItems: 1 }], description: 'MCP JSON-RPC request or batch.' }), responses: { '200': { description: 'MCP JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } }, 'text/event-stream': { schema: { type: 'string' } } } } } } },
-      [`${this.registry.apiBasePath}/confirmations`]: { post: { operationId: 'superconsole.confirmations.issue', summary: 'Issue an actor/scope/operation/input-bound confirmation token', security: authenticated, parameters: scopeParameters(), requestBody: jsonBody({ type: 'object', properties: { operationId: { type: 'string' }, input: { type: 'object' } }, required: ['operationId', 'input'], additionalProperties: false }), responses: { '201': jsonResponse('Confirmation receipt', { type: 'object', properties: { token: { type: 'string' }, expiresAt: { type: 'string', format: 'date-time' } }, required: ['token', 'expiresAt'] }) } } },
-      [`${this.registry.apiBasePath}/operations/{operationId}`]: { post: { operationId: 'superconsole.operations.invoke', summary: 'Invoke one enabled operation by ID', security: authenticated, parameters: [{ name: 'operationId', in: 'path', required: true, schema: { type: 'string' } }, { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string', minLength: 1 } }, { name: 'X-Admin-Confirmation', in: 'header', required: false, schema: { type: 'string', minLength: 1 } }, { name: 'X-AuthFn-CSRF', in: 'header', required: false, description: 'Required for cookie-authenticated mutation requests.', schema: { type: 'string', minLength: 1 } }, ...scopeParameters()], requestBody: jsonBody({ type: 'object', additionalProperties: true }), responses: { '200': jsonResponse('Administration operation envelope', {}), '4XX': errorResponse('Administration request rejected'), '5XX': errorResponse('Administration dependency or server failure') } } },
-      [`${this.registry.apiBasePath}/auth/sign-in`]: { post: { operationId: 'superconsole.auth.signIn', summary: 'Sign in through AuthFn password authentication', security: [], requestBody: jsonBody({ type: 'object', properties: { email: { type: 'string', format: 'email' }, password: { type: 'string', format: 'password' } }, required: ['email', 'password'], additionalProperties: false }), responses: { '200': jsonResponse('Operator session', { type: 'object', properties: { session: sessionSchema }, required: ['session'] }), '401': { description: 'Invalid credentials or two-factor challenge' } } } },
-      [`${this.registry.apiBasePath}/auth/2fa`]: { post: { operationId: 'superconsole.auth.completeTwoFactor', summary: 'Complete an AuthFn two-factor sign-in challenge', security: [], requestBody: jsonBody({ type: 'object', properties: { challengeId: { type: 'string' }, code: { type: 'string' } }, required: ['challengeId', 'code'], additionalProperties: false }), responses: { '200': jsonResponse('Operator session', { type: 'object', properties: { session: sessionSchema }, required: ['session'] }) } } },
-      [`${this.registry.apiBasePath}/auth/sign-out`]: { post: { operationId: 'superconsole.auth.signOut', summary: 'Sign out through AuthFn', security: authenticated, parameters: scopeParameters(), responses: { '200': jsonResponse('Session revoked', { type: 'object', properties: { signedOut: { type: 'boolean', const: true } }, required: ['signedOut'] }) } } },
+      [`${this.registry.apiBasePath}/mcp/transport`]: {
+        post: { operationId: 'superconsole.mcp.transport', summary: 'Authenticated McpFn streamable HTTP transport', security: authenticated, parameters: [...csrfParameters, ...scopeParameters()], requestBody: jsonBody({ oneOf: [{ type: 'object' }, { type: 'array', items: { type: 'object' }, minItems: 1 }], description: 'MCP JSON-RPC request or batch.' }), responses: { '200': { description: 'MCP JSON-RPC response', content: { 'application/json': { schema: { type: 'object' } }, 'text/event-stream': { schema: { type: 'string' } } } } } },
+        delete: { operationId: 'superconsole.mcp.disconnect', summary: 'Disconnect an authenticated McpFn session', security: authenticated, parameters: [...csrfParameters, ...scopeParameters()], responses: { '200': { description: 'MCP session disconnected.' } } },
+      },
+      [`${this.registry.apiBasePath}/confirmations`]: { post: { operationId: 'superconsole.confirmations.issue', summary: 'Issue an actor/scope/operation/input-bound confirmation token', security: authenticated, parameters: [...csrfParameters, ...scopeParameters()], requestBody: jsonBody({ type: 'object', properties: { operationId: { type: 'string' }, input: { type: 'object' } }, required: ['operationId', 'input'], additionalProperties: false }), responses: { '201': jsonResponse('Confirmation receipt', { type: 'object', properties: { token: { type: 'string' }, expiresAt: { type: 'string', format: 'date-time' } }, required: ['token', 'expiresAt'] }) } } },
+      [`${this.registry.apiBasePath}/settings/policies/{policyId}`]: { patch: { operationId: 'superconsole.settings.policies.update', summary: 'Update a deployment policy through its configured function operation', security: authenticated, parameters: [{ name: 'policyId', in: 'path', required: true, schema: { type: 'string' } }, { name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string', minLength: 1 } }, ...csrfParameters, ...scopeParameters()], requestBody: jsonBody({ type: 'object', additionalProperties: true }), responses: { '200': jsonResponse('Updated deployment policy', { type: 'object', additionalProperties: true }), '4XX': errorResponse('Policy update rejected'), '5XX': errorResponse('Policy dependency or server failure') } } },
+      [`${this.registry.apiBasePath}/operations/{operationId}`]: { post: { operationId: 'superconsole.operations.invoke', summary: 'Invoke one enabled operation by ID', security: authenticated, parameters: [{ name: 'operationId', in: 'path', required: true, schema: { type: 'string' } }, { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string', minLength: 1 } }, { name: 'X-Admin-Confirmation', in: 'header', required: false, schema: { type: 'string', minLength: 1 } }, ...csrfParameters, ...scopeParameters()], requestBody: jsonBody({ type: 'object', additionalProperties: true }), responses: { '200': jsonResponse('Administration operation envelope', {}), '4XX': errorResponse('Administration request rejected'), '5XX': errorResponse('Administration dependency or server failure') } } },
+      [`${this.registry.apiBasePath}/auth/sign-in`]: { post: { operationId: 'superconsole.auth.signIn', summary: 'Sign in through the configured operator-auth provider', security: [], requestBody: jsonBody({ type: 'object', properties: { email: { type: 'string', format: 'email' }, password: { type: 'string', format: 'password' } }, required: ['email', 'password'], additionalProperties: false }), responses: { '200': jsonResponse('Operator session', { type: 'object', properties: { session: sessionSchema }, required: ['session'] }), '401': { description: 'Invalid credentials or two-factor challenge' } } } },
+      [`${this.registry.apiBasePath}/auth/2fa`]: { post: { operationId: 'superconsole.auth.completeTwoFactor', summary: 'Complete a provider-defined two-factor sign-in challenge', security: [], requestBody: jsonBody({ type: 'object', properties: { challengeId: { type: 'string' }, code: { type: 'string' } }, required: ['challengeId', 'code'], additionalProperties: false }), responses: { '200': jsonResponse('Operator session', { type: 'object', properties: { session: sessionSchema }, required: ['session'] }) } } },
+      [`${this.registry.apiBasePath}/auth/sign-out`]: { post: { operationId: 'superconsole.auth.signOut', summary: 'Sign out through the configured operator-auth provider', security: authenticated, parameters: [...csrfParameters, ...scopeParameters()], responses: { '200': jsonResponse('Session revoked', { type: 'object', properties: { signedOut: { type: 'boolean', const: true } }, required: ['signedOut'] }) } } },
     });
     return document;
   }
