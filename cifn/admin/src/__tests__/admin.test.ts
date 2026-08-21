@@ -88,6 +88,21 @@ describe("@cifn/admin", () => {
     ]);
     expect(ciFnAdminCapability.resources?.filter((resource) => resource.id !== "runs")
       .every((resource) => resource.presentation?.standaloneList === false)).toBe(true);
+    expect(ciFnAdminCapability.resources?.find((resource) => resource.id === "runs")?.presentation).toMatchObject({
+      query: { filters: [{ field: "status", inputPath: "filter.status" }] },
+    });
+    expect(ciFnAdminCapability.resources?.find((resource) => resource.id === "jobs")?.presentation).toMatchObject({
+      parent: { resourceId: "runs", bindings: [{ sourceField: "runId", queryField: "runId" }] },
+    });
+    expect(ciFnAdminCapability.resources?.find((resource) => resource.id === "logs")?.presentation).toMatchObject({
+      parent: {
+        resourceId: "jobs",
+        bindings: [
+          { sourceField: "runId", queryField: "runId" },
+          { sourceField: "jobKey", queryField: "jobKey" },
+        ],
+      },
+    });
     expect(ciFnAdminCapability.operations.map((operation) => operation.id)).toEqual([
       "cifn.runs.list",
       "cifn.runs.get",

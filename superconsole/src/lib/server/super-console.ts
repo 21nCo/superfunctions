@@ -333,10 +333,12 @@ interface ConsoleResourceView {
   href: string;
   apiHref?: string;
   listApiHref?: string;
+  listInputSchema?: AdminJsonSchema;
   detailApiHref?: string;
   detailIdInput?: string;
   detailInputSchema?: AdminJsonSchema;
   listable: boolean;
+  standaloneList: boolean;
   presentation?: NonNullable<AdminCapabilityManifest['resources']>[number]['presentation'];
   actions: ConsoleActionView[];
 }
@@ -385,9 +387,7 @@ function moduleView(
   const ownResources = [...new Set(entries.map(resourceId))].map((id) => {
     const operations = entries.filter((entry) => resourceId(entry) === id);
     const resource = declaredResources.find((candidate) => candidate.id === id);
-    const list = resource?.presentation?.standaloneList === false
-      ? undefined
-      : resource?.presentation?.listOperationId
+    const list = resource?.presentation?.listOperationId
       ? operations.find((entry) => entry.operation.id === resource.presentation?.listOperationId)
       : operations.find((entry) => entry.operation.id.endsWith('.list'));
     const get = resource?.presentation?.detailOperationId
@@ -411,10 +411,12 @@ function moduleView(
       href: `${navigation?.path ?? `/modules/${manifest.id}`}/${id}`,
       apiHref: list?.routePath,
       listApiHref: list?.routePath,
+      listInputSchema: list?.operation.inputSchema,
       detailApiHref: get?.routePath,
       detailIdInput: get?.operation.target?.idInput,
       detailInputSchema: get?.operation.inputSchema,
       listable: Boolean(list),
+      standaloneList: resource?.presentation?.standaloneList !== false,
       presentation: resource?.presentation,
       actions,
     };

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadResourceList } from '../../src/lib/components/resource-pages';
-import type { RegistryViewModel } from '../../src/lib/components/view-models';
+import { loadResourceDetail, loadResourceList } from '../../src/lib/components/resource-pages';
+import { normalizeAdminResourceRows, type RegistryViewModel } from '../../src/lib/components/view-models';
 
 const registry: RegistryViewModel = {
   modules: [{
@@ -48,5 +48,116 @@ describe('generic resource list ordering', () => {
 
     expect(canonical.view?.rows.map((row) => row.id)).toEqual(['provider-first', 'provider-second']);
     expect(explicit.view?.rows.map((row) => row.id)).toEqual(['explicit-first', 'explicit-second']);
+  });
+
+  it('maps declared controls into the list schema and drops unsupported query input', async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ ok: true, data: { items: [] } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const mappedRegistry: RegistryViewModel = {
+      modules: [{
+        ...registry.modules[0]!,
+        resources: [{
+          ...registry.modules[0]!.resources![0]!,
+          listInputSchema: {
+            type: 'object',
+            properties: {
+              limit: { type: 'integer' },
+              filter: { type: 'object', properties: { status: { type: 'string' } }, additionalProperties: false },
+            },
+            additionalProperties: false,
+          },
+          presentation: {
+            query: { filters: [{ field: 'status', inputPath: 'filter.status', label: 'Status', options: ['running', 'success'] }] },
+          },
+        }],
+      }],
+    };
+
+    const loaded = await loadResourceList({
+      fetcher,
+      url: new URL('https://console.example.test/modules/examplefn/records?q=ignored&status=running&limit=25&unsupported=value'),
+      registry: mappedRegistry,
+      moduleId: 'examplefn',
+      resourceId: 'records',
+    });
+
+    const requested = new URL(String(fetcher.mock.calls[0]![0]), 'https://console.example.test');
+    expect(requested.searchParams.get('filter')).toBe(JSON.stringify({ status: 'running' }));
+    expect(requested.searchParams.get('limit')).toBe('25');
+    expect(requested.searchParams.has('q')).toBe(false);
+    expect(requested.searchParams.has('unsupported')).toBe(false);
+    expect(loaded.view).toMatchObject({
+      searchEnabled: false,
+      filters: [{ field: 'status', label: 'Status', value: 'running', options: ['running', 'success'] }],
+    });
+  });
+
+  it('builds parent-bound related resource links from generic detail records', async () => {
+    const contextualRegistry: RegistryViewModel = {
+      modules: [{
+        id: 'cifn',
+        name: 'CiFn',
+        description: 'CI resources.',
+        href: '/modules/cifn',
+        enabled: true,
+        resources: [
+          {
+            id: 'runs', resourceId: 'runs', sourceModuleId: 'cifn', label: 'Runs', href: '/modules/cifn/runs',
+            detailApiHref: '/api/admin/v1/modules/cifn/runs/:id', detailIdInput: 'id',
+          },
+          {
+            id: 'jobs', resourceId: 'jobs', sourceModuleId: 'cifn', label: 'Jobs', href: '/modules/cifn/jobs',
+            presentation: {
+              parent: { resourceId: 'runs', bindings: [{ sourceField: 'runId', queryField: 'runId' }] },
+            },
+          },
+          {
+            id: 'artifacts', resourceId: 'artifacts', sourceModuleId: 'cifn', label: 'Artifacts', href: '/modules/cifn/artifacts',
+            presentation: {
+              parent: { resourceId: 'runs', bindings: [{ sourceField: 'runId', queryField: 'runId' }] },
+            },
+          },
+        ],
+      }],
+    };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      ok: true,
+      data: { item: { runId: 'run_1', status: 'running' } },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    const loaded = await loadResourceDetail({
+      fetcher,
+      url: new URL('https://console.example.test/modules/cifn/runs/run_1?environmentId=env_1'),
+      registry: contextualRegistry,
+      moduleId: 'cifn',
+      resourceId: 'runs',
+      identity: 'run_1',
+    });
+
+    expect(loaded.view?.related).toEqual([
+      expect.objectContaining({ resourceId: 'jobs', href: '/modules/cifn/jobs?runId=run_1&environmentId=env_1' }),
+      expect.objectContaining({ resourceId: 'artifacts', href: '/modules/cifn/artifacts?runId=run_1&environmentId=env_1' }),
+    ]);
+  });
+
+  it('binds required action inputs that are present on each canonical row', () => {
+    const rows = normalizeAdminResourceRows(
+      [{ id: 'artifact_1', runId: 'run_1', name: 'report.zip' }],
+      [{ key: 'name', label: 'Artifact' }],
+      {
+        id: 'artifacts', label: 'Artifacts', href: '/modules/cifn/artifacts',
+        actions: [{
+          id: 'cifn.artifacts.download-artifact', label: 'Download', targetIdInput: 'id',
+          inputSchema: {
+            type: 'object', properties: { id: { type: 'string' }, runId: { type: 'string' } },
+            required: ['id', 'runId'], additionalProperties: false,
+          },
+        }],
+      },
+    );
+
+    expect(rows[0]?.actions?.[0]?.input).toEqual({ id: 'artifact_1', runId: 'run_1' });
   });
 });

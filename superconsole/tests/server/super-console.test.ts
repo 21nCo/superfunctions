@@ -496,17 +496,35 @@ describe('Super Console server composition', () => {
     });
   });
 
-  it('does not expose context-bound resources as standalone collection pages', async () => {
+  it('projects context-bound resources without exposing them as standalone collection cards', async () => {
     const base = manifest().operations[0]!;
     const contextual = defineAdminCapability({
       ...manifest(),
-      resources: [{
-        id: 'records',
-        label: 'Records',
-        description: 'Records that require parent context.',
-        risk: 'standard',
-        idField: 'id',
-        presentation: { standaloneList: false, listOperationId: base.id },
+      resources: [
+        { id: 'parents', label: 'Parents', description: 'Parent records.', risk: 'standard', idField: 'id' },
+        {
+          id: 'records',
+          label: 'Records',
+          description: 'Records that require parent context.',
+          risk: 'standard',
+          idField: 'id',
+          filterableFields: ['parentId'],
+          presentation: {
+            standaloneList: false,
+            listOperationId: base.id,
+            query: { filters: [{ field: 'parentId', inputPath: 'filter.parentId' }] },
+            parent: { resourceId: 'parents', bindings: [{ sourceField: 'id', queryField: 'parentId' }] },
+          },
+        },
+      ],
+      operations: [{
+        ...base,
+        inputSchema: {
+          type: 'object',
+          properties: { filter: { type: 'object', properties: { parentId: { type: 'string' } }, required: ['parentId'], additionalProperties: false } },
+          required: ['filter'],
+          additionalProperties: false,
+        },
       }],
     });
     const console = createSuperConsole({
@@ -516,8 +534,8 @@ describe('Super Console server composition', () => {
       shellPolicy: { authorize: () => true },
     });
     const view = await (await console.handle(request('/api/admin/v1/modules/examplefn'))).json();
-    expect(view.data.module.resources[0]).toMatchObject({ listable: false });
-    expect(view.data.module.resources[0].listApiHref).toBeUndefined();
+    expect(view.data.module.resources[0]).toMatchObject({ listable: true, standaloneList: false });
+    expect(view.data.module.resources[0].listApiHref).toBe('/api/admin/v1/modules/examplefn/resources/records');
   });
 
   it('folds enabled nested resources into their owner while preserving child routes and identity', async () => {

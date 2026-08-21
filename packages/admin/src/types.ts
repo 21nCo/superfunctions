@@ -200,6 +200,27 @@ export interface AdminHealthDefinition {
 
 export type AdminPresentationFormat = "text" | "status" | "datetime" | "number" | "code";
 
+export interface AdminResourceQueryFilterPresentation {
+  /** Stable console query parameter and resource field name. */
+  field: string;
+  /** Dotted path in the list operation input (for example `filter.status`). */
+  inputPath: string;
+  label?: string;
+  /** Optional finite choices rendered by generic consoles. */
+  options?: readonly AdminJsonPrimitive[];
+}
+
+export interface AdminResourceParentPresentation {
+  /** Resource whose detail page supplies the context for this collection. */
+  resourceId: string;
+  bindings: readonly {
+    /** Dotted field read from the parent resource record. */
+    sourceField: string;
+    /** Query filter field declared by this resource. */
+    queryField: string;
+  }[];
+}
+
 export interface AdminResourcePresentation {
   /** Whether this resource can be browsed without parent context. Defaults to true. */
   standaloneList?: boolean;
@@ -210,6 +231,14 @@ export interface AdminResourcePresentation {
   titleField?: string;
   subtitleField?: string;
   statusField?: string;
+  /** Schema-aware controls for translating console query parameters into list-operation input. */
+  query?: {
+    /** Dotted list-operation input path receiving the generic `q` control. */
+    searchInputPath?: string;
+    filters?: readonly AdminResourceQueryFilterPresentation[];
+  };
+  /** Parent detail context from which this resource can be reached. */
+  parent?: AdminResourceParentPresentation;
   columns?: readonly {
     field: string;
     label: string;

@@ -696,4 +696,62 @@ describe("manifest validation", () => {
     });
     expect(validateAdminCapabilityManifest(valid)).toEqual([]);
   });
+
+  it("validates contextual resource bindings and list query mappings", () => {
+    const base = testManifest("examplefn").operations[0]!;
+    const operation = {
+      ...base,
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          filter: {
+            type: "object" as const,
+            properties: { parentId: { type: "string" as const } },
+            required: ["parentId"],
+            additionalProperties: false,
+          },
+        },
+        required: ["filter"],
+        additionalProperties: false,
+      },
+    };
+    const valid = testManifest("examplefn", {
+      resources: [
+        { id: "parents", label: "Parents", description: "Parent records.", risk: "standard", idField: "id" },
+        {
+          id: "records", label: "Records", description: "Child records.", risk: "standard", idField: "id",
+          filterableFields: ["parentId"],
+          presentation: {
+            standaloneList: false,
+            listOperationId: operation.id,
+            query: { filters: [{ field: "parentId", inputPath: "filter.parentId" }] },
+            parent: { resourceId: "parents", bindings: [{ sourceField: "id", queryField: "parentId" }] },
+          },
+        },
+      ],
+      operations: [operation],
+    });
+    expect(validateAdminCapabilityManifest(valid)).toEqual([]);
+
+    const invalid = testManifest("examplefn", {
+      resources: [{
+        id: "records", label: "Records", description: "Child records.", risk: "standard", idField: "id",
+        presentation: {
+          standaloneList: false,
+          listOperationId: operation.id,
+          query: { filters: [{ field: "missing", inputPath: "filter.missing" }] },
+        },
+      }],
+      operations: [operation],
+    });
+    const issues = validateAdminCapabilityManifest(invalid);
+    expect(issues).toContainEqual(expect.objectContaining({
+      path: "$.resources[0].presentation.parent",
+      message: "is required when standaloneList is false",
+    }));
+    expect(issues).toContainEqual(expect.objectContaining({
+      path: "$.resources[0].presentation.query.filters[0].inputPath",
+      message: "must resolve in the list operation input schema",
+    }));
+  });
 });

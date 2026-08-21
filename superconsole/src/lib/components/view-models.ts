@@ -1,4 +1,4 @@
-import type { AdminJsonSchema, AdminResourcePresentation } from '@superfunctions/admin';
+import type { AdminJsonPrimitive, AdminJsonSchema, AdminResourcePresentation } from '@superfunctions/admin';
 
 export type AdminStateKind =
   | 'ready'
@@ -80,10 +80,12 @@ export interface AdminResourceViewModel {
   href: string;
   apiHref?: string;
   listApiHref?: string;
+  listInputSchema?: AdminJsonSchema;
   detailApiHref?: string;
   detailIdInput?: string;
   detailInputSchema?: AdminJsonSchema;
   listable?: boolean;
+  standaloneList?: boolean;
   presentation?: AdminResourcePresentation;
   count?: number;
   createAction?: AdminActionViewModel;
@@ -201,7 +203,21 @@ export interface ResourceListViewModel {
   rows: ResourceRowViewModel[];
   total?: number;
   nextCursor?: string;
+  searchEnabled?: boolean;
+  filters?: Array<{
+    field: string;
+    label: string;
+    value: string;
+    options?: readonly AdminJsonPrimitive[];
+  }>;
   error?: AdminErrorViewModel;
+}
+
+export interface RelatedResourceViewModel {
+  resourceId: string;
+  label: string;
+  description?: string;
+  href: string;
 }
 
 export interface ResourceDetailViewModel {
@@ -213,6 +229,7 @@ export interface ResourceDetailViewModel {
   status?: string;
   fields: Array<{ label: string; value: unknown; format?: ResourceColumnViewModel['format'] }>;
   actions?: AdminActionViewModel[];
+  related?: RelatedResourceViewModel[];
   audit?: ActivityViewModel[];
   error?: AdminErrorViewModel;
 }
@@ -349,10 +366,16 @@ export function normalizeAdminResourceRows(
     const detailInput = identity ? detailInputForRow(item, source, resource, identity) : undefined;
     const sourceActions = resource.actions ?? [];
     const boundActions = identity
-      ? sourceActions.filter((action) => Boolean(action.targetIdInput)).map((action) => ({
-          ...action,
-          input: { ...(action.input ?? {}), [action.targetIdInput!]: identity },
-        }))
+      ? sourceActions.filter((action) => Boolean(action.targetIdInput)).map((action) => {
+          const actionInput = { ...(action.input ?? {}), [action.targetIdInput!]: identity };
+          const required = action.inputSchema?.type === 'object' ? action.inputSchema.required ?? [] : [];
+          for (const key of required) {
+            if (actionInput[key] !== undefined) continue;
+            const value = source[key] ?? item[key];
+            if (value !== undefined) actionInput[key] = value;
+          }
+          return { ...action, input: actionInput };
+        })
       : [];
     const href = explicitHref ?? (detailInput
       ? detailHref(resource.href, detailInput, resource.detailIdInput ?? 'id')

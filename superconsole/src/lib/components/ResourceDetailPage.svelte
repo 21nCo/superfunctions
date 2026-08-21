@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
+  import { ButtonIcon, ButtonLabel, ButtonRoot } from '@uifn/components-svelte/button';
   import { CardContent, CardDescription, CardHeader, CardRoot, CardTitle } from '@uifn/components-svelte/card';
   import ActionButton from './ActionButton.svelte';
+  import ConsoleIcon from './ConsoleIcon.svelte';
   import PageHeader from './PageHeader.svelte';
   import StatePanel from './StatePanel.svelte';
   import StatusBadge from './StatusBadge.svelte';
@@ -36,6 +39,22 @@
           </dl>
         </CardContent>
       </CardRoot>
+
+      {#if view.related?.length}
+        <CardRoot class="detail-card">
+          <CardHeader><CardTitle>Related resources</CardTitle><CardDescription>Function-declared resources scoped to this record.</CardDescription></CardHeader>
+          <CardContent class="related-resource-list">
+            {#each view.related as related (related.resourceId)}
+              <div>
+                <span><strong>{related.label}</strong>{#if related.description}<small>{related.description}</small>{/if}</span>
+                <ButtonRoot variant="outline" size="sm" onclick={() => void goto(related.href)}>
+                  <ButtonLabel>Open</ButtonLabel><ButtonIcon><ConsoleIcon name="arrow-right" /></ButtonIcon>
+                </ButtonRoot>
+              </div>
+            {/each}
+          </CardContent>
+        </CardRoot>
+      {/if}
 
       <CardRoot class="detail-card">
         <CardHeader><CardTitle>Audit history</CardTitle><CardDescription>Operator and MCP activity for this resource.</CardDescription></CardHeader>

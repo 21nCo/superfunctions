@@ -502,6 +502,14 @@ export const ciFnAdminResources = [
       detailOperationId: "cifn.runs.get",
       titleField: "runId",
       statusField: "status",
+      query: {
+        filters: [{
+          field: "status",
+          inputPath: "filter.status",
+          label: "Status",
+          options: ["queued", "running", "success", "failure", "cancelled"],
+        }],
+      },
       columns: [
         { field: "runId", label: "Run", format: "code" },
         { field: "pipelineRef.repo", label: "Repository", format: "code" },
@@ -528,6 +536,13 @@ export const ciFnAdminResources = [
       standaloneList: false,
       listOperationId: "cifn.jobs.list",
       detailOperationId: "cifn.jobs.get",
+      query: {
+        filters: [{ field: "runId", inputPath: "filter.runId", label: "Run" }],
+      },
+      parent: {
+        resourceId: "runs",
+        bindings: [{ sourceField: "runId", queryField: "runId" }],
+      },
       titleField: "jobKey",
       statusField: "status",
       columns: [
@@ -554,6 +569,19 @@ export const ciFnAdminResources = [
     presentation: {
       standaloneList: false,
       listOperationId: "cifn.logs.list",
+      query: {
+        filters: [
+          { field: "runId", inputPath: "filter.runId", label: "Run" },
+          { field: "jobKey", inputPath: "filter.jobKey", label: "Job" },
+        ],
+      },
+      parent: {
+        resourceId: "jobs",
+        bindings: [
+          { sourceField: "runId", queryField: "runId" },
+          { sourceField: "jobKey", queryField: "jobKey" },
+        ],
+      },
       titleField: "id",
       columns: [
         { field: "timestamp", label: "Timestamp", format: "datetime" },
@@ -578,6 +606,13 @@ export const ciFnAdminResources = [
     presentation: {
       standaloneList: false,
       listOperationId: "cifn.artifacts.list",
+      query: {
+        filters: [{ field: "runId", inputPath: "filter.runId", label: "Run" }],
+      },
+      parent: {
+        resourceId: "runs",
+        bindings: [{ sourceField: "runId", queryField: "runId" }],
+      },
       titleField: "name",
       columns: [
         { field: "name", label: "Artifact" },

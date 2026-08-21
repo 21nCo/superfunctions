@@ -126,6 +126,13 @@ paths are validated against declared output schemas when possible, and default
 sort fields must be declared sortable. It never changes authorization, safety,
 validation, redaction, audit, or dispatcher behavior.
 
+Generic consoles only render controls declared by `presentation.query`. Each
+filter maps a stable console query field to its exact list-operation input path,
+such as `status` to `filter.status`. A context-bound collection declares
+`standaloneList: false` together with `presentation.parent`; its bindings create
+detail-page navigation and supply the child query fields. This keeps nested
+operation input and parent/child navigation function-owned and manifest-driven.
+
 Production deployments inject provider-backed actor/context resolution, an
 append-only audit sink, durable atomic idempotency storage, confirmation
 verification, and function-owned services. `Memory*` implementations are
