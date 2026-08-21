@@ -111,13 +111,13 @@ export function createAdminOpenApiDocument(
   options: AdminOpenApiOptions = {},
 ): AdminOpenApiDocument {
   const securitySchemes = options.securitySchemes ?? {
-    authFnSession: { type: "apiKey", in: "cookie", name: "__Secure-authfn.session" },
-    authFnApiKey: { type: "http", scheme: "bearer", bearerFormat: "AuthFn session or API key" },
+    operatorSession: { type: "apiKey", in: "cookie", name: "__Secure-superconsole.session" },
+    operatorApiKey: { type: "http", scheme: "bearer", bearerFormat: "Operator session or API key" },
   };
-  if (!securitySchemes.authFnSession || !securitySchemes.authFnApiKey) {
+  if (!securitySchemes.operatorSession || !securitySchemes.operatorApiKey) {
     throw new AdminError(
       "invalid_argument",
-      "OpenAPI security schemes must define authFnSession and authFnApiKey because protected operations reference both schemes.",
+      "OpenAPI security schemes must define operatorSession and operatorApiKey because protected operations reference both schemes.",
     );
   }
   const paths: Record<string, Record<string, unknown>> = {};
@@ -188,7 +188,7 @@ export function createAdminOpenApiDocument(
       summary: entry.operation.title,
       description: entry.operation.description,
       tags: [entry.manifest.displayName],
-      security: [{ authFnSession: [] }, { authFnApiKey: [] }],
+      security: [{ operatorSession: [] }, { operatorApiKey: [] }],
       ...(parameters.length ? { parameters } : {}),
       ...(bodySchema ? { requestBody: { required: true, content: { "application/json": { schema: bodySchema } } } } : {}),
       responses: {

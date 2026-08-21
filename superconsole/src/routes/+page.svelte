@@ -26,14 +26,13 @@
   import StatePanel from '$lib/components/StatePanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import { safeConsoleNavigationHref, scopedConsoleHref } from '$lib/components/admin-api';
-  import { consoleDestinationEnabled, enabledNavigationModules, formatValue, registryHasModule, shellSurfaceEnabled } from '$lib/components/view-models';
+  import { consoleDestinationEnabled, enabledNavigationModules, formatValue, shellSurfaceEnabled } from '$lib/components/view-models';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   const modules = $derived(enabledNavigationModules(data.shell.registry));
   const auditEnabled = $derived(shellSurfaceEnabled(data.shell.registry, 'audit'));
   const settingsEnabled = $derived(shellSurfaceEnabled(data.shell.registry, 'settings'));
-  const watchEnabled = $derived(registryHasModule(data.shell.registry, 'watchfn'));
   const metrics = $derived(data.shell.overview.metrics.length
     ? data.shell.overview.metrics
     : [{
@@ -57,7 +56,7 @@
 />
 
   {#if data.shell.error?.status === 401}
-  <StatePanel kind="forbidden" title="Authentication required" message="Sign in through AuthFn to access operator administration." actionHref="/sign-in" actionLabel="Sign in" />
+  <StatePanel kind="forbidden" title="Authentication required" message="Sign in through the configured operator-auth provider to access administration." actionHref="/sign-in" actionLabel="Sign in" />
   {:else if data.shell.error?.status === 403}
     <StatePanel kind="forbidden" error={data.shell.error} />
   {:else if data.shell.error}
@@ -114,11 +113,11 @@
 
     <aside class="overview-grid__aside" aria-labelledby="alerts-heading" id="alerts">
       <div class="section-heading">
-        <div><p class="eyebrow">{watchEnabled ? 'WatchFn' : 'Operations'}</p><h2 id="alerts-heading">Alerts</h2></div>
+        <div><p class="eyebrow">Operations</p><h2 id="alerts-heading">Alerts</h2></div>
         <StatusBadge label={String(data.shell.overview.alerts.length)} tone={data.shell.overview.alerts.length ? 'warning' : 'neutral'} />
       </div>
       {#if data.shell.overview.alerts.length === 0}
-        <StatePanel kind="empty" title="No active alerts" message={watchEnabled ? 'WatchFn has not reported anything requiring operator attention.' : 'No enabled module has reported anything requiring operator attention.'} />
+        <StatePanel kind="empty" title="No active alerts" message="No injected overview provider has reported anything requiring operator attention." />
       {:else}
         <div class="alert-stack">
           {#each data.shell.overview.alerts as alert (alert.id)}
@@ -144,7 +143,7 @@
 
   <section class="activity-section" aria-labelledby="activity-heading">
     <div class="section-heading">
-      <div><p class="eyebrow">{auditEnabled ? 'AuthFn audit' : 'Operator activity'}</p><h2 id="activity-heading">Recent operator activity</h2></div>
+      <div><p class="eyebrow">{auditEnabled ? 'Operator audit' : 'Operator activity'}</p><h2 id="activity-heading">Recent operator activity</h2></div>
       {#if auditEnabled}
         <ButtonRoot variant="outline" size="sm" onclick={() => navigate('/audit')}>
           <ButtonLabel>Full audit trail</ButtonLabel><ButtonIcon><ConsoleIcon name="arrow-right" /></ButtonIcon>

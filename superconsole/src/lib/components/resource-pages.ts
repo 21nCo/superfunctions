@@ -7,6 +7,7 @@ import {
   isAdminRecord,
   moduleById,
   normalizeAdminResourceRows,
+  readAdminPresentationField,
   type AdminErrorViewModel,
   type AdminResourceViewModel,
   type RegistryViewModel,
@@ -83,7 +84,7 @@ export async function loadResourceList(input: ResourceRouteInput): Promise<{
   const resource = resourceForRoute(module?.resources, input.resourceId, input.sourceModuleId);
   if (!module || !resource) return { view: undefined, loadError: unavailable(input.resourceId, input.moduleId), query: '' };
 
-  const apiModule = input.sourceModuleId ?? input.moduleId;
+  const apiModule = input.sourceModuleId ?? resource.sourceModuleId ?? input.moduleId;
   const canonicalResource = resource.resourceId ?? input.resourceId;
   if (resource.listable === false) {
     return { view: undefined, loadError: unavailable(input.resourceId, input.moduleId), query: '' };
@@ -97,10 +98,22 @@ export async function loadResourceList(input: ResourceRouteInput): Promise<{
     withAdminScope(`${requestHref.pathname}${requestHref.search}`, input.url.searchParams)
   );
   const payload = result.ok ? result.data : {};
-  const canonicalItems = Array.isArray(payload.items) ? payload.items : [];
+  const canonicalItems = Array.isArray(payload.items) ? [...payload.items] : [];
+  const defaultSort = resource.presentation?.defaultSort;
+  if (defaultSort) {
+    canonicalItems.sort((left, right) => {
+      if (!isAdminRecord(left) || !isAdminRecord(right)) return 0;
+      const leftValue = readAdminPresentationField(left, defaultSort.field);
+      const rightValue = readAdminPresentationField(right, defaultSort.field);
+      const compared = String(leftValue ?? '').localeCompare(String(rightValue ?? ''), undefined, { numeric: true });
+      return defaultSort.direction === 'desc' ? -compared : compared;
+    });
+  }
   const explicitRows = Array.isArray(payload.rows) ? payload.rows : undefined;
   const columnSource = explicitRows?.map((row) => ({ values: row.values })) ?? canonicalItems;
-  const columns = Array.isArray(payload.columns) && payload.columns.length
+  const columns = resource.presentation?.columns?.length
+    ? resource.presentation.columns.map((column) => ({ key: column.field, label: column.label, format: column.format }))
+    : Array.isArray(payload.columns) && payload.columns.length
     ? payload.columns
     : inferAdminResourceColumns(columnSource);
   return {
@@ -124,7 +137,7 @@ export async function loadResourceDetail(
   const resource = resourceForRoute(module?.resources, input.resourceId, input.sourceModuleId);
   if (!module || !resource) return { view: undefined, loadError: unavailable(input.resourceId, input.moduleId) };
 
-  const apiModule = input.sourceModuleId ?? input.moduleId;
+  const apiModule = input.sourceModuleId ?? resource.sourceModuleId ?? input.moduleId;
   const canonicalResource = resource.resourceId ?? input.resourceId;
   const detailTemplate = resource.detailApiHref;
   if (!detailTemplate) return { view: undefined, loadError: unavailable(input.resourceId, input.moduleId) };
@@ -147,15 +160,34 @@ export async function loadResourceDetail(
   );
   const payload = result.ok ? result.data : {};
   const itemRecord = isAdminRecord(payload.item) ? payload.item : undefined;
+  const presentation = resource.presentation;
+  const fieldValue = (field: string | undefined): unknown =>
+    field && itemRecord ? readAdminPresentationField(itemRecord, field) : undefined;
+  const presentedTitle = fieldValue(presentation?.titleField);
+  const presentedSubtitle = fieldValue(presentation?.subtitleField);
+  const presentedStatus = fieldValue(presentation?.statusField);
+  const presentedFields = presentation?.columns?.map((column) => ({
+    label: column.label,
+    value: fieldValue(column.field),
+    format: column.format,
+  }));
   return {
     view: {
       module,
       resource,
       id: input.identity,
-      title: payload.title ?? inferAdminResourceTitle(itemRecord, input.identity),
-      subtitle: payload.subtitle ?? (typeof itemRecord?.description === 'string' ? itemRecord.description : undefined),
-      status: payload.status ?? inferAdminResourceStatus(itemRecord),
-      fields: Array.isArray(payload.fields) ? payload.fields : inferAdminResourceFields(itemRecord),
+      title: typeof presentedTitle === 'string' || typeof presentedTitle === 'number'
+        ? String(presentedTitle)
+        : payload.title ?? inferAdminResourceTitle(itemRecord, input.identity),
+      subtitle: typeof presentedSubtitle === 'string'
+        ? presentedSubtitle
+        : payload.subtitle ?? (typeof itemRecord?.description === 'string' ? itemRecord.description : undefined),
+      status: typeof presentedStatus === 'string'
+        ? presentedStatus
+        : payload.status ?? inferAdminResourceStatus(itemRecord),
+      fields: presentedFields?.length
+        ? presentedFields
+        : Array.isArray(payload.fields) ? payload.fields : inferAdminResourceFields(itemRecord),
       actions: (resource.actions ?? []).filter((action) => Boolean(action.targetIdInput)).map((action) => ({
         ...action,
         input: { ...(action.input ?? {}), [action.targetIdInput!]: input.identity },

@@ -25,6 +25,24 @@ const manifest = defineAdminCapability({
   category: "example",
   availability: "optional-product",
   scopeLevels: ["installation", "workspace", "project", "environment"],
+  resources: [{
+    id: "records",
+    label: "Records",
+    idField: "id",
+    displayFields: ["id", "name", "status"],
+    searchableFields: ["id", "name"],
+    sortableFields: ["name"],
+    presentation: {
+      listOperationId: "examplefn.records.list",
+      titleField: "name",
+      statusField: "status",
+      columns: [
+        { field: "name", label: "Name" },
+        { field: "status", label: "Status", format: "status" },
+      ],
+      defaultSort: { field: "name", direction: "asc" },
+    },
+  }],
   operations: [{
     id: "examplefn.records.list",
     title: "List records",
@@ -73,7 +91,7 @@ const client = createAdminClient({
 const enabled = await client.registry();
 const overview = await client.overview();
 const search = await client.search("failed deploy", { limit: 25 });
-const auditPage = await client.audit({ module: "cifn", outcome: "failed" });
+const auditPage = await client.audit({ module: "examplefn", outcome: "failed" });
 const settings = await client.settings();
 const mcpMetadata = await client.mcp();
 const confirmation = await client.issueConfirmation("examplefn.records.delete", { id: "record_1" });
@@ -94,7 +112,22 @@ canonical domain operator service declares `availability: "unavailable"`, an
 `unavailableReason`, and no operations/navigation; registry startup rejects an
 attempt to enable it.
 
-Production deployments inject AuthFn-backed actor/context resolution, an append-only audit sink (typically observed by WatchFn), durable atomic idempotency storage, confirmation verification, and function-owned services. `Memory*` implementations are intended for tests and embedded development only: the memory idempotency store prevents concurrent execution inside one process but is neither durable nor multi-process safe. A production store must atomically reserve the full identity, fence completion and pre-domain release with the claim token, and define stale-claim recovery. Claims are released only when the domain handler was never entered; post-domain errors remain fenced because the commit outcome may be uncertain.
+`presentation` is optional, non-authoritative metadata for generic operator
+pages. Operation references must name reads for the same resource, dotted field
+paths are validated against declared output schemas when possible, and default
+sort fields must be declared sortable. It never changes authorization, safety,
+validation, redaction, audit, or dispatcher behavior.
+
+Production deployments inject provider-backed actor/context resolution, an
+append-only audit sink, durable atomic idempotency storage, confirmation
+verification, and function-owned services. `Memory*` implementations are
+intended for tests and embedded development only: the memory idempotency store
+prevents concurrent execution inside one process but is neither durable nor
+multi-process safe. A production store must atomically reserve the full
+identity, fence completion and pre-domain release with the claim token, and
+define stale-claim recovery. Claims are released only when the domain handler
+was never entered; post-domain errors remain fenced because the commit outcome
+may be uncertain.
 
 Every audit sink must declare and implement durable first-write-wins semantics
 for `AdminAuditEvent.id`. The dispatcher persists one stable terminal event ID

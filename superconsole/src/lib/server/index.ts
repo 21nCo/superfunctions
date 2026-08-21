@@ -1,4 +1,3 @@
-export * from './authfn.js';
 export * from './catalog.js';
 export * from './installation.js';
 export * from './super-console.js';

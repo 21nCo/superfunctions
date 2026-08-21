@@ -4,7 +4,7 @@
   import { CardContent, CardDescription, CardHeader, CardRoot, CardTitle } from '@uifn/components-svelte/card';
   import { InputRoot } from '@uifn/components-svelte/input';
   import PageHeader from '$lib/components/PageHeader.svelte';
-  import { fetchConsole, setAuthFnCsrfCookieName } from '$lib/components/admin-api';
+  import { fetchConsole, setOperatorCsrf } from '$lib/components/admin-api';
 
   let email = $state('');
   let password = $state('');
@@ -20,12 +20,12 @@
     try {
       const response = await fetchConsole('/api/admin/v1/auth/sign-in', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ email, password }) });
       const body = await response.json().catch(() => undefined) as {
-        data?: { session?: { csrfCookieName?: string } };
+        data?: { session?: { csrfCookieName?: string; csrfHeaderName?: string } };
         error?: { code?: string; message?: string; details?: { challengeId?: unknown; availableMethods?: unknown } };
       } | undefined;
       if (!response.ok) {
         const details = body?.error?.details;
-        if (body?.error?.code === 'AUTHFN_2FA_REQUIRED' && typeof details?.challengeId === 'string') {
+        if (body?.error?.code === 'OPERATOR_2FA_REQUIRED' && typeof details?.challengeId === 'string') {
           challengeId = details.challengeId;
           availableMethods = Array.isArray(details.availableMethods)
             ? details.availableMethods.filter((method): method is string => typeof method === 'string')
@@ -36,7 +36,7 @@
         }
         throw new Error(body?.error?.message ?? 'Authentication failed.');
       }
-      setAuthFnCsrfCookieName(body?.data?.session?.csrfCookieName);
+      setOperatorCsrf(body?.data?.session?.csrfCookieName, body?.data?.session?.csrfHeaderName);
       await goto('/');
     } catch (cause) {
       message = cause instanceof Error ? cause.message : 'Authentication failed.';
@@ -56,11 +56,11 @@
         body: JSON.stringify({ challengeId, code }),
       });
       const body = await response.json().catch(() => undefined) as {
-        data?: { session?: { csrfCookieName?: string } };
+        data?: { session?: { csrfCookieName?: string; csrfHeaderName?: string } };
         error?: { message?: string };
       } | undefined;
       if (!response.ok) throw new Error(body?.error?.message ?? 'The verification code was not accepted.');
-      setAuthFnCsrfCookieName(body?.data?.session?.csrfCookieName);
+      setOperatorCsrf(body?.data?.session?.csrfCookieName, body?.data?.session?.csrfHeaderName);
       challengeId = undefined;
       code = '';
       await goto('/');
@@ -80,11 +80,11 @@
   }
 </script>
 
-<PageHeader eyebrow="AuthFn operator realm" title="Sign in to Super Console" description="Operator administration is isolated from customer-facing product portals." />
+<PageHeader eyebrow="Operator realm" title="Sign in to Super Console" description="Operator administration is isolated from customer-facing product portals." />
 <CardRoot class="sign-in-card" elevated>
   <CardHeader>
     <CardTitle>{challengeId ? 'Verify operator access' : 'Operator access'}</CardTitle>
-    <CardDescription>{challengeId ? 'Enter the one-time or recovery code requested by AuthFn.' : 'Use an AuthFn identity with an administration role for this self-hosted deployment.'}</CardDescription>
+    <CardDescription>{challengeId ? 'Enter the one-time or recovery code requested by the authentication provider.' : 'Use an identity with an administration role for this self-hosted deployment.'}</CardDescription>
   </CardHeader>
   <CardContent>
     {#if challengeId}

@@ -37,7 +37,7 @@ describe("OpenAPI projection", () => {
     expect(projected["x-superfunctions-target"]).toEqual({ resource: "records", idInput: "id" });
     expect(document["x-superfunctions-enabled-modules"]).toEqual(["firstfn"]);
     expect(JSON.stringify(document)).not.toContain("disabledfn");
-    expect(document.components.securitySchemes).toMatchObject({ authFnSession: expect.any(Object), authFnApiKey: expect.any(Object) });
+    expect(document.components.securitySchemes).toMatchObject({ operatorSession: expect.any(Object), operatorApiKey: expect.any(Object) });
   });
 
   it("documents destructive mutation controls without changing domain schemas", () => {
@@ -152,8 +152,8 @@ describe("OpenAPI projection", () => {
   it("rejects dangling security overrides and documents JSON query encoding and full envelopes", () => {
     const registry = createAdminRegistry({ adapters: [testAdapter()], enabledModules: ["examplefn"] });
     expect(() => createAdminOpenApiDocument(registry, {
-      securitySchemes: { authFnSession: { type: "apiKey" } },
-    })).toThrow(/authFnSession and authFnApiKey/);
+      securitySchemes: { operatorSession: { type: "apiKey" } },
+    })).toThrow(/operatorSession and operatorApiKey/);
     const document = createAdminOpenApiDocument(registry);
     const operation = document.paths["/api/admin/v1/modules/examplefn/resources/records"]?.get as {
       parameters: Array<Record<string, unknown>>;

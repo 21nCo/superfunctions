@@ -584,4 +584,42 @@ describe("manifest validation", () => {
       message: "must be true when high-risk confirmation metadata is declared",
     }));
   });
+
+  it("validates non-authoritative generic resource presentation metadata", () => {
+    const base = testManifest("examplefn");
+    const valid = testManifest("examplefn", {
+      resources: [{
+        id: "records",
+        label: "Records",
+        description: "Presented records.",
+        risk: "standard",
+        idField: "id",
+        sortableFields: ["createdAt"],
+        presentation: {
+          listOperationId: "examplefn.records.list",
+          titleField: "name",
+          columns: [{ field: "id", label: "Record", format: "code" }],
+          defaultSort: { field: "createdAt", direction: "desc" },
+        },
+      }],
+    });
+    expect(validateAdminCapabilityManifest(valid)).toEqual([]);
+
+    const invalid = testManifest("examplefn", {
+      resources: [{
+        ...valid.resources![0]!,
+        presentation: {
+          listOperationId: "examplefn.records.missing",
+          columns: [{ field: "id", label: "" }, { field: "id", label: "Duplicate" }],
+          defaultSort: { field: "undeclared", direction: "asc" },
+        },
+      }],
+      operations: base.operations,
+    });
+    const messages = validateAdminCapabilityManifest(invalid).map((issue) => issue.message);
+    expect(messages).toContain("must name an operation in the same manifest");
+    expect(messages).toContain("must not contain duplicate fields");
+    expect(messages).toContain("must not be empty");
+    expect(messages).toContain("must be declared in sortableFields");
+  });
 });

@@ -198,6 +198,27 @@ export interface AdminHealthDefinition {
   path?: string;
 }
 
+export type AdminPresentationFormat = "text" | "status" | "datetime" | "number" | "code";
+
+export interface AdminResourcePresentation {
+  /** Read operation used for the generic collection page. Inference remains available when omitted. */
+  listOperationId?: string;
+  /** Read operation used for the generic detail page. Inference remains available when omitted. */
+  detailOperationId?: string;
+  titleField?: string;
+  subtitleField?: string;
+  statusField?: string;
+  columns?: readonly {
+    field: string;
+    label: string;
+    format?: AdminPresentationFormat;
+  }[];
+  defaultSort?: {
+    field: string;
+    direction: "asc" | "desc";
+  };
+}
+
 export interface AdminResourceDefinition {
   id: string;
   label: string;
@@ -212,6 +233,8 @@ export interface AdminResourceDefinition {
   filterableFields?: readonly string[];
   sortableFields?: readonly string[];
   sensitiveFields?: readonly string[];
+  /** Optional non-authoritative metadata for generic operator presentation. */
+  presentation?: AdminResourcePresentation;
 }
 
 export interface AdminCapabilityManifest {

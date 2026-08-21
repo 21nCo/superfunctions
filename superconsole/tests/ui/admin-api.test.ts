@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  authFnCsrfToken,
+  operatorCsrfToken,
   fetchAdmin,
   fetchConsole,
   loadShellViewModel,
@@ -11,7 +11,7 @@ import {
   safeAvatarHref,
   safeConsoleNavigationHref,
   scopedConsoleHref,
-  setAuthFnCsrfCookieName,
+  setOperatorCsrf,
   switchAdminContextHref,
   withAdminScope,
 } from '../../src/lib/components/admin-api';
@@ -120,29 +120,29 @@ describe('administration API boundary', () => {
     });
   });
 
-  it('propagates the readable AuthFn CSRF cookie on console mutations', async () => {
-    setAuthFnCsrfCookieName('authfn.csrf');
+  it('propagates the readable provider CSRF cookie on console mutations', async () => {
+    setOperatorCsrf('authfn.csrf', 'x-authfn-csrf');
     document.cookie = 'authfn.csrf=csrf_token%2F1; path=/';
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('x-authfn-csrf')).toBe('csrf_token/1');
       expect(init?.credentials).toBe('same-origin');
       return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
     });
-    expect(authFnCsrfToken()).toBe('csrf_token/1');
+    expect(operatorCsrfToken()).toBe('csrf_token/1');
     await fetchConsole('/api/admin/v1/auth/sign-out', { method: 'POST' }, fetcher);
   });
 
-  it('uses the exact projected AuthFn CSRF cookie name and only an unambiguous fallback', () => {
-    setAuthFnCsrfCookieName('__Secure-west.csrf');
-    expect(authFnCsrfToken(
+  it('uses the exact projected provider CSRF cookie name and only an unambiguous fallback', () => {
+    setOperatorCsrf('__Secure-west.csrf', 'x-provider-csrf');
+    expect(operatorCsrfToken(
       '__Secure-east.csrf=east; __Secure-west.csrf=west-secure; authfn.csrf=default'
     )).toBe('west-secure');
-    setAuthFnCsrfCookieName(undefined);
-    expect(authFnCsrfToken('east.csrf=east; west.csrf=west')).toBeUndefined();
-    expect(authFnCsrfToken('only.csrf=only')).toBe('only');
+    setOperatorCsrf(undefined, undefined);
+    expect(operatorCsrfToken('east.csrf=east; west.csrf=west')).toBeUndefined();
+    expect(operatorCsrfToken('only.csrf=only')).toBe('only');
   });
 
-  it('does not attach an AuthFn CSRF header to read requests', async () => {
+  it('does not attach an operator CSRF header to read requests', async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(new Headers(init?.headers).has('x-authfn-csrf')).toBe(false);
       return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });

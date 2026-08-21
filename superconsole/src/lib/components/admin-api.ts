@@ -36,10 +36,15 @@ export type AdminFetch = (
 
 const SAFE_HTTP_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const CONSOLE_NAVIGATION_PATH = /^\/(?:$|api(?:\/|$)|audit(?:\/|$)|mcp(?:\/|$)|modules(?:\/|$)|search(?:\/|$)|settings(?:\/|$)|sign-in(?:\/|$))/;
-let authFnCsrfCookieName: string | undefined;
+let operatorCsrfCookieName: string | undefined;
+let operatorCsrfHeaderName = 'x-operator-csrf';
 
-export function setAuthFnCsrfCookieName(cookieName: string | undefined): void {
-  authFnCsrfCookieName = cookieName?.trim() || undefined;
+export function setOperatorCsrf(
+  cookieName: string | undefined,
+  headerName: string | undefined,
+): void {
+  operatorCsrfCookieName = cookieName?.trim() || undefined;
+  operatorCsrfHeaderName = headerName?.trim().toLowerCase() || 'x-operator-csrf';
 }
 
 function readableCookies(): string | undefined {
@@ -47,13 +52,13 @@ function readableCookies(): string | undefined {
 }
 
 /**
- * Resolves AuthFn's readable double-submit token by the exact cookie name
+ * Resolves the auth provider's readable double-submit token by the exact cookie name
  * projected into the authenticated session. A single-cookie fallback supports
  * sign-in bootstrap without inferring anything from HTTP-only session cookies.
  */
-export function authFnCsrfToken(
+export function operatorCsrfToken(
   cookieHeader = readableCookies(),
-  cookieName = authFnCsrfCookieName
+  cookieName = operatorCsrfCookieName
 ): string | undefined {
   if (!cookieHeader) return undefined;
   const candidates: Array<{ name: string; value: string }> = [];
@@ -71,7 +76,7 @@ export function authFnCsrfToken(
   return candidates.length === 1 ? candidates[0]?.value : undefined;
 }
 
-/** Same-origin console transport with AuthFn CSRF propagation for mutations. */
+/** Same-origin console transport with provider-defined CSRF propagation for mutations. */
 export async function fetchConsole(
   input: RequestInfo | URL,
   init: RequestInit = {},
@@ -79,9 +84,9 @@ export async function fetchConsole(
 ): Promise<Response> {
   const headers = new Headers(init.headers);
   const method = (init.method ?? 'GET').toUpperCase();
-  if (!SAFE_HTTP_METHODS.has(method) && !headers.has('x-authfn-csrf')) {
-    const token = authFnCsrfToken();
-    if (token) headers.set('x-authfn-csrf', token);
+  if (!SAFE_HTTP_METHODS.has(method) && !headers.has(operatorCsrfHeaderName)) {
+    const token = operatorCsrfToken();
+    if (token) headers.set(operatorCsrfHeaderName, token);
   }
   return fetcher(input, {
     ...init,

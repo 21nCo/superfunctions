@@ -1,144 +1,52 @@
-export const REQUIRED_MODULE_IDS = [
-  'authfn',
-  'billfn',
-  'browsefn',
-  'cifn',
-  'cmsfn',
-  'compfn',
-  'datafn',
-  'filefn',
-  'flowfn',
-  'hostfn',
-  'mailfn',
-  'memoryfn',
-  'plugfn',
-  'recfn',
-  'searchfn',
-  'secfn',
-  'sendfn',
-  'testfn',
-  'userfn',
-  'watchfn',
-] as const;
+import type {
+  AdminAvailability,
+  AdminCapabilityManifest,
+  AdminCapabilityOwner,
+  AdminDependencyDefinition,
+} from '@superfunctions/admin';
 
-export const OPTIONAL_MODULE_IDS = [
-  'apifn',
-  'botfn',
-  'cachefn',
-  'docsfn',
-  'langfn',
-  'probefn',
-] as const;
-
-export const UNAVAILABLE_MODULE_IDS = [] as const;
-
-export const NESTED_MODULE_IDS = ['catchfn', 'logfn'] as const;
-export const FOLDED_MODULE_IDS = ['contentfn'] as const;
-
-export const KNOWN_MODULE_IDS = [
-  'apifn',
-  'authfn',
-  'billfn',
-  'botfn',
-  'browsefn',
-  'cachefn',
-  'catchfn',
-  'cifn',
-  'cmsfn',
-  'compfn',
-  'contentfn',
-  'datafn',
-  'docsfn',
-  'filefn',
-  'flowfn',
-  'hostfn',
-  'langfn',
-  'logfn',
-  'mailfn',
-  'memoryfn',
-  'plugfn',
-  'probefn',
-  'recfn',
-  'searchfn',
-  'secfn',
-  'sendfn',
-  'testfn',
-  'userfn',
-  'watchfn',
-] as const;
-
-export type KnownModuleId = (typeof KNOWN_MODULE_IDS)[number];
-export type ModuleAvailability = 'required-product' | 'optional-product' | 'nested' | 'folded' | 'unavailable';
-
-export interface ModuleCatalogEntry {
-  id: KnownModuleId;
+export interface ConsoleModuleCatalogEntry {
+  id: string;
   displayName: string;
-  availability: ModuleAvailability;
-  owner?: KnownModuleId;
+  description: string;
+  category: string;
+  availability: AdminAvailability;
+  owner?: AdminCapabilityOwner;
+  dependencies: readonly AdminDependencyDefinition[];
 }
 
-const REQUIRED_SET = new Set<string>(REQUIRED_MODULE_IDS);
-const OPTIONAL_SET = new Set<string>(OPTIONAL_MODULE_IDS);
-const UNAVAILABLE_SET = new Set<string>(UNAVAILABLE_MODULE_IDS);
-const FOLDED_SET = new Set<string>(FOLDED_MODULE_IDS);
+function normalizedDependencies(
+  dependencies: AdminCapabilityManifest['dependencies'],
+): AdminDependencyDefinition[] {
+  return (dependencies ?? []).map((dependency) =>
+    typeof dependency === 'string'
+      ? { moduleId: dependency, required: true }
+      : { ...dependency, required: dependency.required !== false });
+}
 
-const DISPLAY_NAMES: Record<KnownModuleId, string> = {
-  apifn: 'ApiFn',
-  authfn: 'AuthFn',
-  billfn: 'BillFn',
-  botfn: 'BotFn',
-  browsefn: 'BrowseFn',
-  cachefn: 'CacheFn',
-  catchfn: 'CatchFn',
-  cifn: 'CiFn',
-  cmsfn: 'CmsFn',
-  compfn: 'CompFn',
-  contentfn: 'ContentFn',
-  datafn: 'DataFn',
-  docsfn: 'DocsFn',
-  filefn: 'FileFn',
-  flowfn: 'FlowFn',
-  hostfn: 'HostFn',
-  langfn: 'LangFn',
-  logfn: 'LogFn',
-  mailfn: 'MailFn',
-  memoryfn: 'MemoryFn',
-  plugfn: 'PlugFn',
-  probefn: 'ProbeFn',
-  recfn: 'RecFn',
-  searchfn: 'SearchFn',
-  secfn: 'SecFn',
-  sendfn: 'SendFn',
-  testfn: 'TestFn',
-  userfn: 'UserFn',
-  watchfn: 'WatchFn',
-};
-
-export const NESTED_OWNERS = {
-  catchfn: 'watchfn',
-  contentfn: 'cmsfn',
-  logfn: 'watchfn',
-} as const satisfies Record<(typeof NESTED_MODULE_IDS)[number] | (typeof FOLDED_MODULE_IDS)[number], KnownModuleId>;
-
-export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = KNOWN_MODULE_IDS.map((id) => {
-  const owner = NESTED_OWNERS[id as keyof typeof NESTED_OWNERS];
-  return {
-    id,
-    displayName: DISPLAY_NAMES[id],
-    availability: UNAVAILABLE_SET.has(id)
-      ? 'unavailable'
-      : FOLDED_SET.has(id)
-        ? 'folded'
-      : owner
-      ? 'nested'
-      : OPTIONAL_SET.has(id)
-        ? 'optional-product'
-        : 'required-product',
-    ...(owner ? { owner } : {}),
-  };
-});
-
-const KNOWN_SET = new Set<string>(KNOWN_MODULE_IDS);
+/** Build the installable product catalog exclusively from supplied manifests. */
+export function createConsoleModuleCatalog(
+  manifests: readonly AdminCapabilityManifest[],
+): readonly ConsoleModuleCatalogEntry[] {
+  const seen = new Set<string>();
+  return Object.freeze(manifests.map((manifest) => {
+    if (seen.has(manifest.id)) {
+      throw new ModuleSelectionError('The supplied administration manifests contain duplicate module IDs.', {
+        moduleId: manifest.id,
+      });
+    }
+    seen.add(manifest.id);
+    return Object.freeze({
+      id: manifest.id,
+      displayName: manifest.displayName,
+      description: manifest.description,
+      category: manifest.category,
+      availability: manifest.availability,
+      ...(manifest.owner ? { owner: Object.freeze({ ...manifest.owner }) } : {}),
+      dependencies: Object.freeze(normalizedDependencies(manifest.dependencies)),
+    });
+  }));
+}
 
 export class ModuleSelectionError extends Error {
   readonly code = 'SUPERCONSOLE_INVALID_MODULE_SELECTION';
@@ -149,13 +57,9 @@ export class ModuleSelectionError extends Error {
   }
 }
 
-export function isKnownModuleId(value: string): value is KnownModuleId {
-  return KNOWN_SET.has(value);
-}
-
 export function parseModuleSelection(
   value: string | readonly string[] | undefined,
-  availableModuleIds: readonly string[] = KNOWN_MODULE_IDS,
+  manifests: readonly AdminCapabilityManifest[],
 ): string[] {
   if (value === undefined) {
     throw new ModuleSelectionError('Super Console requires an explicit module selection; use [] for a shell-only installation.', {
@@ -163,59 +67,62 @@ export function parseModuleSelection(
     });
   }
 
+  const catalog = createConsoleModuleCatalog(manifests);
+  const byId = new Map(catalog.map((entry) => [entry.id, entry]));
   const candidates = (typeof value === 'string' ? value.split(',') : value)
     .map((candidate) => candidate.trim().toLowerCase())
     .filter(Boolean);
-  const available = new Set(availableModuleIds);
-  const unknown = [...new Set(candidates.filter((candidate) => !available.has(candidate)))];
+  const unknown = [...new Set(candidates.filter((candidate) => !byId.has(candidate)))];
   if (unknown.length > 0) {
-    throw new ModuleSelectionError('The module selection contains unknown Superfunctions.', {
+    throw new ModuleSelectionError('The module selection contains modules without supplied administration manifests.', {
       unknown,
-      available: [...available].sort(),
+      available: [...byId.keys()].sort(),
     });
   }
 
-  const unavailable = candidates.filter((candidate) => UNAVAILABLE_SET.has(candidate));
+  const unavailable = candidates.filter((candidate) => byId.get(candidate)?.availability === 'unavailable');
   if (unavailable.length > 0) {
-    throw new ModuleSelectionError('The module selection contains Superfunctions without a domain-backed administration service.', {
+    throw new ModuleSelectionError('The module selection contains modules without a domain-backed administration service.', {
       unavailable: [...new Set(unavailable)],
     });
   }
-  const folded = candidates.filter((candidate) => FOLDED_SET.has(candidate));
+
+  const folded = candidates.filter((candidate) => byId.get(candidate)?.availability === 'folded');
   if (folded.length > 0) {
     throw new ModuleSelectionError('Folded modules are provided by their owner and cannot be selected independently.', {
       folded: [...new Set(folded)],
-      owners: folded.map((moduleId) => ({ moduleId, ownerId: NESTED_OWNERS[moduleId as keyof typeof NESTED_OWNERS] })),
+      owners: folded.map((moduleId) => ({ moduleId, ownerId: byId.get(moduleId)?.owner?.moduleId })),
     });
   }
 
   const selected = [...new Set(candidates)];
   const selectedSet = new Set(selected);
-  const missingOwners = selected
-    .filter((id): id is keyof typeof NESTED_OWNERS => id in NESTED_OWNERS)
-    .map((id) => ({ moduleId: id, ownerId: NESTED_OWNERS[id] }))
-    .filter(({ ownerId }) => !selectedSet.has(ownerId));
+  const missingOwners = selected.flatMap((moduleId) => {
+    const ownerId = byId.get(moduleId)?.owner?.moduleId;
+    return ownerId && !selectedSet.has(ownerId) ? [{ moduleId, ownerId }] : [];
+  });
   if (missingOwners.length > 0) {
-    throw new ModuleSelectionError('Nested modules require their owning module to be selected.', {
-      missingOwners,
-    });
+    throw new ModuleSelectionError('Nested modules require their owning module to be selected.', { missingOwners });
   }
 
-  return selected.sort((left, right) => {
-    const leftIndex = KNOWN_MODULE_IDS.indexOf(left as KnownModuleId);
-    const rightIndex = KNOWN_MODULE_IDS.indexOf(right as KnownModuleId);
-    if (leftIndex < 0 && rightIndex < 0) return left.localeCompare(right);
-    if (leftIndex < 0) return 1;
-    if (rightIndex < 0) return -1;
-    return leftIndex - rightIndex;
-  });
+  const missingDependencies = selected.flatMap((moduleId) =>
+    (byId.get(moduleId)?.dependencies ?? [])
+      .filter((dependency) => dependency.required !== false && !selectedSet.has(dependency.moduleId))
+      .map((dependency) => ({ moduleId, dependencyId: dependency.moduleId })));
+  if (missingDependencies.length > 0) {
+    throw new ModuleSelectionError('Selected modules require additional enabled dependencies.', { missingDependencies });
+  }
+
+  const order = new Map(catalog.map((entry, index) => [entry.id, index]));
+  return selected.sort((left, right) =>
+    (order.get(left) ?? Number.MAX_SAFE_INTEGER) - (order.get(right) ?? Number.MAX_SAFE_INTEGER)
+      || left.localeCompare(right));
 }
 
-export function catalogForSelection(selected: readonly KnownModuleId[]): ModuleCatalogEntry[] {
+export function catalogForSelection(
+  catalog: readonly ConsoleModuleCatalogEntry[],
+  selected: readonly string[],
+): ConsoleModuleCatalogEntry[] {
   const selectedSet = new Set(selected);
-  return MODULE_CATALOG.filter(({ id }) => selectedSet.has(id));
-}
-
-export function isRequiredProductModule(id: KnownModuleId): boolean {
-  return REQUIRED_SET.has(id);
+  return catalog.filter(({ id }) => selectedSet.has(id));
 }

@@ -40,21 +40,13 @@ describe('Super Console operator surface', () => {
     }
   });
 
-  it('does not introduce another UI toolkit or embed the legacy React dashboard', () => {
+  it('does not introduce another UI toolkit or embed product-specific dashboards', () => {
     const packageJson = read('package.json');
     for (const forbidden of ['react', '@mui/', 'chakra', 'antd', 'shadcn', 'bootstrap']) {
       expect(packageJson.toLowerCase()).not.toContain(forbidden);
     }
-    expect(read('src/routes/modules/cifn/+page.svelte')).not.toContain('iframe');
-    expect(read('src/routes/modules/cifn/runs/[runId]/+page.svelte')).toContain('/jobs/${encodeURIComponent(job.jobKey)}/logs');
-    expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.svelte')).toContain('Follow logs');
-    expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.svelte')).toContain('Next page');
-    expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.svelte')).toContain("url.searchParams.set('tail', '1000')");
-    expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.ts')).toContain('/jobs/${encodeURIComponent(params.jobKey)}/logs');
-    expect(read('src/routes/modules/cifn/runs/[runId]/jobs/[jobKey]/logs/+page.ts')).not.toContain('downloadUrl');
-    expect(read('src/routes/modules/cifn/runs/[runId]/artifacts/+page.svelte')).toContain('FileFn');
-    expect(read('src/routes/modules/cifn/runs/[runId]/artifacts/+page.svelte')).toContain("action.id.endsWith('.download-artifact')");
-    expect(read('src/routes/modules/cifn/runs/[runId]/artifacts/+page.svelte')).not.toContain('openSafeAdminDownload');
+    expect(read('src/routes/modules/[moduleId]/+page.svelte')).not.toContain('iframe');
+    expect(read('src/lib/components/ResourceListPage.svelte')).not.toContain('iframe');
   });
 
   it('ships every permanent shell destination and explicit recovery states', () => {
@@ -67,7 +59,7 @@ describe('Super Console operator surface', () => {
     expect(read('src/lib/components/StatePanel.svelte')).toContain("kind === 'forbidden'");
     expect(read('src/lib/components/OperatorShell.svelte')).toContain('Loading the next operator view');
     expect(read('src/routes/sign-in/+page.svelte')).toContain('/api/admin/v1/auth/sign-in');
-    expect(read('src/routes/sign-in/+page.svelte')).toContain("body?.error?.code === 'AUTHFN_2FA_REQUIRED'");
+    expect(read('src/routes/sign-in/+page.svelte')).toContain("body?.error?.code === 'OPERATOR_2FA_REQUIRED'");
     expect(read('src/routes/sign-in/+page.svelte')).toContain('/api/admin/v1/auth/2fa');
     expect(read('src/routes/sign-in/+page.svelte')).toContain('autocomplete="one-time-code"');
     expect(read('src/routes/sign-in/+page.svelte')).toContain('Back to password');
@@ -97,26 +89,22 @@ describe('Super Console operator surface', () => {
     expect(settings).toContain('refreshSuccessfulMutation(`${policy.label} updated.`, invalidateAll)');
   });
 
-  it('mounts folded child resources beneath WatchFn and CmsFn owner routes', () => {
-    expect(read('src/routes/modules/[moduleId]/catchfn/[resource]/+page.ts')).toContain("sourceModuleId: 'catchfn'");
-    expect(read('src/routes/modules/[moduleId]/logfn/[resource]/+page.ts')).toContain("sourceModuleId: 'logfn'");
-    expect(read('src/routes/modules/[moduleId]/contentfn/[resource]/+page.ts')).toContain("sourceModuleId: 'contentfn'");
+  it('mounts owned child resources through generic source-module projection', () => {
+    expect(read('src/lib/components/resource-pages.ts')).toContain('resource.sourceModuleId ?? input.moduleId');
+    expect(read('src/lib/server/super-console.ts')).toContain("encodeURIComponent(`${child.id}:${resource.resourceId}`)");
     expect(read('src/routes/modules/[moduleId]/+page.svelte')).toContain('as resource (resource.href)');
   });
 
-  it('translates the visible CiFn status filter into the canonical operation input', () => {
-    const transport = read('src/lib/components/cifn.ts');
-    expect(transport).toContain("transport.set('filter', JSON.stringify({ status }))");
-    expect(transport).not.toContain("transport.set('status'");
+  it('renders declared resource presentation before generic inference', () => {
+    const pages = read('src/lib/components/resource-pages.ts');
+    expect(pages).toContain('resource.presentation?.columns?.length');
+    expect(pages).toContain('presentation?.titleField');
+    expect(pages).toContain('presentation?.statusField');
   });
 
-  it('preserves scope in CiFn inspection and aligns command search with visible labels', () => {
-    const ci = read('src/routes/modules/cifn/+page.svelte');
-    expect(ci).toContain('scopedConsoleHref(');
-    expect(ci).toContain('page.url.searchParams');
-    const run = read('src/routes/modules/cifn/runs/[runId]/+page.svelte');
-    expect(run).toContain('scopedConsoleHref(');
-    expect(run).toContain('page.url.searchParams');
+  it('preserves scope in generic inspection and aligns command search with visible labels', () => {
+    const resources = read('src/lib/components/resource-pages.ts');
+    expect(resources).toContain('withAdminScope(');
     const command = read('src/lib/components/CommandPalette.svelte');
     expect(command).toContain('commandValue(command)');
     expect(command).toContain('onValueChange');

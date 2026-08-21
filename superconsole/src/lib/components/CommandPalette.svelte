@@ -23,7 +23,7 @@
   import { onMount } from 'svelte';
   import ConsoleIcon from './ConsoleIcon.svelte';
   import { safeConsoleNavigationHref, scopedConsoleHref } from './admin-api';
-  import { enabledNavigationModules, registryHasModule, shellSurfaceEnabled, type RegistryViewModel } from './view-models';
+  import { enabledNavigationModules, shellSurfaceEnabled, type RegistryViewModel } from './view-models';
 
   let {
     registry,
@@ -32,7 +32,6 @@
 
   let query = $state('');
   const modules = $derived(enabledNavigationModules(registry));
-  const searchEnabled = $derived(registryHasModule(registry, 'searchfn'));
   const staticCommands = [
     { id: 'overview', label: 'Open overview', href: '/', group: 'Navigate', icon: 'home', shortcut: 'G O' },
     { id: 'search', label: 'Search all resources', href: '/search', group: 'Navigate', icon: 'search', shortcut: 'G S' },
@@ -43,7 +42,7 @@
   ];
   const commands = $derived([
     ...staticCommands.filter((command) => {
-      if (command.id === 'search') return searchEnabled && shellSurfaceEnabled(registry, 'search');
+      if (command.id === 'search') return shellSurfaceEnabled(registry, 'search');
       if (command.id === 'overview') return shellSurfaceEnabled(registry, 'overview');
       if (command.id === 'audit' || command.id === 'api' || command.id === 'mcp' || command.id === 'settings') {
         return shellSurfaceEnabled(registry, command.id);

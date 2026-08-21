@@ -497,6 +497,20 @@ export const ciFnAdminResources = [
     filterableFields: ["status"],
     sortableFields: ["createdAt", "updatedAt"],
     sensitiveFields: [],
+    presentation: {
+      listOperationId: "cifn.runs.list",
+      detailOperationId: "cifn.runs.get",
+      titleField: "runId",
+      statusField: "status",
+      columns: [
+        { field: "runId", label: "Run", format: "code" },
+        { field: "pipelineRef.repo", label: "Repository", format: "code" },
+        { field: "pipelineRef.ref", label: "Ref", format: "code" },
+        { field: "status", label: "Status", format: "status" },
+        { field: "createdAt", label: "Created", format: "datetime" },
+      ],
+      defaultSort: { field: "createdAt", direction: "desc" },
+    },
   },
   {
     id: "jobs",
@@ -510,6 +524,19 @@ export const ciFnAdminResources = [
     filterableFields: ["runId", "status"],
     sortableFields: ["startedAt", "completedAt"],
     sensitiveFields: [],
+    presentation: {
+      listOperationId: "cifn.jobs.list",
+      detailOperationId: "cifn.jobs.get",
+      titleField: "jobKey",
+      statusField: "status",
+      columns: [
+        { field: "jobKey", label: "Job", format: "code" },
+        { field: "runId", label: "Run", format: "code" },
+        { field: "status", label: "Status", format: "status" },
+        { field: "startedAt", label: "Started", format: "datetime" },
+        { field: "completedAt", label: "Completed", format: "datetime" },
+      ],
+    },
   },
   {
     id: "logs",
@@ -523,6 +550,16 @@ export const ciFnAdminResources = [
     filterableFields: ["runId", "jobKey"],
     sortableFields: ["timestamp"],
     sensitiveFields: ["secret", "token", "credential", "password", "authorization"],
+    presentation: {
+      listOperationId: "cifn.logs.list",
+      titleField: "id",
+      columns: [
+        { field: "timestamp", label: "Timestamp", format: "datetime" },
+        { field: "stepKey", label: "Step", format: "code" },
+        { field: "line", label: "Line", format: "code" },
+      ],
+      defaultSort: { field: "timestamp", direction: "asc" },
+    },
   },
   {
     id: "artifacts",
@@ -536,6 +573,16 @@ export const ciFnAdminResources = [
     filterableFields: ["runId"],
     sortableFields: ["name"],
     sensitiveFields: [],
+    presentation: {
+      listOperationId: "cifn.artifacts.list",
+      titleField: "name",
+      columns: [
+        { field: "name", label: "Artifact" },
+        { field: "fileId", label: "File", format: "code" },
+        { field: "runId", label: "Run", format: "code" },
+      ],
+      defaultSort: { field: "name", direction: "asc" },
+    },
   },
 ] as const;
 
