@@ -55,6 +55,7 @@
     "testfn/*",
     "userfn/typescript",
     "clifn/*",
+    "devfn/*",
     "probefn/apps/*",
     "probefn/packages/*",
     "packages/*",
