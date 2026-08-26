@@ -13,6 +13,7 @@ build/
 **/*.d.ts
 !superconsole/src/app.d.ts
 !apifn/docsfn/src/svelte/ApifnApiReference.svelte.d.ts
+!uifn/catalog/generated/primitive-contracts.d.ts
 **/*.d.ts.map
 **/*.js.map
 

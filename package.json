@@ -57,6 +57,7 @@
     "clifn/*",
     "probefn/apps/*",
     "probefn/packages/*",
+    "devfn/*",
     "packages/*",
     "filefn/examples/full-demo/*",
     "filefn/examples/production/*"

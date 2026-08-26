@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const catalogPath = path.join(root, 'uifn/catalog/generated/catalog.json');
 const outputDirectory = path.join(root, 'uifn/svelte/lib/generated');
-const manifestPath = path.join(root, 'uifn/.conduct/generated/phase-12/phase-12-svelte-compounds.json');
+const manifestPath = path.join(root, 'uifn/evidence/generated/phase-12/phase-12-svelte-compounds.json');
 const allRootsHarnessPath = path.join(root, 'uifn/svelte/tests/fixtures/AllRootsHarness.svelte');
 const check = process.argv.includes('--check');
 const write = process.argv.includes('--write');
@@ -61,6 +61,7 @@ export const ${name}Definition: SveltePrimitiveDefinition<${input}> = {
   inputNames: ${JSON.stringify([
     ...primitive.inputs.map((entry) => entry.name),
     ...(primitive.name === 'Accordion' ? ['type'] : []),
+    ...(primitive.name === 'Carousel' ? ['dir'] : []),
   ])},
   contextKey: Symbol('uifn.${name}'),
   ${runtimeField}
@@ -247,9 +248,15 @@ const requiredSamples = {
   Tour: 'steps={[{ id: "one", title: "One", description: "One", target: "#tour-target" }]}',
   TreeView: 'items={[{ id: "one", textValue: "One" }]}',
 };
-const allRootsHarness = `<script lang="ts">\n  import { ${catalog.primitives.map((primitive) => primitive.name).join(', ')} } from '../../lib/index.js';\n</script>\n\n<div id="tour-target"></div>\n${catalog.primitives.map((primitive) => {
+const allRootsHarness = `<script lang="ts">\n  import { ${catalog.primitives.map((primitive) => primitive.name).join(', ')} } from '../../lib/index.js';\n\n  let { angleName = 'angle' }: { angleName?: string } = $props();\n</script>\n\n<div id="tour-target"></div>\n${catalog.primitives.map((primitive) => {
   const host = primitive.name === 'Toast' ? `${primitive.name}.Provider` : `${primitive.name}.Root`;
   const required = requiredSamples[primitive.name] ? ` ${requiredSamples[primitive.name]}` : '';
+  if (primitive.name === 'AngleSlider') {
+    return `<${host} name={angleName} data-testid="${primitive.id}-root">\n  <AngleSlider.HiddenInput data-testid="angle-slider-input" />\n</${host}>`;
+  }
+  if (primitive.name === 'Form') {
+    return `<${host} action="/save" method="post" enctype="multipart/form-data" data-testid="${primitive.id}-root" />`;
+  }
   return `<${host}${required} data-testid="${primitive.id}-root" />`;
 }).join('\n')}\n`;
 const outputHash = sha256(

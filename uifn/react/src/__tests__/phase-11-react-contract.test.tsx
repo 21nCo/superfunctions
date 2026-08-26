@@ -1,9 +1,12 @@
 import * as React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import type { CarouselProps } from '@uifn/core/primitives/carousel';
+import type { SignaturePadProps } from '@uifn/core/primitives/signature-pad';
 import catalog from '../../../catalog/generated/catalog.json';
-import manifest from '../../../.conduct/generated/phase-11/phase-11-react-compounds.json';
+import manifest from '../../../evidence/generated/phase-11/phase-11-react-compounds.json';
 import * as UIFnReact from '../index';
+import type { ReactPrimitiveBridge } from '../internal/compound';
 
 const fixture: Record<string, Record<string, unknown>> = {
   Carousel: { itemCount: 3, reducedMotion: true },
@@ -165,6 +168,73 @@ describe('PHASE_11 public React contract', () => {
     );
     expect(screen.getByRole('textbox', { name: 'Work email' })).toHaveAttribute('placeholder', 'you@company.com');
     expect(screen.getByRole('combobox', { name: 'Commands' })).toHaveAttribute('placeholder', 'Type a command or search…');
+  });
+
+  it('routes Carousel dir and orientation to the controller', () => {
+    let bridge: ReactPrimitiveBridge<CarouselProps> | undefined;
+    const carousel = (orientation: 'horizontal' | 'vertical') => (
+      <UIFnReact.Carousel
+        defaultIndex={1}
+        itemCount={3}
+        dir="rtl"
+        orientation={orientation}
+        reducedMotion
+        render={(payload) => {
+          bridge = payload.bridge as ReactPrimitiveBridge<CarouselProps>;
+          return <section {...payload.props}><UIFnReact.Carousel.Viewport data-testid="carousel-viewport" /></section>;
+        }}
+      />
+    );
+    const mounted = render(carousel('horizontal'));
+    expect(mounted.container.querySelector('section')).toHaveAttribute('dir', 'rtl');
+    const actions = bridge?.getActions() as {
+      dragStart(id: number, point: { x: number; y: number }): void;
+      dragMove(id: number, point: { x: number; y: number }): void;
+      dragEnd(id: number): void;
+    };
+    act(() => {
+      actions.dragStart(1, { x: 100, y: 0 });
+      actions.dragMove(1, { x: 50, y: 0 });
+      actions.dragEnd(1);
+    });
+    expect(bridge?.getSnapshot().state).toMatchObject({ index: 0, dir: 'rtl' });
+    mounted.rerender(carousel('vertical'));
+    expect(bridge?.getSnapshot().state).toMatchObject({ orientation: 'vertical', dir: 'rtl' });
+  });
+
+  it('preserves controlled SignaturePad requests and live callbacks across rerenders', () => {
+    const point = { x: 1, y: 2, pressure: 0.5, time: 10 };
+    const value = [[point]] as const;
+    const change = vi.fn();
+    let bridge: ReactPrimitiveBridge<SignaturePadProps> | undefined;
+    const signature = (name: string, onValueChange?: SignaturePadProps['onValueChange']) => (
+      <UIFnReact.SignaturePad
+        value={value}
+        name={name}
+        onValueChange={onValueChange}
+        render={(payload) => {
+          bridge = payload.bridge as ReactPrimitiveBridge<SignaturePadProps>;
+          return <div {...payload.props} />;
+        }}
+      />
+    );
+    const mounted = render(signature('first'));
+    const actions = bridge?.getActions() as {
+      pointerStart(id: number, point: typeof point): void;
+      pointerEnd(id: number): void;
+      clear(): void;
+    };
+    act(() => {
+      actions.pointerStart(1, point);
+      actions.pointerEnd(1);
+    });
+    expect(bridge?.getSnapshot().state.requestedValue).toHaveLength(2);
+
+    mounted.rerender(signature('second'));
+    expect(bridge?.getSnapshot().state.requestedValue).toHaveLength(2);
+    mounted.rerender(signature('second', change));
+    act(() => actions.clear());
+    expect(change).toHaveBeenCalledWith([]);
   });
 
   it('preserves intrinsic semantics, refs, accessible names, and disabled behavior for asChild and render', () => {

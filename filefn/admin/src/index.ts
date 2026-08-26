@@ -13,6 +13,7 @@ import {
   type AdminOperationRequest,
   type AdminOperationResult,
   type AdminRawResponse,
+  type AdminResourcePresentation,
   type AdminResult,
 } from "@superfunctions/admin";
 import type { FileRecord, FileVersionRecord, FilePermissionRecord, FileArtifactRecord } from "@filefn/server";
@@ -30,16 +31,17 @@ export interface FileFnAdminResourceDefinition {
   filterableFields: readonly string[];
   sortableFields: readonly string[];
   sensitiveFields: readonly string[];
+  presentation?: AdminResourcePresentation;
 }
 
 export const fileFnAdminResources = [
   { id: "files", label: "Files", description: "Files visible to the active FileFn principal.", icon: "filefn:files", risk: "standard", minimumScope: "project", idField: "fileId", displayFields: ["fileId", "name", "mimeType", "size", "updatedAt"], searchableFields: ["fileId", "name"], filterableFields: [], sortableFields: ["updatedAt"], sensitiveFields: [] },
-  { id: "versions", label: "Versions", description: "Authorized versions of a FileFn file.", icon: "filefn:versions", risk: "standard", minimumScope: "project", idField: "versionId", displayFields: ["versionId", "mimeType", "size", "createdAt"], searchableFields: ["versionId"], filterableFields: ["fileId"], sortableFields: ["createdAt"], sensitiveFields: ["storageKey"] },
+  { id: "versions", label: "Versions", description: "Authorized versions of a FileFn file.", icon: "filefn:versions", risk: "standard", minimumScope: "project", idField: "versionId", displayFields: ["versionId", "mimeType", "size", "createdAt"], searchableFields: ["versionId"], filterableFields: ["fileId"], sortableFields: ["createdAt"], sensitiveFields: ["storageKey"], presentation: { standaloneList: false, listOperationId: "filefn.versions.list", query: { filters: [{ field: "fileId", inputPath: "fileId" }] }, parent: { resourceId: "files", bindings: [{ sourceField: "fileId", queryField: "fileId" }] } } },
   { id: "upload-sessions", label: "Upload Sessions", description: "Upload sessions owned by the active FileFn principal.", icon: "filefn:upload-sessions", risk: "sensitive", minimumScope: "project", idField: "uploadSessionId", displayFields: ["uploadSessionId", "fileId", "status", "expiresAt"], searchableFields: ["uploadSessionId"], filterableFields: [], sortableFields: [], sensitiveFields: ["uploadSessionToken", "token", "url", "headers"] },
-  { id: "grants", label: "Grants", description: "Permission grants for a file managed by the active owner.", icon: "filefn:grants", risk: "sensitive", minimumScope: "project", idField: "permissionId", displayFields: ["permissionId", "fileId", "userId", "role", "tenantId", "expiresAt"], searchableFields: ["permissionId", "userId", "role", "tenantId"], filterableFields: ["fileId"], sortableFields: ["createdAt"], sensitiveFields: [] },
-  { id: "share-links", label: "Share Links", description: "Redacted share-link records for a file the active principal may share.", icon: "filefn:share-links", risk: "sensitive", minimumScope: "project", idField: "tokenHashPrefix", displayFields: ["tokenHashPrefix", "fileId", "expiresAt", "downloads", "revokedAt"], searchableFields: ["tokenHashPrefix"], filterableFields: ["fileId"], sortableFields: ["createdAt"], sensitiveFields: ["token", "tokenHash"] },
+  { id: "grants", label: "Grants", description: "Permission grants for a file managed by the active owner.", icon: "filefn:grants", risk: "sensitive", minimumScope: "project", idField: "permissionId", displayFields: ["permissionId", "fileId", "userId", "role", "tenantId", "expiresAt"], searchableFields: ["permissionId", "userId", "role", "tenantId"], filterableFields: ["fileId"], sortableFields: ["createdAt"], sensitiveFields: [], presentation: { standaloneList: false, listOperationId: "filefn.grants.list", query: { filters: [{ field: "fileId", inputPath: "fileId" }] }, parent: { resourceId: "files", bindings: [{ sourceField: "fileId", queryField: "fileId" }] } } },
+  { id: "share-links", label: "Share Links", description: "Redacted share-link records for a file the active principal may share.", icon: "filefn:share-links", risk: "sensitive", minimumScope: "project", idField: "tokenHashPrefix", displayFields: ["tokenHashPrefix", "fileId", "expiresAt", "downloads", "revokedAt"], searchableFields: ["tokenHashPrefix"], filterableFields: ["fileId"], sortableFields: ["createdAt"], sensitiveFields: ["token", "tokenHash"], presentation: { standaloneList: false, listOperationId: "filefn.share-links.list", query: { filters: [{ field: "fileId", inputPath: "fileId" }] }, parent: { resourceId: "files", bindings: [{ sourceField: "fileId", queryField: "fileId" }] } } },
   { id: "policies", label: "Policies", description: "Configured FileFn upload and storage policies.", icon: "filefn:policies", risk: "standard", minimumScope: "project", idField: "name", displayFields: ["name", "visibility", "storageTarget", "lifecycle"], searchableFields: ["name"], filterableFields: ["visibility", "storageTarget", "lifecycle"], sortableFields: ["name"], sensitiveFields: ["storagePath"] },
-  { id: "artifacts", label: "Artifacts", description: "Processing artifacts for files visible to the active principal.", icon: "filefn:artifacts", risk: "standard", minimumScope: "project", idField: "artifactId", displayFields: ["artifactId", "fileId", "versionId", "kind", "mimeType", "size"], searchableFields: ["artifactId", "kind"], filterableFields: ["fileId", "versionId", "kind"], sortableFields: ["createdAt"], sensitiveFields: ["storageKey", "url", "headers"] },
+  { id: "artifacts", label: "Artifacts", description: "Processing artifacts for files visible to the active principal.", icon: "filefn:artifacts", risk: "standard", minimumScope: "project", idField: "artifactId", displayFields: ["artifactId", "fileId", "versionId", "kind", "mimeType", "size"], searchableFields: ["artifactId", "kind"], filterableFields: ["fileId", "versionId", "kind"], sortableFields: ["createdAt"], sensitiveFields: ["storageKey", "url", "headers"], presentation: { standaloneList: false, listOperationId: "filefn.artifacts.list", query: { filters: [{ field: "fileId", inputPath: "fileId" }] }, parent: { resourceId: "files", bindings: [{ sourceField: "fileId", queryField: "fileId" }] } } },
 ] as const satisfies readonly FileFnAdminResourceDefinition[];
 
 type JsonRecord = Record<string, unknown>;
@@ -150,7 +152,7 @@ const createShareOutputSchema: AdminObjectSchema = {
       additionalProperties: false,
     },
   },
-  required: ["accepted"],
+  required: ["accepted", "item"],
   additionalProperties: false,
 };
 const pageProperties = { cursor: { type: "string", minLength: 1 }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 } } as const;
@@ -169,8 +171,8 @@ const processInputSchema: AdminObjectSchema = { type: "object", properties: { fi
 
 export const fileFnAdminSchemas = { entity: entitySchema, pageInput: pageInputSchema, pageOutput: pageOutputSchema, itemOutput: itemOutputSchema, acceptedOutput: acceptedOutputSchema, fileChildListInput: fileChildListInputSchema, fileChildInput: fileChildInputSchema, uploadSessionInput: uploadSessionInputSchema, createUploadInput: createUploadInputSchema, createGrantInput: createGrantInputSchema, revokeGrantInput: revokeGrantInputSchema, createShareInput: createShareInputSchema, revokeShareInput: revokeShareInputSchema, downloadInput: downloadInputSchema, processInput: processInputSchema } as const satisfies Record<string, AdminJsonSchema>;
 
-function readOperation(id: FileFnAdminOperationId, title: string, description: string, resource: string, inputSchema: AdminObjectSchema, outputSchema: AdminObjectSchema, route: string, collection: boolean, idInput = "id", pagination = false, sensitiveFields: readonly string[] = []): AdminOperationDefinition {
-  return { id, title, description, inputSchema, outputSchema, route: { method: "GET", path: route }, permission: `filefn.${resource}.read`, minimumScope: "project", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: sensitiveFields.length ? "required" : "optional" }, ...(pagination ? { pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 100 } as const } : {}), mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }, ...(sensitiveFields.length ? { redaction: { outputFields: sensitiveFields } } : {}), target: collection ? { resource, collection: true } : { resource, idInput } };
+function readOperation(id: FileFnAdminOperationId, title: string, description: string, resource: string, inputSchema: AdminObjectSchema, outputSchema: AdminObjectSchema, route: string, collection: boolean, idInput = "id", pagination = false, sensitiveFields: readonly string[] = [], auditRequired = false, method: "GET" | "POST" = "GET"): AdminOperationDefinition {
+  return { id, title, description, inputSchema, outputSchema, route: { method, path: route }, permission: `filefn.${resource}.read`, minimumScope: "project", safety: { classification: "read", idempotent: true, requiresConfirmation: false, audit: sensitiveFields.length || auditRequired ? "required" : "optional" }, ...(pagination ? { pagination: { mode: "cursor", defaultLimit: 50, maxLimit: 100 } as const } : {}), mcp: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }, ...(sensitiveFields.length ? { redaction: { outputFields: sensitiveFields } } : {}), target: collection ? { resource, collection: true } : { resource, idInput } };
 }
 function mutationOperation(options: { id: FileFnAdminOperationId; title: string; description: string; resource: string; inputSchema: AdminObjectSchema; outputSchema?: AdminObjectSchema; route: string; destructive?: boolean; confirmation?: "explicit" | "recent-auth" | "mfa"; collection?: boolean; idInput?: string; inputFields?: readonly string[]; allowOutputPaths?: readonly string[]; idempotent?: boolean }): AdminOperationDefinition {
   const destructive = options.destructive ?? false;
@@ -182,11 +184,11 @@ function mutationOperation(options: { id: FileFnAdminOperationId; title: string;
 const operations: AdminOperationDefinition[] = [
   readOperation("filefn.files.list", "List files", "List files authorized for the active FileFn principal.", "files", pageInputSchema, pageOutputSchema, "/resources/files", true, "id", true),
   readOperation("filefn.files.get", "Get file", "Get one authorized FileFn file.", "files", idInputSchema, itemOutputSchema, "/resources/files/:id", false),
-  readOperation("filefn.files.download", "Download file", "Create an authorized download descriptor.", "files", downloadInputSchema, itemOutputSchema, "/resources/files/:id/download", false, "id", false, ["url", "headers"]),
+  readOperation("filefn.files.download", "Download file", "Create an authorized download descriptor.", "files", downloadInputSchema, itemOutputSchema, "/resources/files/:id/download", false, "id", false, [], true),
   mutationOperation({ id: "filefn.files.delete-file", title: "Delete file", description: "Permanently delete a file, its versions, artifacts, grants, and shares.", resource: "files", inputSchema: idInputSchema, route: "/resources/files/actions/delete-file", destructive: true, confirmation: "mfa" }),
   readOperation("filefn.versions.list", "List versions", "List authorized versions for one file.", "versions", fileChildListInputSchema, pageOutputSchema, "/resources/versions", true, "id", true, ["storageKey"]),
   readOperation("filefn.versions.get", "Get version", "Get one authorized version bound to its file.", "versions", fileChildInputSchema, itemOutputSchema, "/resources/versions/:id", false, "id", false, ["storageKey"]),
-  readOperation("filefn.upload-sessions.get", "Get upload session", "Get an upload session owned by the active FileFn principal.", "upload-sessions", uploadSessionInputSchema, itemOutputSchema, "/resources/upload-sessions/:id", false, "id", false, ["uploadSessionToken", "token", "url", "headers"]),
+  readOperation("filefn.upload-sessions.get", "Get upload session", "Get an upload session owned by the active FileFn principal.", "upload-sessions", uploadSessionInputSchema, itemOutputSchema, "/resources/upload-sessions/:id", false, "id", false, ["uploadSessionToken", "token", "url", "headers"], false, "POST"),
   mutationOperation({ id: "filefn.upload-sessions.create-upload", title: "Create upload", description: "Create a policy-validated, quota-checked upload session.", resource: "upload-sessions", inputSchema: createUploadInputSchema, route: "/resources/upload-sessions/actions/create-upload", collection: true }),
   mutationOperation({ id: "filefn.upload-sessions.complete-upload", title: "Complete upload", description: "Complete an owned upload session after its parts are recorded.", resource: "upload-sessions", inputSchema: uploadSessionInputSchema, route: "/resources/upload-sessions/actions/complete-upload", inputFields: ["uploadSessionToken"] }),
   mutationOperation({ id: "filefn.upload-sessions.abort-upload", title: "Abort upload", description: "Abort an owned upload session and clean up temporary parts.", resource: "upload-sessions", inputSchema: uploadSessionInputSchema, route: "/resources/upload-sessions/actions/abort-upload", destructive: true, confirmation: "explicit", inputFields: ["uploadSessionToken"] }),
@@ -195,12 +197,12 @@ const operations: AdminOperationDefinition[] = [
   mutationOperation({ id: "filefn.grants.revoke-grant", title: "Revoke grant", description: "Revoke a file permission grant.", resource: "grants", inputSchema: revokeGrantInputSchema, route: "/resources/grants/actions/revoke-grant", destructive: true, confirmation: "recent-auth" }),
   readOperation("filefn.share-links.list", "List share links", "List redacted share links for a shareable file.", "share-links", fileChildListInputSchema, pageOutputSchema, "/resources/share-links", true, "id", true, ["token", "tokenHash"]),
   mutationOperation({ id: "filefn.share-links.create-share", title: "Create share", description: "Create a FileFn share link; its plaintext token is returned once.", resource: "share-links", inputSchema: createShareInputSchema, outputSchema: createShareOutputSchema, route: "/resources/share-links/actions/create-share", collection: true, confirmation: "recent-auth", idempotent: false, allowOutputPaths: ["$.item.token"] }),
-  mutationOperation({ id: "filefn.share-links.revoke-share", title: "Revoke share", description: "Revoke a share link using its original plaintext token.", resource: "share-links", inputSchema: revokeShareInputSchema, route: "/resources/share-links/actions/revoke-share", destructive: true, confirmation: "recent-auth", idInput: "token", inputFields: ["token"] }),
+  mutationOperation({ id: "filefn.share-links.revoke-share", title: "Revoke share", description: "Revoke a share link using its original plaintext token.", resource: "files", inputSchema: revokeShareInputSchema, route: "/resources/share-links/actions/revoke-share", destructive: true, confirmation: "recent-auth", idInput: "fileId", inputFields: ["token"] }),
   readOperation("filefn.policies.list", "List policies", "List configured FileFn policies.", "policies", pageInputSchema, pageOutputSchema, "/resources/policies", true, "id", true, ["storagePath"]),
   readOperation("filefn.policies.get", "Get policy", "Get one configured FileFn policy.", "policies", idInputSchema, itemOutputSchema, "/resources/policies/:id", false, "id", false, ["storagePath"]),
   readOperation("filefn.artifacts.list", "List artifacts", "List processing artifacts for an authorized file.", "artifacts", fileChildListInputSchema, pageOutputSchema, "/resources/artifacts", true, "id", true, ["storageKey"]),
   readOperation("filefn.artifacts.get", "Get artifact", "Get one artifact bound to an authorized file.", "artifacts", fileChildInputSchema, itemOutputSchema, "/resources/artifacts/:id", false, "id", false, ["storageKey"]),
-  readOperation("filefn.artifacts.download", "Download artifact", "Create an authorized artifact download descriptor.", "artifacts", fileChildInputSchema, itemOutputSchema, "/resources/artifacts/:id/download", false, "id", false, ["url", "headers"]),
+  readOperation("filefn.artifacts.download", "Download artifact", "Create an authorized artifact download descriptor.", "artifacts", fileChildInputSchema, itemOutputSchema, "/resources/artifacts/:id/download", false, "id", false, [], true),
   mutationOperation({ id: "filefn.artifacts.process-file", title: "Process file", description: "Run or enqueue configured processors for an authorized file version.", resource: "artifacts", inputSchema: processInputSchema, route: "/resources/artifacts/actions/process-file", collection: true }),
 ];
 
@@ -330,7 +332,7 @@ function bind<K extends FileFnAdminOperationId>(handler: FileFnAdminServiceMetho
 }
 
 export function createFileFnAdminAdapter(service: FileFnAdminService): AdminCapabilityAdapter<typeof fileFnAdminCapability> {
-  return createKernelAdminCapabilityAdapter(fileFnAdminCapability, {
+  const handlers = {
     "filefn.files.list": bind(service.listFiles),
     "filefn.files.get": bind(service.getFile),
     "filefn.files.download": bind(service.downloadFile),
@@ -353,6 +355,19 @@ export function createFileFnAdminAdapter(service: FileFnAdminService): AdminCapa
     "filefn.artifacts.get": bind(service.getArtifact),
     "filefn.artifacts.download": bind(service.downloadArtifact),
     "filefn.artifacts.process-file": bind(service.processFile),
+  };
+  return createKernelAdminCapabilityAdapter({
+    manifest: fileFnAdminCapability,
+    handlers,
+    compensators: {
+      "filefn.share-links.create-share": async ({ input, result, context }) => {
+        const shareInput = input as CreateShareAdminInput;
+        const shareResult = result as AdminOperationResult<FileFnAdminOperationOutputMap["filefn.share-links.create-share"]>;
+        const token = shareResult.data.item?.token;
+        if (!token) throw new Error("The created FileFn share token is unavailable for compensation.");
+        await service.revokeShareLink({ fileId: shareInput.fileId, token }, context);
+      },
+    },
   });
 }
 export { createFileFnDomainAdminService, type FileFnDomainAdminServiceOptions } from "./domain-service.js";

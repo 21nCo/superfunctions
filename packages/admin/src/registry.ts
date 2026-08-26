@@ -1,5 +1,6 @@
 import { AdminError } from "./errors.js";
 import { assertAdminCapabilityManifest } from "./validator.js";
+import { parseAdminOperationRoute } from "./operation-route.js";
 import type {
   AdminCapabilityAdapter,
   AdminCapabilityManifest,
@@ -32,17 +33,29 @@ function dependenciesOf(manifest: AdminCapabilityManifest): string[] {
   return [...new Set(dependencies)];
 }
 
-function routeOf(operation: AdminOperationDefinition): { method: string; path: string } {
-  if (typeof operation.route === "string") {
-    const match = /^(GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i.exec(operation.route.trim());
-    if (!match) throw new AdminError("invalid_argument", `Invalid route for ${operation.id}.`);
-    return { method: match[1]!.toUpperCase(), path: match[2]! };
+export function adminMcpToolName(operationId: string): string {
+  let normalized = "";
+  let separator = false;
+  for (const character of operationId) {
+    const code = character.charCodeAt(0);
+    const alphaNumeric = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+    if (alphaNumeric) {
+      if (separator && normalized) normalized += "_";
+      normalized += character;
+      separator = false;
+    } else {
+      separator = true;
+    }
   }
-  return operation.route;
+  return `superconsole_${normalized}`.toLowerCase();
 }
 
-export function adminMcpToolName(operationId: string): string {
-  return `superconsole_${operationId.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "")}`.toLowerCase();
+function trimSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) start += 1;
+  while (end > start && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(start, end);
 }
 
 function effectiveAdminMcpToolName(operation: AdminOperationDefinition): string {
@@ -75,7 +88,7 @@ export class AdminCapabilityRegistry {
     ) {
       throw new AdminError("invalid_argument", "Admin registry apiBasePath must be a canonical internal absolute path.");
     }
-    const basePath = `/${configuredBasePath.replace(/^\/+|\/+$/g, "")}`;
+    const basePath = `/${trimSlashes(configuredBasePath)}`;
     const supplied = new Map<string, AdminCapabilityAdapter>();
     for (const adapter of options.adapters) {
       assertAdminCapabilityManifest(adapter.manifest);
@@ -142,7 +155,8 @@ export class AdminCapabilityRegistry {
     for (const moduleId of ordered) {
       const adapter = supplied.get(moduleId)!;
       for (const operation of adapter.manifest.operations) {
-        const route = routeOf(operation);
+        const route = parseAdminOperationRoute(operation);
+        if (!route) throw new AdminError("invalid_argument", `Invalid route for ${operation.id}.`);
         const suffix = route.path.startsWith("/") ? route.path : `/${route.path}`;
         const routePath = `${basePath}/modules/${moduleId}${suffix}`;
         const routeKey = `${route.method} ${normalizeRoutePattern(routePath)}`;
@@ -204,8 +218,8 @@ function normalizeRoutePattern(path: string): string {
 }
 
 function routeMatches(operation: AdminOperationDefinition, pattern: string, method: string, path: string): boolean {
-  const operationMethod = typeof operation.route === "string" ? operation.route.trim().split(/\s+/, 1)[0] : operation.route.method;
-  if (operationMethod?.toUpperCase() !== method.toUpperCase()) return false;
+  const route = parseAdminOperationRoute(operation);
+  if (route?.method !== method.toUpperCase()) return false;
   const patternParts = pattern.split("/").filter(Boolean);
   const pathParts = path.split("?")[0]!.split("/").filter(Boolean);
   return patternParts.length === pathParts.length && patternParts.every((part, index) =>

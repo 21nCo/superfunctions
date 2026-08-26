@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogsRoot = path.join(repoRoot, "uifn", "catalogs");
 const stageRoot = path.join(catalogsRoot, "dist");
 const canonicalCatalog = JSON.parse(
@@ -35,6 +35,7 @@ for (const fixturePath of catalogDevCropFixturePaths) {
 
 const dependencyWorkspaces = [
   "@uifn/core",
+  "@uifn/dom",
   "@uifn/adapter-kit",
   "@uifn/react",
   "@uifn/svelte",
@@ -43,6 +44,9 @@ const dependencyWorkspaces = [
   "@uifn/theme",
   "@uifn/recipes",
   "@uifn/components",
+  "@uifn/components-react",
+  "@uifn/components-svelte",
+  "@uifn/components-solid",
   "@uifn/patterns",
   "@uifn/sf",
   "@uifn/examples-shared",

@@ -77,6 +77,19 @@ describe("@datafn/admin", () => {
       required: ["filter"],
       properties: { filter: { required: ["resource"] } },
     });
+    expect(dataFnAdminCapability.resources?.find(
+      (resource) => resource.id === "records",
+    )?.presentation).toMatchObject({
+      standaloneList: false,
+      listOperationId: "datafn.records.list",
+      query: {
+        filters: [{ field: "resource", inputPath: "filter.resource" }],
+      },
+      parent: {
+        resourceId: "resources",
+        bindings: [{ sourceField: "name", queryField: "resource" }],
+      },
+    });
     const mutationOperation = dataFnAdminCapability.operations.find(
       (operation) => operation.id === "datafn.records.mutate",
     );
@@ -108,6 +121,32 @@ describe("@datafn/admin", () => {
       transact: expect.any(Function),
     }));
     expect(client.queries.query).toEqual(expect.any(Function));
+  });
+
+  it("assigns distinct addressable IDs to every schema-distinct relation", async () => {
+    const executor = {
+      schema: {
+        version: 1,
+        namespaced: true,
+        resources: [],
+        relations: [
+          { from: "users", to: "teams", type: "many-many", relation: "memberships", inverse: "members", joinTable: "team_members" },
+          { from: "users", to: "teams", type: "many-many", relation: "memberships", inverse: "members", joinTable: "archived_team_members" },
+        ],
+      },
+    } as unknown as DatafnExecutor<{ namespace: string }>;
+    const service = createDataFnDomainAdminService({
+      executor,
+      context: () => ({ namespace: "tenant_1" }),
+    });
+
+    const listed = await service.listRelations({}, context);
+    const items = listed.data.items;
+    expect(items.map((item) => item.id)).toHaveLength(2);
+    expect(new Set(items.map((item) => item.id)).size).toBe(2);
+    await expect(service.getRelation({ id: items[1]!.id }, context)).resolves.toMatchObject({
+      data: { item: { joinTable: "archived_team_members" } },
+    });
   });
 
   it("binds schema, mutation, and record reads through the real DataFn executor", async () => {
@@ -172,10 +211,10 @@ describe("@datafn/admin", () => {
 
     const records = await adapter.execute("datafn.records.list", {
       limit: 10,
-      filter: { resource: "tasks", select: ["id", "title"] },
+      filter: { resource: "tasks", select: ["title"] },
     }, context);
     expect(records.data).toMatchObject({
-      items: [{ id: "task-1", title: "Ship Super Console" }],
+      items: [{ id: "tasks:task-1", title: "Ship Super Console" }],
     });
     const resources = await adapter.execute("datafn.resources.list", {}, context);
     expect(resources.data).toMatchObject({
@@ -186,7 +225,7 @@ describe("@datafn/admin", () => {
 
   it("translates and binds opaque admin cursors to the DataFn record collection", async () => {
     const query = vi.fn()
-      .mockResolvedValueOnce({ data: [{ id: "task-1" }], nextCursor: { createdAt: "2026-08-15", id: "task-1" } })
+      .mockResolvedValueOnce({ data: [{ id: "task-1", recordId: "linked-record" }], nextCursor: { createdAt: "2026-08-15", id: "task-1" } })
       .mockResolvedValueOnce({ data: [{ id: "task-2" }], nextCursor: null });
     const executor = {
       schema: { version: 1, resources: [{ name: "tasks", version: 1 }, { name: "other", version: 1 }] },
@@ -195,6 +234,7 @@ describe("@datafn/admin", () => {
     const service = createDataFnDomainAdminService({ executor, context: () => ({ namespace: "tenant_1" }) });
 
     const first = await service.listRecords({ filter: { resource: "tasks" }, limit: 1 }, context);
+    expect(first.data.items).toEqual([{ id: "tasks:task-1", recordId: "linked-record" }]);
     const nextCursor = first.data.nextCursor;
     expect(nextCursor).toEqual(expect.any(String));
     await service.listRecords({ filter: { resource: "tasks" }, limit: 1, cursor: nextCursor! }, context);
@@ -205,5 +245,50 @@ describe("@datafn/admin", () => {
 
     await expect(service.listRecords({ filter: { resource: "other" }, cursor: nextCursor! }, context))
       .rejects.toMatchObject({ code: "invalid_argument" });
+  });
+
+  it("binds metadata cursors to their schema collection", async () => {
+    const executor = {
+      schema: {
+        version: 1,
+        resources: [
+          { name: "accounts", version: 1 },
+          { name: "tasks", version: 1 },
+        ],
+        relations: [
+          { from: "accounts", to: "tasks", name: "owns" },
+          { from: "tasks", to: "accounts", name: "ownedBy" },
+        ],
+      },
+    } as unknown as DatafnExecutor<{ namespace: string }>;
+    const service = createDataFnDomainAdminService({ executor, context: () => ({ namespace: "tenant_1" }) });
+
+    const first = await service.listResources({ limit: 1 }, context);
+    expect(first.data.nextCursor).toEqual(expect.any(String));
+    await expect(service.listResources({ limit: 1, cursor: first.data.nextCursor! }, context))
+      .resolves.toMatchObject({ data: { items: [expect.objectContaining({ id: "tasks" })] } });
+    await expect(service.listRelations({ cursor: first.data.nextCursor! }, context))
+      .rejects.toMatchObject({ code: "invalid_argument" });
+  });
+
+  it("round-trips resource names containing colons through composite record IDs", async () => {
+    const query = vi.fn()
+      .mockResolvedValueOnce({ data: [{ id: "record-1" }], nextCursor: null })
+      .mockResolvedValueOnce({ data: [{ id: "record-1" }], nextCursor: null });
+    const executor = {
+      schema: { version: 1, resources: [{ name: "orders:v2", version: 1 }] },
+      query,
+    } as unknown as DatafnExecutor<{ namespace: string }>;
+    const service = createDataFnDomainAdminService({ executor, context: () => ({ namespace: "tenant_1" }) });
+
+    const listed = await service.listRecords({ filter: { resource: "orders:v2" } }, context);
+    expect(listed.data.items).toEqual([{ id: "orders%3Av2:record-1" }]);
+    await expect(service.getRecord({ id: "orders%3Av2:record-1" }, context)).resolves.toMatchObject({
+      data: { item: { id: "orders%3Av2:record-1" } },
+    });
+    expect(query).toHaveBeenLastCalledWith(expect.objectContaining({
+      resource: "orders:v2",
+      filters: { id: "record-1" },
+    }), { namespace: "tenant_1" });
   });
 });

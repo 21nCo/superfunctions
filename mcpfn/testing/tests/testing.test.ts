@@ -57,6 +57,70 @@ describe("McpFn testing", () => {
     }
   });
 
+  it("fails unexpected tool errors unless the scenario explicitly expects one", async () => {
+    const registry = new McpFnRegistry().register({
+      name: "fails",
+      description: "Return a tool-level failure.",
+      inputSchema: { type: "object" },
+      handler: async () => ({
+        isError: true,
+        content: [{ type: "text", text: "broken" }],
+      }),
+    });
+    const server = createMcpFnServer({
+      info: { name: "scenario-errors", version: "1.0.0" },
+      registry,
+    });
+    const client = await McpFnTestClient.connect(server);
+    try {
+      await expect(runScenarios(client, [{ name: "unexpected", tool: "fails" }]))
+        .resolves.toMatchObject([{ status: "failed", error: expect.stringContaining("isError=true") }]);
+      await expect(runScenarios(client, [{
+        name: "expected",
+        tool: "fails",
+        expect: { isError: true },
+      }])).resolves.toMatchObject([{ status: "passed" }]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("checks an explicit request-visible tool inventory against the full manifest", async () => {
+    const registry = new McpFnRegistry()
+      .register({
+        name: "hidden",
+        description: "Hidden tool.",
+        inputSchema: { type: "object" },
+        handler: async () => structuredResult({ ok: true }),
+      })
+      .register({
+        name: "visible",
+        description: "Visible tool.",
+        inputSchema: { type: "object" },
+        handler: async () => structuredResult({ ok: true }),
+      });
+    const server = createMcpFnServer({
+      info: { name: "filtered", version: "1.0.0" },
+      registry,
+      toolVisibility: ({ tool }) => tool.name === "visible",
+    });
+    const client = await McpFnTestClient.connect(server);
+    try {
+      const manifest = server.manifest();
+      await expect(assertManifestContract(client, manifest)).rejects.toThrow(
+        /Tool inventory mismatch/,
+      );
+      await expect(assertManifestContract(client, manifest, {
+        expectedToolNames: ["visible"],
+      })).resolves.toMatchObject([{ name: "visible" }]);
+      await expect(assertManifestContract(client, manifest, {
+        expectedToolNames: ["missing"],
+      })).rejects.toThrow(/absent from the manifest/);
+    } finally {
+      await client.close();
+    }
+  });
+
   it("rejects stale resource and prompt inventories and ignores undefined scenario fields", async () => {
     const registry = new McpFnRegistry()
       .register({
@@ -113,8 +177,17 @@ describe("McpFn testing", () => {
       .registerResource({
         uri: "docs://guide",
         name: "guide",
+        subscribe: async () => undefined,
+        unsubscribe: async () => undefined,
         read: async () => ({
           contents: [{ uri: "docs://guide", text: "Guide" }],
+        }),
+      })
+      .registerResource({
+        uri: "docs://plain",
+        name: "plain",
+        read: async () => ({
+          contents: [{ uri: "docs://plain", text: "Plain" }],
         }),
       })
       .registerResourceTemplate({
@@ -126,6 +199,8 @@ describe("McpFn testing", () => {
         read: async (uri) => ({
           contents: [{ uri: uri.toString(), text: "Ada" }],
         }),
+        subscribe: async () => undefined,
+        unsubscribe: async () => undefined,
       });
     const server = createMcpFnServer({
       info: { name: "dynamic-resources", version: "1.0.0" },
@@ -135,6 +210,14 @@ describe("McpFn testing", () => {
     try {
       const manifest = server.manifest();
       await expect(assertManifestContract(client, manifest)).resolves.toHaveLength(1);
+      await expect(assertManifestContract(client, {
+        ...manifest,
+        resources: manifest.resources?.map((resource) =>
+          resource.uri === "docs://plain"
+            ? { ...resource, subscribable: true }
+            : resource
+        ),
+      })).rejects.toThrow(/Resource subscription mismatch for docs:\/\/plain/);
       await expect(assertManifestContract(client, {
         ...manifest,
         resources: [],
@@ -195,5 +278,25 @@ describe("McpFn testing", () => {
       server.manifest(),
       MCPFN_HOST_PROFILES.fullProtocol,
     )).toMatchObject({ status: "compatible", compatible: true });
+
+    const optionalPromptServer = createMcpFnServer({
+      info: { name: "optional-prompts", version: "1.0.0" },
+      registry: new McpFnRegistry().registerPrompt({
+        name: "optional",
+        get: async () => ({ messages: [] }),
+      }),
+      protocolVersions: ["2025-11-25"],
+    });
+    expect(checkHostCompatibility(
+      optionalPromptServer.manifest(),
+      MCPFN_HOST_PROFILES.toolsOnly,
+    )).toMatchObject({
+      status: "degraded",
+      compatible: true,
+      issues: [expect.objectContaining({
+        code: "server-feature-unavailable",
+        path: "capabilities.prompts",
+      })],
+    });
   });
 });

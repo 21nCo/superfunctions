@@ -1,4 +1,5 @@
-import { createSignal, onCleanup, onMount, type Accessor } from 'solid-js';
+import { createSignal, onCleanup, onMount, sharedConfig, type Accessor } from 'solid-js';
+import { isServer } from 'solid-js/web';
 import {
   getMediaQuerySnapshot,
   subscribeMediaQuery,
@@ -8,7 +9,11 @@ import {
 export type UseMediaQueryOptions = MediaQueryOptions;
 
 export function createMediaQuery(query: string, options: UseMediaQueryOptions = {}): Accessor<boolean> {
-  const [matches, setMatches] = createSignal(getMediaQuerySnapshot(query, options));
+  const hydrating = !isServer && sharedConfig.context !== undefined;
+  const initialValue = isServer || hydrating
+    ? options.defaultValue ?? false
+    : getMediaQuerySnapshot(query, options);
+  const [matches, setMatches] = createSignal(initialValue);
   let unsubscribe: (() => void) | null = null;
 
   onMount(() => {

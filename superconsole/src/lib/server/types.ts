@@ -169,12 +169,58 @@ export interface SuperConsoleOptions {
 }
 
 export interface SuperConsoleConfirmationService extends AdminConfirmationVerifier {
+  /** Stage an unusable token before its required terminal audit and activation. */
   issue(input: {
     operationId: string;
     input: unknown;
     principal: SuperConsolePrincipal;
     context: AdminOperationContext;
   }): Promise<{ token: string; expiresAt: string }>;
+  /**
+   * Durably bind the staged token to its terminal audit IDs while leaving it fail-closed.
+   * A prepared record must never become verifiable from audit observation alone.
+   */
+  prepareActivation(input: {
+    token: string;
+    auditId: string;
+    /** Bound failure audit whose existence permanently fences reconciliation. */
+    denialAuditId: string;
+    operationId: string;
+    input: unknown;
+    principal: SuperConsolePrincipal;
+    context: AdminOperationContext;
+  }): Promise<void>;
+  /** Durably make cancellation take precedence over the prepared success audit. */
+  cancelActivation(input: {
+    token: string;
+    auditId: string;
+    denialAuditId: string;
+    operationId: string;
+    input: unknown;
+    principal: SuperConsolePrincipal;
+    context: AdminOperationContext;
+  }): Promise<void>;
+  /**
+   * The only transition that may make a staged token verifiable. This operation must be
+   * atomic and idempotent; rejection guarantees the token remains unusable and cannot
+   * become active later through reconciliation.
+   */
+  activate(input: {
+    token: string;
+    auditId: string;
+    operationId: string;
+    input: unknown;
+    principal: SuperConsolePrincipal;
+    context: AdminOperationContext;
+  }): Promise<void>;
+  /** Idempotently discard a staged token and any prepared activation intent. */
+  revoke(input: {
+    token: string;
+    operationId: string;
+    input: unknown;
+    principal: SuperConsolePrincipal;
+    context: AdminOperationContext;
+  }): Promise<void>;
 }
 
 export interface SuperConsoleRequestState {

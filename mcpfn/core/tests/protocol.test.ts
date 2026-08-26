@@ -8,7 +8,7 @@ import {
   ElicitRequestSchema,
   ListRootsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   MCP_APP_EXTENSION_ID,
@@ -28,7 +28,10 @@ describe("McpFn protocol primitives", () => {
     await Promise.all(closeables.splice(0).map((value) => value.close().catch(() => undefined)));
   });
 
-  async function connect(registry: McpFnRegistry, options: Record<string, unknown> = {}) {
+  async function connect<TContext = undefined>(
+    registry: McpFnRegistry<TContext>,
+    options: Record<string, unknown> = {},
+  ) {
     const server = createMcpFnServer({
       info: { name: "protocol-test", version: "1.0.0" },
       registry,
@@ -110,6 +113,200 @@ describe("McpFn protocol primitives", () => {
       prompts: { listChanged: true },
       completions: {},
     });
+  });
+
+  it("passes trusted request context and client completion arguments to completers", async () => {
+    const complete = vi.fn(async (
+      value: string,
+      completionContext: Record<string, string> | undefined,
+      context: { tenant: string },
+    ) => ({
+      completion: { values: [`${context.tenant}:${completionContext?.scope}:${value}`] },
+    }));
+    const registry = new McpFnRegistry<{ tenant: string }>().registerPrompt({
+      name: "tenant-welcome",
+      arguments: [{ name: "name" }],
+      get: async () => ({ messages: [] }),
+      complete: { name: complete },
+    });
+    const context = vi.fn(async () => ({ tenant: "acme" }));
+    const { client } = await connect(registry, { context });
+
+    await expect(client.complete({
+      ref: { type: "ref/prompt", name: "tenant-welcome" },
+      argument: { name: "name", value: "ada" },
+      context: { arguments: { scope: "admins" } },
+    })).resolves.toMatchObject({ completion: { values: ["acme:admins:ada"] } });
+    expect(context).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledWith(
+      "ada",
+      { scope: "admins" },
+      { tenant: "acme" },
+      expect.any(Object),
+    );
+  });
+
+  it("rejects duplicate or ambiguous resource template URIs under different names", () => {
+    const registry = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://users/{id}",
+      name: "user",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "User" }] }),
+    });
+    expect(() => registry.registerResourceTemplate({
+      uriTemplate: "docs://users/{id}",
+      name: "person",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Person" }] }),
+    })).toThrow(/Ambiguous MCP resource URI template/);
+    expect(() => registry.registerResourceTemplate({
+      uriTemplate: "docs://users/{name}",
+      name: "renamed-person",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Person" }] }),
+    })).toThrow(/Ambiguous MCP resource URI template/);
+
+    const reserved = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://reserved/{+id}",
+      name: "reserved",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Reserved" }] }),
+    });
+    expect(() => reserved.registerResourceTemplate({
+      uriTemplate: "docs://reserved/{+id*}",
+      name: "exploded-reserved",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Reserved" }] }),
+    })).toThrow(/Ambiguous MCP resource URI template/);
+    expect(() => reserved.registerResourceTemplate({
+      uriTemplate: "docs://reserved/{name}",
+      name: "simple-reserved",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Reserved" }] }),
+    })).toThrow(/Ambiguous MCP resource URI template/);
+
+    const slash = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://slash/{id}",
+      name: "literal-slash",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Slash" }] }),
+    });
+    expect(() => slash.registerResourceTemplate({
+      uriTemplate: "docs://slash{/name}",
+      name: "slash-operator",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Slash" }] }),
+    })).toThrow(/Ambiguous MCP resource URI template/);
+
+    const dot = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://dot.{id}",
+      name: "literal-dot",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Dot" }] }),
+    });
+    expect(() => dot.registerResourceTemplate({
+      uriTemplate: "docs://dot{.name}",
+      name: "dot-operator",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Dot" }] }),
+    })).toThrow(/Ambiguous MCP resource URI template/);
+
+    const query = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://query{?value}",
+      name: "query",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Query" }] }),
+    });
+    expect(() => query.registerResourceTemplate({
+      uriTemplate: "docs://query{?value*}",
+      name: "exploded-query",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Query" }] }),
+    })).toThrow(/Ambiguous MCP resource URI template/);
+
+    expect(() => new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://unsupported{;value}",
+      name: "unsupported-path-parameter",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Unsupported" }] }),
+    })).toThrow(/unsupported URI template operator ;/);
+    expect(() => new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: null,
+      name: "non-string-template",
+      read: async () => ({ contents: [] }),
+    } as never)).toThrow(/Invalid resource URI template/);
+
+    const distinct = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://distinct/{id}/a",
+      name: "distinct-a",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "A" }] }),
+    });
+    expect(() => distinct.registerResourceTemplate({
+      uriTemplate: "docs://distinct/{id}/b",
+      name: "distinct-b",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "B" }] }),
+    })).not.toThrow();
+
+    const distinctQuery = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://distinct-query{?first}",
+      name: "distinct-first-query",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "First" }] }),
+    });
+    expect(() => distinctQuery.registerResourceTemplate({
+      uriTemplate: "docs://distinct-query{?second}",
+      name: "distinct-second-query",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Second" }] }),
+    })).not.toThrow();
+
+    const sdkQuerySemantics = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://sdk-query{?a,b}",
+      name: "sdk-query-pair",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Pair" }] }),
+    });
+    expect(() => sdkQuerySemantics.registerResourceTemplate({
+      uriTemplate: "docs://sdk-query{?a}",
+      name: "sdk-query-single",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Single" }] }),
+    })).not.toThrow();
+
+    const sdkMultiVariableSemantics = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://sdk-multi/{x,y}",
+      name: "sdk-multi-expression",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Expression" }] }),
+    });
+    expect(() => sdkMultiVariableSemantics.registerResourceTemplate({
+      uriTemplate: "docs://sdk-multi/{x},{y}",
+      name: "sdk-adjacent-expressions",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Adjacent" }] }),
+    })).not.toThrow();
+
+    const explodedGrammar = new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://sdk-exploded/{value*}a",
+      name: "sdk-exploded",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Exploded" }] }),
+    });
+    expect(() => explodedGrammar.registerResourceTemplate({
+      uriTemplate: "docs://sdk-exploded/{value},a",
+      name: "sdk-comma-literal",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Literal" }] }),
+    })).not.toThrow();
+  });
+
+  it("requires resource subscription callbacks to be registered as a pair", () => {
+    const read = async () => ({ contents: [{ uri: "docs://paired", text: "Paired" }] });
+    expect(() => new McpFnRegistry().registerResource({
+      uri: "docs://paired",
+      name: "paired",
+      read,
+      subscribe: async () => undefined,
+    })).toThrow(/must define subscribe and unsubscribe together/);
+    expect(() => new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://paired/{id}",
+      name: "paired-template",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Paired" }] }),
+      unsubscribe: async () => undefined,
+    })).toThrow(/must define subscribe and unsubscribe together/);
+    expect(() => new McpFnRegistry().registerResource({
+      uri: "docs://invalid-pair",
+      name: "invalid-pair",
+      read,
+      subscribe: true,
+      unsubscribe: true,
+    } as never)).toThrow(/together as functions/);
+    expect(() => new McpFnRegistry().registerResourceTemplate({
+      uriTemplate: "docs://invalid-pair/{id}",
+      name: "invalid-pair-template",
+      read: async (uri) => ({ contents: [{ uri: uri.toString(), text: "Invalid" }] }),
+      subscribe: true,
+      unsubscribe: true,
+    } as never)).toThrow(/together as functions/);
   });
 
   it("runs task-augmented tools through the SDK task store", async () => {
@@ -249,6 +446,13 @@ describe("McpFn protocol primitives", () => {
         handler: async () => structuredResult({ ok: true }),
       }),
     })).toThrow(/missing MCP App resource/);
+
+    expect(() => createMcpAppResource({
+      uri: "ui://optional-csp/main",
+      name: "optional-csp",
+      html: "<!doctype html><html><body>Optional</body></html>",
+      ui: { csp: { connectDomains: undefined } as never },
+    })).not.toThrow();
   });
 
   it("mediates roots, sampling, and elicitation through declared client requirements", async () => {

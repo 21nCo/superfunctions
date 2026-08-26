@@ -2,8 +2,8 @@ import { For, createSignal, type Setter } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it } from 'vitest';
 import catalog from '../../../catalog/generated/catalog.json';
-import manifest from '../../../.conduct/generated/phase-13/phase-13-solid-compounds.json';
-import { Accordion, Checkbox, Command, Dialog, Input } from '../index.js';
+import manifest from '../../../evidence/generated/phase-13/phase-13-solid-compounds.json';
+import { Accordion, AngleSlider, Checkbox, Command, Dialog, Form, Input } from '../index.js';
 import type { SolidPrimitiveBridge } from '../internal/compound.jsx';
 import { createSolidPartPropsBinding, toSolidUserPartProps } from '../props.js';
 import { AllRootsHarness } from './fixtures/AllRootsHarness.jsx';
@@ -47,6 +47,36 @@ describe('TV-SOLID-001-P: catalog-complete native Solid compounds', () => {
     await settle();
     expect(host.querySelector<HTMLInputElement>('input[aria-label="Work email"]')?.placeholder).toBe('you@company.com');
     expect(host.querySelector<HTMLInputElement>('[role="combobox"]')?.placeholder).toBe('Type a command or search…');
+  });
+
+  it('routes AngleSlider form names through the public adapter', async () => {
+    let setName!: Setter<string>;
+    const host = mount(() => {
+      const [name, updateName] = createSignal('angle');
+      setName = updateName;
+      return (
+        <AngleSlider name={name()} data-testid="angle-root">
+          <AngleSlider.HiddenInput data-testid="angle-input" />
+        </AngleSlider>
+      );
+    });
+    await settle();
+    expect(host.querySelector('[data-testid="angle-root"]')?.hasAttribute('name')).toBe(false);
+    expect(host.querySelector<HTMLInputElement>('[data-testid="angle-input"]')?.name).toBe('angle');
+    setName('bearing');
+    await settle();
+    expect(host.querySelector<HTMLInputElement>('[data-testid="angle-input"]')?.name).toBe('bearing');
+  });
+
+  it('preserves native form submission attributes', async () => {
+    const host = mount(() => (
+      <Form.Root action="/save" method="post" enctype="multipart/form-data" data-testid="native-form" />
+    ));
+    await settle();
+    const form = host.querySelector('[data-testid="native-form"]');
+    expect(form?.getAttribute('action')).toBe('/save');
+    expect(form?.getAttribute('method')).toBe('post');
+    expect(form?.getAttribute('enctype')).toBe('multipart/form-data');
   });
 
   it('reconciles live part attributes without blurring the focused element', () => {

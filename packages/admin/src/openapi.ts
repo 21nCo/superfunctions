@@ -1,6 +1,7 @@
 import { AdminError } from "./errors.js";
 import type { AdminCapabilityRegistry, AdminRegistryOperation } from "./registry.js";
 import { adminOperationMinimumScope } from "./scope.js";
+import { parseAdminOperationRoute } from "./operation-route.js";
 import type { AdminJsonSchema, AdminObjectSchema } from "./types.js";
 
 export interface AdminOpenApiOptions {
@@ -67,9 +68,8 @@ export function adminOpenApiScopeParameters(): Record<string, unknown>[] {
 }
 
 function route(entry: AdminRegistryOperation): { method: string; path: string; parameterNames: string[] } {
-  const method = typeof entry.operation.route === "string"
-    ? entry.operation.route.trim().split(/\s+/, 1)[0]!.toUpperCase()
-    : entry.operation.route.method;
+  const method = parseAdminOperationRoute(entry.operation)?.method;
+  if (!method) throw new AdminError("invalid_argument", `Invalid route for ${entry.operation.id}.`);
   const parameterNames: string[] = [];
   const path = entry.routePath
     .replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_, name: string) => { parameterNames.push(name); return `{${name}}`; })
@@ -126,14 +126,14 @@ export function createAdminOpenApiDocument(
   if (options.csrfHeader && !options.csrfHeader.name.trim()) {
     throw new AdminError("invalid_argument", "OpenAPI CSRF header metadata must define a nonblank provider header name.");
   }
-  const paths: Record<string, Record<string, unknown>> = {};
+  const paths = Object.create(null) as Record<string, Record<string, unknown>>;
   for (const entry of registry.operations) {
     const { method, path, parameterNames } = route(entry);
     const input = entry.operation.inputSchema;
     const output = entry.operation.outputSchema;
     if (!input || !output) throw new AdminError("internal", `Operation ${entry.operation.id} has incomplete schemas.`);
-    const isReadMethod = method === "GET" || method === "DELETE";
-    const parameters = parametersFor(input, parameterNames, isReadMethod);
+    const usesQueryInput = method === "GET" || method === "DELETE";
+    const parameters = parametersFor(input, parameterNames, usesQueryInput);
     for (const scopeParameter of adminOpenApiScopeParameters()) {
       if (!parameters.some((parameter) => parameter.name === scopeParameter.name && parameter.in === scopeParameter.in)) {
         parameters.push(scopeParameter);
@@ -148,7 +148,7 @@ export function createAdminOpenApiDocument(
         schema: { type: "string", minLength: 1 },
       });
     }
-    if (entry.operation.safety.classification !== "read" && options.csrfHeader) {
+    if ((method !== "GET" || entry.operation.safety.classification !== "read") && options.csrfHeader) {
       parameters.push({
         name: options.csrfHeader.name,
         in: "header",
@@ -167,7 +167,7 @@ export function createAdminOpenApiDocument(
         schema: { type: "string", minLength: 1 },
       });
     }
-    const bodySchema = isReadMethod ? undefined : withoutProperties(input, parameterNames);
+    const bodySchema = usesQueryInput ? undefined : withoutProperties(input, parameterNames);
     const successSchema: AdminObjectSchema = {
       type: "object",
       properties: {
@@ -216,9 +216,13 @@ export function createAdminOpenApiDocument(
         ...(entry.operation.redaction.allowOutputPaths ? { oneTimeOutputPaths: entry.operation.redaction.allowOutputPaths } : {}),
       } } : {}),
     };
-    paths[path] ??= {};
-    if (paths[path]![method.toLowerCase()]) throw new AdminError("conflict", `OpenAPI operation collision: ${method} ${path}.`);
-    paths[path]![method.toLowerCase()] = operation;
+    const pathItem = Object.hasOwn(paths, path)
+      ? paths[path]!
+      : Object.create(null) as Record<string, unknown>;
+    paths[path] = pathItem;
+    const methodName = method.toLowerCase();
+    if (Object.hasOwn(pathItem, methodName)) throw new AdminError("conflict", `OpenAPI operation collision: ${method} ${path}.`);
+    pathItem[methodName] = operation;
   }
 
   return {

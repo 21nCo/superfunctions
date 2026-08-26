@@ -46,11 +46,25 @@ from its name or require a repository-wide package catalog.
 
 Startup fails closed when enabled operations require infrastructure that was
 not injected: a required audit sink, atomic idempotency store, mutation
-authorization, or a bound confirmation issuer/verifier. Required-audit
-mutations and confirmation issuance append a sanitized `attempted` event before
-invoking mutable state, then append a terminal outcome. Audit and domain state
-remain separate systems, so deployments must monitor and reconcile attempts
-without terminal events.
+authorization, or a bound staged confirmation
+issuer/activator/revoker/verifier. Required-audit mutations and confirmation
+issuance append a sanitized `attempted` event before invoking mutable state,
+then append a terminal outcome. Audit and domain state remain separate systems,
+so deployments must monitor and reconcile attempts without terminal events.
+
+Confirmation services must return an unusable staged token from `issue` and
+durably bind it to the supplied success and denial audit IDs in `prepareActivation`
+without making it verifiable. Super Console then writes that exact succeeded audit
+and explicitly calls `activate`. That call is the only allowed transition to a
+verifiable token and must be atomic and idempotent: a rejected call guarantees the
+token is still unusable. Providers must never infer activation from a success audit
+alone during reconciliation; prepared records without a completed activation are
+revoked or expired.
+Activation failures attempt durable cancellation and an idempotent `revoke`
+before writing their pre-bound denied event. Those steps provide cleanup and durable
+failure evidence, but safety does not depend on all three succeeding: the fail-closed
+activation contract and no-auto-activation reconciliation rule prevent a rejected
+activation from becoming live later.
 
 Set `SUPERCONSOLE_INSTALLATION` to the absolute filesystem path or `file://`
 URL of the compiled module. The loader accepts `superConsole`, `default`, or an
@@ -63,6 +77,21 @@ SUPERCONSOLE_INSTALLATION=file:///srv/app/dist/super-console-installation.js \
 
 The stable server-only package entry is `superconsole/server`; browser code
 must not import it.
+
+### Representative `dev` composition
+
+[`examples/dev-installation.ts`](./examples/dev-installation.ts) is the
+checked `dev` allowlist. It registers the function-owned ApiFn, AuthFn, BillFn,
+BotFn, CliFn, DataFn, ExtFn, FileFn, HostFn, PlugFn, and SearchFn adapters, but
+enables only the nine adapters backed by safe server-side domain services.
+CliFn and ExtFn remain registered with `availability: "unavailable"` so the
+reason is explicit; neither can be enabled until it gains an operator-domain
+service that does not expose local shell, credentials, signing, or publishing
+capabilities.
+
+The example accepts real adapter instances and deployment-owned auth, policy,
+audit, idempotency, confirmation, and OpenAPI infrastructure. It intentionally
+does not construct test stores or substitute transport handlers in production.
 
 ## AuthFn integration
 
@@ -126,5 +155,30 @@ UIFn powers the shell's shared visual system. Function packages own their
 adapters and optional integrations; Super Console does not replace them with
 local substitutes.
 
-See [`.conduct/SFN-22/migration.md`](./.conduct/SFN-22/migration.md) for upgrade,
-rollback, and McpFn-boundary guidance.
+## Deployment and rollback
+
+Treat Super Console as an operator surface over function-owned domain APIs, not
+as a replacement for them. Compose the representative dev installation from
+real, scope-isolated adapters; keep CliFn and ExtFn registered but disabled;
+and inject deployment-owned authentication, mutation authorization, durable
+audit, atomic idempotency, confirmation, and OpenAPI security infrastructure.
+The in-memory implementations are development and test helpers only.
+
+Roll out in dependency order: the required UIFn and McpFn packages,
+`@superfunctions/admin`, changed function-domain packages, function admin
+adapters, then `superconsole` and the deployment-owned installation. Keep
+`@modelcontextprotocol/sdk` pinned to `1.25.2` until a separately tested
+protocol upgrade proves the streamable-HTTP suite. PlugFn schema version 7 adds
+the nullable, first-class `tenant_id` workflow owner field. Apply that schema
+change before enabling workflow administration, and backfill existing workflow
+owners only from an authoritative tenant source; generic workflow metadata is
+not an ownership source.
+
+To roll back, first remove traffic and `SUPERCONSOLE_INSTALLATION`, then restore
+the previous Super Console deployment while retaining AuthFn's legacy admin
+router where it was already used. Roll packages back in reverse dependency
+order, revoke console-specific operator credentials when policy requires it,
+and reconcile audit attempts without terminal outcomes. Verify that console
+and MCP routes no longer accept traffic, existing product APIs still pass their
+focused checks, CliFn and ExtFn remain unreachable, and retained audit data is
+still readable.

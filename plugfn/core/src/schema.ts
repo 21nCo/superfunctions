@@ -5,9 +5,10 @@ import {
 } from '@superfunctions/oauth-storage';
 import { DEFAULT_PLUGFN_STORAGE_MODELS, resolvePlugFnStorageModels, type PlugFnStorageModelMapping } from './storage/adapters/database.js';
 
-// Version 7 constrains job-scoped claim tokens to MySQL's portable full-column
-// index width and adds uniqueness. The wider bound preserves legacy version-6
-// worker/job/timestamp tokens while current tokens remain fixed at 54 chars.
+// Version 7 adds first-class tenant ownership to workflows. Backfills must use an
+// authoritative tenant source rather than caller-controlled workflow metadata.
+// Version 6 added job-scoped claim tokens to sync jobs. Any legacy claim token on a
+// connection represented a different ownership domain, so migration must not copy it.
 export const PLUGFN_SCHEMA_VERSION = 7;
 
 export interface PlugFnSchemaOptions {
@@ -57,6 +58,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
         fields: {
           id: { type: 'string', required: true, fieldName: 'id' },
           userId: { type: 'string', required: true, fieldName: 'user_id' },
+          tenantId: { type: 'string', required: false, fieldName: 'tenant_id' },
           name: { type: 'string', required: true, fieldName: 'name' },
           description: { type: 'string', required: false, fieldName: 'description' },
           definition: { type: 'json', required: true, fieldName: 'definition' },
@@ -67,6 +69,7 @@ export function getSchema(options: PlugFnSchemaOptions = {}): { version: number;
         },
         indexes: [
           { name: 'idx_plugfn_workflows_user_id', fields: ['userId'] },
+          { name: 'idx_plugfn_workflows_tenant_user', fields: ['tenantId', 'userId'] },
           { name: 'idx_plugfn_workflows_status', fields: ['status'] }
         ]
       },

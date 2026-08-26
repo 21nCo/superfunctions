@@ -210,6 +210,28 @@ describe('PHASE_09 selection and input vectors', () => {
     }
   });
 
+  it('honors Editable controlled and default editing inputs', () => {
+    const uncontrolled = createEditableController({ defaultEditing: true });
+    expect(uncontrolled.state.editing).toBe(true);
+    uncontrolled.actions.cancel();
+    expect(uncontrolled.state.editing).toBe(false);
+    uncontrolled.destroy();
+
+    const changes: boolean[] = [];
+    const controlled = createEditableController({
+      editing: true,
+      onEditingChange: (editing) => changes.push(editing),
+    });
+    controlled.actions.submit();
+    expect(controlled.state.editing).toBe(true);
+    expect(changes).toEqual([false]);
+    controlled.update({ editing: false });
+    expect(controlled.state.editing).toBe(false);
+    controlled.update({ editing: true });
+    expect(controlled.state.editing).toBe(true);
+    controlled.destroy();
+  });
+
   it('TV-PRIM-004-P keeps Checkbox form values separate from controlled checked state', () => {
     const controller = createCheckboxController({ value: 'accepted', defaultChecked: false, name: 'terms' });
     expect(controller.state.controlled).toBe(false);
@@ -375,13 +397,36 @@ describe('PHASE_09 selection and input vectors', () => {
     const files = createFileUploadController({
       accept: 'image/*',
       maxSize: 100,
+      required: true,
       onReject: (code) => rejected.push(code),
     });
+    expect(files.parts.input.getProps().attributes?.required).toBe(true);
     files.actions.selectFiles([{ name: 'notes.txt', size: 10, type: 'text/plain' }]);
     expect(files.state.status).toBe('rejected');
     expect(files.state.fileCount).toBe(0);
     expect(files.state.lastErrorCode).toBe('UIFN_FILE_REJECTED');
     expect(rejected).toEqual(['type']);
+    files.actions.selectFiles([{ name: 'photo.png', size: 10, type: 'image/png' }]);
+    expect(files.state.valid).toBe(true);
+    expect(files.parts.input.getProps().attributes?.required).toBe(false);
+    files.update({ accept: 'application/pdf', multiple: true, maxFiles: 2, maxSize: 20, name: 'documents' });
+    expect(files.parts.input.getProps().attributes).toMatchObject({
+      accept: 'application/pdf',
+      multiple: true,
+      name: 'documents',
+    });
+    files.actions.selectFiles([{ name: 'second.png', size: 10, type: 'image/png' }]);
+    expect(files.state.status).toBe('rejected');
+    files.actions.selectFiles([{ name: 'report.pdf', size: 25, type: 'application/pdf' }]);
+    expect(files.state.status).toBe('rejected');
+    files.actions.selectFiles([
+      { name: 'report.pdf', size: 10, type: 'application/pdf' },
+      { name: 'evidence.pdf', size: 10, type: 'application/pdf' },
+    ]);
+    expect(files.state.fileCount).toBe(2);
+    files.actions.setFieldsetDisabled(true);
+    files.actions.reset();
+    expect(files.state).toMatchObject({ fileCount: 0, invalid: true, disabled: true });
     clipboard.destroy();
     files.destroy();
   });

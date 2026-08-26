@@ -40,9 +40,6 @@ const MCPFN_PATTERNS = [
   /^mcpfn\//,
   /^datafn\/server\/src\/(?:executor|server|index)\.ts$/,
   /^datafn\/server\/src\/__tests__\/executor\.test\.ts$/,
-  /^langfn\/typescript\/(?:package\.json|tsconfig\.json|tsup\.config\.ts|src\/mcp\/|tests\/mcp-and-eval\.test\.ts|tests\/release-gate\.test\.ts)/,
-  /^memoryfn\/typescript\/(?:package\.json|src\/mcp\/|tests\/mcp\.test\.ts)/,
-  /^probefn\/packages\/mcp-server\//,
   /^scripts\/(?:gate|test)-mcpfn.*\.mjs$/,
 ];
 
@@ -307,7 +304,6 @@ for (const entry of changedEntries) {
 
 const mcpfnOnly =
   runMcpfn &&
-  !fullJs &&
   changedPaths.every((changedPath) =>
     matchesAny(MCPFN_PATTERNS, changedPath) ||
     matchesAny(MCPFN_SUPPORT_PATTERNS, changedPath));

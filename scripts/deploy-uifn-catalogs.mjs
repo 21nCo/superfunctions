@@ -3,6 +3,8 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { parseContentSecurityPolicySources } from "./uifn-catalog-csp.mjs";
 
 const environment = process.argv[2];
 if (!["preview", "production"].includes(environment)) {
@@ -10,7 +12,7 @@ if (!["preview", "production"].includes(environment)) {
   process.exit(1);
 }
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const catalogsRoot = path.join(repoRoot, "uifn", "catalogs");
 const nodeBin = process.execPath;
 const wranglerBin = path.join(repoRoot, "node_modules", ".bin", "wrangler");
@@ -86,12 +88,13 @@ async function waitForDeploymentReadiness(origin, expected, expectedWorkerBuildH
         const expectedStatus = sentinelPath.endsWith("does-not-exist") ? 404 : 200;
         const contentSecurityPolicy =
           response.headers.get("content-security-policy") ?? "";
+        const cspSources = parseContentSecurityPolicySources(contentSecurityPolicy);
         const ready =
           response.status === expectedStatus &&
           response.headers.get("x-uifn-catalog-build") === expected.generatedAt &&
           response.headers.get("x-uifn-catalog-worker") === expectedWorkerBuildHash &&
-          contentSecurityPolicy.includes("https://static.cloudflareinsights.com") &&
-          contentSecurityPolicy.includes("https://cloudflareinsights.com") &&
+          cspSources.has("https://static.cloudflareinsights.com") &&
+          cspSources.has("https://cloudflareinsights.com") &&
           (
             sentinelPath !== "/catalog-manifest.json" ||
             (

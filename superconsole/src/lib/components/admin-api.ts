@@ -249,6 +249,9 @@ export function safeAdminDownloadHref(
       options.scope
     );
   }
+  if (sameOrigin && /^\/proxy\/files\/[^/]+\/(?:download|versions\/[^/]+\/download|artifacts\/[^/]+\/download)$/.test(candidate.pathname)) {
+    return `${candidate.pathname}${candidate.search}${candidate.hash}`;
+  }
   if (options.signedExternal && candidate.protocol === 'https:') return candidate.href;
   return undefined;
 }
@@ -264,9 +267,44 @@ export function openSafeAdminDownload(
     scope: new URL(window.location.href).searchParams,
   });
   if (!safeHref) return false;
-  const popup = window.open(safeHref, '_blank', 'noopener,noreferrer');
-  if (popup) popup.opener = null;
-  return popup !== null;
+  const popup = window.open('about:blank', '_blank');
+  if (!popup) return false;
+  try {
+    popup.opener = null;
+    const anchor = popup.document.createElement('a');
+    anchor.href = safeHref;
+    anchor.target = '_self';
+    anchor.rel = 'noopener noreferrer';
+    anchor.referrerPolicy = 'no-referrer';
+    popup.document.body.append(anchor);
+    anchor.click();
+    return true;
+  } catch {
+    popup.close();
+    return false;
+  }
+}
+
+export interface AdminDownloadReceipt {
+  url: string;
+  headers?: Record<string, string>;
+  signedExternal?: boolean;
+}
+
+export async function openSafeAdminDownloadReceipt(
+  receipt: AdminDownloadReceipt
+): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  const safeHref = safeAdminDownloadHref(receipt.url, {
+    origin: window.location.origin,
+    signedExternal: receipt.signedExternal ?? true,
+    scope: new URL(window.location.href).searchParams,
+  });
+  if (!safeHref) return false;
+  if (Object.keys(receipt.headers ?? {}).length > 0) {
+    throw new Error('The download requires a server-side proxy; provider headers are never sent from the browser.');
+  }
+  return openSafeAdminDownload(safeHref, { signedExternal: receipt.signedExternal ?? true });
 }
 
 export function safeAvatarHref(href: string | undefined): string | undefined {

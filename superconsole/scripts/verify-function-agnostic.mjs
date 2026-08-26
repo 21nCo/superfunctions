@@ -35,10 +35,40 @@ function embeddedFunctionPackage(identifier) {
  */
 function sourceRegions(source, extension) {
   if (extension !== '.svelte') return [{ source, lineOffset: 0 }];
-  return [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => ({
-    source: match[1] ?? '',
-    lineOffset: source.slice(0, match.index).split('\n').length - 1,
-  }));
+  const regions = [];
+  /** @param {string} name @param {number} from @param {boolean} [closing] */
+  const findTag = (name, from, closing = false) => {
+    const prefix = closing ? `</${name}` : `<${name}`;
+    let candidate = source.indexOf('<', from);
+    while (candidate >= 0) {
+      if (source.slice(candidate, candidate + prefix.length).toLowerCase() === prefix) {
+        let boundary = candidate + prefix.length;
+        if (closing) {
+          while ([' ', '\t', '\n', '\r'].includes(source[boundary])) boundary += 1;
+          if (source[boundary] === '>') return { start: candidate, end: boundary };
+        } else if (['>', ' ', '\t', '\n', '\r'].includes(source[boundary])) {
+          const end = source.indexOf('>', boundary);
+          if (end >= 0) return { start: candidate, end };
+          return undefined;
+        }
+      }
+      candidate = source.indexOf('<', candidate + 1);
+    }
+    return undefined;
+  };
+  let cursor = 0;
+  while (cursor < source.length) {
+    const opening = findTag('script', cursor);
+    if (!opening) break;
+    const closing = findTag('script', opening.end + 1, true);
+    if (!closing) break;
+    regions.push({
+      source: source.slice(opening.end + 1, closing.start),
+      lineOffset: source.slice(0, opening.end + 1).split('\n').length - 1,
+    });
+    cursor = closing.end + 1;
+  }
+  return regions;
 }
 
 /** @param {string} directory @returns {string[]} */
@@ -94,7 +124,7 @@ export function findFunctionAgnosticIssues(source, file = 'source.ts') {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const findings = [];
   for (const file of files(sourceRoot)) {
-    if (!['.ts', '.svelte'].includes(extname(file))) continue;
+    if (!['.ts', '.js', '.mjs', '.cjs', '.svelte'].includes(extname(file))) continue;
     const source = readFileSync(file, 'utf8');
     findings.push(...findFunctionAgnosticIssues(source, file).map((finding) => `${relative(root, file)}:${finding}`));
   }

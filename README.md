@@ -26,20 +26,19 @@
 
 ## Application core
 
-| Function | Description | Comparable to | Packages |
-| --- | --- | --- | --- |
-| [authFn](https://authfn.com) | Drop-in authentication and user management. Social logins, magic links, session handling, AI agent authentication and more. | Clerk or Auth0 | [npm](https://www.npmjs.com/package/@authfn/client) · [PyPI](https://pypi.org/project/authfn/) |
-| [billFn](https://billfn.com) | Complete billing infrastructure. Subscriptions, one-time payments, usage-based billing, analytics, store integrations and invoicing. | Stripe Billing + Metronome + RevenueCat | [npm](https://www.npmjs.com/package/billfn) |
-| [mailFn](./mailfn) | Programmable real inboxes for products, agents, and deterministic email testing, with Cloudflare deployment and SendFn composition. | MailSlurp + Mailtrap Inbound + AgentMail | `mailfn` + `@mailfn/*` |
-| [mcpFn](./mcpfn/README.md) | Build and regression-test MCP servers with full protocol contracts, OAuth/API-key testkits, Playwright auth fixtures, host profiles, official conformance, and safe DataFn exposure. | MCP SDK + contract testing | `@mcpfn/core` · `@mcpfn/auth` · `@mcpfn/testing` · `@mcpfn/datafn` · `@mcpfn/cli` |
-| [plugFn](./plugfn) | Universal API integration SDK with standardized provider interfaces and managed authentication. | Nango + Pipedream Connect | [npm](https://www.npmjs.com/package/plugfn) |
+| Function | Description |
+| --- | --- |
+| authFn | Drop-in authentication and user management. Social logins, magic links, session handling, AI agent authentication and more.<br><br>**Packages:** [npm](https://www.npmjs.com/package/@authfn/client) · [PyPI](https://pypi.org/project/authfn/) |
+| billFn | Complete billing infrastructure. Subscriptions, one-time payments, usage-based billing, analytics, store integrations and invoicing.<br><br>**Packages:** [npm](https://www.npmjs.com/package/billfn) |
+| [mcpFn](./mcpfn/README.md) | Build and regression-test MCP servers with protocol contracts, OAuth/API-key testkits, Playwright auth fixtures, host profiles, official conformance, and safe DataFn exposure.<br><br>**Packages:** `@mcpfn/core` · `@mcpfn/auth` · `@mcpfn/testing` · `@mcpfn/datafn` · `@mcpfn/cli` |
+| plugFn | Universal API integration SDK. Connect to third-party services with a standardized interface and automatic auth handling.<br><br>**Packages:** [npm](https://www.npmjs.com/package/plugfn) |
 
 ## User interface
 
-| Function | Description | Packages |
-| --- | --- | --- |
-| [uiFn](./uifn) | Reusable frontend component primitives, themes, catalogs and design-system tooling. | [npm](https://www.npmjs.com/package/uifn) |
-| [docsFn](./docsfn) | AI-native documentation platform and reusable documentation UI. | [npm](https://www.npmjs.com/package/docsfn) |
+| Function | Description |
+| --- | --- |
+| [uiFn](./uifn) | Reusable frontend component primitives, themes, framework adapters, catalogs, registry delivery, and design-system tooling.<br><br>**Packages:** `@uifn/*` |
+| docFn | AI native documentation platform.<br><br>**Packages:** [npm](https://www.npmjs.com/package/docfn) |
 
 ## Infrastructure and meta
 

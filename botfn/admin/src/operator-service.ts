@@ -1,4 +1,11 @@
-import { AdminError, adminScopeRootId, type AdminOperationContext } from "@superfunctions/admin";
+import {
+  AdminError,
+  adminScopeRootId,
+  decodeAdminCursor,
+  encodeAdminCursor,
+  type AdminOperationContext,
+  type AdminScope,
+} from "@superfunctions/admin";
 
 export type BotFnPlatform = "discord" | "slack" | "github" | "linear";
 
@@ -45,9 +52,11 @@ export interface BotFnOperatorStore {
   getBot(scope: BotFnOperatorScope, id: string): Promise<BotFnBotRecord | null>;
   putBot(value: BotFnBotRecord): Promise<void>;
   deleteBot(scope: BotFnOperatorScope, id: string): Promise<boolean>;
+  deleteBotIfNoChannels(scope: BotFnOperatorScope, id: string): Promise<"deleted" | "not_found" | "channels_exist">;
   listChannels(scope: BotFnOperatorScope, botId?: string): Promise<BotFnChannelRecord[]>;
   getChannel(scope: BotFnOperatorScope, id: string): Promise<BotFnChannelRecord | null>;
   putChannel(value: BotFnChannelRecord): Promise<void>;
+  putChannelIfBotExists(value: BotFnChannelRecord): Promise<boolean>;
   deleteChannel(scope: BotFnOperatorScope, id: string): Promise<boolean>;
 }
 
@@ -80,6 +89,20 @@ export class MemoryBotFnOperatorStore implements BotFnOperatorStore {
     return this.bots.delete(this.key(scope, id));
   }
 
+  async deleteBotIfNoChannels(
+    scope: BotFnOperatorScope,
+    id: string,
+  ): Promise<"deleted" | "not_found" | "channels_exist"> {
+    const botKey = this.key(scope, id);
+    if (!this.bots.has(botKey)) return "not_found";
+    const prefix = this.key(scope, "");
+    if ([...this.channels.values()].some((value) => this.key(value.scope, "") === prefix && value.botId === id)) {
+      return "channels_exist";
+    }
+    this.bots.delete(botKey);
+    return "deleted";
+  }
+
   async listChannels(scope: BotFnOperatorScope, botId?: string): Promise<BotFnChannelRecord[]> {
     const prefix = this.key(scope, "");
     return [...this.channels.values()]
@@ -94,6 +117,12 @@ export class MemoryBotFnOperatorStore implements BotFnOperatorStore {
 
   async putChannel(value: BotFnChannelRecord): Promise<void> {
     this.channels.set(this.key(value.scope, value.id), structuredClone(value));
+  }
+
+  async putChannelIfBotExists(value: BotFnChannelRecord): Promise<boolean> {
+    if (!this.bots.has(this.key(value.scope, value.botId))) return false;
+    this.channels.set(this.key(value.scope, value.id), structuredClone(value));
+    return true;
   }
 
   async deleteChannel(scope: BotFnOperatorScope, id: string): Promise<boolean> {
@@ -123,19 +152,58 @@ function requireScope(context: AdminOperationContext): BotFnOperatorScope {
   return { installationId, workspaceId, projectId, environmentId: environmentId ?? null };
 }
 
-function page<T extends { id: string }>(items: T[], input: BotFnPageInput): {
+type BotFnCursorQuery =
+  | { collection: "bots" }
+  | { collection: "channels"; botId: string | null };
+
+function cursorScope(scope: BotFnOperatorScope): AdminScope {
+  return {
+    installationId: scope.installationId,
+    workspaceId: scope.workspaceId,
+    projectId: scope.projectId,
+    ...(scope.environmentId ? { environmentId: scope.environmentId } : {}),
+  };
+}
+
+function sameCursorQuery(left: BotFnCursorQuery, right: BotFnCursorQuery): boolean {
+  return left.collection === right.collection
+    && (left.collection !== "channels"
+      || (right.collection === "channels" && left.botId === right.botId));
+}
+
+function page<T extends { id: string }>(
+  items: T[],
+  input: BotFnPageInput,
+  scope: BotFnOperatorScope,
+  query: BotFnCursorQuery,
+): {
   items: T[];
   nextCursor: string | null;
 } {
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
-  const offset = input.cursor === undefined ? 0 : Number(input.cursor);
-  if (!Number.isSafeInteger(offset) || offset < 0) {
+  const decoded: unknown = input.cursor === undefined
+    ? { offset: 0, query }
+    : decodeAdminCursor<unknown>(input.cursor, cursorScope(scope));
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
     throw new AdminError("invalid_argument", "BotFn cursor is invalid.");
+  }
+  const position = decoded as { offset?: unknown; query?: BotFnCursorQuery };
+  const offset = position.offset;
+  if (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0) {
+    throw new AdminError("invalid_argument", "BotFn cursor is invalid.");
+  }
+  if (!position.query || !sameCursorQuery(position.query, query)) {
+    throw new AdminError("invalid_argument", "BotFn cursor is invalid for this collection query.");
   }
   const ordered = [...items].sort((left, right) => left.id.localeCompare(right.id));
   const values = ordered.slice(offset, offset + limit);
   const next = offset + values.length;
-  return { items: values, nextCursor: next < ordered.length ? String(next) : null };
+  return {
+    items: values,
+    nextCursor: next < ordered.length
+      ? encodeAdminCursor(cursorScope(scope), { offset: next, query })
+      : null,
+  };
 }
 
 function channelView(value: BotFnChannelRecord): BotFnChannelView {
@@ -148,7 +216,8 @@ export function createBotFnOperatorService(options: BotFnOperatorServiceOptions)
 
   return {
     async listBots(input: BotFnPageInput, context: AdminOperationContext) {
-      return page(await options.store.listBots(requireScope(context)), input);
+      const scope = requireScope(context);
+      return page(await options.store.listBots(scope), input, scope, { collection: "bots" });
     },
 
     async getBot(input: { id: string }, context: AdminOperationContext) {
@@ -181,18 +250,23 @@ export function createBotFnOperatorService(options: BotFnOperatorServiceOptions)
 
     async deleteBot(input: { id: string }, context: AdminOperationContext) {
       const scope = requireScope(context);
-      if ((await options.store.listChannels(scope, input.id)).length > 0) {
+      const outcome = await options.store.deleteBotIfNoChannels(scope, input.id);
+      if (outcome === "channels_exist") {
         throw new AdminError("precondition_failed", "Disconnect bot channels before deleting the bot.");
       }
-      if (!await options.store.deleteBot(scope, input.id)) {
+      if (outcome === "not_found") {
         throw new AdminError("not_found", "BotFn bot was not found.");
       }
       return { accepted: true as const };
     },
 
     async listChannels(input: BotFnPageInput & { botId?: string }, context: AdminOperationContext) {
-      const values = await options.store.listChannels(requireScope(context), input.botId);
-      return page(values.map(channelView), input);
+      const scope = requireScope(context);
+      const values = await options.store.listChannels(scope, input.botId);
+      return page(values.map(channelView), input, scope, {
+        collection: "channels",
+        botId: input.botId ?? null,
+      });
     },
 
     async getChannel(input: { id: string }, context: AdminOperationContext) {
@@ -234,7 +308,9 @@ export function createBotFnOperatorService(options: BotFnOperatorServiceOptions)
         createdAt: previous?.createdAt ?? updatedAt,
         updatedAt,
       };
-      await options.store.putChannel(value);
+      if (!await options.store.putChannelIfBotExists(value)) {
+        throw new AdminError("not_found", "BotFn bot was not found.");
+      }
       return { accepted: true as const, item: channelView(value) };
     },
 

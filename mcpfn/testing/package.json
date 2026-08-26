@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@mcpfn/core": "0.0.1",
-    "@modelcontextprotocol/sdk": "^1.25.2"
+    "@modelcontextprotocol/sdk": "1.25.2"
   },
   "peerDependencies": {
     "@playwright/test": ">=1.40.0"

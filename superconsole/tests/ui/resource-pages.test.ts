@@ -113,6 +113,31 @@ describe('generic resource list ordering', () => {
     ]));
   });
 
+  it('returns an admin error view for reserved query input paths', async () => {
+    const fetcher = vi.fn();
+    const guardedRegistry: RegistryViewModel = {
+      modules: [{
+        ...registry.modules[0]!,
+        resources: [{
+          ...registry.modules[0]!.resources![0]!,
+          listInputSchema: { type: 'object', properties: { filter: { type: 'object' } } },
+          presentation: { query: { filters: [{ field: 'status', inputPath: '__proto__.status' }] } },
+        }],
+      }],
+    };
+
+    const loaded = await loadResourceList({
+      fetcher,
+      url: new URL('https://console.example.test/modules/examplefn/records?status=running'),
+      registry: guardedRegistry,
+      moduleId: 'examplefn',
+      resourceId: 'records',
+    });
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(loaded.loadError).toMatchObject({ status: 400, code: 'RESOURCE_QUERY_INVALID' });
+  });
+
   it('builds parent-bound related resource links from generic detail records', async () => {
     const contextualRegistry: RegistryViewModel = {
       modules: [{
@@ -159,6 +184,37 @@ describe('generic resource list ordering', () => {
       expect.objectContaining({ resourceId: 'jobs', href: '/modules/cifn/jobs?runId=run_1&environmentId=env_1' }),
       expect.objectContaining({ resourceId: 'artifacts', href: '/modules/cifn/artifacts?runId=run_1&environmentId=env_1' }),
     ]);
+  });
+
+  it('sends POST detail inputs in the request body instead of the URL', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      ok: true,
+      data: { item: { uploadSessionId: 'upload_1' } },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const registry: RegistryViewModel = {
+      modules: [{
+        id: 'filefn', name: 'FileFn', description: 'Files.', href: '/modules/filefn', enabled: true,
+        resources: [{
+          id: 'upload-sessions', resourceId: 'upload-sessions', sourceModuleId: 'filefn',
+          label: 'Upload sessions', href: '/modules/filefn/upload-sessions',
+          detailApiHref: '/api/admin/v1/modules/filefn/resources/upload-sessions/:id',
+          detailApiMethod: 'POST', detailIdInput: 'id',
+        }],
+      }],
+    };
+
+    await loadResourceDetail({
+      fetcher,
+      url: new URL('https://console.example.test/modules/filefn/upload-sessions/upload_1'),
+      registry,
+      moduleId: 'filefn',
+      resourceId: 'upload-sessions',
+      identity: 'upload_1',
+    });
+
+    const [url, init] = fetcher.mock.calls[0]!;
+    expect(String(url)).toBe('/api/admin/v1/modules/filefn/resources/upload-sessions/upload_1');
+    expect(init).toMatchObject({ method: 'POST', body: JSON.stringify({ id: 'upload_1' }) });
   });
 
   it('binds required action inputs that are present on each canonical row', () => {

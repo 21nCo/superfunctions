@@ -29,12 +29,12 @@ export interface DatafnResourceExposure {
   /** Mutations are always disabled unless configured with an explicit field allowlist. */
   create?: false | DatafnWriteToolOptions;
   update?: false | DatafnWriteToolOptions;
-  delete?: false | Omit<DatafnWriteToolOptions, "fields">;
+  delete?: boolean | Omit<DatafnWriteToolOptions, "fields">;
 }
 
 export interface CreateDatafnMcpRegistryOptions<TMcpContext, TDatafnContext> {
   /** @deprecated The executor's normalized schema is authoritative. */
-  schema: DatafnSchema;
+  schema?: DatafnSchema;
   executor: DatafnExecutor<TDatafnContext>;
   expose: Record<string, DatafnResourceExposure>;
   /** Resolve trusted DataFn context from server-derived MCP context. */
