@@ -1,6 +1,6 @@
 import { instrumentAdapter, wrapWithSchema, type Adapter, type RuntimeStores } from '@superfunctions/db';
 import { instrumentStorageAdapter, type StorageAdapter } from '@superfunctions/storage';
-import type { FileProvider } from '@superfunctions/files';
+import type { FileProvider, FileProviderContext } from '@superfunctions/files';
 import { type RateLimiter, createRateLimiter } from '@superfunctions/middleware';
 import { applyObservationHeaders } from '@superfunctions/http';
 import {
@@ -9,7 +9,7 @@ import {
   type ObservationLogger
 } from '@superfunctions/observability';
 import { getSchema } from './schema.js';
-import { createNucleusPolicies, createPolicyRegistry, type Policy, type PolicyRegistryWithDefine } from './policies.js';
+import { createPolicyRegistry, type Policy, type PolicyRegistryWithDefine } from './policies.js';
 import { createEventEmitter, type FileFnEventEmitter, type FileFnObservationEvent } from './events.js';
 import { createUploadSessionService, type QuotaProvider, type UploadSessionService } from './upload-sessions/service.js';
 import { createUploadSessionRoutes } from './upload-sessions/routes.js';
@@ -81,7 +81,20 @@ export interface FileFnServices {
   uploads: UploadSessionService;
   grants: GrantsService;
   shares: SharesService;
-  processing: ProcessingService;
+  processing: Pick<
+    ProcessingService,
+    | 'isEnabled'
+    | 'listArtifactsForFile'
+    | 'getArtifactDownloadUrlForFile'
+    | 'getArtifactDownloadStreamForFile'
+    | 'getReadableVersionForFile'
+  > & {
+    triggerProcessingForFile(
+      fileId: string,
+      ctx: FileProviderContext,
+      versionId?: string,
+    ): ReturnType<ProcessingService['triggerProcessing']>;
+  };
   policies: PolicyRegistryWithDefine;
 }
 
@@ -331,7 +344,26 @@ export function createFileFn(config: FileFnConfig): FileFn {
       uploads: uploadService,
       grants: grantsService,
       shares: sharesService,
-      processing: processingService,
+      processing: {
+        isEnabled: processingService.isEnabled.bind(processingService),
+        listArtifactsForFile: processingService.listArtifactsForFile.bind(processingService),
+        getArtifactDownloadUrlForFile: processingService.getArtifactDownloadUrlForFile.bind(processingService),
+        getArtifactDownloadStreamForFile: processingService.getArtifactDownloadStreamForFile.bind(processingService),
+        getReadableVersionForFile: processingService.getReadableVersionForFile.bind(processingService),
+        async triggerProcessingForFile(fileId, ctx, versionId) {
+          const file = await fileService.getFile(fileId, ctx);
+          const version = await fileService.getVersion(fileId, versionId ?? file.currentVersionId, ctx);
+          return processingService.triggerProcessing({
+            fileId: file.fileId,
+            versionId: version.versionId,
+            storageKey: version.storageKey,
+            mimeType: version.mimeType,
+            size: version.size,
+            fileName: file.name,
+            tenantId: file.tenantId ?? ctx.tenantId,
+          }, ctx);
+        },
+      },
       policies: policyRegistry,
     },
 

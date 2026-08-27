@@ -78,6 +78,9 @@ function inputSchemaAtPath(
 
 function setInputPath(target: Record<string, unknown>, path: string, value: unknown): void {
   const segments = path.split('.');
+  if (segments.some((segment) => segment === '__proto__' || segment === 'prototype' || segment === 'constructor')) {
+    throw new Error('Administration input paths cannot address object prototype properties.');
+  }
   let current = target;
   segments.forEach((segment, index) => {
     if (index === segments.length - 1) {
@@ -85,7 +88,7 @@ function setInputPath(target: Record<string, unknown>, path: string, value: unkn
       return;
     }
     const existing = current[segment];
-    if (!isAdminRecord(existing)) current[segment] = {};
+    if (!isAdminRecord(existing)) current[segment] = Object.create(null) as Record<string, unknown>;
     current = current[segment] as Record<string, unknown>;
   });
 }
@@ -199,7 +202,20 @@ export async function loadResourceList(input: ResourceRouteInput): Promise<{
   }
   const apiHref = resource.listApiHref ?? resource.apiHref
     ?? `${ADMIN_API_PREFIX}/modules/${encodeURIComponent(apiModule)}/${encodeURIComponent(canonicalResource)}`;
-  const requestHref = listRequestHref(resource, apiHref, input.url.searchParams);
+  let requestHref: string;
+  try {
+    requestHref = listRequestHref(resource, apiHref, input.url.searchParams);
+  } catch {
+    return {
+      view: undefined,
+      loadError: {
+        status: 400,
+        code: 'RESOURCE_QUERY_INVALID',
+        message: `The query controls for ${resource.pluralLabel ?? resource.label} are invalid.`,
+      },
+      query: input.url.searchParams.get('q') ?? '',
+    };
+  }
   const result = await fetchAdmin<Partial<ResourceListViewModel> & { items?: unknown[] }>(
     input.fetcher,
     withAdminScope(requestHref, input.url.searchParams)
@@ -259,11 +275,15 @@ export async function loadResourceDetail(
       },
     };
   }
-  const base = materializeAdminActionHref(detailTemplate, operationInput.value, 'GET');
+  const method = resource.detailApiMethod ?? 'GET';
+  const base = materializeAdminActionHref(detailTemplate, operationInput.value, method);
   if (!base) return { view: undefined, loadError: unavailable(input.resourceId, input.moduleId) };
   const result = await fetchAdmin<Partial<ResourceDetailViewModel> & { item?: unknown }>(
     input.fetcher,
-    withAdminScope(base, input.url.searchParams)
+    withAdminScope(base, input.url.searchParams),
+    method === 'GET' || method === 'HEAD'
+      ? undefined
+      : { method, body: JSON.stringify(operationInput.value) },
   );
   const payload = result.ok ? result.data : {};
   const itemRecord = isAdminRecord(payload.item) ? payload.item : undefined;

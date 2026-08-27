@@ -1,6 +1,6 @@
 import { AdminError } from "./errors.js";
 import { stableSerialize } from "./validator.js";
-import type { AdminResult, AdminScope } from "./types.js";
+import type { AdminOperationResult, AdminResult, AdminScope } from "./types.js";
 
 export interface AdminIdempotencyIdentity {
   key: string;
@@ -19,6 +19,17 @@ export interface AdminIdempotencyRecord<T = unknown> {
     status: "pending" | "completed" | "not-required";
     /** Stable logical terminal event ID, persisted before the first sink write. */
     auditId?: string;
+    /** Terminal event shape to redeliver when a sink acknowledgement is lost. */
+    outcome?: "succeeded" | "failed";
+    errorCode?: string;
+    metadata?: Readonly<Record<string, unknown>>;
+    updatedAt: string;
+  };
+  /** Durable fence installed before a previously completed domain result is compensated. */
+  compensation?: {
+    status: "pending" | "completed" | "failed";
+    /** Redacted completed domain response used by retry-safe compensators during reconciliation. */
+    domainResult: AdminOperationResult<T>;
     updatedAt: string;
   };
   createdAt: string;
@@ -40,15 +51,23 @@ export type AdminIdempotencyBeginResult<T = unknown> =
       retryAfterMs?: number;
     };
 
+export type AdminCompensationClaimResult<T = unknown> =
+  | { status: "acquired"; claim: AdminIdempotencyClaim; record: AdminIdempotencyRecord<T> }
+  | { status: "replay"; record: AdminIdempotencyRecord<T> }
+  | {
+      status: "in-progress";
+      wait?: Promise<AdminIdempotencyRecord<T> | undefined>;
+      retryAfterMs?: number;
+    };
+
 /**
  * Atomic reservation contract. Durable implementations must make `begin` a
  * compare-and-create operation on the full identity and must fence `complete`
  * and `release` with the claim token. `release` is used only before domain
  * invocation, so a failed audit/policy dependency cannot poison a safe retry.
  * Cross-process stores should use a renewable lease or a documented stale-claim
- * recovery policy. `complete` must be safely repeatable with the same claim,
- * identity, fingerprint and result: the dispatcher retries it after ambiguous
- * dependency acknowledgement failures and never re-invokes the domain.
+ * recovery policy. `complete` must be safely repeatable with the same claim and
+ * may advance a compensation record from pending to completed or failed.
  */
 export interface AdminIdempotencyStore {
   begin<T = unknown>(input: {
@@ -59,6 +78,32 @@ export interface AdminIdempotencyStore {
     claim: AdminIdempotencyClaim,
     record: AdminIdempotencyRecord<T>,
   ): Promise<void> | void;
+  /**
+   * Atomically replace the matching completed domain result with a
+   * compensation-pending failure before the compensator is invoked. The
+   * transition must fence on the claim token and fingerprint, be idempotent for
+   * the same record, install an in-progress compensation claim for that token,
+   * and never acknowledge until both the replacement and claim are durable.
+   * This prevents a concurrent replay from observing stale success after the
+   * domain state has been rolled back.
+   */
+  prepareCompensation<T = unknown>(
+    claim: AdminIdempotencyClaim,
+    record: AdminIdempotencyRecord<T> & {
+      compensation: { status: "pending"; updatedAt: string };
+    },
+  ): Promise<void> | void;
+  /**
+   * Atomically claim a pending or previously failed compensation attempt.
+   * Compensators are retry-safe by contract; completed compensation records
+   * must be returned as replays and must never be acquired again.
+   */
+  claimCompensation<T = unknown>(input: {
+    identity: AdminIdempotencyIdentity;
+    fingerprint: string;
+  }): Promise<AdminCompensationClaimResult<T>> | AdminCompensationClaimResult<T>;
+  /** Release a reconciliation claim after an attempt failed or its completion acknowledgement was ambiguous. */
+  releaseCompensation(claim: AdminIdempotencyClaim): Promise<void> | void;
   /**
    * Mandatory atomic reconciliation hook. Implementations may transition only
    * a matching pending terminal-audit marker to completed, and must be
@@ -98,6 +143,11 @@ interface MemoryCompletedEntry {
   fingerprint: string;
   token: string;
   record: AdminIdempotencyRecord;
+  reconciliation?: {
+    token: string;
+    wait: Promise<AdminIdempotencyRecord | undefined>;
+    resolve: (record: AdminIdempotencyRecord | undefined) => void;
+  };
 }
 
 /** Process-local atomic test/development store. It is not durable or multi-process safe. */
@@ -130,11 +180,19 @@ export class MemoryAdminIdempotencyStore implements AdminIdempotencyStore {
   complete<T = unknown>(claim: AdminIdempotencyClaim, record: AdminIdempotencyRecord<T>): void {
     const key = adminIdempotencyStorageKey(claim.identity);
     const existing = this.entries.get(key);
-    if (existing?.status === "completed" && existing.token === claim.token) {
+    if (
+      existing?.status === "completed" &&
+      (existing.token === claim.token || existing.reconciliation?.token === claim.token)
+    ) {
       if (existing.fingerprint !== claim.fingerprint || record.fingerprint !== claim.fingerprint) {
         throw new AdminError("conflict", "The idempotency completion fingerprint does not match its reservation.");
       }
       existing.record = structuredClone(record) as AdminIdempotencyRecord;
+      if (existing.reconciliation?.token === claim.token) {
+        const reconciliation = existing.reconciliation;
+        existing.reconciliation = undefined;
+        reconciliation.resolve(structuredClone(existing.record));
+      }
       return;
     }
     if (!existing || existing.status !== "in-progress" || existing.token !== claim.token) {
@@ -146,6 +204,87 @@ export class MemoryAdminIdempotencyStore implements AdminIdempotencyStore {
     const snapshot = structuredClone(record) as AdminIdempotencyRecord;
     this.entries.set(key, { status: "completed", fingerprint: claim.fingerprint, token: claim.token, record: snapshot });
     existing.resolve(structuredClone(snapshot));
+  }
+
+  prepareCompensation<T = unknown>(
+    claim: AdminIdempotencyClaim,
+    record: AdminIdempotencyRecord<T> & {
+      compensation: { status: "pending"; updatedAt: string };
+    },
+  ): void {
+    const key = adminIdempotencyStorageKey(claim.identity);
+    const existing = this.entries.get(key);
+    if (!existing || existing.status !== "completed" || existing.token !== claim.token) {
+      throw new AdminError("conflict", "The completed idempotency result is unavailable for compensation.");
+    }
+    if (existing.fingerprint !== claim.fingerprint || record.fingerprint !== claim.fingerprint) {
+      throw new AdminError("conflict", "The compensation fingerprint does not match its reservation.");
+    }
+    if (existing.record.compensation?.status === "pending") {
+      if (stableSerialize(existing.record) === stableSerialize(record)) {
+        if (!existing.reconciliation) {
+          let resolve!: (record: AdminIdempotencyRecord | undefined) => void;
+          const wait = new Promise<AdminIdempotencyRecord | undefined>((complete) => { resolve = complete; });
+          existing.reconciliation = { token: claim.token, wait, resolve };
+        }
+        return;
+      }
+      throw new AdminError("conflict", "A different compensation transition is already pending.");
+    }
+    if (
+      existing.record.compensation ||
+      existing.record.result.ok !== true ||
+      existing.record.audit?.status !== "pending" ||
+      existing.record.audit.outcome !== "succeeded"
+    ) {
+      throw new AdminError("conflict", "Only a pending successful domain result can enter compensation.");
+    }
+    let resolve!: (record: AdminIdempotencyRecord | undefined) => void;
+    const wait = new Promise<AdminIdempotencyRecord | undefined>((complete) => { resolve = complete; });
+    existing.record = structuredClone(record) as AdminIdempotencyRecord;
+    existing.reconciliation = { token: claim.token, wait, resolve };
+  }
+
+  claimCompensation<T = unknown>(input: {
+    identity: AdminIdempotencyIdentity;
+    fingerprint: string;
+  }): AdminCompensationClaimResult<T> {
+    const existing = this.entries.get(adminIdempotencyStorageKey(input.identity));
+    if (!existing || existing.status !== "completed" || existing.fingerprint !== input.fingerprint) {
+      throw new AdminError("conflict", "The idempotency record is unavailable for compensation reconciliation.");
+    }
+    if (!existing.record.compensation || existing.record.compensation.status === "completed") {
+      return { status: "replay", record: structuredClone(existing.record) as AdminIdempotencyRecord<T> };
+    }
+    if (existing.reconciliation) {
+      return {
+        status: "in-progress",
+        wait: existing.reconciliation.wait as Promise<AdminIdempotencyRecord<T> | undefined>,
+      };
+    }
+    let resolve!: (record: AdminIdempotencyRecord | undefined) => void;
+    const wait = new Promise<AdminIdempotencyRecord | undefined>((complete) => { resolve = complete; });
+    const token = `compensation_${crypto.randomUUID()}`;
+    existing.reconciliation = { token, wait, resolve };
+    return {
+      status: "acquired",
+      claim: { identity: input.identity, fingerprint: input.fingerprint, token },
+      record: structuredClone(existing.record) as AdminIdempotencyRecord<T>,
+    };
+  }
+
+  releaseCompensation(claim: AdminIdempotencyClaim): void {
+    const existing = this.entries.get(adminIdempotencyStorageKey(claim.identity));
+    if (!existing || existing.status !== "completed" || existing.fingerprint !== claim.fingerprint) {
+      throw new AdminError("conflict", "The idempotency record is unavailable for compensation reconciliation.");
+    }
+    if (existing.record.compensation?.status === "completed" && !existing.reconciliation) return;
+    if (existing.reconciliation?.token !== claim.token) {
+      throw new AdminError("conflict", "The compensation reconciliation claim is no longer owned by this operation.");
+    }
+    const reconciliation = existing.reconciliation;
+    existing.reconciliation = undefined;
+    reconciliation.resolve(undefined);
   }
 
   finalizeAudit(
@@ -201,6 +340,28 @@ export async function beginAdminIdempotency<T>(
     if (reservation.status === "acquired" || reservation.status === "replay") return reservation;
     if (!reservation.wait) {
       throw new AdminError("conflict", "An operation with this idempotency key is already in progress.", {
+        details: { retryAfterMs: reservation.retryAfterMs },
+        retryable: true,
+      });
+    }
+    const record = await reservation.wait;
+    if (record) return { status: "replay", record };
+  }
+}
+
+export async function claimAdminCompensation<T>(
+  store: AdminIdempotencyStore,
+  identity: AdminIdempotencyIdentity,
+  fingerprint: string,
+): Promise<
+  | { status: "acquired"; claim: AdminIdempotencyClaim; record: AdminIdempotencyRecord<T> }
+  | { status: "replay"; record: AdminIdempotencyRecord<T> }
+> {
+  for (;;) {
+    const reservation = await store.claimCompensation<T>({ identity, fingerprint });
+    if (reservation.status === "acquired" || reservation.status === "replay") return reservation;
+    if (!reservation.wait) {
+      throw new AdminError("conflict", "Compensation reconciliation is already in progress.", {
         details: { retryAfterMs: reservation.retryAfterMs },
         retryable: true,
       });

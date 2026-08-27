@@ -4,6 +4,7 @@ import {
   decodeAdminCursor,
   encodeAdminCursor,
   normalizeAdminPageLimit,
+  stableSerialize,
   type AdminOperationContext,
   type AdminOperationResult,
 } from "@superfunctions/admin";
@@ -57,18 +58,27 @@ function page<TItem extends object>(
   values: readonly TItem[],
   input: DataFnListInput,
   context: AdminOperationContext,
+  collection: keyof DataFnSchemaDocuments,
 ): AdminOperationResult<DataFnPageOutput<TItem>> {
   const limit = normalizeAdminPageLimit(input.limit);
-  const offset = typeof input.cursor === "string"
-    ? decodeAdminCursor<{ offset: number }>(input.cursor, context.scope).offset
-    : 0;
-  if (!Number.isInteger(offset) || offset < 0) {
+  const decoded: unknown = typeof input.cursor === "string"
+    ? decodeAdminCursor<unknown>(input.cursor, context.scope)
+    : { offset: 0, collection };
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
     throw new AdminError("invalid_argument", "The DataFn admin cursor is invalid.");
+  }
+  const position = decoded as { offset?: unknown; collection?: unknown };
+  const offset = position.offset;
+  if (typeof offset !== "number" || !Number.isInteger(offset) || offset < 0) {
+    throw new AdminError("invalid_argument", "The DataFn admin cursor is invalid.");
+  }
+  if (position.collection !== collection) {
+    throw new AdminError("invalid_argument", "The DataFn admin cursor does not belong to this metadata collection.");
   }
   const items = values.slice(offset, offset + limit).map((entry) => ({ ...entry }));
   const next = offset + items.length;
   const nextCursor = next < values.length
-    ? encodeAdminCursor(context.scope, { offset: next })
+    ? encodeAdminCursor(context.scope, { offset: next, collection })
     : null;
   return {
     ok: true,
@@ -77,10 +87,8 @@ function page<TItem extends object>(
   };
 }
 
-function relationId(value: { from: string | string[]; to: string | string[]; type: string }): string {
-  const from = Array.isArray(value.from) ? value.from : [value.from];
-  const to = Array.isArray(value.to) ? value.to : [value.to];
-  return `${from.join(",")}->${to.join(",")}:${value.type}`;
+function relationId(value: object): string {
+  return stableSerialize(value);
 }
 
 interface DataFnSchemaDocuments {
@@ -137,7 +145,15 @@ function splitRecordId(value: string): { resource: string; id: string } {
   if (separator <= 0 || separator === value.length - 1) {
     throw new AdminError("invalid_argument", "DataFn record IDs use the form resource:id.");
   }
-  return { resource: value.slice(0, separator), id: value.slice(separator + 1) };
+  try {
+    return { resource: decodeURIComponent(value.slice(0, separator)), id: value.slice(separator + 1) };
+  } catch (error) {
+    throw new AdminError("invalid_argument", "DataFn resource names must be percent-encoded in record IDs.", { cause: error });
+  }
+}
+
+function compositeRecordId(resource: string, id: string | number): string {
+  return `${encodeURIComponent(resource)}:${id}`;
 }
 
 /** Uses DataFn's transport-neutral executor so namespace, policy, hooks, and limits remain authoritative. */
@@ -154,31 +170,31 @@ export function createDataFnDomainAdminService<TContext>(
 
   return {
     async listSchemas(input, context) {
-      return page(documents(context).schemas, input, context);
+      return page(documents(context).schemas, input, context, "schemas");
     },
     async getSchema(input, context) {
       return resultItem(findById(documents(context).schemas, string(input.id, "id"), "schema"));
     },
     async listResources(input, context) {
-      return page(documents(context).resources, input, context);
+      return page(documents(context).resources, input, context, "resources");
     },
     async getResource(input, context) {
       return resultItem(findById(documents(context).resources, string(input.id, "id"), "resource"));
     },
     async listRelations(input, context) {
-      return page(documents(context).relations, input, context);
+      return page(documents(context).relations, input, context, "relations");
     },
     async getRelation(input, context) {
       return resultItem(findById(documents(context).relations, string(input.id, "id"), "relation"));
     },
     async listIndices(input, context) {
-      return page(documents(context).indices, input, context);
+      return page(documents(context).indices, input, context, "indices");
     },
     async getIndex(input, context) {
       return resultItem(findById(documents(context).indices, string(input.id, "id"), "index"));
     },
     async listCapabilities(input, context) {
-      return page(documents(context).capabilities, input, context);
+      return page(documents(context).capabilities, input, context, "capabilities");
     },
     async getCapability(input, context) {
       return resultItem(findById(documents(context).capabilities, string(input.id, "id"), "capability"));
@@ -198,11 +214,15 @@ export function createDataFnDomainAdminService<TContext>(
       if (decoded && (decoded.operationId !== "datafn.records.list" || decoded.resource !== target)) {
         throw new AdminError("invalid_argument", "The DataFn admin cursor does not belong to this record collection.");
       }
+      const select = Array.isArray(filter.select)
+        ? [...new Set(["id", ...filter.select.filter((field): field is string => typeof field === "string")])]
+        : undefined;
       const domain = await executor.query<DataFnAdminRecord>({
         ...filter,
         resource: target,
         version: String(filter.version ?? definition.version),
         limit: input.limit,
+        ...(select ? { select } : {}),
         ...(decoded ? { cursor: decoded.cursor } : {}),
       }, options.context(context));
       const values = Array.isArray(domain.data) ? domain.data : [];
@@ -215,7 +235,16 @@ export function createDataFnDomainAdminService<TContext>(
         : null;
       return {
         ok: true,
-        data: { items: values as DataFnAdminRecord[], nextCursor },
+        data: {
+          items: values.map((value) => {
+            const recordId = value.id;
+            if (typeof recordId !== "string" && typeof recordId !== "number") {
+              throw new AdminError("dependency_unavailable", "DataFn returned a record without a usable id.");
+            }
+            return { ...value, id: compositeRecordId(target, recordId) };
+          }),
+          nextCursor,
+        },
         page: {
           nextCursor,
           hasMore: nextCursor !== null,
@@ -234,7 +263,7 @@ export function createDataFnDomainAdminService<TContext>(
       }, options.context(context));
       const value = Array.isArray(domain.data) ? domain.data[0] : undefined;
       if (!value || typeof value !== "object") throw new AdminError("not_found", "DataFn record was not found.");
-      return resultItem({ ...value, id: `${target.resource}:${target.id}` });
+      return resultItem({ ...value, id: compositeRecordId(target.resource, target.id) });
     },
     async query(input, context) {
       const value = await executor.query<DataFnAdminRecord>(object(input.payload, "payload"), options.context(context));

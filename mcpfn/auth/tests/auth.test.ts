@@ -90,6 +90,76 @@ describe("McpFn OAuth resource server", () => {
     }))).status).toBe(200);
   });
 
+  it("preserves the request body when dynamic scopes inspect it", async () => {
+    const downstream = vi.fn(async (request: Request) => Response.json(await request.json()));
+    const handler = createOAuthResourceServerHandler(downstream, {
+      resource,
+      authorizationServers: ["https://login.example.com"],
+      requiredScopes: async (request) => {
+        const body = await request.json() as { method?: string };
+        return body.method === "tools/call" ? ["mcp:write"] : ["mcp:read"];
+      },
+      verifier: {
+        verifyAccessToken: async () => ({
+          token: "scoped",
+          clientId: "client-1",
+          scopes: ["mcp:write"],
+          resource: new URL(resource),
+        }),
+      },
+    });
+    const body = { jsonrpc: "2.0", id: 1, method: "tools/call" };
+    const response = await handler(new Request(resource, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer scoped",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(body);
+    expect(downstream).toHaveBeenCalledOnce();
+  });
+
+  it("cancels an unread dynamic-scope clone before forwarding a streaming body", async () => {
+    let cancel: ReturnType<typeof vi.spyOn> | undefined;
+    const downstream = vi.fn(async (request: Request) => new Response(await request.text()));
+    const handler = createOAuthResourceServerHandler(downstream, {
+      resource,
+      authorizationServers: ["https://login.example.com"],
+      requiredScopes: async (request) => {
+        cancel = vi.spyOn(request.body!, "cancel");
+        return [];
+      },
+      verifier: {
+        verifyAccessToken: async () => ({
+          token: "scoped",
+          clientId: "client-1",
+          scopes: [],
+          resource: new URL(resource),
+        }),
+      },
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("bounded"));
+        controller.close();
+      },
+    });
+    const response = await handler(new Request(resource, {
+      method: "POST",
+      headers: { authorization: "Bearer scoped" },
+      body,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" }));
+
+    await expect(response.text()).resolves.toBe("bounded");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(downstream).toHaveBeenCalledOnce();
+  });
+
   it("adds stable enterprise-managed authorization discovery and client metadata", () => {
     expect(withEnterpriseManagedAuthorization({ issuer: "https://login.example.com" }))
       .toMatchObject({

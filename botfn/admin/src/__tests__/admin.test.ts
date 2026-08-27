@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createAdminClient,
+  encodeAdminCursor,
   validateAdminCapabilityManifest,
   type AdminOperationContext,
 } from "@superfunctions/admin";
@@ -75,6 +76,13 @@ describe("@botfn/admin", () => {
     expect((await adapter.execute<any>("botfn.channels.list", {}, legacyContext("project-a"))).data.items).toHaveLength(1);
 
     await adapter.execute("botfn.bots.upsert", { id: "sales", name: "Sales Bot" }, context("project-a"));
+    await adapter.execute("botfn.channels.connect", {
+      id: "slack-sales",
+      botId: "sales",
+      platform: "slack",
+      externalId: "channel-2",
+      credentialRef: "vault://botfn/slack-sales",
+    }, context("project-a"));
     const firstPage = await adapter.execute<any>("botfn.bots.list", { limit: 1 }, context("project-a"));
     const secondPage = await adapter.execute<any>(
       "botfn.bots.list",
@@ -82,9 +90,72 @@ describe("@botfn/admin", () => {
       context("project-a"),
     );
     expect(firstPage.data.items).toHaveLength(1);
-    expect(firstPage.data.nextCursor).toBe("1");
+    expect(firstPage.data.nextCursor).toEqual(expect.any(String));
     expect(secondPage.data.items).toHaveLength(1);
     expect(secondPage.data.nextCursor).toBeNull();
+    await expect(adapter.execute<any>(
+      "botfn.bots.list",
+      { limit: 1, cursor: firstPage.data.nextCursor },
+      context("project-a", "other-workspace"),
+    )).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(adapter.execute<any>(
+      "botfn.channels.list",
+      { cursor: firstPage.data.nextCursor },
+      context("project-a"),
+    )).rejects.toMatchObject({ code: "invalid_argument" });
+    const channelsPage = await adapter.execute<any>("botfn.channels.list", { limit: 1 }, context("project-a"));
+    await expect(adapter.execute<any>(
+      "botfn.channels.list",
+      { limit: 1, cursor: channelsPage.data.nextCursor, botId: "support" },
+      context("project-a"),
+    )).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(adapter.execute<any>(
+      "botfn.bots.list",
+      { cursor: encodeAdminCursor(context("project-a").scope, null) },
+      context("project-a"),
+    )).rejects.toMatchObject({ code: "invalid_argument", status: 400 });
+  });
+
+  it("atomically preserves the bot/channel invariant during connect and delete races", async () => {
+    const store = new MemoryBotFnOperatorStore();
+    let releaseVerification!: () => void;
+    let markVerificationStarted!: () => void;
+    const verificationGate = new Promise<void>((resolve) => { releaseVerification = resolve; });
+    const verificationStarted = new Promise<void>((resolve) => { markVerificationStarted = resolve; });
+    const service = createBotFnOperatorService({
+      store,
+      verifyChannel: async () => {
+        markVerificationStarted();
+        await verificationGate;
+        return {};
+      },
+    });
+    const activeContext = context("project-race");
+    await service.upsertBot({ id: "support", name: "Support" }, activeContext);
+    const connecting = service.connectChannel({
+      id: "channel-race",
+      botId: "support",
+      platform: "discord",
+      externalId: "external-race",
+      credentialRef: "vault://botfn/race",
+    }, activeContext);
+    await verificationStarted;
+    await expect(service.deleteBot({ id: "support" }, activeContext)).resolves.toEqual({ accepted: true });
+    releaseVerification();
+    await expect(connecting).rejects.toMatchObject({ code: "not_found" });
+    await expect(service.listChannels({}, activeContext)).resolves.toEqual({ items: [], nextCursor: null });
+
+    await service.upsertBot({ id: "support", name: "Support" }, activeContext);
+    const connectedService = createBotFnOperatorService({ store, verifyChannel: async () => ({}) });
+    await connectedService.connectChannel({
+      id: "channel-live",
+      botId: "support",
+      platform: "discord",
+      externalId: "external-live",
+      credentialRef: "vault://botfn/live",
+    }, activeContext);
+    await expect(connectedService.deleteBot({ id: "support" }, activeContext))
+      .rejects.toMatchObject({ code: "precondition_failed" });
   });
 
   it("exposes named typed client methods and common capability methods", async () => {

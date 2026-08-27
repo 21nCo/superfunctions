@@ -3,6 +3,7 @@ import {
   resolveCapabilities,
   type DatafnFieldSchema,
   type DatafnResourceSchema,
+  type DatafnSchema,
 } from "@datafn/core";
 import {
   McpFnRegistry,
@@ -52,7 +53,38 @@ async function resolveClientId<TMcpContext, TDatafnContext>(
 }
 
 function safeSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+  let segment = "";
+  let needsSeparator = false;
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    const allowed =
+      (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122) ||
+      character === "_" || character === "." || character === "-";
+    if (allowed) {
+      if (needsSeparator && segment) segment += "_";
+      segment += character;
+      needsSeparator = false;
+    } else {
+      needsSeparator = true;
+    }
+  }
+  let start = 0;
+  let end = segment.length;
+  while (start < end && segment[start] === "_") start += 1;
+  while (end > start && segment[end - 1] === "_") end -= 1;
+  return segment.slice(start, end);
+}
+
+function resourceDefaults(
+  schema: DatafnSchema,
+  resource: DatafnResourceSchema,
+) {
+  if (resource.permissions !== undefined || resource.defaultPermissions === false) {
+    return undefined;
+  }
+  return schema.defaultPermissions;
 }
 
 function fieldSchema(field: DatafnFieldSchema): McpFnJsonSchema {
@@ -77,12 +109,15 @@ function fieldSchema(field: DatafnFieldSchema): McpFnJsonSchema {
   if (field.nullable) {
     const currentTypes = Array.isArray(base.type) ? base.type : [base.type];
     base.type = [...new Set([...currentTypes, "null"])];
+    if (Array.isArray(base.enum) && !base.enum.includes(null)) {
+      base.enum = [...base.enum, null];
+    }
   }
   return base;
 }
 
 function capabilitiesFor(
-  schema: CreateDatafnMcpRegistryOptions<unknown, unknown>["schema"],
+  schema: DatafnSchema,
   resource: DatafnResourceSchema,
 ) {
   return getCapabilityFields(
@@ -91,25 +126,38 @@ function capabilitiesFor(
 }
 
 function fieldMaps(
-  schema: CreateDatafnMcpRegistryOptions<unknown, unknown>["schema"],
+  schema: DatafnSchema,
   resource: DatafnResourceSchema,
 ) {
   const schemaFields = new Map(resource.fields.map((field) => [field.name, field]));
   for (const field of capabilitiesFor(schema, resource)) {
     schemaFields.set(field.name, field as DatafnFieldSchema);
   }
-  const readable = new Set(["id", ...(resource.permissions?.read?.fields ?? [])]);
+  const defaults = resourceDefaults(schema, resource);
+  const readDefault = typeof defaults === "string" ? defaults : defaults?.read;
+  const writeDefault = typeof defaults === "string" ? defaults : defaults?.write;
+  const defaultFields = ["id", ...resource.fields.map((field) => field.name)];
+  const readable = new Set([
+    "id",
+    ...(resource.permissions?.read?.fields ??
+      (readDefault === "allResourceFields" ? defaultFields : [])),
+  ]);
   for (const field of capabilitiesFor(schema, resource)) readable.add(field.name);
-  const writable = new Set(resource.permissions?.write?.fields ?? []);
+  const writable = new Set(
+    resource.permissions?.write?.fields ??
+      (writeDefault === "allResourceFields" ? defaultFields : []),
+  );
   return { schemaFields, readable, writable };
 }
 
 function validateReadFields(
-  schema: CreateDatafnMcpRegistryOptions<unknown, unknown>["schema"],
+  schema: DatafnSchema,
   resource: DatafnResourceSchema,
   fields: string[],
 ): void {
-  if (!resource.permissions?.read) {
+  const defaults = resourceDefaults(schema, resource);
+  const readDefault = typeof defaults === "string" ? defaults : defaults?.read;
+  if (!resource.permissions?.read && readDefault !== "allResourceFields") {
     throw new McpFnValidationError(
       `DataFn resource ${resource.name} has no read policy and cannot be exposed`,
     );
@@ -130,11 +178,13 @@ function validateReadFields(
 }
 
 function validateWriteFields(
-  schema: CreateDatafnMcpRegistryOptions<unknown, unknown>["schema"],
+  schema: DatafnSchema,
   resource: DatafnResourceSchema,
   fields: string[],
 ): void {
-  if (!resource.permissions?.write) {
+  const defaults = resourceDefaults(schema, resource);
+  const writeDefault = typeof defaults === "string" ? defaults : defaults?.write;
+  if (!resource.permissions?.write && writeDefault !== "allResourceFields") {
     throw new McpFnValidationError(
       `DataFn resource ${resource.name} has no write policy and cannot expose mutations`,
     );
@@ -177,6 +227,36 @@ function defaultName(prefix: string, resource: string, operation: Operation): st
   return [prefix, safeSegment(resource), operation].filter(Boolean).join("_");
 }
 
+function assertUniqueToolNames<TMcpContext>(
+  registry: McpFnRegistry<TMcpContext>,
+  expose: Record<string, DatafnResourceExposure>,
+  prefix: string,
+): void {
+  const owners = new Map<string, string>();
+  for (const resourceName of Object.keys(expose).sort()) {
+    const exposure = expose[resourceName]!;
+    const operations: Array<[Operation, DatafnReadToolOptions | DatafnWriteToolOptions | undefined]> = [
+      ["list", operationOptions<DatafnListToolOptions>(exposure.list, true)],
+      ["get", operationOptions<DatafnReadToolOptions>(exposure.get, true)],
+      ["create", exposure.create || undefined],
+      ["update", exposure.update || undefined],
+      ["delete", operationOptions<Omit<DatafnWriteToolOptions, "fields">>(exposure.delete, false)],
+    ];
+    for (const [operation, config] of operations) {
+      if (!config) continue;
+      const name = config.name ?? defaultName(prefix, resourceName, operation);
+      const owner = `${resourceName}.${operation}`;
+      const existing = owners.get(name);
+      if (existing || registry.has(name)) {
+        throw new McpFnValidationError(
+          `DataFn tool name collision for ${name}: ${existing ?? "existing registry tool"} and ${owner}`,
+        );
+      }
+      owners.set(name, owner);
+    }
+  }
+}
+
 export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
   options: CreateDatafnMcpRegistryOptions<TMcpContext, TDatafnContext>,
 ): McpFnRegistry<TMcpContext> {
@@ -186,6 +266,7 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
   if (typeof options.clientId === "string" && !options.clientId.trim()) {
     throw new McpFnValidationError("DataFn clientId must be a non-empty string");
   }
+  assertUniqueToolNames(registry, options.expose, prefix);
 
   for (const resourceName of Object.keys(options.expose).sort()) {
     const exposure = options.expose[resourceName]!;
@@ -193,11 +274,12 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
     if (!resource) {
       throw new McpFnValidationError(`Unknown DataFn resource: ${resourceName}`);
     }
+    const list = operationOptions<DatafnListToolOptions>(exposure.list, true);
+    const get = operationOptions<DatafnReadToolOptions>(exposure.get, true);
     validateFieldList(`DataFn resource ${resourceName} projection`, exposure.fields);
-    validateReadFields(schema, resource, exposure.fields);
+    if (list || get) validateReadFields(schema, resource, exposure.fields);
     const maps = fieldMaps(schema, resource);
 
-    const list = operationOptions<DatafnListToolOptions>(exposure.list, true);
     if (list) {
       const filterFields = list.filterFields ?? exposure.fields;
       const sortFields = list.sortFields ?? ["id"];
@@ -253,13 +335,20 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
         },
         metadata: { "mcpfn/datafn": { resource: resourceName, operation: "list" } },
         handler: async (args, context) => {
+          const requestedSort = args.sort as string[] | undefined;
+          const querySort = requestedSort?.length
+            ? [
+                ...requestedSort.filter((term) => !term.startsWith("id:")),
+                requestedSort.find((term) => term.startsWith("id:")) ?? "id:asc",
+              ]
+            : undefined;
           const result = await options.executor.query(
             {
               resource: resourceName,
               version: String(resource.version),
               select: exposure.fields,
               ...(args.filters ? { filters: args.filters } : {}),
-              ...(args.sort ? { sort: args.sort } : {}),
+              ...(querySort ? { sort: querySort } : {}),
               ...(args.cursor ? { cursor: args.cursor } : {}),
               limit: Math.min(Number(args.limit ?? defaultLimit), maxLimit),
             },
@@ -271,7 +360,6 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
       registry.register(definition);
     }
 
-    const get = operationOptions<DatafnReadToolOptions>(exposure.get, true);
     if (get) {
       registry.register({
         name: get.name ?? defaultName(prefix, resourceName, "get"),
@@ -387,9 +475,15 @@ export function createDatafnMcpRegistry<TMcpContext, TDatafnContext>(
 
     if (exposure.create) registerWrite("create", exposure.create);
     if (exposure.update) registerWrite("update", exposure.update);
-    if (exposure.delete) {
-      const config = exposure.delete;
-      if (!resource.permissions?.write) {
+    const remove = operationOptions<Omit<DatafnWriteToolOptions, "fields">>(
+      exposure.delete,
+      false,
+    );
+    if (remove) {
+      const config = remove;
+      const defaults = resourceDefaults(schema, resource);
+      const writeDefault = typeof defaults === "string" ? defaults : defaults?.write;
+      if (!resource.permissions?.write && writeDefault !== "allResourceFields") {
         throw new McpFnValidationError(
           `DataFn resource ${resourceName} has no write policy and cannot expose delete`,
         );

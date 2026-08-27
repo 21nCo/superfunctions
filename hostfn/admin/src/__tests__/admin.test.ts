@@ -158,7 +158,15 @@ describe("@hostfn/admin", () => {
   });
 
   it("paginates deterministically and rejects a cursor in another scope", async () => {
-    const store = new MemoryHostFnOperatorStore();
+    class ReorderingStore extends MemoryHostFnOperatorStore {
+      private reversed = false;
+      override async listTargets(activeScope: HostFnScope) {
+        const values = await super.listTargets(activeScope);
+        this.reversed = !this.reversed;
+        return this.reversed ? values.reverse() : values;
+      }
+    }
+    const store = new ReorderingStore();
     for (let index = 0; index < 3; index++)
       await store.putTarget({
         id: `target_${index}`,
@@ -181,14 +189,33 @@ describe("@hostfn/admin", () => {
       items: unknown[];
       nextCursor: string;
     }>("hostfn.targets.list", { limit: 2 }, context);
-    expect(first.data.items).toHaveLength(2);
+    expect(first.data.items).toEqual([
+      expect.objectContaining({ id: "target_0" }),
+      expect.objectContaining({ id: "target_1" }),
+    ]);
     const second = await adapter.invoke<{ items: unknown[]; nextCursor: null }>(
       "hostfn.targets.list",
       { limit: 2, cursor: first.data.nextCursor },
       context,
     );
-    expect(second.data.items).toHaveLength(1);
+    expect(second.data.items).toEqual([expect.objectContaining({ id: "target_2" })]);
     expect(second.data.nextCursor).toBeNull();
+    await expect(
+      adapter.invoke<{ items: unknown[] }>(
+        "hostfn.targets.list",
+        { limit: 2, cursor: first.data.nextCursor },
+        {
+          ...context,
+          scope: {
+            organizationId: scope.installationId,
+            workspaceId: scope.workspaceId,
+            projectId: scope.projectId,
+            environmentId: scope.environmentId,
+            namespace: "ignored-by-hostfn",
+          },
+        },
+      ),
+    ).resolves.toMatchObject({ data: { items: expect.any(Array) } });
     await expect(
       adapter.invoke(
         "hostfn.targets.list",
@@ -196,6 +223,57 @@ describe("@hostfn/admin", () => {
         { ...context, scope: { ...scope, environmentId: "staging" } },
       ),
     ).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(
+      adapter.invoke(
+        "hostfn.deployments.list",
+        { cursor: first.data.nextCursor },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(
+      adapter.invoke(
+        "hostfn.targets.list",
+        { status: "failed", cursor: first.data.nextCursor },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_argument" });
+  });
+
+  it("round-trips cursors for Unicode scope identifiers", async () => {
+    const unicodeScope: HostFnScope = {
+      ...scope,
+      projectId: "project_日本_🚀",
+    };
+    const store = new MemoryHostFnOperatorStore();
+    for (let index = 0; index < 2; index++)
+      await store.putTarget({
+        id: `unicode_target_${index}`,
+        scope: unicodeScope,
+        name: `target ${index}`,
+        server: "server",
+        runtime: "nodejs",
+        status: "ready",
+        updatedAt: "now",
+      });
+    const adapter = createHostFnAdminAdapter(
+      createHostFnOperatorAdminService(
+        new HostFnOperatorService(store, executor()),
+      ),
+    );
+    const unicodeContext = { ...context, scope: unicodeScope };
+    const first = await adapter.invoke<{
+      items: unknown[];
+      nextCursor: string;
+    }>("hostfn.targets.list", { limit: 1 }, unicodeContext);
+    await expect(
+      adapter.invoke(
+        "hostfn.targets.list",
+        { limit: 1, cursor: first.data.nextCursor },
+        unicodeContext,
+      ),
+    ).resolves.toMatchObject({
+      data: { items: [expect.any(Object)], nextCursor: null },
+    });
   });
 
   it("preserves the common capability client contract alongside named methods", () => {

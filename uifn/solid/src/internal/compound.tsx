@@ -132,7 +132,7 @@ interface RegisteredElement {
 }
 
 const RESERVED_ROOT_PROPS = new Set(['children', 'as', 'render', 'ref', 'environment']);
-const ROOT_DOM_PROP = /^(?:aria-|data-)|^(?:id|class|className|style|title|role|tabindex|tabIndex|hidden|dir|lang|slot|inert|draggable|spellcheck|spellCheck|translate|name|type|value|checked|required|readonly|readOnly|multiple|placeholder|autocomplete|autoComplete|autofocus|autoFocus|inputmode|inputMode|maxlength|maxLength|minlength|minLength|pattern|min|max|step|accept|rows|cols|for|htmlFor|href|target|rel|src|alt|width|height|viewBox)$/;
+const ROOT_DOM_PROP = /^(?:aria-|data-)|^(?:id|class|className|style|title|role|tabindex|tabIndex|hidden|dir|lang|slot|inert|draggable|spellcheck|spellCheck|translate|name|type|value|checked|required|readonly|readOnly|multiple|placeholder|autocomplete|autoComplete|autofocus|autoFocus|inputmode|inputMode|maxlength|maxLength|minlength|minLength|pattern|min|max|step|accept|rows|cols|for|htmlFor|href|target|rel|src|alt|width|height|viewBox|action|method|enctype|encType)$/;
 const ROOT_EVENT_PROP = /^on(?:Click|DblClick|DoubleClick|AuxClick|ContextMenu|KeyDown|KeyUp|KeyPress|Focus|Blur|Input|Change|BeforeInput|CompositionStart|CompositionUpdate|CompositionEnd|Copy|Cut|Paste|PointerDown|PointerMove|PointerUp|PointerCancel|PointerEnter|PointerLeave|PointerOver|PointerOut|MouseDown|MouseMove|MouseUp|MouseEnter|MouseLeave|MouseOver|MouseOut|TouchStart|TouchMove|TouchEnd|TouchCancel|Drag|DragStart|DragEnd|DragEnter|DragLeave|DragOver|Drop|Scroll|Wheel|Select|Submit|Reset|Invalid|Load|Error|AnimationStart|AnimationEnd|AnimationIteration|TransitionEnd|Toggle|BeforeToggle|GotPointerCapture|LostPointerCapture)(?:Capture)?$/;
 
 const EMPTY_DOM_RESOURCES: UIFnDomResourceSnapshot = Object.freeze({
@@ -404,7 +404,9 @@ export class SolidPrimitiveBridge<TInputs extends object = AnyRecord> {
       this.emit();
       return;
     }
+    const previousVersion = this.current?.getSnapshot().version;
     this.current?.update(Object.fromEntries(changedKeys.map((key) => [key, next[key]])) as Partial<AnyRecord>);
+    if (this.current?.getSnapshot().version === previousVersion) this.emit();
   }
 
   getPartProps(part: string, value: unknown, userProps: UIFnPartProps): UIFnPartProps {
@@ -832,7 +834,10 @@ export interface SolidPrimitiveRootRuntimeProps<TInputs extends object> {
 export function SolidPrimitiveRoot<TInputs extends object>(runtime: SolidPrimitiveRootRuntimeProps<TInputs>): JSX.Element {
   const uniqueId = runtime.hydrationId;
   const source = () => runtime.props as AnyRecord;
-  const initial = splitSolidRootProps(untrack(source), runtime.definition.inputNames);
+  const inputNames = runtime.definition.name === 'AngleSlider'
+    ? [...runtime.definition.inputNames, 'name']
+    : runtime.definition.inputNames;
+  const initial = splitSolidRootProps(untrack(source), inputNames);
   const environment: UIFnEnvironment = {
     ...initial.environment,
     scopeId: initial.environment?.scopeId ?? `${runtime.definition.name}-${stableToken(uniqueId)}`,
@@ -840,7 +845,7 @@ export function SolidPrimitiveRoot<TInputs extends object>(runtime: SolidPrimiti
   };
   const bridge = new SolidPrimitiveBridge(runtime.definition, initial.inputs as TInputs, environment);
   const [version, setVersion] = createSignal(0, { equals: false });
-  const split = createMemo(() => splitSolidRootProps(source(), runtime.definition.inputNames));
+  const split = createMemo(() => splitSolidRootProps(source(), inputNames));
   const elementSource = (): AnyRecord => {
     const current = source();
     const elementProps: AnyRecord = {

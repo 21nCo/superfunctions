@@ -3,9 +3,12 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const mode = process.argv.includes('--write') ? 'write' : process.argv.includes('--check') ? 'check' : null;
+const write = process.argv.includes('--write');
+const check = process.argv.includes('--check');
+if (write === check) { console.error('Usage: node scripts/generate-uifn-phase-08.mjs (--write|--check)'); process.exit(2); }
+const mode = write ? 'write' : 'check';
 if (!mode) { console.error('Usage: node scripts/generate-uifn-phase-08.mjs (--write|--check)'); process.exit(2); }
-const outputRoot = path.resolve(process.cwd(), 'uifn/.conduct/generated/phase-08');
+const outputRoot = path.resolve(process.cwd(), 'uifn/evidence/generated/phase-08');
 const primitives = [
   { name: 'ContextMenu', factory: 'createContextMenuController', parts: ['root','trigger','positioner','content','item','itemIndicator','separator','group','groupLabel','submenuTrigger','submenuContent'] },
   { name: 'Menu', factory: 'createMenuController', parts: ['root','trigger','positioner','content','item','itemIndicator','separator','group','groupLabel','submenuTrigger','submenuContent'] },

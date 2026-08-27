@@ -35,6 +35,17 @@ describe('PlugFn schema metadata', () => {
       fields: ['claimToken'],
       unique: true,
     });
+    const workflows = schema.schemas.find(
+      (table) => table.modelName === 'plugfn_workflows'
+    );
+    expect(workflows?.fields.tenantId).toMatchObject({
+      fieldName: 'tenant_id',
+      required: false,
+    });
+    expect(workflows?.indexes).toContainEqual({
+      name: 'idx_plugfn_workflows_tenant_user',
+      fields: ['tenantId', 'userId'],
+    });
   });
 
   it('keeps package discovery metadata aligned with the runtime schema', () => {

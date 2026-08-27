@@ -48,9 +48,13 @@ const httpServer = createServer(async (request, response) => {
       response.write(Buffer.from(chunk.value));
     }
     response.end();
-  } catch (error) {
-    response.writeHead(500, { "content-type": "text/plain" });
-    response.end(error instanceof Error ? error.message : String(error));
+  } catch {
+    if (response.headersSent) {
+      response.destroy();
+    } else {
+      response.writeHead(500, { "content-type": "text/plain" });
+      response.end("Internal Server Error");
+    }
   }
 });
 

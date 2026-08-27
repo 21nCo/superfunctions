@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAdminClient, createAdminRegistry } from "@superfunctions/admin";
+import {
+  AdminAuditNotPersistedError,
+  createAdminClient,
+  createAdminDispatcher,
+  createAdminRegistry,
+  MemoryAdminAuditSink,
+  validateAdminCapabilityManifest,
+} from "@superfunctions/admin";
 import type {
   FileFn,
   FileService,
@@ -67,6 +74,7 @@ function domain(overrides: {
 
 describe("@filefn/admin", () => {
   it("advertises only domain-backed resources and exact high-risk contracts", () => {
+    expect(validateAdminCapabilityManifest(fileFnAdminCapability)).toEqual([]);
     expect(fileFnAdminCapability.scopeLevels).toEqual([
       "installation",
       "workspace",
@@ -85,6 +93,9 @@ describe("@filefn/admin", () => {
     expect(fileFnAdminCapability.operations.some((operation) => operation.id.includes("storage-targets"))).toBe(false);
     expect(fileFnAdminCapability.operations.some((operation) => operation.id.includes("dedup-retention"))).toBe(false);
     expect(fileFnAdminCapability.operations.some((operation) => operation.id.includes("restore-file"))).toBe(false);
+    expect(fileFnAdminCapability.operations.find(
+      (operation) => operation.id === "filefn.upload-sessions.get",
+    )?.route).toEqual({ method: "POST", path: "/resources/upload-sessions/:id" });
 
     const grant = fileFnAdminCapability.operations.find((operation) => operation.id === "filefn.grants.create-grant");
     expect(grant?.inputSchema).toMatchObject({
@@ -104,10 +115,122 @@ describe("@filefn/admin", () => {
       audit: "required",
     });
 
+    for (const resourceId of ["versions", "grants", "share-links", "artifacts"]) {
+      expect(fileFnAdminCapability.resources?.find(
+        (resource) => resource.id === resourceId,
+      )?.presentation).toMatchObject({
+        standaloneList: false,
+        query: { filters: [{ field: "fileId", inputPath: "fileId" }] },
+        parent: {
+          resourceId: "files",
+          bindings: [{ sourceField: "fileId", queryField: "fileId" }],
+        },
+      });
+    }
+    expect(fileFnAdminCapability.operations.find(
+      (operation) => operation.id === "filefn.share-links.revoke-share",
+    )?.target).toEqual({ resource: "files", idInput: "fileId" });
+    expect(fileFnAdminCapability.operations.find(
+      (operation) => operation.id === "filefn.share-links.create-share",
+    )?.safety).toMatchObject({ idempotent: false, audit: "required" });
+    expect(fileFnAdminCapability.operations.find(
+      (operation) => operation.id === "filefn.share-links.create-share",
+    )?.outputSchema?.required).toEqual(expect.arrayContaining(["accepted", "item"]));
+    for (const operationId of ["filefn.files.download", "filefn.artifacts.download"]) {
+      expect(fileFnAdminCapability.operations.find(
+        (operation) => operation.id === operationId,
+      )).toMatchObject({ safety: { audit: "required" } });
+      expect(fileFnAdminCapability.operations.find(
+        (operation) => operation.id === operationId,
+      )?.redaction?.outputFields).toBeUndefined();
+    }
+
     expect(() => createAdminRegistry({
       adapters: [createFileFnAdminAdapter(domain())],
       enabledModules: ["filefn"],
     })).not.toThrow();
+  });
+
+  it("revokes a newly created share only when its terminal audit is definitively absent", async () => {
+    const createShareLink = vi.fn(async () => ({ token: "one-time-share-token", expiresAt: null }));
+    const revokeShareLink = vi.fn(async () => undefined);
+    const service = domain({ shares: { createShareLink, revokeShareLink } });
+    const registry = createAdminRegistry({
+      adapters: [createFileFnAdminAdapter(service)],
+      enabledModules: ["filefn"],
+    });
+    expect(registry.requireOperation("filefn.share-links.create-share").adapter.compensators)
+      .toHaveProperty("filefn.share-links.create-share");
+    const persistedOutcomes: string[] = [];
+    const audit = {
+      idempotentById: true as const,
+      write: vi.fn(async (event: { outcome: string }) => {
+        if (event.outcome === "succeeded") {
+          throw new AdminAuditNotPersistedError("audit unavailable before persistence");
+        }
+        persistedOutcomes.push(event.outcome);
+      }),
+    };
+    const dispatcher = createAdminDispatcher({
+      registry,
+      audit,
+      confirmation: { verify: () => true },
+    });
+
+    const result = await dispatcher.dispatch({
+      operationId: "filefn.share-links.create-share",
+      input: { fileId: "file_1" },
+      context: { ...context, confirmationToken: "recent-auth" },
+    });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "dependency_unavailable" } });
+    expect(createShareLink).toHaveBeenCalledTimes(1);
+    expect(revokeShareLink).toHaveBeenCalledWith(
+      "file_1",
+      "one-time-share-token",
+      { principalId: "operator_1", tenantId: "project_1", requestId: "request_1" },
+    );
+    expect(persistedOutcomes).toEqual(["attempted", "failed"]);
+    expect(result).toHaveProperty("auditId");
+  });
+
+  it("does not revoke a share after an ambiguous terminal audit acknowledgement loss", async () => {
+    const createShareLink = vi.fn(async () => ({ token: "one-time-share-token", expiresAt: null }));
+    const revokeShareLink = vi.fn(async () => undefined);
+    const persistedOutcomes: string[] = [];
+    const registry = createAdminRegistry({
+      adapters: [createFileFnAdminAdapter(domain({ shares: { createShareLink, revokeShareLink } }))],
+      enabledModules: ["filefn"],
+    });
+    const dispatcher = createAdminDispatcher({
+      registry,
+      audit: {
+        idempotentById: true,
+        write: async (event) => {
+          persistedOutcomes.push(event.outcome);
+          if (event.outcome === "succeeded") throw new Error("acknowledgement lost after commit");
+        },
+      },
+      confirmation: { verify: () => true },
+    });
+
+    const result = await dispatcher.dispatch({
+      operationId: "filefn.share-links.create-share",
+      input: { fileId: "file_1" },
+      context: { ...context, confirmationToken: "recent-auth" },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "dependency_unavailable",
+        retryable: false,
+        details: { auditAcknowledgement: "unknown", reconciliationRequired: true },
+      },
+    });
+    expect(createShareLink).toHaveBeenCalledTimes(1);
+    expect(revokeShareLink).not.toHaveBeenCalled();
+    expect(persistedOutcomes).toEqual(["attempted", "succeeded"]);
   });
 
   it("delegates listing to FileFn with the mapped principal, tenant, and request context", async () => {
@@ -202,6 +325,97 @@ describe("@filefn/admin", () => {
 
     expect(result.data).toMatchObject({ item: { fileId: "file_1", versionId: "version_1" } });
     expect((result.data as { item: object }).item).not.toHaveProperty("storageKey");
+  });
+
+  it("uses the authorization-safe FileFn processing facade", async () => {
+    const triggerProcessingForFile = vi.fn(async () => ({ enqueued: true, jobId: "job_1" }));
+    const service = domain({ processing: { triggerProcessingForFile } });
+
+    const result = await service.processFile(
+      { fileId: "file_1", versionId: "version_1" },
+      context,
+    );
+
+    expect(triggerProcessingForFile).toHaveBeenCalledWith(
+      "file_1",
+      { principalId: "operator_1", tenantId: "project_1", requestId: "request_1" },
+      "version_1",
+    );
+    expect(result.data).toMatchObject({
+      accepted: true,
+      item: { enqueued: true, jobId: "job_1" },
+    });
+  });
+
+  it("preserves header-free provider download receipts and rejects provider header contracts", async () => {
+    const getDownloadUrl = vi.fn(async () => ({
+      url: "https://storage.example.test/signed-object?signature=opaque",
+    }));
+    const registry = createAdminRegistry({
+      adapters: [createFileFnAdminAdapter(domain({ files: { getDownloadUrl } }))],
+      enabledModules: ["filefn"],
+    });
+    const result = await createAdminDispatcher({
+      registry,
+      audit: new MemoryAdminAuditSink(),
+    }).dispatch({
+      operationId: "filefn.files.download",
+      input: { id: "file_1" },
+      context,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        item: {
+          url: "https://storage.example.test/signed-object?signature=opaque",
+        },
+      },
+    });
+
+    const secretHeaderRegistry = createAdminRegistry({
+      adapters: [createFileFnAdminAdapter(domain({ files: { getDownloadUrl: async () => ({
+        url: "https://storage.example.test/object",
+        headers: { authorization: "Bearer storage-token" },
+      }) } }))],
+      enabledModules: ["filefn"],
+    });
+    await expect(createAdminDispatcher({
+      registry: secretHeaderRegistry,
+      audit: new MemoryAdminAuditSink(),
+    }).dispatch({
+      operationId: "filefn.files.download",
+      input: { id: "file_1" },
+      context,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "dependency_unavailable",
+        details: { unsupportedHeaders: ["authorization"] },
+      },
+    });
+
+    const encryptionHeaderRegistry = createAdminRegistry({
+      adapters: [createFileFnAdminAdapter(domain({ files: { getDownloadUrl: async () => ({
+        url: "https://storage.example.test/object",
+        headers: { "x-goog-encryption-key": "base64-customer-key" },
+      }) } }))],
+      enabledModules: ["filefn"],
+    });
+    await expect(createAdminDispatcher({
+      registry: encryptionHeaderRegistry,
+      audit: new MemoryAdminAuditSink(),
+    }).dispatch({
+      operationId: "filefn.files.download",
+      input: { id: "file_1" },
+      context,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "dependency_unavailable",
+        details: { unsupportedHeaders: ["x-goog-encryption-key"] },
+      },
+    });
   });
 
   it("pushes bounded child pagination into FileFn and binds cursors to the parent file", async () => {

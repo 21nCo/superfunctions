@@ -80,34 +80,25 @@ try {
     return response.json();
   });
   assert.equal(registry.ok, true);
-  assert.deepEqual(registry.data.modules.map(({ id }) => id), ['cifn']);
-  assert.deepEqual(registry.data.enabledModules.map(({ id }) => id), ['cifn']);
+  assert.deepEqual(registry.data.modules.map(({ id }) => id), ['searchfn']);
+  assert.deepEqual(registry.data.enabledModules.map(({ id }) => id), ['searchfn']);
   await page.screenshot({ path: join(artifactDirectory, '01-overview-desktop.png'), fullPage: true });
 
-  await page.getByRole('button', { name: 'Open CiFn' }).click();
-  await page.waitForURL('**/modules/cifn');
+  await page.getByRole('button', { name: 'Open SearchFn' }).click();
+  await page.waitForURL('**/modules/searchfn');
   await page.getByRole('heading', { name: 'Resources' }).waitFor();
-  await page.getByRole('button', { name: 'Open Runs' }).click();
-  await page.waitForURL('**/modules/cifn/runs');
-  await page.getByRole('heading', { name: 'Runs' }).waitFor();
-  await page.getByRole('columnheader', { name: 'Repository' }).waitFor();
-  await page.getByText('21nCo/super-functions').waitFor();
-  const openRun = page.getByRole('table').getByRole('button', { name: /^Open / }).first();
-  const runId = (await openRun.getAttribute('aria-label'))?.replace(/^Open /, '');
-  assert.ok(runId, 'The generic resource row must expose its manifest-defined identity.');
-  await openRun.click();
-  await page.waitForURL(/\/modules\/cifn\/runs\/[^/]+$/);
-  await page.getByRole('heading', { name: runId }).waitFor();
+  await page.getByRole('button', { name: 'Open Indexes Collections' }).click();
+  await page.waitForURL('**/modules/searchfn/indexes-collections');
+  await page.getByRole('heading', { name: 'Indexes Collections' }).waitFor();
+  await page.getByRole('columnheader', { name: 'Name' }).waitFor();
+  await page.getByRole('table').getByRole('button', { name: 'Open docs' }).click();
+  await page.waitForURL('**/modules/searchfn/indexes-collections/docs');
+  await page.getByRole('heading', { name: 'docs' }).waitFor();
   await page.getByRole('heading', { name: 'Properties' }).waitFor();
-  await page.getByRole('button', { name: 'Cancel run' }).click();
-  await page.getByRole('button', { name: 'Confirm Cancel run' }).click();
-  await page.getByRole('status').filter({ hasText: 'Cancel run completed.' }).waitFor();
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.getByText('cancelled', { exact: true }).first().waitFor();
-  await page.getByRole('button', { name: 'Retry run' }).click();
-  await page.getByRole('button', { name: 'Confirm Retry run' }).click();
-  await page.getByRole('status').filter({ hasText: 'Retry run completed.' }).waitFor();
-  await page.screenshot({ path: join(artifactDirectory, '02-cifn-run-detail.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Clear Index' }).click();
+  await page.getByRole('button', { name: 'Confirm Clear Index' }).click();
+  await page.getByRole('status').filter({ hasText: 'Clear Index completed.' }).waitFor();
+  await page.screenshot({ path: join(artifactDirectory, '02-searchfn-index-detail.png'), fullPage: true });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
@@ -142,7 +133,7 @@ try {
     schemaVersion: 1,
     evidenceSet: basename(artifactDirectory),
     sourceCommit,
-    scenario: 'real-adapter-through-manifest-driven-generic-routes',
+    scenario: 'common-dev-adapter-through-manifest-driven-generic-routes',
     failure: failure instanceof Error
       ? {
           name: failure.name,

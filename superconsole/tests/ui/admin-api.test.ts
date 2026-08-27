@@ -7,6 +7,7 @@ import {
   materializeAdminActionHref,
   materializeAdminApiHref,
   normalizeRegistry,
+  openSafeAdminDownloadReceipt,
   safeAdminDownloadHref,
   safeAvatarHref,
   safeConsoleNavigationHref,
@@ -164,6 +165,10 @@ describe('administration API boundary', () => {
       signedExternal: true,
       scope: new URLSearchParams({ organizationId: 'org-1' }),
     })).toBe('https://storage.example.test/signed?token=one');
+    expect(safeAdminDownloadHref('/proxy/files/file-1/download')).toBe('/proxy/files/file-1/download');
+    expect(safeAdminDownloadHref('/proxy/files/file-1/versions/version-1/download')).toBe('/proxy/files/file-1/versions/version-1/download');
+    expect(safeAdminDownloadHref('/proxy/files/file-1/artifacts/artifact-1/download')).toBe('/proxy/files/file-1/artifacts/artifact-1/download');
+    expect(safeAdminDownloadHref('/proxy/files/file-1/delete')).toBeUndefined();
     expect(safeConsoleNavigationHref('/modules/authfn/users')).toBe('/modules/authfn/users');
     expect(safeConsoleNavigationHref('javascript:alert(1)')).toBeUndefined();
     expect(safeConsoleNavigationHref('data:text/html,hello')).toBeUndefined();
@@ -174,6 +179,56 @@ describe('administration API boundary', () => {
     expect(safeAvatarHref('data:text/html;base64,PHNjcmlwdD4=')).toBeUndefined();
     expect(safeAvatarHref('https://images.example.test/operator.png')).toBe('https://images.example.test/operator.png');
     expect(safeAvatarHref('http://images.example.test/operator.png')).toBeUndefined();
+  });
+
+  it('fails closed for every provider-header download receipt', async () => {
+    await expect(openSafeAdminDownloadReceipt({
+      url: 'https://storage.example.test/signed-object',
+      headers: { 'x-goog-encryption-key': 'base64-customer-key' },
+    })).rejects.toThrow('provider headers are never sent from the browser');
+  });
+
+  it('opens a header-free signed download receipt', async () => {
+    const click = vi.fn();
+    const append = vi.fn();
+    const anchor = { href: '', target: '', rel: '', referrerPolicy: '', click } as unknown as HTMLAnchorElement;
+    const popup = {
+      opener: window,
+      document: {
+        createElement: vi.fn(() => anchor),
+        body: { append },
+      },
+      close: vi.fn(),
+    } as unknown as Window;
+    const open = vi.spyOn(window, 'open').mockReturnValue(popup);
+    try {
+      await expect(openSafeAdminDownloadReceipt({
+        url: 'https://storage.example.test/signed-object',
+      })).resolves.toBe(true);
+      expect(open).toHaveBeenCalledWith('about:blank', '_blank');
+      expect(popup.opener).toBeNull();
+      expect(anchor).toMatchObject({
+        href: 'https://storage.example.test/signed-object',
+        target: '_self',
+        rel: 'noopener noreferrer',
+        referrerPolicy: 'no-referrer',
+      });
+      expect(append).toHaveBeenCalledWith(anchor);
+      expect(click).toHaveBeenCalledOnce();
+    } finally {
+      open.mockRestore();
+    }
+  });
+
+  it('reports a blocked signed download window', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    try {
+      await expect(openSafeAdminDownloadReceipt({
+        url: 'https://storage.example.test/signed-object',
+      })).resolves.toBe(false);
+    } finally {
+      open.mockRestore();
+    }
   });
 
   it('materializes declared administration route parameters from bound input', () => {

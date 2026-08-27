@@ -19,8 +19,8 @@ for (const directory of entries) {
   }
 }
 
-if (packages.length !== 29) {
-  throw new Error(`Expected 29 function administration packages, found ${packages.length}.`);
+if (packages.length !== 31) {
+  throw new Error(`Expected 31 function administration packages, found ${packages.length}.`);
 }
 
 const kernel = await import('@superfunctions/admin');
@@ -37,6 +37,7 @@ const expectedAvailability = new Map([
   ['optional-product', 6],
   ['nested', 2],
   ['folded', 1],
+  ['unavailable', 2],
 ]);
 const availability = new Map();
 const moduleIds = new Set();
@@ -64,6 +65,13 @@ for (const entry of packages) {
     if (manifest.id !== 'contentfn' || resources.length !== 0 || manifest.operations.length !== 0) {
       throw new Error('ContentFn must be the only empty folded capability and must remain owned by CmsFn.');
     }
+  } else if (manifest.availability === 'unavailable') {
+    if (resources.length !== 0 || manifest.operations.length !== 0 || manifest.navigation !== undefined) {
+      throw new Error(`${entry.name} is unavailable but still exposes resources, operations, or navigation.`);
+    }
+    if (!manifest.unavailableReason) {
+      throw new Error(`${entry.name} is unavailable without an explicit reason.`);
+    }
   } else if (resources.length === 0 || manifest.operations.length === 0) {
     throw new Error(`${entry.name} is selectable but exposes no domain-backed resources or operations.`);
   }
@@ -86,6 +94,8 @@ for (const entry of packages) {
     if (operationIds.has(operation.id)) throw new Error(`Duplicate global operation id: ${operation.id}.`);
     operationIds.add(operation.id);
   }
+
+  if (manifest.availability === 'unavailable') continue;
 
   const clientFactories = Object.entries(adminModule).filter(
     ([name, value]) => /^create[A-Z][A-Za-z0-9]*AdminClient$/.test(name) && typeof value === 'function',

@@ -21,6 +21,19 @@ import type {
 } from "./index.js";
 
 type JsonRecord = Record<string, unknown>;
+
+function adminDownloadDescriptor(descriptor: { url: string; headers?: Record<string, string> }) {
+  const unsupportedHeaders = Object.keys(descriptor.headers ?? {});
+  if (unsupportedHeaders.length > 0) {
+    throw new AdminError(
+      "dependency_unavailable",
+      "FileFn administration downloads require a signed URL or same-origin proxy; provider request headers are never exposed to the browser.",
+      { details: { unsupportedHeaders } },
+    );
+  }
+  return descriptor;
+}
+
 type FileFnDomainRequest = {
   [K in FileFnAdminOperationId]: {
     operationId: K;
@@ -155,7 +168,7 @@ export function createFileFnDomainAdminService(options: FileFnDomainAdminService
         case "filefn.files.get":
           return item(record(await options.fileFn.getFile({ fileId: request.input.id }, ctx), "FileFn.getFile"));
         case "filefn.files.download":
-          return item(await files.getDownloadUrl(request.input.id, request.input.versionId, ctx));
+          return item(adminDownloadDescriptor(await files.getDownloadUrl(request.input.id, request.input.versionId, ctx)));
         case "filefn.files.delete-file":
           await options.fileFn.deleteFile({ fileId: request.input.id }, ctx);
           return accepted();
@@ -223,18 +236,13 @@ export function createFileFnDomainAdminService(options: FileFnDomainAdminService
           return item(safeArtifact(findById(artifacts, (value) => value.artifactId === request.input.id, "Artifact")));
         }
         case "filefn.artifacts.download":
-          return item(await processing.getArtifactDownloadUrlForFile(request.input.fileId, request.input.id, ctx));
+          return item(adminDownloadDescriptor(await processing.getArtifactDownloadUrlForFile(request.input.fileId, request.input.id, ctx)));
         case "filefn.artifacts.process-file": {
-          const readable = await processing.getReadableVersionForFile(request.input.fileId, ctx, request.input.versionId);
-          return accepted(await processing.triggerProcessing({
-            fileId: readable.file.fileId,
-            versionId: readable.version.versionId,
-            storageKey: readable.version.storageKey,
-            mimeType: readable.version.mimeType,
-            size: readable.version.size,
-            fileName: readable.file.name,
-            tenantId: readable.file.tenantId ?? undefined,
-          }, ctx));
+          return accepted(await processing.triggerProcessingForFile(
+            request.input.fileId,
+            ctx,
+            request.input.versionId,
+          ));
         }
       }
     };

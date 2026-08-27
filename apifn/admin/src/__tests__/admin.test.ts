@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createAdminClient,
+  encodeAdminCursor,
   validateAdminCapabilityManifest,
   type AdminOperationContext,
 } from "@superfunctions/admin";
@@ -58,8 +59,23 @@ describe("@apifn/admin", () => {
       context("same-project"),
     );
     expect(first.data.items).toHaveLength(1);
-    expect(first.data.nextCursor).toBe("1");
+    expect(first.data.nextCursor).toEqual(expect.any(String));
     expect(second.data.nextCursor).toBeNull();
+    await expect(adapter.execute<any>(
+      "apifn.specs.list",
+      { limit: 1, cursor: first.data.nextCursor },
+      context("same-project", "other-workspace"),
+    )).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(adapter.execute<any>(
+      "apifn.environments.list",
+      { cursor: first.data.nextCursor },
+      context("same-project"),
+    )).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(adapter.execute<any>(
+      "apifn.specs.list",
+      { cursor: encodeAdminCursor(context("same-project").scope, null) },
+      context("same-project"),
+    )).rejects.toMatchObject({ code: "invalid_argument", status: 400 });
 
     const otherWorkspace = await adapter.execute<any>(
       "apifn.specs.list",
@@ -97,5 +113,17 @@ describe("@apifn/admin", () => {
     expect(String(fetcher.mock.calls[0]![0])).toContain("apifn.specs.list");
     expect(client.environments.upsert).toEqual(expect.any(Function));
     expect(client.availability).toEqual(expect.any(Function));
+  });
+
+  it("rejects credentials embedded in environment base URLs", async () => {
+    const adapter = createApiFnAdminAdapter(createApiFnOperatorService({
+      store: new MemoryApiFnOperatorStore(),
+    }));
+
+    await expect(adapter.execute("apifn.environments.upsert", {
+      id: "production",
+      name: "Production",
+      baseUrl: "https://operator:secret@example.test/api",
+    }, context("project"))).rejects.toMatchObject({ code: "invalid_argument" });
   });
 });

@@ -139,7 +139,7 @@ jobs:
   python:
     name: Python
     needs: plan
-    if: needs.plan.outputs.run_python == 'true'
+    if: needs.plan.outputs.run_python == 'true' && needs.plan.outputs.mcpfn_only != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

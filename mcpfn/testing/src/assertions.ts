@@ -23,20 +23,36 @@ export class McpFnAssertionError extends Error {
   }
 }
 
+export interface AssertManifestContractOptions {
+  /** Exact tools expected to be visible for the test client's request context. */
+  expectedToolNames?: readonly string[];
+}
+
 export async function assertManifestContract(
   client: McpFnTestClient<unknown>,
   manifest: McpFnManifest,
+  options: AssertManifestContractOptions = {},
 ): Promise<Tool[]> {
   const actual = await client.listTools();
   const actualByName = new Map(actual.map((tool) => [tool.name, tool]));
-  const expectedNames = manifest.tools.map((tool) => tool.name).sort();
+  const manifestByName = new Map(manifest.tools.map((tool) => [tool.name, tool]));
+  const expectedNames = [...(
+    options.expectedToolNames ?? manifest.tools.map((tool) => tool.name)
+  )].sort();
+  const unknownExpectedNames = expectedNames.filter((name) => !manifestByName.has(name));
+  if (unknownExpectedNames.length) {
+    throw new McpFnAssertionError(
+      `Expected visible tools are absent from the manifest: ${stableJson(unknownExpectedNames)}`,
+    );
+  }
   const actualNames = actual.map((tool) => tool.name).sort();
   if (stableJson(expectedNames) !== stableJson(actualNames)) {
     throw new McpFnAssertionError(
       `Tool inventory mismatch\nexpected: ${stableJson(expectedNames)}\nactual:   ${stableJson(actualNames)}`,
     );
   }
-  for (const expected of manifest.tools) {
+  for (const name of expectedNames) {
+    const expected = manifestByName.get(name)!;
     const tool = actualByName.get(expected.name)!;
     const comparableExpected = {
       name: expected.name,
@@ -92,9 +108,12 @@ export async function assertManifestContract(
       staticResourceUris.has(resource.uri) ||
       !resourceTemplates.some((template) => template.match(resource.uri)),
   );
-  if (stableJson(manifest.resources ?? []) !== stableJson(comparableStaticResources)) {
+  const expectedResources = (manifest.resources ?? []).map(
+    ({ subscribable: _subscribable, ...resource }) => resource,
+  );
+  if (stableJson(expectedResources) !== stableJson(comparableStaticResources)) {
     throw new McpFnAssertionError(
-      `Resource inventory mismatch\nexpected: ${stableJson(manifest.resources ?? [])}\nactual:   ${stableJson(comparableStaticResources)}`,
+      `Resource inventory mismatch\nexpected: ${stableJson(expectedResources)}\nactual:   ${stableJson(comparableStaticResources)}`,
     );
   }
 
@@ -105,10 +124,46 @@ export async function assertManifestContract(
     ...template,
     metadata: _meta,
   }));
-  if (stableJson(manifest.resourceTemplates ?? []) !== stableJson(comparableTemplates)) {
+  const expectedTemplates = (manifest.resourceTemplates ?? []).map(
+    ({ subscribable: _subscribable, ...template }) => template,
+  );
+  if (stableJson(expectedTemplates) !== stableJson(comparableTemplates)) {
     throw new McpFnAssertionError(
-      `Resource template inventory mismatch\nexpected: ${stableJson(manifest.resourceTemplates ?? [])}\nactual:   ${stableJson(comparableTemplates)}`,
+      `Resource template inventory mismatch\nexpected: ${stableJson(expectedTemplates)}\nactual:   ${stableJson(comparableTemplates)}`,
     );
+  }
+
+  for (const resource of comparableResources) {
+    const expected = (manifest.resources ?? []).find(
+      (candidate) => candidate.uri === resource.uri,
+    ) ?? (manifest.resourceTemplates ?? []).find(
+      (candidate) => new UriTemplate(candidate.uriTemplate).match(resource.uri),
+    );
+    const subscribable = expected?.subscribable === true;
+    if (subscribable) {
+      try {
+        await client.subscribeResource(resource.uri);
+        await client.unsubscribeResource(resource.uri);
+      } catch (error) {
+        throw new McpFnAssertionError(
+          `Resource subscription mismatch for ${resource.uri}: expected subscribe and unsubscribe to succeed (${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
+      continue;
+    }
+    let accepted = false;
+    try {
+      await client.subscribeResource(resource.uri);
+      accepted = true;
+      await client.unsubscribeResource(resource.uri).catch(() => undefined);
+    } catch {
+      // Rejection is the expected behavior for a non-subscribable resource.
+    }
+    if (accepted) {
+      throw new McpFnAssertionError(
+        `Resource subscription mismatch for ${resource.uri}: expected subscribe to be rejected`,
+      );
+    }
   }
 
   const actualPrompts = actualCapabilities.prompts

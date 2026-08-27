@@ -37,6 +37,8 @@
     "@authfn/admin": "0.1.1",
     "@authfn/password": "0.1.1",
     "@authfn/two-factor": "0.1.1",
+    "@clifn/admin": "0.1.0",
+    "@extfn/admin": "0.1.0",
     "@sveltejs/adapter-node": "^5.3.2",
     "@sveltejs/vite-plugin-svelte": "4.0.4",
     "@testing-library/jest-dom": "^6.9.1",

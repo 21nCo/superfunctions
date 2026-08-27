@@ -5,6 +5,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { svelteScriptSources } from '../uifn/components-svelte/scripts/svelte-script-sources.mjs';
 
 const defaultRepoRoot = process.cwd();
 const ignoredDirectories = new Set([
@@ -217,10 +218,10 @@ function validateSourceImports(repoRoot, node, allowedDependencies) {
   return failures;
 }
 
-function sourceImportSpecifiers(source, pathname) {
+export function sourceImportSpecifiers(source, pathname) {
   const extension = path.extname(pathname);
   const executableSources = extension === '.svelte'
-    ? [...source.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map((match) => match[1])
+    ? svelteScriptSources(source)
     : [source];
   const dependencies = new Set();
 
@@ -269,7 +270,7 @@ export function runPackageGraphVerification(options = {}) {
   const experimentalNames = new Set(experimentalNodes.map((node) => node.name));
   const privateNames = new Set((graph.private ?? []).map((node) => node.name));
   const ownershipIds = inspectWorktree
-    ? new Set(readJson(repoRoot, 'uifn/.conduct/contracts/ownership.json').packages.map((entry) => entry.id))
+    ? new Set(readJson(repoRoot, 'uifn/evidence/contracts/ownership.json').packages.map((entry) => entry.id))
     : new Set(nodes.map((node) => node.name));
   const manifests = new Map();
 

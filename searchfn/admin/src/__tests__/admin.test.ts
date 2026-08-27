@@ -7,7 +7,11 @@ import {
   type SearchFnAdminService,
 } from "../index.js";
 import { MemoryAdapter } from "@searchfn/adapter-memory";
-import type { AdminClient } from "@superfunctions/admin";
+import {
+  createAdminRegistry,
+  validateAdminCapabilityManifest,
+  type AdminClient,
+} from "@superfunctions/admin";
 
 const context = {
   scope: {
@@ -49,6 +53,21 @@ describe("@searchfn/admin", () => {
         idempotent: true,
       },
     });
+    for (const operationId of ["searchfn.documents.index", "searchfn.documents.remove-document"]) {
+      const operation = searchFnAdminCapability.operations.find((candidate) => candidate.id === operationId);
+      expect(operation).toMatchObject({
+        target: { resource: "documents", idInput: "id" },
+      });
+      expect(operation?.inputSchema?.required).toContain("id");
+    }
+    expect(validateAdminCapabilityManifest(searchFnAdminCapability)).toEqual([]);
+    expect(() => createAdminRegistry({
+      adapters: [createSearchFnAdminAdapter(createSearchFnDomainAdminService({
+        adapter: () => new MemoryAdapter(),
+        resources: () => ["docs"],
+      }))],
+      enabledModules: ["searchfn"],
+    })).not.toThrow();
   });
 
   it("delegates the operation and complete scope to the injected domain service", async () => {
@@ -122,6 +141,48 @@ describe("@searchfn/admin", () => {
       query: "Console",
     })).resolves.toEqual([]);
 
+    await adapter.execute("searchfn.documents.index", {
+      id: "docs:001",
+      payload: { fields: { title: "Leading zero" } },
+    }, context);
+    await expect(adapters.get("environment_1")!.search({
+      resource: "docs",
+      query: "Leading",
+    })).resolves.toEqual(["001"]);
+
+    await adapter.execute("searchfn.documents.index", {
+      id: "docs:123",
+      payload: { fields: { title: "Numeric-looking string" } },
+    }, context);
+    await expect(adapters.get("environment_1")!.search({ resource: "docs", query: "Numeric-looking" })).resolves.toEqual(["123"]);
+
+    await adapter.execute("searchfn.documents.batch-index", {
+      payload: { resource: "docs", documents: [{ id: 123, fields: { title: "Numeric identifier" } }] },
+    }, context);
+    await adapter.execute("searchfn.documents.remove-document", { id: "docs:123" }, context);
+    await expect(adapters.get("environment_1")!.search({ resource: "docs", query: "Numeric identifier" })).resolves.toEqual([123]);
+    await adapter.execute("searchfn.documents.remove-document", { id: "docs:number:123" }, context);
+    await expect(adapters.get("environment_1")!.search({ resource: "docs", query: "Numeric" })).resolves.toEqual([]);
+
+    await adapter.execute("searchfn.documents.batch-index", {
+      payload: { resource: "docs", documents: [{ id: 1.5, fields: { title: "Floating identifier" } }] },
+    }, context);
+    await adapter.execute("searchfn.documents.remove-document", { id: "docs:number:1.5" }, context);
+    await expect(adapters.get("environment_1")!.search({ resource: "docs", query: "Floating" })).resolves.toEqual([]);
+
+    await adapter.execute("searchfn.documents.index", {
+      id: "docs:string:string%3Aliteral",
+      payload: { fields: { title: "Literal string prefix" } },
+    }, context);
+    await expect(adapters.get("environment_1")!.search({ resource: "docs", query: "Literal" })).resolves.toEqual(["string:literal"]);
+    await adapter.execute("searchfn.documents.index", {
+      id: "docs:string:number%3A123",
+      payload: { fields: { title: "Escaped numeric prefix" } },
+    }, context);
+    await expect(adapters.get("environment_1")!.search({ resource: "docs", query: "Escaped" })).resolves.toEqual(["number:123"]);
+    await adapter.execute("searchfn.documents.remove-document", { id: "docs:string:number%3A123" }, context);
+    await expect(adapters.get("environment_1")!.search({ resource: "docs", query: "Escaped" })).resolves.toEqual([]);
+
     await adapter.execute("searchfn.documents.remove-document", {
       id: "docs:doc-1",
     }, context);
@@ -129,5 +190,49 @@ describe("@searchfn/admin", () => {
       resource: "docs",
       query: "Console",
     })).resolves.toEqual([]);
+
+    const colonAdapter = createSearchFnAdminAdapter(createSearchFnDomainAdminService({
+      adapter: () => adapters.get("environment_1")!,
+      resources: () => ["orders:v2"],
+    }));
+    await colonAdapter.execute("searchfn.documents.index", {
+      id: "orders%3Av2:string:doc-1",
+      payload: { fields: { title: "Versioned resource" } },
+    }, context);
+    await expect(adapters.get("environment_1")!.search({ resource: "orders:v2", query: "Versioned" }))
+      .resolves.toEqual(["doc-1"]);
+    await colonAdapter.execute("searchfn.documents.remove-document", {
+      id: "orders%3Av2:string:doc-1",
+    }, context);
+    await expect(adapters.get("environment_1")!.search({ resource: "orders:v2", query: "Versioned" }))
+      .resolves.toEqual([]);
+  });
+
+  it("applies index list search, sorting, limits, and cursors", async () => {
+    const adapter = createSearchFnAdminAdapter(createSearchFnDomainAdminService({
+      adapter: () => new MemoryAdapter(),
+      resources: () => ["zeta", "alpha", "beta"],
+    }));
+    const first = await adapter.execute("searchfn.indexes-collections.list", {
+      search: "a",
+      sort: [{ field: "name", direction: "asc" }],
+      limit: 2,
+    }, context);
+    expect(first.data).toMatchObject({
+      items: [{ id: "alpha" }, { id: "beta" }],
+      nextCursor: expect.any(String),
+    });
+    const second = await adapter.execute("searchfn.indexes-collections.list", {
+      search: "a",
+      sort: [{ field: "name", direction: "asc" }],
+      limit: 2,
+      cursor: (first.data as { nextCursor: string }).nextCursor,
+    }, context);
+    expect(second.data).toEqual({ items: [{ id: "zeta", name: "zeta", status: "available" }], nextCursor: null });
+    const cursor = (first.data as { nextCursor: string }).nextCursor;
+    await expect(adapter.execute("searchfn.health.list", { cursor }, context))
+      .rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(adapter.execute("searchfn.indexes-collections.list", { search: "z", sort: [{ field: "name", direction: "asc" }], cursor }, context))
+      .rejects.toMatchObject({ code: "invalid_argument" });
   });
 });

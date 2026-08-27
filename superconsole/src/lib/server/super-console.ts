@@ -147,10 +147,7 @@ function requestedScope(request: Request, principal: SuperConsolePrincipal): Adm
   const namespace = url.searchParams.get('namespace') ?? request.headers.get('x-superconsole-namespace');
   const region = url.searchParams.get('region') ?? request.headers.get('x-superconsole-region');
   return {
-    ...(installation ? { installationId: requestedRoot } : organization ? { organizationId: requestedRoot } : {
-      ...(principal.defaultScope.installationId ? { installationId: requestedRoot } : {}),
-      ...(principal.defaultScope.organizationId ? { organizationId: requestedRoot } : {}),
-    }),
+    ...(requestedRoot ? { installationId: requestedRoot } : {}),
     ...(requestedWorkspace ? { workspaceId: requestedWorkspace } : {}),
     ...(requestedProject ? { projectId: requestedProject } : {}),
     ...((environment ?? (rootChanged || workspaceChanged || projectChanged ? undefined : principal.defaultScope.environmentId))
@@ -335,6 +332,7 @@ interface ConsoleResourceView {
   listApiHref?: string;
   listInputSchema?: AdminJsonSchema;
   detailApiHref?: string;
+  detailApiMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   detailIdInput?: string;
   detailInputSchema?: AdminJsonSchema;
   listable: boolean;
@@ -394,7 +392,7 @@ function moduleView(
       ? operations.find((entry) => entry.operation.id === resource.presentation?.detailOperationId)
       : operations.find((entry) => entry.operation.id.endsWith('.get'));
     const actions = operations
-      .filter((entry) => entry.operation.safety.classification !== 'read' && Boolean(entry.operation.target?.idInput))
+      .filter((entry) => entry !== list && entry !== get && Boolean(entry.operation.target?.idInput))
       .map(actionView);
     const label = resource?.label ?? list?.operation.title.replace(/^List\s+/i, '') ?? get?.operation.title.replace(/^Get\s+/i, '') ?? id;
     return {
@@ -413,6 +411,9 @@ function moduleView(
       listApiHref: list?.routePath,
       listInputSchema: list?.operation.inputSchema,
       detailApiHref: get?.routePath,
+      detailApiMethod: get
+        ? routeDefinition(get.operation).method as ConsoleResourceView['detailApiMethod']
+        : undefined,
       detailIdInput: get?.operation.target?.idInput,
       detailInputSchema: get?.operation.inputSchema,
       listable: Boolean(list),
@@ -443,6 +444,22 @@ function moduleView(
     sourceModuleId: child.id,
     foldedIntoModuleId: manifest.id,
   })));
+  const manuallyAddressedResourceIds = new Set(
+    ownResources
+      .filter((resource) => !resource.listable && !resource.detailApiHref)
+      .map((resource) => resource.resourceId),
+  );
+  const directlyAddressableActions = entries
+    .filter((entry) =>
+      entry.operation.safety.classification !== 'read'
+      && Boolean(entry.operation.target?.idInput)
+      && (entry.operation.safety.classification !== 'destructive'
+        || manuallyAddressedResourceIds.has(resourceId(entry))))
+    .map((entry) => ({
+      ...actionView(entry),
+      targetInput: undefined,
+      targetIdInput: undefined,
+    }));
   return {
     id: manifest.id,
     name: manifest.displayName,
@@ -459,7 +476,7 @@ function moduleView(
     resources: [...ownResources, ...foldedResources],
     actions: [...entries
       .filter((entry) => entry.operation.safety.classification !== 'read' && entry.operation.target?.collection === true)
-      .map(actionView), ...foldedActions],
+      .map(actionView), ...directlyAddressableActions, ...foldedActions],
     foldedModuleIds: childViews.map(({ view }) => view.id),
     manifest,
   };
@@ -489,7 +506,7 @@ function extractPathParams(entry: AdminRegistryOperation, concretePath: string):
 async function operationInput(request: Request, entry: AdminRegistryOperation, matchedPath: string): Promise<Record<string, unknown>> {
   const schema = entry.operation.inputSchema;
   const input: Record<string, unknown> = {};
-  if (request.method === 'GET' || request.method === 'DELETE') {
+  if (request.method === 'GET' || request.method === 'HEAD' || request.method === 'DELETE') {
     const url = new URL(request.url);
     url.searchParams.forEach((value, key) => {
       if (['installationId', 'organizationId', 'workspaceId', 'projectId', 'environmentId', 'installation', 'organization', 'workspace', 'project', 'environment', 'namespace', 'region'].includes(key)) return;
@@ -526,6 +543,9 @@ export class SuperConsole {
   private mcpHandlerPromise?: Promise<SuperConsoleMcpHandler>;
 
   constructor(options: SuperConsoleOptions) {
+    if (options.apiBasePath !== undefined && options.apiBasePath !== '/api/admin/v1') {
+      throw new Error('The bundled Super Console UI currently requires apiBasePath to be /api/admin/v1.');
+    }
     const enabledModules = parseModuleSelection(
       options.enabledModules,
       options.adapters.map((adapter) => adapter.manifest),
@@ -583,8 +603,13 @@ export class SuperConsole {
       throw new Error('Super Console startup requires operator-auth mutation authorization because enabled operations can mutate state.');
     }
     if (operations.some((operation) => operation.safety.requiresConfirmation)
-      && (typeof options.confirmation?.issue !== 'function' || typeof options.confirmation?.verify !== 'function')) {
-      throw new Error('Super Console startup requires a confirmation issuer and verifier because enabled operations require confirmation.');
+      && (typeof options.confirmation?.issue !== 'function'
+        || typeof options.confirmation?.prepareActivation !== 'function'
+        || typeof options.confirmation?.cancelActivation !== 'function'
+        || typeof options.confirmation?.activate !== 'function'
+        || typeof options.confirmation?.revoke !== 'function'
+        || typeof options.confirmation?.verify !== 'function')) {
+      throw new Error('Super Console startup requires staged confirmation issue, durable activation preparation and cancellation, activation, revocation, and verification because enabled operations require confirmation.');
     }
     if (options.openApiSecuritySchemes
       && (!options.openApiSecuritySchemes.operatorSession || !options.openApiSecuritySchemes.operatorApiKey)) {
@@ -623,7 +648,7 @@ export class SuperConsole {
       if (relative === 'confirmations' && request.method === 'POST') return await this.issueConfirmation(request, state);
       if (relative.startsWith('settings/policies/') && request.method === 'PATCH') {
         await this.authorizeShell('settings', state);
-        return await this.updatePolicy(request, relative.slice('settings/policies/'.length), state);
+        return await this.updatePolicy(request, decodeURIComponent(relative.slice('settings/policies/'.length)), state);
       }
       if (relative.startsWith('operations/') && request.method === 'POST') return await this.invokeOperation(request, decodeURIComponent(relative.slice('operations/'.length)), state);
       if (relative.startsWith('modules/')) return await this.moduleRequest(request, relative, state);
@@ -677,7 +702,12 @@ export class SuperConsole {
         } catch {
           throw new SuperConsoleHttpError('The administration path contains invalid percent encoding.', { status: 400, code: 'INVALID_ADMIN_PATH' });
         }
-        if (next === '.' || next === '..' || /[\/\\\u0000-\u001f\u007f]/.test(next)) {
+        const unsafeDecodedSegment = next === '.' || next === '..'
+          || /[\\\u0000-\u001f\u007f]/.test(next)
+          || next.split('/').some((part) => part === '.' || part === '..');
+        const decodedSeparatorCount = decoded.split('/').length - 1;
+        const nextSeparatorCount = next.split('/').length - 1;
+        if (unsafeDecodedSegment || (depth > 0 && nextSeparatorCount > decodedSeparatorCount)) {
           throw new SuperConsoleHttpError('The administration path contains an unsafe segment.', { status: 400, code: 'INVALID_ADMIN_PATH' });
         }
         if (next === decoded) return segment;
@@ -1038,7 +1068,105 @@ export class SuperConsole {
       await this.auditConfirmation(entry, operationId, immutable.input, immutable.state.context, 'denied', started, normalizeAdminError(error).error.code);
       throw error;
     }
-    await this.auditConfirmation(entry, operationId, immutable.input, immutable.state.context, 'succeeded', started);
+    const confirmation = this.options.confirmation;
+    if (!confirmation) throw new SuperConsoleHttpError('Confirmation issuance is unavailable.', { status: 503, code: 'CONFIRMATION_UNAVAILABLE' });
+    const successAuditId = `audit_${crypto.randomUUID()}`;
+    const denialAuditId = `audit_${crypto.randomUUID()}`;
+    try {
+      await confirmation.prepareActivation({
+        token: receipt.token,
+        auditId: successAuditId,
+        denialAuditId,
+        operationId,
+        input: immutable.input,
+        principal: immutable.state.principal,
+        context: immutable.state.context,
+      });
+    } catch {
+      try {
+        await confirmation.revoke({
+          token: receipt.token,
+          operationId,
+          input: immutable.input,
+          principal: immutable.state.principal,
+          context: immutable.state.context,
+        });
+      } catch {
+        // The token remains staged and unusable when activation preparation fails.
+      }
+      try {
+        await this.auditConfirmation(entry, operationId, immutable.input, immutable.state.context, 'denied', started, 'CONFIRMATION_ACTIVATION_PREPARE_FAILED');
+      } catch {
+        throw new SuperConsoleHttpError('The confirmation activation preparation failure could not be audited.', { status: 503, code: 'AUDIT_UNAVAILABLE', details: { retryable: true } });
+      }
+      throw new SuperConsoleHttpError('The confirmation token could not be prepared for activation.', { status: 503, code: 'CONFIRMATION_ACTIVATION_FAILED', details: { retryable: true } });
+    }
+    try {
+      await this.auditConfirmation(entry, operationId, immutable.input, immutable.state.context, 'succeeded', started, undefined, successAuditId);
+    } catch {
+      try {
+        await confirmation.revoke({
+          token: receipt.token,
+          operationId,
+          input: immutable.input,
+          principal: immutable.state.principal,
+          context: immutable.state.context,
+        });
+      } catch {
+        // The token is still staged and unusable because activation has not run.
+      }
+      throw new SuperConsoleHttpError('The confirmation issuance could not be audited.', { status: 503, code: 'AUDIT_UNAVAILABLE', details: { retryable: true } });
+    }
+    try {
+      await confirmation.activate({
+        token: receipt.token,
+        auditId: successAuditId,
+        operationId,
+        input: immutable.input,
+        principal: immutable.state.principal,
+        context: immutable.state.context,
+      });
+    } catch (error) {
+      try {
+        await confirmation.cancelActivation({
+          token: receipt.token,
+          auditId: successAuditId,
+          denialAuditId,
+          operationId,
+          input: immutable.input,
+          principal: immutable.state.principal,
+          context: immutable.state.context,
+        });
+      } catch {
+        // A durable revoke below is an equivalent cancellation fence.
+      }
+      try {
+        await confirmation.revoke({
+          token: receipt.token,
+          operationId,
+          input: immutable.input,
+          principal: immutable.state.principal,
+          context: immutable.state.context,
+        });
+      } catch {
+        // activate() rejection is fail-closed; revocation is an additional cleanup attempt.
+      }
+      try {
+        await this.auditConfirmation(
+          entry,
+          operationId,
+          immutable.input,
+          immutable.state.context,
+          'denied',
+          started,
+          'CONFIRMATION_ACTIVATION_FAILED',
+          denialAuditId,
+        );
+      } catch {
+        throw new SuperConsoleHttpError('The confirmation activation failure could not be audited.', { status: 503, code: 'AUDIT_UNAVAILABLE', details: { retryable: true } });
+      }
+      throw new SuperConsoleHttpError('The confirmation token could not be activated.', { status: 503, code: 'CONFIRMATION_ACTIVATION_FAILED', details: { retryable: true } });
+    }
     return receipt;
   }
 
@@ -1068,6 +1196,7 @@ export class SuperConsole {
     outcome: 'attempted' | 'succeeded' | 'denied',
     started: Date,
     errorCode?: string,
+    auditId?: string,
   ): Promise<void> {
     if (!this.options.audit) return;
     const safeInput = entry
@@ -1092,7 +1221,7 @@ export class SuperConsole {
       };
     }
     await this.options.audit.write({
-      id: `audit_${crypto.randomUUID()}`,
+      id: auditId ?? `audit_${crypto.randomUUID()}`,
       timestamp: this.now().toISOString(),
       actorId: context.actor.id,
       actorType: context.actor.type,
@@ -1191,9 +1320,10 @@ export class SuperConsole {
     const resourceAliasPath = rest[0] !== 'resources'
       ? `${this.registry.apiBasePath}/modules/${encodeURIComponent(moduleId)}/resources/${rest.join('/')}`
       : undefined;
-    let entry = this.registry.matchRoute(request.method, matchedPath);
+    const routeMethod = request.method === 'HEAD' ? 'GET' : request.method;
+    let entry = this.registry.matchRoute(routeMethod, matchedPath);
     if (!entry && resourceAliasPath) {
-      entry = this.registry.matchRoute(request.method, resourceAliasPath);
+      entry = this.registry.matchRoute(routeMethod, resourceAliasPath);
       if (entry) matchedPath = resourceAliasPath;
     }
     if (!entry) {
@@ -1206,9 +1336,12 @@ export class SuperConsole {
     if (!(await this.operationDiscoverable(entry, state))) {
       throw new SuperConsoleHttpError('The requested module operation is not enabled.', { status: 404, code: 'OPERATION_NOT_ENABLED' });
     }
+    if (entry.operation.safety.classification !== 'read' && READ_METHODS.has(request.method)) {
+      await this.options.auth.authorizeMutation?.({ principal: state.principal, request });
+    }
     const input = await operationInput(request, entry, matchedPath);
     const dispatched = await this.dispatcher.dispatch({ operationId: entry.operation.id, input, context: state.context });
-    return resultResponse(dispatched);
+    return this.headAware(request, resultResponse(dispatched));
   }
 
   private requirePermission(principal: SuperConsolePrincipal, permission: string): void {

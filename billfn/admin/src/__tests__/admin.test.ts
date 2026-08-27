@@ -6,6 +6,7 @@ import {
   type BillFnAdminService,
 } from "../index.js";
 import { createBillFn, type BillFnInstance } from "@billfn/core";
+import { encodeAdminCursor } from "@superfunctions/admin";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 
 const context = {
@@ -47,6 +48,11 @@ describe("@billfn/admin", () => {
         audit: "required",
         idempotent: true,
       },
+    });
+    expect(billFnAdminCapability.resources.find((resource) => resource.id === "products")).toMatchObject({
+      displayFields: ["id", "productKey", "planCount"],
+      filterableFields: ["productKey", "planCount"],
+      sortableFields: ["productKey", "planCount"],
     });
   });
 
@@ -129,6 +135,57 @@ describe("@billfn/admin", () => {
     });
     await expect(adapter.execute("billfn.prices.get", { id: "price_monthly" }, context)).resolves.toMatchObject({
       data: { item: { planKey: "pro", amount: 2900 } },
+    });
+  });
+
+  it("applies declared catalog list search, filters, sorting, limits, and cursors", async () => {
+    const plans = ["gamma", "alpha", "beta"].map((planKey) => ({
+      productKey: "console",
+      planKey,
+      displayName: `${planKey} plan`,
+      features: {},
+      limits: {},
+      prices: [],
+    }));
+    const service = createBillFnDomainAdminService({
+      billfn: { getCatalog: vi.fn(async () => ({ plans })) } as unknown as BillFnInstance,
+      subject: () => ({ tenantId: "tenant_1" }),
+    });
+    const first = await service.listPlans({ search: "plan", sort: [{ field: "id", direction: "asc" }], limit: 2 }, context);
+    expect(first.data).toMatchObject({ items: [{ id: "alpha" }, { id: "beta" }], nextCursor: expect.any(String) });
+    const second = await service.listPlans({
+      search: "plan",
+      sort: [{ field: "id", direction: "asc" }],
+      limit: 2,
+      cursor: (first.data as { nextCursor: string }).nextCursor,
+    }, context);
+    expect(second.data).toEqual({ items: [expect.objectContaining({ id: "gamma" })], nextCursor: null });
+    const cursor = (first.data as { nextCursor: string }).nextCursor;
+    await expect(service.listPrices({ search: "plan", sort: [{ field: "id", direction: "asc" }], cursor }, context))
+      .rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(service.listPlans({ search: "gamma", sort: [{ field: "id", direction: "asc" }], cursor }, context))
+      .rejects.toMatchObject({ code: "invalid_argument" });
+  });
+
+  it("sorts numeric catalog fields numerically and rejects missing cursor positions", async () => {
+    const plans = [
+      ...Array.from({ length: 9 }, (_, index) => ({
+        productKey: "nine", planKey: `nine_${index}`, displayName: "Nine", features: {}, limits: {}, prices: [],
+      })),
+      ...Array.from({ length: 10 }, (_, index) => ({
+        productKey: "ten", planKey: `ten_${index}`, displayName: "Ten", features: {}, limits: {}, prices: [],
+      })),
+    ];
+    const service = createBillFnDomainAdminService({
+      billfn: { getCatalog: vi.fn(async () => ({ plans })) } as unknown as BillFnInstance,
+      subject: () => ({ tenantId: "tenant_1" }),
+    });
+
+    await expect(service.listProducts({ sort: [{ field: "planCount", direction: "asc" }] }, context)).resolves.toMatchObject({
+      data: { items: [{ productKey: "nine", planCount: 9 }, { productKey: "ten", planCount: 10 }] },
+    });
+    await expect(service.listProducts({ cursor: encodeAdminCursor(context.scope, null) }, context)).rejects.toMatchObject({
+      code: "invalid_argument",
     });
   });
 

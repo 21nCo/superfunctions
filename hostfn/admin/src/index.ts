@@ -1,7 +1,9 @@
 import {
   createAdminCapabilityAdapter as createKernelAdapter,
   createCapabilityAdminClient,
+  decodeAdminCursor,
   defineAdminCapability,
+  encodeAdminCursor,
   AdminError,
   type AdminCapabilityAdapter,
   type AdminClient,
@@ -696,23 +698,16 @@ function pageResult(
   items: unknown[],
   input: PageInput,
   context: AdminOperationContext,
+  identity: string,
 ): PageOutput {
-  const active = scope(context);
-  const marker = [
-    active.installationId,
-    active.workspaceId,
-    active.projectId,
-    active.environmentId,
-  ].join("/");
+  const cursorScope = scope(context);
   let offset = 0;
   if (input.cursor) {
     try {
-      const decoded = JSON.parse(atob(input.cursor)) as {
-        marker: string;
-        offset: number;
-      };
+      const decoded = decodeAdminCursor<{ identity?: unknown; offset?: unknown }>(input.cursor, cursorScope);
       if (
-        decoded.marker !== marker ||
+        decoded.identity !== identity ||
+        typeof decoded.offset !== "number" ||
         !Number.isSafeInteger(decoded.offset) ||
         decoded.offset < 0
       )
@@ -726,15 +721,26 @@ function pageResult(
     }
   }
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
-  const pageItems = items.slice(offset, offset + limit);
+  const orderedItems = [...items].sort((left, right) => {
+    const leftItem = left as { updatedAt?: unknown; createdAt?: unknown; id?: unknown };
+    const rightItem = right as { updatedAt?: unknown; createdAt?: unknown; id?: unknown };
+    const timestamp = String(leftItem.updatedAt ?? leftItem.createdAt ?? "")
+      .localeCompare(String(rightItem.updatedAt ?? rightItem.createdAt ?? ""));
+    return timestamp || String(leftItem.id ?? "").localeCompare(String(rightItem.id ?? ""));
+  });
+  const pageItems = orderedItems.slice(offset, offset + limit);
   const nextOffset = offset + pageItems.length;
   return {
     items: pageItems,
     nextCursor:
-      nextOffset < items.length
-        ? btoa(JSON.stringify({ marker, offset: nextOffset }))
+      nextOffset < orderedItems.length
+        ? encodeAdminCursor(cursorScope, { identity, offset: nextOffset })
         : null,
   };
+}
+
+function pageIdentity(operationId: string, filter?: string): string {
+  return JSON.stringify([operationId, filter ?? null]);
 }
 export function createHostFnOperatorAdminService(
   operator: HostFnOperatorService,
@@ -747,6 +753,7 @@ export function createHostFnOperatorAdminService(
         ),
         i,
         c,
+        pageIdentity("hostfn.targets.list", i.status),
       ),
     getTarget: async (i, c) => ({
       item:
@@ -756,7 +763,12 @@ export function createHostFnOperatorAdminService(
       item: await operator.restart(scope(c), i.id),
     }),
     listDeployments: async (i, c) =>
-      pageResult(await operator.listDeployments(scope(c), i.targetId), i, c),
+      pageResult(
+        await operator.listDeployments(scope(c), i.targetId),
+        i,
+        c,
+        pageIdentity("hostfn.deployments.list", i.targetId),
+      ),
     getDeployment: async (i, c) => ({
       item:
         (await operator.getDeployment(scope(c), i.id)) ??
@@ -770,7 +782,12 @@ export function createHostFnOperatorAdminService(
       item: await operator.rollback(scope(c), i.id),
     }),
     listDomains: async (i, c) =>
-      pageResult(await operator.listDomains(scope(c), i.targetId), i, c),
+      pageResult(
+        await operator.listDomains(scope(c), i.targetId),
+        i,
+        c,
+        pageIdentity("hostfn.domains.list", i.targetId),
+      ),
     attachDomain: async (i, c) => ({
       item: await operator.attachDomain(scope(c), i),
     }),
@@ -778,7 +795,12 @@ export function createHostFnOperatorAdminService(
       item: await operator.detachDomain(scope(c), i.id),
     }),
     listVariables: async (i, c) =>
-      pageResult(await operator.listVariables(scope(c), i.targetId), i, c),
+      pageResult(
+        await operator.listVariables(scope(c), i.targetId),
+        i,
+        c,
+        pageIdentity("hostfn.variables.list", i.targetId),
+      ),
     setVariable: async (i, c) => ({
       item: await operator.setVariable(scope(c), i),
     }),

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { addArtifact } from '../add';
 import { buildRegistry } from '../build-registry';
-import { runCli } from '../cli';
+import { infoArtifact, runCli } from '../cli';
 import { diffInstalled } from '../diff';
 import { readLockFile } from '../lockfile';
 import { planInstall } from '../plan';
@@ -46,7 +46,7 @@ describe('TV-REG-001-P/N transaction-safe registry', () => {
       expect(result.ok).toBe(true);
       expect(result.dryRun).toBe(true);
       expect(result.plan?.resolved).toEqual(['button']);
-      expect(result.plan?.dependencies.map((dependency) => dependency.name)).toEqual(['@uifn/components', '@uifn/react', 'react', 'react-dom']);
+      expect(result.plan?.dependencies.map((dependency) => dependency.name)).toEqual(['@uifn/components', '@uifn/react', '@uifn/recipes', 'react', 'react-dom']);
       expect(result.plan?.files.map((file) => file.path)).toEqual(expect.arrayContaining(['components/uifn/react/button.ts', 'package.json', '.uifn/registry.lock', '.uifn/selected-components.json']));
       expect(snapshot(rootDir)).toBe(before);
     });
@@ -85,6 +85,25 @@ describe('TV-REG-001-P/N transaction-safe registry', () => {
     });
   });
 
+  it('rejects explicitly requested lock keys that are not installed', () => {
+    withProject((rootDir) => {
+      expect(addArtifact({ rootDir, artifact: 'button', framework: 'react' }).ok).toBe(true);
+      const before = snapshot(rootDir);
+      expect(updateInstalled({
+        rootDir,
+        lockKeys: ['button', 'component:not-installed'],
+      })).toMatchObject({
+        ok: false,
+        updated: [],
+        errors: [{
+          code: 'UIFN_REGISTRY_ARTIFACT_NOT_INSTALLED',
+          message: 'Not installed: component:not-installed',
+        }],
+      });
+      expect(snapshot(rootDir)).toBe(before);
+    });
+  });
+
   it('rejects symlink escape before writes and leaves the outside byte-identical', () => {
     const outside = mkdtempSync(path.join(os.tmpdir(), 'uifn-phase16-outside-'));
     try {
@@ -114,6 +133,10 @@ describe('TV-REG-001-P/N transaction-safe registry', () => {
     cycleArtifacts[0].artifactDependencies = [cycleArtifacts[1].slug];
     cycleArtifacts[1].artifactDependencies = [cycleArtifacts[0].slug];
     expect(buildRegistry(undefined, { catalogOverride: cycleArtifacts }).errors.map((error) => error.code)).toContain('UIFN_REGISTRY_DEPENDENCY_CYCLE');
+    expect(infoArtifact(
+      { artifact: 'button', framework: 'react' },
+      buildRegistry(undefined, { payloadOverride: 'tampered catalog' }),
+    )).toMatchObject({ ok: false, error: { code: 'UIFN_REGISTRY_SIGNATURE_INVALID' } });
     withProject((rootDir) => expect(planInstall({ rootDir, artifacts: ['button'], framework: 'vue' })).toMatchObject({ ok: false, error: { code: 'UIFN_REGISTRY_UNSUPPORTED_FRAMEWORK' } }));
   });
 
