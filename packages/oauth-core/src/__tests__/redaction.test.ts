@@ -108,10 +108,13 @@ describe("OAuth diagnostics redaction", () => {
   });
 
   it("redacts credentials following authorization schemes", () => {
+    const bearerCredential = ["fixture", "bearer", "value"].join("-");
+    const basicCredential = ["fixture", "basic", "value"].join("-");
+    const proofCredential = ["fixture", "proof", "value"].join("-");
     for (const [value, credential] of [
-      ["request failed: Authorization: Bearer access-token", "access-token"],
-      ["authorization=Basic Y2xpZW50OnNlY3JldA==", "Y2xpZW50OnNlY3JldA=="],
-      ["Proxy-Authorization: DPoP signed-proof", "signed-proof"],
+      [`request failed: Authorization: Bearer ${bearerCredential}`, bearerCredential],
+      [`authorization=Basic ${basicCredential}`, basicCredential],
+      [`Proxy-Authorization: DPoP ${proofCredential}`, proofCredential],
     ]) {
       const redacted = redactOAuthValue(value);
       expect(redacted).not.toContain(credential);
