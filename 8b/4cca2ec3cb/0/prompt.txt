@@ -1,0 +1,1 @@
+local next synced with remote next? and the worktree cleared of the PR?
