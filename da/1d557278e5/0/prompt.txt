@@ -1,0 +1,8 @@
+# Response annotations:
+Each item contains text selected from an earlier Codex response and may include a user comment. Treat items as Annotation 1, Annotation 2, and so on in array order. Use every selection as context and address every comment. For every annotation you address, include its inline directive `:codex-annotation{index="N"}`, where N is its one-based array position (for example, `:codex-annotation{index="1"}`). Do not use unstructured annotation labels.
+<response-annotations>
+[{"text":"No origin/dev PR was created. Replaying the preserved dev snapshot showed that valid functional work was already integrated. The remaining differences were stale or broken, including dependency cycles, duplicated implementations, and invalid test syntax."}]
+</response-annotations>
+
+## My request:
+elaborate on this... we made a lot of changes locally on dev branch... how did this happen that these changes are already integrated?
