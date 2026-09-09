@@ -1,0 +1,3 @@
+proceed with the remaining order and after that the local changesets in dev, preserved next should also be considered, committed in groups and create PRs against remotes (dont merge these PRs until all threads are resolved)
+
+dont work on changesets commits yet... first finish the rest
