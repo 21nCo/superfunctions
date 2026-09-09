@@ -1,0 +1,5 @@
+proceed with the recommended steps
+
+push the snapshot branches to respective remotes as well
+
+fix any review comments on PR #47
