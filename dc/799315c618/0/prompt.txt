@@ -1,0 +1,3 @@
+/goal fetch the latest sf-next/next branch (may be in a separate worktree or just git fetch instead of pull) and then create an issue in linear under SF Next called Production readiness audit - {date}
+
+And then perform thorough and detailed production-readiness audit for each super function and shared packages - then create audit document for each super function or coherent group of super functions in this new issue
