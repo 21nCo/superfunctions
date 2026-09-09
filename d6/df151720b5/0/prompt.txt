@@ -1,0 +1,1 @@
+splane add-to-backlog for skillplane project to use mdfn for skills editing on web UI and any other notes/contexts text editors
