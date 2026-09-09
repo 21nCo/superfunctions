@@ -1,0 +1,1 @@
+publish all devfn packages (publish CLI as @devfn/cli) instead of bare devfn as it is not available
