@@ -1,0 +1,1 @@
+perform a thorough read-only audit of SFN-21 - super console worktree and create the audit document in linear associated to the issue SFN-21 (this is a reaudit after the first audit)
