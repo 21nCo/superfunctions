@@ -1,0 +1,3 @@
+inventory what all superfunctions needs an admin UI (compare with equivalent commercial Platform as a service...) like better-auth, clerk, descope, auth0 for authfn, resend for sendfn etc...
+
+do it as fast as possible
