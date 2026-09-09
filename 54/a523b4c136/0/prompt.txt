@@ -1,0 +1,1 @@
+are DEV-1 worktrees safe to remove?
