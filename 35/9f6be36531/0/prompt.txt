@@ -1,0 +1,1 @@
+in superfunctions-dev worktree checkout dev and sync all remote dev changes locally and then sync all latest changes and hardeing that got added on dev to next branch and then create a PR into sf-next/next with the synced changes from dev
