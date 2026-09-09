@@ -1,0 +1,228 @@
+<skill>
+<name>pr-refetch-fix</name>
+<path>/Users/serro/.codex/skills/pr-refetch-fix/SKILL.md</path>
+---
+name: pr-refetch-fix
+description: Refetch the latest GitHub PR review feedback reliably before applying fixes. Use when a user asks to re-check review comments after a push, says there are newer PR comments that were missed, or when timestamp-only PR comment queries may be incomplete or misleading. This skill is for GitHub PR review triage where unresolved review threads, inline comments, review bodies, and issue comments must be checked together.
+---
+
+# PR Refetch Fix
+
+Refetch PR feedback from the right GitHub surfaces before deciding there are no new issues. Do not rely only on a timestamp cutoff against inline review comments.
+
+## Core Rule
+
+When the user asks for "newer PR comments", "latest review issues", or says comments were missed:
+
+1. Check current unresolved review threads first.
+2. Treat timestamp filtering as secondary, not primary.
+3. Verify every still-open thread against the current worktree before fixing or dismissing it.
+
+The failure mode this skill prevents is:
+
+- querying only `pulls/{n}/comments` after an incorrect cutoff time
+- missing comments posted in review threads or review bodies
+- missing still-unresolved older threads that remain actionable after newer pushes
+
+## Workflow
+
+### 1. Identify the PRs and auth context
+
+Use the user's existing GitHub auth context if they specified one earlier, such as:
+
+```bash
+GH_CONFIG_DIR=~/.config/gh-other
+```
+
+Preserve that context for every `gh` call in the workflow.
+
+### 1a. Work only in the PR's corresponding worktree and branch
+
+Before checking comments or making fixes:
+
+1. switch to the PR's dedicated worktree
+2. confirm the checked-out branch is the PR head branch
+3. inspect and edit only in that worktree
+
+Do not:
+
+- inspect comments against the main repo checkout if the PR has a separate worktree
+- validate a review comment against `next`, `dev`, or another sibling PR branch
+- make fixes in one worktree and assume they apply to another PR branch
+
+If multiple PRs are involved, handle each PR in its own worktree independently.
+
+Minimum check:
+
+```bash
+git branch --show-current
+git status --short
+git remote -v
+```
+
+Use the worktree that already backs the PR whenever available. Treat that worktree as the source of truth for:
+
+- whether a comment is already fixed
+- whether a thread is stale
+- what code should be edited
+
+### 2. Do not start with timestamp-only filtering
+
+Do not begin with:
+
+- only `gh pr view --json comments`
+- only `gh api repos/.../pulls/<n>/comments`
+- only "comments after last pushed commit time"
+
+Those can miss actionable review feedback.
+
+### 3. Fetch unresolved review threads with GraphQL
+
+This is the primary source of truth for "what still needs attention".
+
+Use:
+
+```bash
+GH_CONFIG_DIR=~/.config/gh-other gh api graphql -f query='
+query {
+  repository(owner:"OWNER", name:"REPO") {
+    pullRequest(number:PR_NUMBER) {
+      reviewThreads(first:100) {
+        nodes {
+          isResolved
+          path
+          comments(first:20) {
+            nodes {
+              body
+              author { login }
+              createdAt
+              outdated
+              url
+              diffHunk
+              originalLine
+              line
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+```
+
+If there may be more than 100 threads, page through the connection instead of assuming the first page is complete.
+
+### 4. Also check the other review surfaces
+
+After review threads, inspect:
+
+1. PR reviews
+2. PR issue comments
+3. Inline review comments if needed for raw export or extra metadata
+
+Useful commands:
+
+```bash
+GH_CONFIG_DIR=~/.config/gh-other gh pr view PR_NUMBER --repo OWNER/REPO --json reviews,comments,updatedAt,url
+```
+
+```bash
+GH_CONFIG_DIR=~/.config/gh-other gh api repos/OWNER/REPO/pulls/PR_NUMBER/comments
+```
+
+Use these to supplement threads, not replace them.
+
+### 5. Use timestamps carefully
+
+If the user explicitly wants "since the last push", compute the cutoff from the exact pushed commit, not a guessed time.
+
+Rules:
+
+- use the exact commit SHA that was pushed
+- use its absolute timestamp in UTC
+- if the user seems confused about "today", "after that push", or "latest", mention exact dates/times
+
+Even with an accurate cutoff, do not exclude unresolved review threads just because the thread started earlier. A still-unresolved thread can remain actionable after later pushes.
+
+### 6. Classify findings before editing
+
+For each thread or comment:
+
+`Actionable`
+- thread is unresolved, and
+- the comment still matches the current file state, and
+- the issue is not already fixed in the worktree
+
+`Already fixed / stale`
+- thread is outdated, or
+- the code already addresses it, or
+- the comment refers to an earlier diff shape that no longer exists
+
+`Non-code noise`
+- Graphite merge queue comments
+- usage-limit notices
+- bot bookkeeping without code findings
+
+### 7. Verify against the current worktree
+
+Before editing:
+
+1. open the current file in the worktree
+2. inspect the exact code around the commented path/line
+3. decide whether the review comment is still valid now
+
+Do not trust the review diff alone. Many bot comments are attached to old hunks and become stale after subsequent pushes.
+
+### 8. Fix only the valid items
+
+When fixing:
+
+- prefer narrow fixes tied to the still-valid review findings
+- add focused regression coverage when practical
+- keep unrelated local or `.conduct/` artifacts out of commits unless the user explicitly asks for them
+
+### 9. Report with explicit buckets
+
+Summarize findings as:
+
+- `Fixed`
+- `Skipped (Already Fixed)`
+- `Not Attempted`
+
+If something remains pending because of extracted-worktree dependency issues, say so explicitly.
+
+## Decision Heuristics
+
+Use unresolved threads as the main queue when the user says:
+
+- "check newer PR comments"
+- "there are still comments"
+- "you missed some issues"
+- "refetch review feedback"
+
+Use timestamp filtering only to answer narrower questions like:
+
+- "what comments arrived after commit <sha>?"
+- "what was posted after the last push?"
+
+Even then, compare the result against current unresolved threads before concluding there is nothing new.
+
+## Common Pitfalls
+
+- Missing comments because `gh pr view --json comments` does not include review threads.
+- Missing comments because `pulls/<n>/comments` was queried with the wrong cutoff time.
+- Treating all old comments as irrelevant even when the thread is still unresolved.
+- Treating all unresolved bot comments as actionable without checking the current code.
+- Forgetting that some PR activity is non-code noise, especially merge-queue comments.
+
+## Minimum Successful Pass
+
+A correct refetch pass should:
+
+1. fetch unresolved review threads with GraphQL
+2. inspect review bodies and issue comments
+3. cross-check against the current worktree
+4. separate valid issues from stale ones
+5. only then start fixing code
+
+</skill>
