@@ -1,0 +1,3 @@
+/goal create a new worktree off of clean next branch of superfunctions and fully implement [https://linear.app/21n/issue/SFN-17/build-mailfn-as-a-reusable-programmable-mailbox-function](https://linear.app/21n/issue/SFN-17/build-mailfn-as-a-reusable-programmable-mailbox-function) (all phases)
+
+comparable products: [https://www.mailslurp.com/,](https://www.mailslurp.com/,) [https://mailtrap.io/inbound-email/,](https://mailtrap.io/inbound-email/,) [https://www.agentmail.to/](https://www.agentmail.to/)
