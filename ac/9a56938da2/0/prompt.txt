@@ -1,0 +1,5 @@
+what does it take to build mdfn in superfunctions ecosystem - the complete markdown solution similar to tiptap but not restricted to react framework
+
+similar to framework agonistic uifn
+
+thoroughly understand the superfunctions ecosystem and answer
