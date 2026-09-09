@@ -1,0 +1,1 @@
+for remote sf-next next branch - is it possible for us to increment package versions by comparing latest packages published on npm and then trigger publish via CI?
