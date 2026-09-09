@@ -1,0 +1,1 @@
+splane work on linear issue: SFN-22 — Make Super Console function-agnostic and manifest-driven
