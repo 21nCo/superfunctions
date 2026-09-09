@@ -1,0 +1,3 @@
+[https://github.com/21nCo/super-functions/pull/93/changes#diff-7fdec83c1f7f2634f12a8b7f6b59622f75165374b780ff72f0dcff5c43ca5a2c](https://github.com/21nCo/super-functions/pull/93/changes#diff-7fdec83c1f7f2634f12a8b7f6b59622f75165374b780ff72f0dcff5c43ca5a2c)
+
+splane PR fixes
