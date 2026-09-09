@@ -1,0 +1,1 @@
+create a concise splane skill to inventory all worktrees and post findings about removable worktrees in a given repo
