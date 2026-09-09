@@ -1,0 +1,3 @@
+create a skill in splane for refetching and fixing pending valid review findings ( [$pr-refetch-fix](/Users/serro/.codex/skills/pr-refetch-fix/SKILL.md) ) and clearly mentioning to not go in loops and stop with only 1 round
+
+create in 21n workspace
