@@ -1,0 +1,4 @@
+we should only bump and publish the packages where something has changed since we last published
+and ignore the packages that are present in dev branch and shared packages
+
+Now inventory for this criteria
