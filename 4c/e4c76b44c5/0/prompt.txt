@@ -1,0 +1,5 @@
+<environment_context>
+  <current_date>2026-08-18</current_date>
+  <timezone>Asia/Kolkata</timezone>
+  <filesystem><workspace_roots><root>/Users/serro/Documents/dev/n/superfunctions</root><root>/Users/serro/.codex/visualizations/2026/08/11/019ff0d3-7b1f-7e03-ab55-c5c5fd150841</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
+</environment_context>
