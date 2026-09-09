@@ -1,0 +1,1 @@
+does the skill [$pr-refetch-fix](/Users/serro/.codex/skills/pr-refetch-fix/SKILL.md) say anything about loop?
