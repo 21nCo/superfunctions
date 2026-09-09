@@ -1,0 +1,1 @@
+inventory all local worktrees of superfunctions
