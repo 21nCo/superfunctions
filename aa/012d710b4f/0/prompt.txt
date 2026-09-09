@@ -1,0 +1,10 @@
+<environment_context>
+  <current_date>2026-08-14</current_date>
+  <timezone>Asia/Kolkata</timezone>
+  <filesystem><workspace_roots><root>/Users/serro/Documents/dev/n/superfunctions</root><root>/Users/serro/.codex/visualizations/2026/08/13/019ff8ab-73b8-7f42-919f-00d68af2b55f</root><root>/Users/serro/Documents/dev/repos</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
+  <subagents>
+    - kernel_sdk_reaudit: Singer
+    - required_modules: James
+    - testfn_real_binding: Linnaeus
+  </subagents>
+</environment_context>
