@@ -1,0 +1,473 @@
+<recommended_plugins>
+Here is a list of plugins that are available but not installed.
+
+- Airtable (airtable@openai-curated-remote)
+- Apollo.io (apollo@openai-curated-remote)
+- Asana (asana@openai-curated-remote)
+- Atlassian Rovo (atlassian-rovo@openai-curated-remote)
+- Base44 (base44@openai-curated-remote)
+- Box (box@openai-curated-remote)
+- Canva (canva@openai-curated-remote)
+- Cloudflare (cloudflare@openai-curated-remote)
+- Codex Security (codex-security@openai-curated-remote)
+- Granola (granola@openai-curated-remote)
+- HeyGen (heygen@openai-curated-remote)
+- HubSpot (hubspot@openai-curated-remote)
+- HyperFrames by HeyGen (hyperframes@openai-curated-remote)
+- Lovable (lovable@openai-curated-remote)
+- Monday.com (monday-com@openai-curated-remote)
+- Neon Postgres (neon-postgres@openai-curated-remote)
+- OpenAI Developers (openai-developers@openai-curated-remote)
+- Outlook Calendar (outlook-calendar@openai-curated-remote)
+- Outlook Email (outlook-email@openai-curated-remote)
+- PostHog (posthog@openai-curated-remote)
+- Remotion (remotion@openai-curated-remote)
+- Replit (replit@openai-curated-remote)
+- Semrush (semrush@openai-curated-remote)
+- Sentry (sentry@openai-curated-remote)
+- SharePoint (sharepoint@openai-curated-remote)
+- Stripe (stripe@openai-curated-remote)
+- Supabase (supabase@openai-curated-remote)
+- Superpowers (superpowers@openai-curated-remote)
+- Teams (teams@openai-curated-remote)
+- Vercel (vercel@openai-curated-remote)
+- Wix (wix@openai-curated-remote)
+- Zotero (zotero@openai-curated-remote)
+</recommended_plugins>
+
+# AGENTS.md instructions for /Users/serro/Documents/dev/n/superfunctions
+
+<INSTRUCTIONS>
+# AGENTS.md - AI Agent Development Guide for Superfunctions
+
+> **Purpose**: This document provides AI agents with essential information for working effectively on the Superfunctions monorepo.
+
+## 🏗️ Repository Structure
+
+Superfunctions is a **Turbo monorepo** containing self-hosted developer tools and libraries. The repository is organized into:
+
+### Core Functions (Top-Level Directories)
+
+Individual superfunction packages, each providing specific developer capabilities:
+
+- **`authfn/`** - Authentication & API key management
+- **`cachefn/`** - Multi-tier caching with function memoization
+- **`drawfn/`** - Cross-framework drawing canvas for brainstorming
+- **`plugfn/`** - Integration platform (OAuth, webhooks, 75+ providers)
+- **`searchfn/`** - Browser-first full-text search with IndexedDB
+- **`secfn/`** - Security functions (secrets vault, rate limiting, monitoring)
+- **`testfn/`** - Testing utilities and frameworks
+- **`botfn/`** - Bot framework (Discord, GitHub, Linear integrations)
+- **`hostfn/`** - Hosting and deployment utilities
+- **`uifn/`** - UI components and utilities
+- **`watchfn/`** - File watching and monitoring
+- **`billfn/`** - Billing and payment processing
+- **`browsefn/`** - Browser automation utilities
+- **`chartfn/`** - Charting and visualization
+- **`datafn/`** - Data processing utilities
+- **`docsfn/`** - Documentation generation
+- **`filefn/`** - File operations and management
+- **`flowfn/`** - Flow control (queues, streams, workflows)
+- **`iconfn/`** - Icon utilities
+- **`logfn/`** - Logging utilities
+- **`sendfn/`** - Email/messaging utilities
+
+### Shared Packages (`packages/`)
+
+Framework-agnostic core libraries used across superfunctions:
+
+**TypeScript Packages:**
+
+- `@superfunctions/http` - HTTP abstractions
+- `@superfunctions/http-express` - Express.js adapter
+- `@superfunctions/http-fastify` - Fastify adapter
+- `@superfunctions/http-hono` - Hono adapter
+- `@superfunctions/http-next` - Next.js adapter
+- `@superfunctions/http-sveltekit` - SvelteKit adapter
+- `@superfunctions/db` - Database adapter system (Drizzle, Prisma, Kysely)
+- `@superfunctions/auth` - Authentication abstraction layer
+- `@superfunctions/cli` - CLI tool for schema management
+
+**Python Packages:**
+
+- `superfunctions` (from `python-core/`) - Core namespace package
+- `superfunctions-sqlalchemy` (from `python-sqlalchemy/`)
+- `superfunctions-fastapi` (from `python-fastapi/`)
+- `superfunctions-flask` (from `python-flask/`)
+
+### Other Directories
+
+- **`_conduct/`** - Root-level artifacts for shared code (implementation plans, specs, audits)
+- **`21n/`** - Organization-specific packages
+- **`.agent/`** - Agent workflows and automation
+- **`.github/`** - GitHub Actions and CI/CD
+
+## 📦 Package Naming Conventions
+
+### Rule A: Shared Packages Format
+
+**Any package shared across superfunctions uses `@superfunctions/{name}` format**
+
+Examples:
+
+```
+packages/db/          → @superfunctions/db
+packages/http/        → @superfunctions/http
+packages/auth/        → @superfunctions/auth
+packages/cli/         → @superfunctions/cli
+```
+
+### Rule B: Core Function Packages Format
+
+**Single-package functions**: Use simple name without scope
+
+```
+authfn/ts-sdk/        → authfn
+drawfn/core/          → drawfn
+cachefn/typescript/   → cachefn
+plugfn/core/         → plugfn
+searchfn/             → searchfn
+```
+
+**Multi-package functions**: Use `@{functionname}/{sub-package}` format (if needed in future)
+
+```
+@authfn/core          (example for future multi-package structure)
+@authfn/providers     (example for future multi-package structure)
+```
+
+**Current Status**: All core functions currently use single-package structure. The scoped format is reserved for future expansion if a function needs multiple published packages.
+
+### Rule C: Monorepo Structure
+
+**The root `superfunctions` is a Turbo monorepo. Avoid nested monorepos.**
+
+- ✅ Use subfolders to organize functions (e.g., `authfn/python/`, `authfn/ts-sdk/`)
+- ❌ Do NOT create nested monorepos (e.g., `authfn/` should NOT be another monorepo)
+- ✅ Use Turbo workspaces defined in root `package.json`
+
+Current workspaces:
+
+```json
+{
+  "workspaces": [
+    "searchfn",
+    "botfn/*",
+    "hostfn/*",
+    "authfn/*",
+    "packages/*",
+    "21n/*"
+  ]
+}
+```
+
+### Rule D: Artifact Location
+
+**Create artifacts (`.md` files) in `.conduct` folders**
+
+- **Function-specific artifacts**: `{function}/.conduct/`
+  - Examples: `authfn/.conduct/implementation.md`, `drawfn/.conduct/audit_report.md`
+- **Shared/root artifacts**: `_conduct/`
+  - Examples: `_conduct/implementation.md`, `_conduct/spec.md`
+
+Artifact types:
+
+- `implementation.md` - Implementation plans
+- `spec.md` - Technical specifications
+- `audit_report.md` - Code audits and reviews
+- `task.md` - Task tracking
+- `walkthrough.md` - Feature walkthroughs
+
+## 🗂️ Language Support
+
+Most core functions support **both TypeScript and Python**:
+
+### TypeScript Structure
+
+```
+{function}/
+├── typescript/       or  core/
+│   ├── src/
+│   ├── package.json
+│   ├── tsconfig.json
+│   └── vitest.config.ts
+```
+
+### Python Structure
+
+```
+{function}/
+├── python/
+│   ├── {function}/        # Python package directory
+│   │   ├── __init__.py
+│   │   └── ...
+│   ├── tests/
+│   ├── pyproject.toml
+│   └── README.md
+```
+
+### Examples
+
+- `authfn/typescript/` + `authfn/python/`
+- `cachefn/typescript/` + `cachefn/python/`
+- `secfn/typescript/` + `secfn/python/`
+- `plugfn/core/` + `plugfn/python/`
+- `drawfn/core/` (TypeScript only, with React/Svelte adapters)
+- `searchfn/` (TypeScript only, browser-focused)
+
+## 🔧 Development Workflow
+
+### Building
+
+```bash
+# Build all packages
+npm run build
+
+# Build specific package (from root)
+turbo run build --filter=authfn
+turbo run build --filter=@superfunctions/db
+
+# Build from package directory
+cd authfn/ts-sdk && npm run build
+```
+
+### Testing
+
+```bash
+# Test all packages
+npm test
+
+# Test specific package
+turbo run test --filter=drawfn
+
+# Watch mode
+npm run test:watch
+```
+
+### Linting
+
+```bash
+npm run lint
+```
+
+### Package Manager
+
+- **npm** (v10.2.0+) - Specified in `packageManager` field
+- Uses npm workspaces for monorepo management
+- Turbo for build orchestration
+
+## 🎯 Key Superfunctions Features
+
+### AuthFn
+
+- Multi-provider authentication (OAuth, API keys, JWT)
+- Framework-agnostic with adapters for Express, Fastify, Hono, Next.js, SvelteKit
+- Database-agnostic (Drizzle, Prisma, Kysely)
+- TypeScript + Python SDKs
+
+### DrawFn
+
+- Cross-framework drawing canvas
+- React and Svelte adapters
+- Scene management, export capabilities
+- Tolerant parsing with version validation
+
+### PlugFn
+
+- Self-hosted integration platform
+- 75+ provider integrations (GitHub, Slack, Discord, Linear, Stripe)
+- OAuth 2.0 flow handling
+- Webhook support
+- Multi-tenant with secure token storage
+
+### SearchFn
+
+- Browser-first full-text search
+- IndexedDB persistence with in-memory LRU cache
+- BM25 scoring
+- FlexSearch-compatible API
+- Worker-ready with snapshot export/import
+
+### CacheFn
+
+- Multi-tier caching (memory, IndexedDB, external)
+- Function memoization
+- TTL and invalidation strategies
+- Browser and server support
+
+### SecFn
+
+- Secrets vault management
+- Access control and permissions
+- Rate limiting
+- Security monitoring
+- Secret scanning
+
+### BotFn
+
+- Multi-platform bot framework
+- Discord, GitHub, Linear integrations
+- Shared types and persistence layer
+- Event-driven architecture
+
+## 🛠️ Common Tasks
+
+### Adding a New Function
+
+1. Create top-level directory: `{functionname}/`
+2. Add TypeScript SDK: `{functionname}/typescript/` or `{functionname}/ts-sdk/`
+3. (Optional) Add Python SDK: `{functionname}/python/`
+4. Create `.conduct/` for artifacts
+5. Add to workspace in root `package.json`
+6. Package name: `{functionname}` (not scoped unless multi-package)
+
+### Adding a Shared Package
+
+1. Create in `packages/{name}/`
+2. Package name: `@superfunctions/{name}`
+3. Add to workspace (already covered by `packages/*`)
+4. Update dependent packages
+
+### Creating Artifacts
+
+1. Function-specific: `{function}/.conduct/{artifact}.md`
+2. Shared/root: `_conduct/{artifact}.md`
+3. Use consistent naming: `implementation.md`, `spec.md`, `audit_report.md`, etc.
+
+### Working with Turbo
+
+```bash
+# Run task across all packages
+turbo run build
+turbo run test
+
+# Run for specific package
+turbo run build --filter=authfn
+
+# Run with dependencies
+turbo run build --filter=authfn...
+
+# Clear cache
+turbo run clean
+```
+
+## 📚 Important Files
+
+### Root Configuration
+
+- `package.json` - Workspace and script definitions
+- `turbo.json` - Turbo build configuration
+- `tsconfig.json` - TypeScript base config (if exists)
+
+### Package Configuration
+
+- `package.json` - Package metadata, dependencies, scripts
+- `tsconfig.json` - TypeScript configuration
+- `vitest.config.ts` - Test configuration
+- `pyproject.toml` - Python package configuration
+
+### Documentation
+
+- `README.md` - Package overview and usage
+- `SPEC.md` - Technical specification (common in larger functions)
+- `.conduct/*.md` - Implementation plans, audits, tasks
+
+## 🔍 Finding Code
+
+### Search Patterns
+
+- **Function implementations**: `{function}/typescript/src/` or `{function}/python/{function}/`
+- **Tests**: `__tests__/`, `tests/`, `*.test.ts`, `test_*.py`
+- **Types**: `types.ts`, `models.py`, `src/types/`
+- **Adapters**: `packages/http-*/`, `packages/python-*/`, `adapters/`
+- **Examples**: `examples/`, `{function}/examples/`
+
+### Key Directories
+
+```
+superfunctions/
+├── {function}/              # Core function packages
+│   ├── typescript/          # TS implementation
+│   ├── python/              # Python implementation
+│   ├── .conduct/            # Artifacts
+│   ├── README.md            # Documentation
+│   └── SPEC.md              # Specification (if exists)
+├── packages/                # Shared packages
+│   ├── {name}/              # @superfunctions/{name}
+│   └── python-{name}/       # Python shared packages
+└── _conduct/                # Root artifacts
+```
+
+## 🚀 Best Practices
+
+### Super functions ecosystem (Very important)
+
+- Reuse shared packages from `packages/` folder like http abstraction, db abstraction, etc.
+- Never duplicate shared code like http adapters, db abstractions, etc.
+- Don't reexport http-adapters etc - end consumers of the core function package will use the adapters directly. Refer `authfn` implementation for usage of core http router, core db, http adapters and db interface usage.
+- Function packages that accept a `@superfunctions/db` `Adapter` must wrap the incoming adapter internally with their own schema, for example `wrapWithSchema(config.database, getSchema(...))`, before passing it to services/storage. Do not require app consumers to pass `adapterSchema` to `drizzleAdapter`, `kyselyAdapter`, `prismaAdapter`, or `memoryAdapter`; `adapterSchema` is a deprecated compatibility escape hatch for direct app-level adapter use.
+
+### Code Organization
+
+- Keep shared code in `packages/`
+- Keep function-specific code in `{function}/`
+- Use TypeScript for type safety
+- Provide Python SDKs for backend-focused functions
+- Write comprehensive tests
+
+### Documentation
+
+- Update README.md with usage examples
+- Create SPEC.md for complex functions
+- Document breaking changes
+- Keep artifacts in `.conduct/` folders
+
+### Testing
+
+- Use Vitest for TypeScript
+- Use pytest for Python
+- Maintain high test coverage
+- Test adapters separately
+
+### Versioning
+
+- Follow semantic versioning
+- Coordinate versions across language SDKs
+- Document migration guides for breaking changes
+
+## 🔗 Related Resources
+
+- **Repository**: https://github.com/21nCo/super-functions
+- **License**: MIT (most packages) / Apache-2.0 (some packages)
+- **Organization**: 21n
+- **Contact**: hello@21n.org
+
+## 📝 Notes for AI Agents
+
+1. **Always check both TypeScript and Python** implementations when working on core functions
+2. **Respect the naming conventions** - shared packages use `@superfunctions/`, functions use simple names
+3. **Create artifacts in `.conduct/` folders**, not in root or arbitrary locations
+4. **Avoid nested monorepos** - use subfolders within the main Turbo monorepo
+5. **Use Turbo commands** for cross-package operations
+6. **Check existing patterns** in similar functions before implementing new features
+7. **Maintain consistency** across TypeScript and Python SDKs
+8. **Update workspaces** in root `package.json` when adding new packages
+9. **Follow existing test patterns** (Vitest for TS, pytest for Python)
+10. **Document thoroughly** - this is a developer-focused ecosystem
+
+---
+
+**Last Updated**: 2026-01-12
+**Monorepo Version**: 0.1.0
+**Package Manager**: npm@10.2.0
+**Build Tool**: Turbo v2.0.0
+
+</INSTRUCTIONS>
+
+<environment_context>
+  <cwd>/Users/serro/Documents/dev/n/superfunctions</cwd>
+  <shell>zsh</shell>
+  <current_date>2026-08-10</current_date>
+  <timezone>Asia/Kolkata</timezone>
+  <filesystem><workspace_roots><root>/Users/serro/Documents/dev/n/superfunctions</root><root>/Users/serro/.codex/visualizations/2026/08/10/019fecab-0303-76a3-add2-4f7ec6995795</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
+</environment_context>
