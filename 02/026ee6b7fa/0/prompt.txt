@@ -1,0 +1,12 @@
+Then mount product modules. Fold catchfn and logfn into WatchFn, contentfn into CmsFn, and port the existing CiFn dashboard into the shell. Use UIFn for the shared visual system, but keep customer portals distinct from operator administration.
+Suggested order: **Console shell + AuthFn/audit → WatchFn backbone → PlugFn/SendFn/MailFn/BillFn/FileFn → DataFn/FlowFn/HostFn/SecFn/SearchFn → remaining vertical modules.**
+
+
+this plan sounds great... lets call it super console.. based on what functions the consumer actually uses - they should be able to select only those and view those in the super console UI
+uifn must power the UI and other superfunctions like you said - authfn etc should power the different aspects of super console
+
+also should we create admin SDKS/REST API in each of the super functions so that admins can consume via api and mcp as well - not just from console?
+
+ask any questions before proceeding ... we will work this out in a new worktree and we will work entire thing out at once
+
+we also should create a linear issue and detailed documents for architecture, each function capabilities, rules must use uifn etc... - using splane add-to-backlog
