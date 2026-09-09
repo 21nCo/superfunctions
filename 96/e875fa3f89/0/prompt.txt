@@ -1,0 +1,4 @@
+compare all states - local dev, local preserved next, remote sf-next/next and remote origin/dev, and [https://github.com/21nCo/super-functions/pull/109](https://github.com/21nCo/super-functions/pull/109)
+
+Among all the changes - suggest the order of merges so that all good or latest changes will be preserved and
+also dev latest changes are synced to next branch as well and shared packages will have the latest of all
