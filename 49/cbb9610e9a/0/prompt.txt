@@ -1,0 +1,12 @@
+1. yes full (use parallel runs and complete as fast as possible)
+2. confirm
+3. use svelte or sveltekit + tailwind + uifn (fix any issues on uifn as you go - dont use workarounds - hard rule)
+4. confirm
+5. all
+6. typescript + lang neutral rest/openapi is good for now
+7. confirm (also use mcpfn wherener needed - add usage of superfunctions for specific things in super console as hard rule)
+8. yes
+9. yes
+10. keep it local but have coherent separate commits
+11. yes
+12. self-hosted
