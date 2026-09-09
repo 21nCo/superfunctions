@@ -1,0 +1,1 @@
+create a reusable skill for this kind of publishing for super functions in skillplane - 21n workspace (dont overfit it to next branch - any group of packages to be published to npm using github action workflow - checking last published version and code changes happened in the meantime, bumping if needed, asking user to use regular version or alpha, beta etc pre-release tags etc)
