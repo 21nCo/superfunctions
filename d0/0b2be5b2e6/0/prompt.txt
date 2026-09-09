@@ -1,0 +1,1 @@
+the super console worktree has dev branch changes as well? and local next branch doesn't have them?
