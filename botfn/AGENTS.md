@@ -39,7 +39,7 @@ Workspace dependencies use the `@superfunctions/botfn-*` package names from the 
 
 ## Cloudflare deployment
 
-Each deployable package has a `wrangler.toml` and `npm run deploy` / `deploy:cloudflare`. Secrets go in Wrangler (`wrangler secret put ...`), including persistence `DATABASE_URL`. Discord and Slack env access is `c.env.VARIABLE_NAME`.
+Discord and persistence ship `wrangler.toml` and `npm run deploy`. Slack has no `wrangler.toml`; it deploys the entrypoint directly (`npm run deploy:cloudflare` → `wrangler deploy src/index.ts`). Secrets go in Wrangler (`wrangler secret put ...`), including persistence `DATABASE_URL`. Env access is `c.env.VARIABLE_NAME`.
 
 ## Development workflow
 
