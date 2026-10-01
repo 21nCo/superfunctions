@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     outputs:
@@ -35,7 +35,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
           ref: refs/tags/${{ env.RELEASE_TAG }}
