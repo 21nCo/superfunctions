@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -25,9 +27,7 @@ function parsePinnedStartTime(text: string): number | undefined {
 export async function processBirthSignature(pid: number): Promise<string | undefined> {
   try {
     if (process.platform === "linux") {
-      const stat = await import("node:fs/promises").then((fs) => fs.readFile(`/proc/${pid}/stat`, "utf8"));
-      const afterCommand = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
-      const startTime = afterCommand[19];
+      const startTime = linuxStatFields(await readFile(`/proc/${pid}/stat`, "utf8"))[19];
       return startTime ? `linux:${startTime}` : undefined;
     }
     if (process.platform === "darwin") {
@@ -43,9 +43,55 @@ export async function processBirthSignature(pid: number): Promise<string | undef
   return undefined;
 }
 
+/** The /proc/<pid>/stat fields after the command name: state, ppid, pgrp, ... */
+function linuxStatFields(stat: string): string[] {
+  return stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+}
+
+// A zombie has exited but keeps its PID and group ID until its parent reaps
+// it, which a container PID 1 that does not reap never does. It runs nothing,
+// and neither ID can be reused meanwhile, so it counts as exited.
+const EXITED_STATE = /^[ZX]/;
+
+/** Whether the PID is a live process; a zombie is not one. */
 export function processExists(pid: number): boolean {
-  try { process.kill(pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+  let signalled = true;
+  try { process.kill(pid, 0); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
+    signalled = false;
+  }
+  if (process.platform !== "linux") return true;
+  try { return !EXITED_STATE.test(linuxStatFields(readFileSync(`/proc/${pid}/stat`, "utf8"))[0] ?? ""); }
+  // Reaped meanwhile, unless /proc hides another user's process from us.
+  catch (error) { return !signalled || (error as NodeJS.ErrnoException).code !== "ENOENT"; }
+}
+
+/** Whether a PID signal 0 reaches is a darwin zombie; elsewhere processExists judges. */
+async function darwinZombie(pid: number): Promise<boolean> {
+  if (process.platform !== "darwin") return false;
+  const { stdout } = await execFileAsync("ps", ["-o", "stat=", "-p", String(pid)]).catch(() => ({ stdout: "" }));
+  return EXITED_STATE.test(stdout.trim());
+}
+
+/** States of the visible members of a process group, or undefined when they cannot be listed. */
+async function processGroupMemberStates(pgid: number): Promise<string[] | undefined> {
+  try {
+    if (process.platform === "linux") {
+      const states: string[] = [];
+      for (const entry of await readdir("/proc")) {
+        if (!/^\d+$/.test(entry)) continue;
+        const fields = await readFile(`/proc/${entry}/stat`, "utf8").then(linuxStatFields, () => undefined);
+        if (fields && Number(fields[2]) === pgid) states.push(fields[0]);
+      }
+      return states;
+    }
+    if (process.platform === "darwin") {
+      const { stdout } = await execFileAsync("ps", ["-A", "-o", "pgid=,stat="]);
+      return stdout.split("\n").map((line) => line.trim().split(/\s+/)).filter(([group]) => Number(group) === pgid).map(([, state]) => state);
+    }
+  } catch { return undefined; }
+  return undefined;
 }
 
 export type ProcessIdentityStatus = "running" | "exited" | "identity-mismatch" | "unverified";
@@ -93,7 +139,7 @@ export function classifyLegacyDarwinIdentity(pinnedStartTime: string | undefined
  * from the live process; it decides only legacy darwin: signatures.
  */
 export async function processIdentityStatus(pid: number, signature?: string, recordedAt?: string): Promise<ProcessIdentityStatus> {
-  if (!processExists(pid)) return "exited";
+  if (!processExists(pid) || await darwinZombie(pid)) return "exited";
   if (signature && process.platform === "darwin" && signatureFormat(signature) === "darwin") {
     const start = await darwinStartTime(pid, { ...process.env, ...PINNED_PS_ENVIRONMENT }).catch(() => undefined);
     return processExists(pid) ? classifyLegacyDarwinIdentity(start, recordedAt) : "exited";
@@ -115,14 +161,25 @@ export type ProcessGroupStatus = "running" | "unverified" | "exited" | "identity
  * - an exited leader whose group still has members is "unverified": those
  *   members are what it started, unless the group was emptied and a later
  *   process reusing the PID started another, which DevFn cannot tell apart;
- * - only "exited" (leader and group gone) and "identity-mismatch" are death
- *   evidence. Windows has no process groups; only the leader is judged.
+ * - only "exited" (leader and group gone, or only zombies left) and
+ *   "identity-mismatch" are death evidence. Windows has no process groups;
+ *   only the leader is judged.
  */
 export async function processGroupStatus(pid: number, signature?: string, recordedAt?: string): Promise<ProcessGroupStatus> {
   const leader = await processIdentityStatus(pid, signature, recordedAt);
   if (leader !== "exited" || process.platform === "win32") return leader;
-  try { process.kill(-pid, 0); return "unverified"; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH" ? "exited" : "unverified"; }
+  try { process.kill(-pid, 0); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return "exited";
+    // macOS refuses to signal a group of only zombies; elsewhere a refusal
+    // means a member DevFn may not signal, which may be live.
+    if (code !== "EPERM" || process.platform !== "darwin") return "unverified";
+  }
+  // Signal 0 also reaches zombies. The group is gone only when members are
+  // listed and every one has exited; one that cannot be listed may be live.
+  const states = await processGroupMemberStates(pid);
+  return states && states.length > 0 && states.every((state) => EXITED_STATE.test(state)) ? "exited" : "unverified";
 }
 
 /** Whether the PID is verifiably the recorded process, as required before signalling it. */

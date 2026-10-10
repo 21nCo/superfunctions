@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import dgram from "node:dgram";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import net from "node:net";
@@ -536,7 +536,9 @@ describe("FilePortRegistry", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-"));
     const lockPath = path.join(dir, "registry.lock");
     await mkdir(lockPath);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Only past the bound every release waits for a creator to record itself.
+    await expect(withFileLock(lockPath, async () => "acquired", { staleMs: 1, timeoutMs: 300 })).rejects.toMatchObject({ code: "DEVFN_REGISTRY_LOCK_TIMEOUT" });
+    await utimes(lockPath, new Date(Date.now() - 301_000), new Date(Date.now() - 301_000));
     await expect(withFileLock(lockPath, async () => "acquired", { staleMs: 1, timeoutMs: 1000 })).resolves.toBe("acquired");
   });
 

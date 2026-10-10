@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { lstat, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { processBirthSignature, processIdentityStatus } from "@devfn/processes";
@@ -25,84 +25,99 @@ export async function withRoutingLock<T>(stateDir: string, action: () => Promise
   { timeoutMs: ROUTING_LOCK_TIMEOUT_MS, staleMs: ROUTING_LOCK_STALE_MS });
 }
 
+// An ownerless lock may be one whose creator, of this or an earlier release,
+// has not yet recorded itself. It is taken only after the 300 s earlier
+// releases also wait; a creator stalled even longer cannot then publish
+// itself over the next holder (claimLock).
+const OWNERLESS_LOCK_STALE_MS = 300_000;
+
+type LockOwner = { token?: string; pid?: number; birthSignature?: string; createdAt?: string };
+
+/**
+ * Hold a lock directory for the duration of action. Every release, this and
+ * earlier ones, acquires it with mkdir, which never replaces a lock. The
+ * owner record is then published with link, which never replaces one either,
+ * so a creator that stalled past recovery cannot claim a lock another holder
+ * already recorded. Only a lock recording this holder is ever removed.
+ */
 export async function withFileLock<T>(lockPath: string, action: () => Promise<T>, options: { timeoutMs?: number; staleMs?: number } = {}): Promise<T> {
   const timeoutMs = options.timeoutMs ?? 10_000;
   const staleMs = options.staleMs ?? 300_000;
   const token = randomUUID();
-  const ownerBirth = await processBirthSignature(process.pid);
+  const ownerRecord = JSON.stringify({ token, pid: process.pid, birthSignature: await processBirthSignature(process.pid), createdAt: new Date().toISOString() });
   const deadline = Date.now() + timeoutMs;
-  // The lock directory appears only by renaming a staged directory that
-  // already holds its owner record, so a lock is never ownerless while its
-  // creator runs, and a creator never removes a lock it does not hold. An
-  // ownerless lock is left only by an earlier release.
-  const staged = `${lockPath}.acquire.${token}`;
-  await mkdir(staged, { mode: 0o700 });
-  try {
-    await writeFile(path.join(staged, "owner.json"), JSON.stringify({ token, pid: process.pid, birthSignature: ownerBirth, createdAt: new Date().toISOString() }), { mode: 0o600, flag: "wx" });
-  } catch (error) {
-    await rm(staged, { recursive: true, force: true });
-    throw error;
-  }
-  let acquired = false;
-  try {
-    while (true) {
-      acquired = await claimStagedLock(staged, lockPath);
-      if (acquired) break;
-      let recover = false;
-      let observedToken = "ownerless";
-      try {
-        const observed = JSON.parse(await readFile(`${lockPath}/owner.json`, "utf8")) as { token?: string; pid?: number; birthSignature?: string; createdAt?: string };
-        observedToken = observed.token ?? observedToken;
-        const owner = observed.pid ? await processIdentityStatus(observed.pid, observed.birthSignature, observed.createdAt) : "exited";
-        const birthSignaturesSupported = process.platform === "linux" || process.platform === "darwin" || process.platform === "win32";
-        const ownerMatches = owner === "running" || owner === "unverified";
-        recover = birthSignaturesSupported && !ownerMatches && Boolean(observed.createdAt) && Date.now() - Date.parse(observed.createdAt!) > staleMs;
-      } catch (ownerError) {
-        if ((ownerError as NodeJS.ErrnoException).code !== "ENOENT") throw ownerError;
-        const mtime = await stat(lockPath).then((value) => value.mtimeMs).catch((error) => {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return Date.now();
-          throw error;
-        });
-        const birthSignaturesSupported = process.platform === "linux" || process.platform === "darwin" || process.platform === "win32";
-        recover = birthSignaturesSupported && Date.now() - mtime > staleMs;
-      }
-      if (recover) {
-        const quarantine = `${lockPath}.stale.${observedToken}.${randomUUID()}`;
-        try { await rename(lockPath, quarantine); await rm(quarantine, { recursive: true, force: true }); }
-        catch (recoveryError) { if ((recoveryError as NodeJS.ErrnoException).code !== "ENOENT") throw recoveryError; }
-      }
-      if (Date.now() >= deadline) throw new PortRegistryError("DEVFN_REGISTRY_LOCK_TIMEOUT", `Timed out acquiring registry lock ${lockPath}.`);
-      await delay(20 + Math.floor(Math.random() * 20));
-    }
-  } finally {
-    if (!acquired) await rm(staged, { recursive: true, force: true });
+  while (!await claimLock(lockPath, token, ownerRecord)) {
+    let observed: LockOwner | undefined;
+    try { observed = JSON.parse(await readFile(`${lockPath}/owner.json`, "utf8")) as LockOwner; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    if (await recoverable(lockPath, observed, staleMs)) await recoverLock(lockPath, observed?.token ?? "ownerless");
+    if (Date.now() >= deadline) throw new PortRegistryError("DEVFN_REGISTRY_LOCK_TIMEOUT", `Timed out acquiring registry lock ${lockPath}.`);
+    await delay(20 + Math.floor(Math.random() * 20));
   }
   try { return await action(); }
   finally {
     try {
-      const owner = JSON.parse(await readFile(`${lockPath}/owner.json`, "utf8")) as { token?: string };
-      if (owner.token === token) await rm(lockPath, { recursive: true, force: true });
+      const owner = JSON.parse(await readFile(`${lockPath}/owner.json`, "utf8")) as LockOwner;
+      if (owner.token === token) {
+        // Moving the lock aside frees its path in one step.
+        const released = `${lockPath}.released.${token}`;
+        await rename(lockPath, released);
+        await rm(released, { recursive: true, force: true });
+      }
     } catch { /* Never remove a lock whose ownership cannot be proven. */ }
   }
 }
 
-/** Rename a staged lock into place unless a lock already exists. */
-async function claimStagedLock(staged: string, lockPath: string): Promise<boolean> {
-  // POSIX rename replaces an empty directory, which may be an earlier
-  // release's lock between its mkdir and owner write, so an existing lock is
-  // never renamed over.
-  try {
-    await lstat(lockPath);
-    return false;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  try {
-    await rename(staged, lockPath);
-    return true;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EEXIST" || code === "ENOTEMPTY" || (code === "EPERM" && process.platform === "win32")) return false;
+/** Create the lock and publish this owner in it; false when another holds or is creating it. */
+async function claimLock(lockPath: string, token: string, ownerRecord: string): Promise<boolean> {
+  try { await mkdir(lockPath, { mode: 0o700 }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
     throw error;
   }
+  // The directory may have been recovered and recreated by another holder
+  // while this creator stalled; publishing fails then, never replacing it.
+  const ownerTemp = `${lockPath}/owner.${token}.tmp`;
+  try {
+    await writeFile(ownerTemp, ownerRecord, { mode: 0o600, flag: "wx" });
+    await link(ownerTemp, `${lockPath}/owner.json`);
+    return true;
+  } catch (error) {
+    if (["EEXIST", "ENOENT"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
+    // Unpublished, the directory is still empty unless another holder now
+    // owns it, and rmdir removes only an empty one.
+    await rm(ownerTemp, { force: true }).catch(() => undefined);
+    await rmdir(lockPath).catch(() => undefined);
+    throw error;
+  } finally {
+    await rm(ownerTemp, { force: true }).catch(() => undefined);
+  }
+}
+
+async function recoverable(lockPath: string, observed: LockOwner | undefined, staleMs: number): Promise<boolean> {
+  if (!["linux", "darwin", "win32"].includes(process.platform)) return false;
+  if (observed) {
+    const owner = observed.pid ? await processIdentityStatus(observed.pid, observed.birthSignature, observed.createdAt) : "exited";
+    return (owner === "exited" || owner === "identity-mismatch") && Boolean(observed.createdAt) && Date.now() - Date.parse(observed.createdAt!) > staleMs;
+  }
+  const mtime = await stat(lockPath).then((value) => value.mtimeMs, (error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return Date.now();
+    throw error;
+  });
+  return Date.now() - mtime > Math.max(staleMs, OWNERLESS_LOCK_STALE_MS);
+}
+
+/** Move a stale lock aside, putting it back if its creator recorded itself meanwhile. */
+async function recoverLock(lockPath: string, observedToken: string): Promise<void> {
+  const quarantine = `${lockPath}.stale.${observedToken}.${randomUUID()}`;
+  try { await rename(lockPath, quarantine); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const owner = await readFile(`${quarantine}/owner.json`, "utf8").then((text) => (JSON.parse(text) as LockOwner).token ?? "ownerless", () => "ownerless");
+  if (owner === observedToken) { await rm(quarantine, { recursive: true, force: true }); return; }
+  // A lock is never deleted for a holder it was not judged by. Its holder
+  // still releases by token; one that cannot be restored is left in place.
+  await rename(quarantine, lockPath).catch(() => undefined);
 }
