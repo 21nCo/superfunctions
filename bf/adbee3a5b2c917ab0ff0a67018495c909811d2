@@ -1,0 +1,33 @@
+devfn/cli/SECURITY.md
+  s_1900bb15a7199a::t_425cc885b75935 22
+devfn/docs/configuration.md
+  s_1900bb15a7199a::t_b04b0d77c53508 105
+devfn/ports/src/proxy-state.ts
+  s_1900bb15a7199a::t_891763025912c3 11
+devfn/processes/src/index.ts
+  s_1900bb15a7199a::t_057f9811ee03e3 3
+devfn/proxy/src/index.ts
+  s_1900bb15a7199a::t_b50287bd308161 12,56,196-207,210-213,220,324,514,575,779
+devfn/proxy/src/oauth-relay/service.ts
+  s_1900bb15a7199a::t_ff4b7467a959df 8,49-51,73-76,85,89,93-105,230-231,253,267,286-289
+devfn/proxy/test/oauth-relay-service.test.ts
+  s_1900bb15a7199a::t_d54ef3ad898454 380-427
+devfn/proxy/test/proxy.test.ts
+  s_1900bb15a7199a::t_f805aece62ccec 17-18,20,27-28,32,208-261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bfadbee3a5b2c917ab0ff0a67018495c909811d2",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
