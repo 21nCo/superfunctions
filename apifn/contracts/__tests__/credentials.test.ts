@@ -9,7 +9,7 @@ import {
   validateClientFailureEvent,
   validateManifest,
 } from "../src/index.js";
-import { clone, fixture } from "./helpers.js";
+import { clone, fixture, LINEAR_RATIO, SCALING_TIMEOUT, scalingRatio } from "./helpers.js";
 
 const PROJECT_ROUTE = "/workspaces/{workspaceId}/projects/{projectId}";
 
@@ -333,6 +333,10 @@ const XML_FORMS: Array<[form: string, text: string]> = [
   ["unterminated comment", `<password><!-- x ${XML_SEED}</password>`],
   ["element inside a comment", `<!-- <client_secret>${XML_SEED}</client_secret> -->`],
   ["element inside CDATA", `<![CDATA[<client_secret>${XML_SEED}</client_secret>]]>`],
+  // An element left open while a closing tag of its name closes a nested element, or falls in a comment, is ambiguous.
+  ["open element around a closed same-name element", `<password> <password></password>${XML_SEED}`],
+  ["bare tag around a closed same-name element", `<token> x <token>a</token>${XML_SEED}`],
+  ["bare tag before a comment holding its closing tag", `<token> <!-- </token> --> ${XML_SEED}`],
 ];
 
 describe("XML element boundaries", () => {
@@ -343,6 +347,8 @@ describe("XML element boundaries", () => {
     ["CDATA placeholder", "<password><![CDATA[[REDACTED]]]></password>"],
     ["bare placeholder tag in a comment", "<!-- <token> --> then text"],
     ["ordinary nested elements", "<config><timeout>30</timeout><config>x</config></config>"],
+    ["lone bare placeholder tag in prose", "Send <token> with each request."],
+    ["pair of bare placeholder tags with no closing tag", "Use <token> or <token> here."],
   ])("keeps a %s", (_name, text) => {
     expect(containsCredentialValue(text)).toBe(false);
     expect(redactCredentialValues(text)).toBe(text);
@@ -379,6 +385,46 @@ describe("positional name/value pairs", () => {
     ["template placeholder", "new Headers([['authorization', `Bearer ${token}`]])"],
     ["list of three field names", '["password","email","name"]'],
     ["unquoted variable names", "const [token, setToken] = useState()"],
+  ])("keeps a %s", (_name, text) => {
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+  });
+});
+
+// One pair grammar for text and structured data: `[` or `(`, the key trimmed inside its quotes, a comma, the value,
+// an optional trailing comma, then the matching `]` or `)`. form x key.
+const PAIR_FORMS: Array<[form: string, render: (key: string, value: string) => string, structured?: (key: string, value: string) => unknown]> = [
+  ["trailing comma", (key, value) => `["${key}","${value}",]`, (key, value) => [key, value]],
+  ["Python tuple", (key, value) => `('${key}', '${value}')`],
+  ["tuple in a list", (key, value) => `dict_items([('${key}', '${value}')])`],
+  ["key padded inside its quotes", (key, value) => `[" ${key} ","${value}"]`, (key, value) => [` ${key} `, value]],
+];
+const PAIR_GRAMMAR_MATRIX = PAIR_FORMS.flatMap(([form, render, structured]) =>
+  POSITIONAL_KEYS.map(([key, value]) => ({ name: `${form} ${key}`, text: `Request failed: ${render(key, value)}`, literal: structured?.(key, value) }))
+);
+
+describe("pair grammar", () => {
+  it.each(PAIR_GRAMMAR_MATRIX)("$name", ({ text, literal }) => {
+    expectSeedRemovedEverywhere(text, POSITIONAL_SEED);
+    if (literal === undefined) return;
+    const nextSpec = clone(fixture("catalog/openapi.json"));
+    nextSpec.components.schemas.ProjectInput.properties.probe = { type: "array", default: literal };
+    const built = buildOperationCatalog(nextSpec, clone(fixture("catalog/manifest.json")));
+    expect(built.catalog).not.toBeNull();
+    expect(JSON.stringify(built)).not.toContain(POSITIONAL_SEED);
+    expect(built.diagnostics).toContainEqual(expect.objectContaining({ code: "CREDENTIAL_REDACTED", pointer: "/components/schemas/ProjectInput/properties/probe/default" }));
+  });
+
+  it("keeps the scheme of an Authorization tuple", () => {
+    expect(redactCredentialValues(`('Authorization', 'Bearer ${POSITIONAL_SEED}')`)).toBe("('Authorization', 'Bearer [REDACTED]')");
+  });
+
+  it.each([
+    ["ordinary header with a trailing comma", '["X-Request-Id","req-42",]'],
+    ["ordinary header tuple", "dict_items([('X-Request-Id', 'req-42')])"],
+    ["placeholder tuple", "('X-Api-Key', '[REDACTED]')"],
+    ["tuple of three field names", "('password', 'email', 'name')"],
+    ["list of three with a trailing comma", '["password","email","name",]'],
   ])("keeps a %s", (_name, text) => {
     expect(containsCredentialValue(text)).toBe(false);
     expect(redactCredentialValues(text)).toBe(text);
@@ -553,6 +599,9 @@ describe("YAML block values", () => {
     ["blank lines inside the block", `password: |\n  ${SEED}a\n\n  ${SEED}b\nnext: kept`, "next: kept"],
     ["mixed tab and space indentation fails closed to the end", `\tpassword:\n    ${SEED}a\n${SEED}b`, null],
     ["a placeholder block is kept", "password: |\n  <password>\nnext: kept", "password: |\n  <password>\nnext: kept"],
+    // A comment after the key is text of its own: the block consumes the key's value, not what the comment holds.
+    ["a credential in a comment above a block", `password: # token=${SEED}a\n  ${SEED}b\nnext: kept`, "password: # token=[REDACTED]\n  [REDACTED]\nnext: kept"],
+    ["a credential in a comment above a placeholder block", `password: # token=${SEED}a\n  <password>\nnext: kept`, "password: # token=[REDACTED]\n  <password>\nnext: kept"],
   ])("%s", (_name, text, kept) => {
     const redacted = redactCredentialValues(text);
     expect(redacted).not.toContain(SEED);
@@ -561,72 +610,110 @@ describe("YAML block values", () => {
   });
 });
 
-// Every rule is linear in the text: long runs that a backtracking pattern would rescan per character.
+// Every rule is linear in the text: long runs that a backtracking pattern, or a per-match scan reaching past the
+// span the match consumes, would rescan per character. Each row is timed at n and 4n characters.
 const LONG = 100_000;
-const run = (unit: string) => unit.repeat(Math.ceil(LONG / unit.length)).slice(0, LONG);
-const LONG_TEXTS: Array<[string, string]> = [
+const repeat = (unit: string, size: number) => unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
+const run = (unit: string) => (size: number) => repeat(unit, size);
+const LONG_TEXTS: Array<[string, (size: number) => string]> = [
   ["a+ chain", run("a+")],
   ["dotted words", run("a.")],
-  ["Authorization header word", `Authorization: ${run("a")}`],
-  ["scheme-like run", `https://${run("a")}`],
+  ["Authorization header word", (n) => `Authorization: ${repeat("a", n)}`],
+  ["scheme-like run", (n) => `https://${repeat("a", n)}`],
   ["spaced words", run("ab ")],
   ["slashes", run("//a")],
-  ["escaped quotes", `password="${run('\\"')}`],
-  ["open brackets", `password=${run("[")}`],
+  ["escaped quotes", (n) => `password="${repeat('\\"', n)}`],
+  ["open brackets", (n) => `password=${repeat("[", n)}`],
   ["Bearer repeats", run("Bearer x")],
   ["key separators", run("token=a ")],
   ["YAML keys", run("password:\n")],
-  ["YAML block lines", `password: |\n${run("  a\n")}`],
-  ["Digest parameters", `Authorization: Digest ${run('a="b", ')}`],
+  ["YAML block lines", (n) => `password: |\n${repeat("  a\n", n)}`],
+  ["Digest parameters", (n) => `Authorization: Digest ${repeat('a="b", ', n)}`],
   ["at signs", run("x@")],
   ["XML placeholder tags", run("<password> ")],
   ["unclosed XML elements", run("<password>x")],
   ["XML tags with attributes", run('<token a="b">')],
   ["namespace chain", run("a:")],
   ["credential namespaces", run("password:a")],
-  ["distinct unclosed XML tags", Array.from({ length: LONG / 10 }, (_, index) => `<token_${index}> `).join("").slice(0, LONG)],
-  ["distinct XML tags then closings", `${Array.from({ length: LONG / 20 }, (_, index) => `<token_${index}>a`).join("")}${Array.from({ length: LONG / 20 }, (_, index) => `</token_${index}>`).join("")}`],
+  ["distinct unclosed XML tags", (n) => Array.from({ length: n / 10 }, (_, index) => `<token_${index}> `).join("").slice(0, n)],
+  ["distinct XML tags then closings", (n) => `${Array.from({ length: n / 20 }, (_, index) => `<token_${index}>a`).join("")}${Array.from({ length: n / 20 }, (_, index) => `</token_${index}>`).join("")}`],
   ["credential XML attributes", run('<password a="b" ')],
   ["named containers", run('{"name":"token","value":[')],
   ["named containers closed", run('[{"name":"token","value":"<x>"},')],
   ["quoted brackets", run('{"name":"token","note":"}]>{[<a","value":"<x>"},')],
-  ["unterminated quotes", `{"name":"token"} ${run("'{[<a ")}`],
-  ["stray closers", `{"name":"token"}${run("}]>")}`],
-  ["unquoted closers in prose", `{"name":"token","value":"x"} ${run("a } b ] c > ")}`],
+  ["unterminated quotes", (n) => `{"name":"token"} ${repeat("'{[<a ", n)}`],
+  ["stray closers", (n) => `{"name":"token"}${repeat("}]>", n)}`],
+  ["unquoted closers in prose", (n) => `{"name":"token","value":"x"} ${repeat("a } b ] c > ", n)}`],
   ["placeholders followed by text", run("token=[REDACTED]a{{b}}c ")],
-  ["deep nesting", `${run("[{")}"name":"token","value":"x"`],
+  ["deep nesting", (n) => `${repeat("[{", n)}"name":"token","value":"x"`],
   ["escaped quote values", run('password=\\"a\\\\')],
   ["PEM headers", run("-----BEGIN PRIVATE KEY PRIVATE KEY ")],
   ["special scheme runs", run("https:")],
-  ["special scheme backslashes", `https:${run("\\")}`],
-  ["deep same-name XML nesting", `${run("<password>")}a${run("</password>")}`],
+  ["special scheme backslashes", (n) => `https:${repeat("\\", n)}`],
+  ["deep same-name XML nesting", (n) => `${repeat("<password>", n)}a${repeat("</password>", n)}`],
   ["XML CDATA sections", run("<password><![CDATA[</password>a]]>")],
   ["XML comments holding closing tags", run("<token><!-- </token> -->")],
-  ["unterminated XML comment", `<password>${run("<!-- </password> ")}`],
+  ["unterminated XML comment", (n) => `<password>${repeat("<!-- </password> ", n)}`],
   ["stray XML closing tags", run("a</password>")],
   ["positional pairs", run('[["token","a"],')],
-  ["unterminated positional pairs", `${run('["token", ')}"a`],
+  ["unterminated positional pairs", (n) => `${repeat('["token", ', n)}"a`],
+  // Forms whose value check once read to the end of the line or text on every match.
+  ["placeholders then a space", run("token=[REDACTED] ")],
+  ["template placeholders then a space", run("token={{a}} ")],
+  ["bracketed Authorization values", run("Authorization: [x], ")],
+  ["pairs with bracketed values", run('["token", [x]] ')],
+  ["YAML comments after =", run("token=#a ")],
+  ["YAML comments after :", run("password: #x ")],
+  ["keys in a YAML comment above a long line", (n) => `password: # ${repeat("a: # ", n / 2)}\n${repeat("x", n / 2)}`],
+  ["longer lists nested in pair values", (n) => `${'["token", '.repeat(n / 14)}[x]${", 1]".repeat(n / 14)}`],
+  ["tuple pairs", run("('token', 'a'), ")],
+  ["ambiguous escaped quotes", run('password=\\"a" ')],
+  ["XML closings around open same-name elements", run("<token> <token>a</token> ")],
 ];
 
 describe("credential rules run in linear time", () => {
-  it.each(LONG_TEXTS)("%s", (_name, text) => {
-    const started = performance.now();
-    containsCredentialValue(text);
-    containsCredentialIdentifier(text);
-    redactCredentialValues(text);
-    expect(performance.now() - started).toBeLessThan(500);
-  });
+  it.each(LONG_TEXTS)("%s", (_name, build) => {
+    const texts = new Map([LONG / 4, LONG].map((size) => [size, build(size)]));
+    const ratio = scalingRatio((size) => {
+      const text = texts.get(size)!;
+      containsCredentialValue(text);
+      containsCredentialIdentifier(text);
+      redactCredentialValues(text);
+    }, LONG / 4);
+    expect(ratio).toBeLessThan(LINEAR_RATIO);
+  }, SCALING_TIMEOUT);
 
   it("bounds validateManifest and buildOperationCatalog on long keys and descriptions", () => {
     const manifest = fixture("catalog/manifest.json");
     const spec = fixture("catalog/openapi.json");
     const started = performance.now();
-    validateManifest({ ...clone(manifest), [run("a+")]: 1 });
+    validateManifest({ ...clone(manifest), [repeat("a+", LONG)]: 1 });
     const nextSpec = clone(spec);
-    nextSpec.paths[PROJECT_ROUTE].get.description = run("a+");
+    nextSpec.paths[PROJECT_ROUTE].get.description = repeat("a+", LONG);
     expect(buildOperationCatalog(nextSpec, clone(manifest)).catalog).not.toBeNull();
-    expect(performance.now() - started).toBeLessThan(1000);
-  });
+    expect(performance.now() - started).toBeLessThan(5000);
+  }, SCALING_TIMEOUT);
+
+  const MEGABYTE = 1_000_000;
+  it.each([
+    "token=[REDACTED] ",
+    "token={{a}} ",
+    "Authorization: [x], ",
+    '["token", [x]] ',
+    "token=#a ",
+    "password: #x ",
+  ])("buildOperationCatalog scales linearly up to a 1 MB description of %j", (unit) => {
+    const manifest = fixture("catalog/manifest.json");
+    const specs = new Map(
+      [MEGABYTE / 4, MEGABYTE].map((size) => {
+        const nextSpec = clone(fixture("catalog/openapi.json"));
+        nextSpec.paths[PROJECT_ROUTE].get.description = repeat(unit, size);
+        return [size, nextSpec];
+      })
+    );
+    const ratio = scalingRatio((size) => expect(buildOperationCatalog(specs.get(size)!, clone(manifest)).catalog).not.toBeNull(), MEGABYTE / 4, 2);
+    expect(ratio).toBeLessThan(LINEAR_RATIO);
+  }, SCALING_TIMEOUT);
 });
 
 // Keys are quoted back in pointers and messages, so every report goes through one sanitizer.

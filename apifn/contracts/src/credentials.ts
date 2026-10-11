@@ -77,8 +77,10 @@ const IDENTIFIER_KEY_SEPARATOR = new RegExp(`(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)(
 /** A value that is not quoted or bracketed runs to the next delimiter; placeholders such as `<your token>` may hold spaces. */
 const PLAIN_VALUE = new RegExp(`^(?:${PLACEHOLDER.source}|[^\\s&,;"'\`)\\]}])*`);
 const SCHEME_ONLY = new RegExp(`^(?:${AUTH_SCHEMES})$`, "i");
-/** A YAML block scalar indicator (`|`, `>-`, `|2+`, ...) or nothing, ending the key's line: the value is on the indented lines below. */
-const BLOCK_HEAD = /^(?:[|>](?:[1-9]?[+-]?|[+-]?[1-9]?))?[ \t]*(?:#[^\r\n]*)?(?=\r?\n)/;
+/** A YAML block scalar indicator (`|`, `>-`, `|2+`, ...) or nothing, then spaces; a block head when the line ends there or a `#` comment does. */
+const BLOCK_INDICATOR = /(?:[|>](?:[1-9][+-]?|[+-][1-9]?)?)?[ \t]*/y;
+/** What may follow a bracketed header value for it to end there: a delimiter or the end of the line. */
+const HEADER_VALUE_END = /[^\S\r\n]*(?:[,;\]})]|[\r\n]|$)/y;
 /** CDATA delimiters, removed before an element value is judged as placeholders. */
 const CDATA_DELIMITERS = /<!\[CDATA\[|\]\]>/g;
 
@@ -124,6 +126,9 @@ function isHeaderKey(key: string): boolean {
   return normalized.endsWith("authorization") || normalized.endsWith("cookie");
 }
 
+const CLOSERS: Record<string, string> = { "{": "}", "[": "]", "<": ">" };
+const QUOTES = new Set(['"', "'", "`"]);
+
 /** End of a quoted string that opens at `start`, after its closing quote; -1 when unterminated. */
 function quotedEnd(text: string, start: number): number {
   const quote = text[start];
@@ -134,15 +139,20 @@ function quotedEnd(text: string, start: number): number {
   return -1;
 }
 
+interface EscapedQuote {
+  /** After the closing `\"`; when ambiguous, after the unescaped quote; when unterminated, the end of the text. */
+  end: number;
+  status: "closed" | "ambiguous" | "unterminated";
+}
+
 /**
- * End of a string quoted with escaped quotes (`\"...\"`, as in JSON inside a
- * JSON string) that opens at `start`, after its closing `\"`. The text is
- * decoded one level as it is read, so an escaped quote inside the value
- * (`\\\"`) does not close it. Returns -1 when the closing delimiter is
- * ambiguous (an unescaped quote ends the outer string first) and -2 when
- * the value is unterminated.
+ * Reads a string quoted with escaped quotes (`\"...\"`, as in JSON inside a
+ * JSON string) that opens at `start`. The text is decoded one level as it is
+ * read, so an escaped quote inside the value (`\\\"`) does not close it. The
+ * closing delimiter is ambiguous when an unescaped quote ends the outer string
+ * first. The scan never passes the returned end.
  */
-function escapedQuotedEnd(text: string, start: number): number {
+function escapedQuotedEnd(text: string, start: number): EscapedQuote {
   const quote = text[start + 1];
   let innerEscaped = false;
   for (let index = start + 2; index < text.length; ) {
@@ -151,9 +161,15 @@ function escapedQuotedEnd(text: string, start: number): number {
     index += pair ? 2 : 1;
     if (innerEscaped) innerEscaped = false;
     else if (pair && char === "\\") innerEscaped = true;
-    else if (char === quote) return pair ? index : -1;
+    else if (char === quote) return { end: index, status: pair ? "closed" : "ambiguous" };
   }
-  return -2;
+  return { end: text.length, status: "unterminated" };
+}
+
+/** The end of a closed escaped-quoted string at `start`, or -1 when it is ambiguous or unterminated. */
+function escapedQuoteSkip(text: string, start: number): number {
+  const { end, status } = escapedQuotedEnd(text, start);
+  return status === "closed" ? end : -1;
 }
 
 /** End of the line holding `index`, before any line break. */
@@ -163,25 +179,90 @@ function lineEnd(text: string, index: number): number {
   return text[newline - 1] === "\r" && newline - 1 >= index ? newline - 1 : newline;
 }
 
-/** End of a balanced `{...}` or `[...]` that opens at `start`; -1 when unbalanced. */
-function bracketedEnd(text: string, start: number): number {
-  const closers: string[] = [];
-  for (let index = start; index < text.length; index += 1) {
-    const char = text[index];
-    if (char === "\\") {
-      index += 1; // An escaped character, such as \" inside escaped JSON, never opens or closes anything.
-    } else if (char === '"' || char === "'" || char === "`") {
-      const end = quotedEnd(text, index);
-      if (end === -1) return -1;
-      index = end - 1;
-    } else if (char === "{" || char === "[") {
-      closers.push(char === "{" ? "}" : "]");
-    } else if (char === "}" || char === "]") {
-      if (closers.pop() !== char) return -1;
-      if (closers.length === 0) return index + 1;
+/**
+ * Memoized scans of one text for one pass of a key or pair rule, so the work
+ * each match does is bounded by the span it consumes: a bracketed value, a
+ * line or a YAML block that several matches reach is scanned once.
+ */
+class TextScan {
+  /** Bracket start -> its end after the matching closer, or -1 when unbalanced. */
+  private readonly brackets = new Map<number, number>();
+  /** The last line-break query: from `breakFrom`, the first `\r` or `\n` is at `breakAt`. */
+  private breakFrom = -1;
+  private breakAt = -1;
+  /** Line break ending a key's line -> the YAML block below it. */
+  private readonly blocks = new Map<number, { begin: number; end: number } | null>();
+
+  constructor(readonly text: string) {}
+
+  /**
+   * End of a balanced `{...}` or `[...]` that opens at `start`; -1 when
+   * unbalanced. Every bracket the scan passes is recorded with its end, and a
+   * recorded inner bracket is skipped, so nested values are scanned once.
+   */
+  bracketedEnd(start: number): number {
+    const known = this.brackets.get(start);
+    if (known !== undefined) return known;
+    const { text } = this;
+    const open: number[] = [];
+    const fail = () => {
+      for (const opener of open) this.brackets.set(opener, -1);
+      return -1;
+    };
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (char === "\\") {
+        index += 1; // An escaped character, such as \" inside escaped JSON, never opens or closes anything.
+      } else if (QUOTES.has(char)) {
+        const end = quotedEnd(text, index);
+        if (end === -1) return fail();
+        index = end - 1;
+      } else if (char === "{" || char === "[") {
+        const inner = index === start ? undefined : this.brackets.get(index);
+        if (inner === -1) return fail(); // Unbalanced inside means unbalanced outside.
+        if (inner !== undefined) index = inner - 1;
+        else open.push(index);
+      } else if (char === "}" || char === "]") {
+        if (CLOSERS[text[open[open.length - 1]]] !== char) return fail();
+        this.brackets.set(open.pop()!, index + 1);
+        if (open.length === 0) return index + 1;
+      }
     }
+    return fail();
   }
-  return -1;
+
+  /** The first `\r` or `\n` at or after `index`, or the end of the text. */
+  lineBreak(index: number): number {
+    if (index < this.breakFrom || index > this.breakAt) {
+      let at = index;
+      while (at < this.text.length && this.text[at] !== "\n" && this.text[at] !== "\r") at += 1;
+      this.breakFrom = index;
+      this.breakAt = at;
+    }
+    return this.breakAt;
+  }
+
+  /**
+   * When the value at `start` is a YAML block head (`|`, `>-` or nothing,
+   * optionally a `#` comment, then the end of the line), the `\n` ending the
+   * key's line and where the comment starts (or -1); otherwise null.
+   */
+  blockHead(start: number): { newline: number; comment: number } | null {
+    BLOCK_INDICATOR.lastIndex = start;
+    BLOCK_INDICATOR.exec(this.text);
+    const after = BLOCK_INDICATOR.lastIndex;
+    const comment = this.text[after] === "#" ? after : -1;
+    const stop = comment === -1 ? after : this.lineBreak(after);
+    if (this.text[stop] === "\n") return { newline: stop, comment };
+    if (this.text[stop] === "\r" && this.text[stop + 1] === "\n") return { newline: stop + 1, comment };
+    return null;
+  }
+
+  /** The YAML block below the key at `keyStart` whose line ends at `newline` (see {@link blockSpan}); keys on one line share it. */
+  block(newline: number, keyStart: number): { begin: number; end: number } | null {
+    if (!this.blocks.has(newline)) this.blocks.set(newline, blockSpan(this.text, newline, lineIndent(this.text, keyStart)));
+    return this.blocks.get(newline)!;
+  }
 }
 
 interface ValueSpan {
@@ -199,44 +280,50 @@ interface ValueSpan {
  * quotes), a balanced `{...}`/`[...]`, an Authorization or Cookie header line,
  * a YAML block (every line indented below the key), or a run up to the next
  * delimiter that also takes the token after a bare scheme word (`Bearer abc`).
- * A value that cannot be delimited fails closed: it runs to the end of the text.
+ * A value that cannot be delimited fails closed: it runs to the end of the
+ * text. Nothing is scanned beyond the returned end except through `scan`'s memos.
  */
-function readValue(text: string, start: number, keyStart: number, header: boolean): ValueSpan {
-  const rest = text.slice(start);
-  const escaped = /^\\(["'`])/.exec(rest);
-  if (escaped) {
-    const end = escapedQuotedEnd(text, start);
-    if (end === -1) return { end: lineEnd(text, start), value: text.slice(start, lineEnd(text, start)), quote: "" };
-    if (end === -2) return { end: text.length, value: text.slice(start), quote: "" };
-    return { end, value: text.slice(start + 2, end - 2), quote: `\\${escaped[1]}` };
-  }
+function readValue(scan: TextScan, start: number, keyStart: number, header: boolean): ValueSpan {
+  const { text } = scan;
   const first = text[start];
-  if (first === '"' || first === "'" || first === "`") {
+  if (first === "\\" && QUOTES.has(text[start + 1] ?? "")) {
+    const { end, status } = escapedQuotedEnd(text, start);
+    if (status === "closed") return { end, value: text.slice(start + 2, end - 2), quote: `\\${text[start + 1]}` };
+    // Ambiguous: to the end of the line, or past the unescaped quote when that is further. Unterminated: to the end of the text.
+    const stop = Math.max(end, lineEnd(text, start));
+    return { end: stop, value: text.slice(start, stop), quote: "" };
+  }
+  if (QUOTES.has(first)) {
     const end = quotedEnd(text, start);
     if (end === -1) return { end: text.length, value: text.slice(start), quote: "" };
     return { end, value: text.slice(start + 1, end - 1), quote: first };
   }
   // `password: |`, `password: >-` or `password:` ending a line: the value is every line indented below the key (YAML block style).
-  const head = BLOCK_HEAD.exec(rest);
+  const head = scan.blockHead(start);
   if (head) {
-    const newline = text.indexOf("\n", start + head[0].length);
-    const block = blockSpan(text, newline, lineIndent(text, keyStart));
+    const block = scan.block(head.newline, keyStart);
     if (!block) return { end: start, value: "", quote: "" };
     return { begin: block.begin, end: block.end, value: text.slice(block.begin, block.end), quote: "" };
   }
   if (first === "{" || first === "[") {
-    const close = bracketedEnd(text, start);
+    const close = scan.bracketedEnd(start);
     if (close === -1) return { end: text.length, value: text.slice(start), quote: "" };
     // The value runs to its real delimiter, so a placeholder such as `[REDACTED]` or `{{token}}` followed directly by
     // more characters is judged with them. In a header the rest of the line belongs to the value unless a delimiter follows.
-    const line = /^[^\r\n]*/.exec(text.slice(close))![0];
-    const more = header ? (/^\s*(?:[,;\]})]|$)/.test(line) ? 0 : line.trimEnd().length) : PLAIN_VALUE.exec(text.slice(close))![0].length;
-    return { end: close + more, value: text.slice(start, close + more), quote: "" };
+    let end: number;
+    if (header) {
+      HEADER_VALUE_END.lastIndex = close;
+      end = HEADER_VALUE_END.test(text) ? close : close + text.slice(close, scan.lineBreak(close)).trimEnd().length;
+    } else {
+      end = close + PLAIN_VALUE.exec(text.slice(close))![0].length;
+    }
+    return { end, value: text.slice(start, end), quote: "" };
   }
   if (header) {
-    const line = /^[^\r\n]*/.exec(rest)![0].trimEnd();
+    const line = text.slice(start, scan.lineBreak(start)).trimEnd();
     return { end: start + line.length, value: line, quote: "" };
   }
+  const rest = text.slice(start);
   let run = PLAIN_VALUE.exec(rest)![0];
   if (SCHEME_ONLY.test(run)) {
     const token = /^[ \t]+/.exec(rest.slice(run.length));
@@ -274,9 +361,6 @@ export function credentialValueFields(record: Record<string, unknown>): string[]
     .map(([key]) => key);
 }
 
-const CLOSERS: Record<string, string> = { "{": "}", "[": "]", "<": ">" };
-const QUOTES = new Set(['"', "'", "`"]);
-
 /**
  * For each index, the start of the innermost `{...}`, `[...]` or XML tag
  * holding it, or -1. Strings are skipped: a delimiter inside `"..."`,
@@ -295,7 +379,7 @@ function containerStarts(text: string): Int32Array {
   for (let index = 0; index < text.length; ) {
     const char = text[index];
     let skip = 0; // The end of a string or escaped character that starts here.
-    if (char === "\\") skip = QUOTES.has(text[index + 1] ?? "") ? escapedQuotedEnd(text, index) : Math.min(index + 2, text.length);
+    if (char === "\\") skip = QUOTES.has(text[index + 1] ?? "") ? escapedQuoteSkip(text, index) : Math.min(index + 2, text.length);
     else if (QUOTES.has(char)) skip = quotedEnd(text, index);
     if (skip < 0) return starts.fill(-1);
     if (skip > 0) {
@@ -345,6 +429,7 @@ function redactKeyValues(text: string, identifier: boolean): string {
   let output = "";
   let copied = 0;
   const named = namedCredentialContainers(text);
+  const scan = new TextScan(text);
   const pattern = new RegExp((identifier ? IDENTIFIER_KEY_SEPARATOR : KEY_SEPARATOR).source, "g");
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
     const key = match[2];
@@ -355,9 +440,15 @@ function redactKeyValues(text: string, identifier: boolean): string {
     if (!indirect && !isCredentialKey(lastWord) && !isCredentialKey(key)) continue;
     const start = match.index + match[0].length;
     const header = indirect ? named!.headers.get(container)! : isHeaderKey(lastWord);
-    const { begin = start, end, value, quote } = readValue(text, start, match.index, header);
+    const { begin = start, end, value, quote } = readValue(scan, start, match.index, header);
     if (end <= start) continue;
     pattern.lastIndex = end;
+    if (begin > start) {
+      // Before a YAML block: the rest of the key's line, such as a `# token=...` comment, is judged as text of its own.
+      const gap = redactKeyValues(text.slice(start, begin), identifier);
+      output += `${text.slice(copied, start)}${gap}`;
+      copied = begin;
+    }
     if (value.trim() === "" || isPlaceholderValue(value, header)) continue;
     const scheme = header ? (LEADING_AUTH_SCHEME.exec(value)?.[0] ?? "") : "";
     output += `${text.slice(copied, begin)}${quote}${scheme}${REDACTED}${quote}`;
@@ -367,20 +458,23 @@ function redactKeyValues(text: string, identifier: boolean): string {
 }
 
 /**
- * A two-element list opening with a quoted credential key: `["X-Api-Key", "..."]`
- * in JSON, escaped JSON or a JS literal, as in header entries
- * (`new Headers([[name, value]])`). The value follows the comma.
+ * A two-element list or tuple opening with a quoted credential key: an opening
+ * `[` or `(`, the key (spaces inside its quotes trimmed), a comma, then the
+ * value; after it an optional trailing comma and the matching `]` or `)`. This
+ * covers JSON, escaped JSON, JS literals and Python reprs of header entries
+ * (`new Headers([[name, value]])`, `dict_items([(name, value)])`).
  */
-const PAIR_KEY = new RegExp(`\\[[ \\t\\r\\n]*(\\\\?["'\`])((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\1[ \\t\\r\\n]*,[ \\t\\r\\n]*`, "g");
-const PAIR_END = /[ \t\r\n]*\]/y;
+const PAIR_KEY = new RegExp(`([\\[(])\\s*(\\\\?["'\`])\\s*((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\s*\\2\\s*,\\s*`, "g");
+const PAIR_END = /\s*(?:,\s*)?([\])])/y;
+const PAIR_CLOSERS: Record<string, string> = { "[": "]", "(": ")" };
 /** A key as {@link PAIR_KEY} reads it, for structured data. */
 const PAIR_KEY_TEXT = new RegExp(`^(?:${KEY_WORD}[ \\t]+)?${KEY_WORD}$`);
 
 /**
  * True when `list` is a name/value pair naming a credential: two elements, the
- * first a credential key (one or two words, as in text) and the second a value
- * that is not empty, null or only placeholders. Text and structured data
- * judge pairs alike.
+ * first a credential key (one or two words once trimmed, as in text) and the
+ * second a value that is not empty, null or only placeholders. Text and
+ * structured data judge pairs alike.
  */
 export function isCredentialPair(list: readonly unknown[]): boolean {
   if (list.length !== 2 || typeof list[0] !== "string") return false;
@@ -389,21 +483,23 @@ export function isCredentialPair(list: readonly unknown[]): boolean {
   return !(typeof value === "string" && (value.trim() === "" || isPlaceholderValue(value, isHeaderKey(name))));
 }
 
-/** The pair rule in text: the second element of a two-element list whose first is a quoted credential key is a credential. */
+/** The pair rule in text: the second element of a two-element list or tuple whose first is a quoted credential key is a credential. */
 function redactPairs(text: string): string {
   let output = "";
   let copied = 0;
+  const scan = new TextScan(text);
   const pattern = new RegExp(PAIR_KEY.source, "g");
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
-    const key = match[2];
+    const key = match[3];
     if (!isCredentialKey(key)) continue;
     const start = match.index + match[0].length;
     const header = isHeaderKey(key);
-    const { end, value, quote } = readValue(text, start, match.index, header);
+    const { end, value, quote } = readValue(scan, start, match.index, header);
     if (end <= start) continue;
     PAIR_END.lastIndex = end;
+    const close = PAIR_END.exec(text);
     // A longer list is not a pair; a value that cannot be delimited (it runs to the end of the text) fails closed.
-    if (end < text.length && !PAIR_END.test(text)) continue;
+    if (end < text.length && close?.[1] !== PAIR_CLOSERS[match[1]]) continue;
     pattern.lastIndex = end;
     if (value.trim() === "" || isPlaceholderValue(value, header)) continue;
     const scheme = header ? (LEADING_AUTH_SCHEME.exec(value)?.[0] ?? "") : "";
@@ -440,8 +536,19 @@ interface XmlElement {
   close: number;
   /** The comment or CDATA section holding the opening tag (numbered from 1), or 0 outside one. */
   scope: number;
-  /** Reopened by a closing tag with nothing of its name open: the value runs to the end of the text, placeholder or not. */
-  reopened: boolean;
+  /**
+   * Left open where the structure cannot be trusted: reopened by a closing tag
+   * with nothing of its name open, or open while a closing tag of its name
+   * closed a nested element or fell in a comment or CDATA section. The value
+   * runs to the end of the text, bare placeholder tag or not.
+   */
+  ambiguous: boolean;
+}
+
+/** The open elements of one name, innermost last; the `ambiguous` bottom ones are marked when they leave or when the text ends. */
+interface OpenStack {
+  elements: XmlElement[];
+  ambiguous: number;
 }
 
 /**
@@ -453,19 +560,28 @@ interface XmlElement {
  * the end of the text: an element left open (also by an unterminated comment
  * or CDATA section), or a closing tag with nothing of its name open, which
  * reopens the first element of that name or, with none, takes the text since
- * the markup before it. One linear pass.
+ * the markup before it. An element left open while a closing tag of its name
+ * went elsewhere is ambiguous. One linear pass.
  */
 function credentialXmlElements(text: string): XmlElement[] {
   const elements: XmlElement[] = [];
-  const open = new Map<string, XmlElement[]>();
+  const open = new Map<string, OpenStack>();
   const first = new Map<string, XmlElement>();
   let scope = 0;
   let scopes = 0;
   let scopeEnd = -1;
   let markupEnd = 0;
+  const pop = (stack: OpenStack): XmlElement => {
+    const element = stack.elements.pop()!;
+    if (stack.ambiguous > stack.elements.length) {
+      element.ambiguous = true;
+      stack.ambiguous = stack.elements.length;
+    }
+    return element;
+  };
   const leaveScope = () => {
     // Elements the section left open stay unmatched (they run to the end of the text) and no longer nest.
-    for (const stack of open.values()) while (stack.length > 0 && stack[stack.length - 1].scope === scope) stack.pop();
+    for (const stack of open.values()) while (stack.elements.length > 0 && stack.elements[stack.elements.length - 1].scope === scope) pop(stack);
     scope = 0;
   };
   const pattern = new RegExp(XML_TOKEN.source, "g");
@@ -487,26 +603,31 @@ function credentialXmlElements(text: string): XmlElement[] {
     const name = closing ?? opening;
     if (isCredentialKey(name)) {
       let stack = open.get(name);
-      if (!stack) open.set(name, (stack = []));
+      if (!stack) open.set(name, (stack = { elements: [], ambiguous: 0 }));
+      const top = stack.elements[stack.elements.length - 1];
       if (opening !== undefined) {
-        const element: XmlElement = { index: match.index, start: end, name, attributes, close: -1, scope, reopened: false };
+        const element: XmlElement = { index: match.index, start: end, name, attributes, close: -1, scope, ambiguous: false };
         elements.push(element);
         if (!attributes.endsWith("/")) {
           // `<password value="..."/>` has no element value.
-          stack.push(element);
+          stack.elements.push(element);
           if (!first.has(name)) first.set(name, element);
         }
-      } else if (stack.length > 0 && stack[stack.length - 1].scope === scope) {
-        stack.pop()!.close = match.index;
+      } else if (top !== undefined && top.scope === scope) {
+        pop(stack).close = match.index;
+        stack.ambiguous = stack.elements.length; // Whatever stays open around the element it closed is ambiguous.
+      } else if (top !== undefined) {
+        stack.ambiguous = stack.elements.length; // A closing tag in a section never ends an element opened outside it.
       } else if (scope === 0) {
         // Nothing of this name is open: the structure cannot be trusted. (In a section, a closing tag of an outer element does not count.)
         const earlier = first.get(name);
-        if (earlier) Object.assign(earlier, { close: -1, reopened: true });
-        else elements.push({ index: markupEnd, start: markupEnd, name, attributes: null, close: match.index, scope, reopened: false });
+        if (earlier) Object.assign(earlier, { close: -1, ambiguous: true });
+        else elements.push({ index: markupEnd, start: markupEnd, name, attributes: null, close: match.index, scope, ambiguous: false });
       }
     }
     markupEnd = end;
   }
+  for (const stack of open.values()) stack.elements.slice(0, stack.ambiguous).forEach((element) => (element.ambiguous = true));
   return elements;
 }
 
@@ -517,12 +638,12 @@ function credentialXmlElements(text: string): XmlElement[] {
  * and comments (see {@link credentialXmlElements}). Without a matching
  * closing tag the value fails closed to the end of the text, unless the tag is
  * a bare placeholder such as `<token>` followed by a space, punctuation or the
- * end of the text.
+ * end of the text and its structure is not ambiguous.
  */
 function redactXmlElements(text: string): string {
   let output = "";
   let copied = 0;
-  for (const { index, start, name, attributes, close, reopened } of credentialXmlElements(text)) {
+  for (const { index, start, name, attributes, close, ambiguous } of credentialXmlElements(text)) {
     if (index < copied) continue; // Inside a value already redacted.
     if (attributes !== null) {
       const safeAttributes = redactAttributeValues(attributes);
@@ -531,7 +652,7 @@ function redactXmlElements(text: string): string {
         copied = start;
       }
       if (attributes.endsWith("/")) continue;
-      if (close === -1 && !reopened && !attributes.includes("=") && /^(?:$|[\s"'`.,;:!?)\]}])/.test(text.slice(start, start + 1))) continue;
+      if (close === -1 && !ambiguous && !attributes.includes("=") && /^(?:$|[\s"'`.,;:!?)\]}])/.test(text.slice(start, start + 1))) continue;
     }
     const end = close === -1 ? text.length : close;
     const value = text.slice(start, end).replace(CDATA_DELIMITERS, "");

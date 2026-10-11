@@ -166,6 +166,33 @@ const STRING_LIST: MemberType<string[]> = {
   accepts: (value): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string"),
 };
 
+const JSON_TYPES = new Set(["string", "number", "integer", "boolean", "object", "array", "null"]);
+const NUMBER: MemberType<number> = { name: "a number", accepts: (value): value is number => typeof value === "number" };
+const NON_NEGATIVE_INTEGER: MemberType<number> = { name: "a non-negative integer", accepts: (value): value is number => Number.isInteger(value) && (value as number) >= 0 };
+/**
+ * The JSON type of every schema keyword the catalog emits with a fixed type.
+ * A wrong type is INVALID_SPEC: copying it would publish a schema that
+ * generated clients misread, and literal data must never pass under another type.
+ */
+const SCHEMA_KEYWORD_TYPES = new Map<string, MemberType<unknown>>([
+  [
+    "type",
+    {
+      name: "a JSON type name or a non-empty array of distinct type names",
+      accepts: (value): value is unknown =>
+        typeof value === "string" ? JSON_TYPES.has(value) : Array.isArray(value) && value.length > 0 && new Set(value).size === value.length && value.every((item) => typeof item === "string" && JSON_TYPES.has(item)),
+    },
+  ],
+  ["enum", LIST],
+  ["multipleOf", { name: "a number greater than 0", accepts: (value): value is number => typeof value === "number" && value > 0 }],
+  ...["maximum", "minimum"].map((key): [string, MemberType<unknown>] => [key, NUMBER]),
+  // The OpenAPI 3.0 boolean form is converted where the keyword is copied.
+  ...["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, MemberType<unknown>] => [key, { name: "a number or a boolean", accepts: (value): value is unknown => typeof value === "number" || typeof value === "boolean" }]),
+  ...["maxLength", "minLength", "maxItems", "minItems", "maxProperties", "minProperties", "maxContains", "minContains"].map((key): [string, MemberType<unknown>] => [key, NON_NEGATIVE_INTEGER]),
+  ...["pattern", "format", "title", "description", "$comment", "contentMediaType", "contentEncoding"].map((key): [string, MemberType<unknown>] => [key, STRING]),
+  ...["uniqueItems", "readOnly", "writeOnly", "deprecated", "nullable"].map((key): [string, MemberType<unknown>] => [key, BOOLEAN]),
+]);
+
 function describeValue(value: unknown): string {
   return value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
 }
@@ -363,6 +390,8 @@ interface SpecOperation {
 
 class CatalogBuilder {
   readonly diagnostics: Diagnostic[] = [];
+  /** While positive, reports are discarded: componentSchemas settles component taint in a dry run before emitting. */
+  private muted = 0;
   /** Component schemas reached from operations; true when reached from a credential field. */
   private readonly componentRefs = new Map<string, boolean>();
   /** Component names whose entry in componentRefs is new or newly tainted, for componentSchemas to emit. */
@@ -411,6 +440,7 @@ class CatalogBuilder {
     message: string,
     options: { severity?: Diagnostic["severity"]; source?: Diagnostic["source"]; operation?: string } = {}
   ): void {
+    if (this.muted > 0) return;
     this.diagnostics.push({
       code,
       severity: options.severity ?? "error",
@@ -643,7 +673,10 @@ class CatalogBuilder {
     for (const [key, child] of Object.entries(value)) {
       const childPointer = `${pointer}/${pointerSegment(key)}`;
       if (key === "example" || key === "examples" || key.startsWith("x-")) continue;
-      if (isCredentialMember(key)) {
+      const expected = SCHEMA_KEYWORD_TYPES.get(key);
+      if (expected && !expected.accepts(child)) {
+        this.report("INVALID_SPEC", childPointer, `Expected ${expected.name} at ${childPointer}, found ${describeValue(child)}.`);
+      } else if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
       } else if (REFERENCE_KEYWORDS.has(key)) {
         const ref = this.schemaRef(child, childPointer, secret);
@@ -702,7 +735,7 @@ class CatalogBuilder {
         drop(key, childPointer, "it is literal or unrecognized data inside a credential field");
       } else if (LITERAL_KEYWORDS.has(key) && this.reachesCredentialField(value)) {
         drop(key, childPointer, "the schema contains a credential field whose value the literal would carry");
-      } else if (key === "enum" ? Array.isArray(child) && child.some(hasCredentialKey) : hasCredentialKey(child)) {
+      } else if (key === "enum" && Array.isArray(child) ? child.some(hasCredentialKey) : hasCredentialKey(child)) {
         // An enum lists values, so it is judged member by member: ["password", "otp"] lists two methods, not a pair.
         drop(key, childPointer, "it holds credential-named keys or a value named as a credential");
       } else {
@@ -1227,23 +1260,34 @@ class CatalogBuilder {
     return output;
   }
 
+  /**
+   * Emits every component schema reached from an operation. A component
+   * reached from a credential field is emitted without literals. Its final
+   * taint is settled first, in a dry run with reports discarded: each name is
+   * queued when first referenced and again when tainted, so a long chain is
+   * walked once. Then each component is emitted once, in name order, so its
+   * output and diagnostics never depend on the order references were found.
+   */
   componentSchemas(): Record<string, JsonValue> {
     const components = this.schemaComponents;
-    const output: Record<string, JsonValue> = {};
-    // A component reached from a credential field is emitted without literals; a
-    // component first emitted normally is re-emitted once that taint reaches it.
-    // Each name is queued when first referenced and again when tainted, so a long chain is walked once.
-    const emitted = new Map<string, boolean>();
+    const settled = new Map<string, boolean>();
+    this.muted += 1;
     for (let next = 0; next < this.pendingComponents.length; next += 1) {
       const name = this.pendingComponents[next];
       const secret = this.componentRefs.get(name) === true;
-      if (emitted.has(name) && (!secret || emitted.get(name))) continue;
-      emitted.set(name, secret);
-      this.identifier(name, `/components/schemas/${pointerSegment(name)}`, "Component schema name");
-      const schema = this.schema(own(components, name), `/components/schemas/${pointerSegment(name)}`, secret);
+      if (settled.has(name) && (!secret || settled.get(name))) continue;
+      settled.set(name, secret);
+      this.schema(own(components, name), `/components/schemas/${pointerSegment(name)}`, secret);
+    }
+    this.muted -= 1;
+    const output: Record<string, JsonValue> = {};
+    for (const name of Array.from(settled.keys()).sort(compareCodeUnits)) {
+      const pointer = `/components/schemas/${pointerSegment(name)}`;
+      this.identifier(name, pointer, "Component schema name");
+      const schema = this.schema(own(components, name), pointer, this.componentRefs.get(name) === true);
       if (schema !== null) setOwn(output, name, schema);
     }
-    return Object.fromEntries(Object.keys(output).sort(compareCodeUnits).map((name) => [name, output[name]]));
+    return output;
   }
 
   servers(list: unknown[], pointer: string): CatalogServer[] {

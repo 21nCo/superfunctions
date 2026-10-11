@@ -2,7 +2,7 @@ import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { buildOperationCatalog, canonicalJson, type Diagnostic, type OperationCatalog } from "../src/index.js";
-import { clone, fixture, matchFixture, readJson, reverseKeys, SCHEMAS } from "./helpers.js";
+import { clone, fixture, LINEAR_RATIO, matchFixture, readJson, reverseKeys, SCALING_TIMEOUT, scalingRatio, SCHEMAS } from "./helpers.js";
 
 const validateCatalog = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(
   readJson(path.join(SCHEMAS, "operation-catalog.v1.schema.json"))
@@ -1304,16 +1304,56 @@ describe("literals of schemas at the head of long component chains", () => {
     expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toContain(`/components/schemas/ProjectInput/properties/probe/${keyword}`);
   });
 
-  it.each(["$ref", "allOf"] as const)("judges a literal on every link of a 20000-link %s chain in linear time", (link) => {
+  it.each(["$ref", "allOf"] as const)("judges a literal on every link of a %s chain in linear time", (link) => {
     for (const last of [{ type: "string" }, { type: "string", format: "password" }]) {
-      const nextSpec = clone(spec);
-      chain(nextSpec, link, 20_000, last, ["default", "ok"]);
-      inputSchema(nextSpec).properties.probe = { $ref: "#/components/schemas/C0" };
-      const started = performance.now();
-      const result = buildOperationCatalog(nextSpec, clone(manifest));
-      expect(performance.now() - started).toBeLessThan(5000);
-      expect(result.catalog).not.toBeNull();
-      expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBe(last.format ? 20_000 : 0);
+      const specs = new Map(
+        [2_500, 10_000].map((length) => {
+          const nextSpec = clone(spec);
+          chain(nextSpec, link, length, last, ["default", "ok"]);
+          inputSchema(nextSpec).properties.probe = { $ref: "#/components/schemas/C0" };
+          return [length, nextSpec];
+        })
+      );
+      const ratio = scalingRatio((length) => {
+        const result = buildOperationCatalog(specs.get(length)!, clone(manifest));
+        expect(result.catalog).not.toBeNull();
+        expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBe(last.format ? length : 0);
+      }, 2_500, 2);
+      expect(ratio).toBeLessThan(LINEAR_RATIO);
+    }
+  }, SCALING_TIMEOUT);
+});
+
+// The emitted taint of a component never depends on the order its references were found: it is settled first.
+describe("component taint under key reordering", () => {
+  const tainted = (target: Record<string, unknown>) => (nextSpec: any) => {
+    Object.assign(nextSpec.components.schemas, {
+      A: { $ref: "#/components/schemas/X" },
+      B: { $ref: "#/components/schemas/C" },
+      C: { $ref: "#/components/schemas/X" },
+      X: target,
+    });
+    inputSchema(nextSpec).properties.probe = { type: "object", properties: { a: { $ref: "#/components/schemas/A" }, password: { $ref: "#/components/schemas/B" } } };
+  };
+
+  it.each([
+    ["a literal on the shared component", { type: "string", default: "token=abc123" }, true],
+    ["a wrong-typed keyword on the shared component", { type: "string", enum: { "token=abc": 1 } }, false],
+  ])("%s gives one result in either order", (_name, target, succeeds) => {
+    const forward = build(tainted(target));
+    const reversed = build((nextSpec) => {
+      tainted(target)(nextSpec);
+      // Every nested object, including the probe's properties (password before a), in reverse key order.
+      Object.assign(nextSpec, reverseKeys(nextSpec));
+    });
+    expect(canonicalJson(reversed)).toBe(canonicalJson(forward));
+    expect(forward.catalog !== null).toBe(succeeds);
+    if (succeeds) {
+      // X is reached from the password field, so it is emitted once, without the literal, with one diagnostic.
+      expect(only(forward.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual(["/components/schemas/X/default"]);
+      expect(forward.catalog!.schemas.X).toEqual({ type: "string" });
+    } else {
+      expect(forward.diagnostics).toContainEqual(expect.objectContaining({ code: "INVALID_SPEC", pointer: "/components/schemas/X/enum" }));
     }
   });
 });
@@ -1598,6 +1638,56 @@ describe("wrong-typed members", () => {
     });
     expect(result.catalog).toBeNull();
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "UNRESOLVED_REF", pointer: "/x-param/schema/$ref" }));
+  });
+});
+
+// Every schema keyword the catalog emits with a fixed JSON type is checked before any other rule reads it.
+const KEYWORD_SEED = "SEEDkeyword5521";
+const WRONG_TYPED_KEYWORDS: Array<[keyword: string, value: unknown]> = [
+  ["type", 42],
+  ["type", "file"],
+  ["type", []],
+  ["type", ["string", "string"]],
+  ["enum", "bad"],
+  ["enum", { password: KEYWORD_SEED }],
+  ["enum", { name: "X-Api-Key", value: KEYWORD_SEED }],
+  ["multipleOf", 0],
+  ["multipleOf", "2"],
+  ["maximum", "10"],
+  ["minimum", null],
+  ["exclusiveMaximum", "10"],
+  ["exclusiveMinimum", {}],
+  ...["maxLength", "minLength", "maxItems", "minItems", "maxProperties", "minProperties", "maxContains", "minContains"].flatMap((keyword): Array<[string, unknown]> => [
+    [keyword, "12"],
+    [keyword, -1],
+    [keyword, 1.5],
+  ]),
+  ...["pattern", "format", "title", "description", "$comment", "contentMediaType", "contentEncoding"].map((keyword): [string, unknown] => [keyword, 7]),
+  ...["uniqueItems", "readOnly", "writeOnly", "deprecated", "nullable"].map((keyword): [string, unknown] => [keyword, "true"]),
+];
+
+describe("schema keyword types", () => {
+  it.each(WRONG_TYPED_KEYWORDS)("INVALID_SPEC: %s = %j", (keyword, value) => {
+    const result = build((nextSpec) => (inputSchema(nextSpec).properties.probe = keyword === "type" ? { type: value } : { type: "string", [keyword]: value }));
+    expect(result).toEqual({ catalog: null, digest: null, diagnostics: [expect.objectContaining({ code: "INVALID_SPEC", pointer: `/components/schemas/ProjectInput/properties/probe/${keyword.replace(/~/g, "~0")}` })] });
+    expect(JSON.stringify(result)).not.toContain(KEYWORD_SEED);
+  });
+
+  it("checks keyword types inside a credential field too", () => {
+    const result = build((nextSpec) => (inputSchema(nextSpec).properties.password = { type: "string", maxLength: "12" }));
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "INVALID_SPEC", pointer: "/components/schemas/ProjectInput/properties/password/maxLength" }));
+  });
+
+  it("keeps every keyword of the right type", () => {
+    const probe = {
+      type: ["string", "null"], enum: ["a", null], multipleOf: 0.5, maximum: 10, minimum: 0, exclusiveMaximum: 11, exclusiveMinimum: -1,
+      maxLength: 12, minLength: 0, pattern: "^[a-z]+$", format: "slug", title: "Probe", description: "A probe.", $comment: "c",
+      contentMediaType: "text/plain", contentEncoding: "base64", readOnly: false, writeOnly: false, deprecated: false,
+    };
+    const result = build((nextSpec) => (inputSchema(nextSpec).properties.probe = probe));
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual(probe);
   });
 });
 

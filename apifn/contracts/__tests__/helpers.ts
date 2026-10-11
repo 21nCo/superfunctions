@@ -53,3 +53,28 @@ export function jsonDiff(left: unknown, right: unknown, pointer = ""): string[] 
   }
   return JSON.stringify(left) === JSON.stringify(right) ? [] : [pointer];
 }
+
+/** Scaling rows allow this much time: inputs are sized for hosted runners under load, and a quadratic rule fails the ratio, not the clock. */
+export const SCALING_TIMEOUT = 60_000;
+
+/**
+ * Best-of-`runs` wall time of `work(4 * size)` over `work(size)`, the smaller
+ * time floored at 1 ms so sub-millisecond noise cannot inflate it. A linear
+ * rule stays near 4; a quadratic one approaches 16.
+ */
+export function scalingRatio(work: (size: number) => void, size: number, runs = 3): number {
+  const time = (n: number) => {
+    let best = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < runs; run += 1) {
+      const started = performance.now();
+      work(n);
+      best = Math.min(best, performance.now() - started);
+    }
+    return best;
+  };
+  const small = time(size);
+  return time(size * 4) / Math.max(small, 1);
+}
+
+/** The ratio {@link scalingRatio} must stay below: well above linear (4), well below quadratic (16). */
+export const LINEAR_RATIO = 9;
