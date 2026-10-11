@@ -1,0 +1,37 @@
+devfn/cli/SECURITY.md
+  s_1900bb15a7199a::t_268ca28910fb33 22
+devfn/core/src/orchestrator.ts
+  s_1900bb15a7199a::t_ab48f241812dd1 3,12,368-377,379-381
+devfn/core/test/oauth-relay-recovery.test.ts
+  s_1900bb15a7199a::t_5eac757deece17 18,61-102
+devfn/docs/configuration.md
+  s_1900bb15a7199a::t_5d1d329df85592 103,105
+devfn/proxy/src/oauth-relay/index.ts
+  s_1900bb15a7199a::t_ce3ec3207897d9 5
+devfn/proxy/src/oauth-relay/serve.ts
+  s_1900bb15a7199a::t_3f96df9981c372 2,7-13,16-19,30-32,35
+devfn/proxy/src/oauth-relay/service.ts
+  s_1900bb15a7199a::t_eb99ee982293c2 47-66,68-72,74,76,78-83,85-86,90,92,94-95,97,104-112,116,135,142,205,228,230-231,233-235,238,243,257-261,267-268,270-280,283-287,292,314-318,320,323,330
+devfn/proxy/src/oauth-relay/state.ts
+  s_1900bb15a7199a::t_d95e0fb89ccd30 131-144,150-151,176-178,293-295,313-316
+devfn/proxy/test/oauth-relay-service.test.ts
+  s_1900bb15a7199a::t_a37710f8d12b37 156,159,238-337
+devfn/proxy/test/oauth-relay.test.ts
+  s_1900bb15a7199a::t_be0f0b7434acfb 207-219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1dbecc0cb8dec96c7cd190d8b0c7a47edbbb0ec7",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
