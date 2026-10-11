@@ -227,7 +227,7 @@ describe("Caddy route rendering", () => {
     } finally { await cleanup(); }
   });
 
-  it("keeps a service route while a process of its group outlives the leader", async () => {
+  it.skipIf(process.platform === "win32")("keeps a service route while a process of its group outlives the leader", async () => {
     const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-service-group-");
     // The leader starts a member of its own process group, prints its PID and exits.
     const leader = spawn(process.execPath, ["-e", `const member = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { stdio: "ignore" });

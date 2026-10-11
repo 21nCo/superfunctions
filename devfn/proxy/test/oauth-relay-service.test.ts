@@ -53,7 +53,7 @@ async function registeredState(): Promise<string> {
 const sibling: ProxyRoute = { id: "owner-a:app:0", instanceId: "owner-a", hostname: `app-a.${DOMAIN}`, targetHost: "127.0.0.1", targetPort: 41234, tls: "internal",
   updatedAt: "2026-01-01T00:00:00.000Z", registeredDomain: DOMAIN, projectId: "fixture", repositoryIdentity: "repo" };
 
-it("starts one relay, survives its crash without touching sibling routes, and stops it by verified identity", async () => {
+it.skipIf(process.platform === "win32")("starts one relay, survives its crash without touching sibling routes, and stops it by verified identity", async () => {
   const stateDir = await registeredState();
   const proxy = fakeProxy([sibling]);
   await expect(startOAuthRelay({ stateDir, domain: "other.example.test", projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
@@ -99,7 +99,7 @@ it("starts one relay, survives its crash without touching sibling routes, and st
   expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, routeActive: false });
 }, 60_000);
 
-it("recovers a crashed relay's route only, and refuses to guess when its record is unreadable", async () => {
+it.skipIf(process.platform === "win32")("recovers a crashed relay's route only, and refuses to guess when its record is unreadable", async () => {
   const stateDir = await registeredState();
   const proxy = fakeProxy([sibling]);
   const started = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
@@ -376,6 +376,35 @@ it("keeps a failed start's relay running, recorded and claimed when its activate
   expect(proxy.routes).toEqual([sibling]);
 }, 60_000);
 
+it.skipIf(process.platform === "win32")("names a failed start's relay that does not stop, and keeps its record and claim with no route", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  const wrapper = path.join(stateDir, "relay-group.cjs");
+  // The recorded relay leads a group with the relay entry; once the leader dies, the group cannot be verified as the relay's.
+  await writeFile(wrapper, `const { spawn } = require("node:child_process");
+spawn(process.argv[2], process.argv.slice(3), { stdio: "inherit" });
+`);
+  const failing: OAuthRelayProxy = {
+    ...proxy,
+    async upsert() {
+      const service = (await readRelayService(stateDir))!;
+      cleanup.push(async () => { try { process.kill(-service.pid, "SIGKILL"); } catch { /* stopped */ } });
+      process.kill(service.pid, "SIGKILL");
+      for (let attempt = 0; attempt < 100 && await processIdentityStatus(service.pid, service.birthSignature) === "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      throw Object.assign(new Error("The route state could not be committed."), { code: "DEVFN_PROXY_RELOAD_FAILED" });
+    },
+  };
+  const error = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy: failing,
+    command: [process.execPath, wrapper, ...RELAY_COMMAND] }).catch((caught: unknown) => caught);
+  const service = (await readRelayService(stateDir))!;
+  expect(error).toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE",
+    message: expect.stringMatching(new RegExp(`could not be committed.*did not stop.*PID ${service.pid}\\b.*record and listener claim.*devfn oauth-relay stop`)) });
+  expect(proxy.routes).toEqual([sibling]);
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+  expect((await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state)).toEqual(["ready"]);
+  expect((await registry.read()).allocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => [item.port, item.state])).toEqual([[service.port, "active"]]);
+}, 60_000);
+
 it("does not declare the relay stopped while a route or claim records a live relay the service record does not name", async () => {
   const stateDir = await registeredState();
   const live = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { detached: true, stdio: "ignore" });
@@ -441,7 +470,7 @@ setInterval(() => undefined, 1000);
   expect(recorded || !alive()).toBe(true);
 }, 60_000);
 
-it("counts the relay stopped only when its whole process group is gone", async () => {
+it.skipIf(process.platform === "win32")("counts the relay stopped only when its whole process group is gone", async () => {
   const stateDir = await registeredState();
   const proxy = fakeProxy([sibling]);
   const wrapper = path.join(stateDir, "relay-group.cjs");

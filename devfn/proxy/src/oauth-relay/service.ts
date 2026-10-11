@@ -311,11 +311,14 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
           throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `The relay route could not be activated (${error instanceof Error ? error.message : String(error)}) and its removal could not be confirmed (${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}). The relay (PID ${service.pid}) keeps running with its record and listener claim; run devfn oauth-relay stop once the proxy is available.`);
         }
       }
-      // No relay route remains, so the new relay's process, record and claim go.
-      if (!service || await stopRelayProcess(service) === undefined) {
-        if (service) await rm(relayPaths(input.stateDir).service, { force: true });
-        await registryOf(input.stateDir).release({ invocationId, errorCode: "DEVFN_START_FAILED" });
+      // No relay route remains, so the new relay's process, record and claim
+      // go; a relay that does not stop keeps its record and claim for stop.
+      const running = service ? await stopRelayProcess(service) : undefined;
+      if (running) {
+        throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `The relay could not be started (${error instanceof Error ? error.message : String(error)}) and its process did not stop (${running}). The relay (PID ${service!.pid}) keeps its record and listener claim and has no route; run devfn oauth-relay stop once it can be stopped.`);
       }
+      if (service) await rm(relayPaths(input.stateDir).service, { force: true });
+      await registryOf(input.stateDir).release({ invocationId, errorCode: "DEVFN_START_FAILED" });
       throw error;
     }
     // A crashed relay's claim is covered by this one, so it ends without being retained.
