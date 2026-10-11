@@ -3,11 +3,11 @@ import { canonicalDigest, canonicalJson, compareCodeUnits, MAX_JSON_DEPTH, snaps
 import {
   containsCredentialIdentifier,
   containsCredentialValue,
-  hasUrlUserInfo,
   isCredentialKey,
   pointerSegment,
   REDACTED,
   redactCredentialValues,
+  removedServerUrlSpans,
   sanitizePointer,
   sanitizeReport,
   stripUrlCredentials,
@@ -58,12 +58,18 @@ const OBJECT_KEYWORDS = new Set(["xml", "externalDocs"]);
  * (an unrecognized member could hold a default under another name) is dropped.
  */
 const CREDENTIAL_FIELD_KEYWORDS = new Set([
-  "type", "format", "title", "description", "$comment", "$id", "$schema", "$anchor", "$dynamicAnchor", "$dynamicRef",
+  "type", "format", "title", "description", "$comment", "$id", "$schema", "$anchor", "$dynamicAnchor",
   "multipleOf", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum", "maxLength", "minLength", "pattern",
   "maxItems", "minItems", "uniqueItems", "maxContains", "minContains", "maxProperties", "minProperties",
   "nullable", "readOnly", "writeOnly", "deprecated", "contentEncoding", "contentMediaType", "discriminator",
   ...NAME_KEYWORDS, ...OBJECT_KEYWORDS,
 ]);
+/**
+ * Schema keywords holding a reference. `$dynamicRef` and `$recursiveRef` are
+ * checked and collected like `$ref`: a copied reference whose target is not a
+ * catalog schema would dangle.
+ */
+const REFERENCE_KEYWORDS = new Set(["$ref", "$dynamicRef", "$recursiveRef"]);
 const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
 const SCHEMA_KEYWORDS = new Set([
   "items",
@@ -148,14 +154,56 @@ function describeValue(value: unknown): string {
   return value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
 }
 
-/** A server variable value without user info: everything up to its last "@". */
-function withoutUserInfo(value: string): string {
-  return value.slice(value.lastIndexOf("@") + 1);
+interface Expansion {
+  text: string;
+  /** Where each substituted value lands in `text`. */
+  spans: Array<{ name: string; start: number; end: number }>;
 }
 
-/** Expands `{name}` server variables; undeclared ones stay as written. */
-function expandServerUrl(url: string, values: Record<string, string>): string {
-  return url.replace(/\{([^{}]*)\}/g, (placeholder, name: string) => (Object.hasOwn(values, name) ? values[name] : placeholder));
+/** Expands `{name}` server variables, recording where each value lands; undeclared ones stay as written. */
+function expandServerUrl(url: string, values: Record<string, string>): Expansion {
+  const spans: Expansion["spans"] = [];
+  let text = "";
+  let copied = 0;
+  for (const match of url.matchAll(/\{([^{}]*)\}/g)) {
+    text += url.slice(copied, match.index);
+    copied = match.index + match[0].length;
+    const name = match[1];
+    if (!Object.hasOwn(values, name)) {
+      text += match[0];
+      continue;
+    }
+    spans.push({ name, start: text.length, end: text.length + values[name].length });
+    text += values[name];
+  }
+  return { text: text + url.slice(copied), spans };
+}
+
+/**
+ * Judges the value of server variable `name` in `template` expanded with
+ * `values` (every other variable at its own value, so values that only
+ * together form user info or a query are judged together). A value that
+ * touches nothing the catalog removes is kept. User info lying wholly inside
+ * the value is cut out of it (`svc:pw@api.test` as `{authority}` becomes
+ * `api.test`, `https://svc:pw@api.test` as `{base}` becomes
+ * `https://api.test`). Otherwise every variable touching the removed part is
+ * hidden.
+ */
+function judgeServerValue(template: string, values: Record<string, string>, name: string): { value: string; cut: boolean } | { hide: string[] } {
+  const expansion = expandServerUrl(template, values);
+  const overlaps = (span: { start: number; end: number }, part: { start: number; end: number }) => span.start < part.end && span.end > part.start;
+  const own = expansion.spans.filter((span) => span.name === name);
+  const hits = removedServerUrlSpans(expansion.text).filter((part) => own.some((span) => overlaps(span, part)));
+  if (hits.length === 0) return { value: values[name], cut: false };
+  const [part] = hits;
+  const occurrence = own.find((span) => span.start <= part.start && span.end >= part.end);
+  if (hits.length === 1 && part.userInfo && occurrence && expansion.spans.every((span) => span === occurrence || !overlaps(span, part))) {
+    const raw = values[name];
+    const value = raw.slice(0, part.start - occurrence.start) + raw.slice(part.end - occurrence.start);
+    const retry = judgeServerValue(template, { ...values, [name]: value }, name);
+    return "hide" in retry ? retry : { value: retry.value, cut: true };
+  }
+  return { hide: Array.from(new Set(expansion.spans.filter((span) => hits.some((hit) => overlaps(span, hit))).map((span) => span.name))) };
 }
 
 /** Escapes a component name for a `$ref` emitted into the catalog (diagnostic pointers use pointerSegment). */
@@ -506,7 +554,7 @@ class CatalogBuilder {
       if (key === "example" || key === "examples" || key.startsWith("x-")) continue;
       if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
-      } else if (key === "$ref") {
+      } else if (REFERENCE_KEYWORDS.has(key)) {
         const ref = this.schemaRef(child, childPointer, secret);
         if (ref !== null) setOwn(output, key, ref);
       } else if (SCHEMA_MAP_KEYWORDS.has(key)) {
@@ -1003,27 +1051,11 @@ class CatalogBuilder {
       }
       const template = server.url;
       const url = this.url(template, `${serverPointer}/url`, { dropQuery: true }) as string;
-      const variables: CatalogServer["variables"] = {};
       const declared = this.member(server, "variables", serverPointer, OBJECT) ?? {};
-      // Judged against the original template: a variable with an occurrence in the removed user info, query or
-      // fragment (or none left in the emitted URL) only fills a removed part, so its values may be credentials.
-      const removed = (name: string) => {
-        const placeholder = `{${name}}`;
-        const kept = url.split(placeholder).length - 1;
-        return kept === 0 || kept < template.split(placeholder).length - 1;
-      };
-      // Other variables expand to their defaults without user info, so a value is judged only by the user info it adds itself.
-      const neutral: Record<string, string> = {};
-      for (const [name, variable] of Object.entries(declared)) {
-        if (isRecord(variable) && typeof variable.default === "string") setOwn(neutral, name, withoutUserInfo(variable.default));
-      }
-      /** A variable value that puts user info into the expanded URL (`svc:pw@host` as `{authority}`) loses it. */
-      const value = (name: string, raw: string, valuePointer: string): string => {
-        if (!hasUrlUserInfo(expandServerUrl(url, { ...neutral, [name]: raw }))) return this.text(raw, valuePointer) as string;
-        this.report("CREDENTIAL_REDACTED", valuePointer, `Removed the user info that server variable "${name}" puts into the URL at ${serverPointer}/url; URLs never carry user info.`, { severity: "warning" });
-        return this.text(withoutUserInfo(raw), valuePointer) as string;
-      };
-      for (const name of Object.keys(declared).sort(compareCodeUnits)) {
+      const names = Object.keys(declared).sort(compareCodeUnits);
+      const defaults: Record<string, string> = {};
+      const enums = new Map<string, string[] | null>();
+      for (const name of names) {
         const variable = declared[name];
         const variablePointer = `${serverPointer}/variables/${pointerSegment(name)}`;
         this.identifier(name, variablePointer, "Server variable name");
@@ -1031,18 +1063,67 @@ class CatalogBuilder {
           this.report("INVALID_SPEC", variablePointer, `Server variable "${name}" at ${serverPointer} needs a string default.`);
           continue;
         }
-        const values = this.member(variable, "enum", variablePointer, STRING_LIST) ?? null;
-        const hidden = isCredentialKey(name) || removed(name);
+        setOwn(defaults, name, variable.default);
+        enums.set(name, this.member(variable, "enum", variablePointer, STRING_LIST) ?? null);
+      }
+      const valid = names.filter((name) => Object.hasOwn(defaults, name));
+      // Judged against the original template: a variable with an occurrence in the removed user info, query or
+      // fragment (or none left in the emitted URL) only fills a removed part, so its values may be credentials.
+      const removed = (name: string) => {
+        const placeholder = `{${name}}`;
+        const kept = url.split(placeholder).length - 1;
+        return kept === 0 || kept < template.split(placeholder).length - 1;
+      };
+      const hidden = new Set(valid.filter((name) => isCredentialKey(name) || removed(name)));
+      // Values are judged in the URL expanded with all defaults, then with each enum value in turn (other variables at
+      // their judged defaults), so values that only together form user info, a query or a fragment are caught.
+      const cuts = new Set<string>();
+      const judged: Record<string, string> = { ...defaults };
+      for (const name of valid.filter((name) => !hidden.has(name))) {
+        const verdict = judgeServerValue(template, defaults, name);
+        if ("hide" in verdict) {
+          verdict.hide.forEach((other) => hidden.add(other));
+        } else if (verdict.cut) {
+          setOwn(judged, name, verdict.value);
+          cuts.add(`${name}/default`);
+        }
+      }
+      const enumValues = new Map<string, string[]>();
+      for (const name of valid.filter((name) => !hidden.has(name) && enums.get(name))) {
+        enumValues.set(name, enums.get(name)!.map((entry, index) => {
+          const verdict = judgeServerValue(template, { ...judged, [name]: entry }, name);
+          if ("hide" in verdict) {
+            verdict.hide.forEach((other) => hidden.add(other));
+            return entry;
+          }
+          if (verdict.cut) cuts.add(`${name}/enum/${index}`);
+          return verdict.value;
+        }));
+      }
+      const variables: CatalogServer["variables"] = {};
+      for (const name of valid) {
+        const variable = declared[name] as Record<string, unknown>;
+        const variablePointer = `${serverPointer}/variables/${pointerSegment(name)}`;
+        const values = enums.get(name) ?? null;
+        const hide = hidden.has(name);
         if (isCredentialKey(name)) {
           this.report("CREDENTIAL_REDACTED", variablePointer, `Replaced the values of credential-named server variable "${name}"; credentials never belong in server URLs.`, { severity: "warning" });
-        } else if (hidden) {
+        } else if (hide) {
           const why = `server variable "${name}" fills user info, a query or a fragment of ${serverPointer}/url, which the catalog removes`;
           this.report("CREDENTIAL_REDACTED", `${variablePointer}/default`, `Replaced the default of ${why}.`, { severity: "warning" });
           values?.forEach((_, valueIndex) => this.report("CREDENTIAL_REDACTED", `${variablePointer}/enum/${valueIndex}`, `Removed enum value ${valueIndex} of ${why}.`, { severity: "warning" }));
         }
+        /** A value that put user info into the URL lost it; the rest is copied as text. */
+        const value = (raw: string, field: string): string => {
+          const valuePointer = `${variablePointer}/${field}`;
+          if (cuts.has(`${name}/${field}`)) {
+            this.report("CREDENTIAL_REDACTED", valuePointer, `Removed the user info that server variable "${name}" puts into the URL at ${serverPointer}/url; URLs never carry user info.`, { severity: "warning" });
+          }
+          return this.text(raw, valuePointer) as string;
+        };
         setOwn(variables, name, {
-          default: hidden ? REDACTED : value(name, variable.default, `${variablePointer}/default`),
-          enum: values && !hidden ? values.map((entry, valueIndex) => value(name, entry, `${variablePointer}/enum/${valueIndex}`)) : null,
+          default: hide ? REDACTED : value(judged[name], "default"),
+          enum: values && !hide ? enumValues.get(name)!.map((entry, valueIndex) => value(entry, `enum/${valueIndex}`)) : null,
           description: this.text(own(variable, "description"), `${variablePointer}/description`),
         });
       }

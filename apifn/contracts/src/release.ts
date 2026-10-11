@@ -1,6 +1,6 @@
 import { canonicalDigest, canonicalJson, compareCodeUnits, snapshotPlainData } from "./canonical.js";
 import { containsCredentialIdentifier, sanitizeReport } from "./credentials.js";
-import { API_ID_PATTERN, OPERATION_ID_PATTERN, TARGET_PATTERN, VERSION_PATTERN } from "./manifest.js";
+import { API_ID_PATTERN, OPERATION_ID_PATTERN, POLICY_REF_PATTERN, TARGET_PATTERN, VERSION_PATTERN } from "./manifest.js";
 import {
   CATALOG_VERSION,
   RELEASE_DESCRIPTOR_VERSION,
@@ -38,6 +38,7 @@ const RULES = {
   target: { pattern: TARGET_PATTERN, maxLength: 32, what: "a target such as typescript" },
   packageName: { pattern: PACKAGE_NAME_PATTERN, maxLength: 214, what: "a registry package name" },
   packageVersion: { pattern: VERSION_PATTERN, maxLength: 64, what: "a registry version string" },
+  executionPolicyRef: { pattern: POLICY_REF_PATTERN, maxLength: 128, what: "an execution policy reference" },
 } satisfies Record<string, FieldRule>;
 
 /** True for a string that satisfies the field's schema bounds and holds no credential. */
@@ -109,6 +110,8 @@ export function createReleaseDescriptor(input: CreateReleaseInput): CreateReleas
         fail(pointer, `Operation ${pointer} needs sdk.include, sdk.excludedTargets and agent.expose as built by buildOperationCatalog.`);
         return;
       }
+      // Exposure without a policy is never listed in agent tools: method and schema imply no authorization (operation-catalog.v1 requires it too).
+      if (agent.expose && !check((operation as Record<string, unknown>).executionPolicyRef, `${pointer}/executionPolicyRef`, RULES.executionPolicyRef)) return;
       operations.push({ id, sdkInclude: sdk.include, excludedTargets: excluded as string[], agentExpose: agent.expose });
     });
   }

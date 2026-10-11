@@ -6,7 +6,7 @@ export const OPERATION_ID_PATTERN = /^[a-z][A-Za-z0-9]*(?:\.[a-z][A-Za-z0-9]*)*$
 export const NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
 export const TARGET_PATTERN = /^[a-z][a-z0-9-]*$/;
 export const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
-const POLICY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
+export const POLICY_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 const METHODS = new Set(["get", "put", "post", "delete", "options", "head", "patch", "trace"]);
 
 /** Media types the catalog can describe for generated clients. */

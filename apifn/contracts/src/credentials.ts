@@ -76,8 +76,10 @@ const PLAIN_VALUE = new RegExp(`^(?:${PLACEHOLDER.source}|[^\\s&,;"'\`)\\]}])*`)
 const SCHEME_ONLY = new RegExp(`^(?:${AUTH_SCHEMES})$`, "i");
 /** A YAML block scalar indicator (`|`, `>-`, `|2+`, ...) or nothing, ending the key's line: the value is on the indented lines below. */
 const BLOCK_HEAD = /^(?:[|>](?:[1-9]?[+-]?|[+-]?[1-9]?))?[ \t]*(?:#[^\r\n]*)?(?=\r?\n)/;
-/** An XML element named like a credential: `<password>...</password>`. */
-const XML_ELEMENT = /<([A-Za-z][A-Za-z0-9_.:-]*)>([^<]*)<\/\1>/g;
+/** An XML opening tag: its name, then any attributes. */
+const XML_OPEN_TAG = /<([A-Za-z_][A-Za-z0-9_.:-]*)(\s[^<>]*)?>/g;
+/** CDATA delimiters, removed before an element value is judged as placeholders. */
+const CDATA_DELIMITERS = /<!\[CDATA\[|\]\]>/g;
 
 /**
  * End of a YAML block value whose first line break is at `from`: every
@@ -232,9 +234,77 @@ function redactKeyValues(text: string, identifier: boolean): string {
     output += `${text.slice(copied, begin)}${quote}${scheme}${REDACTED}${quote}`;
     copied = end;
   }
-  return (output + text.slice(copied)).replace(XML_ELEMENT, (element, name: string, value: string) =>
-    isCredentialKey(name) && !isPlaceholderValue(value, false) && value.trim() !== "" ? `<${name}>${REDACTED}</${name}>` : element
-  );
+  return output + text.slice(copied);
+}
+
+/**
+ * XML elements named like a credential: the value runs from the end of the
+ * opening tag (attributes included) to the matching closing tag, CDATA
+ * included. Without a closing tag the value fails closed to the end of the
+ * text, unless the tag is a bare placeholder such as `<token>` followed by
+ * a space, punctuation or the end of the text.
+ */
+function redactXmlElements(text: string): string {
+  let output = "";
+  let copied = 0;
+  // Per element name, the last closing-tag search: a later search from the same or a later offset reuses it, so the scan stays linear.
+  const closings = new Map<string, { from: number; at: number; length: number }>();
+  const closing = (name: string, from: number) => {
+    const cached = closings.get(name);
+    if (cached && cached.from <= from && (cached.at === -1 || cached.at >= from)) return cached;
+    const pattern = new RegExp(`</${name.replace(/[.]/g, "\\.")}\\s*>`, "g");
+    pattern.lastIndex = from;
+    const match = pattern.exec(text);
+    const found = { from, at: match ? match.index : -1, length: match ? match[0].length : 0 };
+    closings.set(name, found);
+    return found;
+  };
+  const pattern = new RegExp(XML_OPEN_TAG.source, "g");
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    const [tag, name, attributes = ""] = match;
+    if (!isCredentialKey(name)) continue;
+    const start = match.index + tag.length;
+    const close = closing(name, start);
+    if (close.at === -1 && !attributes.includes("=") && /^(?:$|[\s"'`.,;:!?)\]}])/.test(text.slice(start, start + 1))) continue;
+    const end = close.at === -1 ? text.length : close.at;
+    pattern.lastIndex = close.at === -1 ? text.length : close.at + close.length;
+    const value = text.slice(start, end).replace(CDATA_DELIMITERS, "");
+    if (value.trim() === "" || isPlaceholderValue(value, false)) continue;
+    output += `${text.slice(copied, start)}${REDACTED}`;
+    copied = end;
+  }
+  return output + text.slice(copied);
+}
+
+/** In identifiers, a namespace segment (`<key>:<segment>`) whose key is a credential key. */
+const NAMESPACE_SEGMENT = /(?<![A-Za-z0-9_.%-])([A-Za-z0-9_.%-]+):(?!\/\/)([A-Za-z0-9_.~+%-]+)/g;
+
+/**
+ * True when an identifier segment after a credential-key namespace looks like
+ * a value rather than a name: one of its words (split at `_`, `.` and `-`) is
+ * token-shaped or has 16+ characters. `password:too_short`, `token:expired`
+ * and `secrets:read` are names; `password:hunter2SEED99` is not.
+ */
+function isTokenSegment(segment: string): boolean {
+  return segment.split(/[_.-]+/).some((word) => word.length >= 16 || /[+~%]/.test(word) || isTokenShaped(word));
+}
+
+/** Redacts token-shaped segments after a credential-key namespace in an identifier. */
+function redactNamespaceSegments(text: string): string {
+  const pattern = new RegExp(NAMESPACE_SEGMENT.source, "g");
+  let output = "";
+  let copied = 0;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    const [, key, segment] = match;
+    const start = match.index + key.length + 1;
+    if (!isCredentialKey(key) || !isTokenSegment(segment)) {
+      pattern.lastIndex = start; // The segment can itself be the key of the next namespace (`a:password:...`).
+      continue;
+    }
+    output += `${text.slice(copied, start)}${REDACTED}`;
+    copied = start + segment.length;
+  }
+  return output + text.slice(copied);
 }
 
 /**
@@ -300,7 +370,7 @@ function redact(value: string, identifier: boolean): string {
         if (accept && !accept(groups)) return match;
         return replace ? replace(groups) : REDACTED;
       }),
-    redactKeyValues(value, identifier)
+    identifier ? redactNamespaceSegments(redactXmlElements(redactKeyValues(value, true))) : redactXmlElements(redactKeyValues(value, false))
   );
 }
 
@@ -356,6 +426,21 @@ export function stripUrlCredentials(url: string, options: { dropQuery?: boolean 
   const [, prefix, authority, path, query] = match;
   const host = authority.slice(authority.lastIndexOf("@") + 1);
   return joinQuery(`${prefix}${host}${path}`, query, options.dropQuery);
+}
+
+/**
+ * The spans that `stripUrlCredentials(url, { dropQuery: true })` removes:
+ * the user info through its last "@", and everything from the first "?" or
+ * "#" on. Lets a caller tell which part of an expanded URL template is gone.
+ */
+export function removedServerUrlSpans(url: string): Array<{ start: number; end: number; userInfo: boolean }> {
+  const spans: Array<{ start: number; end: number; userInfo: boolean }> = [];
+  const match = URL_PARTS.exec(url);
+  const at = match ? match[2].lastIndexOf("@") : -1;
+  if (match && at !== -1) spans.push({ start: match[1].length, end: match[1].length + at + 1, userInfo: true });
+  const tail = url.search(/[?#]/);
+  if (tail !== -1) spans.push({ start: tail, end: url.length, userInfo: false });
+  return spans;
 }
 
 function joinQuery(base: string, query: string | undefined, dropQuery = false): string {

@@ -127,6 +127,25 @@ describe("schema and runtime agreement", () => {
     }
   );
 
+  // Agent exposure needs an execution policy in the published catalog schema and in createReleaseDescriptor,
+  // not only in buildOperationCatalog: [label, agent.expose, executionPolicyRef, valid].
+  it.each<[string, boolean, string | null, boolean]>([
+    ["exposed with a policy", true, "policy.read-only", true],
+    ["exposed without a policy", true, null, false],
+    ["not exposed, no policy", false, null, true],
+  ])("operation %s: the catalog schema and the release agree", (_label, expose, executionPolicyRef, valid) => {
+    const catalog = clone(fixture("catalog/catalog.json"));
+    for (const operation of catalog.operations) Object.assign(operation, { agent: { expose }, executionPolicyRef });
+    expect(check("operation-catalog", catalog)).toBe(valid);
+    const { descriptor, diagnostics } = createReleaseDescriptor({
+      catalog: catalog as CreateReleaseInput["catalog"],
+      generator: { name: "gen", version: "1.0.0" },
+      artifacts: [{ kind: "agent-tools", target: "mcp", package: { name: "tools", version: "1.0.0" } }],
+    });
+    expect(descriptor !== null).toBe(valid);
+    if (!valid) expect(diagnostics.map((diagnostic) => diagnostic.pointer)).toContain("/catalog/operations/0/executionPolicyRef");
+  });
+
   // [errorCode, valid at runtime, valid by the schema]. errorCode is an identifier, so ":" is a namespace
   // separator; credential values are checked only at runtime, as the schema description documents.
   it.each<[string, boolean, boolean]>([
@@ -135,6 +154,9 @@ describe("schema and runtime agreement", () => {
     ["rate:limited", true, true],
     ["token=abc123", false, false],
     ["sk_live_abcdefgh12345678", false, true],
+    ["secrets:read", true, true],
+    ["password:hunter2SEED99", false, true],
+    ["api_key:AbCdEf123456Ghij", false, true],
   ])("failure.errorCode %s: identifier rule at runtime, pattern in the schema", (errorCode, runtime, schemaValid) => {
     const candidate = { ...clone(event), failure: { ...event.failure, errorCode } };
     expect(validateClientFailureEvent(candidate).ok).toBe(runtime);

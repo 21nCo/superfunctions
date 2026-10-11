@@ -21,6 +21,8 @@ const LITERAL_KEYWORDS = new Set(["default", "const", "enum"]);
  * mapping target names a schema in catalog.schemas, and every security
  * requirement names a scheme in catalog.securitySchemes.
  */
+const REFERENCE_KEYWORDS = new Set(["$ref", "$dynamicRef", "$recursiveRef"]);
+
 function closureViolations(catalog: OperationCatalog): string[] {
   const violations: string[] = [];
   const target = (ref: string, at: string) => {
@@ -32,7 +34,7 @@ function closureViolations(catalog: OperationCatalog): string[] {
     if (!value || typeof value !== "object") return;
     for (const [key, child] of Object.entries(value)) {
       if (LITERAL_KEYWORDS.has(key)) continue;
-      if (key === "$ref" && typeof child === "string") target(child, at);
+      if (REFERENCE_KEYWORDS.has(key) && typeof child === "string") target(child, at);
       else if (key === "discriminator" && child && typeof child === "object" && "mapping" in child) {
         for (const [value, ref] of Object.entries((child as { mapping: Record<string, string> }).mapping)) target(ref, `${at}/discriminator/mapping/${value}`);
       } else walk(child, `${at}/${key}`);
@@ -692,6 +694,56 @@ describe("OpenAPI fields that change client behavior", () => {
     expect(redacted).toContain(field === "default" ? `${pointer}/variables/v/default` : `${pointer}/variables/v/enum/1`);
   });
 
+  // Values are judged together: variables that only jointly form user info, a query or a fragment are hidden as a group.
+  const COMPOSED_SEED = "SEEDEDjoin0070";
+  const COMPOSITIONS: Array<[string, string, (field: "default" | "enum") => Record<string, unknown>, string[]]> = [
+    ["prefix+suffix user info", "https://{prefix}{suffix}/v1", (field) => ({
+      prefix: field === "default" ? { default: `svc:${COMPOSED_SEED}` } : { default: "api", enum: ["api", `svc:${COMPOSED_SEED}`] },
+      suffix: { default: "@api.example.test" },
+    }), ["prefix", "suffix"]],
+    ["host carrying ?key=", "https://{host}/{p}", (field) => ({
+      host: { default: "api.example.test?api_key=" },
+      p: field === "default" ? { default: COMPOSED_SEED } : { default: "v1", enum: ["v1", COMPOSED_SEED] },
+    }), ["host", "p"]],
+    ["host carrying #", "https://{host}/{p}", (field) => ({
+      host: { default: "api.example.test#" },
+      p: field === "default" ? { default: COMPOSED_SEED } : { default: "v1", enum: ["v1", COMPOSED_SEED] },
+    }), ["host", "p"]],
+  ];
+  const COMPOSED_CELLS = COMPOSITIONS.flatMap(([composition, url, variables, hidden]) =>
+    SERVER_SCOPES.flatMap(([scope, pointer, place]) =>
+      (["default", "enum"] as const).map((field) => [composition, scope, field, url, variables(field), hidden, pointer, place] as const)
+    )
+  );
+
+  it.each(COMPOSED_CELLS)("hides server variables that together fill %s (%s server, %s)", (_composition, _scope, _field, url, variables, hidden, pointer, place) => {
+    const result = build((nextSpec) => place(nextSpec, { url, variables }));
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(COMPOSED_SEED);
+    const redacted = only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer);
+    for (const name of hidden) expect(redacted).toContain(`${pointer}/variables/${name}/default`);
+  });
+
+  it("removes only the user info from a whole-URL variable value", () => {
+    const result = build((nextSpec) => {
+      nextSpec.servers = [{ url: "{base}", variables: { base: { default: `https://svc:${COMPOSED_SEED}@api.example.test`, enum: [`https://svc:${COMPOSED_SEED}@api.example.test`, "https://eu.example.test"] } } }];
+    });
+    expect(canonicalJson(result)).not.toContain(COMPOSED_SEED);
+    expect(result.catalog!.servers[0].variables.base).toEqual({ default: "https://api.example.test", enum: ["https://api.example.test", "https://eu.example.test"], description: null });
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual(["/servers/0/variables/base/default", "/servers/0/variables/base/enum/0"]);
+  });
+
+  it("keeps the values of a scheme and host variable verbatim", () => {
+    const result = build((nextSpec) => {
+      nextSpec.servers = [{ url: "{scheme}://{host}", variables: { scheme: { default: "https", enum: ["https", "http"] }, host: { default: "api.example.test" } } }];
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.catalog!.servers[0].variables).toEqual({
+      host: { default: "api.example.test", enum: null, description: null },
+      scheme: { default: "https", enum: ["https", "http"], description: null },
+    });
+  });
+
   it("keeps the values of a variable used only in the host or path", () => {
     const result = build((nextSpec) => {
       nextSpec.servers = [{ url: "https://{host}/{base}", variables: { host: { default: "api.example.test", enum: ["api.example.test", "eu.example.test"] }, base: { default: "v1" } } }];
@@ -1027,6 +1079,31 @@ describe("component schema closure", () => {
     expect(result.diagnostics).toEqual([]);
     expect((result.catalog!.schemas.ProjectInput as any).properties.z).toEqual({ $ref: normal });
     expect(Object.hasOwn(result.catalog!.schemas, name)).toBe(true);
+  });
+
+  // $dynamicRef and $recursiveRef are references too: their targets join catalog.schemas or the build fails.
+  it.each(["$dynamicRef", "$recursiveRef"])("%s to a component schema is collected like $ref", (keyword) => {
+    const result = build((nextSpec) => {
+      nextSpec.components.schemas.ThingX = { type: "object", properties: { label: { type: "string" } } };
+      inputSchema(nextSpec).properties.thing = { [keyword]: "#/components/schemas/ThingX" };
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.thing).toEqual({ [keyword]: "#/components/schemas/ThingX" });
+    expect(result.catalog!.schemas.ThingX).toEqual({ type: "object", properties: { label: { type: "string" } } });
+  });
+
+  it.each([
+    ["$dynamicRef", "#/components/schemas/Nope"],
+    ["$dynamicRef", "#meta"],
+    ["$recursiveRef", "#"],
+  ])("UNRESOLVED_REF: %s %s does not name a catalog schema", (keyword, ref) => {
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.thing = { [keyword]: ref };
+    });
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: "UNRESOLVED_REF", pointer: `/components/schemas/ProjectInput/properties/thing/${keyword}` }),
+    ]);
   });
 
   it("UNRESOLVED_REF: a schema reference into a component instead of to it", () => {

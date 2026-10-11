@@ -261,7 +261,10 @@
         "agent",
         "deprecation",
         "executionPolicyRef"
-      ]
+      ],
+      "if": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"expose": {"const": true}}}}},
+      "then": {"type": "object", "properties": {"executionPolicyRef": {"type": "string"}}},
+      "$comment": "An operation exposed to agents always names an execution policy (AGENT_POLICY_REQUIRED); HTTP method and schema never imply authorization or idempotency."
     },
     "content": {
       "type": "object",

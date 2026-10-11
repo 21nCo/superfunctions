@@ -44,6 +44,10 @@ const TEXT_CASES: Array<[text: string, credential: boolean, secrets?: string[]]>
   // ...also on the next line (YAML block style) or as an XML element.
   ["password:\n  SEEDyaml01", true, ["SEEDyaml01"]],
   ["<password>SEEDxml01</password>", true, ["SEEDxml01"]],
+  // An XML value runs from the end of the opening tag (with attributes) to the closing tag, CDATA included; unclosed, to the end.
+  ['<password type="string">SEEDxml02</password>', true, ["SEEDxml02"]],
+  ["<password><![CDATA[SEEDxml03]]></password>", true, ["SEEDxml03"]],
+  ["<password>SEEDxml04 (retry)", true, ["SEEDxml04", "retry"]],
   // Connection strings and provider keys.
   ["Server=db;User Id=sa;Pwd=SEEDpwd01;", true, ["SEEDpwd01"]],
   ["AccountName=x;AccountKey=SEEDacct01+/==;", true, ["SEEDacct01"]],
@@ -73,6 +77,8 @@ const TEXT_CASES: Array<[text: string, credential: boolean, secrets?: string[]]>
   ["Cookie: session=<id>", false],
   ["token=<your token>", false],
   ['{"password": "<password>"}', false],
+  ["Send the <password> field, then retry", false],
+  ["<password><![CDATA[<password>]]></password>", false],
   ["https://api.example.test/v1?tenant=eu", false],
 ];
 
@@ -101,6 +107,40 @@ describe("credential text rules", () => {
     const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
     expect(result.ok).toBe(!credential);
     if (!result.ok) expect(result.issues.map((issue) => `${issue.path} ${issue.code}`)).toEqual(["/failure/message CREDENTIAL_VALUE"]);
+  });
+});
+
+// Identifiers use ":" as a namespace separator, but a token-shaped segment after a credential key is still a credential.
+// [identifier, credential]: each row drives containsCredentialIdentifier, a catalog scope name and failure.errorCode.
+const IDENTIFIER_CASES: Array<[string, boolean]> = [
+  ["token:expired", false],
+  ["password:too_short", false],
+  ["secrets:read", false],
+  ["rate:limited", false],
+  ["password:hunter2SEED99", true],
+  ["api_key:AbCdEf123456Ghij", true],
+  ["auth:password:hunter2SEED99", true],
+  ["token:abcdefghijklmnopqrst", true],
+  ["token=abc123", true],
+];
+
+describe("credential identifier rules", () => {
+  const spec = fixture("catalog/openapi.json");
+  const manifest = fixture("catalog/manifest.json");
+  const event = fixture("client-failure/valid/network-minimal.json");
+
+  it.each(IDENTIFIER_CASES)("%s -> credential: %s", (identifier, credential) => {
+    expect(containsCredentialIdentifier(identifier)).toBe(credential);
+
+    const nextSpec = clone(spec);
+    nextSpec.components.securitySchemes.oauth.flows.clientCredentials.scopes[identifier] = "Scope";
+    const { catalog, diagnostics } = buildOperationCatalog(nextSpec, clone(manifest));
+    const rejected = diagnostics.filter((diagnostic) => diagnostic.code === "INVALID_SPEC" && diagnostic.pointer.includes("/scopes/"));
+    expect(rejected.length > 0).toBe(credential);
+    if (!credential) expect(catalog!.securitySchemes.oauth.flows!.clientCredentials.scopes).toContain(identifier);
+
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, errorCode: identifier } });
+    expect(result.ok).toBe(!credential);
   });
 });
 
@@ -216,6 +256,11 @@ const LONG_TEXTS: Array<[string, string]> = [
   ["YAML block lines", `password: |\n${run("  a\n")}`],
   ["Digest parameters", `Authorization: Digest ${run('a="b", ')}`],
   ["at signs", run("x@")],
+  ["XML placeholder tags", run("<password> ")],
+  ["unclosed XML elements", run("<password>x")],
+  ["XML tags with attributes", run('<token a="b">')],
+  ["namespace chain", run("a:")],
+  ["credential namespaces", run("password:a")],
 ];
 
 describe("credential rules run in linear time", () => {
