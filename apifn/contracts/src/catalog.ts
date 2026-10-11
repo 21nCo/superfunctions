@@ -812,6 +812,10 @@ class CatalogBuilder {
         const resolved = this.deref(responses[status], `${entry.pointer}/responses/${pointerSegment(status)}`);
         if (!resolved) return [];
         const kind: CatalogResponse["kind"] = status === "default" ? "default" : /^[45]/.test(status) ? "error" : "success";
+        const headers = this.member(resolved.value, "headers", resolved.pointer, OBJECT, id);
+        if (headers && Object.keys(headers).some((name) => !name.startsWith("x-"))) {
+          this.report("UNSUPPORTED_SERIALIZATION", `${resolved.pointer}/headers`, `Response ${status} headers of operation "${id}" are not described in the catalog; generated clients will not expose them.`, { severity: "warning", operation: id });
+        }
         return [
           {
             status,
@@ -997,9 +1001,17 @@ class CatalogBuilder {
         this.report("INVALID_SPEC", serverPointer, `Server ${serverPointer} needs a non-empty url.`);
         return [];
       }
-      const url = this.url(server.url, `${serverPointer}/url`, { dropQuery: true }) as string;
+      const template = server.url;
+      const url = this.url(template, `${serverPointer}/url`, { dropQuery: true }) as string;
       const variables: CatalogServer["variables"] = {};
       const declared = this.member(server, "variables", serverPointer, OBJECT) ?? {};
+      // Judged against the original template: a variable with an occurrence in the removed user info, query or
+      // fragment (or none left in the emitted URL) only fills a removed part, so its values may be credentials.
+      const removed = (name: string) => {
+        const placeholder = `{${name}}`;
+        const kept = url.split(placeholder).length - 1;
+        return kept === 0 || kept < template.split(placeholder).length - 1;
+      };
       // Other variables expand to their defaults without user info, so a value is judged only by the user info it adds itself.
       const neutral: Record<string, string> = {};
       for (const [name, variable] of Object.entries(declared)) {
@@ -1019,13 +1031,18 @@ class CatalogBuilder {
           this.report("INVALID_SPEC", variablePointer, `Server variable "${name}" at ${serverPointer} needs a string default.`);
           continue;
         }
+        const values = this.member(variable, "enum", variablePointer, STRING_LIST) ?? null;
+        const hidden = isCredentialKey(name) || removed(name);
         if (isCredentialKey(name)) {
           this.report("CREDENTIAL_REDACTED", variablePointer, `Replaced the values of credential-named server variable "${name}"; credentials never belong in server URLs.`, { severity: "warning" });
+        } else if (hidden) {
+          const why = `server variable "${name}" fills user info, a query or a fragment of ${serverPointer}/url, which the catalog removes`;
+          this.report("CREDENTIAL_REDACTED", `${variablePointer}/default`, `Replaced the default of ${why}.`, { severity: "warning" });
+          values?.forEach((_, valueIndex) => this.report("CREDENTIAL_REDACTED", `${variablePointer}/enum/${valueIndex}`, `Removed enum value ${valueIndex} of ${why}.`, { severity: "warning" }));
         }
-        const values = this.member(variable, "enum", variablePointer, STRING_LIST) ?? null;
         setOwn(variables, name, {
-          default: isCredentialKey(name) ? REDACTED : value(name, variable.default, `${variablePointer}/default`),
-          enum: values && !isCredentialKey(name) ? values.map((entry, valueIndex) => value(name, entry, `${variablePointer}/enum/${valueIndex}`)) : null,
+          default: hidden ? REDACTED : value(name, variable.default, `${variablePointer}/default`),
+          enum: values && !hidden ? values.map((entry, valueIndex) => value(name, entry, `${variablePointer}/enum/${valueIndex}`)) : null,
           description: this.text(own(variable, "description"), `${variablePointer}/description`),
         });
       }
@@ -1056,7 +1073,11 @@ class CatalogBuilder {
       if (!resolved) continue;
       for (const method of METHODS) {
         const operation = own(resolved.value, method);
-        if (!isRecord(operation)) continue;
+        if (operation === undefined) continue;
+        if (!isRecord(operation)) {
+          this.report("INVALID_SPEC", `/paths/${pointerSegment(path)}/${method}`, `Operation ${method.toUpperCase()} ${path} must be an object, not ${describeValue(operation)}.`);
+          continue;
+        }
         operations.push({
           method,
           path,

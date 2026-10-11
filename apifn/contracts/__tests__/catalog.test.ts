@@ -660,6 +660,59 @@ describe("OpenAPI fields that change client behavior", () => {
     expect(result.catalog!.servers[0].variables.base).toEqual({ default: "users/@me", enum: ["users/@me", "v1"], description: null });
   });
 
+  // A variable is judged by where the original template uses it: values that fill the user info, query or fragment
+  // (which the catalog removes) are dropped, whatever the variable is called.
+  const SERVER_SEED = "SEEDEDvar0060";
+  const SERVER_POSITIONS: Array<[string, string]> = [
+    ["user", "https://{v}:x@api.example.test/v1"],
+    ["password", "https://svc:{v}@api.example.test/v1"],
+    ["whole user info", "https://{v}@api.example.test/v1"],
+    ["user info and path", "https://{v}@api.example.test/{v}"],
+    ["query value", "https://api.example.test/v1?api_key={v}"],
+    ["fragment", "https://api.example.test/v1#{v}"],
+    ["no occurrence", "https://api.example.test/v1"],
+  ];
+  const SERVER_SCOPES: Array<[string, string, (nextSpec: any, server: unknown) => void]> = [
+    ["root", "/servers/0", (nextSpec, server) => { nextSpec.servers = [server]; }],
+    ["path", `/paths/${LIST_ROUTE.replace(/\//g, "~1")}/servers/0`, (nextSpec, server) => { nextSpec.paths[LIST_ROUTE].servers = [server]; }],
+    ["operation", `/paths/${LIST_ROUTE.replace(/\//g, "~1")}/get/servers/0`, (nextSpec, server) => { nextSpec.paths[LIST_ROUTE].get.servers = [server]; }],
+  ];
+  const SERVER_CELLS = SERVER_POSITIONS.flatMap(([position, url]) =>
+    SERVER_SCOPES.flatMap(([scope, pointer, place]) =>
+      (["default", "enum"] as const).map((field) => [position, scope, field, url, pointer, place] as const)
+    )
+  );
+
+  it.each(SERVER_CELLS)("drops server variable values that fill the %s (%s server, %s)", (_position, _scope, field, url, pointer, place) => {
+    const variable = field === "default" ? { default: SERVER_SEED } : { default: "svc", enum: ["svc", SERVER_SEED] };
+    const result = build((nextSpec) => place(nextSpec, { url, variables: { v: variable } }));
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(SERVER_SEED);
+    const redacted = only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer);
+    expect(redacted).toContain(field === "default" ? `${pointer}/variables/v/default` : `${pointer}/variables/v/enum/1`);
+  });
+
+  it("keeps the values of a variable used only in the host or path", () => {
+    const result = build((nextSpec) => {
+      nextSpec.servers = [{ url: "https://{host}/{base}", variables: { host: { default: "api.example.test", enum: ["api.example.test", "eu.example.test"] }, base: { default: "v1" } } }];
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.catalog!.servers[0].variables).toEqual({
+      base: { default: "v1", enum: null, description: null },
+      host: { default: "api.example.test", enum: ["api.example.test", "eu.example.test"], description: null },
+    });
+  });
+
+  it("warns that response headers are not described", () => {
+    const result = build((nextSpec) => {
+      nextSpec.paths[LIST_ROUTE].get.responses["200"].headers = { "X-RateLimit-Remaining": { schema: { type: "integer" } } };
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: "UNSUPPORTED_SERIALIZATION", severity: "warning", pointer: `/paths/${LIST_ROUTE.replace(/\//g, "~1")}/get/responses/200/headers` }),
+    ]);
+  });
+
   it("INVALID_SPEC: parameters without a usable name or location, and path parameters missing from the template", () => {
     const result = build((nextSpec) => {
       nextSpec.paths[LIST_ROUTE].get.parameters.push({ name: "filter", in: "body", schema: { type: "string" } });
@@ -1063,6 +1116,11 @@ const WRONG_TYPED_MEMBERS: Array<[pointer: string, value: unknown]> = [
   [`/paths/${escape(LIST_ROUTE)}/get/responses`, []],
   [`/paths/${escape(LIST_ROUTE)}/get/responses/200/description`, 7],
   [`/paths/${escape(LIST_ROUTE)}/get/responses/200/content`, "application/json"],
+  [`/paths/${escape(LIST_ROUTE)}/get/responses/200/headers`, []],
+  [`/paths/${escape(LIST_ROUTE)}/get`, []],
+  [`/paths/${escape(LIST_ROUTE)}/get`, null],
+  [`/paths/${escape(LIST_ROUTE)}/get`, 1],
+  [`/paths/${escape(LIST_ROUTE)}/get`, "x"],
   [`/paths/${escape(LIST_ROUTE)}/get/responses/200/content/application~1json/encoding`, []],
   [`/paths/${escape(LIST_ROUTE)}/post/requestBody/content`, []],
   [`/paths/${escape(LIST_ROUTE)}/post/requestBody/required`, "yes"],
@@ -1103,6 +1161,15 @@ describe("wrong-typed members", () => {
     const result = build((nextSpec) => setAt(nextSpec, pointer, value));
     expect(result.catalog).toBeNull();
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "INVALID_SPEC", pointer }));
+  });
+
+  it.each([[[]], [null], [1], ["x"]])("INVALID_SPEC: an unbound operation %j is reported, never skipped", (value) => {
+    const result = buildOperationCatalog(
+      { openapi: "3.1.0", info: { title: "T", version: "1" }, paths: { "/a": { get: value } } },
+      { manifestVersion: 1, api: { id: "t", version: "1" }, operations: [] }
+    );
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_SPEC", pointer: "/paths/~1a/get" })]);
   });
 
   it("UNRESOLVED_REF: a schema reference reached through a parameter outside components", () => {

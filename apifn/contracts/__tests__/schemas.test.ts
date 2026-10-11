@@ -127,6 +127,20 @@ describe("schema and runtime agreement", () => {
     }
   );
 
+  // [errorCode, valid at runtime, valid by the schema]. errorCode is an identifier, so ":" is a namespace
+  // separator; credential values are checked only at runtime, as the schema description documents.
+  it.each<[string, boolean, boolean]>([
+    ["token:expired", true, true],
+    ["password:too_short", true, true],
+    ["rate:limited", true, true],
+    ["token=abc123", false, false],
+    ["sk_live_abcdefgh12345678", false, true],
+  ])("failure.errorCode %s: identifier rule at runtime, pattern in the schema", (errorCode, runtime, schemaValid) => {
+    const candidate = { ...clone(event), failure: { ...event.failure, errorCode } };
+    expect(validateClientFailureEvent(candidate).ok).toBe(runtime);
+    expect(check("client-failure-event", candidate)).toBe(schemaValid);
+  });
+
   // [label, JSON pointer, largest valid value]; one more character must fail in both.
   const EVENT_BOUNDS: Array<[string, string[], string]> = [
     ["eventId", ["eventId"], "e".repeat(64)],

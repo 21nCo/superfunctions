@@ -77,13 +77,21 @@ type Field =
       /** Semantic check after the pattern, such as a real calendar date. */
       valid?: { test: (value: string) => boolean; message: string };
       required?: boolean;
+      /** Pattern-restricted identifier: judged by the identifier rule, where `:` is a namespace separator. */
+      identifier?: boolean;
     }
   | { type: "integer"; min: number; max: number; required?: boolean }
   | { type: "boolean"; required?: boolean }
   | { type: "object"; fields: Record<string, Field>; required?: boolean };
 
-const text = (maxBytes: number, pattern?: RegExp, required = false): Field => ({ type: "string", maxBytes, pattern, required });
 const PRINTABLE = /^[\x21-\x7e]+$/;
+const text = (maxBytes: number, pattern?: RegExp, required = false): Field => ({
+  type: "string",
+  maxBytes,
+  pattern,
+  required,
+  identifier: pattern !== undefined && pattern !== PRINTABLE,
+});
 /**
  * RFC 3339 UTC timestamp with in-range fields; the published schema shares
  * this pattern, and the validator also rejects dates such as February 30.
@@ -160,12 +168,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-function checkString(value: string, path: string, maxBytes: number, issues: FailureEventIssue[]): boolean {
+function checkString(value: string, path: string, maxBytes: number, issues: FailureEventIssue[], identifier = false): boolean {
   if (byteLength(value) > maxBytes) {
     issues.push({ path, code: "TOO_LONG", message: `${path} exceeds ${maxBytes} UTF-8 bytes.` });
     return false;
   }
-  if (containsCredentialValue(value)) {
+  if (identifier ? containsCredentialIdentifier(value) : containsCredentialValue(value)) {
     issues.push({ path, code: "CREDENTIAL_VALUE", message: `${path} contains a credential-like value; strip tokens and secrets before reporting.` });
     return false;
   }
@@ -191,7 +199,7 @@ function checkField(value: unknown, field: Field, path: string, issues: FailureE
     issues.push({ path, code: "TYPE", message: `${path} must be a string.` });
   } else if (value.length === 0) {
     issues.push({ path, code: "PATTERN", message: `${path} must not be empty.` });
-  } else if (checkString(value, path, field.maxBytes, issues)) {
+  } else if (checkString(value, path, field.maxBytes, issues, field.identifier)) {
     if (field.values && !field.values.includes(value)) {
       issues.push({ path, code: "PATTERN", message: `${path} must be one of ${field.values.join(", ")}.` });
     } else if (field.pattern && !field.pattern.test(value)) {

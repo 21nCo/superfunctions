@@ -3,7 +3,7 @@
 // monorepo and checks that every public export loads from the installed
 // package (ESM and CJS) without workspace or source paths. Run after build.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,7 +62,7 @@ try {
   if (leaked.length > 0) throw new Error(`tarball contains source or test files: ${leaked.join(", ")}`);
 
   const consumer = path.join(workdir, "consumer");
-  execFileSync("mkdir", ["-p", consumer]);
+  mkdirSync(consumer, { recursive: true });
   writeFileSync(path.join(consumer, "package.json"), JSON.stringify({ name: "contracts-consumer", private: true, version: "0.0.0" }));
   run("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", tarball], consumer);
 
