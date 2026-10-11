@@ -255,6 +255,26 @@ const NAME_FIELD = new RegExp(
 );
 /** Fields that hold the value of the header, parameter or setting their container names; mirrors {@link NAME_FIELD}. */
 const VALUE_FIELD = /^(?:(?:(?:header|field|param(?:eter)?)[_-]?)?(?:values?|val)|content|data|default|examples?)$/i;
+/** The member names {@link NAME_FIELD} matches in text, for structured data. */
+const NAME_FIELD_KEY = /^(?:(?:(?:header|field|param(?:eter)?)[_-]?)?name|key|header|field|param(?:eter)?)$/i;
+
+/**
+ * The name/value rule of {@link redactKeyValues} for structured data: when a
+ * name field of `record` holds a credential key, its value fields are
+ * credentials unless they are empty, null or only placeholders. Returns those
+ * value-field keys, so `{name: "X-Api-Key", value: "..."}` is judged the same
+ * as an object or in text.
+ */
+export function credentialValueFields(record: Record<string, unknown>): string[] {
+  let header: boolean | undefined;
+  for (const [key, child] of Object.entries(record)) {
+    if (NAME_FIELD_KEY.test(key) && typeof child === "string" && isCredentialKey(child.trim())) header = header === true || isHeaderKey(child.trim());
+  }
+  if (header === undefined) return [];
+  return Object.entries(record)
+    .filter(([key, child]) => VALUE_FIELD.test(key) && child !== null && !(typeof child === "string" && (child.trim() === "" || isPlaceholderValue(child, header))))
+    .map(([key]) => key);
+}
 
 const CLOSERS: Record<string, string> = { "{": "}", "[": "]", "<": ">" };
 const QUOTES = new Set(['"', "'", "`"]);

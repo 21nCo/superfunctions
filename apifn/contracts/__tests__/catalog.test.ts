@@ -759,6 +759,70 @@ describe("OpenAPI fields that change client behavior", () => {
     for (const name of hidden) expect(redacted).toContain(`${pointer}/variables/${name}/default`);
   });
 
+  // Every combination of declared values is judged: one variable's scheme and another's user info meet only there.
+  const JOINT_SEED = "SEEDEDcombo0083";
+  const JOINT_CELLS = SERVER_SCOPES.flatMap(([scope, pointer, place]) =>
+    (["default", "enum"] as const).map((field) => [scope, field, pointer, place] as const)
+  );
+
+  it.each(JOINT_CELLS)("hides variables whose enum values only jointly form user info (%s server, %s)", (_scope, field, pointer, place) => {
+    const authority = `svc:${JOINT_SEED}@api.example.test`;
+    const variables = field === "default"
+      ? { base: { default: "/", enum: ["/", "https://"] }, authority: { default: authority, enum: [authority, "api.example.test"] } }
+      : { base: { default: "/", enum: ["/", "https://"] }, authority: { default: "api.example.test", enum: ["api.example.test", authority] } };
+    const result = build((nextSpec) => place(nextSpec, { url: "{base}{authority}", variables }));
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(JOINT_SEED);
+    const redacted = only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer);
+    expect(redacted).toContain(`${pointer}/variables/authority/default`);
+  });
+
+  it("hides variables when three enum values together form user info", () => {
+    const result = build((nextSpec) => {
+      nextSpec.servers = [{
+        url: "{scheme}{user}{host}",
+        variables: {
+          scheme: { default: "/", enum: ["/", "https://"] },
+          user: { default: "v1/", enum: ["v1/", JOINT_SEED] },
+          host: { default: "api.example.test", enum: ["api.example.test", "@api.example.test"] },
+        },
+      }];
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(JOINT_SEED);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual(expect.arrayContaining(["/servers/0/variables/user/default", "/servers/0/variables/host/default"]));
+    expect(result.catalog!.servers[0].variables.scheme).toEqual({ default: "/", enum: ["/", "https://"], description: null });
+  });
+
+  it("hides every variable when there are too many value combinations to judge", () => {
+    const many = (prefix: string) => Array.from({ length: 70 }, (_, index) => `${prefix}${index}`);
+    const result = build((nextSpec) => {
+      nextSpec.servers = [{
+        url: "{base}{authority}",
+        variables: {
+          base: { default: "/", enum: ["/", "https://", ...many("/v")] },
+          authority: { default: "api.example.test", enum: ["api.example.test", `svc:${JOINT_SEED}@api.example.test`, ...many("eu")] },
+        },
+      }];
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(JOINT_SEED);
+    expect(result.catalog!.servers[0].variables).toEqual({
+      authority: { default: "[REDACTED]", enum: null, description: null },
+      base: { default: "[REDACTED]", enum: null, description: null },
+    });
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")[0].message).toMatch(/more than 4096 combinations/);
+  });
+
+  it("keeps many value combinations that hold no @, ? or #", () => {
+    const many = (prefix: string) => Array.from({ length: 70 }, (_, index) => `${prefix}${index}`);
+    const result = build((nextSpec) => {
+      nextSpec.servers = [{ url: "https://{host}/{base}", variables: { host: { default: "eu0", enum: many("eu") }, base: { default: "v0", enum: many("v") } } }];
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.catalog!.servers[0].variables.host.enum).toEqual(many("eu"));
+  });
+
   it("removes only the user info from a whole-URL variable value", () => {
     const result = build((nextSpec) => {
       nextSpec.servers = [{ url: "{base}", variables: { base: { default: `https://svc:${COMPOSED_SEED}@api.example.test`, enum: [`https://svc:${COMPOSED_SEED}@api.example.test`, "https://eu.example.test"] } } }];
@@ -1070,6 +1134,90 @@ describe("literals of schemas holding credential fields", () => {
     });
     expect(result.diagnostics).toEqual([]);
     expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual(probe);
+  });
+});
+
+// Structured data follows the text name/value rule: a value field next to a name field naming a credential.
+const PAIR_SEED = "SEEDpair0081";
+const PAIRS: Array<[field: string, pair: Record<string, string>]> = [
+  ["name", { name: "X-Api-Key", value: PAIR_SEED }],
+  ["key", { key: "client_secret", value: PAIR_SEED }],
+  ["header", { header: "Authorization", value: `Bearer ${PAIR_SEED}` }],
+];
+const PAIR_PLACES: Array<[place: string, keyword: "default" | "const" | "enum", literal: (pair: Record<string, string>) => unknown]> = [
+  ["default", "default", (pair) => pair],
+  ["const", "const", (pair) => pair],
+  ["enum", "enum", (pair) => [pair]],
+  ["nested object", "default", (pair) => ({ headers: { auth: pair } })],
+  ["array element", "default", (pair) => ({ headers: [{ name: "X-Request-Id", value: "req-42" }, pair] })],
+];
+const PAIR_CELLS = PAIRS.flatMap(([field, pair]) => PAIR_PLACES.map(([place, keyword, literal]) => ({ name: `${field} field, ${place}`, keyword, literal: literal(pair) })));
+
+describe("credential name/value pairs in literals", () => {
+  it.each(PAIR_CELLS)("drops the literal: $name", ({ keyword, literal }) => {
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.probe = { type: "object", [keyword]: literal };
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(PAIR_SEED);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual({ type: "object" });
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual([`/components/schemas/ProjectInput/properties/probe/${keyword}`]);
+  });
+
+  it("keeps an ordinary name/value pair and a placeholder value", () => {
+    const probe = { type: "object", default: { headers: [{ name: "X-Request-Id", value: "req-42" }, { name: "X-Api-Key", value: "<token>" }] } };
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.probe = probe;
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual(probe);
+  });
+});
+
+// Long component chains: the literal check walks them without recursion, and once per build.
+type Link = "$ref" | "allOf";
+const chain = (nextSpec: any, link: Link, length: number, last: Record<string, unknown>, literal?: [string, unknown]) => {
+  const ref = (index: number) => ({ $ref: `#/components/schemas/C${index}` });
+  for (let index = 0; index < length; index += 1) {
+    const next = index + 1 < length ? ref(index + 1) : last;
+    nextSpec.components.schemas[`C${index}`] = { ...(link === "$ref" ? next : { allOf: [next] }), ...(literal ? { [literal[0]]: literal[1] } : {}) };
+  }
+};
+const CHAIN_CELLS = (["$ref", "allOf"] as const).flatMap((link) => (["default", "const", "enum"] as const).map((keyword) => ({ name: `${link} ${keyword}`, link, keyword })));
+
+describe("literals of schemas at the head of long component chains", () => {
+  it.each(CHAIN_CELLS)("builds a 5000-link $name chain and keeps the literal", ({ link, keyword }) => {
+    const literal = keyword === "enum" ? ["ok"] : "ok";
+    const result = build((nextSpec) => {
+      chain(nextSpec, link, 5000, { type: "string" });
+      inputSchema(nextSpec).properties.probe = { $ref: "#/components/schemas/C0", [keyword]: literal };
+    });
+    expect(result.catalog).not.toBeNull();
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe[keyword]).toEqual(literal);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")).toEqual([]);
+  });
+
+  it.each(CHAIN_CELLS)("drops the literal when a 5000-link $name chain ends in a password field", ({ link, keyword }) => {
+    const result = build((nextSpec) => {
+      chain(nextSpec, link, 5000, { type: "string", format: "password" });
+      inputSchema(nextSpec).properties.probe = { $ref: "#/components/schemas/C0", [keyword]: keyword === "enum" ? [LITERAL_SEED] : LITERAL_SEED };
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(LITERAL_SEED);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toContain(`/components/schemas/ProjectInput/properties/probe/${keyword}`);
+  });
+
+  it.each(["$ref", "allOf"] as const)("judges a literal on every link of a 20000-link %s chain in linear time", (link) => {
+    for (const last of [{ type: "string" }, { type: "string", format: "password" }]) {
+      const nextSpec = clone(spec);
+      chain(nextSpec, link, 20_000, last, ["default", "ok"]);
+      inputSchema(nextSpec).properties.probe = { $ref: "#/components/schemas/C0" };
+      const started = performance.now();
+      const result = buildOperationCatalog(nextSpec, clone(manifest));
+      expect(performance.now() - started).toBeLessThan(5000);
+      expect(result.catalog).not.toBeNull();
+      expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBe(last.format ? 20_000 : 0);
+    }
   });
 });
 

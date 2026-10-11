@@ -196,6 +196,24 @@ describe("client-failure event envelope", () => {
     }
   });
 
+  // The attributes object follows the text name/value rule, as failure.message does.
+  it.each<[string, Record<string, string>, string]>([
+    ["name", { name: "X-Api-Key", value: "SEEDattr0082" }, "/attributes/value"],
+    ["key", { key: "client_secret", value: "SEEDattr0082" }, "/attributes/value"],
+    ["header", { header: "Authorization", header_value: "Bearer SEEDattr0082" }, "/attributes/header_value"],
+  ])("rejects an attribute value named as a credential by the %s attribute", (_field, attributes, path) => {
+    const event = clone(fixture("client-failure/valid/network-minimal.json"));
+    const result = validateClientFailureEvent({ ...event, attributes });
+    expect(result).toEqual({ ok: false, issues: [expect.objectContaining({ path, code: "CREDENTIAL_VALUE" })] });
+    expect(JSON.stringify(result)).not.toContain("SEEDattr0082");
+    expect(validateClientFailureEvent({ ...event, failure: { kind: "unknown", message: JSON.stringify(attributes) } }).ok).toBe(false);
+  });
+
+  it.each([{ name: "X-Request-Id", value: "req-42" }, { name: "X-Api-Key", value: "<token>" }])("accepts the attributes %j", (attributes) => {
+    const event = clone(fixture("client-failure/valid/network-minimal.json"));
+    expect(validateClientFailureEvent({ ...event, attributes })).toEqual({ ok: true, event: { ...event, attributes } });
+  });
+
   it.each(["2026-99-99T99:99:99Z", "2026-02-30T12:00:00Z", "2025-02-29T00:00:00Z", "2026-04-31T08:00:00Z", "2026-10-11T24:00:00Z"])(
     "rejects the impossible timestamp %s",
     (occurredAt) => {

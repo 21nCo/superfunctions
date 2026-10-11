@@ -3,7 +3,7 @@
 // browsers and edge runtimes before reporting them.
 
 import { canonicalJson, snapshotPlainData } from "./canonical.js";
-import { containsCredentialIdentifier, containsCredentialValue, isCredentialKey, pointerSegment, sanitizeReport } from "./credentials.js";
+import { containsCredentialIdentifier, containsCredentialValue, credentialValueFields, isCredentialKey, pointerSegment, sanitizeReport } from "./credentials.js";
 import { API_ID_PATTERN, NAME_PATTERN, OPERATION_ID_PATTERN, TARGET_PATTERN, VERSION_PATTERN } from "./manifest.js";
 import { RELEASE_ID_PATTERN } from "./release.js";
 
@@ -253,6 +253,13 @@ function checkAttributes(value: unknown, issues: FailureEventIssue[]): void {
       checkString(child, path, CLIENT_FAILURE_LIMITS.maxAttributeValueBytes, issues);
     } else if (!(typeof child === "boolean" || (typeof child === "number" && Number.isFinite(child)))) {
       issues.push({ path, code: "TYPE", message: `${path} must be a string, finite number or boolean.` });
+    }
+  }
+  // `{name: "X-Api-Key", value: "..."}`: a value attribute next to a name attribute naming a credential, as in text.
+  for (const key of credentialValueFields(value)) {
+    const path = `/attributes/${pointerSegment(key)}`;
+    if (!issues.some((issue) => issue.path === path)) {
+      issues.push({ path, code: "CREDENTIAL_VALUE", message: `${path} is the value of a credential named by another attribute; strip tokens and secrets before reporting.` });
     }
   }
 }

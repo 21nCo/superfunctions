@@ -3,6 +3,7 @@ import { canonicalDigest, canonicalJson, compareCodeUnits, MAX_JSON_DEPTH, snaps
 import {
   containsCredentialIdentifier,
   containsCredentialValue,
+  credentialValueFields,
   isCredentialKey,
   pointerSegment,
   REDACTED,
@@ -129,10 +130,15 @@ function isCredentialMember(key: string): boolean {
   return isCredentialKey(key) || containsCredentialIdentifier(key);
 }
 
-/** True when JSON data holds a credential-named or credential-bearing key at any depth. */
+/**
+ * True when JSON data holds, at any depth, a credential-named or
+ * credential-bearing key, or a name field naming a credential next to a value
+ * field (`{name: "X-Api-Key", value: "..."}`), as the text rule reads it.
+ */
 function hasCredentialKey(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(hasCredentialKey);
-  return isRecord(value) && Object.entries(value).some(([key, child]) => isCredentialMember(key) || hasCredentialKey(child));
+  if (!isRecord(value)) return false;
+  return credentialValueFields(value).length > 0 || Object.entries(value).some(([key, child]) => isCredentialMember(key) || hasCredentialKey(child));
 }
 
 /**
@@ -214,6 +220,52 @@ function judgeServerValue(template: string, values: Record<string, string>, name
   return { hide: Array.from(new Set(expansion.spans.filter((span) => hits.some((hit) => overlaps(span, hit))).map((span) => span.name))) };
 }
 
+/** The most combinations of server variable values judged one by one; beyond it the judgement fails closed. */
+const SERVER_COMBINATION_LIMIT = 4096;
+
+/**
+ * Hides every visible variable that some combination of declared values puts
+ * into user info, a query or a fragment of the expanded `template`. A hidden
+ * variable's values are never published, so it takes each raw value; a
+ * visible one each value the catalog would publish. Hiding a variable widens
+ * its values to the raw ones, so this repeats until nothing more is hidden.
+ * When the combinations exceed {@link SERVER_COMBINATION_LIMIT} and any value
+ * or the template holds `@`, `?` or `#` (without one nothing can be
+ * removed), every visible variable is hidden and true is returned.
+ */
+function hideJointServerValues(template: string, names: string[], hidden: Set<string>, candidates: (name: string) => string[]): boolean {
+  const used = names.filter((name) => template.includes(`{${name}}`));
+  for (;;) {
+    const visible = used.filter((name) => !hidden.has(name));
+    if (visible.length === 0) return false;
+    const lists = used.map((name) => Array.from(new Set(candidates(name))));
+    if (!template.includes("@") && lists.every((list) => list.every((value) => !/[@?#]/.test(value)))) return false;
+    const count = lists.reduce((product, list) => product * list.length, 1);
+    if (count > SERVER_COMBINATION_LIMIT) {
+      visible.forEach((name) => hidden.add(name));
+      return true;
+    }
+    let grew = false;
+    for (let combination = 0; combination < count; combination += 1) {
+      const values: Record<string, string> = {};
+      let rest = combination;
+      used.forEach((name, index) => {
+        setOwn(values, name, lists[index][rest % lists[index].length]);
+        rest = Math.floor(rest / lists[index].length);
+      });
+      const expansion = expandServerUrl(template, values);
+      const parts = removedServerUrlSpans(expansion.text);
+      for (const span of expansion.spans) {
+        if (!hidden.has(span.name) && parts.some((part) => span.start < part.end && span.end > part.start)) {
+          hidden.add(span.name);
+          grew = true;
+        }
+      }
+    }
+    if (!grew) return false;
+  }
+}
+
 /** Escapes a component name for a `$ref` emitted into the catalog (diagnostic pointers use pointerSegment). */
 function refSegment(name: string): string {
   return name.replace(/~/g, "~0").replace(/\//g, "~1");
@@ -292,6 +344,14 @@ class CatalogBuilder {
   readonly diagnostics: Diagnostic[] = [];
   /** Component schemas reached from operations; true when reached from a credential field. */
   private readonly componentRefs = new Map<string, boolean>();
+  /** Component names whose entry in componentRefs is new or newly tainted, for componentSchemas to emit. */
+  private readonly pendingComponents: string[] = [];
+  /** The schema graph {@link reachesCredentialField} has explored, the schemas known to reach a credential field, and reverse edges. */
+  private readonly reach = {
+    explored: new Set<Record<string, unknown>>(),
+    reaching: new Set<Record<string, unknown>>(),
+    parents: new Map<Record<string, unknown>, Array<Record<string, unknown>>>(),
+  };
   private readonly mediaTypes: Set<string>;
   /** `<in>:<name>` of every parameter that a declared apiKey security scheme carries. */
   private readonly apiKeyParameters = new Set<string>();
@@ -613,7 +673,7 @@ class CatalogBuilder {
       } else if (LITERAL_KEYWORDS.has(key) && this.reachesCredentialField(value)) {
         drop(key, childPointer, "the schema contains a credential field whose value the literal would carry");
       } else if (hasCredentialKey(child)) {
-        drop(key, childPointer, "it holds credential-named keys");
+        drop(key, childPointer, "it holds credential-named keys or a value named as a credential");
       } else {
         setOwn(output, key, this.data(OBJECT_KEYWORDS.has(key) ? withoutExtensions(child) : child, childPointer));
       }
@@ -626,28 +686,58 @@ class CatalogBuilder {
    * `$ref`, not the schema itself) is a credential field: a credential-named
    * property or `format: password`. A literal on such a schema could carry
    * that field's value, as `default: {pin: "..."}` does for a password `pin`.
+   *
+   * Iterative, and linear over a whole build: the schemas reachable from
+   * `schema` that no earlier call explored are explored once, then whether
+   * each reaches a credential field is propagated back along their edges, so
+   * long `$ref` chains and cycles neither recurse nor get walked twice.
    */
   private reachesCredentialField(schema: Record<string, unknown>): boolean {
-    const seen = new Set<unknown>();
-    const reaches = (value: unknown, self: boolean): boolean => {
-      if (!isRecord(value) || seen.has(value)) return false;
-      seen.add(value);
-      if (!self && value.format === "password") return true;
-      for (const [key, child] of Object.entries(value)) {
+    const { explored, reaching, parents } = this.reach;
+    const fresh: Array<Record<string, unknown>> = [];
+    const sources: Array<Record<string, unknown>> = [];
+    const stack = [schema];
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      if (explored.has(node)) continue;
+      explored.add(node);
+      fresh.push(node);
+      let source = false;
+      const edge = (child: unknown) => {
+        if (!isRecord(child)) return;
+        // A child already known to reach one (from an earlier call) or that is a password field makes this one reach.
+        if (child.format === "password" || reaching.has(child)) source = true;
+        const list = parents.get(child);
+        if (list) list.push(node);
+        else parents.set(child, [node]);
+        if (!explored.has(child)) stack.push(child);
+      };
+      for (const [key, child] of Object.entries(node)) {
         if (REFERENCE_KEYWORDS.has(key)) {
-          if (typeof child === "string" && child.startsWith("#") && reaches(resolvePointer(this.doc, child), false)) return true;
+          if (typeof child === "string" && child.startsWith("#")) edge(resolvePointer(this.doc, child));
         } else if (SCHEMA_MAP_KEYWORDS.has(key) && isRecord(child)) {
           const named = key === "properties" || key === "patternProperties";
-          if (Object.entries(child).some(([name, entry]) => (named && isCredentialKey(name)) || reaches(entry, false))) return true;
+          for (const [name, entry] of Object.entries(child)) {
+            if (named && isCredentialKey(name)) source = true;
+            edge(entry);
+          }
         } else if (SCHEMA_KEYWORDS.has(key)) {
-          if (reaches(child, false)) return true;
+          edge(child);
         } else if (SCHEMA_LIST_KEYWORDS.has(key) && Array.isArray(child)) {
-          if (child.some((entry) => reaches(entry, false))) return true;
+          child.forEach(edge);
         }
       }
-      return false;
-    };
-    return reaches(schema, true);
+      if (source) sources.push(node);
+    }
+    // Schemas explored by earlier calls are settled: everything they reach was explored with them.
+    const isFresh = new Set(fresh);
+    while (sources.length > 0) {
+      const node = sources.pop()!;
+      if (reaching.has(node)) continue;
+      reaching.add(node);
+      for (const parent of parents.get(node) ?? []) if (isFresh.has(parent) && !reaching.has(parent)) sources.push(parent);
+    }
+    return reaching.has(schema);
   }
 
   /** Property names (`required`, `dependentRequired`): checked like property names and copied verbatim, never rewritten. */
@@ -675,8 +765,17 @@ class CatalogBuilder {
       this.report("UNRESOLVED_REF", pointer, `Schema reference "${showRef(ref as string)}" must target ${COMPONENT_SCHEMA_PREFIX}<name> so generated clients can share the type.`);
       return null;
     }
-    this.componentRefs.set(name, this.componentRefs.get(name) === true || secret);
+    this.referComponent(name, secret);
     return `${COMPONENT_SCHEMA_PREFIX}${refSegment(name)}`;
+  }
+
+  /** Records a reference to component schema `name`, queueing it for componentSchemas when it is new or newly reached from a credential field. */
+  private referComponent(name: string, secret: boolean): void {
+    const before = this.componentRefs.get(name);
+    const after = before === true || secret;
+    if (before === after) return;
+    this.componentRefs.set(name, after);
+    this.pendingComponents.push(name);
   }
 
   /**
@@ -701,7 +800,7 @@ class CatalogBuilder {
         this.report("UNRESOLVED_REF", targetPointer, `Discriminator mapping "${redactCredentialValues(key)}" targets "${shown}", which is not a schema in ${COMPONENT_SCHEMA_PREFIX}<name>.`);
         continue;
       }
-      this.componentRefs.set(name, this.componentRefs.get(name) === true || secret);
+      this.referComponent(name, secret);
       setOwn(targets, key, `${COMPONENT_SCHEMA_PREFIX}${refSegment(name)}`);
     }
     output.mapping = targets;
@@ -1102,16 +1201,16 @@ class CatalogBuilder {
     const output: Record<string, JsonValue> = {};
     // A component reached from a credential field is emitted without literals; a
     // component first emitted normally is re-emitted once that taint reaches it.
+    // Each name is queued when first referenced and again when tainted, so a long chain is walked once.
     const emitted = new Map<string, boolean>();
-    for (;;) {
-      const pending = Array.from(this.componentRefs).filter(([name, secret]) => !emitted.has(name) || (secret && !emitted.get(name)));
-      if (pending.length === 0) break;
-      for (const [name, secret] of pending) {
-        emitted.set(name, secret);
-        this.identifier(name, `/components/schemas/${pointerSegment(name)}`, "Component schema name");
-        const schema = this.schema(own(components, name), `/components/schemas/${pointerSegment(name)}`, secret);
-        if (schema !== null) setOwn(output, name, schema);
-      }
+    for (let next = 0; next < this.pendingComponents.length; next += 1) {
+      const name = this.pendingComponents[next];
+      const secret = this.componentRefs.get(name) === true;
+      if (emitted.has(name) && (!secret || emitted.get(name))) continue;
+      emitted.set(name, secret);
+      this.identifier(name, `/components/schemas/${pointerSegment(name)}`, "Component schema name");
+      const schema = this.schema(own(components, name), `/components/schemas/${pointerSegment(name)}`, secret);
+      if (schema !== null) setOwn(output, name, schema);
     }
     return Object.fromEntries(Object.keys(output).sort(compareCodeUnits).map((name) => [name, output[name]]));
   }
@@ -1178,6 +1277,10 @@ class CatalogBuilder {
           return verdict.value;
         }));
       }
+      // Every combination of declared values, judged together: one variable's scheme and another's user info meet only there.
+      const overflow = hideJointServerValues(template, valid, hidden, (name) =>
+        hidden.has(name) ? [defaults[name], ...(enums.get(name) ?? [])] : [judged[name], ...(enumValues.get(name) ?? [])]
+      );
       const variables: CatalogServer["variables"] = {};
       for (const name of valid) {
         const variable = declared[name] as Record<string, unknown>;
@@ -1187,7 +1290,9 @@ class CatalogBuilder {
         if (isCredentialKey(name)) {
           this.report("CREDENTIAL_REDACTED", variablePointer, `Replaced the values of credential-named server variable "${name}"; credentials never belong in server URLs.`, { severity: "warning" });
         } else if (hide) {
-          const why = `server variable "${name}" fills user info, a query or a fragment of ${serverPointer}/url, which the catalog removes`;
+          const why = overflow
+            ? `server variable "${name}" of ${serverPointer}/url, whose values have more than ${SERVER_COMBINATION_LIMIT} combinations to judge for user info, a query or a fragment`
+            : `server variable "${name}" fills user info, a query or a fragment of ${serverPointer}/url, which the catalog removes`;
           this.report("CREDENTIAL_REDACTED", `${variablePointer}/default`, `Replaced the default of ${why}.`, { severity: "warning" });
           values?.forEach((_, valueIndex) => this.report("CREDENTIAL_REDACTED", `${variablePointer}/enum/${valueIndex}`, `Removed enum value ${valueIndex} of ${why}.`, { severity: "warning" }));
         }
