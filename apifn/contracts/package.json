@@ -1,0 +1,71 @@
+{
+  "name": "@apifn/contracts",
+  "version": "0.1.0",
+  "description": "Versioned API operation catalog, release descriptor and client-failure event contracts for ApiFn",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./failure-event": {
+      "import": {
+        "types": "./dist/failure-event.d.ts",
+        "default": "./dist/failure-event.js"
+      },
+      "require": {
+        "types": "./dist/failure-event.d.cts",
+        "default": "./dist/failure-event.cjs"
+      }
+    },
+    "./schemas/*": "./schemas/*",
+    "./fixtures/*": "./fixtures/*",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
+    "lint": "tsc --noEmit",
+    "verify:packed": "node scripts/verify-packed-consumer.mjs"
+  },
+  "dependencies": {
+    "@apifn/core": "0.0.3"
+  },
+  "devDependencies": {
+    "@superfunctions/http-openapi": "0.1.0",
+    "@types/node": "^20.0.0",
+    "ajv": "8.20.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^3.2.4"
+  },
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "apifn/contracts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "schemas",
+    "fixtures",
+    "README.md"
+  ]
+}

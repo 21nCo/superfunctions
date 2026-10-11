@@ -1,0 +1,58 @@
+{
+  "api": {
+    "id": "example.projects",
+    "version": "2026-10-01"
+  },
+  "artifacts": [
+    {
+      "kind": "agent-tools",
+      "operations": [
+        "projects.create",
+        "projects.list"
+      ],
+      "package": {
+        "name": "@example/projects-mcp",
+        "version": "2026.10.1"
+      },
+      "target": "mcp"
+    },
+    {
+      "kind": "sdk",
+      "operations": [
+        "projects.create",
+        "projects.delete",
+        "projects.get",
+        "projects.list"
+      ],
+      "package": {
+        "name": "example-projects",
+        "version": "2026.10.1"
+      },
+      "target": "python"
+    },
+    {
+      "kind": "sdk",
+      "operations": [
+        "projects.archive",
+        "projects.create",
+        "projects.delete",
+        "projects.get",
+        "projects.list"
+      ],
+      "package": {
+        "name": "@example/projects-sdk",
+        "version": "2026.10.1"
+      },
+      "target": "typescript"
+    }
+  ],
+  "catalogDigest": "sha256:9a016c912f0eb9fb178ae82b338c94f6dd1e6acc8706abb3e6c25f575a6592d7",
+  "descriptorVersion": "apifn.release-descriptor/v1",
+  "generator": {
+    "name": "@apifn/contracts-fixture",
+    "version": "0.1.0"
+  },
+  "manifestDigest": "sha256:398125844426680a3bb83d343356606be36edf9f08c195ed3b61f5797d5aa060",
+  "releaseId": "rel_73c20448ac5def0b4823a995",
+  "specDigest": "sha256:9cb040e18030e798c1fcf6681d6b0b1cca8a24748c1738d78bbd45120569eaf5"
+}
