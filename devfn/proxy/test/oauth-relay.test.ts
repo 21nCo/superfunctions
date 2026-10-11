@@ -204,6 +204,20 @@ describe("OAuth relay ticket contract", () => {
       .rejects.toMatchObject({ reason: "target-mutated" });
   });
 
+  it("forgets a state only once its ticket expires, whether or not another registration came between", async () => {
+    const m = await setup();
+    const later = () => new Date(Date.now() + 2_000);
+    for (const [label, intervening] of [["direct", false], ["after-other", true]] as const) {
+      await registerA(m, state(label), { expiresInSeconds: 1 });
+      await expect(registerA(m, state(label))).rejects.toMatchObject({ reason: "target-mutated" });
+      if (intervening) await registerOAuthRelayState(m.stateDir, { ownerId: "owner-a", state: state(`${label}-other`), redirectUri: REDIRECT_URI, callbackUrl: `${origin("app-a")}${CALLBACK_PATH}` }, { ownerLive: m.ownerLive, now: later });
+      await expect(registerOAuthRelayState(m.stateDir, { ownerId: "owner-a", state: state(label), redirectUri: REDIRECT_URI, callbackUrl: `${origin("app-a")}${CALLBACK_PATH}` }, { ownerLive: m.ownerLive, now: later }))
+        .resolves.toMatchObject({ expiresAt: expect.any(String) });
+      await expect(consume(m, callback(m, state(label)), later)).resolves.toMatchObject({ location: `${origin("app-a")}${CALLBACK_PATH}?code=c0de&state=${state(label)}` });
+      await expect(consume(m, callback(m, state(label)), later)).rejects.toMatchObject({ reason: "replayed" });
+    }
+  });
+
   it("stores only tickets it can read back, so one owner's oversized URL cannot disable the shared store", async () => {
     const m = await setup();
     await registerA(m, state("sibling"));

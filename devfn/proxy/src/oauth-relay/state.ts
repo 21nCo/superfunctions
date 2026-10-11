@@ -281,8 +281,8 @@ export interface RegisterOAuthRelayStateInput {
 
 /**
  * Bind one OAuth state to the registering owner's live route. The state is
- * single-use and expiring, and a state can be bound only once: a second
- * registration, even with the same target, is refused.
+ * single-use and expiring, and a state can be bound only once until that
+ * ticket expires: a second registration, even with the same target, is refused.
  */
 export async function registerOAuthRelayState(stateDir: string, input: RegisterOAuthRelayStateInput, options: RelayStateOptions = {}): Promise<{ expiresAt: string }> {
   const now = options.now ?? (() => new Date());
@@ -305,7 +305,8 @@ export async function registerOAuthRelayState(stateDir: string, input: RegisterO
     const at = now();
     const tickets = prune(state, at.getTime());
     const id = stateDigest(input.state);
-    if (state.tickets.some((ticket) => ticket.id === id)) throw reject("target-mutated", "This OAuth state is already bound; a state cannot be rebound.");
+    // A state stays bound, consumed or not, until its ticket expires; then the store forgets it.
+    if (tickets.some((ticket) => ticket.id === id)) throw reject("target-mutated", "This OAuth state is already bound; a state cannot be rebound.");
     if (tickets.filter((ticket) => ticket.ownerId === input.ownerId && !ticket.consumedAt).length >= MAX_LIVE_TICKETS_PER_OWNER) {
       throw reject("capacity", "This owner has too many pending OAuth relay states.");
     }

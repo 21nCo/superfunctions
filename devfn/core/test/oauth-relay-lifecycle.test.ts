@@ -60,6 +60,30 @@ it("gives launched processes the lifecycle's state directory, so a default OAuth
   }
 }, 60_000);
 
+it("checks readiness with the same DEVFN_STATE_DIR it launched with, so status stays ready and a second up keeps the lifecycle", async () => {
+  const { root, config: base, orchestrator } = await processFixture("devfn-relay-readiness-env-");
+  try {
+    const stateDir = path.join(root, "custom-state");
+    await mkdir(stateDir);
+    const resolvedStateDir = await realpath(stateDir);
+    // Healthy only when the health command sees this lifecycle's state directory.
+    const config = validateDevFnConfig({ ...base, processes: { app: { ...base.processes!.app, health: { type: "command", timeoutMs: 10_000,
+      command: [process.execPath, "-e", "process.exitCode = process.env.DEVFN_STATE_DIR === process.argv[1] ? 0 : 1", resolvedStateDir] } } } });
+    const started = await orchestrator.up({ config, root, stateDir });
+    try {
+      expect(started.state).toBe("ready");
+      await expect(orchestrator.status({ config, root })).resolves.toMatchObject({ ok: true, state: "ready" });
+      // A ready lifecycle is kept, not replaced.
+      await expect(orchestrator.up({ config, root, stateDir })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+      await expect(orchestrator.status({ config, root })).resolves.toMatchObject({ state: "ready", processes: [{ pid: started.processes[0].pid, state: "running" }] });
+    } finally {
+      await orchestrator.down({ config, root, stateDir });
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
 it("tears down a route-less lifecycle and releases its leases without Caddy while a dead relay route remains", async () => {
   const { root, config, orchestrator } = await processFixture("devfn-relay-routeless-");
   const stateDir = path.join(root, "state");

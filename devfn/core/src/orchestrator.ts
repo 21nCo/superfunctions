@@ -44,6 +44,13 @@ function assertReceiptStateDir(receipt: LifecycleReceipt, stateDir: string): voi
   }
 }
 
+// The one lifecycle environment a process sees: generated endpoint values plus the
+// lifecycle's state directory, so in-process DevFn clients read the same machine
+// state as this command. Start, readiness and status all build it here.
+function lifecycleGeneratedEnvironment(receipt: Pick<LifecycleReceipt, "stateDir">, generated: Readonly<Record<string, string>>): Record<string, string> {
+  return { ...generated, ...(receipt.stateDir ? { [STATE_DIR_ENV]: receipt.stateDir } : {}) };
+}
+
 function resolvedHealth(health: HealthCheck | undefined, command: string[] | undefined, url?: string): HealthCheck | undefined {
   if (health?.type === "command" && command) return { ...health, command };
   if (health?.type === "http" && url) return { type: "http", url, ...(health.expectedStatus ? { expectedStatus: health.expectedStatus } : {}), ...(health.timeoutMs ? { timeoutMs: health.timeoutMs } : {}) };
@@ -328,7 +335,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     if (!spec || processStates[index] !== "running") return false;
     try {
       const ready = await checkReadinessNow({
-        health: resolvedHealth(spec.health, resolved.nodes[managed.name]?.healthCommand, resolved.nodes[managed.name]?.healthUrl), ports, logPath: managed.logPath, cwd: managed.cwd, environment: createProcessEnvironment({ ...spec, env: resolved.nodes[managed.name]?.environment }, resolved.generated),
+        health: resolvedHealth(spec.health, resolved.nodes[managed.name]?.healthCommand, resolved.nodes[managed.name]?.healthUrl), ports, logPath: managed.logPath, cwd: managed.cwd, environment: createProcessEnvironment({ ...spec, env: resolved.nodes[managed.name]?.environment }, lifecycleGeneratedEnvironment(receipt, resolved.generated)),
         previouslyReady: Boolean(managed.readyAt || receipt.state === "ready"), isAlive: async () => await supervisor.status(managed) === "running",
       });
       if (!ready || spec.exposure === "public") return ready;
@@ -777,8 +784,7 @@ export class DevFnOrchestrator {
     const spec = options.config.processes![node.name];
     const managed = await supervisor.start({
       name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir: receipt.runtimeDir, ports,
-      // The lifecycle's state directory, so in-process DevFn clients read the same machine state as this command.
-      environment: { ...resolved.generated, ...(receipt.stateDir ? { [STATE_DIR_ENV]: receipt.stateDir } : {}) },
+      environment: lifecycleGeneratedEnvironment(receipt, resolved.generated),
       onStarted: async (started) => {
         receipt.processes.push(started);
         receipt.startedNodes?.push({ name: node.name, kind: node.kind });
