@@ -366,8 +366,8 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Pro
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   const recovered: string[] = [];
   for (const instanceId of await proxy.routedInstanceIds()) {
-    // The OAuth relay is not a registry lifecycle; its own service record
-    // shows whether its process may still run.
+    // The OAuth relay has no lifecycle lock; its own service record shows
+    // whether its process may still run, and recovery also ends its claim.
     if (instanceId === OAUTH_RELAY_OWNER_ID) {
       if (await recoverOAuthRelayRoute(stateDir, proxy)) recovered.push(instanceId);
       continue;

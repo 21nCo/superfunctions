@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 
-import { allocateEphemeralPort, FilePortRegistry, withFileLock } from "@devfn/ports";
+import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature, processIdentityStatus } from "@devfn/processes";
 import { CaddyProxyController, proxyListenerPorts, registerDomain, type ProxyRoute } from "../src/index.js";
 import {
@@ -69,20 +69,33 @@ it("starts one relay, survives its crash without touching sibling routes, and st
   expect((await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND })).pid).toBe(first.pid);
   await expect(startOAuthRelay({ stateDir, domain: DOMAIN, host: "login", projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
     .rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE" });
-  // A live relay keeps its route through orphan recovery.
+  // The route is bound to the relay process, and the relay holds the listener claim as its own registry lifecycle.
+  expect(proxy.routes.find((route) => route.instanceId === OAUTH_RELAY_OWNER_ID)?.serviceProcess).toEqual({ pid: first.pid, birthSignature: first.birthSignature });
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+  const claims = async () => (await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => [item.state, item.proxyListenerPorts]);
+  const listeners = [proxyListenerPorts().httpPort, httpsPort];
+  expect(await claims()).toEqual([["ready", listeners]]);
+  expect(await registry.instanceMayRun(OAUTH_RELAY_OWNER_ID)).toBe(true);
+  // A live relay keeps its route through orphan recovery and status.
   expect(await recoverOAuthRelayRoute(stateDir, proxy)).toBe(false);
+  expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: true, routeActive: true });
   process.kill(-first.pid, "SIGKILL");
   for (let attempt = 0; attempt < 100 && await processIdentityStatus(first.pid, first.birthSignature) === "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, routeActive: true });
+  // Status after a crash removes the dead relay's route at once and ends its claim.
+  expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, routeActive: false });
+  expect(proxy.routes).toEqual([sibling]);
+  expect((await claims()).map(([state]) => state)).toEqual(["stopped"]);
   // A restart after the crash replaces only the relay's route.
   const restarted = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
   expect(restarted.pid).not.toBe(first.pid);
   expect(proxy.routes).toContainEqual(sibling);
   const second = (await readRelayService(stateDir))!;
+  expect((await claims()).map(([state]) => state)).toEqual(["stopped", "ready"]);
   expect(await stopOAuthRelay(stateDir, proxy)).toEqual({ stopped: true, routeRemoved: true });
   expect(await processIdentityStatus(second.pid, second.birthSignature)).not.toBe("running");
   expect(proxy.routes).toEqual([sibling]);
-  expect(proxy.removed).toEqual([OAUTH_RELAY_OWNER_ID]);
+  expect(proxy.removed).toEqual([OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_OWNER_ID]);
+  expect((await claims()).map(([state]) => state)).toEqual(["stopped", "stopped"]);
   expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, routeActive: false });
 }, 60_000);
 
@@ -97,11 +110,38 @@ it("recovers a crashed relay's route only, and refuses to guess when its record 
   await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
     .rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
   await writeFile(record, valid);
+  const service = JSON.parse(valid) as { pid: number; birthSignature: string };
   process.kill(-started.pid!, "SIGKILL");
-  for (let attempt = 0; attempt < 100 && (await oauthRelayStatus(stateDir, proxy)).running; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  for (let attempt = 0; attempt < 100 && await processIdentityStatus(service.pid, service.birthSignature) === "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
   expect(await recoverOAuthRelayRoute(stateDir, proxy)).toBe(true);
   expect(proxy.routes).toEqual([sibling]);
   expect(await readRelayService(stateDir)).toBeUndefined();
+}, 60_000);
+
+it("follows the listener claim contract: a sibling lease refuses the start, and the relay's claim covers stopping worktrees", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  const { httpPort, httpsPort } = proxyListenerPorts();
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"), undefined, async () => true);
+  // A v0.1 profile leases the HTTPS listener port as an exact service port.
+  await registry.reserve({ projectId: "fixture", instanceId: "v01", invocationId: "v01-1", profile: "default", requests: [{ name: "web", spec: { preferred: httpsPort, exact: true } }] });
+  await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
+    .rejects.toMatchObject({ code: "DEVFN_PORT_CONFLICT", details: { port: httpsPort, instanceId: "v01", service: "web" } });
+  expect(await readRelayService(stateDir)).toBeUndefined();
+  expect(proxy.routes).toEqual([sibling]);
+  expect((await registry.read()).invocations.map((item) => item.instanceId)).toEqual(["v01"]);
+  await registry.release({ invocationId: "v01-1" });
+  await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+  // While the relay claims the listeners, a sibling cannot lease them, and a
+  // routed worktree that stops is covered by the relay rather than retained.
+  await expect(registry.reserve({ projectId: "fixture", instanceId: "v01", invocationId: "v01-2", profile: "default", requests: [{ name: "web", spec: { preferred: httpPort, exact: true } }] }))
+    .rejects.toMatchObject({ code: "DEVFN_PORT_CONFLICT", details: { instanceId: OAUTH_RELAY_OWNER_ID } });
+  await registry.reserve({ projectId: "fixture", instanceId: "owner-a", invocationId: "a-1", profile: "default", requests: [], proxyListenerPorts: [httpPort, httpsPort] });
+  await registry.markActive("a-1");
+  await registry.release({ invocationId: "a-1" });
+  expect((await registry.read()).invocations.find((item) => item.id === "a-1")).toMatchObject({ state: "stopped" });
+  expect((await registry.read()).invocations.find((item) => item.id === "a-1")?.proxyClaimRetained).toBeUndefined();
+  await stopOAuthRelay(stateDir, proxy);
 }, 60_000);
 
 it("writes nothing but its readiness line, whatever callbacks it serves", async () => {
@@ -146,17 +186,18 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("completes two worktree sign-ins
       for (const [key, value] of Object.entries(original)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
     });
     const relay = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
-    // Both owners are running lifecycles in the machine registry, which the
-    // relay process consults; this test process is their recorded owner.
-    const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
-    for (const owner of ["owner-a", "owner-b"]) {
-      await registry.reserve({ projectId: "fixture", instanceId: owner, invocationId: owner, profile: "default", requests: [{ name: "app", spec: { preferred: await allocateEphemeralPort() } }] });
-      await registry.markActive(owner, { app: { process: { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! } } });
-    }
     const provider = await createFakeProvider(() => [`${relay.origin}/oauth/callback`]);
     const apps = await Promise.all(["owner-a", "owner-b"].map(async (owner) => await createOAuthClientApp({ scheme: "https", callbackPath: "/oauth/callback", provider,
       relay: new OAuthRelayClient({ stateDir, ownerId: owner }) })));
     cleanup.push(async () => { await provider.close(); await Promise.all(apps.map((app) => app.close())); });
+    // Both owners are ready lifecycles in the machine registry, which the
+    // relay process consults: this test process is the verified owner of the
+    // lease on each app's port.
+    const registry = new FilePortRegistry(path.join(stateDir, "registry.json"), undefined, async () => true);
+    for (const [index, owner] of ["owner-a", "owner-b"].entries()) {
+      await registry.reserve({ projectId: "fixture", instanceId: owner, invocationId: owner, profile: "default", requests: [{ name: "app", spec: { preferred: apps[index].port, exact: true } }] });
+      await registry.markActive(owner, { app: { process: { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! } } });
+    }
     for (const [index, owner] of ["owner-a", "owner-b"].entries()) {
       await proxy.upsert([{ id: `${owner}:app:0`, instanceId: owner, hostname: `app-${index}.${DOMAIN}`, targetHost: "127.0.0.1", targetPort: apps[index].port, tls: "internal",
         registeredDomain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir }], owner);
@@ -181,9 +222,15 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("completes two worktree sign-ins
     expect(a[2]).toMatchObject({ url: expect.stringContaining(`https://auth.${DOMAIN}${suffix}/oauth/callback?`), status: 303, setCookie: [] });
     expect(provider.tokenRequests.map((request) => request.redirectUri)).toEqual([`${relay.origin}/oauth/callback`, `${relay.origin}/oauth/callback`]);
     expect((await browser.request(a[2].url)).status).toBe(403);
-    expect(await stopOAuthRelay(stateDir, proxy)).toMatchObject({ stopped: true, routeRemoved: true });
-    // Without the relay route Caddy no longer serves the callback host at all
-    // (no certificate is selected for it); sibling routes stay served.
+    // A crashed relay's route goes at the next route transition, even one for
+    // an owner without routes. Caddy then no longer serves the callback host
+    // at all (no certificate is selected for it); sibling routes stay served.
+    process.kill(-relay.pid!, "SIGKILL");
+    for (let attempt = 0; attempt < 100 && (await readRelayService(stateDir).then((service) => processIdentityStatus(service!.pid, service!.birthSignature))) === "running"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await proxy.removeInstance("unrelated");
     await expect(browser.request(a[2].url)).rejects.toThrow(/EPROTO|alert/);
     expect((await browser.request(`https://app-1.${DOMAIN}${suffix}/me`)).body).toBe("bob");
+    expect(await stopOAuthRelay(stateDir, proxy)).toMatchObject({ stopped: false, routeRemoved: false });
   }, { timeoutMs: 120_000 }), 240_000);

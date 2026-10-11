@@ -9,7 +9,7 @@ import { lookup } from "node:dns/promises";
 import { promisify } from "node:util";
 
 import { connectionRefused, isPortAvailable, parsePersistedProxyRoutes, parseProxyOwner, proxyOwnerStatus, scanListenerState, withFileLock, withRoutingLock, type ProxyOwner } from "@devfn/ports";
-import { matchesProcessIdentity, processBirthSignature } from "@devfn/processes";
+import { matchesProcessIdentity, processBirthSignature, processIdentityStatus } from "@devfn/processes";
 import { domainContains, DomainError, ipv6LoopbackAvailable, readRegisteredDomains, verifyCertificate, verifyLocalDns } from "./domains.js";
 export { DomainError, domainContains, normalizeDomain, readRegisteredDomains, registerDomain, unregisterDomain, verifyCertificate, verifyLocalDns, type RegisteredDomain } from "./domains.js";
 
@@ -53,6 +53,8 @@ export interface ProxyRoute {
   certificateFile?: string; keyFile?: string;
   /** Private, immutable copy of the certificate used by an activated route. */
   certificateDigest?: string;
+  /** A route to a process DevFn started outside a lifecycle; the next route transition drops it once that process is verified gone. */
+  serviceProcess?: { pid: number; birthSignature: string };
 }
 interface ProxyState { version: 1; routes: ProxyRoute[] }
 
@@ -188,6 +190,20 @@ async function readAdminConfig(): Promise<unknown> {
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) => item && typeof item === "object" && !Array.isArray(item)
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => compareText(a, b))) : item);
+}
+
+/**
+ * Routes without a service process whose recorded process is verified gone.
+ * Every route transition drops those, so a crashed service's route does not
+ * outlive the next routing operation; an unverifiable process keeps its route.
+ */
+async function withoutExitedServices(routes: readonly ProxyRoute[]): Promise<ProxyRoute[]> {
+  const kept: ProxyRoute[] = [];
+  for (const route of routes) {
+    const status = route.serviceProcess && await processIdentityStatus(route.serviceProcess.pid, route.serviceProcess.birthSignature);
+    if (status !== "exited" && status !== "identity-mismatch") kept.push(route);
+  }
+  return kept;
 }
 
 export class CaddyProxyController {
@@ -725,12 +741,13 @@ export class CaddyProxyController {
         throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A route ID is already owned by another instance.");
       }
       const now = new Date().toISOString();
-      const nextRoutes = [...state.routes.filter((route) => route.instanceId !== selectedOwner), ...routes.map(({ certificateDigest: _ignored, ...route }) => ({ ...route, updatedAt: now }))];
+      const kept = (await withoutExitedServices(state.routes)).filter((route) => route.instanceId !== selectedOwner);
+      const nextRoutes = [...kept, ...routes.map(({ certificateDigest: _ignored, ...route }) => ({ ...route, updatedAt: now }))];
       renderCaddyfile(nextRoutes);
       if (routes.length === 0 && nextRoutes.length === state.routes.length) return [];
       // Every explicitly selected route is activated again. Only routes from
       // other instances are exempt from fresh DNS and certificate checks.
-      await this.apply({ version: 1, routes: nextRoutes }, false, state.routes.filter((route) => route.instanceId !== selectedOwner));
+      await this.apply({ version: 1, routes: nextRoutes }, false, kept);
       return nextRoutes.filter((route) => ids.has(route.id));
     }, { timeoutMs: PROXY_LOCK_TIMEOUT_MS }));
   }
@@ -739,7 +756,7 @@ export class CaddyProxyController {
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
     await withRoutingLock(this.stateDir, async () => await withFileLock(this.lockPath, async () => {
       const state = await this.read();
-      const routes = state.routes.filter((route) => route.instanceId !== instanceId);
+      const routes = (await withoutExitedServices(state.routes)).filter((route) => route.instanceId !== instanceId);
       if (routes.length !== state.routes.length) await this.apply({ version: 1, routes }, false, state.routes);
     }, { timeoutMs: PROXY_LOCK_TIMEOUT_MS }));
   }

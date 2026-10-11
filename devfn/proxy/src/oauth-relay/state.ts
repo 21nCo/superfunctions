@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { FilePortRegistry, parsePersistedProxyRoutes, withFileLock, type PersistedProxyRoute } from "@devfn/ports";
+import { FilePortRegistry, parsePersistedProxyRoutes, withFileLock, withRoutingLock, type PersistedProxyRoute } from "@devfn/ports";
 import { processIdentityStatus } from "@devfn/processes";
 
 import { proxyListenerPorts } from "../index.js";
@@ -43,6 +43,8 @@ export interface OAuthRelayService {
   version: 1;
   pid: number; birthSignature: string; startedAt: string; port: number;
   origin: string; hostname: string; domain: string; projectId: string; repositoryIdentity: string;
+  /** The registry invocation that holds the relay's proxy listener claim. */
+  invocationId: string;
 }
 
 /** The owner route a ticket was bound to when it was registered. */
@@ -60,8 +62,12 @@ interface Ticket {
 }
 interface TicketState { version: 1; tickets: Ticket[] }
 
-/** Owner liveness evidence; by default the machine registry's lifecycle journal. */
-export type OwnerLiveness = (ownerId: string) => Promise<boolean>;
+/**
+ * Affirmative evidence that the owner's lifecycle serves the route's target
+ * port now; by default a verified-running lease owner in the machine
+ * registry. Uncertain evidence must answer false.
+ */
+export type OwnerLiveness = (ownerId: string, targetPort: number) => Promise<boolean>;
 export interface RelayStateOptions { now?: () => Date; ownerLive?: OwnerLiveness }
 
 export function relayPaths(stateDir: string) {
@@ -108,7 +114,8 @@ export function parseRelayService(value: unknown): OAuthRelayService {
   const record = value as Record<string, unknown> | null;
   if (!record || typeof record !== "object" || record.version !== 1 || !Number.isSafeInteger(record.pid) || (record.pid as number) <= 0 ||
     !text(record.birthSignature) || !iso(record.startedAt) || !Number.isInteger(record.port) || (record.port as number) < 1 || (record.port as number) > 65535 ||
-    !text(record.origin) || !text(record.hostname, 253) || !text(record.domain, 253) || !text(record.projectId) || !text(record.repositoryIdentity, 4096)) {
+    !text(record.origin) || !text(record.hostname, 253) || !text(record.domain, 253) || !text(record.projectId) || !text(record.repositoryIdentity, 4096) ||
+    !text(record.invocationId, 256)) {
     throw invalid("The OAuth relay service record is invalid.");
   }
   const origin = canonicalHttpUrl(record.origin as string, true);
@@ -206,31 +213,39 @@ const sameBinding = (a: RouteBinding, b: RouteBinding) => a.id === b.id && a.hos
 
 function defaultOwnerLive(stateDir: string): OwnerLiveness {
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
-  return async (ownerId) => await registry.instanceMayRun(ownerId);
+  return async (ownerId, targetPort) => await registry.instanceServesPort(ownerId, targetPort);
 }
 
 /**
- * The owner route that serves url right now. It must be committed, not in a
- * pending route transition, owned by ownerId and, when bound, unchanged
- * since registration; and the owner's lifecycle must still be running.
+ * The owner route that serves url right now. Route state and owner evidence
+ * are read as one snapshot under the routing lock that every route and lease
+ * transition holds, so neither changes between the two reads or before the
+ * decision. The route must be committed with no transition pending, owned by
+ * ownerId and, when bound, unchanged since registration, and the owner must
+ * verifiably serve its target port. Evidence that cannot be read fails closed.
  */
 async function liveOwnerRoute(stateDir: string, ownerId: string, url: URL, ownerLive: OwnerLiveness, bound?: RouteBinding): Promise<RouteBinding> {
-  const { committed, pending } = await readRoutes(stateDir);
-  const route = routeFor(committed, url);
-  if (bound) {
-    const current = committed.find((item) => item.id === bound.id);
-    if (!current) throw reject("route-stopped", "The target route is no longer served.");
-    if (current.instanceId !== ownerId || current.updatedAt !== bound.updatedAt) throw reject("stale-owner", "The target route belongs to a different or restarted owner.");
-    if (!sameBinding(binding(current), bound) || route?.id !== current.id) throw reject("target-mutated", "The target route changed after registration.");
+  try {
+    return await withRoutingLock(stateDir, async () => {
+      const { committed, pending } = await readRoutes(stateDir);
+      // Under the routing lock a pending journal is an interrupted transition.
+      if (pending) throw reject(bound ? "route-stopped" : "target-invalid", "A route transition was interrupted; the next DevFn routing command recovers it.");
+      const route = routeFor(committed, url);
+      if (bound) {
+        const current = committed.find((item) => item.id === bound.id);
+        if (!current) throw reject("route-stopped", "The target route is no longer served.");
+        if (current.instanceId !== ownerId || current.updatedAt !== bound.updatedAt) throw reject("stale-owner", "The target route belongs to a different or restarted owner.");
+        if (!sameBinding(binding(current), bound) || route?.id !== current.id) throw reject("target-mutated", "The target route changed after registration.");
+      }
+      if (!route) throw reject("target-invalid", "The callback URL is not served by a DevFn route.");
+      if (route.instanceId !== ownerId) throw reject(bound ? "stale-owner" : "target-invalid", "The callback URL is served by another owner.");
+      if (!await ownerLive(ownerId, route.targetPort)) throw reject("stale-owner", "The target route's owner is not verifiably running.");
+      return binding(route);
+    });
+  } catch (error) {
+    if (error instanceof OAuthRelayError) throw error;
+    throw invalid("Route ownership cannot be established.");
   }
-  if (!route) throw reject("target-invalid", "The callback URL is not served by a DevFn route.");
-  if (route.instanceId !== ownerId) throw reject(bound ? "stale-owner" : "target-invalid", "The callback URL is served by another owner.");
-  const pendingRoute = pending?.find((item) => item.id === route.id);
-  if (pending && (!pendingRoute || !sameBinding(binding(pendingRoute), binding(route)) || pendingRoute.instanceId !== ownerId)) {
-    throw reject(bound ? "route-stopped" : "target-invalid", "The target route is changing; retry after the route transition completes.");
-  }
-  if (!await ownerLive(ownerId)) throw reject("stale-owner", "The target route's owner is not running.");
-  return binding(route);
 }
 
 /** The relay service, when its recorded process is verifiably this record's process. */
@@ -271,11 +286,13 @@ export async function registerOAuthRelayState(stateDir: string, input: RegisterO
   const callback = typeof input.callbackUrl === "string" ? canonicalHttpUrl(input.callbackUrl) : undefined;
   if (!redirect || !callback) throw reject("malformed", "Redirect and callback URLs must be canonical http(s) URLs without credentials, query or fragment.");
   await relayDirectory(stateDir);
+  const origin = (await runningService(stateDir)).origin;
+  if (redirect.origin !== origin) throw reject("wrong-origin", "The redirect URI is not on the relay origin.");
+  if (callback.origin === origin) throw reject("target-invalid", "The callback URL cannot be the relay itself.");
+  // A route that changes after this check is caught when the callback is consumed.
+  const route = await liveOwnerRoute(stateDir, input.ownerId, callback, options.ownerLive ?? defaultOwnerLive(stateDir));
   return await withFileLock(relayPaths(stateDir).lock, async () => {
-    const service = await runningService(stateDir);
-    if (redirect.origin !== service.origin) throw reject("wrong-origin", "The redirect URI is not on the relay origin.");
-    if (callback.origin === service.origin) throw reject("target-invalid", "The callback URL cannot be the relay itself.");
-    const route = await liveOwnerRoute(stateDir, input.ownerId, callback, options.ownerLive ?? defaultOwnerLive(stateDir));
+    if ((await runningService(stateDir)).origin !== origin) throw reject("wrong-origin", "The relay origin changed during registration.");
     const state = await readTickets(stateDir);
     const at = now();
     const tickets = prune(state, at.getTime());
@@ -304,7 +321,8 @@ export interface OAuthRelayCallback {
 /**
  * Consume the ticket for a provider callback and return the owner's callback
  * URL with the provider's query unchanged. The ticket is consumed before any
- * route check, so every attempt that reaches it is its only attempt.
+ * route check, so every attempt that reaches it is its only attempt; the
+ * route and owner are then checked against the binding under the routing lock.
  */
 export async function consumeOAuthRelayCallback(stateDir: string, input: OAuthRelayCallback, options: RelayStateOptions = {}): Promise<{ location: string }> {
   const now = options.now ?? (() => new Date());
@@ -318,7 +336,7 @@ export async function consumeOAuthRelayCallback(stateDir: string, input: OAuthRe
   }
   if (input.requestOrigin !== input.origin) throw reject("wrong-origin", "The callback did not arrive on the relay origin.");
   await relayDirectory(stateDir);
-  return await withFileLock(relayPaths(stateDir).lock, async () => {
+  const ticket = await withFileLock(relayPaths(stateDir).lock, async () => {
     const state = await readTickets(stateDir);
     const id = stateDigest(states[0]);
     const ticket = state.tickets.find((item) => item.id === id);
@@ -330,9 +348,11 @@ export async function consumeOAuthRelayCallback(stateDir: string, input: OAuthRe
     await writePrivateJson(relayPaths(stateDir).tickets, { version: 1, tickets: prune(state, at.getTime()) });
     if (Date.parse(ticket.expiresAt) <= at.getTime()) throw reject("expired", "This OAuth state expired.");
     if (`${input.origin}${input.requestPath}` !== ticket.redirectUri) throw reject("wrong-origin", "The callback did not arrive at the registered redirect URI.");
-    await liveOwnerRoute(stateDir, ticket.ownerId, new URL(ticket.callbackUrl), options.ownerLive ?? defaultOwnerLive(stateDir), ticket.route);
-    return { location: `${ticket.callbackUrl}?${input.rawQuery}` };
+    return ticket;
   }, { timeoutMs: LOCK_TIMEOUT_MS });
+  // The consumed ticket is this callback's alone, so the route check needs no ticket lock.
+  await liveOwnerRoute(stateDir, ticket.ownerId, new URL(ticket.callbackUrl), options.ownerLive ?? defaultOwnerLive(stateDir), ticket.route);
+  return { location: `${ticket.callbackUrl}?${input.rawQuery}` };
 }
 
 /** Ticket store integrity and pending counts, without any state material. */

@@ -5,7 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { processExists, processGroupStatus } from "@devfn/processes";
+import { processExists, processGroupStatus, processIdentityStatus } from "@devfn/processes";
 
 import { allocateEphemeralPort, bindProbe, connectionRefused, isPortAvailable, scanListenerState } from "./listeners.js";
 import { withFileLock, withRoutingLock } from "./lock.js";
@@ -746,6 +746,30 @@ export class FilePortRegistry {
     for (const invocation of state.invocations.filter((item) => item.instanceId === instanceId)) {
       if (CLAIM_STATES.has(invocation.state) && invocation.state !== "ready" && recentlyRefreshed(invocation)) return true;
       if (await journalMayRun(state, invocation)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Affirmative evidence that a ready lifecycle of this instance serves
+   * targetPort right now: its active TCP lease on that port names a process
+   * whose identity is verified running, or a container Docker reports
+   * running. Unlike instanceMayRun this is authorization evidence, so an
+   * unverifiable identity, an unresolved launch, an owner-less legacy
+   * invocation or any other uncertainty is false. Callers hold the routing
+   * lock across this check and the action it permits.
+   */
+  public async instanceServesPort(instanceId: string, targetPort: number): Promise<boolean> {
+    const state = await withRoutingLock(path.dirname(this.filePath), async () => await this.read());
+    for (const invocation of state.invocations) {
+      if (invocation.instanceId !== instanceId || invocation.state !== "ready" || !invocation.ownerJournal || invocation.launching?.length) continue;
+      for (const allocation of state.allocations) {
+        if (allocation.invocationId !== invocation.id || allocation.state !== "active" || allocation.protocol !== "tcp" || allocation.port !== targetPort) continue;
+        if (!allocation.process && !allocation.container) continue;
+        if (allocation.process && await processIdentityStatus(allocation.process.pid, allocation.process.birthSignature, allocation.process.recordedAt) !== "running") continue;
+        if (allocation.container && await inspectContainerRunning(allocation.container) !== true) continue;
+        return true;
+      }
     }
     return false;
   }

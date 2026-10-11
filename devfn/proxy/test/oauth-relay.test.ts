@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { FilePortRegistry, allocateEphemeralPort } from "@devfn/ports";
+import { FilePortRegistry, allocateEphemeralPort, withRoutingLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { proxyListenerPorts } from "../src/index.js";
 import {
@@ -39,7 +39,7 @@ async function machine() {
   const birthSignature = await processBirthSignature(process.pid);
   await mkdir(path.join(stateDir, "oauth-relay"), { recursive: true, mode: 0o700 });
   await writeFile(path.join(stateDir, "oauth-relay", "service.json"), JSON.stringify({ version: 1, pid: process.pid, birthSignature, startedAt: new Date().toISOString(),
-    port: relayPort, origin: RELAY_ORIGIN, hostname: `auth.${DOMAIN}`, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir }));
+    port: relayPort, origin: RELAY_ORIGIN, hostname: `auth.${DOMAIN}`, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, invocationId: "relay" }));
   const routes: Route[] = [{ id: OAUTH_RELAY_ROUTE_ID, instanceId: OAUTH_RELAY_OWNER_ID, hostname: `auth.${DOMAIN}`, targetPort: relayPort, updatedAt: "2026-01-01T00:00:00.000Z" }];
   const writeRoutes = async (file = "proxy-routes.json", list = routes) => await writeFile(path.join(stateDir, file), JSON.stringify({ version: 1, routes: list.map((route) => ({
     ...route, targetHost: "127.0.0.1", tls: "internal", registeredDomain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir })) }));
@@ -148,7 +148,7 @@ describe("OAuth relay fixture journey", () => {
     expect(persisted).toContain(stateDigest(new URL(alice[1].url).searchParams.get("state")!));
   });
 
-  it("keeps PKCE and the registered redirect URI effective at the token exchange", async () => {
+  it("keeps PKCE, the nonce and the registered redirect URI effective at the token exchange", async () => {
     const m = await setup();
     // An intercepted code is useless without the worktree's verifier, and a
     // code redeemed with any other redirect URI is refused.
@@ -159,6 +159,14 @@ describe("OAuth relay fixture journey", () => {
         redirect_uri: redirectUri, client_id: m.provider.clientId, client_secret: m.provider.clientSecret, code_verifier: verifier }) });
       expect(await response.json()).toEqual({ error });
     }
+    // An ID token issued for another nonce fails the worktree's own nonce check after the relay hop.
+    const browser = m.browser();
+    const [login] = await browser.navigate(`${origin("app-a")}/login?user=alice`, 1);
+    const authorize = new URL(login.location!);
+    authorize.searchParams.set("nonce", "nonce_forged");
+    const hops = await browser.navigate(authorize.href);
+    expect(hops[1]).toMatchObject({ status: 303 });
+    expect(hops.at(-1)).toMatchObject({ status: 400, body: "nonce_mismatch" });
   });
 });
 
@@ -216,8 +224,10 @@ describe("OAuth relay ticket contract", () => {
     await expect(consume(m, callback(m, state("dead")))).rejects.toMatchObject({ reason: "stale-owner" });
     m.live.add("owner-a");
     const own = m.routes.find((route) => route.instanceId === "owner-a")!;
-    await m.writeRoutes("proxy-routes.pending.json", m.routes.filter((route) => route !== own));
+    // Under the routing lock a pending journal is an interrupted transition, even one that keeps this route.
+    await m.writeRoutes("proxy-routes.pending.json", m.routes);
     await expect(consume(m, callback(m, state("pending")))).rejects.toMatchObject({ reason: "route-stopped" });
+    await expect(registerA(m, state("pending-new"))).rejects.toMatchObject({ reason: "target-invalid" });
     await rm(path.join(m.stateDir, "proxy-routes.pending.json"));
     own.targetPort = await allocateEphemeralPort();
     await m.writeRoutes();
@@ -276,16 +286,74 @@ describe("OAuth relay ticket contract", () => {
     await expect(consume(m, callback(m, state("routes")))).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
   });
 
-  it("uses the machine registry's lifecycle journal as owner liveness by default", async () => {
+  it("decides from the route state a transition leaves, not one read before it", async () => {
     const m = await setup();
-    const registry = new FilePortRegistry(path.join(m.stateDir, "registry.json"));
-    const port = await allocateEphemeralPort();
-    await registry.reserve({ projectId: "fixture", instanceId: "owner-a", invocationId: "a-1", profile: "default", requests: [{ name: "app", spec: { preferred: port } }] });
-    await registry.markActive("owner-a", { app: { process: { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! } } });
-    const input = { ownerId: "owner-a", redirectUri: REDIRECT_URI, callbackUrl: `${origin("app-a")}${CALLBACK_PATH}` };
-    await expect(registerOAuthRelayState(m.stateDir, { ...input, state: state("journal") })).resolves.toBeDefined();
-    await expect(registerOAuthRelayState(m.stateDir, { ...input, ownerId: "owner-b", state: state("nojournal"), callbackUrl: `${origin("app-b")}${CALLBACK_PATH}` }))
-      .rejects.toMatchObject({ reason: "stale-owner" });
-    await expect(consumeOAuthRelayCallback(m.stateDir, callback(m, state("journal")))).resolves.toBeDefined();
+    await registerA(m, state("moved"));
+    await registerA(m, state("removed"));
+    const own = m.routes.find((route) => route.instanceId === "owner-a")!;
+    // A route transition holds the routing lock while validation is requested.
+    const transition = async (change: () => Promise<void>, attempt: () => Promise<unknown>) => {
+      let entered!: () => void;
+      let finish!: () => void;
+      const inside = new Promise<void>((resolve) => { entered = resolve; });
+      const held = new Promise<void>((resolve) => { finish = resolve; });
+      const locked = withRoutingLock(m.stateDir, async () => { entered(); await held; await change(); });
+      await inside;
+      const outcome = attempt().then((value) => ({ value }), (error: unknown) => ({ error }));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      finish();
+      await locked;
+      return await outcome;
+    };
+    expect(await transition(async () => { own.targetPort = await allocateEphemeralPort(); own.updatedAt = "2026-03-01T00:00:00.000Z"; await m.writeRoutes(); },
+      async () => await consume(m, callback(m, state("moved"))))).toMatchObject({ error: { reason: "stale-owner" } });
+    expect(await transition(async () => { await m.writeRoutes("proxy-routes.json", m.routes.filter((route) => route !== own)); },
+      async () => await consume(m, callback(m, state("removed"))))).toMatchObject({ error: { reason: "route-stopped" } });
+    expect(await transition(async () => { await m.writeRoutes("proxy-routes.json", m.routes.filter((route) => route !== own)); },
+      async () => await registerA(m, state("late")))).toMatchObject({ error: { reason: "target-invalid" } });
+  });
+
+  it("requires affirmative registry evidence that the owner serves its route", async () => {
+    const m = await setup();
+    const registry = new FilePortRegistry(path.join(m.stateDir, "registry.json"), undefined, async () => true);
+    const self = { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! };
+    const ready = async (owner: string, invocationId: string, process?: { pid: number; birthSignature?: string }) => {
+      await registry.reserve({ projectId: "fixture", instanceId: owner, invocationId, profile: "default", requests: [{ name: "app", spec: { preferred: m.apps[owner].port, exact: true } }] });
+      await registry.markActive(invocationId, process ? { app: { process } } : {});
+    };
+    const register = async (owner: string, label: string) => await registerOAuthRelayState(m.stateDir, { ownerId: owner, state: state(label), redirectUri: REDIRECT_URI,
+      callbackUrl: `${origin(owner === "owner-a" ? "app-a" : "app-b")}${CALLBACK_PATH}` });
+    await ready("owner-a", "a-1", self);
+    await expect(register("owner-a", "verified")).resolves.toBeDefined();
+    await expect(consumeOAuthRelayCallback(m.stateDir, callback(m, state("verified")))).resolves.toBeDefined();
+    // Each of these may still run as far as cleanup is concerned, but none proves the owner serves its route.
+    const uncertain: Array<[string, () => Promise<void>]> = [
+      ["planning", async () => { await registry.reserve({ projectId: "fixture", instanceId: "owner-b", invocationId: "b-plan", profile: "default", requests: [] }); }],
+      ["unverified identity", async () => { await ready("owner-b", "b-unverified", { pid: process.pid }); }],
+      ["unresolved launch", async () => {
+        await ready("owner-b", "b-launch", self);
+        await registry.beginLaunch("b-launch", "worker", { projectName: "devfn-fixture", composeService: "worker", preExisting: false, existingContainerIds: [], runningContainerIds: [] });
+      }],
+      ["legacy owner-less", async () => {
+        await ready("owner-b", "b-legacy");
+        const saved = await registry.read();
+        delete saved.invocations.find((item) => item.id === "b-legacy")!.ownerJournal;
+        await writeFile(registry.filePath, JSON.stringify(saved));
+      }],
+    ];
+    for (const [label, arrange] of uncertain) {
+      await registry.release({ instanceId: "owner-b" });
+      await registry.gc();
+      await arrange();
+      expect(await registry.instanceMayRun("owner-b"), label).toBe(true);
+      await expect(register("owner-b", label.replace(/\W/g, "")), label).rejects.toMatchObject({ reason: "stale-owner" });
+    }
+    // Evidence that becomes uncertain after registration refuses the callback too.
+    await expect(register("owner-a", "later")).resolves.toBeDefined();
+    await registry.beginLaunch("a-1", "worker", { projectName: "devfn-fixture", composeService: "worker", preExisting: false, existingContainerIds: [], runningContainerIds: [] });
+    await expect(consumeOAuthRelayCallback(m.stateDir, callback(m, state("later")))).rejects.toMatchObject({ reason: "stale-owner" });
+    // Unreadable registry state fails closed.
+    await writeFile(registry.filePath, "{");
+    await expect(register("owner-a", "unreadable")).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
   });
 });

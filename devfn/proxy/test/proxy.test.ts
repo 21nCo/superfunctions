@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -171,6 +172,33 @@ describe("Caddy route rendering", () => {
       expect(JSON.parse(await readFile(path.join(stateDir, "proxy-routes.json"), "utf8"))).toEqual({ version: 1, routes: [sibling] });
       await expect(access(path.join(stateDir, "proxy-routes.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
       await expect(controller.upsert([])).rejects.toMatchObject({ code: "DEVFN_PROXY_CONFIG_INVALID" });
+    } finally { await cleanup(); }
+  });
+
+  it("drops a route whose service process is verified gone at the next unrelated route transition", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-service-");
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 200)"], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    const deadSignature = await processBirthSignature(child.pid!);
+    await exited;
+    const route = (id: string, targetPort: number, serviceProcess?: { pid: number; birthSignature: string }) =>
+      ({ id, instanceId: id, hostname: `${id}.localhost`, targetHost: "127.0.0.1", targetPort, tls: "off" as const, updatedAt: "now", ...(serviceProcess ? { serviceProcess } : {}) });
+    const dead = route("dead", 4101, { pid: child.pid!, birthSignature: deadSignature ?? "gone" });
+    const live = route("live", 4102, { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! });
+    // A signature in no readable format cannot be judged, so its route stays.
+    const unverifiable = route("unverifiable", 4103, { pid: process.pid, birthSignature: "unreadable" });
+    const plain = route("plain", 4104);
+    try {
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [dead, live, unverifiable, plain] }));
+      const controller = new CaddyProxyController(stateDir);
+      // Removing an owner without routes is still a route transition.
+      await controller.removeInstance("unrelated");
+      expect(await controller.routes()).toEqual([live, unverifiable, plain]);
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [dead, plain] }));
+      await controller.upsert([{ id: "next", instanceId: "next", hostname: "next.localhost", targetHost: "127.0.0.1", targetPort: 4105, tls: "off" }]);
+      expect((await controller.routes()).map((item) => item.id)).toEqual(["plain", "next"]);
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [{ ...plain, serviceProcess: { pid: 0, birthSignature: "x" } }] }));
+      await expect(controller.routes()).rejects.toMatchObject({ code: "DEVFN_PROXY_CONFIG_INVALID" });
     } finally { await cleanup(); }
   });
 

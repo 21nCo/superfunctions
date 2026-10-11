@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { realpath, rm } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { withFileLock } from "@devfn/ports";
+import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { matchesProcessIdentity, processBirthSignature, processIdentityStatus } from "@devfn/processes";
 
-import { CaddyProxyController, DomainError, proxyListenerPorts, readRegisteredDomains, type ProxyRoute } from "../index.js";
+import { CaddyProxyController, DomainError, proxyListenerPorts, proxyListenerPortsFor, readRegisteredDomains, type ProxyRoute } from "../index.js";
 import {
   OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayError, readRelayService, relayDirectory, relayPaths, relayTicketSummary,
   writePrivateJson, type OAuthRelayService,
@@ -105,7 +106,43 @@ async function launch(command: readonly string[], config: { stateDir: string; or
 
 function relayRoute(service: OAuthRelayService, tls: ProxyRoute["tls"], certificate: { certificateFile?: string; keyFile?: string }): Omit<ProxyRoute, "updatedAt"> {
   return { id: OAUTH_RELAY_ROUTE_ID, instanceId: OAUTH_RELAY_OWNER_ID, hostname: service.hostname, targetHost: "127.0.0.1", targetPort: service.port, tls,
-    registeredDomain: service.domain, projectId: service.projectId, repositoryIdentity: service.repositoryIdentity, ...certificate };
+    registeredDomain: service.domain, projectId: service.projectId, repositoryIdentity: service.repositoryIdentity, ...certificate,
+    // Any later route transition drops this route once the relay is verified gone.
+    serviceProcess: { pid: service.pid, birthSignature: service.birthSignature } };
+}
+
+const registryOf = (stateDir: string) => new FilePortRegistry(path.join(stateDir, "registry.json"));
+
+/**
+ * Claim the proxy listener ports for the relay route as a registry lifecycle
+ * of the relay owner, as every routed lifecycle does: a sibling's planned or
+ * active lease on either port refuses the claim and names its owner.
+ */
+async function claimListeners(stateDir: string, projectId: string, tls: ProxyRoute["tls"]): Promise<string> {
+  const invocationId = randomUUID();
+  await registryOf(stateDir).reserve({ projectId, instanceId: OAUTH_RELAY_OWNER_ID, invocationId, profile: "oauth-relay", requests: [],
+    proxyListenerPorts: proxyListenerPortsFor([{ tls }]) });
+  return invocationId;
+}
+
+/**
+ * End the relay's listener claims other than keep, once the processes they
+ * record are stopped or covered by keep; the shared evidence rule decides
+ * whether one is retained.
+ */
+async function releaseClaims(stateDir: string, keep?: string): Promise<void> {
+  const registry = registryOf(stateDir);
+  for (const invocation of (await registry.read()).invocations) {
+    if (invocation.instanceId !== OAUTH_RELAY_OWNER_ID || invocation.id === keep || ["failed", "stopped"].includes(invocation.state)) continue;
+    await registry.release({ invocationId: invocation.id });
+  }
+}
+
+/** Record the relay process on its claim, then mark the claim ready. */
+async function activateClaim(stateDir: string, service: OAuthRelayService): Promise<void> {
+  const registry = registryOf(stateDir);
+  await registry.recordOwners(service.invocationId, "oauth-relay", [{ process: { pid: service.pid, birthSignature: service.birthSignature, recordedAt: service.startedAt } }]);
+  await registry.markActive(service.invocationId);
 }
 
 /**
@@ -136,29 +173,49 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
       if (service.hostname !== hostname || service.domain !== registration.domain || service.projectId !== registration.projectId || service.repositoryIdentity !== registration.repositoryIdentity) {
         throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `A relay already serves ${service.origin}; stop it before serving another origin.`);
       }
-      // A start interrupted after its record was written may lack its route.
-      await proxy.upsert([relayRoute(service, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID);
-      return await oauthRelayStatus(input.stateDir, proxy);
+      // A start interrupted after its record was written may lack its claim or route.
+      const claimed = (await registryOf(input.stateDir).read()).invocations.some((item) => item.id === service.invocationId && item.state === "ready");
+      let reused = service;
+      if (!claimed) {
+        reused = { ...service, invocationId: await claimListeners(input.stateDir, registration.projectId, registration.tls) };
+        await activateClaim(input.stateDir, reused);
+        await writePrivateJson(relayPaths(input.stateDir).service, reused);
+      }
+      await proxy.upsert([relayRoute(reused, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID);
+      await releaseClaims(input.stateDir, reused.invocationId);
+      return await relayStatus(input.stateDir, proxy);
     }
-    const started = await launch(input.command ?? defaultCommand(), { stateDir: input.stateDir, origin });
-    const service: OAuthRelayService = { version: 1, ...started, startedAt: new Date().toISOString(), origin, hostname,
-      domain: registration.domain, projectId: registration.projectId, repositoryIdentity: registration.repositoryIdentity };
+    // The listener claim comes first: a conflicting sibling lease refuses the
+    // start before any relay process or route exists.
+    const invocationId = await claimListeners(input.stateDir, registration.projectId, registration.tls);
+    let service: OAuthRelayService | undefined;
     try {
+      const started = await launch(input.command ?? defaultCommand(), { stateDir: input.stateDir, origin });
+      service = { version: 1, ...started, startedAt: new Date().toISOString(), origin, hostname,
+        domain: registration.domain, projectId: registration.projectId, repositoryIdentity: registration.repositoryIdentity, invocationId };
+      // Recorded first, so an interrupted start leaves a relay the next start can find.
       await writePrivateJson(relayPaths(input.stateDir).service, service);
+      await activateClaim(input.stateDir, service);
       await proxy.upsert([relayRoute(service, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID);
     } catch (error) {
-      // The route was not activated, so the new process and record go; a
-      // prior route, if any, still names the previous (dead) relay port.
-      if (await stopRelayProcess(service)) await rm(relayPaths(input.stateDir).service, { force: true });
+      // The route was not activated, so the new process, record and claim go;
+      // a prior route, if any, still names the previous (dead) relay.
+      if (!service || await stopRelayProcess(service)) {
+        if (service) await rm(relayPaths(input.stateDir).service, { force: true });
+        await registryOf(input.stateDir).release({ invocationId, errorCode: "DEVFN_START_FAILED" });
+      }
       throw error;
     }
-    return await oauthRelayStatus(input.stateDir, proxy);
+    // A crashed relay's claim is covered by this one, so it ends without being retained.
+    await releaseClaims(input.stateDir, invocationId);
+    return await relayStatus(input.stateDir, proxy);
   }, { timeoutMs: SERVICE_LOCK_TIMEOUT_MS });
 }
 
 /**
  * Remove the relay route first, so no callback is served, then stop the
- * relay process by verified identity. Tickets are left to expire.
+ * relay process by verified identity and end its listener claim. Tickets
+ * are left to expire.
  */
 export async function stopOAuthRelay(stateDir: string, proxy: OAuthRelayProxy = new CaddyProxyController(stateDir)): Promise<{ stopped: boolean; routeRemoved: boolean }> {
   await relayDirectory(stateDir);
@@ -172,11 +229,12 @@ export async function stopOAuthRelay(stateDir: string, proxy: OAuthRelayProxy = 
     // An unreadable record cannot identify a process to signal; with the
     // route gone no callback reaches whatever it named.
     await rm(relayPaths(stateDir).service, { force: true });
+    await releaseClaims(stateDir);
     return { stopped: current.status === "running", routeRemoved };
   }, { timeoutMs: SERVICE_LOCK_TIMEOUT_MS });
 }
 
-export async function oauthRelayStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState"> = new CaddyProxyController(stateDir)): Promise<OAuthRelayStatus> {
+async function relayStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState">): Promise<OAuthRelayStatus> {
   const current = await serviceStatus(stateDir);
   const routes = (await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID)).committed;
   const service = current.service;
@@ -190,15 +248,28 @@ export async function oauthRelayStatus(stateDir: string, proxy: Pick<OAuthRelayP
 }
 
 /**
- * Orphaned-route recovery for the relay owner: its route is removed only when
- * its recorded process is verifiably gone. Returns whether it was removed.
+ * The relay's status. A route left by a relay verified gone is removed
+ * first, so status never reports, or leaves, a route to a dead relay.
  */
-export async function recoverOAuthRelayRoute(stateDir: string, proxy: Pick<OAuthRelayProxy, "removeInstance">): Promise<boolean> {
+export async function oauthRelayStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "removeInstance"> = new CaddyProxyController(stateDir)): Promise<OAuthRelayStatus> {
+  await recoverOAuthRelayRoute(stateDir, proxy);
+  return await relayStatus(stateDir, proxy);
+}
+
+/**
+ * Orphaned-route recovery for the relay owner: its route and listener claim
+ * are removed only when its recorded process is verifiably gone. Returns
+ * whether a route was removed.
+ */
+export async function recoverOAuthRelayRoute(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "removeInstance">): Promise<boolean> {
   await relayDirectory(stateDir);
   return await withFileLock(relayPaths(stateDir).serviceLock, async () => {
     if ((await serviceStatus(stateDir)).status !== "stopped") return false;
-    await proxy.removeInstance(OAUTH_RELAY_OWNER_ID);
+    const state = await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID);
+    const routed = state.committed.length > 0 || Boolean(state.pending?.length);
+    if (routed) await proxy.removeInstance(OAUTH_RELAY_OWNER_ID);
     await rm(relayPaths(stateDir).service, { force: true });
-    return true;
+    await releaseClaims(stateDir);
+    return routed;
   }, { timeoutMs: SERVICE_LOCK_TIMEOUT_MS });
 }

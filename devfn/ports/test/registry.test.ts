@@ -725,6 +725,38 @@ esac
     }
   });
 
+  it("counts a lease as serving its port only while its owner is verified running", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "devfn-serving-owner-"));
+    const dockerState = path.join(dir, "docker-state");
+    const originalPath = process.env.PATH;
+    const registry = new FilePortRegistry(path.join(dir, "registry.json"), undefined, async () => true);
+    try {
+      await writeFile(path.join(dir, "docker"), `#!/bin/sh
+case "$(cat "${dockerState}")" in
+  running) echo true;;
+  gone) echo "Error: No such object: $4" >&2; exit 1;;
+  *) echo "Cannot connect to the Docker daemon" >&2; exit 1;;
+esac
+`, { mode: 0o700 });
+      process.env.PATH = `${dir}${path.delimiter}${originalPath ?? ""}`;
+      const port = await allocateEphemeralPort();
+      await registry.reserve({ projectId: "app", instanceId: "one", invocationId: "ready", profile: "default", requests: [{ name: "api", spec: { preferred: port, exact: true } }] });
+      await registry.markActive("ready", { api: { container: { id: "fixture-container" } } });
+      // An unreachable Docker keeps the lifecycle for cleanup but is no evidence that it serves.
+      for (const [docker, serves, mayRun] of [["running", true, true], ["unreachable", false, true], ["gone", false, false]] as const) {
+        await writeFile(dockerState, docker);
+        expect(await registry.instanceServesPort("one", port), docker).toBe(serves);
+        expect(await registry.instanceMayRun("one"), docker).toBe(mayRun);
+      }
+      await writeFile(dockerState, "running");
+      expect(await registry.instanceServesPort("one", port + 1)).toBe(false);
+      expect(await registry.instanceServesPort("two", port)).toBe(false);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform !== "darwin")("keeps a live recorded owner whose birth signature cannot be read as possibly running", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "devfn-unverified-owner-"));
     const originalPath = process.env.PATH;

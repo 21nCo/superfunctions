@@ -43,7 +43,7 @@ it("keeps the OAuth relay route while its recorded process runs and recovers it,
     const route = (id: string, instanceId: string, hostname: string, targetPort: number) => ({ id, instanceId, hostname, targetHost: "127.0.0.1", targetPort, tls: "off", updatedAt: new Date().toISOString() });
     await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [route(OAUTH_RELAY_ROUTE_ID, OAUTH_RELAY_OWNER_ID, "auth.localhost", 41001), route("dead:app", "dead", "dead.localhost", 41002)] }));
     const service = (owner: { pid: number; birthSignature: string }) => JSON.stringify({ version: 1, ...owner, startedAt: new Date().toISOString(), port: 41001,
-      origin: "https://auth.dev.example.test", hostname: "auth.dev.example.test", domain: "dev.example.test", projectId: "fixture", repositoryIdentity: root });
+      origin: "https://auth.dev.example.test", hostname: "auth.dev.example.test", domain: "dev.example.test", projectId: "fixture", repositoryIdentity: root, invocationId: "relay" });
     const routedOwners = async () => (JSON.parse(await readFile(path.join(stateDir, "proxy-routes.json"), "utf8")) as { routes: Array<{ instanceId: string }> }).routes.map((item) => item.instanceId);
     await writeFile(path.join(stateDir, "oauth-relay", "service.json"), service(self));
     // The relay is not a registry lifecycle, but its live process keeps its route.
