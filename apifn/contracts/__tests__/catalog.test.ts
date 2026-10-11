@@ -880,6 +880,18 @@ describe("author strings copied into the catalog", () => {
     expect(result.catalog!.securitySchemes.oauth.flows!.clientCredentials.scopes).toContain("secrets:read");
   });
 
+  it.each([
+    ["a scalar", "owner-team"],
+    ["an object", { tokenUrl: "https://internal.example.test/token", scopes: { admin: "Admin" } }],
+  ])("ignores an x-* extension holding %s in OAuth flows", (_name, extension) => {
+    const result = build((nextSpec) => {
+      nextSpec.components.securitySchemes.oauth.flows["x-internal"] = extension;
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(Object.keys(result.catalog!.securitySchemes.oauth.flows!)).toEqual(["clientCredentials"]);
+    expect(result.catalog!.securitySchemes).toEqual(build().catalog!.securitySchemes);
+  });
+
   it("INVALID_MANIFEST: a credential in a manifest identifier", () => {
     const result = build((_spec, nextManifest) => {
       nextManifest.operations[0].name = ID_SECRET;

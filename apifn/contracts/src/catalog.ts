@@ -998,7 +998,8 @@ class CatalogBuilder {
       const declaredFlows = this.member(value, "flows", pointer, OBJECT);
       if (declaredFlows !== undefined) {
         const flows: NonNullable<CatalogSecurityScheme["flows"]> = {};
-        for (const flowName of Object.keys(declaredFlows).sort(compareCodeUnits)) {
+        // Specification extensions (`x-*`) are not flows.
+        for (const flowName of Object.keys(declaredFlows).filter((key) => !key.startsWith("x-")).sort(compareCodeUnits)) {
           const flow = declaredFlows[flowName];
           const flowPointer = `${pointer}/flows/${pointerSegment(flowName)}`;
           this.identifier(flowName, flowPointer, "OAuth flow name");

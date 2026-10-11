@@ -133,6 +133,35 @@ function quotedEnd(text: string, start: number): number {
   return -1;
 }
 
+/**
+ * End of a string quoted with escaped quotes (`\"...\"`, as in JSON inside a
+ * JSON string) that opens at `start`, after its closing `\"`. The text is
+ * decoded one level as it is read, so an escaped quote inside the value
+ * (`\\\"`) does not close it. Returns -1 when the closing delimiter is
+ * ambiguous (an unescaped quote ends the outer string first) and -2 when
+ * the value is unterminated.
+ */
+function escapedQuotedEnd(text: string, start: number): number {
+  const quote = text[start + 1];
+  let innerEscaped = false;
+  for (let index = start + 2; index < text.length; ) {
+    const pair = text[index] === "\\" && index + 1 < text.length;
+    const char = pair ? text[index + 1] : text[index];
+    index += pair ? 2 : 1;
+    if (innerEscaped) innerEscaped = false;
+    else if (pair && char === "\\") innerEscaped = true;
+    else if (char === quote) return pair ? index : -1;
+  }
+  return -2;
+}
+
+/** End of the line holding `index`, before any line break. */
+function lineEnd(text: string, index: number): number {
+  const newline = text.indexOf("\n", index);
+  if (newline === -1) return text.length;
+  return text[newline - 1] === "\r" && newline - 1 >= index ? newline - 1 : newline;
+}
+
 /** End of a balanced `{...}` or `[...]` that opens at `start`; -1 when unbalanced. */
 function bracketedEnd(text: string, start: number): number {
   const closers: string[] = [];
@@ -175,9 +204,10 @@ function readValue(text: string, start: number, keyStart: number, header: boolea
   const rest = text.slice(start);
   const escaped = /^\\(["'`])/.exec(rest);
   if (escaped) {
-    const close = text.indexOf(`\\${escaped[1]}`, start + 2);
-    if (close === -1) return { end: text.length, value: text.slice(start), quote: "" };
-    return { end: close + 2, value: text.slice(start + 2, close), quote: `\\${escaped[1]}` };
+    const end = escapedQuotedEnd(text, start);
+    if (end === -1) return { end: lineEnd(text, start), value: text.slice(start, lineEnd(text, start)), quote: "" };
+    if (end === -2) return { end: text.length, value: text.slice(start), quote: "" };
+    return { end, value: text.slice(start + 2, end - 2), quote: `\\${escaped[1]}` };
   }
   const first = text[start];
   if (first === '"' || first === "'" || first === "`") {
@@ -210,22 +240,82 @@ function readValue(text: string, start: number, keyStart: number, header: boolea
   return { end: start + run.length, value: run, quote: "" };
 }
 
+/** Fields that name a header, parameter or setting: `{"name": "X-Api-Key", ...}`, `<add key="password" .../>`. */
+const NAME_FIELD = new RegExp(
+  `(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)(?:(?:header[_-]?)?name|key|header|field|param(?:eter)?)\\1[ \\t]*(?:=>|:=|[:=])[ \\t]*(\\\\?["'\`]|)(${KEY_WORD})\\2(?![A-Za-z0-9_.%-])`,
+  "gi"
+);
+/** Fields that hold the value of the header, parameter or setting their container names. */
+const VALUE_FIELDS = new Set(["value", "values", "content", "val", "data"]);
+
+const CLOSERS: Record<string, string> = { "{": "}", "[": "]", "<": ">" };
+
+/**
+ * For each index, the start of the innermost `{...}`, `[...]` or XML tag
+ * holding it, or -1. Quotes are not tracked, so a bracket inside a string can
+ * merge containers; that only makes more values credentials. A stray closer
+ * is ignored, and a closer pops every container opened after its opener.
+ */
+function containerStarts(text: string): Int32Array {
+  const starts = new Int32Array(text.length + 1);
+  const stack: number[] = [];
+  const open: Record<string, number> = { "}": 0, "]": 0, ">": 0 };
+  for (let index = 0; index < text.length; index += 1) {
+    starts[index] = stack.length === 0 ? -1 : stack[stack.length - 1];
+    const char = text[index];
+    if (char === "{" || char === "[" || (char === "<" && /[A-Za-z_]/.test(text[index + 1] ?? ""))) {
+      stack.push(index);
+      open[CLOSERS[char]] += 1;
+    } else if (open[char] > 0) {
+      // Each opener is popped at most once, so this stays linear.
+      for (let popped = ""; popped !== char; ) {
+        popped = CLOSERS[text[stack.pop()!]];
+        open[popped] -= 1;
+      }
+    }
+  }
+  starts[text.length] = stack.length === 0 ? -1 : stack[stack.length - 1];
+  return starts;
+}
+
+/**
+ * The containers whose name field holds a credential key, each mapped to
+ * whether that key is an Authorization or Cookie header; null when there are
+ * none, so ordinary text never pays for the container index.
+ */
+function namedCredentialContainers(text: string): { containers: Int32Array; headers: Map<number, boolean> } | null {
+  let found: { containers: Int32Array; headers: Map<number, boolean> } | null = null;
+  for (const match of text.matchAll(NAME_FIELD)) {
+    if (!isCredentialKey(match[3])) continue;
+    found ??= { containers: containerStarts(text), headers: new Map() };
+    const container = found.containers[match.index];
+    found.headers.set(container, (found.headers.get(container) ?? false) || isHeaderKey(match[3]));
+  }
+  return found;
+}
+
 /**
  * The key/value rule: a key that satisfies {@link isCredentialKey} (its last
  * word, or its last two words joined) makes its whole value a credential
- * unless all of the value is placeholders. In Authorization headers the
- * scheme name is kept so redacted text stays readable.
+ * unless all of the value is placeholders. So does a value field (`value`,
+ * `content`, ...) whose container (`{...}`, `[...]` or an XML tag) has a
+ * name field (`name`, `key`, `header`, ...) holding a credential key. In
+ * Authorization headers the scheme name is kept so redacted text stays readable.
  */
 function redactKeyValues(text: string, identifier: boolean): string {
   let output = "";
   let copied = 0;
+  const named = namedCredentialContainers(text);
   const pattern = new RegExp((identifier ? IDENTIFIER_KEY_SEPARATOR : KEY_SEPARATOR).source, "g");
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
     const key = match[2];
     const lastWord = key.split(/[ \t]+/).pop()!;
-    if (!isCredentialKey(lastWord) && !isCredentialKey(key)) continue;
+    // `{"name": "X-Api-Key", "value": "..."}`: the value field of a container whose name field holds a credential key.
+    const container = named && VALUE_FIELDS.has(lastWord.toLowerCase()) ? named.containers[match.index] : undefined;
+    const indirect = container !== undefined && named!.headers.has(container);
+    if (!indirect && !isCredentialKey(lastWord) && !isCredentialKey(key)) continue;
     const start = match.index + match[0].length;
-    const header = isHeaderKey(lastWord);
+    const header = indirect ? named!.headers.get(container)! : isHeaderKey(lastWord);
     const { begin = start, end, value, quote } = readValue(text, start, match.index, header);
     if (end <= start) continue;
     pattern.lastIndex = end;
@@ -237,33 +327,59 @@ function redactKeyValues(text: string, identifier: boolean): string {
   return output + text.slice(copied);
 }
 
+/** An XML attribute: its name, then a quoted or bare value. A name starts only at the start of a word, so the scan is linear. */
+const XML_ATTRIBUTE = /(?<![A-Za-z0-9_.:-])([A-Za-z_][A-Za-z0-9_.:-]*)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'<>/=`]+))/g;
+/** An XML closing tag and its name. */
+const XML_CLOSE_TAG = /<\/([A-Za-z_][A-Za-z0-9_.:-]*)\s*>/g;
+
+/** Redacts every attribute value of a credential-named element that is not all placeholders. */
+function redactAttributeValues(attributes: string): string {
+  return attributes.replace(XML_ATTRIBUTE, (whole, name: string, equals: string, double?: string, single?: string, bare?: string) => {
+    const value = double ?? single ?? bare ?? "";
+    if (value.trim() === "" || isPlaceholderValue(value, false)) return whole;
+    const quote = double !== undefined ? '"' : single !== undefined ? "'" : "";
+    return `${name}${equals}${quote}${REDACTED}${quote}`;
+  });
+}
+
 /**
- * XML elements named like a credential: the value runs from the end of the
- * opening tag (attributes included) to the matching closing tag, CDATA
- * included. Without a closing tag the value fails closed to the end of the
- * text, unless the tag is a bare placeholder such as `<token>` followed by
- * a space, punctuation or the end of the text.
+ * XML elements named like a credential: every attribute value is a
+ * credential, and the element value runs from the end of the opening tag to
+ * the matching closing tag, CDATA included. Without a closing tag the value
+ * fails closed to the end of the text, unless the tag is a bare placeholder
+ * such as `<token>` followed by a space, punctuation or the end of the text.
  */
 function redactXmlElements(text: string): string {
   let output = "";
   let copied = 0;
-  // Per element name, the last closing-tag search: a later search from the same or a later offset reuses it, so the scan stays linear.
-  const closings = new Map<string, { from: number; at: number; length: number }>();
+  // Closing tags by name, indexed in one pass on first use. Opening tags are read in order, so each name's cursor only moves forward.
+  let closings: Map<string, { at: number[]; length: number[]; next: number }> | null = null;
   const closing = (name: string, from: number) => {
-    const cached = closings.get(name);
-    if (cached && cached.from <= from && (cached.at === -1 || cached.at >= from)) return cached;
-    const pattern = new RegExp(`</${name.replace(/[.]/g, "\\.")}\\s*>`, "g");
-    pattern.lastIndex = from;
-    const match = pattern.exec(text);
-    const found = { from, at: match ? match.index : -1, length: match ? match[0].length : 0 };
-    closings.set(name, found);
-    return found;
+    if (closings === null) {
+      closings = new Map();
+      for (const match of text.matchAll(XML_CLOSE_TAG)) {
+        const entry = closings.get(match[1]) ?? { at: [], length: [], next: 0 };
+        entry.at.push(match.index);
+        entry.length.push(match[0].length);
+        closings.set(match[1], entry);
+      }
+    }
+    const entry = closings.get(name);
+    if (!entry) return { at: -1, length: 0 };
+    while (entry.next < entry.at.length && entry.at[entry.next] < from) entry.next += 1;
+    return entry.next < entry.at.length ? { at: entry.at[entry.next], length: entry.length[entry.next] } : { at: -1, length: 0 };
   };
   const pattern = new RegExp(XML_OPEN_TAG.source, "g");
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
     const [tag, name, attributes = ""] = match;
     if (!isCredentialKey(name)) continue;
     const start = match.index + tag.length;
+    const safeAttributes = redactAttributeValues(attributes);
+    if (safeAttributes !== attributes) {
+      output += `${text.slice(copied, match.index)}<${name}${safeAttributes}>`;
+      copied = start;
+    }
+    if (attributes.endsWith("/")) continue; // `<password value="..."/>` has no element value.
     const close = closing(name, start);
     if (close.at === -1 && !attributes.includes("=") && /^(?:$|[\s"'`.,;:!?)\]}])/.test(text.slice(start, start + 1))) continue;
     const end = close.at === -1 ? text.length : close.at;
@@ -346,6 +462,13 @@ const SHAPE_RULES: ShapeRule[] = [
   { pattern: /(?<![A-Za-z0-9])(?:xox[abpr]|AKIA)[A-Za-z0-9-]{12,}/g },
   // Any URL user info, with or without a scheme and however many "@" it holds.
   // A scheme starts only at the start of a word, so a long word is scanned once, not once per character.
+  // Special schemes need no "//": URL parsers read user info from `https:user:pw@host` and `https:\\user:pw@host`.
+  // The match takes the whole authority whether or not it holds an "@", so the scan never restarts inside it.
+  {
+    pattern: /((?<![a-z0-9+.-])(?:https?|wss?|ftp|file):[\/\\]*)([^/\s?#]*)/gi,
+    accept: ([, authority]) => authority.includes("@"),
+    replace: ([prefix, authority]) => `${prefix}${REDACTED}@${authority.slice(authority.lastIndexOf("@") + 1)}`,
+  },
   {
     pattern: /((?:(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#]*@/gi,
     replace: ([prefix]) => `${prefix}${REDACTED}@`,
@@ -361,7 +484,11 @@ export function redactCredentialValues(value: string): string {
   return redact(value, false);
 }
 
+/** A PEM private key block, through its END line or, unterminated, to the end of the text. Bounded label runs keep it linear. */
+const PEM_PRIVATE_KEY = /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY[\s\S]*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY[A-Z0-9 ]{0,40}-----|$)/g;
+
 function redact(value: string, identifier: boolean): string {
+  const text = value.replace(PEM_PRIVATE_KEY, REDACTED);
   return SHAPE_RULES.reduce(
     (text, { pattern, accept, replace }) =>
       text.replace(pattern, (match: string, ...rest: unknown[]) => {
@@ -370,7 +497,7 @@ function redact(value: string, identifier: boolean): string {
         if (accept && !accept(groups)) return match;
         return replace ? replace(groups) : REDACTED;
       }),
-    identifier ? redactNamespaceSegments(redactXmlElements(redactKeyValues(value, true))) : redactXmlElements(redactKeyValues(value, false))
+    identifier ? redactNamespaceSegments(redactXmlElements(redactKeyValues(text, true))) : redactXmlElements(redactKeyValues(text, false))
   );
 }
 
@@ -389,7 +516,12 @@ export function containsCredentialIdentifier(value: string): boolean {
   return redact(value, true) !== value;
 }
 
-const URL_PARTS = /^((?:[a-z][a-z0-9+.-]*:)?\/\/)([^/?#]*)([^?#]*)(?:\?([^#]*))?/i;
+/**
+ * Prefix, authority, path and query. Special schemes (http, https, ws, wss,
+ * ftp, file) need no "//": any run of "/" or "\\", even none, starts the
+ * authority, as URL parsers read it.
+ */
+const URL_PARTS = /^((?:https?|wss?|ftp|file):[\/\\]*|(?:[a-z][a-z0-9+.-]*:)?\/\/)([^/?#]*)([^?#]*)(?:\?([^#]*))?/i;
 
 /** True when a URL or URL template has user info in its authority. */
 export function hasUrlUserInfo(url: string): boolean {

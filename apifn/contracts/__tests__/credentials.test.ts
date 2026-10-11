@@ -1,5 +1,6 @@
+import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { redactCredentialValues } from "../src/credentials.js";
+import { redactCredentialValues, stripUrlCredentials } from "../src/credentials.js";
 import {
   buildOperationCatalog,
   containsCredentialIdentifier,
@@ -11,6 +12,10 @@ import {
 import { clone, fixture } from "./helpers.js";
 
 const PROJECT_ROUTE = "/workspaces/{workspaceId}/projects/{projectId}";
+
+const ED25519_PEM = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+const RSA_PEM = generateKeyPairSync("rsa", { modulusLength: 1024 }).privateKey.export({ type: "pkcs1", format: "pem" }) as string;
+const pemBody = (pem: string) => pem.split("\n").filter((line) => line !== "" && !line.startsWith("-----"));
 
 // One table for every consumer of the credential text rules: the catalog
 // redacts exactly what the failure-event validator rejects.
@@ -48,6 +53,18 @@ const TEXT_CASES: Array<[text: string, credential: boolean, secrets?: string[]]>
   ['<password type="string">SEEDxml02</password>', true, ["SEEDxml02"]],
   ["<password><![CDATA[SEEDxml03]]></password>", true, ["SEEDxml03"]],
   ["<password>SEEDxml04 (retry)", true, ["SEEDxml04", "retry"]],
+  // Every attribute value of a credential-named element, also on a self-closing tag.
+  ['<password id="1" value="SEEDxml05"/>', true, ["SEEDxml05"]],
+  ['<password a="b" c="SEEDxml06">x</password>', true, ["SEEDxml06"]],
+  ["<password value='SEEDxml07'/>", true, ["SEEDxml07"]],
+  // An escaped quote inside an escaped-quoted value does not close it, whatever precedes it.
+  [JSON.stringify(JSON.stringify({ password: 'prefix"SEEDED-tail-9911' })), true, ["SEEDED-tail-9911"]],
+  [JSON.stringify(JSON.stringify({ password: '[REDACTED]"SEEDED-tail-9912' })), true, ["SEEDED-tail-9912"]],
+  ['password=\\"abc"SEEDambig01 rest', true, ["SEEDambig01", "rest"]],
+  // PEM private keys through their END line, or to the end of the text when cut off.
+  [ED25519_PEM, true, pemBody(ED25519_PEM)],
+  [RSA_PEM.slice(0, 900), true, pemBody(RSA_PEM.slice(0, 900)).slice(0, -1)],
+  [`key:\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUSEEDssh01\n-----END OPENSSH PRIVATE KEY-----\ndone`, true, ["SEEDssh01"]],
   // Connection strings and provider keys.
   ["Server=db;User Id=sa;Pwd=SEEDpwd01;", true, ["SEEDpwd01"]],
   ["AccountName=x;AccountKey=SEEDacct01+/==;", true, ["SEEDacct01"]],
@@ -80,6 +97,11 @@ const TEXT_CASES: Array<[text: string, credential: boolean, secrets?: string[]]>
   ["Send the <password> field, then retry", false],
   ["<password><![CDATA[<password>]]></password>", false],
   ["https://api.example.test/v1?tenant=eu", false],
+  ["-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAitZFd5CIGdFlbiqZbNIkspX4T/RzE+0jHdbp5AYXJd4=\n-----END PUBLIC KEY-----\n", false],
+  ['{"name":"X-Request-Id","value":"req-42"}', false],
+  ['<add key="timeout" value="30"/>', false],
+  ['{"name":"X-Api-Key","value":"<api key>"}', false],
+  ["https:api.example.test/v1", false],
 ];
 
 describe("credential text rules", () => {
@@ -97,7 +119,7 @@ describe("credential text rules", () => {
     expect(diagnostics.some((diagnostic) => diagnostic.code === "CREDENTIAL_REDACTED")).toBe(credential);
     if (credential) {
       expect(description).toContain("[REDACTED]");
-      for (const secret of secrets) expect(description).not.toContain(secret);
+      for (const secret of secrets) expect(JSON.stringify({ catalog, diagnostics })).not.toContain(secret);
       // Redacted text is clean: redaction is idempotent.
       expect(containsCredentialValue(description!)).toBe(false);
     } else {
@@ -107,6 +129,97 @@ describe("credential text rules", () => {
     const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
     expect(result.ok).toBe(!credential);
     if (!result.ok) expect(result.issues.map((issue) => `${issue.path} ${issue.code}`)).toEqual(["/failure/message CREDENTIAL_VALUE"]);
+    for (const secret of secrets) expect(JSON.stringify(result)).not.toContain(secret);
+  });
+});
+
+// Name/value indirection: a value field whose container names a credential header or setting.
+// Every name field x container syntax x member order.
+const NAME_SEED = "SEEDnamed42x";
+const NAME_FIELDS = ["name", "key", "header"];
+const NAME_VALUE_SYNTAXES: Array<[syntax: string, render: (field: string, nameFirst: boolean) => string]> = [
+  ["JSON", (field, nameFirst) => (nameFirst ? `{"${field}":"X-Api-Key","value":"${NAME_SEED}"}` : `{"value":"${NAME_SEED}","${field}":"X-Api-Key"}`)],
+  ["escaped JSON", (field, nameFirst) => (nameFirst ? `{\\"${field}\\":\\"client_secret\\",\\"value\\":\\"${NAME_SEED}\\"}` : `{\\"value\\":\\"${NAME_SEED}\\",\\"${field}\\":\\"client_secret\\"}`)],
+  ["JS literal in a list", (field, nameFirst) => (nameFirst ? `headers: [{${field}: 'x-api-key', value: '${NAME_SEED}'}]` : `headers: [{value: '${NAME_SEED}', ${field}: 'x-api-key'}]`)],
+  ["XML attributes", (field, nameFirst) => (nameFirst ? `<add ${field}="password" value="${NAME_SEED}"/>` : `<add value="${NAME_SEED}" ${field}="password"/>`)],
+];
+const NAME_VALUE_MATRIX = NAME_FIELDS.flatMap((field) =>
+  NAME_VALUE_SYNTAXES.flatMap(([syntax, render]) =>
+    [true, false].map((nameFirst) => ({ name: `${syntax} ${field} ${nameFirst ? "name first" : "value first"}`, text: `Request failed: ${render(field, nameFirst)}` }))
+  )
+);
+
+describe("name/value indirection", () => {
+  const spec = fixture("catalog/openapi.json");
+  const manifest = fixture("catalog/manifest.json");
+  const event = fixture("client-failure/valid/network-minimal.json");
+
+  it.each(NAME_VALUE_MATRIX)("$name", ({ text }) => {
+    expect(containsCredentialValue(text)).toBe(true);
+    expect(redactCredentialValues(text)).not.toContain(NAME_SEED);
+
+    const nextSpec = clone(spec);
+    nextSpec.paths[PROJECT_ROUTE].get.description = text;
+    const built = buildOperationCatalog(nextSpec, clone(manifest));
+    expect(built.catalog).not.toBeNull();
+    expect(JSON.stringify(built)).not.toContain(NAME_SEED);
+
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(NAME_SEED);
+  });
+
+  it("keeps the value of a container that names an ordinary header, even next to a credential container", () => {
+    const text = `[{"name":"X-Request-Id","value":"req-42"},{"name":"Authorization","value":"Bearer ${NAME_SEED}"}]`;
+    expect(redactCredentialValues(text)).toBe('[{"name":"X-Request-Id","value":"req-42"},{"name":"Authorization","value":"Bearer [REDACTED]"}]');
+  });
+});
+
+// URL user info for special schemes needs no "//": URL parsers read it after any run of "/" or "\\", even none.
+const URL_SEED = "hunter2pwSEED";
+const USER_INFO_URLS = [
+  `https:svc:${URL_SEED}@api.example.test/v1`,
+  `https:/svc:${URL_SEED}@api.example.test/v1`,
+  `https:\\\\svc:${URL_SEED}@api.example.test/v1`,
+  `https:\\svc:${URL_SEED}@api.example.test/v1`,
+  `HTTP:/\\svc:${URL_SEED}@api.example.test/v1`,
+  `wss:svc:${URL_SEED}@api.example.test/v1`,
+];
+const URL_PLACES: Array<[place: string, apply: (spec: Record<string, any>, manifest: Record<string, any>, url: string) => void]> = [
+  ["server", (spec, _manifest, url) => (spec.servers = [{ url }])],
+  ["OAuth tokenUrl", (spec, _manifest, url) => (spec.components.securitySchemes.oauth.flows.clientCredentials.tokenUrl = url)],
+  ["OpenID Connect URL", (spec, _manifest, url) => (spec.components.securitySchemes.oidc = { type: "openIdConnect", openIdConnectUrl: url })],
+  ["provenance source", (_spec, manifest, url) => (manifest.provenance.source = url)],
+];
+
+describe("URL user info without //", () => {
+  const spec = fixture("catalog/openapi.json");
+  const manifest = fixture("catalog/manifest.json");
+  const event = fixture("client-failure/valid/network-minimal.json");
+
+  it.each(USER_INFO_URLS.flatMap((url) => URL_PLACES.map(([place, apply]) => ({ name: `${place}: ${url}`, url, apply }))))("$name", ({ url, apply }) => {
+    expect(containsCredentialValue(url)).toBe(true);
+    const nextSpec = clone(spec);
+    const nextManifest = clone(manifest);
+    apply(nextSpec, nextManifest, url);
+    const built = buildOperationCatalog(nextSpec, nextManifest);
+    expect(built.catalog).not.toBeNull();
+    expect(built.diagnostics.some((diagnostic) => diagnostic.code === "CREDENTIAL_REDACTED")).toBe(true);
+    expect(JSON.stringify(built)).not.toContain(URL_SEED);
+  });
+
+  it.each(USER_INFO_URLS)("event message: fetch %s failed", (url) => {
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "network", message: `fetch ${url} failed` } });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(URL_SEED);
+  });
+
+  it("strips only the user info and keeps the scheme", () => {
+    expect(stripUrlCredentials(`https:svc:${URL_SEED}@api.example.test/v1`)).toBe("https:api.example.test/v1");
+    expect(stripUrlCredentials(`https:\\svc:${URL_SEED}@api.example.test/v1`)).toBe("https:\\api.example.test/v1");
+    expect(stripUrlCredentials("https:api.example.test/v1")).toBe("https:api.example.test/v1");
+    // A non-special scheme without "//" has no authority.
+    expect(stripUrlCredentials("urn:example:svc@host")).toBe("urn:example:svc@host");
   });
 });
 
@@ -261,6 +374,17 @@ const LONG_TEXTS: Array<[string, string]> = [
   ["XML tags with attributes", run('<token a="b">')],
   ["namespace chain", run("a:")],
   ["credential namespaces", run("password:a")],
+  ["distinct unclosed XML tags", Array.from({ length: LONG / 10 }, (_, index) => `<token_${index}> `).join("").slice(0, LONG)],
+  ["distinct XML tags then closings", `${Array.from({ length: LONG / 20 }, (_, index) => `<token_${index}>a`).join("")}${Array.from({ length: LONG / 20 }, (_, index) => `</token_${index}>`).join("")}`],
+  ["credential XML attributes", run('<password a="b" ')],
+  ["named containers", run('{"name":"token","value":[')],
+  ["named containers closed", run('[{"name":"token","value":"<x>"},')],
+  ["stray closers", `{"name":"token"}${run("}]>")}`],
+  ["deep nesting", `${run("[{")}"name":"token","value":"x"`],
+  ["escaped quote values", run('password=\\"a\\\\')],
+  ["PEM headers", run("-----BEGIN PRIVATE KEY PRIVATE KEY ")],
+  ["special scheme runs", run("https:")],
+  ["special scheme backslashes", `https:${run("\\")}`],
 ];
 
 describe("credential rules run in linear time", () => {

@@ -91,6 +91,12 @@ describe("published JSON Schemas", () => {
     expect(diagnostics).toEqual([]);
     expect(check("operation-catalog", catalog), JSON.stringify(validators["operation-catalog"].errors)).toBe(true);
     expect(check("operation-catalog", { ...catalog, servers: [{ url: "https://user@api.example.test", description: null, variables: {} }] })).toBe(false);
+    // Special schemes need no "//" before user info; a non-special scheme without "//" has no authority.
+    const serverUrl = (url: string) => check("operation-catalog", { ...catalog, servers: [{ url, description: null, variables: {} }] });
+    for (const url of ["https:svc:pw@api.example.test", "https:/svc:pw@api.example.test", "https:\\\\svc:pw@api.example.test", "HTTP:\\svc:pw@api.example.test", "wss:/\\svc:pw@api.example.test"]) {
+      expect(serverUrl(url), url).toBe(false);
+    }
+    for (const url of ["https:api.example.test/v1", "https:\\\\api.example.test\\v1", "urn:example:svc@host"]) expect(serverUrl(url), url).toBe(true);
   });
 
   it("share identifier patterns with the TypeScript contract", () => {

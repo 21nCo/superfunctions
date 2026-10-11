@@ -300,7 +300,7 @@
           "description": "URL template without user info, query or fragment.",
           "type": "string",
           "minLength": 1,
-          "pattern": "^(?:(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^/?#@]*(?:/[^?#]*)?|(?![A-Za-z][A-Za-z0-9+.-]*://|//)[^?#]*)$"
+          "pattern": "^(?:(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^/?#@]*(?:/[^?#]*)?|(?:[Hh][Tt][Tt][Pp][Ss]?|[Ww][Ss][Ss]?|[Ff][Tt][Pp]|[Ff][Ii][Ll][Ee]):[/\\\\]*(?![/\\\\])[^/\\\\?#@]*(?:[/\\\\][^?#]*)?|(?![A-Za-z][A-Za-z0-9+.-]*://|//|(?:[Hh][Tt][Tt][Pp][Ss]?|[Ww][Ss][Ss]?|[Ff][Tt][Pp]|[Ff][Ii][Ll][Ee]):)[^?#]*)$"
         },
         "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "variables": {
