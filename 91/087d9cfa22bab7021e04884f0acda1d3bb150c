@@ -1,0 +1,27 @@
+devfn/core/src/orchestrator.ts
+  s_1900bb15a7199a::t_0ea5dd73cdd063 47-53,338,787
+devfn/core/test/oauth-relay-lifecycle.test.ts
+  s_1900bb15a7199a::t_26532b87598a73 60-83
+devfn/docs/configuration.md
+  s_1900bb15a7199a::t_b97e8fa42344e5 101
+devfn/proxy/src/oauth-relay/state.ts
+  s_1900bb15a7199a::t_7f7831bca44491 284-285,308-309
+devfn/proxy/test/oauth-relay.test.ts
+  s_1900bb15a7199a::t_8b245a4e1f3264 207-220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91087d9cfa22bab7021e04884f0acda1d3bb150c",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
