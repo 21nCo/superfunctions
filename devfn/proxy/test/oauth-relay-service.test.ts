@@ -1,0 +1,189 @@
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { afterEach, expect, it } from "vitest";
+
+import { allocateEphemeralPort, FilePortRegistry, withFileLock } from "@devfn/ports";
+import { processBirthSignature, processIdentityStatus } from "@devfn/processes";
+import { CaddyProxyController, proxyListenerPorts, registerDomain, type ProxyRoute } from "../src/index.js";
+import {
+  OAUTH_RELAY_OWNER_ID, OAuthRelayClient, oauthRelayStatus, readRelayService, recoverOAuthRelayRoute, startOAuthRelay, stopOAuthRelay, type OAuthRelayProxy,
+} from "../src/oauth-relay/index.js";
+import { createFakeProvider, createOAuthClientApp, FixtureBrowser } from "./fixtures/oauth.js";
+
+const DOMAIN = "dev.example.test";
+const loopback = (async () => [{ address: "127.0.0.1", family: 4 }]) as never;
+// The relay entry runs from source through tsx; the package build runs dist/oauth-relay/serve.js.
+const RELAY_COMMAND = [process.execPath, "--import", createRequire(import.meta.url).resolve("tsx"), fileURLToPath(new URL("../src/oauth-relay/serve.ts", import.meta.url))];
+
+/** Route state in memory, with the controller's per-owner replace semantics. */
+function fakeProxy(initial: ProxyRoute[] = []): OAuthRelayProxy & { routes: ProxyRoute[]; removed: string[] } {
+  const proxy = {
+    routes: [...initial], removed: [] as string[],
+    async upsert(routes: readonly Omit<ProxyRoute, "updatedAt">[], instanceId?: string) {
+      const owner = instanceId ?? routes[0].instanceId;
+      const next = routes.map((route) => ({ ...route, updatedAt: new Date().toISOString() }));
+      proxy.routes = [...proxy.routes.filter((route) => route.instanceId !== owner), ...next];
+      return next;
+    },
+    async removeInstance(instanceId: string) { proxy.removed.push(instanceId); proxy.routes = proxy.routes.filter((route) => route.instanceId !== instanceId); },
+    async instanceRouteState(instanceId: string) { return { committed: proxy.routes.filter((route) => route.instanceId === instanceId) }; },
+  };
+  return proxy;
+}
+
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => { for (const step of cleanup.splice(0).reverse()) await step(); });
+
+async function registeredState(): Promise<string> {
+  const stateDir = await realpath(await mkdtemp(path.join(os.tmpdir(), "devfn-oauth-relay-service-")));
+  cleanup.push(async () => {
+    const service = await readRelayService(stateDir).catch(() => undefined);
+    if (service) try { process.kill(-service.pid, "SIGKILL"); } catch { /* stopped */ }
+    await rm(stateDir, { recursive: true, force: true });
+  });
+  await registerDomain(stateDir, { domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, tls: "internal" }, loopback);
+  return stateDir;
+}
+
+const sibling: ProxyRoute = { id: "owner-a:app:0", instanceId: "owner-a", hostname: `app-a.${DOMAIN}`, targetHost: "127.0.0.1", targetPort: 41234, tls: "internal",
+  updatedAt: "2026-01-01T00:00:00.000Z", registeredDomain: DOMAIN, projectId: "fixture", repositoryIdentity: "repo" };
+
+it("starts one relay, survives its crash without touching sibling routes, and stops it by verified identity", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  await expect(startOAuthRelay({ stateDir, domain: "other.example.test", projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
+    .rejects.toMatchObject({ code: "DEVFN_DOMAIN_UNREGISTERED" });
+  await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "other", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
+    .rejects.toMatchObject({ code: "DEVFN_DOMAIN_UNREGISTERED" });
+  const started = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+  const { httpsPort } = proxyListenerPorts();
+  expect(started).toMatchObject({ running: true, routeActive: true, hostname: `auth.${DOMAIN}`, origin: `https://auth.${DOMAIN}${httpsPort === 443 ? "" : `:${httpsPort}`}` });
+  const first = (await readRelayService(stateDir))!;
+  expect(proxy.routes.find((route) => route.instanceId === OAUTH_RELAY_OWNER_ID)).toMatchObject({ hostname: `auth.${DOMAIN}`, targetPort: first.port, tls: "internal", registeredDomain: DOMAIN });
+  // Starting again reuses the running relay; another origin is refused.
+  expect((await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND })).pid).toBe(first.pid);
+  await expect(startOAuthRelay({ stateDir, domain: DOMAIN, host: "login", projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
+    .rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE" });
+  // A live relay keeps its route through orphan recovery.
+  expect(await recoverOAuthRelayRoute(stateDir, proxy)).toBe(false);
+  process.kill(-first.pid, "SIGKILL");
+  for (let attempt = 0; attempt < 100 && await processIdentityStatus(first.pid, first.birthSignature) === "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, routeActive: true });
+  // A restart after the crash replaces only the relay's route.
+  const restarted = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+  expect(restarted.pid).not.toBe(first.pid);
+  expect(proxy.routes).toContainEqual(sibling);
+  const second = (await readRelayService(stateDir))!;
+  expect(await stopOAuthRelay(stateDir, proxy)).toEqual({ stopped: true, routeRemoved: true });
+  expect(await processIdentityStatus(second.pid, second.birthSignature)).not.toBe("running");
+  expect(proxy.routes).toEqual([sibling]);
+  expect(proxy.removed).toEqual([OAUTH_RELAY_OWNER_ID]);
+  expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, routeActive: false });
+}, 60_000);
+
+it("recovers a crashed relay's route only, and refuses to guess when its record is unreadable", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  const started = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+  const record = path.join(stateDir, "oauth-relay", "service.json");
+  const valid = await readFile(record, "utf8");
+  await writeFile(record, "{");
+  expect(await recoverOAuthRelayRoute(stateDir, proxy)).toBe(false);
+  await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
+    .rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
+  await writeFile(record, valid);
+  process.kill(-started.pid!, "SIGKILL");
+  for (let attempt = 0; attempt < 100 && (await oauthRelayStatus(stateDir, proxy)).running; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(await recoverOAuthRelayRoute(stateDir, proxy)).toBe(true);
+  expect(proxy.routes).toEqual([sibling]);
+  expect(await readRelayService(stateDir)).toBeUndefined();
+}, 60_000);
+
+it("writes nothing but its readiness line, whatever callbacks it serves", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "devfn-oauth-relay-silent-"));
+  cleanup.push(async () => await rm(stateDir, { recursive: true, force: true }));
+  const child = spawn(RELAY_COMMAND[0], RELAY_COMMAND.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+  child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+  const exited = new Promise((resolve) => child.once("exit", resolve));
+  child.stdin.end(JSON.stringify({ stateDir, origin: "https://auth.dev.example.test", nonce: "n" }));
+  for (let attempt = 0; attempt < 200 && !stdout.includes("\n"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+  const { port } = JSON.parse(stdout) as { port: number };
+  const secret = "st_secretsecretsecretsecretsecret";
+  for (const query of [`code=CODE-${secret}&state=${secret}`, `state=${secret}`, "x", `code=a&state=${secret}%0a`]) {
+    await new Promise<void>((resolve, reject) => http.get({ hostname: "127.0.0.1", port, path: `/cb?${query}`, headers: { host: "auth.dev.example.test" } }, (response) => {
+      response.resume(); response.once("end", resolve);
+    }).once("error", reject));
+  }
+  await writeFile(path.join(stateDir, "oauth-relay", "tickets.json"), "{");
+  await new Promise<void>((resolve) => http.get({ hostname: "127.0.0.1", port, path: `/cb?code=CODE-${secret}&state=${secret}`, headers: { host: "auth.dev.example.test" } }, (response) => {
+    response.resume(); response.once("end", resolve);
+  }));
+  child.kill("SIGTERM");
+  await exited;
+  expect(stdout).toBe(`${JSON.stringify({ nonce: "n", port })}\n`);
+  expect(stderr).toBe("");
+}, 30_000);
+
+// Opt-in local observation through the real DevFn-owned Caddy, internal TLS,
+// the relay process and two worktree apps. The provider is still a fixture.
+it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("completes two worktree sign-ins through real Caddy and one relay hostname", async () => await withFileLock(
+  path.join(os.tmpdir(), "devfn-test-caddy-admin.lock"), async () => {
+    const stateDir = await registeredState();
+    const original = { XDG_DATA_HOME: process.env.XDG_DATA_HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+    process.env.XDG_DATA_HOME = path.join(stateDir, "data");
+    process.env.XDG_CONFIG_HOME = path.join(stateDir, "config");
+    const proxy = new CaddyProxyController(stateDir, loopback);
+    cleanup.push(async () => {
+      try { process.kill(-(JSON.parse(await readFile(path.join(stateDir, "proxy-owner.json"), "utf8")) as { pid: number }).pid, "SIGTERM"); } catch { /* stopped */ }
+      for (const [key, value] of Object.entries(original)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    });
+    const relay = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+    // Both owners are running lifecycles in the machine registry, which the
+    // relay process consults; this test process is their recorded owner.
+    const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+    for (const owner of ["owner-a", "owner-b"]) {
+      await registry.reserve({ projectId: "fixture", instanceId: owner, invocationId: owner, profile: "default", requests: [{ name: "app", spec: { preferred: await allocateEphemeralPort() } }] });
+      await registry.markActive(owner, { app: { process: { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! } } });
+    }
+    const provider = await createFakeProvider(() => [`${relay.origin}/oauth/callback`]);
+    const apps = await Promise.all(["owner-a", "owner-b"].map(async (owner) => await createOAuthClientApp({ scheme: "https", callbackPath: "/oauth/callback", provider,
+      relay: new OAuthRelayClient({ stateDir, ownerId: owner }) })));
+    cleanup.push(async () => { await provider.close(); await Promise.all(apps.map((app) => app.close())); });
+    for (const [index, owner] of ["owner-a", "owner-b"].entries()) {
+      await proxy.upsert([{ id: `${owner}:app:0`, instanceId: owner, hostname: `app-${index}.${DOMAIN}`, targetHost: "127.0.0.1", targetPort: apps[index].port, tls: "internal",
+        registeredDomain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir }], owner);
+    }
+    const { httpsPort } = proxyListenerPorts();
+    let ca: string | undefined;
+    for (let attempt = 0; attempt < 50 && !ca; attempt += 1) {
+      ca = await readFile(path.join(stateDir, "data", "caddy", "pki", "authorities", "local", "root.crt"), "utf8").catch(() => undefined);
+      if (!ca) await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const browser = new FixtureBrowser((url) => url.hostname === "127.0.0.1" ? { port: Number(url.port), tls: false } : { port: httpsPort, tls: true, ca });
+    const suffix = httpsPort === 443 ? "" : `:${httpsPort}`;
+    // Caddy issues internal certificates asynchronously after a reload.
+    for (const host of ["auth", "app-0", "app-1"]) {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (await browser.request(`https://${host}.${DOMAIN}${suffix}/me`).then(() => true, () => false)) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+    const [a, b] = await Promise.all([browser.navigate(`https://app-0.${DOMAIN}${suffix}/login?user=alice`), browser.navigate(`https://app-1.${DOMAIN}${suffix}/login?user=bob`)]);
+    expect([a.at(-1)?.body, b.at(-1)?.body], JSON.stringify([a, b], null, 1)).toEqual(["alice", "bob"]);
+    expect(a[2]).toMatchObject({ url: expect.stringContaining(`https://auth.${DOMAIN}${suffix}/oauth/callback?`), status: 303, setCookie: [] });
+    expect(provider.tokenRequests.map((request) => request.redirectUri)).toEqual([`${relay.origin}/oauth/callback`, `${relay.origin}/oauth/callback`]);
+    expect((await browser.request(a[2].url)).status).toBe(403);
+    expect(await stopOAuthRelay(stateDir, proxy)).toMatchObject({ stopped: true, routeRemoved: true });
+    // Without the relay route Caddy no longer serves the callback host at all
+    // (no certificate is selected for it); sibling routes stay served.
+    await expect(browser.request(a[2].url)).rejects.toThrow(/EPROTO|alert/);
+    expect((await browser.request(`https://app-1.${DOMAIN}${suffix}/me`)).body).toBe("bob");
+  }, { timeoutMs: 120_000 }), 240_000);

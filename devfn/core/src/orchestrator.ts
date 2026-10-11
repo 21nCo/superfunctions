@@ -9,6 +9,7 @@ import { defaultStateDir, isCredentialKey, loadDevFnPolicy, validateDevFnConfig,
 import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePolicy, scanListenerState, withFileLock, withRoutingLock, type ListenerInfo, type ListenerScanResult, type PortAllocation, type RegistryInvocation } from "@devfn/ports";
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
 import { CaddyProxyController, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
+import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute } from "@devfn/proxy/oauth-relay";
 
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
@@ -365,6 +366,12 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Pro
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   const recovered: string[] = [];
   for (const instanceId of await proxy.routedInstanceIds()) {
+    // The OAuth relay is not a registry lifecycle; its own service record
+    // shows whether its process may still run.
+    if (instanceId === OAUTH_RELAY_OWNER_ID) {
+      if (await recoverOAuthRelayRoute(stateDir, proxy)) recovered.push(instanceId);
+      continue;
+    }
     let entered = false;
     try {
       await withFileLock(path.join(stateDir, `lifecycle-${instanceId}.lock`), async () => {
