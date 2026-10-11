@@ -6,6 +6,8 @@ export interface OAuthRelayHandlerOptions extends RelayStateOptions {
   stateDir: string;
   /** The relay's public origin, as recorded in its service record. */
   origin: string;
+  /** This relay process, which the service record must name; the relay entry passes its own PID. */
+  servicePid?: number;
 }
 
 const NO_STORE = { "cache-control": "no-store", pragma: "no-cache", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
@@ -34,6 +36,7 @@ export function createOAuthRelayHandler(options: OAuthRelayHandlerOptions): (req
         const { location } = await consumeOAuthRelayCallback(options.stateDir, {
           origin: options.origin, requestOrigin: `${scheme}//${host.toLowerCase()}`,
           requestPath: target.slice(0, separator), rawQuery: target.slice(separator + 1),
+          ...(options.servicePid === undefined ? {} : { servicePid: options.servicePid }),
         }, options);
         response.writeHead(303, { ...NO_STORE, location });
         response.end();

@@ -9,7 +9,7 @@ import { defaultStateDir, isCredentialKey, loadDevFnPolicy, validateDevFnConfig,
 import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePolicy, scanListenerState, withFileLock, withRoutingLock, type ListenerInfo, type ListenerScanResult, type PortAllocation, type RegistryInvocation } from "@devfn/ports";
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
 import { CaddyProxyController, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
-import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute, relayPaths } from "@devfn/proxy/oauth-relay";
+import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute, relayPaths, STATE_DIR_ENV } from "@devfn/proxy/oauth-relay";
 
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
@@ -776,7 +776,9 @@ export class DevFnOrchestrator {
     }
     const spec = options.config.processes![node.name];
     const managed = await supervisor.start({
-      name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir: receipt.runtimeDir, ports, environment: resolved.generated,
+      name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir: receipt.runtimeDir, ports,
+      // The lifecycle's state directory, so in-process DevFn clients read the same machine state as this command.
+      environment: { ...resolved.generated, ...(receipt.stateDir ? { [STATE_DIR_ENV]: receipt.stateDir } : {}) },
       onStarted: async (started) => {
         receipt.processes.push(started);
         receipt.startedNodes?.push({ name: node.name, kind: node.kind });

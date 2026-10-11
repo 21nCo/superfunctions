@@ -14,6 +14,8 @@ import {
 } from "./state.js";
 
 const SERVICE_LOCK_TIMEOUT_MS = 60_000;
+/** The relay's backend lease under its registry claim. */
+const BACKEND_SERVICE = "oauth-relay";
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
 /** The proxy operations the relay service needs; a CaddyProxyController by default. */
@@ -109,7 +111,7 @@ interface LaunchedRelay { pid: number; birthSignature: string; port: number; com
  * recorded; a starter that dies first closes the relay's stdin, and the
  * relay exits.
  */
-async function launch(command: readonly string[], config: { stateDir: string; origin: string }): Promise<LaunchedRelay> {
+async function launch(command: readonly string[], config: { stateDir: string; origin: string; port: number }): Promise<LaunchedRelay> {
   const nonce = randomBytes(16).toString("hex");
   const child = spawn(command[0], command.slice(1), { detached: process.platform !== "win32", stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
   child.stdin.once("error", () => undefined);
@@ -123,7 +125,7 @@ async function launch(command: readonly string[], config: { stateDir: string; or
       clearTimeout(timer);
       try {
         const line = JSON.parse(output.slice(0, output.indexOf("\n"))) as { nonce?: unknown; port?: unknown };
-        resolve(line.nonce === nonce && Number.isInteger(line.port) && (line.port as number) > 0 ? { port: line.port as number } : undefined);
+        resolve(line.nonce === nonce && line.port === config.port ? { port: config.port } : undefined);
       } catch { resolve(undefined); }
     });
     child.once("exit", () => { clearTimeout(timer); resolve(undefined); });
@@ -152,13 +154,15 @@ function relayRoute(service: OAuthRelayService, tls: ProxyRoute["tls"], certific
 /**
  * Claim the proxy listener ports for the relay route as a registry lifecycle
  * of the relay owner, as every routed lifecycle does: a sibling's planned or
- * active lease on either port refuses the claim and names its owner.
+ * active lease on either port refuses the claim and names its owner. The
+ * same claim leases the relay's loopback backend port, so no DevFn lease,
+ * planned or bound, can take it while the claim lasts.
  */
-async function claimListeners(stateDir: string, projectId: string, tls: ProxyRoute["tls"]): Promise<string> {
+async function claimListeners(stateDir: string, projectId: string, tls: ProxyRoute["tls"]): Promise<{ invocationId: string; port: number }> {
   const invocationId = randomUUID();
-  await registryOf(stateDir).reserve({ projectId, instanceId: OAUTH_RELAY_OWNER_ID, invocationId, profile: "oauth-relay", requests: [],
-    proxyListenerPorts: proxyListenerPortsFor([{ tls }]) });
-  return invocationId;
+  const [backend] = await registryOf(stateDir).reserve({ projectId, instanceId: OAUTH_RELAY_OWNER_ID, invocationId, profile: "oauth-relay",
+    requests: [{ name: BACKEND_SERVICE, spec: { ephemeral: true } }], proxyListenerPorts: proxyListenerPortsFor([{ tls }]) });
+  return { invocationId, port: backend.port };
 }
 
 /**
@@ -174,11 +178,12 @@ async function releaseClaims(stateDir: string, keep?: string): Promise<void> {
   }
 }
 
-/** Record the relay process on its claim, then mark the claim ready. */
+/** Record the relay process on its claim and backend lease, then mark the claim ready. */
 async function activateClaim(stateDir: string, service: OAuthRelayService): Promise<void> {
   const registry = registryOf(stateDir);
-  await registry.recordOwners(service.invocationId, "oauth-relay", [{ process: { pid: service.pid, birthSignature: service.birthSignature, recordedAt: service.startedAt } }]);
-  await registry.markActive(service.invocationId);
+  const owner = { pid: service.pid, birthSignature: service.birthSignature, recordedAt: service.startedAt };
+  await registry.recordOwners(service.invocationId, BACKEND_SERVICE, [{ process: owner }]);
+  await registry.markActive(service.invocationId, { [BACKEND_SERVICE]: { process: owner } });
 }
 
 /**
@@ -209,25 +214,25 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
       if (service.hostname !== hostname || service.domain !== registration.domain || service.projectId !== registration.projectId || service.repositoryIdentity !== registration.repositoryIdentity) {
         throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `A relay already serves ${service.origin}; stop it before serving another origin.`);
       }
-      // A start interrupted after its record was written may lack its claim or route.
-      const claimed = (await registryOf(input.stateDir).read()).invocations.some((item) => item.id === service.invocationId && item.state === "ready");
-      let reused = service;
-      if (!claimed) {
-        reused = { ...service, invocationId: await claimListeners(input.stateDir, registration.projectId, registration.tls) };
-        await activateClaim(input.stateDir, reused);
-        await writePrivateJson(relayPaths(input.stateDir).service, reused);
+      // Only a relay that still holds its claim and backend lease is reused;
+      // one whose claim ended is replaced below.
+      const registry = await registryOf(input.stateDir).read();
+      const claimed = registry.invocations.some((item) => item.id === service.invocationId && item.state === "ready") &&
+        registry.allocations.some((item) => item.invocationId === service.invocationId && item.state === "active" && item.port === service.port);
+      if (claimed) {
+        await proxy.upsert([relayRoute(service, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID);
+        await releaseClaims(input.stateDir, service.invocationId);
+        return await relayStatus(input.stateDir, proxy);
       }
-      await proxy.upsert([relayRoute(reused, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID);
-      await releaseClaims(input.stateDir, reused.invocationId);
-      return await relayStatus(input.stateDir, proxy);
+      if (!await stopRelayProcess(service)) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `The unclaimed relay process (PID ${service.pid}) did not stop.`);
     }
     // The listener claim comes first: a conflicting sibling lease refuses the
     // start before any relay process or route exists.
-    const invocationId = await claimListeners(input.stateDir, registration.projectId, registration.tls);
+    const { invocationId, port } = await claimListeners(input.stateDir, registration.projectId, registration.tls);
     let service: OAuthRelayService | undefined;
     let started: LaunchedRelay | undefined;
     try {
-      started = await launch(input.command ?? defaultCommand(), { stateDir: input.stateDir, origin });
+      started = await launch(input.command ?? defaultCommand(), { stateDir: input.stateDir, origin, port });
       service = { version: 1, pid: started.pid, birthSignature: started.birthSignature, port: started.port, startedAt: new Date().toISOString(), origin, hostname,
         domain: registration.domain, projectId: registration.projectId, repositoryIdentity: registration.repositoryIdentity, invocationId };
       // Recorded on the service record and the claim before the relay is

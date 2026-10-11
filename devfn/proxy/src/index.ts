@@ -53,7 +53,7 @@ export interface ProxyRoute {
   certificateFile?: string; keyFile?: string;
   /** Private, immutable copy of the certificate used by an activated route. */
   certificateDigest?: string;
-  /** A route to a process DevFn started outside a lifecycle; the next route transition drops it once that process is verified gone. */
+  /** A route to a process DevFn started outside a lifecycle; the next transition that changes routes drops it once that process is verified gone. */
   serviceProcess?: { pid: number; birthSignature: string };
 }
 interface ProxyState { version: 1; routes: ProxyRoute[] }
@@ -194,8 +194,10 @@ function canonicalJson(value: unknown): string {
 
 /**
  * Routes without a service process whose recorded process is verified gone.
- * Every route transition drops those, so a crashed service's route does not
- * outlive the next routing operation; an unverifiable process keeps its route.
+ * Every transition that changes routes drops those, so a crashed service's
+ * route does not outlive the next such operation; an unverifiable process
+ * keeps its route. A call that changes no routes never applies Caddy for
+ * this sweep alone, so route-less lifecycles stay independent of Caddy.
  */
 async function withoutExitedServices(routes: readonly ProxyRoute[]): Promise<ProxyRoute[]> {
   const kept: ProxyRoute[] = [];
@@ -741,10 +743,12 @@ export class CaddyProxyController {
         throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A route ID is already owned by another instance.");
       }
       const now = new Date().toISOString();
-      const kept = (await withoutExitedServices(state.routes)).filter((route) => route.instanceId !== selectedOwner);
-      const nextRoutes = [...kept, ...routes.map(({ certificateDigest: _ignored, ...route }) => ({ ...route, updatedAt: now }))];
-      renderCaddyfile(nextRoutes);
-      if (routes.length === 0 && nextRoutes.length === state.routes.length) return [];
+      const others = state.routes.filter((route) => route.instanceId !== selectedOwner);
+      const fresh = routes.map(({ certificateDigest: _ignored, ...route }) => ({ ...route, updatedAt: now }));
+      renderCaddyfile([...others, ...fresh]);
+      if (routes.length === 0 && others.length === state.routes.length) return [];
+      const kept = await withoutExitedServices(others);
+      const nextRoutes = [...kept, ...fresh];
       // Every explicitly selected route is activated again. Only routes from
       // other instances are exempt from fresh DNS and certificate checks.
       await this.apply({ version: 1, routes: nextRoutes }, false, kept);
@@ -756,8 +760,9 @@ export class CaddyProxyController {
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
     await withRoutingLock(this.stateDir, async () => await withFileLock(this.lockPath, async () => {
       const state = await this.read();
-      const routes = (await withoutExitedServices(state.routes)).filter((route) => route.instanceId !== instanceId);
-      if (routes.length !== state.routes.length) await this.apply({ version: 1, routes }, false, state.routes);
+      const remaining = state.routes.filter((route) => route.instanceId !== instanceId);
+      if (remaining.length === state.routes.length) return;
+      await this.apply({ version: 1, routes: await withoutExitedServices(remaining) }, false, state.routes);
     }, { timeoutMs: PROXY_LOCK_TIMEOUT_MS }));
   }
 

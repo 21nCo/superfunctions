@@ -175,7 +175,7 @@ describe("Caddy route rendering", () => {
     } finally { await cleanup(); }
   });
 
-  it("drops a route whose service process is verified gone at the next unrelated route transition", async () => {
+  it("drops a route whose service process is verified gone at the next transition that changes routes", async () => {
     const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-service-");
     const child = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 200)"], { stdio: "ignore" });
     const exited = new Promise((resolve) => child.once("exit", resolve));
@@ -191,15 +191,45 @@ describe("Caddy route rendering", () => {
     try {
       await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [dead, live, unverifiable, plain] }));
       const controller = new CaddyProxyController(stateDir);
-      // Removing an owner without routes is still a route transition.
       await controller.removeInstance("unrelated");
-      expect(await controller.routes()).toEqual([live, unverifiable, plain]);
+      expect(await controller.routes()).toEqual([dead, live, unverifiable, plain]);
+      await controller.removeInstance("plain");
+      expect(await controller.routes()).toEqual([live, unverifiable]);
       await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [dead, plain] }));
       await controller.upsert([{ id: "next", instanceId: "next", hostname: "next.localhost", targetHost: "127.0.0.1", targetPort: 4105, tls: "off" }]);
       expect((await controller.routes()).map((item) => item.id)).toEqual(["plain", "next"]);
       await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [{ ...plain, serviceProcess: { pid: 0, birthSignature: "x" } }] }));
       await expect(controller.routes()).rejects.toMatchObject({ code: "DEVFN_PROXY_CONFIG_INVALID" });
     } finally { await cleanup(); }
+  });
+
+  it("never applies Caddy for a dead service route when the caller's routes do not change", async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-routeless-"));
+    const toolsDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-tools-"));
+    const originalPath = process.env.PATH;
+    const marker = path.join(toolsDir, "caddy-invoked");
+    // No Caddy owner is recorded and this Caddy fails every command, as on a host without DevFn's Caddy.
+    await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, { mode: 0o700 });
+    process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 200)"], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    const deadSignature = await processBirthSignature(child.pid!);
+    await exited;
+    const dead = { id: "relay:callback", instanceId: "relay", hostname: "auth.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" as const, updatedAt: "now",
+      serviceProcess: { pid: child.pid!, birthSignature: deadSignature ?? "gone" } };
+    try {
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [dead] }));
+      const controller = new CaddyProxyController(stateDir);
+      // A route-less lifecycle's teardown and empty selection.
+      await controller.removeInstance("routeless");
+      await expect(controller.upsert([], "routeless")).resolves.toEqual([]);
+      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await controller.routes()).toEqual([dead]);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+      await rm(stateDir, { recursive: true, force: true });
+      await rm(toolsDir, { recursive: true, force: true });
+    }
   });
 
   it("replays and commits a valid route activation journal", async () => {

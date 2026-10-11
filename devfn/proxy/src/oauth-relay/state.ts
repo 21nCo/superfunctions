@@ -327,13 +327,18 @@ export interface OAuthRelayCallback {
   requestPath: string;
   /** The raw query string, without "?"; forwarded byte-exact. */
   rawQuery: string;
+  /** The serving process; when given, it must be the relay the service record names. */
+  servicePid?: number;
 }
 
 /**
  * Consume the ticket for a provider callback and return the owner's callback
- * URL with the provider's query unchanged. The ticket is consumed before any
- * route check, so every attempt that reaches it is its only attempt; the
- * route and owner are then checked against the binding under the routing lock.
+ * URL with the provider's query unchanged. The service record must name a
+ * running relay for this origin (and, when given, this process) before any
+ * ticket is touched; a missing or unreadable record forwards nothing. The
+ * ticket is consumed before any route check, so every attempt that reaches it
+ * is its only attempt; the route and owner are then checked against the
+ * binding under the routing lock.
  */
 export async function consumeOAuthRelayCallback(stateDir: string, input: OAuthRelayCallback, options: RelayStateOptions = {}): Promise<{ location: string }> {
   const now = options.now ?? (() => new Date());
@@ -347,6 +352,10 @@ export async function consumeOAuthRelayCallback(stateDir: string, input: OAuthRe
   }
   if (input.requestOrigin !== input.origin) throw reject("wrong-origin", "The callback did not arrive on the relay origin.");
   await relayDirectory(stateDir);
+  const service = await runningService(stateDir);
+  if (service.origin !== input.origin || (input.servicePid !== undefined && service.pid !== input.servicePid)) {
+    throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", "This process is not the recorded DevFn OAuth relay for this origin.");
+  }
   const ticket = await withFileLock(relayPaths(stateDir).lock, async () => {
     const state = await readTickets(stateDir);
     const id = stateDigest(states[0]);

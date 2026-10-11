@@ -220,7 +220,6 @@ describe("OAuth relay ticket contract", () => {
   it("forwards only to the bound route and rejects stale owners, stopped or changed routes, expiry and wrong origins", async () => {
     const m = await setup();
     for (const label of ["ok", "stopped", "restarted", "moved", "dead", "origin", "path", "pending"]) await registerA(m, state(label));
-    await registerA(m, state("expired"), { expiresInSeconds: 1 });
     // Host or path not on the registered redirect URI.
     await expect(consume(m, { ...callback(m, state("origin")), requestOrigin: origin("app-a") })).rejects.toMatchObject({ reason: "wrong-origin" });
     await expect(consume(m, { ...callback(m, state("path")), requestPath: "/other" })).rejects.toMatchObject({ reason: "wrong-origin" });
@@ -230,7 +229,9 @@ describe("OAuth relay ticket contract", () => {
     await expect(consume(m, callback(m, state("ok"), "&redirect_uri=https://evil.example&target=x"))).resolves.toEqual({
       location: `${origin("app-a")}${CALLBACK_PATH}?code=c0de&state=${state("ok")}&redirect_uri=https://evil.example&target=x` });
     await expect(consume(m, callback(m, state("never")))).rejects.toMatchObject({ reason: "unknown-state" });
-    // Two seconds after now is past the one-second ticket, however slowly it was registered.
+    // Two seconds after now is past the one-second ticket, however slowly it was registered. No other
+    // ticket write, which prunes expired tickets, comes between its registration and this callback.
+    await registerA(m, state("expired"), { expiresInSeconds: 1 });
     await expect(consume(m, callback(m, state("expired")), () => new Date(Date.now() + 2_000))).rejects.toMatchObject({ reason: "expired" });
     await expect(consume(m, callback(m, state("expired")))).rejects.toMatchObject({ reason: "unknown-state" });
     m.live.delete("owner-a");
@@ -250,7 +251,8 @@ describe("OAuth relay ticket contract", () => {
     await expect(consume(m, callback(m, state("restarted")))).rejects.toMatchObject({ reason: "stale-owner" });
     await m.writeRoutes("proxy-routes.json", m.routes.filter((route) => route !== own));
     await expect(consume(m, callback(m, state("stopped")))).rejects.toMatchObject({ reason: "route-stopped" });
-  });
+  // Each registration and callback verifies process identities with a subprocess.
+  }, 30_000);
 
   it("rejects malformed and parameter-polluted callbacks before touching a ticket", async () => {
     const m = await setup();
@@ -298,6 +300,32 @@ describe("OAuth relay ticket contract", () => {
     await writeFile(path.join(m.stateDir, "proxy-routes.json"), "{");
     await expect(consume(m, callback(m, state("routes")))).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
   });
+
+  it("forwards nothing unless the service record names this running relay, and leaves the ticket and record in place", async () => {
+    const m = await setup();
+    const value = state("service");
+    await registerA(m, value);
+    const record = path.join(m.stateDir, "oauth-relay", "service.json");
+    const tickets = path.join(m.stateDir, "oauth-relay", "tickets.json");
+    const valid = await readFile(record, "utf8");
+    const before = await readFile(tickets, "utf8");
+    await writeFile(record, "{");
+    expect(await relayRequest(m, `code=c0de&state=${value}`)).toMatchObject({ status: 503, body: "DEVFN_OAUTH_RELAY_STATE_INVALID\n" });
+    expect(await readFile(record, "utf8")).toBe("{");
+    await rm(record);
+    expect(await relayRequest(m, `code=c0de&state=${value}`)).toMatchObject({ status: 503, body: "DEVFN_OAUTH_RELAY_UNAVAILABLE\n" });
+    // A record for another relay process, or another origin, is not this relay's.
+    await writeFile(record, valid);
+    await expect(consumeOAuthRelayCallback(m.stateDir, { ...callback(m, value), servicePid: process.pid + 1 }, { ownerLive: m.ownerLive }))
+      .rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE" });
+    await writeFile(record, valid.replace(`"origin":"${RELAY_ORIGIN}"`, `"origin":"https://login.${DOMAIN}${portSuffix}"`).replace(`"hostname":"auth.${DOMAIN}"`, `"hostname":"login.${DOMAIN}"`));
+    expect(await relayRequest(m, `code=c0de&state=${value}`)).toMatchObject({ status: 503, body: "DEVFN_OAUTH_RELAY_UNAVAILABLE\n" });
+    expect(await readFile(tickets, "utf8")).toBe(before);
+    // Once the record is intact again, the untouched ticket is still its callback's one use.
+    await writeFile(record, valid);
+    const relayed = await relayRequest(m, `code=c0de&state=${value}`);
+    expect(relayed).toMatchObject({ status: 303, headers: { location: `${origin("app-a")}${CALLBACK_PATH}?code=c0de&state=${value}` } });
+  }, 30_000);
 
   it("decides from the route state a transition leaves, not one read before it", async () => {
     const m = await setup();

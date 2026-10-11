@@ -3,8 +3,15 @@ import path from "node:path";
 
 import { readRelayService, registerOAuthRelayState, OAuthRelayError, type RelayStateOptions } from "./state.js";
 
+/** The machine state directory DevFn passes to every process it launches. */
+export const STATE_DIR_ENV = "DEVFN_STATE_DIR";
+
 export interface OAuthRelayClientOptions extends RelayStateOptions {
-  /** DevFn machine state; defaults to the CLI's default state directory. */
+  /**
+   * DevFn machine state; defaults to DEVFN_STATE_DIR, which DevFn sets to
+   * the lifecycle's own state directory (including --state-dir and
+   * XDG_STATE_HOME), then to the CLI's default state directory.
+   */
   stateDir?: string;
   /** Opaque lifecycle owner; defaults to DEVFN_INSTANCE_ID. */
   ownerId?: string;
@@ -31,7 +38,7 @@ export class OAuthRelayClient {
 
   public constructor(private readonly options: OAuthRelayClientOptions = {}) {
     const env = options.env ?? process.env;
-    this.stateDir = options.stateDir ?? (env.XDG_STATE_HOME ? path.join(env.XDG_STATE_HOME, "devfn") : path.join(os.homedir(), ".local", "state", "devfn"));
+    this.stateDir = options.stateDir || env[STATE_DIR_ENV] || (env.XDG_STATE_HOME ? path.join(env.XDG_STATE_HOME, "devfn") : path.join(os.homedir(), ".local", "state", "devfn"));
     const ownerId = options.ownerId ?? env.DEVFN_INSTANCE_ID;
     if (!ownerId) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", "No DevFn lifecycle owner is available; run inside devfn up or pass ownerId.");
     this.ownerId = ownerId;

@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 
-import { FilePortRegistry, withFileLock } from "@devfn/ports";
+import { allocateEphemeralPort, FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature, processIdentityStatus } from "@devfn/processes";
 import { CaddyProxyController, proxyListenerPorts, registerDomain, type ProxyRoute } from "../src/index.js";
 import {
@@ -141,7 +141,22 @@ it("follows the listener claim contract: a sibling lease refuses the start, and 
   await registry.release({ invocationId: "a-1" });
   expect((await registry.read()).invocations.find((item) => item.id === "a-1")).toMatchObject({ state: "stopped" });
   expect((await registry.read()).invocations.find((item) => item.id === "a-1")?.proxyClaimRetained).toBeUndefined();
+  // The relay's loopback backend is a lease of its claim, owned by the relay
+  // process, so no sibling lease, planned or bound, can take that port.
+  const service = (await readRelayService(stateDir))!;
+  const backend = async () => (await registry.read()).allocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => [item.port, item.state, item.process?.pid]);
+  expect(await backend()).toEqual([[service.port, "active", service.pid]]);
+  await expect(registry.reserve({ projectId: "fixture", instanceId: "v01", invocationId: "v01-3", profile: "default", requests: [{ name: "web", spec: { preferred: service.port, exact: true } }] }))
+    .rejects.toMatchObject({ code: "DEVFN_PORT_CONFLICT", details: { port: service.port } });
+  // A running relay whose claim ended is replaced, not reused unclaimed.
+  await registry.release({ invocationId: service.invocationId });
+  const replaced = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+  expect(replaced.pid).not.toBe(service.pid);
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).not.toBe("running");
+  const next = (await readRelayService(stateDir))!;
+  expect((await backend()).filter(([, state]) => state === "active")).toEqual([[next.port, "active", next.pid]]);
   await stopOAuthRelay(stateDir, proxy);
+  expect((await backend()).every(([, state]) => state === "released")).toBe(true);
 }, 60_000);
 
 it("writes nothing but its readiness line, whatever callbacks it serves", async () => {
@@ -153,9 +168,11 @@ it("writes nothing but its readiness line, whatever callbacks it serves", async 
   child.stdout.on("data", (chunk) => { stdout += String(chunk); });
   child.stderr.on("data", (chunk) => { stderr += String(chunk); });
   const exited = new Promise((resolve) => child.once("exit", resolve));
-  child.stdin.write(`${JSON.stringify({ stateDir, origin: "https://auth.dev.example.test", nonce: "n" })}\n`);
+  const leased = await allocateEphemeralPort();
+  child.stdin.write(`${JSON.stringify({ stateDir, origin: "https://auth.dev.example.test", nonce: "n", port: leased })}\n`);
   for (let attempt = 0; attempt < 200 && !stdout.includes("\n"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
   const { port } = JSON.parse(stdout) as { port: number };
+  expect(port).toBe(leased);
   child.stdin.end("commit\n");
   const secret = "st_secretsecretsecretsecretsecret";
   for (const query of [`code=CODE-${secret}&state=${secret}`, `state=${secret}`, "x", `code=a&state=${secret}%0a`]) {
@@ -223,14 +240,17 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("completes two worktree sign-ins
     expect(a[2]).toMatchObject({ url: expect.stringContaining(`https://auth.${DOMAIN}${suffix}/oauth/callback?`), status: 303, setCookie: [] });
     expect(provider.tokenRequests.map((request) => request.redirectUri)).toEqual([`${relay.origin}/oauth/callback`, `${relay.origin}/oauth/callback`]);
     expect((await browser.request(a[2].url)).status).toBe(403);
-    // A crashed relay's route goes at the next route transition, even one for
-    // an owner without routes. Caddy then no longer serves the callback host
-    // at all (no certificate is selected for it); sibling routes stay served.
+    // A crashed relay's route goes at the next transition that changes routes;
+    // one for an owner without routes leaves Caddy untouched. Caddy then no
+    // longer serves the callback host at all (no certificate is selected for
+    // it); sibling routes stay served.
     process.kill(-relay.pid!, "SIGKILL");
     for (let attempt = 0; attempt < 100 && (await readRelayService(stateDir).then((service) => processIdentityStatus(service!.pid, service!.birthSignature))) === "running"; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     await proxy.removeInstance("unrelated");
+    expect((await browser.request(a[2].url)).status).toBe(502);
+    await proxy.removeInstance("owner-a");
     await expect(browser.request(a[2].url)).rejects.toThrow(/EPROTO|alert/);
     expect((await browser.request(`https://app-1.${DOMAIN}${suffix}/me`)).body).toBe("bob");
     expect(await stopOAuthRelay(stateDir, proxy)).toMatchObject({ stopped: false, routeRemoved: false });
@@ -244,9 +264,11 @@ it("keeps a relay running only once its starter commits it", async () => {
   let stdout = "";
   child.stdout.on("data", (chunk) => { stdout += String(chunk); });
   const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
-  child.stdin.write(`${JSON.stringify({ stateDir, origin: "https://auth.dev.example.test", nonce: "n" })}\n`);
+  const leased = await allocateEphemeralPort();
+  child.stdin.write(`${JSON.stringify({ stateDir, origin: "https://auth.dev.example.test", nonce: "n", port: leased })}\n`);
   for (let attempt = 0; attempt < 200 && !stdout.includes("\n"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
   const { port } = JSON.parse(stdout) as { port: number };
+  expect(port).toBe(leased);
   // The starter's end of stdin closes without a commit, as when it is killed.
   child.stdin.end();
   expect(await exited).toBe(0);

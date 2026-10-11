@@ -1,4 +1,4 @@
-export { OAuthRelayClient, type OAuthRelayAuthorization, type OAuthRelayClientOptions } from "./client.js";
+export { OAuthRelayClient, STATE_DIR_ENV, type OAuthRelayAuthorization, type OAuthRelayClientOptions } from "./client.js";
 export { createOAuthRelayHandler, type OAuthRelayHandlerOptions } from "./server.js";
 export { oauthRelayStatus, recoverOAuthRelayRoute, startOAuthRelay, stopOAuthRelay, type OAuthRelayProxy, type OAuthRelayStatus, type StartOAuthRelayInput } from "./service.js";
 export {
