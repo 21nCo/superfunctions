@@ -77,13 +77,13 @@
             "additionalProperties": false,
             "minProperties": 1,
             "properties": {
-              "implicit": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["authorizationUrl"], "properties": {"authorizationUrl": {"type": "string", "minLength": 1}}}]},
-              "password": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["tokenUrl"], "properties": {"tokenUrl": {"type": "string", "minLength": 1}}}]},
-              "clientCredentials": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["tokenUrl"], "properties": {"tokenUrl": {"type": "string", "minLength": 1}}}]},
+              "implicit": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["authorizationUrl"], "properties": {"authorizationUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}]},
+              "password": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["tokenUrl"], "properties": {"tokenUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}]},
+              "clientCredentials": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["tokenUrl"], "properties": {"tokenUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}]},
               "authorizationCode": {
                 "allOf": [
                   {"$ref": "#/$defs/oauthFlow"},
-                  {"type": "object", "required": ["authorizationUrl", "tokenUrl"], "properties": {"authorizationUrl": {"type": "string", "minLength": 1}, "tokenUrl": {"type": "string", "minLength": 1}}}
+                  {"type": "object", "required": ["authorizationUrl", "tokenUrl"], "properties": {"authorizationUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}, "tokenUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}
                 ]
               }
             }
@@ -93,14 +93,14 @@
         "allOf": [
           {
             "if": {"type": "object", "properties": {"type": {"const": "apiKey"}}},
-            "then": {"type": "object", "required": ["in", "name"], "properties": {"in": {"type": "string", "enum": ["query", "header", "cookie"]}, "name": {"type": "string", "minLength": 1}}}
+            "then": {"type": "object", "required": ["in", "name"], "properties": {"in": {"type": "string", "enum": ["query", "header", "cookie"]}, "name": {"type": "string", "minLength": 1, "pattern": "\\S"}}}
           },
-          {"if": {"type": "object", "properties": {"type": {"const": "http"}}}, "then": {"type": "object", "required": ["scheme"], "properties": {"scheme": {"type": "string", "minLength": 1}}}},
+          {"if": {"type": "object", "properties": {"type": {"const": "http"}}}, "then": {"type": "object", "required": ["scheme"], "properties": {"scheme": {"type": "string", "minLength": 1, "pattern": "\\S"}}}},
           {
             "if": {"type": "object", "properties": {"type": {"const": "openIdConnect"}}},
-            "then": {"type": "object", "required": ["openIdConnectUrl"], "properties": {"openIdConnectUrl": {"type": "string", "minLength": 1}}}
+            "then": {"type": "object", "required": ["openIdConnectUrl"], "properties": {"openIdConnectUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}
           },
-          {"if": {"type": "object", "properties": {"type": {"const": "oauth2"}}}, "then": {"type": "object", "required": ["flows"]}}
+          {"if": {"type": "object", "properties": {"type": {"const": "oauth2"}}}, "then": {"type": "object", "required": ["flows"]}, "else": {"not": {"required": ["flows"]}}}
         ]
       }
     },
@@ -295,7 +295,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "mediaType": {"type": "string", "minLength": 1, "maxLength": 128},
+        "mediaType": {"description": "Bare media type: no parameters.", "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^;\\s]+$"},
         "schema": {
           "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>; resolve them against the catalog's schemas map."
         },

@@ -12,7 +12,7 @@ import {
   sanitizeReport,
   stripUrlCredentials,
 } from "./credentials.js";
-import { isSupportedMediaType, normalizeMediaType, validateManifest } from "./manifest.js";
+import { isSupportedMediaType, mediaTypeParameters, normalizeMediaType, validateManifest } from "./manifest.js";
 import {
   CATALOG_VERSION,
   type ApiManifest,
@@ -610,6 +610,8 @@ class CatalogBuilder {
         }
       } else if (secret && !CREDENTIAL_FIELD_KEYWORDS.has(key)) {
         drop(key, childPointer, "it is literal or unrecognized data inside a credential field");
+      } else if (LITERAL_KEYWORDS.has(key) && this.reachesCredentialField(value)) {
+        drop(key, childPointer, "the schema contains a credential field whose value the literal would carry");
       } else if (hasCredentialKey(child)) {
         drop(key, childPointer, "it holds credential-named keys");
       } else {
@@ -617,6 +619,35 @@ class CatalogBuilder {
       }
     }
     return output;
+  }
+
+  /**
+   * True when a subschema (through any schema keyword, applicator or component
+   * `$ref`, not the schema itself) is a credential field: a credential-named
+   * property or `format: password`. A literal on such a schema could carry
+   * that field's value, as `default: {pin: "..."}` does for a password `pin`.
+   */
+  private reachesCredentialField(schema: Record<string, unknown>): boolean {
+    const seen = new Set<unknown>();
+    const reaches = (value: unknown, self: boolean): boolean => {
+      if (!isRecord(value) || seen.has(value)) return false;
+      seen.add(value);
+      if (!self && value.format === "password") return true;
+      for (const [key, child] of Object.entries(value)) {
+        if (REFERENCE_KEYWORDS.has(key)) {
+          if (typeof child === "string" && child.startsWith("#") && reaches(resolvePointer(this.doc, child), false)) return true;
+        } else if (SCHEMA_MAP_KEYWORDS.has(key) && isRecord(child)) {
+          const named = key === "properties" || key === "patternProperties";
+          if (Object.entries(child).some(([name, entry]) => (named && isCredentialKey(name)) || reaches(entry, false))) return true;
+        } else if (SCHEMA_KEYWORDS.has(key)) {
+          if (reaches(child, false)) return true;
+        } else if (SCHEMA_LIST_KEYWORDS.has(key) && Array.isArray(child)) {
+          if (child.some((entry) => reaches(entry, false))) return true;
+        }
+      }
+      return false;
+    };
+    return reaches(schema, true);
   }
 
   /** Property names (`required`, `dependentRequired`): checked like property names and copied verbatim, never rewritten. */
@@ -733,7 +764,7 @@ class CatalogBuilder {
     // Source keys are visited in code-unit order so collisions resolve the same way for any key order.
     for (const rawType of Object.keys(content).sort(compareCodeUnits)) {
       const mediaType = normalizeMediaType(rawType);
-      if (!this.mediaTypes.has(mediaType)) {
+      if (!this.mediaTypes.has(mediaType) || mediaTypeParameters(rawType).length > 0) {
         unsupported.push(rawType);
         continue;
       }
@@ -758,8 +789,11 @@ class CatalogBuilder {
     }
     if (unsupported.length > 0) {
       const allowed = sortStrings(this.mediaTypes).join(", ");
-      const listable = unsupported.filter((rawType) => isSupportedMediaType(normalizeMediaType(rawType)));
+      const listable = unsupported.filter((rawType) => isSupportedMediaType(normalizeMediaType(rawType)) && mediaTypeParameters(rawType).length === 0);
       // Only media types the catalog can describe may be added to the manifest; others need a spec change.
+      const parameterized = unsupported.some((rawType) => mediaTypeParameters(rawType).length > 0)
+        ? " (media type parameters other than charset=utf-8 change the bytes on the wire and are not supported)"
+        : "";
       const advice = listable.length > 0
         ? `add a media type the manifest lists (${allowed}) or add ${sortStrings(listable.map(normalizeMediaType)).join(", ")} to manifest serialization.mediaTypes`
         : `the catalog cannot describe ${unsupported.join(", ")}, so the spec must also offer one of ${allowed}`;
@@ -767,8 +801,8 @@ class CatalogBuilder {
         "UNSUPPORTED_SERIALIZATION",
         pointer,
         byType.size === 0
-          ? `${what} of operation "${operation}" only offers ${unsupported.join(", ")}; ${advice}.`
-          : `${what} of operation "${operation}" drops unsupported media types ${unsupported.join(", ")}; clients use ${allowed}.`,
+          ? `${what} of operation "${operation}" only offers ${unsupported.join(", ")}${parameterized}; ${advice}.`
+          : `${what} of operation "${operation}" drops unsupported media types ${unsupported.join(", ")}${parameterized}; clients use ${allowed}.`,
         { severity: byType.size === 0 ? "error" : "warning", operation }
       );
     }
@@ -869,7 +903,8 @@ class CatalogBuilder {
         if (!resolved) return [];
         const kind: CatalogResponse["kind"] = status === "default" ? "default" : /^[45]/.test(status) ? "error" : "success";
         const headers = this.member(resolved.value, "headers", resolved.pointer, OBJECT, id);
-        if (headers && Object.keys(headers).some((name) => !name.startsWith("x-"))) {
+        // Header names are not extensions (`x-ratelimit-remaining` is a header); OpenAPI ignores Content-Type here.
+        if (headers && Object.keys(headers).some((name) => name.toLowerCase() !== "content-type")) {
           this.report("UNSUPPORTED_SERIALIZATION", `${resolved.pointer}/headers`, `Response ${status} headers of operation "${id}" are not described in the catalog; generated clients will not expose them.`, { severity: "warning", operation: id });
         }
         return [
@@ -1008,15 +1043,16 @@ class CatalogBuilder {
       };
       if (value.type === "apiKey") {
         requireMember("in", API_KEY_LOCATIONS.includes(scheme.in ?? ""), `"in" of ${API_KEY_LOCATIONS.join(", ")}`);
-        requireMember("name", Boolean(scheme.name), "a non-empty name");
+        requireMember("name", Boolean(scheme.name?.trim()), "a non-empty name");
       }
-      if (value.type === "http") requireMember("scheme", Boolean(scheme.scheme), "a non-empty scheme");
+      if (value.type === "http") requireMember("scheme", Boolean(scheme.scheme?.trim()), "a non-empty scheme");
       const bearerFormat = this.text(own(value, "bearerFormat"), `${pointer}/bearerFormat`);
       if (bearerFormat !== null) scheme.bearerFormat = bearerFormat;
       const openIdConnectUrl = this.url(own(value, "openIdConnectUrl"), `${pointer}/openIdConnectUrl`);
       if (openIdConnectUrl !== null) scheme.openIdConnectUrl = openIdConnectUrl;
-      if (value.type === "openIdConnect") requireMember("openIdConnectUrl", Boolean(openIdConnectUrl), "a non-empty openIdConnectUrl");
-      const declaredFlows = this.member(value, "flows", pointer, OBJECT);
+      if (value.type === "openIdConnect") requireMember("openIdConnectUrl", Boolean(openIdConnectUrl?.trim()), "a non-empty openIdConnectUrl");
+      // OpenAPI defines flows for oauth2 only; other types never carry them.
+      const declaredFlows = value.type === "oauth2" ? this.member(value, "flows", pointer, OBJECT) : undefined;
       if (value.type === "oauth2") {
         const flowCount = Object.keys(declaredFlows ?? {}).filter((key) => !key.startsWith("x-")).length;
         requireMember("flows", flowCount > 0, `flows with at least one of ${Object.keys(OAUTH_FLOW_URLS).join(", ")}`);
@@ -1048,7 +1084,7 @@ class CatalogBuilder {
             const declaredUrl = own(flow, key);
             const url = this.url(declaredUrl, `${flowPointer}/${key}`);
             if (url !== null) output[key] = url;
-            if (!url && requiredUrls?.includes(key as "authorizationUrl" | "tokenUrl") && (declaredUrl === undefined || typeof declaredUrl === "string")) {
+            if (!url?.trim() && requiredUrls?.includes(key as "authorizationUrl" | "tokenUrl") && (declaredUrl === undefined || typeof declaredUrl === "string")) {
               this.report("INVALID_SPEC", `${flowPointer}/${key}`, `OAuth flow "${flowName}" of security scheme "${name}" needs a non-empty ${key}.`);
             }
           }
@@ -1089,6 +1125,10 @@ class CatalogBuilder {
       }
       const template = server.url;
       const url = this.url(template, `${serverPointer}/url`, { dropQuery: true }) as string;
+      if (url === "") {
+        this.report("INVALID_SPEC", `${serverPointer}/url`, `Server ${serverPointer} has no URL left once its query and fragment are removed; give it a base URL.`);
+        return [];
+      }
       const declared = this.member(server, "variables", serverPointer, OBJECT) ?? {};
       const names = Object.keys(declared).sort(compareCodeUnits);
       const defaults: Record<string, string> = {};

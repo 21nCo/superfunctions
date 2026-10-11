@@ -133,6 +133,42 @@ describe("credential text rules", () => {
   });
 });
 
+// A placeholder exempts a value only when all of it is placeholders: the value runs to its real delimiter, so
+// text straight after a placeholder is judged with it. placeholder x suffix x syntax.
+const SUFFIX_SEED = "SEEDtail9911";
+const PLACEHOLDERS = ["[REDACTED]", "{{token}}", "<token>", "$TOKEN"];
+const PLACEHOLDER_SYNTAXES: Array<[syntax: string, render: (value: string) => string]> = [
+  ["key=", (value) => `token=${value}`],
+  ["Authorization:", (value) => `Authorization: ${value}`],
+  ["JSON value", (value) => `{"token":"${value}"}`],
+];
+const PLACEHOLDER_MATRIX = PLACEHOLDERS.flatMap((placeholder) =>
+  ["", SUFFIX_SEED].flatMap((suffix) =>
+    PLACEHOLDER_SYNTAXES.map(([syntax, render]) => ({ name: `${syntax} ${placeholder}${suffix ? " + suffix" : ""}`, text: render(`${placeholder}${suffix}`), credential: suffix !== "" }))
+  )
+);
+
+describe("placeholder values", () => {
+  const spec = fixture("catalog/openapi.json");
+  const manifest = fixture("catalog/manifest.json");
+  const event = fixture("client-failure/valid/network-minimal.json");
+
+  it.each(PLACEHOLDER_MATRIX)("$name", ({ text, credential }) => {
+    expect(containsCredentialValue(text)).toBe(credential);
+
+    const nextSpec = clone(spec);
+    nextSpec.paths[PROJECT_ROUTE].get.description = text;
+    const built = buildOperationCatalog(nextSpec, clone(manifest));
+    expect(built.catalog).not.toBeNull();
+    expect(JSON.stringify(built)).not.toContain(SUFFIX_SEED);
+    if (!credential) expect(built.catalog!.operations.find((operation) => operation.id === "projects.get")!.description).toBe(text);
+
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
+    expect(result.ok).toBe(!credential);
+    expect(JSON.stringify(result)).not.toContain(SUFFIX_SEED);
+  });
+});
+
 // Name/value indirection: a value field whose container names a credential header or setting.
 // Every name field x container syntax x member order.
 const NAME_SEED = "SEEDnamed42x";
@@ -213,6 +249,29 @@ describe("name/value indirection", () => {
   ])("fails closed on a %s", (_name, text) => {
     expect(containsCredentialValue(text)).toBe(true);
     expect(redactCredentialValues(text)).not.toContain(NAME_SEED);
+  });
+
+  // An unquoted closer (in a regex, comment, prose or a bare attribute) leaves a stray closer behind: the structure
+  // cannot be trusted, so the whole text is one container.
+  it.each([
+    ["regex literal", `{name: "password", re: /}/, value: "${NAME_SEED}"}`],
+    ["line comment", `{name: "password", // }\n value: "${NAME_SEED}"}`],
+    ["prose in parentheses", `{ name: password (see }) value: ${NAME_SEED} }`],
+    ["bare bracket value", `[name: password, note: ], value: ${NAME_SEED}]`],
+    ["bare XML attribute holding >", `<add key="password" note=a>b value="${NAME_SEED}"/>`],
+  ])("fails closed on an unquoted closer in a %s", (_name, text) => {
+    expect(containsCredentialValue(text)).toBe(true);
+    expect(redactCredentialValues(text)).not.toContain(NAME_SEED);
+
+    const nextSpec = clone(spec);
+    nextSpec.paths[PROJECT_ROUTE].get.description = text;
+    const built = buildOperationCatalog(nextSpec, clone(manifest));
+    expect(built.catalog).not.toBeNull();
+    expect(JSON.stringify(built)).not.toContain(NAME_SEED);
+
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(NAME_SEED);
   });
 
   it("keeps the value of an ordinary header container when sibling strings hold brackets", () => {
@@ -448,6 +507,8 @@ const LONG_TEXTS: Array<[string, string]> = [
   ["quoted brackets", run('{"name":"token","note":"}]>{[<a","value":"<x>"},')],
   ["unterminated quotes", `{"name":"token"} ${run("'{[<a ")}`],
   ["stray closers", `{"name":"token"}${run("}]>")}`],
+  ["unquoted closers in prose", `{"name":"token","value":"x"} ${run("a } b ] c > ")}`],
+  ["placeholders followed by text", run("token=[REDACTED]a{{b}}c ")],
   ["deep nesting", `${run("[{")}"name":"token","value":"x"`],
   ["escaped quote values", run('password=\\"a\\\\')],
   ["PEM headers", run("-----BEGIN PRIVATE KEY PRIVATE KEY ")],

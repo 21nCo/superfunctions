@@ -173,6 +173,10 @@ describe("schema and runtime agreement", () => {
     ["implicit with an empty authorizationUrl", flows({ implicit: { authorizationUrl: "", scopes: {} } }), [`${SCHEME}/flows/implicit/authorizationUrl`]],
     ["authorizationCode without authorizationUrl", flows({ authorizationCode: { tokenUrl: "https://auth.example.test/token", scopes: {} } }), [`${SCHEME}/flows/authorizationCode/authorizationUrl`]],
     ["authorizationCode without tokenUrl", flows({ authorizationCode: { authorizationUrl: "https://auth.example.test/authorize", scopes: {} } }), [`${SCHEME}/flows/authorizationCode/tokenUrl`]],
+    ["http with a blank scheme", { type: "http", scheme: " " }, [`${SCHEME}/scheme`]],
+    ["apiKey with a blank name", { type: "apiKey", in: "header", name: " " }, [`${SCHEME}/name`]],
+    ["openIdConnect with a blank URL", { type: "openIdConnect", openIdConnectUrl: " " }, [`${SCHEME}/openIdConnectUrl`]],
+    ["clientCredentials with a blank tokenUrl", flows({ clientCredentials: { tokenUrl: "   ", scopes: {} } }), [`${SCHEME}/flows/clientCredentials/tokenUrl`]],
     ["valid apiKey", { type: "apiKey", in: "cookie", name: "sid" }, []],
     ["valid http", { type: "http", scheme: "bearer" }, []],
     ["valid mutualTLS", { type: "mutualTLS" }, []],
@@ -211,6 +215,34 @@ describe("schema and runtime agreement", () => {
     catalog.securitySchemes.auth = emitted;
     expect(check("operation-catalog", catalog), JSON.stringify(validators["operation-catalog"].errors)).toBe(pointers.length === 0);
     if (built.catalog) expect(built.catalog.securitySchemes.auth).toEqual(emitted);
+  });
+
+  // OpenAPI defines flows for oauth2 only: other types never emit them (an emitted {} would fail the schema), and the schema rejects them.
+  it.each<[string, Record<string, unknown>]>([
+    ["apiKey with flows {}", { type: "apiKey", in: "header", name: "X-Key", flows: {} }],
+    ["http with only an extension flow", { type: "http", scheme: "bearer", flows: { "x-internal": "owner-team" } }],
+    ["mutualTLS with flows {}", { type: "mutualTLS", flows: {} }],
+    ["http with a complete flow", { type: "http", scheme: "bearer", flows: { implicit: { authorizationUrl: "https://auth.example.test/authorize", scopes: {} } } }],
+  ])("security scheme %s: flows are not emitted and the catalog validates", (_label, declared) => {
+    const spec = clone(fixture("catalog/openapi.json"));
+    spec.components.securitySchemes.auth = declared;
+    spec.paths["/workspaces/{workspaceId}/projects/{projectId}"].get.security = [{ auth: [] }];
+    const built = buildOperationCatalog(spec, clone(fixture("catalog/manifest.json")));
+    expect(built.diagnostics).toEqual([]);
+    const { flows: _flows, ...rest } = declared;
+    expect(built.catalog!.securitySchemes.auth).toEqual({ ...rest, description: null });
+    expect(check("operation-catalog", built.catalog), JSON.stringify(validators["operation-catalog"].errors)).toBe(true);
+
+    const withFlows = clone(built.catalog!) as any;
+    withFlows.securitySchemes.auth.flows = { implicit: { authorizationUrl: "https://auth.example.test/authorize", scopes: [] } };
+    expect(check("operation-catalog", withFlows)).toBe(false);
+  });
+
+  it("the catalog schema rejects a content media type with parameters", () => {
+    const catalog = clone(fixture("catalog/catalog.json"));
+    const content = catalog.operations.find((operation: any) => operation.responses.some((response: any) => response.contents.length > 0));
+    content.responses.find((response: any) => response.contents.length > 0).contents[0].mediaType = "application/json; charset=utf-16";
+    expect(check("operation-catalog", catalog)).toBe(false);
   });
 
   // [errorCode, valid at runtime, valid by the schema]. errorCode is an identifier, so ":" is a namespace

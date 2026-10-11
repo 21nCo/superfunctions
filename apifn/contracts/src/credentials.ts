@@ -57,8 +57,11 @@ const LEADING_AUTH_SCHEME = new RegExp(`^(?:${AUTH_SCHEMES})\\s+`, "i");
 function isPlaceholderValue(value: string, header: boolean): boolean {
   let rest = value;
   // The lookbehind starts a name only at the start of a word, so a long word is scanned once, not once per character.
-  if (header) rest = rest.replace(/(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]+\s*=(?![=\s]|$)/g, "").replace(AUTH_SCHEME_WORDS, "");
-  return rest.replace(PLACEHOLDER, "").replace(/[\s"'`,;:=\\]/g, "") === "";
+  if (header) rest = rest.replace(/(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]+\s*=(?![=\s]|$)/g, "");
+  // Placeholders go first, so a scheme word inside one (`$TOKEN`) cannot break it apart.
+  rest = rest.replace(PLACEHOLDER, "");
+  if (header) rest = rest.replace(AUTH_SCHEME_WORDS, "");
+  return rest.replace(/[\s"'`,;:=\\]/g, "") === "";
 }
 
 const KEY_WORD = "[A-Za-z0-9_.%-]+";
@@ -215,10 +218,6 @@ function readValue(text: string, start: number, keyStart: number, header: boolea
     if (end === -1) return { end: text.length, value: text.slice(start), quote: "" };
     return { end, value: text.slice(start + 1, end - 1), quote: first };
   }
-  if (first === "{" || first === "[") {
-    const end = bracketedEnd(text, start);
-    return { end: end === -1 ? text.length : end, value: text.slice(start, end === -1 ? text.length : end), quote: "" };
-  }
   // `password: |`, `password: >-` or `password:` ending a line: the value is every line indented below the key (YAML block style).
   const head = BLOCK_HEAD.exec(rest);
   if (head) {
@@ -226,6 +225,15 @@ function readValue(text: string, start: number, keyStart: number, header: boolea
     const block = blockSpan(text, newline, lineIndent(text, keyStart));
     if (!block) return { end: start, value: "", quote: "" };
     return { begin: block.begin, end: block.end, value: text.slice(block.begin, block.end), quote: "" };
+  }
+  if (first === "{" || first === "[") {
+    const close = bracketedEnd(text, start);
+    if (close === -1) return { end: text.length, value: text.slice(start), quote: "" };
+    // The value runs to its real delimiter, so a placeholder such as `[REDACTED]` or `{{token}}` followed directly by
+    // more characters is judged with them. In a header the rest of the line belongs to the value unless a delimiter follows.
+    const line = /^[^\r\n]*/.exec(text.slice(close))![0];
+    const more = header ? (/^\s*(?:[,;\]})]|$)/.test(line) ? 0 : line.trimEnd().length) : PLAIN_VALUE.exec(text.slice(close))![0].length;
+    return { end: close + more, value: text.slice(start, close + more), quote: "" };
   }
   if (header) {
     const line = /^[^\r\n]*/.exec(rest)![0].trimEnd();
@@ -256,15 +264,15 @@ const QUOTES = new Set(['"', "'", "`"]);
  * holding it, or -1. Strings are skipped: a delimiter inside `"..."`,
  * `'...'`, `` `...` `` or an escaped-quoted `\"...\"` (decoded one level, as
  * {@link escapedQuotedEnd} reads it) neither opens nor closes a container, and
- * neither does an escaped character. A stray closer is ignored. When the
- * structure cannot be trusted (an unterminated or ambiguous quote, or a closer
- * that does not match the innermost open container) the whole text is one
- * container, which fails closed. One linear pass.
+ * neither does an escaped character. When the structure cannot be trusted
+ * (an unterminated or ambiguous quote, a closer that does not match the
+ * innermost open container, or a stray closer with no open container, as an
+ * unquoted `}` in a regex, comment or prose leaves behind) the whole text is
+ * one container, which fails closed. One linear pass.
  */
 function containerStarts(text: string): Int32Array {
   const starts = new Int32Array(text.length + 1);
   const stack: number[] = [];
-  const open: Record<string, number> = { "}": 0, "]": 0, ">": 0 };
   const current = () => (stack.length === 0 ? -1 : stack[stack.length - 1]);
   for (let index = 0; index < text.length; ) {
     const char = text[index];
@@ -280,11 +288,10 @@ function containerStarts(text: string): Int32Array {
     starts[index] = current();
     if (char === "{" || char === "[" || (char === "<" && /[A-Za-z_]/.test(text[index + 1] ?? ""))) {
       stack.push(index);
-      open[CLOSERS[char]] += 1;
-    } else if (open[char] > 0) {
+    } else if (char === "}" || char === "]" || char === ">") {
+      // With no open container, current() is -1 and nothing matches.
       if (CLOSERS[text[current()]] !== char) return starts.fill(-1);
       stack.pop();
-      open[char] -= 1;
     }
     index += 1;
   }

@@ -21,6 +21,19 @@ export function isSupportedMediaType(mediaType: string): boolean {
   );
 }
 
+/**
+ * Media type parameters that change the wire bytes: every parameter except
+ * `charset=utf-8`, which clients use anyway. The catalog emits bare media
+ * types, so a media type with any of these cannot be described.
+ */
+export function mediaTypeParameters(mediaType: string): string[] {
+  return mediaType
+    .split(";")
+    .slice(1)
+    .map((parameter) => parameter.trim())
+    .filter((parameter) => parameter !== "" && !/^charset\s*=\s*(?:utf-8|"utf-8")$/i.test(parameter));
+}
+
 export function normalizeMediaType(mediaType: string): string {
   return mediaType.split(";")[0].trim().toLowerCase();
 }
@@ -146,10 +159,10 @@ export function validateManifest(input: unknown): { manifest: ApiManifest | null
         mediaTypes.forEach((mediaType, index) => {
           const pointer = `/serialization/mediaTypes/${index}`;
           check.string(mediaType, pointer, undefined, 128);
-          if (typeof mediaType === "string" && !isSupportedMediaType(normalizeMediaType(mediaType))) {
+          if (typeof mediaType === "string" && (!isSupportedMediaType(normalizeMediaType(mediaType)) || mediaTypeParameters(mediaType).length > 0)) {
             check.fail(
               pointer,
-              `Media type "${mediaType}" is not a supported serialization; use JSON (application/json or +json), text/plain, application/octet-stream, application/x-www-form-urlencoded or multipart/form-data.`,
+              `Media type "${mediaType}" is not a supported serialization; use JSON (application/json or +json), text/plain, application/octet-stream, application/x-www-form-urlencoded or multipart/form-data, with no parameter other than charset=utf-8.`,
               "UNSUPPORTED_SERIALIZATION"
             );
           }

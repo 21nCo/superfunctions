@@ -595,11 +595,46 @@ describe("serialization metadata", () => {
     expect(result.digest).not.toBe(build().digest);
   });
 
+  // Media type parameters other than charset=utf-8 change the bytes on the wire, so they are never dropped silently.
+  it.each<[string, Record<string, unknown>, string, string]>([
+    ["request", { "application/json; charset=utf-16": { schema: { type: "object" } } }, "requestBody", "only offers"],
+    ["response", { "application/json;charset=ISO-8859-1": { schema: { type: "object" } } }, "responses/200", "only offers"],
+    [
+      "response next to the same schema without parameters",
+      { "application/json": { schema: { type: "object" } }, "application/json; charset=utf-16": { schema: { type: "object" } } },
+      "responses/200",
+      "drops unsupported media types",
+    ],
+  ])("UNSUPPORTED_SERIALIZATION: a charset other than utf-8 in a %s", (place, content, at, phrase) => {
+    const result = build((nextSpec) => {
+      const operation = nextSpec.paths[LIST_ROUTE].get;
+      if (place === "request") operation.requestBody = { content };
+      else operation.responses["200"].content = content;
+    });
+    const reported = only(result.diagnostics, "UNSUPPORTED_SERIALIZATION");
+    expect(reported).toEqual([expect.objectContaining({ pointer: `/paths/${LIST_ROUTE.replace(/\//g, "~1")}/get/${at}/content` })]);
+    expect(reported[0].message).toContain(phrase);
+    expect(reported[0].message).toContain("charset=utf-8");
+    expect(result.catalog === null).toBe(phrase === "only offers");
+    if (result.catalog) {
+      const response = result.catalog.operations.find((operation) => operation.id === "projects.list")!.responses.find((entry) => entry.status === "200")!;
+      expect(response.contents.map((entry) => entry.mediaType)).toEqual(["application/json"]);
+    }
+  });
+
+  it("UNSUPPORTED_SERIALIZATION: a manifest media type with parameters", () => {
+    const result = build((_nextSpec, nextManifest) => {
+      nextManifest.serialization.mediaTypes.push("text/plain; charset=iso-8859-1");
+    });
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "UNSUPPORTED_SERIALIZATION")).toEqual([expect.objectContaining({ source: "manifest", pointer: "/serialization/mediaTypes/3" })]);
+  });
+
   it("resolves media types that normalize to the same value independently of key order", () => {
     const route = (nextSpec: any) => nextSpec.paths[PROJECT_ROUTE].get.responses["200"];
     const variants = {
       "text/plain;charset=utf-8": { schema: { type: "string", maxLength: 10 } },
-      "text/plain;charset=us-ascii": { schema: { type: "string", maxLength: 20 } },
+      "Text/Plain": { schema: { type: "string", maxLength: 20 } },
       "application/xml": { schema: { type: "string" } },
       "application/yaml": { schema: { type: "string" } },
     };
@@ -608,11 +643,11 @@ describe("serialization metadata", () => {
     expect(forward.catalog).toBeNull();
     expect(reversed.diagnostics).toEqual(forward.diagnostics);
     expect(only(forward.diagnostics, "UNSUPPORTED_SERIALIZATION").map((diagnostic) => diagnostic.message)).toEqual([
-      expect.stringMatching(/describes "text\/plain;charset=us-ascii" and "text\/plain;charset=utf-8" differently/),
+      expect.stringMatching(/describes "Text\/Plain" and "text\/plain;charset=utf-8" differently/),
       expect.stringMatching(/drops unsupported media types application\/xml, application\/yaml; clients use application\/json, application\/problem\+json, text\/plain\.$/),
     ]);
 
-    const same = { "text/plain;charset=utf-8": { schema: { type: "string" } }, "text/plain; charset=us-ascii": { schema: { type: "string" } } };
+    const same = { "text/plain;charset=utf-8": { schema: { type: "string" } }, "text/plain; charset=\"UTF-8\"": { schema: { type: "string" } } };
     const merged = build((nextSpec) => Object.assign(route(nextSpec).content, same));
     const mergedReversed = build((nextSpec) => Object.assign(route(nextSpec).content, reverseKeys(same)));
     expect(merged.diagnostics).toEqual([]);
@@ -755,14 +790,30 @@ describe("OpenAPI fields that change client behavior", () => {
     });
   });
 
-  it("warns that response headers are not described", () => {
+  it.each(["X-RateLimit-Remaining", "x-ratelimit-remaining"])("warns that response header %s is not described", (header) => {
     const result = build((nextSpec) => {
-      nextSpec.paths[LIST_ROUTE].get.responses["200"].headers = { "X-RateLimit-Remaining": { schema: { type: "integer" } } };
+      nextSpec.paths[LIST_ROUTE].get.responses["200"].headers = { [header]: { schema: { type: "integer" } } };
     });
     expect(result.catalog).not.toBeNull();
     expect(result.diagnostics).toEqual([
       expect.objectContaining({ code: "UNSUPPORTED_SERIALIZATION", severity: "warning", pointer: `/paths/${LIST_ROUTE.replace(/\//g, "~1")}/get/responses/200/headers` }),
     ]);
+  });
+
+  // A server URL that is only a query or fragment has nothing left once they are removed; an empty url breaks the catalog schema.
+  it.each(
+    ["#main", "?tenant=a"].flatMap((url) =>
+      [
+        ["root", (nextSpec: any) => (nextSpec.servers = [{ url }]), "/servers/0/url"],
+        ["path", (nextSpec: any) => (nextSpec.paths[PROJECT_ROUTE].servers = [{ url }]), `/paths/${PROJECT_ROUTE.replace(/\//g, "~1")}/servers/0/url`],
+        ["operation", (nextSpec: any) => (nextSpec.paths[PROJECT_ROUTE].get.servers = [{ url }]), `/paths/${PROJECT_ROUTE.replace(/\//g, "~1")}/get/servers/0/url`],
+      ].map(([scope, apply, pointer]) => ({ name: `${scope} server ${url}`, apply: apply as (nextSpec: any) => void, pointer: pointer as string }))
+    )
+  )("INVALID_SPEC: $name has no URL left", ({ apply, pointer }) => {
+    const result = build(apply);
+    expect(result.catalog).toBeNull();
+    expect(result.digest).toBeNull();
+    expect(only(result.diagnostics, "INVALID_SPEC").map((diagnostic) => diagnostic.pointer)).toEqual([pointer]);
   });
 
   it("INVALID_SPEC: parameters without a usable name or location, and path parameters missing from the template", () => {
@@ -985,6 +1036,40 @@ describe("literal instance data", () => {
       required: ["password"],
       xml: { name: "mode" },
     });
+  });
+});
+
+// A literal on a schema whose subtree reaches a credential field could carry that field's value: shape x keyword.
+const LITERAL_SEED = "SEEDliteral0071";
+const LITERAL_SHAPES: Array<[shape: string, schema: Record<string, unknown>, literal: unknown]> = [
+  ["properties", { type: "object", properties: { pin: { type: "string", format: "password" } } }, { pin: LITERAL_SEED }],
+  ["items", { type: "array", items: { type: "string", format: "password" } }, [LITERAL_SEED]],
+  ["$ref to a password component", { type: "object", properties: { pin: { $ref: "#/components/schemas/Pin" } } }, { pin: LITERAL_SEED }],
+  ["sibling $ref to a password component", { $ref: "#/components/schemas/Pin" }, LITERAL_SEED],
+];
+const LITERAL_CELLS = LITERAL_SHAPES.flatMap(([shape, schema, literal]) =>
+  (["default", "const", "enum"] as const).map((keyword) => ({ name: `${shape} ${keyword}`, keyword, schema: { ...schema, [keyword]: keyword === "enum" ? [literal] : literal } }))
+);
+
+describe("literals of schemas holding credential fields", () => {
+  it.each(LITERAL_CELLS)("$name", ({ keyword, schema }) => {
+    const result = build((nextSpec) => {
+      nextSpec.components.schemas.Pin = { type: "string", format: "password" };
+      inputSchema(nextSpec).properties.probe = schema;
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(LITERAL_SEED);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe).not.toHaveProperty(keyword);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual([`/components/schemas/ProjectInput/properties/probe/${keyword}`]);
+  });
+
+  it("keeps the literal of an ordinary object schema", () => {
+    const probe = { type: "object", properties: { size: { type: "string" }, tags: { type: "array", items: { $ref: "#/components/schemas/ProjectStatus" } } }, default: { size: "large", tags: ["active"] } };
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.probe = probe;
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual(probe);
   });
 });
 
