@@ -63,8 +63,12 @@ export function processExists(pid: number): boolean {
   }
   if (process.platform !== "linux") return true;
   try { return !EXITED_STATE.test(linuxStatFields(readFileSync(`/proc/${pid}/stat`, "utf8"))[0] ?? ""); }
-  // Reaped meanwhile, unless /proc hides another user's process from us.
-  catch (error) { return !signalled || (error as NodeJS.ErrnoException).code !== "ENOENT"; }
+  catch (error) {
+    if (!signalled || (error as NodeJS.ErrnoException).code !== "ENOENT") return true;
+    // Reaped meanwhile, unless /proc hides a process we may signal (hidepid).
+    try { process.kill(pid, 0); return true; }
+    catch (signalError) { return (signalError as NodeJS.ErrnoException).code !== "ESRCH"; }
+  }
 }
 
 /** Whether a PID signal 0 reaches is a darwin zombie; elsewhere processExists judges. */
@@ -74,21 +78,45 @@ async function darwinZombie(pid: number): Promise<boolean> {
   return EXITED_STATE.test(stdout.trim());
 }
 
-/** States of the visible members of a process group, or undefined when they cannot be listed. */
+/** Whether /proc hides processes of other users (hidepid), so a scan may miss group members. */
+async function procHidesProcesses(): Promise<boolean> {
+  const mounts = await readFile("/proc/self/mountinfo", "utf8");
+  return mounts.split("\n").some((line) => {
+    const [mount, filesystem] = line.split(" - ");
+    if (mount?.split(" ")[4] !== "/proc" || !filesystem) return false;
+    return (filesystem.split(" ")[2] ?? "").split(",").some((option) => option.startsWith("hidepid=") && !["hidepid=0", "hidepid=off"].includes(option));
+  });
+}
+
+/**
+ * States of every member of a process group, or undefined when they cannot
+ * all be listed: an entry that cannot be read or parsed, or a /proc that
+ * hides processes, may be a live member.
+ */
 async function processGroupMemberStates(pgid: number): Promise<string[] | undefined> {
   try {
     if (process.platform === "linux") {
+      if (await procHidesProcesses()) return undefined;
       const states: string[] = [];
       for (const entry of await readdir("/proc")) {
         if (!/^\d+$/.test(entry)) continue;
-        const fields = await readFile(`/proc/${entry}/stat`, "utf8").then(linuxStatFields, () => undefined);
-        if (fields && Number(fields[2]) === pgid) states.push(fields[0]);
+        const stat = await readFile(`/proc/${entry}/stat`, "utf8").catch((error: NodeJS.ErrnoException) => {
+          // Only a process that ended meanwhile may be skipped.
+          if (error.code === "ENOENT") return undefined;
+          throw error;
+        });
+        if (stat === undefined) continue;
+        const [state, , group] = linuxStatFields(stat);
+        if (!stat.includes(")") || !/^[A-Za-z]$/.test(state ?? "") || !/^\d+$/.test(group ?? "")) return undefined;
+        if (Number(group) === pgid) states.push(state);
       }
       return states;
     }
     if (process.platform === "darwin") {
       const { stdout } = await execFileAsync("ps", ["-A", "-o", "pgid=,stat="]);
-      return stdout.split("\n").map((line) => line.trim().split(/\s+/)).filter(([group]) => Number(group) === pgid).map(([, state]) => state);
+      const rows = stdout.split("\n").filter((line) => line.trim()).map((line) => /^\s*(\d+)\s+(\S+)\s*$/.exec(line));
+      if (rows.some((row) => !row)) return undefined;
+      return rows.filter((row) => Number(row![1]) === pgid).map((row) => row![2]);
     }
   } catch { return undefined; }
   return undefined;

@@ -542,6 +542,31 @@ describe("FilePortRegistry", () => {
     await expect(withFileLock(lockPath, async () => "acquired", { staleMs: 1, timeoutMs: 1000 })).resolves.toBe("acquired");
   });
 
+  it("loses no reservation when concurrent commands recover the locks of a holder killed while holding them", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "devfn-registry-"));
+    const registry = new FilePortRegistry(path.join(dir, "registry.json"));
+    const holder = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { stdio: "ignore" });
+    try {
+      await new Promise<void>((resolve) => holder.once("spawn", () => resolve()));
+      const owner = { pid: holder.pid, birthSignature: await processBirthSignature(holder.pid!), createdAt: new Date(Date.now() - 3_600_000).toISOString() };
+      for (const lock of ["routing.lock", "registry.json.lock"]) {
+        await mkdir(path.join(dir, lock));
+        await writeFile(path.join(dir, lock, "owner.json"), JSON.stringify({ ...owner, token: lock }));
+      }
+      holder.kill("SIGKILL");
+      await new Promise<void>((resolve) => holder.once("exit", () => resolve()));
+      const instances = Array.from({ length: 6 }, (_, index) => `worktree-${index}`);
+      await Promise.all(instances.map(async (instanceId) => await registry.reserve({ projectId: "app", instanceId, invocationId: instanceId, profile: "default", requests: [{ name: "app", spec: { range: [43000, 43100] } }] })));
+      const state = await registry.read();
+      expect(state.invocations.map((invocation) => invocation.instanceId).sort()).toEqual(instances);
+      expect(new Set(state.allocations.map((allocation) => allocation.port)).size).toBe(instances.length);
+      expect(state.revision).toBe(instances.length);
+    } finally {
+      holder.kill("SIGKILL");
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform !== "darwin")("recovers a stale legacy lock whose PID now belongs to a process started after it", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-"));
     const unrelated = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
