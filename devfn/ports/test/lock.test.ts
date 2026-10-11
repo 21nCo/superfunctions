@@ -371,7 +371,7 @@ it.each([
   }
 });
 
-it("lets only one of two recoverers of the same dead holder's record take the lock", async () => {
+it("lets only one of two recoverers take over a dead holder's record, after which both hold the lock in turn without overlap", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-takers-"));
   const lockPath = path.join(dir, "routing.lock");
   const detector = overlapDetector();

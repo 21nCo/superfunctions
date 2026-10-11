@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { link, mkdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { processBirthSignature, processIdentityStatus } from "@devfn/processes";
@@ -30,9 +30,6 @@ export async function withRoutingLock<T>(stateDir: string, action: () => Promise
 // releases also wait; a creator stalled even longer cannot then publish
 // itself over the next holder (publishOwner).
 const OWNERLESS_LOCK_STALE_MS = 300_000;
-// Successive takeovers of one dead holder's record, each started only after
-// the previous taker was verified dead.
-const MAX_TAKEOVER_GENERATIONS = 16;
 
 type LockOwner = { token?: string; pid?: number; birthSignature?: string; createdAt?: string };
 
@@ -57,7 +54,7 @@ export async function withFileLock<T>(lockPath: string, action: () => Promise<T>
       throw error;
     });
     const owner = observed === undefined ? undefined : JSON.parse(observed) as LockOwner;
-    if (await recoverable(lockPath, owner, staleMs) && await recoverLock(lockPath, observed, token, ownerRecord)) break;
+    if (await recoverable(lockPath, owner, staleMs) && await recoverLock(lockPath, observed, token, ownerRecord, deadline)) break;
     if (Date.now() >= deadline) throw new PortRegistryError("DEVFN_REGISTRY_LOCK_TIMEOUT", `Timed out acquiring registry lock ${lockPath}.`);
     await delay(20 + Math.floor(Math.random() * 20));
   }
@@ -116,46 +113,65 @@ async function recoverable(lockPath: string, observed: LockOwner | undefined, st
  * Take over a lock judged stale without ever freeing its path or leaving it
  * without an owner record, so neither mkdir nor a pending publish can succeed
  * meanwhile. An ownerless lock is adopted by publishing this owner, which
- * fails if its creator publishes first. For a dead holder's record, a marker
- * named after that record and created with link admits one taker; a taker
- * killed midway is superseded by the next generation once verified dead. The
- * taker links the current record aside without removing it and replaces it
- * only if it is still the record judged dead. Publishers never replace a
- * record, so nothing else can change it before the replace.
+ * fails if its creator publishes first.
+ *
+ * A dead holder's record is taken over under these rules:
+ * - Safety: at most one holder; only the record judged dead is replaced. A
+ *   marker named after that record and created with link admits one taker
+ *   per generation, and generation n+1 is linked only after the taker of n
+ *   was verified dead, so only the newest taker may be live. The taker links
+ *   the current record aside without removing it and replaces it only if it
+ *   is still the record judged; publishers never replace a record, so
+ *   nothing else can change it before the replace.
+ * - Liveness: if the holder and every taker are verified dead, a waiter
+ *   recovers the lock before its deadline however many takers died.
+ * - Exclusion: only a live taker, or one whose marker or identity cannot be
+ *   read, blocks; such a marker needs manual removal once its taker is gone.
+ * While the record may still be current, a taker removes only its own
+ * marker, the newest, so the markers stay a gapless run no waiter can pass a
+ * live taker in. Once the record is replaced, its markers are inert and all
+ * of them are removed.
  */
-async function recoverLock(lockPath: string, observed: string | undefined, token: string, ownerRecord: string): Promise<boolean> {
+async function recoverLock(lockPath: string, observed: string | undefined, token: string, ownerRecord: string, deadline: number): Promise<boolean> {
   if (observed === undefined) return await publishOwner(lockPath, token, ownerRecord);
-  const record = createHash("sha256").update(observed).digest("hex").slice(0, 32);
+  const record = `owner.takeover.${createHash("sha256").update(observed).digest("hex").slice(0, 32)}.`;
   const ownerTemp = `${lockPath}/owner.${token}.tmp`;
   const snapshot = `${lockPath}/owner.snapshot.${token}`;
-  const markers: string[] = [];
-  let taken = false;
+  let marker: string | undefined;
+  let replaced = false;
   try {
     await writeFile(ownerTemp, ownerRecord, { mode: 0o600, flag: "wx" });
-    for (let generation = 0; !taken; generation += 1) {
-      if (generation === MAX_TAKEOVER_GENERATIONS) return false;
-      const marker = `${lockPath}/owner.takeover.${record}.${generation}`;
-      markers.push(marker);
-      try { await link(ownerTemp, marker); taken = true; }
+    for (let generation = 0; marker === undefined; generation += 1) {
+      if (Date.now() >= deadline) return false;
+      const candidate = `${lockPath}/${record}${generation}`;
+      try { await link(ownerTemp, candidate); marker = candidate; }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const taker = await readFile(marker, "utf8").then((value) => JSON.parse(value) as LockOwner, () => undefined);
-        if (!taker || !await ownerDead(taker)) return false;
+        if (!await takerDead(candidate)) return false;
       }
     }
     await link(`${lockPath}/owner.json`, snapshot);
-    if (await readFile(snapshot, "utf8") !== observed) return false;
+    replaced = await readFile(snapshot, "utf8") !== observed;
+    if (replaced) return false;
     await rename(ownerTemp, `${lockPath}/owner.json`);
+    replaced = true;
     return true;
   } catch (error) {
     // Released, or the record was never there to judge.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   } finally {
-    // Markers go only once this taker has finished with the record: a later
-    // taker of it then finds another record and stops.
-    await Promise.all([ownerTemp, snapshot, ...(taken ? markers : [])].map(async (file) => await rm(file, { force: true }).catch(() => undefined)));
+    const markers = replaced
+      ? (await readdir(lockPath).catch(() => [])).filter((name) => name.startsWith(record)).map((name) => `${lockPath}/${name}`)
+      : marker ? [marker] : [];
+    await Promise.all([ownerTemp, snapshot, ...markers].map(async (file) => await rm(file, { force: true }).catch(() => undefined)));
   }
+}
+
+/** A taker whose marker cannot be read may still be live. */
+async function takerDead(marker: string): Promise<boolean> {
+  try { return await ownerDead(JSON.parse(await readFile(marker, "utf8")) as LockOwner); }
+  catch { return false; }
 }
 
 /** Remove the lock only while it records this holder. */
@@ -163,9 +179,12 @@ async function releaseLock(lockPath: string, token: string): Promise<void> {
   try {
     const owner = JSON.parse(await readFile(`${lockPath}/owner.json`, "utf8")) as LockOwner;
     if (owner.token !== token) return;
-    // Moving the lock aside frees its path in one step.
-    const released = `${lockPath}.released.${token}`;
-    await rename(lockPath, released);
-    await rm(released, { recursive: true, force: true });
+    // Moving the lock aside frees its path in one step. Released locks are
+    // never used again, so those of holders killed before removing theirs go
+    // too.
+    const prefix = `${path.basename(lockPath)}.released.`;
+    await rename(lockPath, `${lockPath}.released.${token}`);
+    const released = (await readdir(path.dirname(lockPath))).filter((name) => name.startsWith(prefix));
+    await Promise.all(released.map(async (name) => await rm(path.join(path.dirname(lockPath), name), { recursive: true, force: true }).catch(() => undefined)));
   } catch { /* Never remove a lock whose ownership cannot be proven. */ }
 }
