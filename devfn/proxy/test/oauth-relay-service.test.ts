@@ -313,6 +313,69 @@ it("stops nothing when Caddy cannot remove the relay route, so no callback can r
   expect(proxy.routes).toEqual([sibling]);
 }, 60_000);
 
+it("withdraws a route that a failed start activated or journaled before it stops the new relay and releases its claim", async () => {
+  const relayClaims = async (stateDir: string) => (await new FilePortRegistry(path.join(stateDir, "registry.json")).read()).invocations
+    .filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state);
+  for (const reached of ["committed", "pending", "none"] as const) {
+    const stateDir = await registeredState();
+    const proxy = fakeProxy([sibling]);
+    let pending: ProxyRoute[] | undefined;
+    const steps: string[] = [];
+    const failing: OAuthRelayProxy = {
+      async upsert(routes, instanceId) {
+        // The route reached Caddy or the journal, then the commit failed.
+        if (reached === "committed") await proxy.upsert(routes, instanceId);
+        if (reached === "pending") pending = routes.map((route) => ({ ...route, updatedAt: new Date().toISOString() }));
+        throw Object.assign(new Error("The route state could not be committed."), { code: "DEVFN_PROXY_RELOAD_FAILED" });
+      },
+      async removeInstance(instanceId) {
+        const service = (await readRelayService(stateDir))!;
+        steps.push(`remove:${await processIdentityStatus(service.pid, service.birthSignature)}:${(await relayClaims(stateDir)).join()}`);
+        pending = undefined;
+        await proxy.removeInstance(instanceId);
+      },
+      async instanceRouteState(instanceId) { return { ...await proxy.instanceRouteState(instanceId), ...(pending ? { pending } : {}) }; },
+    };
+    await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy: failing, command: RELAY_COMMAND }))
+      .rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+    // A route that reached the proxy is removed while the relay still runs and holds its claim.
+    expect(steps).toEqual(reached === "none" ? [] : ["remove:running:ready"]);
+    expect(proxy.routes).toEqual([sibling]);
+    expect(pending).toBeUndefined();
+    expect(await readRelayService(stateDir)).toBeUndefined();
+    expect(await relayClaims(stateDir)).toEqual(["failed"]);
+  }
+}, 90_000);
+
+it("keeps a failed start's relay running, recorded and claimed when its activated route cannot be removed", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  const failing: OAuthRelayProxy = {
+    ...proxy,
+    async upsert(routes, instanceId) {
+      await proxy.upsert(routes, instanceId);
+      throw Object.assign(new Error("The route state could not be committed."), { code: "DEVFN_PROXY_RELOAD_FAILED" });
+    },
+    async removeInstance() { throw Object.assign(new Error("Caddy is unavailable."), { code: "DEVFN_PROXY_UNAVAILABLE" }); },
+  };
+  const error = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy: failing, command: RELAY_COMMAND }).catch((caught: unknown) => caught);
+  expect(error).toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE", message: expect.stringMatching(/could not be committed.*Caddy is unavailable.*keeps running/) });
+  const service = (await readRelayService(stateDir))!;
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).toBe("running");
+  expect(proxy.routes.map((route) => route.id)).toEqual([sibling.id, "devfn-oauth-relay:callback"]);
+  expect(proxy.routes.find((route) => route.instanceId === OAUTH_RELAY_OWNER_ID)?.targetPort).toBe(service.port);
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+  expect((await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state)).toEqual(["ready"]);
+  expect((await registry.read()).allocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => [item.port, item.state])).toEqual([[service.port, "active"]]);
+  // A removal the proxy reports applied but does not reflect is not confirmed either.
+  await expect(stopOAuthRelay(stateDir, { ...proxy, removeInstance: async () => undefined })).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE" });
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).toBe("running");
+  // Once the proxy is available, stop withdraws the route and the relay.
+  await expect(stopOAuthRelay(stateDir, proxy)).resolves.toEqual({ stopped: true, routeRemoved: true });
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).not.toBe("running");
+  expect(proxy.routes).toEqual([sibling]);
+}, 60_000);
+
 it("does not declare the relay stopped while a route or claim records a live relay the service record does not name", async () => {
   const stateDir = await registeredState();
   const live = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { detached: true, stdio: "ignore" });

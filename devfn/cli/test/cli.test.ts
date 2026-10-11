@@ -39,6 +39,8 @@ describe("devfn CLI", () => {
       expect(await run("status")).toEqual({ code: 0, result: { ok: true, relay: { running: false, routeActive: false, tickets: { valid: true, pending: 0 } } } });
       expect(await run("start", "dev.example.test")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_DOMAIN_UNREGISTERED" } } });
       expect(await run("start")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
+      // A malformed host label is refused as input, before any machine state is read.
+      expect(await run("start", "dev.example.test", "--host", "Bad_Label")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_OAUTH_RELAY_REJECTED" } } });
       expect(await run("stop", "dev.example.test")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
       expect(await run("restart")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
       expect(await run("stop")).toEqual({ code: 0, result: { ok: true, stopped: false, routeRemoved: false } });

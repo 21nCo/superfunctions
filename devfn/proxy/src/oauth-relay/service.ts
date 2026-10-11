@@ -147,6 +147,22 @@ async function launch(command: readonly string[], config: { stateDir: string; or
   return { pid: child.pid, birthSignature, port: ready.port, commit: () => child.stdin.end("commit\n"), abandon: () => child.stdin.destroy() };
 }
 
+const routeStateKey = (state: { committed: ProxyRoute[]; pending?: ProxyRoute[] }) => JSON.stringify([state.committed, state.pending ?? null]);
+
+/**
+ * Remove every relay route and confirm that neither committed nor pending
+ * route state still names the relay owner. Every path that stops a relay
+ * process or releases its claim and backend lease withdraws the route this
+ * way first, so no callback route outlives the port it reaches.
+ */
+async function withdrawRelayRoute(proxy: Pick<OAuthRelayProxy, "removeInstance" | "instanceRouteState">): Promise<void> {
+  await proxy.removeInstance(OAUTH_RELAY_OWNER_ID);
+  const state = await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID);
+  if (state.committed.length > 0 || state.pending?.length) {
+    throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", "The proxy still records a relay route after its removal.");
+  }
+}
+
 function relayRoute(service: OAuthRelayService, tls: ProxyRoute["tls"], certificate: { certificateFile?: string; keyFile?: string }): Omit<ProxyRoute, "updatedAt"> {
   return { id: OAUTH_RELAY_ROUTE_ID, instanceId: OAUTH_RELAY_OWNER_ID, hostname: service.hostname, targetHost: "127.0.0.1", targetPort: service.port, tls,
     registeredDomain: service.domain, projectId: service.projectId, repositoryIdentity: service.repositoryIdentity, ...certificate,
@@ -197,7 +213,7 @@ async function activateClaim(stateDir: string, service: OAuthRelayService): Prom
  */
 export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAuthRelayStatus> {
   const host = input.host ?? "auth";
-  if (!HOST_LABEL.test(host)) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", "The relay host must be one lowercase DNS label of at most 40 characters.");
+  if (!HOST_LABEL.test(host)) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_REJECTED", "The relay host must be one lowercase DNS label of at most 40 characters.", "malformed");
   // Registrations hold the canonical repository path, as domain unregistration compares.
   const repositoryIdentity = await realpath(input.repositoryIdentity).catch(() => input.repositoryIdentity);
   const registration = (await readRegisteredDomains(input.stateDir)).find((item) => item.domain === input.domain &&
@@ -235,6 +251,7 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
     const { invocationId, port } = await claimListeners(input.stateDir, registration.projectId, registration.tls);
     let service: OAuthRelayService | undefined;
     let started: LaunchedRelay | undefined;
+    let priorRoutes: string | undefined;
     try {
       started = await launch(input.command ?? defaultCommand(), { stateDir: input.stateDir, origin, port });
       service = { version: 1, pid: started.pid, birthSignature: started.birthSignature, port: started.port, startedAt: new Date().toISOString(), origin, hostname,
@@ -245,11 +262,25 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
       await writePrivateJson(relayPaths(input.stateDir).service, service);
       await activateClaim(input.stateDir, service);
       started.commit();
+      priorRoutes = routeStateKey(await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID));
       await proxy.upsert([relayRoute(service, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID);
     } catch (error) {
-      // The route was not activated, so the new process, record and claim go;
-      // a prior route, if any, still names the previous (dead) relay.
       started?.abandon();
+      // A failed activation can still have reloaded Caddy or journaled the
+      // route. When the relay's route state changed or cannot be read, the
+      // route is withdrawn and confirmed gone before anything is released;
+      // otherwise the committed relay keeps its record, claim and lease.
+      if (service && priorRoutes !== undefined) {
+        const after = await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID).then(routeStateKey, () => undefined);
+        if (after !== priorRoutes) {
+          try { await withdrawRelayRoute(proxy); }
+          catch (cleanupError) {
+            throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `The relay route could not be activated (${error instanceof Error ? error.message : String(error)}) and its removal could not be confirmed (${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}). The relay (PID ${service.pid}) keeps running with its record and listener claim; run devfn oauth-relay stop once the proxy is available.`);
+          }
+        }
+      }
+      // No relay route reaches the new relay, so its process, record and
+      // claim go; a prior route, if any, still names the previous (dead) relay.
       if (!service || await stopRelayProcess(service) === undefined) {
         if (service) await rm(relayPaths(input.stateDir).service, { force: true });
         await registryOf(input.stateDir).release({ invocationId, errorCode: "DEVFN_START_FAILED" });
@@ -275,7 +306,7 @@ export async function stopOAuthRelay(stateDir: string, proxy: OAuthRelayProxy = 
     const routeRemoved = (await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID)).committed.length > 0;
     // Read before the route that carries one of them is removed.
     const identities = await recordedIdentities(stateDir, proxy);
-    await proxy.removeInstance(OAUTH_RELAY_OWNER_ID);
+    await withdrawRelayRoute(proxy);
     let service: OAuthRelayService | undefined;
     let unreadable = false;
     try { service = await readRelayService(stateDir); }
