@@ -204,6 +204,19 @@ describe("OAuth relay ticket contract", () => {
       .rejects.toMatchObject({ reason: "target-mutated" });
   });
 
+  it("stores only tickets it can read back, so one owner's oversized URL cannot disable the shared store", async () => {
+    const m = await setup();
+    await registerA(m, state("sibling"));
+    const longPath = `/${"a".repeat(2048)}`;
+    // Both URLs are canonical and the long callback is served by owner-a's root route.
+    await expect(registerA(m, state("long-callback"), { callbackUrl: `${origin("app-a")}${longPath}` })).rejects.toMatchObject({ reason: "malformed" });
+    await expect(registerA(m, state("long-redirect"), { redirectUri: `${RELAY_ORIGIN}${longPath}` })).rejects.toMatchObject({ reason: "malformed" });
+    const limit = `/${"a".repeat(2047 - origin("app-a").length)}`;
+    await registerA(m, state("at-limit"), { callbackUrl: `${origin("app-a")}${limit}` });
+    await expect(consume(m, callback(m, state("sibling")))).resolves.toMatchObject({ location: expect.stringContaining(`${origin("app-a")}${CALLBACK_PATH}?`) });
+    await expect(consume(m, callback(m, state("at-limit")))).resolves.toMatchObject({ location: `${origin("app-a")}${limit}?code=c0de&state=${state("at-limit")}` });
+  });
+
   it("forwards only to the bound route and rejects stale owners, stopped or changed routes, expiry and wrong origins", async () => {
     const m = await setup();
     for (const label of ["ok", "stopped", "restarted", "moved", "dead", "origin", "path", "pending"]) await registerA(m, state(label));

@@ -128,22 +128,27 @@ export async function readRelayService(stateDir: string): Promise<OAuthRelayServ
   return value === undefined ? undefined : parseRelayService(value);
 }
 
+/**
+ * The one ticket validator, used before a ticket is written and whenever the
+ * store is read, so every ticket a registration persists stays readable.
+ */
+function validTicket(item: unknown): item is Ticket {
+  const ticket = item as Record<string, unknown> | null;
+  const route = ticket?.route as Record<string, unknown> | undefined;
+  return Boolean(ticket && typeof ticket === "object" && typeof ticket.id === "string" && /^[a-f0-9]{64}$/.test(ticket.id) &&
+    text(ticket.ownerId, 256) && targetUrl(ticket.redirectUri) && targetUrl(ticket.callbackUrl) && iso(ticket.createdAt) && iso(ticket.expiresAt) &&
+    (ticket.consumedAt === undefined || iso(ticket.consumedAt)) && route && typeof route === "object" && text(route.id, 512) &&
+    text(route.hostname, 253) && typeof route.path === "string" && PATH_PATTERN.test(route.path) && ["exact", "prefix"].includes(route.match as string) &&
+    Number.isInteger(route.targetPort) && iso(route.updatedAt));
+}
+
 function parseTickets(value: unknown): TicketState {
   if (value === undefined) return { version: 1, tickets: [] };
   const state = value as { version?: unknown; tickets?: unknown };
   if (!state || typeof state !== "object" || state.version !== 1 || !Array.isArray(state.tickets)) throw invalid("OAuth relay ticket state is invalid.");
   const ids = new Set<string>();
-  for (const item of state.tickets as unknown[]) {
-    const ticket = item as Record<string, unknown> | null;
-    const route = ticket?.route as Record<string, unknown> | undefined;
-    if (!ticket || typeof ticket !== "object" || typeof ticket.id !== "string" || !/^[a-f0-9]{64}$/.test(ticket.id) || ids.has(ticket.id) ||
-      !text(ticket.ownerId, 256) || !text(ticket.redirectUri) || !text(ticket.callbackUrl) || !iso(ticket.createdAt) || !iso(ticket.expiresAt) ||
-      (ticket.consumedAt !== undefined && !iso(ticket.consumedAt)) || !route || typeof route !== "object" || !text(route.id, 512) ||
-      !text(route.hostname, 253) || typeof route.path !== "string" || !PATH_PATTERN.test(route.path) || !["exact", "prefix"].includes(route.match as string) ||
-      !Number.isInteger(route.targetPort) || !iso(route.updatedAt) ||
-      !canonicalHttpUrl(ticket.redirectUri as string) || !canonicalHttpUrl(ticket.callbackUrl as string)) {
-      throw invalid("OAuth relay ticket state is invalid.");
-    }
+  for (const ticket of state.tickets as unknown[]) {
+    if (!validTicket(ticket) || ids.has(ticket.id)) throw invalid("OAuth relay ticket state is invalid.");
     ids.add(ticket.id);
   }
   return state as TicketState;
@@ -167,6 +172,9 @@ function canonicalHttpUrl(value: string, originOnly = false): URL | undefined {
   if (url.href !== value || !PATH_PATTERN.test(url.pathname) || url.pathname.includes("//") || /%/.test(value)) return undefined;
   return url;
 }
+
+/** A redirect or callback URL a ticket can hold: canonical and at most 2048 characters. */
+const targetUrl = (value: unknown): URL | undefined => text(value) ? canonicalHttpUrl(value) : undefined;
 
 /** The scheme and port Caddy serves this route on. */
 function routeOrigin(route: PersistedProxyRoute): string {
@@ -282,9 +290,9 @@ export async function registerOAuthRelayState(stateDir: string, input: RegisterO
   if (typeof input.state !== "string" || !STATE_PATTERN.test(input.state)) throw reject("malformed", "The OAuth state must be 22-512 unreserved URL characters.");
   const ttl = input.expiresInSeconds ?? DEFAULT_TTL_SECONDS;
   if (!Number.isInteger(ttl) || ttl < 1 || ttl > MAX_TTL_SECONDS) throw reject("malformed", `Relay state lifetime must be 1-${MAX_TTL_SECONDS} seconds.`);
-  const redirect = typeof input.redirectUri === "string" ? canonicalHttpUrl(input.redirectUri) : undefined;
-  const callback = typeof input.callbackUrl === "string" ? canonicalHttpUrl(input.callbackUrl) : undefined;
-  if (!redirect || !callback) throw reject("malformed", "Redirect and callback URLs must be canonical http(s) URLs without credentials, query or fragment.");
+  const redirect = targetUrl(input.redirectUri);
+  const callback = targetUrl(input.callbackUrl);
+  if (!redirect || !callback) throw reject("malformed", "Redirect and callback URLs must be canonical http(s) URLs of at most 2048 characters without credentials, query or fragment.");
   await relayDirectory(stateDir);
   const origin = (await runningService(stateDir)).origin;
   if (redirect.origin !== origin) throw reject("wrong-origin", "The redirect URI is not on the relay origin.");
@@ -302,7 +310,10 @@ export async function registerOAuthRelayState(stateDir: string, input: RegisterO
       throw reject("capacity", "This owner has too many pending OAuth relay states.");
     }
     const expiresAt = new Date(at.getTime() + ttl * 1000).toISOString();
-    tickets.push({ id, ownerId: input.ownerId, redirectUri: redirect.href, callbackUrl: callback.href, route, createdAt: at.toISOString(), expiresAt });
+    const ticket: Ticket = { id, ownerId: input.ownerId, redirectUri: redirect.href, callbackUrl: callback.href, route, createdAt: at.toISOString(), expiresAt };
+    // A ticket the store could not read back would invalidate every owner's tickets.
+    if (!validTicket(ticket)) throw reject("malformed", "This registration cannot be stored as a relay ticket.");
+    tickets.push(ticket);
     await writePrivateJson(relayPaths(stateDir).tickets, { version: 1, tickets });
     return { expiresAt };
   }, { timeoutMs: LOCK_TIMEOUT_MS });

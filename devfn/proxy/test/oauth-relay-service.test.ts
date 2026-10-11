@@ -153,9 +153,10 @@ it("writes nothing but its readiness line, whatever callbacks it serves", async 
   child.stdout.on("data", (chunk) => { stdout += String(chunk); });
   child.stderr.on("data", (chunk) => { stderr += String(chunk); });
   const exited = new Promise((resolve) => child.once("exit", resolve));
-  child.stdin.end(JSON.stringify({ stateDir, origin: "https://auth.dev.example.test", nonce: "n" }));
+  child.stdin.write(`${JSON.stringify({ stateDir, origin: "https://auth.dev.example.test", nonce: "n" })}\n`);
   for (let attempt = 0; attempt < 200 && !stdout.includes("\n"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
   const { port } = JSON.parse(stdout) as { port: number };
+  child.stdin.end("commit\n");
   const secret = "st_secretsecretsecretsecretsecret";
   for (const query of [`code=CODE-${secret}&state=${secret}`, `state=${secret}`, "x", `code=a&state=${secret}%0a`]) {
     await new Promise<void>((resolve, reject) => http.get({ hostname: "127.0.0.1", port, path: `/cb?${query}`, headers: { host: "auth.dev.example.test" } }, (response) => {
@@ -234,3 +235,103 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("completes two worktree sign-ins
     expect((await browser.request(`https://app-1.${DOMAIN}${suffix}/me`)).body).toBe("bob");
     expect(await stopOAuthRelay(stateDir, proxy)).toMatchObject({ stopped: false, routeRemoved: false });
   }, { timeoutMs: 120_000 }), 240_000);
+
+it("keeps a relay running only once its starter commits it", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "devfn-oauth-relay-gate-"));
+  cleanup.push(async () => await rm(stateDir, { recursive: true, force: true }));
+  const child = spawn(RELAY_COMMAND[0], RELAY_COMMAND.slice(1), { stdio: ["pipe", "pipe", "ignore"] });
+  cleanup.push(async () => { try { child.kill("SIGKILL"); } catch { /* exited */ } });
+  let stdout = "";
+  child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+  const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+  child.stdin.write(`${JSON.stringify({ stateDir, origin: "https://auth.dev.example.test", nonce: "n" })}\n`);
+  for (let attempt = 0; attempt < 200 && !stdout.includes("\n"); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+  const { port } = JSON.parse(stdout) as { port: number };
+  // The starter's end of stdin closes without a commit, as when it is killed.
+  child.stdin.end();
+  expect(await exited).toBe(0);
+  await expect(new Promise((resolve, reject) => http.get({ hostname: "127.0.0.1", port, path: "/" }, resolve).once("error", reject))).rejects.toThrow(/ECONNREFUSED/);
+}, 30_000);
+
+it("stops by every recorded identity when the service record is unreadable, and leaves the record for inspection", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  const started = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+  const service = (await readRelayService(stateDir))!;
+  cleanup.push(async () => { try { process.kill(-service.pid, "SIGKILL"); } catch { /* stopped */ } });
+  const record = path.join(stateDir, "oauth-relay", "service.json");
+  await writeFile(record, "{");
+  expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, unverified: true });
+  await expect(stopOAuthRelay(stateDir, proxy)).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
+  expect(started.pid).toBe(service.pid);
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).not.toBe("running");
+  expect(proxy.routes).toEqual([sibling]);
+  expect(await readFile(record, "utf8")).toBe("{");
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+  expect((await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state)).toEqual(["stopped"]);
+}, 60_000);
+
+it("does not declare the relay stopped while a route or claim records a live relay the service record does not name", async () => {
+  const stateDir = await registeredState();
+  const live = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { detached: true, stdio: "ignore" });
+  cleanup.push(async () => { try { process.kill(-live.pid!, "SIGKILL"); } catch { /* stopped */ } });
+  const identity = { pid: live.pid!, birthSignature: (await processBirthSignature(live.pid!))! };
+  const relayRoute: ProxyRoute = { ...sibling, id: "devfn-oauth-relay:callback", instanceId: OAUTH_RELAY_OWNER_ID, hostname: `auth.${DOMAIN}`, targetPort: 41999, serviceProcess: identity };
+  // No service record: the route still names a live relay process.
+  const proxy = fakeProxy([sibling, relayRoute]);
+  expect(await recoverOAuthRelayRoute(stateDir, proxy)).toBe(false);
+  expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, unverified: true });
+  expect(proxy.routes).toEqual([sibling, relayRoute]);
+  await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
+    .rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
+  // Without the route, a relay claim recording the live process keeps it unverified too.
+  const bare = fakeProxy([sibling]);
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+  await registry.reserve({ projectId: "fixture", instanceId: OAUTH_RELAY_OWNER_ID, invocationId: "relay-1", profile: "oauth-relay", requests: [] });
+  await registry.recordOwners("relay-1", "oauth-relay", [{ process: identity }]);
+  await registry.markActive("relay-1");
+  expect(await recoverOAuthRelayRoute(stateDir, bare)).toBe(false);
+  expect((await registry.read()).invocations.find((item) => item.id === "relay-1")).toMatchObject({ state: "ready" });
+  // stop ends it by that identity.
+  expect(await stopOAuthRelay(stateDir, proxy)).toEqual({ stopped: true, routeRemoved: true });
+  expect(await processIdentityStatus(identity.pid, identity.birthSignature)).not.toBe("running");
+  expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, routeActive: false });
+  expect((await oauthRelayStatus(stateDir, proxy)).unverified).toBeUndefined();
+}, 60_000);
+
+it("leaves no unrecorded relay running when its starter is killed after the relay is ready", async () => {
+  const stateDir = await registeredState();
+  const readyFile = path.join(stateDir, "relay-ready");
+  const wrapper = path.join(stateDir, "relay-wrapper.mjs");
+  const starter = path.join(stateDir, "starter.mts");
+  // The wrapper marks the moment the relay has written its readiness line.
+  await writeFile(wrapper, `import { writeFileSync } from "node:fs";
+const end = process.stdout.end.bind(process.stdout);
+process.stdout.end = (...args) => { const result = end(...args); writeFileSync(${JSON.stringify(readyFile)}, String(process.pid)); return result; };
+await import(${JSON.stringify(new URL("../src/oauth-relay/serve.ts", import.meta.url).href)});
+`);
+  await writeFile(starter, `import { startOAuthRelay } from ${JSON.stringify(new URL("../src/oauth-relay/index.ts", import.meta.url).href)};
+const proxy = { upsert: async () => [], removeInstance: async () => undefined, instanceRouteState: async () => ({ committed: [] }) };
+await startOAuthRelay({ stateDir: ${JSON.stringify(stateDir)}, domain: ${JSON.stringify(DOMAIN)}, projectId: "fixture", repositoryIdentity: ${JSON.stringify(stateDir)}, proxy,
+  command: ${JSON.stringify([...RELAY_COMMAND.slice(0, -1), wrapper])} });
+setInterval(() => undefined, 1000);
+`);
+  const child = spawn(RELAY_COMMAND[0], [...RELAY_COMMAND.slice(1, -1), starter], { stdio: "ignore" });
+  cleanup.push(async () => { try { child.kill("SIGKILL"); } catch { /* exited */ } });
+  let relayPid: number | undefined;
+  for (let attempt = 0; attempt < 600 && !relayPid; attempt += 1) {
+    relayPid = Number(await readFile(readyFile, "utf8").catch(() => "")) || undefined;
+    if (!relayPid) await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  child.kill("SIGKILL");
+  expect(relayPid).toBeDefined();
+  cleanup.push(async () => { try { process.kill(-relayPid!, "SIGKILL"); } catch { /* stopped */ } });
+  const alive = () => { try { process.kill(relayPid!, 0); return true; } catch { return false; } };
+  for (let attempt = 0; attempt < 100 && alive(); attempt += 1) {
+    if ((await readRelayService(stateDir).catch(() => undefined))?.pid === relayPid) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  // Either the relay was committed with a durable record, or it exited with its starter.
+  const recorded = (await readRelayService(stateDir).catch(() => undefined))?.pid === relayPid;
+  expect(recorded || !alive()).toBe(true);
+}, 60_000);

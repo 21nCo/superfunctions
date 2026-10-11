@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -9,7 +9,7 @@ import { defaultStateDir, isCredentialKey, loadDevFnPolicy, validateDevFnConfig,
 import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePolicy, scanListenerState, withFileLock, withRoutingLock, type ListenerInfo, type ListenerScanResult, type PortAllocation, type RegistryInvocation } from "@devfn/ports";
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
 import { CaddyProxyController, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
-import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute } from "@devfn/proxy/oauth-relay";
+import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute, relayPaths } from "@devfn/proxy/oauth-relay";
 
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
@@ -365,13 +365,20 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Pro
   const proxy = new CaddyProxyController(stateDir);
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   const recovered: string[] = [];
-  for (const instanceId of await proxy.routedInstanceIds()) {
-    // The OAuth relay has no lifecycle lock; its own service record shows
-    // whether its process may still run, and recovery also ends its claim.
-    if (instanceId === OAUTH_RELAY_OWNER_ID) {
-      if (await recoverOAuthRelayRoute(stateDir, proxy)) recovered.push(instanceId);
-      continue;
+  const routed = await proxy.routedInstanceIds();
+  // The OAuth relay has no lifecycle lock; its recorded identities show
+  // whether it may still run. Recovery also ends a dead relay's claim and
+  // record after a route transition already dropped its route. A relay
+  // command holding its lock owns the relay, as a lifecycle command does.
+  if (routed.includes(OAUTH_RELAY_OWNER_ID) || await lstat(relayPaths(stateDir).dir).then(() => true, () => false)) {
+    try {
+      if (await recoverOAuthRelayRoute(stateDir, proxy, { lockTimeoutMs: 1_000 })) recovered.push(OAUTH_RELAY_OWNER_ID);
+    } catch (error) {
+      if (!(error && typeof error === "object" && "code" in error && error.code === "DEVFN_REGISTRY_LOCK_TIMEOUT")) throw error;
     }
+  }
+  for (const instanceId of routed) {
+    if (instanceId === OAUTH_RELAY_OWNER_ID) continue;
     let entered = false;
     try {
       await withFileLock(path.join(stateDir, `lifecycle-${instanceId}.lock`), async () => {

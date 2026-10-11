@@ -15,6 +15,7 @@ vi.mock("@devfn/proxy", async (importOriginal) => {
   };
 });
 
+import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID } from "@devfn/proxy/oauth-relay";
 import { recoverOrphanedProxyRoutes } from "../src/index.js";
@@ -52,6 +53,48 @@ it("keeps the OAuth relay route while its recorded process runs and recovers it,
     await writeFile(path.join(stateDir, "oauth-relay", "service.json"), service(await exitedProcess()));
     expect(await recoverOrphanedProxyRoutes(stateDir)).toEqual([OAUTH_RELAY_OWNER_ID]);
     expect(await routedOwners()).toEqual([]);
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
+it("skips a relay whose command holds its lock, and ends a dead relay's claim after its route is gone", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "devfn-relay-gc-"));
+  const stateDir = path.join(root, "state");
+  const toolsDir = path.join(root, "tools");
+  const originalPath = process.env.PATH;
+  try {
+    await Promise.all([mkdir(path.join(stateDir, "oauth-relay"), { recursive: true }), mkdir(toolsDir)]);
+    await writeFile(path.join(toolsDir, "caddy"), CADDY_STUB, { mode: 0o700 });
+    process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
+    const self = { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! };
+    await writeFile(path.join(stateDir, "proxy-owner.json"), JSON.stringify(self));
+    const dead = await exitedProcess();
+    const route = (id: string, instanceId: string, hostname: string, targetPort: number) => ({ id, instanceId, hostname, targetHost: "127.0.0.1", targetPort, tls: "off", updatedAt: new Date().toISOString() });
+    await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [route(OAUTH_RELAY_ROUTE_ID, OAUTH_RELAY_OWNER_ID, "auth.localhost", 41001), route("dead:app", "dead", "dead.localhost", 41002)] }));
+    await writeFile(path.join(stateDir, "oauth-relay", "service.json"), JSON.stringify({ version: 1, ...dead, startedAt: new Date().toISOString(), port: 41001,
+      origin: "https://auth.dev.example.test", hostname: "auth.dev.example.test", domain: "dev.example.test", projectId: "fixture", repositoryIdentity: root, invocationId: "relay" }));
+    const routedOwners = async () => (JSON.parse(await readFile(path.join(stateDir, "proxy-routes.json"), "utf8")) as { routes: Array<{ instanceId: string }> }).routes.map((item) => item.instanceId);
+    // A relay command holds the relay's lock: gc skips the relay and still recovers other owners.
+    let release!: () => void;
+    let held!: () => void;
+    const holding = new Promise<void>((resolve) => { held = resolve; });
+    const holder = withFileLock(path.join(stateDir, "oauth-relay", "service.lock"), async () => { held(); await new Promise<void>((resolve) => { release = resolve; }); });
+    await holding;
+    try {
+      expect(await recoverOrphanedProxyRoutes(stateDir)).toEqual(["dead"]);
+    } finally { release(); await holder; }
+    expect(await routedOwners()).toEqual([OAUTH_RELAY_OWNER_ID]);
+    // A route transition already dropped the dead relay's route; gc still ends its claim and record.
+    await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [] }));
+    const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+    await registry.reserve({ projectId: "fixture", instanceId: OAUTH_RELAY_OWNER_ID, invocationId: "relay", profile: "oauth-relay", requests: [], proxyListenerPorts: [18080, 18443] });
+    await registry.recordOwners("relay", "oauth-relay", [{ process: dead }]);
+    await registry.markActive("relay");
+    expect(await recoverOrphanedProxyRoutes(stateDir)).toEqual([]);
+    expect((await registry.read()).invocations.find((item) => item.id === "relay")).toMatchObject({ state: "stopped" });
+    await expect(readFile(path.join(stateDir, "oauth-relay", "service.json"))).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
     await rm(root, { recursive: true, force: true });
