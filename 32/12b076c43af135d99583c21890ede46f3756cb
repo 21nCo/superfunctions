@@ -1,0 +1,33 @@
+devfn/cli/SECURITY.md
+  s_b00b32c06373e1::t_b3eab149aa5bd7 19,22
+devfn/core/test/startup-fixture.test.ts
+  s_b00b32c06373e1::t_ab31b495797ce9 94-97,123
+devfn/docs/configuration.md
+  s_b00b32c06373e1::t_40212a4b2be11f 107
+devfn/proxy/README.md
+  s_b00b32c06373e1::t_2f2b4a5eac7fd4 10
+devfn/proxy/src/index.ts
+  s_b00b32c06373e1::t_bf8d36619f0958 229,240,538-540,573-602,673-676,681-683,762-763,786,800
+devfn/proxy/src/oauth-relay/service.ts
+  s_b00b32c06373e1::t_f4b123079bd338 305-309
+devfn/proxy/test/oauth-relay-service.test.ts
+  s_b00b32c06373e1::t_578fdb4ca42c60 408-458
+devfn/proxy/test/proxy.test.ts
+  s_b00b32c06373e1::t_d8b70da855a2c0 387-431
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3212b076c43af135d99583c21890ede46f3756cb",
+  "prompts": {},
+  "sessions": {
+    "s_b00b32c06373e1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "08387dc8-8751-4fe7-bb0e-d0828228f71b",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
