@@ -460,4 +460,40 @@ describe("OAuth relay ticket contract", () => {
     await writeFile(registry.filePath, "{");
     await expect(register("owner-a", "unreadable")).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
   }, 30_000);
+
+  it("fails closed on malformed or inconsistent owner evidence without rewriting the registry", async () => {
+    const m = await setup();
+    const registry = new FilePortRegistry(path.join(m.stateDir, "registry.json"), undefined, async () => true);
+    const self = { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! };
+    for (const [owner, invocationId] of [["owner-a", "a-1"], ["owner-b", "b-1"]] as const) {
+      await registry.reserve({ projectId: "fixture", instanceId: owner, invocationId, profile: "default", requests: [{ name: "app", spec: { preferred: m.apps[owner].port, exact: true } }] });
+      await registry.markActive(invocationId, { app: { process: self } });
+    }
+    const register = async (owner: string, label: string) => await registerOAuthRelayState(m.stateDir, { ownerId: owner, state: state(label), redirectUri: REDIRECT_URI,
+      callbackUrl: `${origin(owner === "owner-a" ? "app-a" : "app-b")}${CALLBACK_PATH}` });
+    const valid = await readFile(registry.filePath, "utf8");
+    type Saved = { invocations: Array<Record<string, unknown>>; allocations: Array<Record<string, unknown>> };
+    const invocationA = (saved: Saved) => saved.invocations.find((item) => item.id === "a-1")!;
+    const leaseA = (saved: Saved) => saved.allocations.find((item) => item.invocationId === "a-1")!;
+    const malformed = { code: "DEVFN_OAUTH_RELAY_STATE_INVALID" };
+    const cases: Array<[string, (saved: Saved) => void, object]> = [
+      ["journal", (saved) => { invocationA(saved).ownerJournal = "invalid"; }, malformed],
+      ["launching", (saved) => { invocationA(saved).launching = { worker: true }; }, malformed],
+      ["foreigninstance", (saved) => { leaseA(saved).instanceId = "owner-c"; }, { reason: "stale-owner" }],
+      ["foreignproject", (saved) => { leaseA(saved).projectId = "other"; }, { reason: "stale-owner" }],
+    ];
+    for (const [label, corrupt, refusal] of cases) {
+      await writeFile(registry.filePath, valid);
+      await expect(register("owner-a", `${label}cb`), label).resolves.toBeDefined();
+      const saved = JSON.parse(valid) as Saved;
+      corrupt(saved);
+      const bytes = JSON.stringify(saved);
+      await writeFile(registry.filePath, bytes);
+      await expect(register("owner-a", `${label}reg`), label).rejects.toMatchObject(refusal);
+      await expect(consumeOAuthRelayCallback(m.stateDir, callback(m, state(`${label}cb`))), label).rejects.toMatchObject(refusal);
+      // A sibling owner's valid evidence still authorizes it.
+      await expect(register("owner-b", `${label}sib`), label).resolves.toBeDefined();
+      expect(await readFile(registry.filePath, "utf8"), label).toBe(bytes);
+    }
+  }, 30_000);
 });
