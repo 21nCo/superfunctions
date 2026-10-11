@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { link, mkdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -30,9 +30,9 @@ export async function withRoutingLock<T>(stateDir: string, action: () => Promise
 // releases also wait; a creator stalled even longer cannot then publish
 // itself over the next holder (publishOwner).
 const OWNERLESS_LOCK_STALE_MS = 300_000;
-// How long a release waits for a recoverer that moved its owner record aside
-// to compare it with a dead one to put it back.
-const RELEASE_RECHECK_MS = 1_000;
+// Successive takeovers of one dead holder's record, each started only after
+// the previous taker was verified dead.
+const MAX_TAKEOVER_GENERATIONS = 16;
 
 type LockOwner = { token?: string; pid?: number; birthSignature?: string; createdAt?: string };
 
@@ -41,8 +41,9 @@ type LockOwner = { token?: string; pid?: number; birthSignature?: string; create
  * earlier ones, acquires it with mkdir, which never replaces a lock. The
  * owner record is then published with link, which never replaces one either,
  * so a creator that stalled past recovery cannot claim a lock another holder
- * already recorded. Recovery takes a stale lock over in place and never frees
- * its path (recoverLock), and only a lock recording this holder is removed.
+ * already recorded. Once recorded, owner.json is never absent until its holder
+ * releases: recovery replaces a dead holder's record in place (recoverLock),
+ * and only a lock recording this holder is removed.
  */
 export async function withFileLock<T>(lockPath: string, action: () => Promise<T>, options: { timeoutMs?: number; staleMs?: number } = {}): Promise<T> {
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -96,12 +97,14 @@ async function publishOwner(lockPath: string, token: string, ownerRecord: string
   }
 }
 
+async function ownerDead(owner: LockOwner): Promise<boolean> {
+  const status = owner.pid ? await processIdentityStatus(owner.pid, owner.birthSignature, owner.createdAt) : "exited";
+  return status === "exited" || status === "identity-mismatch";
+}
+
 async function recoverable(lockPath: string, observed: LockOwner | undefined, staleMs: number): Promise<boolean> {
   if (!["linux", "darwin", "win32"].includes(process.platform)) return false;
-  if (observed) {
-    const owner = observed.pid ? await processIdentityStatus(observed.pid, observed.birthSignature, observed.createdAt) : "exited";
-    return (owner === "exited" || owner === "identity-mismatch") && Boolean(observed.createdAt) && Date.now() - Date.parse(observed.createdAt!) > staleMs;
-  }
+  if (observed) return Boolean(observed.createdAt) && Date.now() - Date.parse(observed.createdAt!) > staleMs && await ownerDead(observed);
   const mtime = await stat(lockPath).then((value) => value.mtimeMs, (error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return Date.now();
     throw error;
@@ -110,51 +113,55 @@ async function recoverable(lockPath: string, observed: LockOwner | undefined, st
 }
 
 /**
- * Take over a lock judged stale without ever freeing its path, so mkdir keeps
- * failing for every other claimant meanwhile. An ownerless lock is adopted by
- * publishing this owner, which fails if its creator publishes first. A dead
- * owner's record is moved aside and compared with the one judged: the same
- * record means the lock is still that owner's, and this owner is published in
- * its place. Any other record belongs to a holder that took the lock since,
- * and is put straight back; while it is aside the lock is not ownerless for
- * long enough to adopt, so nothing else can be published there, and a restore
- * that fails anyway is an error rather than a lost lock.
+ * Take over a lock judged stale without ever freeing its path or leaving it
+ * without an owner record, so neither mkdir nor a pending publish can succeed
+ * meanwhile. An ownerless lock is adopted by publishing this owner, which
+ * fails if its creator publishes first. For a dead holder's record, a marker
+ * named after that record and created with link admits one taker; a taker
+ * killed midway is superseded by the next generation once verified dead. The
+ * taker links the current record aside without removing it and replaces it
+ * only if it is still the record judged dead. Publishers never replace a
+ * record, so nothing else can change it before the replace.
  */
 async function recoverLock(lockPath: string, observed: string | undefined, token: string, ownerRecord: string): Promise<boolean> {
   if (observed === undefined) return await publishOwner(lockPath, token, ownerRecord);
-  const aside = `${lockPath}/owner.stale.${token}.json`;
+  const record = createHash("sha256").update(observed).digest("hex").slice(0, 32);
+  const ownerTemp = `${lockPath}/owner.${token}.tmp`;
+  const snapshot = `${lockPath}/owner.snapshot.${token}`;
+  const markers: string[] = [];
+  let taken = false;
   try {
-    await rename(`${lockPath}/owner.json`, aside);
-    const moved = await readFile(aside, "utf8");
-    if (moved === observed) return await publishOwner(lockPath, token, ownerRecord);
+    await writeFile(ownerTemp, ownerRecord, { mode: 0o600, flag: "wx" });
+    for (let generation = 0; !taken; generation += 1) {
+      if (generation === MAX_TAKEOVER_GENERATIONS) return false;
+      const marker = `${lockPath}/owner.takeover.${record}.${generation}`;
+      markers.push(marker);
+      try { await link(ownerTemp, marker); taken = true; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const taker = await readFile(marker, "utf8").then((value) => JSON.parse(value) as LockOwner, () => undefined);
+        if (!taker || !await ownerDead(taker)) return false;
+      }
+    }
+    await link(`${lockPath}/owner.json`, snapshot);
+    if (await readFile(snapshot, "utf8") !== observed) return false;
+    await rename(ownerTemp, `${lockPath}/owner.json`);
+    return true;
   } catch (error) {
-    // Released or taken over meanwhile.
+    // Released, or the record was never there to judge.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
+  } finally {
+    // Markers go only once this taker has finished with the record: a later
+    // taker of it then finds another record and stops.
+    await Promise.all([ownerTemp, snapshot, ...(taken ? markers : [])].map(async (file) => await rm(file, { force: true }).catch(() => undefined)));
   }
-  try { await link(aside, `${lockPath}/owner.json`); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw new PortRegistryError("DEVFN_REGISTRY_INVALID", `Could not restore the owner record of lock ${lockPath}: ${(error as Error).message}`);
-  }
-  await rm(aside, { force: true });
-  return false;
 }
 
 /** Remove the lock only while it records this holder. */
 async function releaseLock(lockPath: string, token: string): Promise<void> {
-  const deadline = Date.now() + RELEASE_RECHECK_MS;
   try {
-    let owner: LockOwner | undefined;
-    while (!owner) {
-      try { owner = JSON.parse(await readFile(`${lockPath}/owner.json`, "utf8")) as LockOwner; }
-      catch (error) {
-        // A recoverer may have moved this holder's record aside to compare it.
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT" || Date.now() >= deadline) return;
-        await stat(lockPath);
-        await delay(10);
-      }
-    }
+    const owner = JSON.parse(await readFile(`${lockPath}/owner.json`, "utf8")) as LockOwner;
     if (owner.token !== token) return;
     // Moving the lock aside frees its path in one step.
     const released = `${lockPath}.released.${token}`;

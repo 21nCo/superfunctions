@@ -1,13 +1,19 @@
-import { access, link, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { access, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { processBirthSignature } from "@devfn/processes";
+
 // Stall the first lock-owner write until released, as a lock creator paused
 // by the scheduler would; age ownerless locks and run a hook after a waiter
-// reads that age; run a hook right before this release creates a lock; or run
-// a hook right before a recoverer moves a stale lock or its record aside, and
-// right before it reads what it moved.
+// reads that age; run a hook right before this release creates a lock; run a
+// hook right before the next lock-owner write; or run a hook right before a
+// recoverer starts taking a stale lock over, and right before it reads the
+// record it compares with the one judged. Those two also fire on the earlier
+// move-aside recovery, so these scenarios run against it.
 const fsHooks = vi.hoisted(() => ({
   armed: false,
   stalled: undefined as (() => void) | undefined,
@@ -15,12 +21,13 @@ const fsHooks = vi.hoisted(() => ({
   agedPath: undefined as string | undefined,
   afterAgeCheck: undefined as (() => Promise<void>) | undefined,
   beforeClaim: undefined as ((lockPath: string) => Promise<void>) | undefined,
-  beforeStaleMove: undefined as (() => Promise<void>) | undefined,
-  beforeStaleRead: undefined as (() => Promise<void>) | undefined,
+  beforeOwnerWrite: undefined as (() => Promise<void>) | undefined,
+  beforeTakeover: undefined as (() => Promise<void>) | undefined,
+  beforeRecordCompare: undefined as (() => Promise<void>) | undefined,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  const once = async (name: "afterAgeCheck" | "beforeStaleMove" | "beforeStaleRead") => {
+  const once = async (name: "afterAgeCheck" | "beforeOwnerWrite" | "beforeTakeover" | "beforeRecordCompare") => {
     const hook = fsHooks[name];
     fsHooks[name] = undefined;
     await hook?.();
@@ -28,6 +35,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     writeFile: async (...args: Parameters<typeof actual.writeFile>) => {
+      if (typeof args[0] === "string" && path.basename(args[0]).startsWith("owner")) await once("beforeOwnerWrite");
       if (fsHooks.armed && typeof args[0] === "string" && path.basename(args[0]).startsWith("owner")) {
         fsHooks.armed = false;
         fsHooks.stalled?.();
@@ -47,11 +55,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       return Object.assign(result, { mtimeMs: 0 });
     },
     rename: async (...args: Parameters<typeof actual.rename>) => {
-      if (String(args[1]).includes(".stale.")) await once("beforeStaleMove");
+      if (String(args[1]).includes(".stale.")) await once("beforeTakeover");
       return await actual.rename(...args);
     },
+    link: async (...args: Parameters<typeof actual.link>) => {
+      if (String(args[1]).includes(".takeover.")) await once("beforeTakeover");
+      return await actual.link(...args);
+    },
     readFile: async (...args: Parameters<typeof actual.readFile>) => {
-      if (String(args[0]).includes(".stale.")) await once("beforeStaleRead");
+      if (/\.(stale|snapshot)\./.test(String(args[0]))) await once("beforeRecordCompare");
       return await actual.readFile(...args);
     },
   };
@@ -59,7 +71,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const { withFileLock } = await import("../src/index.js");
 
-afterEach(() => { Object.assign(fsHooks, { armed: false, agedPath: undefined, afterAgeCheck: undefined, beforeClaim: undefined, beforeStaleMove: undefined, beforeStaleRead: undefined }); });
+afterEach(() => { Object.assign(fsHooks, { armed: false, agedPath: undefined, afterAgeCheck: undefined, beforeClaim: undefined, beforeOwnerWrite: undefined, beforeTakeover: undefined, beforeRecordCompare: undefined }); });
 
 /** The v0.1 lock protocol: mkdir, then rename the owner record over owner.json; release by token. */
 async function legacyAcquire(lockPath: string, token: string, beforePublish: Promise<void> = Promise.resolve()): Promise<boolean> {
@@ -229,13 +241,13 @@ it("never frees a lock another recoverer took over and a new holder claimed whil
   await deadHolderLock(lockPath);
   // This recoverer judged the dead holder stale. Before it acts, another
   // recovers and releases the lock and a new holder claims it.
-  fsHooks.beforeStaleMove = async () => {
+  fsHooks.beforeTakeover = async () => {
     await withFileLock(lockPath, async () => await detector.hold(5), { staleMs: 1 });
     const holder = startHolding((entered) => withFileLock(lockPath, async () => { entered(); await detector.hold(800); }, { staleMs: 1 }));
     later.push(holder.result);
     await holder.entered;
-    // While this recoverer inspects what it moved, a claimant tries the path.
-    fsHooks.beforeStaleRead = async () => {
+    // While this recoverer checks the record, a claimant tries the path.
+    fsHooks.beforeRecordCompare = async () => {
       const claimant = startHolding((entered) => withFileLock(lockPath, async () => { entered(); await detector.hold(50); }, { staleMs: 1 }));
       later.push(claimant.result);
       await Promise.race([claimant.entered, new Promise((resolve) => setTimeout(resolve, 300))]);
@@ -265,19 +277,20 @@ it("never frees an ownerless lock whose creator records itself after a waiter ju
     await paused;
     fsHooks.agedPath = lockPath;
     // The waiter finds the lock ownerless past the bound; then the creator
-    // resumes, records itself and starts its work.
+    // resumes, records itself and starts its work, and a claimant tries the
+    // path before the waiter adopts the lock.
     fsHooks.afterAgeCheck = async () => {
       fsHooks.agedPath = undefined;
       resume();
       await creator.entered;
-      fsHooks.beforeStaleRead = async () => {
-        const claimant = startHolding((entered) => withFileLock(lockPath, async () => { entered(); await detector.hold(50); }, { staleMs: 1 }));
-        later.push(claimant.result);
-        await Promise.race([claimant.entered, new Promise((resolve) => setTimeout(resolve, 300))]);
-      };
+      const claimant = startHolding((entered) => withFileLock(lockPath, async () => { entered(); await detector.hold(50); }, { staleMs: 1 }));
+      later.push(claimant.result);
+      await Promise.race([claimant.entered, new Promise((resolve) => setTimeout(resolve, 300))]);
     };
     await withFileLock(lockPath, async () => await detector.hold(5), { staleMs: 1 });
     await Promise.all([creator.result, ...later]);
+    expect(fsHooks.afterAgeCheck).toBeUndefined();
+    expect(later).toHaveLength(1);
     expect(detector.overlaps).toBe(0);
     expect(await readdir(dir)).toEqual([]);
   } finally {
@@ -308,21 +321,122 @@ it("keeps one holder at a time when several waiters recover the same dead holder
   }
 }, 60_000);
 
-it("releases its lock after a recoverer that moved its record aside to compare it puts it back", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-release-"));
+it.each([
+  ["before it starts the takeover", "beforeTakeover"],
+  ["before it records itself for the takeover", "beforeOwnerWrite"],
+] as const)("never lets an obsolete recoverer paused %s open a gap that a paused creator or an ownerless adopter fills", async (_, pausePoint) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-obsolete-"));
   const lockPath = path.join(dir, "routing.lock");
-  let restored: Promise<void> | undefined;
+  const detector = overlapDetector();
+  const later: Promise<unknown>[] = [];
+  let resume: (() => void) | undefined;
+  let compared = false;
+  await deadHolderLock(lockPath);
+  // This recoverer judged the dead holder stale. Before it acts, another
+  // recovers and releases the lock, a creator makes it again and pauses before
+  // recording itself, and a waiter adopts that ownerless lock.
+  fsHooks[pausePoint] = async () => {
+    await withFileLock(lockPath, async () => await detector.hold(5), { staleMs: 1 });
+    fsHooks.release = new Promise<void>((resolve) => { resume = resolve; });
+    const paused = new Promise<void>((resolve) => { fsHooks.stalled = resolve; });
+    fsHooks.armed = true;
+    later.push(withFileLock(lockPath, async () => await detector.hold(20), { staleMs: 1 }));
+    await paused;
+    fsHooks.agedPath = lockPath;
+    const adopter = startHolding((entered) => withFileLock(lockPath, async () => { fsHooks.agedPath = undefined; entered(); await detector.hold(400); }, { staleMs: 1 }));
+    later.push(adopter.result);
+    await adopter.entered;
+    // The creator resumes and publishes while the adopter still holds: as
+    // this recoverer checks the record if it gets that far, else soon after.
+    fsHooks.beforeRecordCompare = async () => {
+      compared = true;
+      resume?.();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    };
+    setTimeout(() => resume?.(), 150);
+  };
   try {
-    await withFileLock(lockPath, async () => {
-      const aside = path.join(lockPath, "owner.stale.other.json");
-      await rename(path.join(lockPath, "owner.json"), aside);
-      restored = new Promise((resolve) => setTimeout(resolve, 100)).then(async () => {
-        await link(aside, path.join(lockPath, "owner.json"));
-        await rm(aside);
-      });
-    });
-    await restored;
-    await expect(access(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await withFileLock(lockPath, async () => await detector.hold(5), { staleMs: 1 });
+    await Promise.all(later);
+    expect(fsHooks[pausePoint]).toBeUndefined();
+    expect(later).toHaveLength(2);
+    expect(detector.overlaps).toBe(0);
+    // A recoverer whose record left with the released lock stops at once; one
+    // that recorded itself in the new lock compares and finds another record.
+    expect(compared).toBe(pausePoint === "beforeOwnerWrite");
+    expect(await readdir(dir)).toEqual([]);
+  } finally {
+    resume?.();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("lets only one of two recoverers of the same dead holder's record take the lock", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-takers-"));
+  const lockPath = path.join(dir, "routing.lock");
+  const detector = overlapDetector();
+  const entered: string[] = [];
+  let second: Promise<unknown> | undefined;
+  await deadHolderLock(lockPath);
+  // While the first recoverer checks the dead record, a second one judges it.
+  fsHooks.beforeRecordCompare = async () => {
+    second = withFileLock(lockPath, async () => { entered.push("second"); await detector.hold(5); }, { staleMs: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  };
+  try {
+    await withFileLock(lockPath, async () => { entered.push("first"); await detector.hold(50); }, { staleMs: 1 });
+    await second;
+    expect(entered).toEqual(["first", "second"]);
+    expect(detector.overlaps).toBe(0);
+    expect(await readdir(dir)).toEqual([]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("never strands a holder's lock when a recoverer checking it stalls past that holder's release", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-stalled-recoverer-"));
+  const lockPath = path.join(dir, "routing.lock");
+  const detector = overlapDetector();
+  const later: Promise<unknown>[] = [];
+  await deadHolderLock(lockPath);
+  fsHooks.beforeTakeover = async () => {
+    await withFileLock(lockPath, async () => await detector.hold(5), { staleMs: 1 });
+    const holder = startHolding((entered) => withFileLock(lockPath, async () => { entered(); await detector.hold(50); }, { staleMs: 1 }));
+    later.push(holder.result);
+    await holder.entered;
+    fsHooks.beforeRecordCompare = async () => {
+      await holder.result;
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+    };
+  };
+  try {
+    await withFileLock(lockPath, async () => await detector.hold(5), { staleMs: 1 });
+    await Promise.all(later);
+    // Nothing the recoverer did keeps the next claimant out.
+    await expect(withFileLock(lockPath, async () => "next", { staleMs: 1, timeoutMs: 1_000 })).resolves.toBe("next");
+    expect(detector.overlaps).toBe(0);
+    expect(await readdir(dir)).toEqual([]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 20_000);
+
+it("supersedes a recoverer killed while taking a dead holder's lock over, but never a live one", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "devfn-lock-killed-taker-"));
+  const lockPath = path.join(dir, "routing.lock");
+  try {
+    await deadHolderLock(lockPath);
+    const record = createHash("sha256").update(await readFile(path.join(lockPath, "owner.json"), "utf8")).digest("hex").slice(0, 32);
+    const marker = path.join(lockPath, `owner.takeover.${record}.0`);
+    const createdAt = new Date().toISOString();
+    await writeFile(marker, JSON.stringify({ token: "live", pid: process.pid, birthSignature: await processBirthSignature(process.pid), createdAt }));
+    await expect(withFileLock(lockPath, async () => "taken", { staleMs: 1, timeoutMs: 300 })).rejects.toMatchObject({ code: "DEVFN_REGISTRY_LOCK_TIMEOUT" });
+    expect(JSON.parse(await readFile(path.join(lockPath, "owner.json"), "utf8"))).toMatchObject({ token: "dead" });
+    const killed = spawnSync(process.execPath, ["-e", ""]).pid;
+    await writeFile(marker, JSON.stringify({ token: "killed", pid: killed, createdAt }));
+    // The takeover leaves only this holder's record behind.
+    await expect(withFileLock(lockPath, async () => await readdir(lockPath), { staleMs: 1, timeoutMs: 5_000 })).resolves.toEqual(["owner.json"]);
     expect(await readdir(dir)).toEqual([]);
   } finally {
     await rm(dir, { recursive: true, force: true });
