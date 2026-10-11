@@ -31,7 +31,22 @@ export async function withRoutingLock<T>(stateDir: string, action: () => Promise
 // itself over the next holder (publishOwner).
 const OWNERLESS_LOCK_STALE_MS = 300_000;
 
-type LockOwner = { token?: string; pid?: number; birthSignature?: string; createdAt?: string };
+type LockOwner = { token: string; pid: number; birthSignature?: string; createdAt: string };
+
+/**
+ * An owner record as this and earlier releases write it, or undefined for
+ * anything else. Only such a record can show its owner dead.
+ */
+function parseOwnerRecord(text: string): LockOwner | undefined {
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return undefined; }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { token, pid, birthSignature, createdAt } = value as Record<string, unknown>;
+  if (typeof token !== "string" || token === "" || typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) return undefined;
+  if (typeof createdAt !== "string" || !Number.isFinite(Date.parse(createdAt))) return undefined;
+  if (birthSignature !== undefined && typeof birthSignature !== "string") return undefined;
+  return { token, pid, birthSignature, createdAt };
+}
 
 /**
  * Hold a lock directory for the duration of action. Every release, this and
@@ -53,8 +68,7 @@ export async function withFileLock<T>(lockPath: string, action: () => Promise<T>
       if (error.code === "ENOENT") return undefined;
       throw error;
     });
-    const owner = observed === undefined ? undefined : JSON.parse(observed) as LockOwner;
-    if (await recoverable(lockPath, owner, staleMs) && await recoverLock(lockPath, observed, token, ownerRecord, deadline)) break;
+    if (await recoverable(lockPath, observed, staleMs) && await recoverLock(lockPath, observed, token, ownerRecord, deadline)) break;
     if (Date.now() >= deadline) throw new PortRegistryError("DEVFN_REGISTRY_LOCK_TIMEOUT", `Timed out acquiring registry lock ${lockPath}.`);
     await delay(20 + Math.floor(Math.random() * 20));
   }
@@ -95,13 +109,17 @@ async function publishOwner(lockPath: string, token: string, ownerRecord: string
 }
 
 async function ownerDead(owner: LockOwner): Promise<boolean> {
-  const status = owner.pid ? await processIdentityStatus(owner.pid, owner.birthSignature, owner.createdAt) : "exited";
+  const status = await processIdentityStatus(owner.pid, owner.birthSignature, owner.createdAt);
   return status === "exited" || status === "identity-mismatch";
 }
 
-async function recoverable(lockPath: string, observed: LockOwner | undefined, staleMs: number): Promise<boolean> {
+/** Only a well-formed record of a holder verified dead, or no record for long enough, is recovered. */
+async function recoverable(lockPath: string, observed: string | undefined, staleMs: number): Promise<boolean> {
   if (!["linux", "darwin", "win32"].includes(process.platform)) return false;
-  if (observed) return Boolean(observed.createdAt) && Date.now() - Date.parse(observed.createdAt!) > staleMs && await ownerDead(observed);
+  if (observed !== undefined) {
+    const owner = parseOwnerRecord(observed);
+    return owner !== undefined && Date.now() - Date.parse(owner.createdAt) > staleMs && await ownerDead(owner);
+  }
   const mtime = await stat(lockPath).then((value) => value.mtimeMs, (error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return Date.now();
     throw error;
@@ -125,8 +143,10 @@ async function recoverable(lockPath: string, observed: LockOwner | undefined, st
  *   nothing else can change it before the replace.
  * - Liveness: if the holder and every taker are verified dead, a waiter
  *   recovers the lock before its deadline however many takers died.
- * - Exclusion: only a live taker, or one whose marker or identity cannot be
- *   read, blocks; such a marker needs manual removal once its taker is gone.
+ * - Exclusion: only a live taker, or one whose marker cannot be read or is
+ *   not a well-formed owner record, or whose identity cannot be read, blocks;
+ *   such a marker needs manual removal once its taker is gone. The same rule
+ *   keeps an ill-formed holder record from being recovered at all.
  * While the record may still be current, a taker removes only its own
  * marker, the newest, so the markers stay a gapless run no waiter can pass a
  * live taker in. Once the record is replaced, its markers are inert and all
@@ -168,17 +188,18 @@ async function recoverLock(lockPath: string, observed: string | undefined, token
   }
 }
 
-/** A taker whose marker cannot be read may still be live. */
+/** A taker whose marker cannot be read or is ill-formed may still be live. */
 async function takerDead(marker: string): Promise<boolean> {
-  try { return await ownerDead(JSON.parse(await readFile(marker, "utf8")) as LockOwner); }
-  catch { return false; }
+  try {
+    const owner = parseOwnerRecord(await readFile(marker, "utf8"));
+    return owner !== undefined && await ownerDead(owner);
+  } catch { return false; }
 }
 
 /** Remove the lock only while it records this holder. */
 async function releaseLock(lockPath: string, token: string): Promise<void> {
   try {
-    const owner = JSON.parse(await readFile(`${lockPath}/owner.json`, "utf8")) as LockOwner;
-    if (owner.token !== token) return;
+    if (parseOwnerRecord(await readFile(`${lockPath}/owner.json`, "utf8"))?.token !== token) return;
     // Moving the lock aside frees its path in one step. Released locks are
     // never used again, so those of holders killed before removing theirs go
     // too.

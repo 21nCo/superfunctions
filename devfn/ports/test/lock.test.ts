@@ -223,7 +223,7 @@ it("keeps one holder at a time across concurrent holders of this and the earlier
 /** A lock left by a holder that recorded itself an hour ago and has since died. */
 async function deadHolderLock(lockPath: string): Promise<void> {
   await mkdir(lockPath);
-  await writeFile(path.join(lockPath, "owner.json"), JSON.stringify({ token: "dead", createdAt: new Date(Date.now() - 3_600_000).toISOString() }));
+  await writeFile(path.join(lockPath, "owner.json"), JSON.stringify({ token: "dead", pid: spawnSync(process.execPath, ["-e", ""]).pid, createdAt: new Date(Date.now() - 3_600_000).toISOString() }));
 }
 
 /** Resolves once action has started holding the lock. */

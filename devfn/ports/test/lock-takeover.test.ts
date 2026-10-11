@@ -79,16 +79,56 @@ it.each([0, 20])("never takes a dead holder's lock over while a live taker holds
   expect((await readdir(lockPath)).sort()).toEqual(["owner.json", ...Array.from({ length: generation + 1 }, (_, index) => `${prefix}${index}`)].sort());
 }, 20_000);
 
-it.each([
-  ["malformed", async (marker: string) => { await writeFile(marker, "{"); }],
-  ["unreadable", async (marker: string) => { await writeFile(marker, "{}"); await chmod(marker, 0); }],
-] as const)("treats a %s takeover marker as a possibly live taker", async (kind, write) => {
-  if (kind === "unreadable" && process.getuid?.() === 0) return;
+// Records that are not a well-formed owner record. Each would name a dead
+// process if its missing or ill-typed fields were taken at face value.
+const invalidRecords: [string, () => string][] = [
+  ["malformed JSON", () => "{"],
+  ["an empty object", () => "{}"],
+  ["an array", () => "[]"],
+  ["a number", () => "0"],
+  ["null", () => "null"],
+  ["a string", () => JSON.stringify("x")],
+  ["a record without a PID", () => JSON.stringify({ token: "x", createdAt: anHourAgo() })],
+  ...([0, -1, 1.5, "123"] as const).map((pid): [string, () => string] => [`PID ${JSON.stringify(pid)}`, () => JSON.stringify({ token: "x", pid, createdAt: anHourAgo() })]),
+  ["an empty token", () => JSON.stringify({ token: "", pid: deadPid(), createdAt: anHourAgo() })],
+  ["a numeric token", () => JSON.stringify({ token: 1, pid: deadPid(), createdAt: anHourAgo() })],
+  ["a record without a time", () => JSON.stringify({ token: "x", pid: deadPid() })],
+  ["an unparseable time", () => JSON.stringify({ token: "x", pid: deadPid(), createdAt: "yesterday" })],
+  ["a non-string birth signature", () => JSON.stringify({ token: "x", pid: deadPid(), birthSignature: 5, createdAt: anHourAgo() })],
+];
+
+it.each(invalidRecords.flatMap(([kind, record]) => [0, 20].map((generation) => [kind, generation, record] as const)))("treats a takeover marker holding %s at generation %i as a possibly live taker", async (_, generation, record) => {
   const prefix = await deadHolderLock();
-  await write(path.join(lockPath, `${prefix}0`));
+  for (let earlier = 0; earlier < generation; earlier += 1) await killedTaker(prefix, earlier);
+  const marker = record();
+  await writeFile(path.join(lockPath, `${prefix}${generation}`), marker);
+  const before = await ownerRecord();
+  await expect(withFileLock(lockPath, async () => "taken", { staleMs: 1, timeoutMs: 300 })).rejects.toMatchObject({ code: "DEVFN_REGISTRY_LOCK_TIMEOUT" });
+  // The waiter read the marker, went no further and changed nothing.
+  expect(markerReads).toContain(`${prefix}${generation}`);
+  expect(await ownerRecord()).toBe(before);
+  expect(await readFile(path.join(lockPath, `${prefix}${generation}`), "utf8")).toBe(marker);
+  expect((await readdir(lockPath)).sort()).toEqual(["owner.json", ...Array.from({ length: generation + 1 }, (_, index) => `${prefix}${index}`)].sort());
+});
+
+it.skipIf(process.getuid?.() === 0)("treats an unreadable takeover marker as a possibly live taker", async () => {
+  const prefix = await deadHolderLock();
+  // Readable, this marker would name a dead taker.
+  await killedTaker(prefix, 0);
+  await chmod(path.join(lockPath, `${prefix}0`), 0);
   const before = await ownerRecord();
   await expect(withFileLock(lockPath, async () => "taken", { staleMs: 1, timeoutMs: 300 })).rejects.toMatchObject({ code: "DEVFN_REGISTRY_LOCK_TIMEOUT" });
   expect(await ownerRecord()).toBe(before);
+  expect((await readdir(lockPath)).sort()).toEqual(["owner.json", `${prefix}0`].sort());
+});
+
+it.each(invalidRecords)("never recovers a lock whose owner record holds %s", async (_, record) => {
+  await mkdir(lockPath);
+  const owner = record();
+  await writeFile(path.join(lockPath, "owner.json"), owner);
+  await expect(withFileLock(lockPath, async () => "taken", { staleMs: 1, timeoutMs: 300 })).rejects.toMatchObject({ code: "DEVFN_REGISTRY_LOCK_TIMEOUT" });
+  expect(await ownerRecord()).toBe(owner);
+  expect(await readdir(lockPath)).toEqual(["owner.json"]);
 });
 
 it.each([
