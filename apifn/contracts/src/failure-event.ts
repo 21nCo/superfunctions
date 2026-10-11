@@ -168,10 +168,15 @@ function checkField(value: unknown, field: Field, path: string, issues: FailureE
   }
 }
 
+/** Own-property lookup, so keys such as "constructor" never resolve through Object.prototype. */
+function own<T>(record: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
 function checkObject(value: Record<string, unknown>, fields: Record<string, Field>, path: string, issues: FailureEventIssue[]): void {
   for (const [key, child] of Object.entries(value)) {
     const childPath = `${path}/${key}`;
-    const field = fields[key];
+    const field = own(fields, key);
     if (field) {
       if (child !== undefined) checkField(child, field, childPath, issues);
     } else if (isCredentialKey(key)) {
@@ -181,7 +186,7 @@ function checkObject(value: Record<string, unknown>, fields: Record<string, Fiel
     }
   }
   for (const [key, field] of Object.entries(fields)) {
-    if (field.required && value[key] === undefined) {
+    if (field.required && own(value, key) === undefined) {
       issues.push({ path: `${path}/${key}`, code: "REQUIRED", message: `${path}/${key} is required.` });
     }
   }
@@ -220,8 +225,9 @@ export function validateClientFailureEvent(input: unknown): ValidateFailureEvent
   if (!isRecord(input)) {
     return { ok: false, issues: [{ path: "", code: "TYPE", message: "A client-failure event must be an object." }] };
   }
-  const { attributes, ...rest } = input;
+  const rest = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "attributes"));
   checkObject(rest, EVENT_FIELDS, "", issues);
+  const attributes = own(input, "attributes");
   if (attributes !== undefined) checkAttributes(attributes, issues);
   if (issues.length === 0) {
     const serialized = canonicalJson(input);

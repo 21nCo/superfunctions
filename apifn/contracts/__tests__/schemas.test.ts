@@ -10,9 +10,10 @@ import {
   RELEASE_ID_PATTERN,
   TARGET_PATTERN,
   VERSION_PATTERN,
+  buildOperationCatalog,
   validateClientFailureEvent,
 } from "../src/index.js";
-import { FIXTURES, fixture, readJson, SCHEMAS } from "./helpers.js";
+import { clone, FIXTURES, fixture, readJson, SCHEMAS } from "./helpers.js";
 
 const ajv = new Ajv2020({ allErrors: true, strict: true, strictRequired: false });
 const schema = (name: string) => readJson(path.join(SCHEMAS, `${name}.v1.schema.json`));
@@ -53,6 +54,37 @@ describe("published JSON Schemas", () => {
       expect(validateClientFailureEvent(event).ok, file).toBe(false);
       expect(check("client-failure-event", event), file).toBe(runtimeOnly.has(file));
     }
+  });
+
+  it("agree with the TypeScript validator on Object.prototype member names", () => {
+    const event = fixture("client-failure/valid/network-minimal.json");
+    const inputs = [
+      `{"constructor":"x",${JSON.stringify(event).slice(1)}`,
+      JSON.stringify({ ...event, failure: { ...event.failure, toString: "x".repeat(4000) } }),
+      JSON.stringify({ ...event, failure: { ...event.failure, constructor: "x" } }),
+      JSON.stringify(event).replace('"release":{', '"release":{"__proto__":{"x":1},'),
+    ];
+    for (const input of inputs) {
+      const parsed = JSON.parse(input);
+      expect(check("client-failure-event", parsed), input.slice(0, 60)).toBe(false);
+      expect(validateClientFailureEvent(parsed).ok, input.slice(0, 60)).toBe(false);
+    }
+  });
+
+  it("accept catalogs with form encoding, server variables and server overrides", () => {
+    const spec = clone(fixture("catalog/openapi.json"));
+    const manifest = clone(fixture("catalog/manifest.json"));
+    manifest.serialization.mediaTypes.push("multipart/form-data");
+    spec.servers = [{ url: "https://{region}.api.example.test/v1", variables: { region: { default: "eu" } } }, { url: "/relative/@scope" }];
+    spec.paths["/health"].servers = [{ url: "//status.example.test" }];
+    spec.paths["/workspaces/{workspaceId}/projects"].post.requestBody.content["multipart/form-data"] = {
+      schema: { type: "object" },
+      encoding: { file: { contentType: "image/png", explode: false } },
+    };
+    const { catalog, diagnostics } = buildOperationCatalog(spec, manifest);
+    expect(diagnostics).toEqual([]);
+    expect(check("operation-catalog", catalog), JSON.stringify(validators["operation-catalog"].errors)).toBe(true);
+    expect(check("operation-catalog", { ...catalog, servers: [{ url: "https://user@api.example.test", description: null, variables: {} }] })).toBe(false);
   });
 
   it("share identifier patterns with the TypeScript contract", () => {

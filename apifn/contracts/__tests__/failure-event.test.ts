@@ -36,6 +36,10 @@ describe("client-failure event envelope", () => {
 
   it.each([
     ["URL user info", { pathTemplate: "/x", name: undefined }, { message: "fetch https://svc:hunter2pass@api.example.test failed" }],
+    ["URL user info without a password", {}, { message: "fetch https://hunter2hunter2@api.example.test failed" }],
+    ["URL user info with several @", {}, { message: "fetch https://x@hunter2hunter2@api.example.test failed" }],
+    ["protocol-relative URL user info", {}, { message: "fetch //svc:hunter2hunter2@api.example.test failed" }],
+    ["lowercase bearer token", {}, { message: "sent Authorization: Bearer abcdefghijklmnop" }],
     ["JWT", {}, { errorCode: "eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.c2lnbmF0dXJl" }],
     ["query credential", {}, { message: "GET /v1/projects?access_token=abc123 failed" }],
     ["provider key", {}, { message: "rejected key sk_live_abcdefgh12345678" }],
@@ -46,6 +50,34 @@ describe("client-failure event envelope", () => {
     const result = validateClientFailureEvent(JSON.parse(JSON.stringify(event)));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.map((issue) => issue.code)).toEqual(["CREDENTIAL_VALUE"]);
+  });
+
+  it("accepts prose that names an authentication scheme", () => {
+    const event = clone(fixture("client-failure/valid/network-minimal.json"));
+    for (const message of ["Bearer authentication required", "Requires HTTP Basic authentication", "contact support@example.test"]) {
+      expect(validateClientFailureEvent({ ...event, failure: { kind: "http", httpStatus: 401, message } }).ok, message).toBe(true);
+    }
+  });
+
+  it.each([
+    ["top-level constructor", '{"constructor":"x"}', "/constructor"],
+    ["top-level __proto__", '{"__proto__":{"a":1}}', "/__proto__"],
+    ["failure.constructor", '{"failure":{"kind":"unknown","constructor":"x"}}', "/failure/constructor"],
+    ["failure.toString", `{"failure":{"kind":"unknown","toString":"${"x".repeat(4000)}"}}`, "/failure/toString"],
+    ["failure.hasOwnProperty", '{"failure":{"kind":"unknown","hasOwnProperty":"x"}}', "/failure/hasOwnProperty"],
+    ["release.__proto__", '{"release":{"releaseId":"rel_0123456789abcdef01234567","__proto__":{"x":1}}}', "/release/__proto__"],
+  ])("reports Object.prototype names as unknown fields: %s", (_name, patch, issuePath) => {
+    const base = clone(fixture("client-failure/valid/network-minimal.json"));
+    const input = JSON.parse(patch);
+    for (const key of Object.keys(input)) {
+      const value = input[key];
+      Object.defineProperty(base, key, { value: key === "__proto__" || key === "constructor" ? value : { ...base[key], ...value }, enumerable: true, writable: true, configurable: true });
+    }
+    let result: ReturnType<typeof validateClientFailureEvent> | undefined;
+    expect(() => {
+      result = validateClientFailureEvent(base);
+    }).not.toThrow();
+    expect(result).toEqual({ ok: false, issues: [expect.objectContaining({ path: issuePath, code: "UNKNOWN_FIELD" })] });
   });
 
   it("is exported from the runtime-neutral entry point", () => {

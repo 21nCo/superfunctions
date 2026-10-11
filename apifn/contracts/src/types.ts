@@ -71,9 +71,22 @@ export interface OperationBinding {
 // Operation catalog
 // ---------------------------------------------------------------------------
 
+export interface CatalogEncoding {
+  /** Part content type; null keeps the default for the property type. */
+  contentType: string | null;
+  style: string;
+  explode: boolean;
+  allowReserved: boolean;
+}
+
 export interface CatalogContent {
   mediaType: string;
   schema: JsonValue | null;
+  /**
+   * Per-property serialization for `application/x-www-form-urlencoded` and
+   * `multipart/form-data` bodies, keyed by property name; empty otherwise.
+   */
+  encoding: Record<string, CatalogEncoding>;
 }
 
 export interface CatalogParameter {
@@ -83,8 +96,16 @@ export interface CatalogParameter {
   deprecated: boolean;
   style: string;
   explode: boolean;
+  allowReserved: boolean;
   description: string | null;
   schema: JsonValue | null;
+}
+
+export interface CatalogServer {
+  /** URL template without user info, query or fragment. */
+  url: string;
+  description: string | null;
+  variables: Record<string, { default: string; enum: string[] | null; description: string | null }>;
 }
 
 export interface CatalogResponse {
@@ -111,6 +132,8 @@ export interface CatalogOperation {
   parameters: CatalogParameter[];
   requestBody: { required: boolean; contents: CatalogContent[] } | null;
   responses: CatalogResponse[];
+  /** Path- or operation-level server override; null uses the catalog servers. */
+  servers: CatalogServer[] | null;
   /**
    * Accepted credential combinations: any one alternative (OR) whose terms
    * are all satisfied (AND). An empty alternative allows anonymous calls.
@@ -151,7 +174,7 @@ export interface OperationCatalog {
     provenance: { source: string | null; revision: string | null; exporter: string | null };
   };
   serialization: { mediaTypes: string[] };
-  servers: Array<{ url: string; description: string | null }>;
+  servers: CatalogServer[];
   securitySchemes: Record<string, CatalogSecurityScheme>;
   operations: CatalogOperation[];
   /** Component schemas reachable from operations, keyed by component name. */

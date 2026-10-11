@@ -16,6 +16,7 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 | [`@apifn/react`](./react) | React components — interactive API explorer, Try-It console, schema viewer, diff, performance overlays. |
 | [`@apifn/svelte`](./svelte) | The same UI surface for Svelte, shipped as `.svelte` source. |
 | [`@apifn/docsfn`](./docsfn) | docsfn plugin — render an OpenAPI spec as an interactive API reference. |
+| [`@apifn/contracts`](./contracts) | Versioned operation catalog, release descriptor and client-failure event contracts, with JSON Schemas and shared fixtures for SDK generators, agent tools and failure reporting. |
 
 ### npm release dependency order
 

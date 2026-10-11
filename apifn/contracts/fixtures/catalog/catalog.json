@@ -24,6 +24,7 @@
       "openapiOperationId": "archiveProject",
       "parameters": [
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": false,
@@ -37,6 +38,7 @@
           "style": "simple"
         },
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": false,
@@ -55,6 +57,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/json",
               "schema": {
                 "$ref": "#/components/schemas/Project"
@@ -68,6 +71,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/problem+json",
               "schema": {
                 "$ref": "#/components/schemas/Problem"
@@ -101,6 +105,7 @@
           ]
         ]
       },
+      "servers": null,
       "summary": "Archive a project",
       "tags": [
         "projects"
@@ -124,6 +129,7 @@
       "openapiOperationId": "createProject",
       "parameters": [
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": false,
@@ -137,6 +143,7 @@
           "style": "simple"
         },
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": false,
@@ -154,6 +161,7 @@
       "requestBody": {
         "contents": [
           {
+            "encoding": {},
             "mediaType": "application/json",
             "schema": {
               "$ref": "#/components/schemas/ProjectInput"
@@ -166,6 +174,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/json",
               "schema": {
                 "$ref": "#/components/schemas/Project"
@@ -179,6 +188,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/problem+json",
               "schema": {
                 "$ref": "#/components/schemas/Problem"
@@ -192,6 +202,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/problem+json",
               "schema": {
                 "$ref": "#/components/schemas/Problem"
@@ -229,6 +240,7 @@
           ]
         ]
       },
+      "servers": null,
       "summary": "Create a project",
       "tags": [
         "projects"
@@ -252,6 +264,7 @@
       "openapiOperationId": "removeProject",
       "parameters": [
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": false,
@@ -265,6 +278,7 @@
           "style": "simple"
         },
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": false,
@@ -289,6 +303,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/problem+json",
               "schema": {
                 "$ref": "#/components/schemas/Problem"
@@ -320,6 +335,7 @@
           ]
         ]
       },
+      "servers": null,
       "summary": "Delete a project (deprecated)",
       "tags": [
         "projects"
@@ -343,6 +359,7 @@
       "openapiOperationId": "getProject",
       "parameters": [
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": false,
@@ -356,6 +373,7 @@
           "style": "simple"
         },
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": "Project slug or ID",
           "explode": false,
@@ -375,6 +393,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/json",
               "schema": {
                 "$ref": "#/components/schemas/Project"
@@ -388,6 +407,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/problem+json",
               "schema": {
                 "$ref": "#/components/schemas/Problem"
@@ -419,6 +439,7 @@
           ]
         ]
       },
+      "servers": null,
       "summary": "Get a project",
       "tags": [
         "projects"
@@ -442,6 +463,7 @@
       "openapiOperationId": "listProjects",
       "parameters": [
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": false,
@@ -455,6 +477,7 @@
           "style": "simple"
         },
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": true,
@@ -470,6 +493,7 @@
           "style": "deepObject"
         },
         {
+          "allowReserved": false,
           "deprecated": false,
           "description": null,
           "explode": true,
@@ -491,6 +515,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/json",
               "schema": {
                 "$ref": "#/components/schemas/ProjectPage"
@@ -504,6 +529,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/problem+json",
               "schema": {
                 "$ref": "#/components/schemas/Problem"
@@ -517,6 +543,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "application/problem+json",
               "schema": {
                 "$ref": "#/components/schemas/Problem"
@@ -548,6 +575,7 @@
           ]
         ]
       },
+      "servers": null,
       "summary": "List projects",
       "tags": [
         "projects"
@@ -576,6 +604,7 @@
         {
           "contents": [
             {
+              "encoding": {},
               "mediaType": "text/plain",
               "schema": {
                 "type": "string"
@@ -596,6 +625,7 @@
           []
         ]
       },
+      "servers": null,
       "summary": null,
       "tags": []
     }
@@ -729,7 +759,8 @@
   "servers": [
     {
       "description": "Production",
-      "url": "https://api.example.test/v1"
+      "url": "https://api.example.test/v1",
+      "variables": {}
     }
   ],
   "source": {

@@ -7,42 +7,45 @@ export function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : 1;
 }
 
-function canonicalValue(value: unknown, path: string): unknown {
+function serialize(value: unknown, path: string): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return value;
+    return JSON.stringify(value);
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
       throw new TypeError(`Cannot canonicalize non-finite number at ${path}`);
     }
-    return value;
+    return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return value.map((item, index) => canonicalValue(item, `${path}/${index}`));
+    return `[${value.map((item, index) => serialize(item, `${path}/${index}`)).join(",")}]`;
   }
   if (typeof value === "object") {
     const proto = Object.getPrototypeOf(value);
     if (proto !== Object.prototype && proto !== null) {
       throw new TypeError(`Cannot canonicalize non-plain object at ${path}`);
     }
+    // Serialized by hand: JSON.stringify would emit integer-like keys first
+    // and an object literal would turn an own "__proto__" key into a prototype.
     const record = value as Record<string, unknown>;
-    const sorted: Record<string, unknown> = {};
+    const members: string[] = [];
     for (const key of Object.keys(record).sort(compareCodeUnits)) {
       if (record[key] !== undefined) {
-        sorted[key] = canonicalValue(record[key], `${path}/${key}`);
+        members.push(`${JSON.stringify(key)}:${serialize(record[key], `${path}/${key}`)}`);
       }
     }
-    return sorted;
+    return `{${members.join(",")}}`;
   }
   throw new TypeError(`Cannot canonicalize ${typeof value} at ${path}`);
 }
 
 /**
- * Serializes plain JSON data with object keys sorted by code unit and no
- * insignificant whitespace. Undefined object members are omitted.
+ * Serializes plain JSON data with object keys sorted by UTF-16 code unit (as
+ * in RFC 8785) and no insignificant whitespace. Undefined object members are
+ * omitted.
  */
 export function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalValue(value, ""));
+  return serialize(value, "");
 }
 
 const K = new Uint32Array([

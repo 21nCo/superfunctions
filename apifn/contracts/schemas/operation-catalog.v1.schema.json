@@ -58,18 +58,7 @@
       },
       "required": ["mediaTypes"]
     },
-    "servers": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "url": {"type": "string", "minLength": 1, "pattern": "^[^?#@]*$"},
-          "description": {"anyOf": [{"type": "string"}, {"type": "null"}]}
-        },
-        "required": ["url", "description"]
-      }
-    },
+    "servers": {"type": "array", "items": {"$ref": "#/$defs/server"}},
     "securitySchemes": {
       "type": "object",
       "additionalProperties": {
@@ -149,12 +138,13 @@
               "deprecated": {"type": "boolean"},
               "style": {"enum": ["simple", "form", "deepObject"]},
               "explode": {"type": "boolean"},
+              "allowReserved": {"type": "boolean"},
               "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
               "schema": {
                 "description": "JSON Schema (2020-12) with $ref values pointing at #/components/schemas/<name>; resolve them against the catalog's schemas map."
               }
             },
-            "required": ["name", "in", "required", "deprecated", "style", "explode", "description", "schema"]
+            "required": ["name", "in", "required", "deprecated", "style", "explode", "allowReserved", "description", "schema"]
           }
         },
         "requestBody": {
@@ -184,6 +174,10 @@
             },
             "required": ["status", "kind", "description", "contents"]
           }
+        },
+        "servers": {
+          "description": "Path- or operation-level server override; null uses the catalog servers.",
+          "anyOf": [{"type": "array", "items": {"$ref": "#/$defs/server"}}, {"type": "null"}]
         },
         "security": {
           "type": "object",
@@ -261,6 +255,7 @@
         "parameters",
         "requestBody",
         "responses",
+        "servers",
         "security",
         "sdk",
         "agent",
@@ -275,9 +270,51 @@
         "mediaType": {"type": "string", "minLength": 1, "maxLength": 128},
         "schema": {
           "description": "JSON Schema (2020-12) with $ref values pointing at #/components/schemas/<name>; resolve them against the catalog's schemas map."
+        },
+        "encoding": {
+          "description": "Per-property serialization of application/x-www-form-urlencoded and multipart/form-data bodies, keyed by property name; empty for other media types.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "contentType": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+              "style": {"enum": ["form", "deepObject"]},
+              "explode": {"type": "boolean"},
+              "allowReserved": {"type": "boolean"}
+            },
+            "required": ["contentType", "style", "explode", "allowReserved"]
+          }
         }
       },
-      "required": ["mediaType", "schema"]
+      "required": ["mediaType", "schema", "encoding"]
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "description": "URL template without user info, query or fragment.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?:(?:[A-Za-z][A-Za-z0-9+.-]*:)?//[^/?#@]*(?:/[^?#]*)?|(?![A-Za-z][A-Za-z0-9+.-]*://|//)[^?#]*)$"
+        },
+        "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "variables": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "default": {"type": "string"},
+              "enum": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]},
+              "description": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+            },
+            "required": ["default", "enum", "description"]
+          }
+        }
+      },
+      "required": ["url", "description", "variables"]
     },
     "securityTerm": {
       "type": "object",

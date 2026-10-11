@@ -1,3 +1,4 @@
+import { redactCredentialValues } from "./credentials.js";
 import type { ApiManifest, Diagnostic } from "./types.js";
 
 export const API_ID_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
@@ -56,7 +57,7 @@ class ManifestChecker {
     if (typeof value !== "string" || value.length === 0 || value.length > max) {
       this.fail(pointer, `Expected a non-empty string of at most ${max} characters at ${pointer}.`);
     } else if (pattern && !pattern.test(value)) {
-      this.fail(pointer, `Value "${value}" at ${pointer} must match ${pattern.source}.`);
+      this.fail(pointer, `Value "${redactCredentialValues(value)}" at ${pointer} must match ${pattern.source}.`);
     }
   }
 
@@ -82,7 +83,7 @@ function checkBinding(check: ManifestChecker, binding: unknown, pointer: string)
     check.fail(pointer, `Operation binding "${String(value.id)}" must set either operationId or both method and path.`);
   }
   if (typeof value.method === "string" && !METHODS.has(value.method.toLowerCase())) {
-    check.fail(`${pointer}/method`, `Unknown HTTP method "${value.method}".`);
+    check.fail(`${pointer}/method`, `Unknown HTTP method "${redactCredentialValues(value.method)}".`);
   }
 
   if (value.sdk !== undefined && check.object(value.sdk, `${pointer}/sdk`, ["include", "excludeTargets"])) {

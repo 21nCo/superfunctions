@@ -9,6 +9,18 @@ describe("canonical JSON", () => {
     );
   });
 
+  it("orders integer-like keys by code unit like every other key (RFC 8785)", () => {
+    expect(canonicalJson({ b: 1, "10": 2, "9": 3, $ref: 4 })).toBe('{"$ref":4,"10":2,"9":3,"b":1}');
+    expect(canonicalDigest({ b: 1, "10": 2, "9": 3 })).toBe(`sha256:${createHash("sha256").update('{"10":2,"9":3,"b":1}').digest("hex")}`);
+  });
+
+  it("keeps an own __proto__ key so distinct inputs never share a digest", () => {
+    const withProto = JSON.parse('{"__proto__":{"a":1},"b":2}');
+    expect(canonicalJson(withProto)).toBe('{"__proto__":{"a":1},"b":2}');
+    expect(canonicalDigest(withProto)).not.toBe(canonicalDigest({ b: 2 }));
+    expect(canonicalJson(Object.assign(Object.create(null), { z: 1, a: 2 }))).toBe('{"a":2,"z":1}');
+  });
+
   it("rejects values JSON cannot represent instead of silently changing them", () => {
     expect(() => canonicalJson({ value: Number.NaN })).toThrow(/non-finite number at \/value/);
     expect(() => canonicalJson({ when: new Date(0) })).toThrow(/non-plain object at \/when/);
