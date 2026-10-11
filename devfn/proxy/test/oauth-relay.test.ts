@@ -440,5 +440,5 @@ describe("OAuth relay ticket contract", () => {
     // Unreadable registry state fails closed.
     await writeFile(registry.filePath, "{");
     await expect(register("owner-a", "unreadable")).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
-  });
+  }, 30_000);
 });

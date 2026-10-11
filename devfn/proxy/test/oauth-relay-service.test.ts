@@ -488,3 +488,91 @@ wait();
   expect(await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8")).toBe(record);
   expect(await claims()).toEqual(["stopped", "ready"]);
 }, 90_000);
+
+it("retires an unclaimed relay route-first: a failed replacement leaves no relay route, and a failed withdrawal leaves the old relay running", async () => {
+  const relayClaims = async (stateDir: string) => (await new FilePortRegistry(path.join(stateDir, "registry.json")).read()).invocations
+    .filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state);
+  for (const failure of ["claim", "launch", "withdrawal"] as const) {
+    const stateDir = await registeredState();
+    const proxy = fakeProxy([sibling]);
+    await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+    const old = (await readRelayService(stateDir))!;
+    cleanup.push(async () => { try { process.kill(-old.pid, "SIGKILL"); } catch { /* stopped */ } });
+    const registry = new FilePortRegistry(path.join(stateDir, "registry.json"), undefined, async () => true);
+    await registry.release({ invocationId: old.invocationId });
+    if (failure === "claim") await registry.reserve({ projectId: "fixture", instanceId: "v01", invocationId: "v01-1", profile: "default", requests: [{ name: "web", spec: { preferred: proxyListenerPorts().httpsPort, exact: true } }] });
+    const record = await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8");
+    const routes = JSON.stringify(proxy.routes);
+    const steps: string[] = [];
+    const observed: OAuthRelayProxy = {
+      ...proxy,
+      async removeInstance(instanceId) {
+        steps.push(`remove:${await processIdentityStatus(old.pid, old.birthSignature)}`);
+        if (failure === "withdrawal") throw Object.assign(new Error("Caddy is unavailable."), { code: "DEVFN_PROXY_UNAVAILABLE" });
+        await proxy.removeInstance(instanceId);
+      },
+    };
+    await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy: observed,
+      command: failure === "launch" ? [process.execPath, "-e", "process.exit(1)"] : RELAY_COMMAND }))
+      .rejects.toMatchObject({ code: { claim: "DEVFN_PORT_CONFLICT", launch: "DEVFN_OAUTH_RELAY_UNAVAILABLE", withdrawal: "DEVFN_PROXY_UNAVAILABLE" }[failure] });
+    // The old relay's route went while the relay still ran, before it was signalled.
+    expect(steps).toEqual(["remove:running"]);
+    if (failure === "withdrawal") {
+      expect(await processIdentityStatus(old.pid, old.birthSignature)).toBe("running");
+      expect(JSON.stringify(proxy.routes)).toBe(routes);
+      expect(await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8")).toBe(record);
+      continue;
+    }
+    expect(await processIdentityStatus(old.pid, old.birthSignature)).not.toBe("running");
+    expect(proxy.routes).toEqual([sibling]);
+    expect(await readRelayService(stateDir)).toBeUndefined();
+    expect(await relayClaims(stateDir)).not.toContain("ready");
+  }
+}, 90_000);
+
+it("removes a committed or pending relay route that does not reach the live recorded relay, through recovery and status, and keeps the relay", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  let pending: ProxyRoute[] | undefined;
+  const journaled: OAuthRelayProxy = {
+    ...proxy,
+    async removeInstance(instanceId) { pending = undefined; await proxy.removeInstance(instanceId); },
+    async instanceRouteState(instanceId) { return { ...await proxy.instanceRouteState(instanceId), ...(pending ? { pending } : {}) }; },
+  };
+  const start = async () => await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy: journaled, command: RELAY_COMMAND });
+  await start();
+  const service = (await readRelayService(stateDir))!;
+  const record = await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8");
+  const route = proxy.routes.find((item) => item.instanceId === OAUTH_RELAY_OWNER_ID)!;
+  const siblingJson = JSON.stringify(sibling);
+  const claims = async () => (await new FilePortRegistry(path.join(stateDir, "registry.json")).read()).invocations
+    .filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state);
+  // As a starter killed between committing a replacement relay and routing it
+  // would leave behind: the previous, dead relay's route to its former port.
+  const previous = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { stdio: "ignore" });
+  const dead = { pid: previous.pid!, birthSignature: (await processBirthSignature(previous.pid!))! };
+  previous.kill("SIGKILL");
+  await new Promise((resolve) => previous.once("exit", resolve));
+  const formerPort = await allocateEphemeralPort();
+  proxy.routes = [sibling, { ...route, targetPort: formerPort, serviceProcess: dead }];
+  expect(await recoverOAuthRelayRoute(stateDir, journaled)).toBe(true);
+  expect(proxy.routes.map((item) => JSON.stringify(item))).toEqual([siblingJson]);
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).toBe("running");
+  expect(await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8")).toBe(record);
+  expect(await claims()).toEqual(["ready"]);
+  // The next start reuses the live relay and routes it again.
+  expect((await start()).pid).toBe(service.pid);
+  expect(proxy.routes.find((item) => item.instanceId === OAUTH_RELAY_OWNER_ID)).toMatchObject({ targetPort: service.port, serviceProcess: { pid: service.pid } });
+  // A pending relay route to another host is withdrawn by status, with the committed one.
+  pending = [{ ...route, hostname: `login.${DOMAIN}` }];
+  expect(await oauthRelayStatus(stateDir, journaled)).toMatchObject({ running: true, routeActive: false, pid: service.pid });
+  expect(pending).toBeUndefined();
+  expect(proxy.routes.map((item) => JSON.stringify(item))).toEqual([siblingJson]);
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).toBe("running");
+  expect(await claims()).toEqual(["ready"]);
+  // A route that reaches the live relay is kept.
+  await start();
+  const routed = JSON.stringify(proxy.routes);
+  expect(await oauthRelayStatus(stateDir, journaled)).toMatchObject({ running: true, routeActive: true });
+  expect(JSON.stringify(proxy.routes)).toBe(routed);
+}, 60_000);

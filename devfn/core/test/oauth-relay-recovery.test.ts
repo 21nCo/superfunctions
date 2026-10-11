@@ -41,16 +41,20 @@ it("keeps the OAuth relay route while its recorded process runs and recovers it,
     process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
     const self = { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! };
     await writeFile(path.join(stateDir, "proxy-owner.json"), JSON.stringify(self));
-    const route = (id: string, instanceId: string, hostname: string, targetPort: number) => ({ id, instanceId, hostname, targetHost: "127.0.0.1", targetPort, tls: "off", updatedAt: new Date().toISOString() });
-    await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [route(OAUTH_RELAY_ROUTE_ID, OAUTH_RELAY_OWNER_ID, "auth.localhost", 41001), route("dead:app", "dead", "dead.localhost", 41002)] }));
+    const route = (id: string, instanceId: string, hostname: string, targetPort: number, serviceProcess?: { pid: number; birthSignature: string }) => ({
+      id, instanceId, hostname, targetHost: "127.0.0.1", targetPort, tls: "off", updatedAt: new Date().toISOString(), ...(serviceProcess ? { serviceProcess } : {}) });
+    const relayRoute = (owner: { pid: number; birthSignature: string }) => route(OAUTH_RELAY_ROUTE_ID, OAUTH_RELAY_OWNER_ID, "auth.localhost", 41001, owner);
+    await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [relayRoute(self), route("dead:app", "dead", "dead.localhost", 41002)] }));
     const service = (owner: { pid: number; birthSignature: string }) => JSON.stringify({ version: 1, ...owner, startedAt: new Date().toISOString(), port: 41001,
-      origin: "https://auth.dev.example.test", hostname: "auth.dev.example.test", domain: "dev.example.test", projectId: "fixture", repositoryIdentity: root, invocationId: "relay" });
+      origin: "https://auth.localhost", hostname: "auth.localhost", domain: "localhost", projectId: "fixture", repositoryIdentity: root, invocationId: "relay" });
     const routedOwners = async () => (JSON.parse(await readFile(path.join(stateDir, "proxy-routes.json"), "utf8")) as { routes: Array<{ instanceId: string }> }).routes.map((item) => item.instanceId);
     await writeFile(path.join(stateDir, "oauth-relay", "service.json"), service(self));
-    // The relay is not a registry lifecycle, but its live process keeps its route.
+    // The relay is not a registry lifecycle, but its live process keeps the route that reaches it.
     expect(await recoverOrphanedProxyRoutes(stateDir)).toEqual(["dead"]);
     expect(await routedOwners()).toEqual([OAUTH_RELAY_OWNER_ID]);
-    await writeFile(path.join(stateDir, "oauth-relay", "service.json"), service(await exitedProcess()));
+    const dead = await exitedProcess();
+    await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [relayRoute(dead)] }));
+    await writeFile(path.join(stateDir, "oauth-relay", "service.json"), service(dead));
     expect(await recoverOrphanedProxyRoutes(stateDir)).toEqual([OAUTH_RELAY_OWNER_ID]);
     expect(await routedOwners()).toEqual([]);
   } finally {
