@@ -66,17 +66,21 @@ function isPlaceholderValue(value: string, header: boolean): boolean {
 
 const KEY_WORD = "[A-Za-z0-9_.%-]+";
 /**
+ * A quote, alone or escaped at any depth (`"`, `\"` or `\\\"`, as in JSON
+ * stringified once or twice). A backslash run is read from its start only, so
+ * a long run is scanned once, not once per backslash.
+ */
+const QUOTE_DELIMITER = "(?<!\\\\)\\\\+[\"'`]|[\"'`]";
+/**
  * A key of one or two words (`token`, `API key`), bare, quoted or with
  * backslash-escaped quotes, then `:`, `=`, `=>` or `:=`. This covers HTTP
- * headers, JSON (also escaped inside a string), JS object literals, query
- * strings and prose such as `Invalid API key: ...`. `scheme://` is a URL.
+ * headers, JSON (also escaped inside a string, at any depth), JS object
+ * literals, query strings and prose such as `Invalid API key: ...`.
+ * `scheme://` is a URL.
  */
-const KEY_SEPARATOR = new RegExp(`(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\1[ \\t]*(=>|:=|[:=])(?!\\/\\/)[ \\t]*`, "g");
+const KEY_SEPARATOR = new RegExp(`(?<![A-Za-z0-9_.%-])(${QUOTE_DELIMITER}|)((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\1[ \\t]*(=>|:=|[:=])(?!\\/\\/)[ \\t]*`, "g");
 /** Identifiers use `:` as a namespace separator (`secrets:read`), so only `=`, `=>` and `:=` introduce a value there. */
-const IDENTIFIER_KEY_SEPARATOR = new RegExp(`(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\1[ \\t]*(=>|:=|=)[ \\t]*`, "g");
-/** A value that is not quoted or bracketed runs to the next delimiter; placeholders such as `<your token>` may hold spaces. */
-const PLAIN_VALUE = new RegExp(`^(?:${PLACEHOLDER.source}|[^\\s&,;"'\`)\\]}])*`);
-const SCHEME_ONLY = new RegExp(`^(?:${AUTH_SCHEMES})$`, "i");
+const IDENTIFIER_KEY_SEPARATOR = new RegExp(`(?<![A-Za-z0-9_.%-])(${QUOTE_DELIMITER}|)((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\1[ \\t]*(=>|:=|=)[ \\t]*`, "g");
 /** A YAML block scalar indicator (`|`, `>-`, `|2+`, ...) or nothing, then spaces; a block head when the line ends there or a `#` comment does. */
 const BLOCK_INDICATOR = /(?:[|>](?:[1-9][+-]?|[+-][1-9]?)?)?[ \t]*/y;
 /** What may follow a bracketed header value for it to end there: a delimiter or the end of the line. */
@@ -127,6 +131,7 @@ function isHeaderKey(key: string): boolean {
 }
 
 const CLOSERS: Record<string, string> = { "{": "}", "[": "]", "<": ">" };
+const GROUP_CLOSERS: Record<string, string> = { "{": "}", "[": "]", "(": ")" };
 const QUOTES = new Set(['"', "'", "`"]);
 
 /** End of a quoted string that opens at `start`, after its closing quote; -1 when unterminated. */
@@ -139,37 +144,65 @@ function quotedEnd(text: string, start: number): number {
   return -1;
 }
 
-interface EscapedQuote {
-  /** After the closing `\"`; when ambiguous, after the unescaped quote; when unterminated, the end of the text. */
-  end: number;
-  status: "closed" | "ambiguous" | "unterminated";
+/** Length of the run of backslashes at `index`. */
+function backslashRun(text: string, index: number): number {
+  let run = 0;
+  while (text[index + run] === "\\") run += 1;
+  return run;
 }
 
 /**
- * Reads a string quoted with escaped quotes (`\"...\"`, as in JSON inside a
- * JSON string) that opens at `start`. The text is decoded one level as it is
- * read, so an escaped quote inside the value (`\\\"`) does not close it. The
- * closing delimiter is ambiguous when an unescaped quote ends the outer string
- * first. The scan never passes the returned end.
+ * The quoting level of a quote after `run` backslashes: 0 for a raw quote,
+ * 1 for `\"` (JSON inside a JSON string), 2 for `\\\"` (stringified twice),
+ * and so on. Each level of decoding halves the run, and an odd run escapes
+ * the quote at that level.
  */
-function escapedQuotedEnd(text: string, start: number): EscapedQuote {
-  const quote = text[start + 1];
-  let innerEscaped = false;
-  for (let index = start + 2; index < text.length; ) {
-    const pair = text[index] === "\\" && index + 1 < text.length;
-    const char = pair ? text[index + 1] : text[index];
-    index += pair ? 2 : 1;
-    if (innerEscaped) innerEscaped = false;
-    else if (pair && char === "\\") innerEscaped = true;
-    else if (char === quote) return { end: index, status: pair ? "closed" : "ambiguous" };
-  }
-  return { end: text.length, status: "unterminated" };
+function quoteLevel(run: number): number {
+  let level = 0;
+  for (let rest = run; rest % 2 === 1; rest = (rest - 1) / 2) level += 1;
+  return level;
 }
 
-/** The end of a closed escaped-quoted string at `start`, or -1 when it is ambiguous or unterminated. */
-function escapedQuoteSkip(text: string, start: number): number {
-  const { end, status } = escapedQuotedEnd(text, start);
-  return status === "closed" ? end : -1;
+interface EscapedQuote {
+  /** After the closing delimiter; when ambiguous, after the quote of a lower level; when unterminated, the end of the text. */
+  end: number;
+  status: "closed" | "ambiguous" | "unterminated";
+  /** Lengths of the opening and (when closed) closing delimiters, backslashes included. */
+  open: number;
+  close: number;
+}
+
+/**
+ * Reads a string quoted with escaped quotes (`\"...\"` as in JSON inside a
+ * JSON string, `\\\"...\\\"` as in JSON stringified twice) whose backslash
+ * run starts at `start`. The text is decoded level by level as it is read: a
+ * quote of the same level closes the string, a quote of a deeper level (an
+ * escaped quote inside the value, such as `\\\"` in `\"...\"`) is part of it,
+ * and a quote of a lower level ends the outer string first, which makes the
+ * closing delimiter ambiguous. The scan never passes the returned end.
+ */
+function escapedQuotedEnd(text: string, start: number): EscapedQuote {
+  const open = backslashRun(text, start) + 1;
+  const quote = text[start + open - 1];
+  const level = quoteLevel(open - 1);
+  for (let index = start + open; index < text.length; ) {
+    const run = backslashRun(text, index);
+    if (text[index + run] !== quote) {
+      index += Math.max(run, 1);
+      continue;
+    }
+    const found = quoteLevel(run);
+    if (found === level) return { end: index + run + 1, status: "closed", open, close: run + 1 };
+    if (found < level) return { end: index + run + 1, status: "ambiguous", open, close: 0 };
+    index += run + 1;
+  }
+  return { end: text.length, status: "unterminated", open, close: 0 };
+}
+
+/** When a quote escaped at some level (`\"`, `\\\"`, ...) starts at `index`, the length of its backslash run; otherwise 0. */
+function escapedQuoteAt(text: string, index: number): number {
+  const run = backslashRun(text, index);
+  return run > 0 && QUOTES.has(text[index + run] ?? "") && quoteLevel(run) > 0 ? run : 0;
 }
 
 /** End of the line holding `index`, before any line break. */
@@ -185,28 +218,52 @@ function lineEnd(text: string, index: number): number {
  * line or a YAML block that several matches reach is scanned once.
  */
 class TextScan {
-  /** Bracket start -> its end after the matching closer, or -1 when unbalanced. */
+  /** Bracket start -> its end after the matching closer, or -1 when unbalanced; one map for `{[`, one for `{[(`. */
   private readonly brackets = new Map<number, number>();
-  /** The last line-break query: from `breakFrom`, the first `\r` or `\n` is at `breakAt`. */
-  private breakFrom = -1;
-  private breakAt = -1;
+  private readonly groups = new Map<number, number>();
+  /** Quote start -> its end after the closing quote, or -1 when unterminated. */
+  private readonly quotes = new Map<number, number>();
+  private structured?: Structure;
+  /** Positions of every `\r` and `\n`, in order. */
+  private breaks?: number[];
   /** Line break ending a key's line -> the YAML block below it. */
   private readonly blocks = new Map<number, { begin: number; end: number } | null>();
 
   constructor(readonly text: string) {}
 
-  /**
-   * End of a balanced `{...}` or `[...]` that opens at `start`; -1 when
-   * unbalanced. Every bracket the scan passes is recorded with its end, and a
-   * recorded inner bracket is skipped, so nested values are scanned once.
-   */
+  /** End of a balanced `{...}` or `[...]` that opens at `start`; -1 when unbalanced. */
   bracketedEnd(start: number): number {
-    const known = this.brackets.get(start);
+    return this.balancedEnd(start, this.brackets, false);
+  }
+
+  /** End of a balanced `{...}`, `[...]` or `(...)` that opens at `start`; -1 when unbalanced. */
+  groupEnd(start: number): number {
+    return this.balancedEnd(start, this.groups, true);
+  }
+
+  /** End of a quoted string that opens at `start` (see {@link quotedEnd}). */
+  quotedEnd(start: number): number {
+    let end = this.quotes.get(start);
+    if (end === undefined) this.quotes.set(start, (end = quotedEnd(this.text, start)));
+    return end;
+  }
+
+  /** The containers and strings of the text (see {@link textStructure}), computed once. */
+  structure(): Structure {
+    return (this.structured ??= textStructure(this.text));
+  }
+
+  /**
+   * Every bracket the scan passes is recorded with its end, and a recorded
+   * inner bracket is skipped, so nested values are scanned once.
+   */
+  private balancedEnd(start: number, memo: Map<number, number>, parentheses: boolean): number {
+    const known = memo.get(start);
     if (known !== undefined) return known;
     const { text } = this;
     const open: number[] = [];
     const fail = () => {
-      for (const opener of open) this.brackets.set(opener, -1);
+      for (const opener of open) memo.set(opener, -1);
       return -1;
     };
     for (let index = start; index < text.length; index += 1) {
@@ -214,17 +271,17 @@ class TextScan {
       if (char === "\\") {
         index += 1; // An escaped character, such as \" inside escaped JSON, never opens or closes anything.
       } else if (QUOTES.has(char)) {
-        const end = quotedEnd(text, index);
+        const end = this.quotedEnd(index);
         if (end === -1) return fail();
         index = end - 1;
-      } else if (char === "{" || char === "[") {
-        const inner = index === start ? undefined : this.brackets.get(index);
+      } else if (char === "{" || char === "[" || (parentheses && char === "(")) {
+        const inner = index === start ? undefined : memo.get(index);
         if (inner === -1) return fail(); // Unbalanced inside means unbalanced outside.
         if (inner !== undefined) index = inner - 1;
         else open.push(index);
-      } else if (char === "}" || char === "]") {
-        if (CLOSERS[text[open[open.length - 1]]] !== char) return fail();
-        this.brackets.set(open.pop()!, index + 1);
+      } else if (char === "}" || char === "]" || (parentheses && char === ")")) {
+        if (GROUP_CLOSERS[text[open[open.length - 1]]] !== char) return fail();
+        memo.set(open.pop()!, index + 1);
         if (open.length === 0) return index + 1;
       }
     }
@@ -233,13 +290,14 @@ class TextScan {
 
   /** The first `\r` or `\n` at or after `index`, or the end of the text. */
   lineBreak(index: number): number {
-    if (index < this.breakFrom || index > this.breakAt) {
-      let at = index;
-      while (at < this.text.length && this.text[at] !== "\n" && this.text[at] !== "\r") at += 1;
-      this.breakFrom = index;
-      this.breakAt = at;
+    const breaks = (this.breaks ??= Array.from(this.text.matchAll(/[\r\n]/g), (match) => match.index));
+    let [low, high] = [0, breaks.length];
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (breaks[middle] < index) low = middle + 1;
+      else high = middle;
     }
-    return this.breakAt;
+    return low < breaks.length ? breaks[low] : this.text.length;
   }
 
   /**
@@ -271,30 +329,84 @@ interface ValueSpan {
   end: number;
   /** The value without its delimiters. */
   value: string;
-  /** Delimiters kept around the redacted value (`"`, `\\"`), or "" for none. */
+  /** Delimiters kept around the redacted value (`"`, `\"`), or "" for none; `closing` when the closing one differs. */
   quote: string;
+  closing?: string;
+}
+
+/** Where a value that is not quoted or bracketed may end before the end of its line; see {@link plainEnd}. */
+interface PlainContext {
+  /** The closer of the container holding the key (`}`, `]`, `)` or `>`), or "" outside one. */
+  closer: string;
+  /** A comma separates members of that container. */
+  comma: boolean;
+  /** `;` and `&` separate `key=value` settings, as in connection and query strings. */
+  settings: boolean;
+  /** A ` #` starts a comment (YAML, .env); only outside containers and strings. */
+  comment: boolean;
+  /** Start of the closing delimiter of the string holding the key, or -1 outside one. */
+  stringClose: number;
 }
 
 /**
- * Reads the whole value after a key: a quoted string (also with escaped
- * quotes), a balanced `{...}`/`[...]`, an Authorization or Cookie header line,
- * a YAML block (every line indented below the key), or a run up to the next
- * delimiter that also takes the token after a bare scheme word (`Bearer abc`).
- * A value that cannot be delimited fails closed: it runs to the end of the
- * text. Nothing is scanned beyond the returned end except through `scan`'s memos.
+ * End of a value that is not quoted or bracketed: it runs to the end of its
+ * line and stops earlier only at a delimiter that ends a value in the
+ * surrounding syntax (see {@link PlainContext}), never at whitespace inside
+ * it, so `password: first second` is one value. Quoted strings and balanced
+ * `{...}`, `[...]` and `(...)` inside the value are part of it; an unbalanced
+ * one fails closed to the end of the text (or of the string holding the key).
+ * Trailing whitespace is left out. Nothing is scanned beyond the returned end
+ * except through `scan`'s memos.
  */
-function readValue(scan: TextScan, start: number, keyStart: number, header: boolean): ValueSpan {
+function plainEnd(scan: TextScan, start: number, context: PlainContext): number {
+  const { text } = scan;
+  const limit = context.stringClose === -1 ? text.length : context.stringClose;
+  let stop = Math.min(scan.lineBreak(start), limit);
+  let end = start;
+  for (let index = start; index < stop; ) {
+    const char = text[index];
+    let skip = -1; // The end of an escaped character, string or group that starts here.
+    if (char === "\\") skip = index + 2;
+    else if (QUOTES.has(char)) skip = scan.quotedEnd(index); // An unterminated quote is a character of the value.
+    else if (char === "{" || char === "[" || char === "(") {
+      skip = scan.groupEnd(index);
+      if (skip === -1) return limit;
+    } else if (char === context.closer || (context.closer === ">" && char === "/" && text[index + 1] === ">")) break;
+    else if ((char === "," && context.comma) || ((char === ";" || char === "&") && context.settings)) break;
+    else if (char === "#" && context.comment && (text[index - 1] === " " || text[index - 1] === "\t") && index > start) break;
+    if (skip > limit) return limit;
+    if (skip !== -1) {
+      index = end = skip;
+      if (index > stop) stop = Math.min(scan.lineBreak(index), limit); // A string may span lines.
+      continue;
+    }
+    index += 1;
+    if (char !== " " && char !== "\t") end = index;
+  }
+  return end;
+}
+
+/**
+ * Reads the whole value after a key: a quoted string (also with quotes
+ * escaped at any depth), a balanced `{...}`/`[...]`, an Authorization or
+ * Cookie header line, a YAML block (every line indented below the key), or a
+ * run to the end of the line that stops earlier only where `context` says the
+ * surrounding syntax ends it. A value that cannot be delimited fails closed:
+ * it runs to the end of the text. Nothing is scanned beyond the returned end
+ * except through `scan`'s memos.
+ */
+function readValue(scan: TextScan, start: number, keyStart: number, header: boolean, context: () => PlainContext): ValueSpan {
   const { text } = scan;
   const first = text[start];
-  if (first === "\\" && QUOTES.has(text[start + 1] ?? "")) {
-    const { end, status } = escapedQuotedEnd(text, start);
-    if (status === "closed") return { end, value: text.slice(start + 2, end - 2), quote: `\\${text[start + 1]}` };
-    // Ambiguous: to the end of the line, or past the unescaped quote when that is further. Unterminated: to the end of the text.
+  if (escapedQuoteAt(text, start) > 0) {
+    const { end, status, open, close } = escapedQuotedEnd(text, start);
+    if (status === "closed") return { end, value: text.slice(start + open, end - close), quote: text.slice(start, start + open), closing: text.slice(end - close, end) };
+    // Ambiguous: to the end of the line, or past the lower-level quote when that is further. Unterminated: to the end of the text.
     const stop = Math.max(end, lineEnd(text, start));
     return { end: stop, value: text.slice(start, stop), quote: "" };
   }
   if (QUOTES.has(first)) {
-    const end = quotedEnd(text, start);
+    const end = scan.quotedEnd(start);
     if (end === -1) return { end: text.length, value: text.slice(start), quote: "" };
     return { end, value: text.slice(start + 1, end - 1), quote: first };
   }
@@ -308,14 +420,14 @@ function readValue(scan: TextScan, start: number, keyStart: number, header: bool
   if (first === "{" || first === "[") {
     const close = scan.bracketedEnd(start);
     if (close === -1) return { end: text.length, value: text.slice(start), quote: "" };
-    // The value runs to its real delimiter, so a placeholder such as `[REDACTED]` or `{{token}}` followed directly by
-    // more characters is judged with them. In a header the rest of the line belongs to the value unless a delimiter follows.
+    // The value runs to its real delimiter, so a placeholder such as `[REDACTED]` or `{{token}}` followed by
+    // more text is judged with it. In a header the rest of the line belongs to the value unless a delimiter follows.
     let end: number;
     if (header) {
       HEADER_VALUE_END.lastIndex = close;
       end = HEADER_VALUE_END.test(text) ? close : close + text.slice(close, scan.lineBreak(close)).trimEnd().length;
     } else {
-      end = close + PLAIN_VALUE.exec(text.slice(close))![0].length;
+      end = plainEnd(scan, close, context());
     }
     return { end, value: text.slice(start, end), quote: "" };
   }
@@ -323,19 +435,13 @@ function readValue(scan: TextScan, start: number, keyStart: number, header: bool
     const line = text.slice(start, scan.lineBreak(start)).trimEnd();
     return { end: start + line.length, value: line, quote: "" };
   }
-  const rest = text.slice(start);
-  let run = PLAIN_VALUE.exec(rest)![0];
-  if (SCHEME_ONLY.test(run)) {
-    const token = /^[ \t]+/.exec(rest.slice(run.length));
-    const next = token ? PLAIN_VALUE.exec(rest.slice(run.length + token[0].length))![0] : "";
-    if (next !== "") run = rest.slice(0, run.length + token![0].length + next.length);
-  }
-  return { end: start + run.length, value: run, quote: "" };
+  const end = plainEnd(scan, start, context());
+  return { end, value: text.slice(start, end), quote: "" };
 }
 
 /** Fields that name a header, parameter or setting: `{"name": "X-Api-Key", ...}`, `<add key="password" .../>`. */
 const NAME_FIELD = new RegExp(
-  `(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)(?:(?:(?:header|field|param(?:eter)?)[_-]?)?name|key|header|field|param(?:eter)?)\\1[ \\t]*(?:=>|:=|[:=])[ \\t]*(\\\\?["'\`]|)(${KEY_WORD})\\2(?![A-Za-z0-9_.%-])`,
+  `(?<![A-Za-z0-9_.%-])(${QUOTE_DELIMITER}|)(?:(?:(?:header|field|param(?:eter)?)[_-]?)?name|key|header|field|param(?:eter)?)\\1[ \\t]*(?:=>|:=|[:=])[ \\t]*(${QUOTE_DELIMITER}|)(${KEY_WORD})\\2(?![A-Za-z0-9_.%-])`,
   "gi"
 );
 /** Fields that hold the value of the header, parameter or setting their container names; mirrors {@link NAME_FIELD}. */
@@ -361,44 +467,84 @@ export function credentialValueFields(record: Record<string, unknown>): string[]
     .map(([key]) => key);
 }
 
+interface Structure {
+  /** For each index, the start of the innermost `{...}`, `[...]` or XML tag holding it, or -1. */
+  containers: Int32Array;
+  /** For each index inside a string, where the string's closing delimiter starts; -1 outside strings. */
+  stringCloses: Int32Array;
+}
+
 /**
- * For each index, the start of the innermost `{...}`, `[...]` or XML tag
- * holding it, or -1. Strings are skipped: a delimiter inside `"..."`,
- * `'...'`, `` `...` `` or an escaped-quoted `\"...\"` (decoded one level, as
- * {@link escapedQuotedEnd} reads it) neither opens nor closes a container, and
- * neither does an escaped character. When the structure cannot be trusted
- * (an unterminated or ambiguous quote, a closer that does not match the
- * innermost open container, or a stray closer with no open container, as an
- * unquoted `}` in a regex, comment or prose leaves behind) the whole text is
- * one container, which fails closed. One linear pass.
+ * The containers and strings of a text. Strings are skipped: a delimiter
+ * inside `"..."`, `'...'`, `` `...` `` or a string quoted with escaped quotes
+ * at any depth (`\"...\"`, `\\\"...\\\"`, read as {@link escapedQuotedEnd}
+ * reads them) neither opens nor closes a container, and neither does an
+ * escaped character. When the structure cannot be trusted (an unterminated or
+ * ambiguous quote, a closer that does not match the innermost open container,
+ * or a stray closer with no open container, as an unquoted `}` in a regex,
+ * comment or prose leaves behind) the whole text is one container with no
+ * strings, which fails closed. One linear pass.
  */
-function containerStarts(text: string): Int32Array {
-  const starts = new Int32Array(text.length + 1);
+function textStructure(text: string): Structure {
+  const containers = new Int32Array(text.length + 1);
+  const stringCloses = new Int32Array(text.length + 1).fill(-1);
+  const untrusted = () => ({ containers: containers.fill(-1), stringCloses: stringCloses.fill(-1) });
   const stack: number[] = [];
   const current = () => (stack.length === 0 ? -1 : stack[stack.length - 1]);
   for (let index = 0; index < text.length; ) {
     const char = text[index];
     let skip = 0; // The end of a string or escaped character that starts here.
-    if (char === "\\") skip = QUOTES.has(text[index + 1] ?? "") ? escapedQuoteSkip(text, index) : Math.min(index + 2, text.length);
-    else if (QUOTES.has(char)) skip = quotedEnd(text, index);
-    if (skip < 0) return starts.fill(-1);
+    let close = -1; // For a string, where its closing delimiter starts.
+    if (escapedQuoteAt(text, index) > 0) {
+      const quoted = escapedQuotedEnd(text, index);
+      if (quoted.status !== "closed") return untrusted();
+      [skip, close] = [quoted.end, quoted.end - quoted.close];
+    } else if (char === "\\") {
+      // An odd run escapes the character after it; an even run (before a raw quote, say) escapes nothing.
+      const run = backslashRun(text, index);
+      skip = Math.min(index + run + (run % 2), text.length);
+    } else if (QUOTES.has(char)) {
+      skip = quotedEnd(text, index);
+      if (skip === -1) return untrusted();
+      close = skip - 1;
+    }
     if (skip > 0) {
-      starts.fill(current(), index, skip);
+      containers.fill(current(), index, skip);
+      if (close !== -1) stringCloses.fill(close, index, skip);
       index = skip;
       continue;
     }
-    starts[index] = current();
+    containers[index] = current();
     if (char === "{" || char === "[" || (char === "<" && /[A-Za-z_]/.test(text[index + 1] ?? ""))) {
       stack.push(index);
     } else if (char === "}" || char === "]" || char === ">") {
       // With no open container, current() is -1 and nothing matches.
-      if (CLOSERS[text[current()]] !== char) return starts.fill(-1);
+      if (CLOSERS[text[current()]] !== char) return untrusted();
       stack.pop();
     }
     index += 1;
   }
-  starts[text.length] = current();
-  return starts;
+  containers[text.length] = current();
+  return { containers, stringCloses };
+}
+
+/**
+ * Where the plain value of a key at `keyStart` may end (see {@link plainEnd}):
+ * at the closing delimiter of a string holding the key; otherwise at a comma
+ * or the closer of the container holding it, or at a ` #` comment outside
+ * containers. `;` and `&` end `key=value` settings in either case.
+ */
+function keyValueContext(scan: TextScan, keyStart: number, start: number, separator: string): PlainContext {
+  const { containers, stringCloses } = scan.structure();
+  const stringClose = stringCloses[keyStart] >= start ? stringCloses[keyStart] : -1;
+  const opener = stringClose === -1 ? scan.text[containers[keyStart]] ?? "" : "";
+  return {
+    closer: CLOSERS[opener] ?? "",
+    comma: opener === "{" || opener === "[",
+    settings: separator !== ":",
+    comment: stringClose === -1 && opener === "",
+    stringClose,
+  };
 }
 
 /**
@@ -406,11 +552,11 @@ function containerStarts(text: string): Int32Array {
  * whether that key is an Authorization or Cookie header; null when there are
  * none, so ordinary text never pays for the container index.
  */
-function namedCredentialContainers(text: string): { containers: Int32Array; headers: Map<number, boolean> } | null {
+function namedCredentialContainers(scan: TextScan): { containers: Int32Array; headers: Map<number, boolean> } | null {
   let found: { containers: Int32Array; headers: Map<number, boolean> } | null = null;
-  for (const match of text.matchAll(NAME_FIELD)) {
+  for (const match of scan.text.matchAll(NAME_FIELD)) {
     if (!isCredentialKey(match[3])) continue;
-    found ??= { containers: containerStarts(text), headers: new Map() };
+    found ??= { containers: scan.structure().containers, headers: new Map() };
     const container = found.containers[match.index];
     found.headers.set(container, (found.headers.get(container) ?? false) || isHeaderKey(match[3]));
   }
@@ -428,8 +574,8 @@ function namedCredentialContainers(text: string): { containers: Int32Array; head
 function redactKeyValues(text: string, identifier: boolean): string {
   let output = "";
   let copied = 0;
-  const named = namedCredentialContainers(text);
   const scan = new TextScan(text);
+  const named = namedCredentialContainers(scan);
   const pattern = new RegExp((identifier ? IDENTIFIER_KEY_SEPARATOR : KEY_SEPARATOR).source, "g");
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
     const key = match[2];
@@ -440,7 +586,7 @@ function redactKeyValues(text: string, identifier: boolean): string {
     if (!indirect && !isCredentialKey(lastWord) && !isCredentialKey(key)) continue;
     const start = match.index + match[0].length;
     const header = indirect ? named!.headers.get(container)! : isHeaderKey(lastWord);
-    const { begin = start, end, value, quote } = readValue(scan, start, match.index, header);
+    const { begin = start, end, value, quote, closing = quote } = readValue(scan, start, match.index, header, () => keyValueContext(scan, match.index, start, match[3]));
     if (end <= start) continue;
     pattern.lastIndex = end;
     if (begin > start) {
@@ -451,7 +597,7 @@ function redactKeyValues(text: string, identifier: boolean): string {
     }
     if (value.trim() === "" || isPlaceholderValue(value, header)) continue;
     const scheme = header ? (LEADING_AUTH_SCHEME.exec(value)?.[0] ?? "") : "";
-    output += `${text.slice(copied, begin)}${quote}${scheme}${REDACTED}${quote}`;
+    output += `${text.slice(copied, begin)}${quote}${scheme}${REDACTED}${closing}`;
     copied = end;
   }
   return output + text.slice(copied);
@@ -464,8 +610,10 @@ function redactKeyValues(text: string, identifier: boolean): string {
  * covers JSON, escaped JSON, JS literals and Python reprs of header entries
  * (`new Headers([[name, value]])`, `dict_items([(name, value)])`).
  */
-const PAIR_KEY = new RegExp(`([\\[(])\\s*(\\\\?["'\`])\\s*((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\s*\\2\\s*,\\s*`, "g");
+const PAIR_KEY = new RegExp(`([\\[(])\\s*(${QUOTE_DELIMITER})\\s*((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\s*\\2\\s*,\\s*`, "g");
 const PAIR_END = /\s*(?:,\s*)?([\])])/y;
+/** After a value, what makes the list not a pair: another element or a closer that does not match. */
+const LIST_GOES_ON = /\s*[,\])}]/y;
 const PAIR_CLOSERS: Record<string, string> = { "[": "]", "(": ")" };
 /** A key as {@link PAIR_KEY} reads it, for structured data. */
 const PAIR_KEY_TEXT = new RegExp(`^(?:${KEY_WORD}[ \\t]+)?${KEY_WORD}$`);
@@ -483,7 +631,13 @@ export function isCredentialPair(list: readonly unknown[]): boolean {
   return !(typeof value === "string" && (value.trim() === "" || isPlaceholderValue(value, isHeaderKey(name))));
 }
 
-/** The pair rule in text: the second element of a two-element list or tuple whose first is a quoted credential key is a credential. */
+/**
+ * The pair rule in text: the second element of a two-element list or tuple
+ * whose first is a quoted credential key is a credential. A plain value runs
+ * to the comma or closer that ends it (see {@link plainEnd}). A longer list or
+ * a mismatched closer is not a pair; a value that no comma or closer follows
+ * cannot be shown to end the list and fails closed.
+ */
 function redactPairs(text: string): string {
   let output = "";
   let copied = 0;
@@ -494,16 +648,20 @@ function redactPairs(text: string): string {
     if (!isCredentialKey(key)) continue;
     const start = match.index + match[0].length;
     const header = isHeaderKey(key);
-    const { end, value, quote } = readValue(scan, start, match.index, header);
+    const closer = PAIR_CLOSERS[match[1]];
+    const context = (): PlainContext => {
+      const close = scan.structure().stringCloses[match.index];
+      return { closer, comma: true, settings: false, comment: false, stringClose: close >= start ? close : -1 };
+    };
+    const { end, value, quote, closing = quote } = readValue(scan, start, match.index, header, context);
     if (end <= start) continue;
     PAIR_END.lastIndex = end;
-    const close = PAIR_END.exec(text);
-    // A longer list is not a pair; a value that cannot be delimited (it runs to the end of the text) fails closed.
-    if (end < text.length && close?.[1] !== PAIR_CLOSERS[match[1]]) continue;
+    LIST_GOES_ON.lastIndex = end;
+    if (PAIR_END.exec(text)?.[1] !== closer && LIST_GOES_ON.test(text)) continue;
     pattern.lastIndex = end;
     if (value.trim() === "" || isPlaceholderValue(value, header)) continue;
     const scheme = header ? (LEADING_AUTH_SCHEME.exec(value)?.[0] ?? "") : "";
-    output += `${text.slice(copied, start)}${quote}${scheme}${REDACTED}${quote}`;
+    output += `${text.slice(copied, start)}${quote}${scheme}${REDACTED}${closing}`;
     copied = end;
   }
   return output + text.slice(copied);
@@ -637,8 +795,9 @@ function credentialXmlElements(text: string): XmlElement[] {
  * the closing tag that matches it by nesting, with any nested markup, CDATA
  * and comments (see {@link credentialXmlElements}). Without a matching
  * closing tag the value fails closed to the end of the text, unless the tag is
- * a bare placeholder such as `<token>` followed by a space, punctuation or the
- * end of the text and its structure is not ambiguous.
+ * a bare placeholder such as `<token>` followed by a space, punctuation, a
+ * quote escaped at any depth (`"<token>"` in escaped JSON) or the end of the
+ * text, and its structure is not ambiguous.
  */
 function redactXmlElements(text: string): string {
   let output = "";
@@ -652,7 +811,8 @@ function redactXmlElements(text: string): string {
         copied = start;
       }
       if (attributes.endsWith("/")) continue;
-      if (close === -1 && !ambiguous && !attributes.includes("=") && /^(?:$|[\s"'`.,;:!?)\]}])/.test(text.slice(start, start + 1))) continue;
+      const bare = /^(?:$|[\s"'`.,;:!?)\]}])/.test(text.slice(start, start + 1)) || escapedQuoteAt(text, start) > 0;
+      if (close === -1 && !ambiguous && !attributes.includes("=") && bare) continue;
     }
     const end = close === -1 ? text.length : close;
     const value = text.slice(start, end).replace(CDATA_DELIMITERS, "");

@@ -431,6 +431,76 @@ describe("pair grammar", () => {
   });
 });
 
+// An unquoted value runs to the end of its line, never stopping at a space inside it; only a delimiter of the
+// surrounding syntax ends it earlier. syntax x surface.
+const PLAIN_SEED = "SEEDplain5521";
+const PLAIN_FORMS: Array<[form: string, text: string]> = [
+  ["YAML inline", `password: first ${PLAIN_SEED}`],
+  ["connection string", `Server=db;Pwd=first ${PLAIN_SEED};`],
+  ["X-Api-Key header", `X-Api-Key: first ${PLAIN_SEED}`],
+  ["logfmt", `level=error password=first ${PLAIN_SEED} msg=x`],
+  ["query string", `?password=first ${PLAIN_SEED}&x=1`],
+  ["JS unquoted", `{password: first ${PLAIN_SEED}, x: 1}`],
+  ["prose", `The API key: first ${PLAIN_SEED} was rejected`],
+  ["placeholder then text", `password: <token> ${PLAIN_SEED}`],
+  ["unbalanced group in the value", `{password: f(${PLAIN_SEED}, x: 1}`],
+  ["stray closer in the value", `password: a) ${PLAIN_SEED}`],
+  ["comma outside a container", `token=a, ${PLAIN_SEED}`],
+];
+
+// A quote escaped at any depth delimits like a quote escaped once: JSON stringified one to three times.
+const stringified = (value: unknown, depth: number): string => (depth === 0 ? JSON.stringify(value) : JSON.stringify(stringified(value, depth - 1)));
+const ESCAPED_FORMS: Array<[form: string, text: string]> = [1, 2, 3].flatMap((depth): Array<[string, string]> => [
+  [`key/value stringified ${depth}x`, stringified({ password: PLAIN_SEED }, depth)],
+  [`pair stringified ${depth}x`, stringified([["X-Api-Key", PLAIN_SEED]], depth)],
+  [`name/value stringified ${depth}x`, stringified({ name: "client_secret", value: PLAIN_SEED }, depth)],
+  [`escaped quote inside a value stringified ${depth}x`, stringified({ password: `a"${PLAIN_SEED}` }, depth)],
+]);
+
+describe("unquoted value boundaries", () => {
+  it.each(PLAIN_FORMS)("%s", (_form, text) => expectSeedRemovedEverywhere(text, PLAIN_SEED));
+
+  it.each([
+    ["a container member ends at its comma", `{password: first ${PLAIN_SEED}, x: 1}`, "{password: [REDACTED], x: 1}"],
+    ["a container member ends at its closer", `[password=first ${PLAIN_SEED}] next`, "[password=[REDACTED]] next"],
+    ["a query parameter ends at &", `?password=first ${PLAIN_SEED}&x=1`, "?password=[REDACTED]&x=1"],
+    ["a connection setting ends at ;", `Server=db;Pwd=first ${PLAIN_SEED};Database=x`, "Server=db;Pwd=[REDACTED];Database=x"],
+    ["a YAML value ends at a comment", `password: first ${PLAIN_SEED} # rotate monthly\nnext: kept`, "password: [REDACTED] # rotate monthly\nnext: kept"],
+    ["a value in a string ends at its closing quote", `{"m":"password: first ${PLAIN_SEED}","x":1}`, '{"m":"password: [REDACTED]","x":1}'],
+    ["a comma in a string does not end the value", `{"m":"password: a, ${PLAIN_SEED}","x":1}`, '{"m":"password: [REDACTED]","x":1}'],
+    ["a value ends at the end of its line", `password: first ${PLAIN_SEED}\nnext: kept`, "password: [REDACTED]\nnext: kept"],
+    ["a pair value ends at the pair's closer", `('client_secret', first ${PLAIN_SEED}) next`, "('client_secret', [REDACTED]) next"],
+  ])("%s", (_name, text, redacted) => {
+    expect(redactCredentialValues(text)).toBe(redacted);
+  });
+
+  it.each([
+    ["placeholder alone after prose", "Enter your password: <password>"],
+    ["placeholder value", "password: <token>"],
+    ["placeholders and whitespace", "password: <token> {{token}}"],
+    ["placeholder member of a container", "{password: <token>, user: me}"],
+    ["ordinary header line", "X-Request-Id: req 42"],
+    ["ordinary header pair", '["X-Request-Id", "req-42"]'],
+  ])("keeps a %s", (_name, text) => {
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+  });
+});
+
+describe("quotes escaped at any depth", () => {
+  it.each(ESCAPED_FORMS)("%s", (_form, text) => expectSeedRemovedEverywhere(text, PLAIN_SEED));
+
+  it.each([1, 2, 3])("keeps the delimiters and ordinary members stringified %ix", (depth) => {
+    const text = stringified({ password: PLAIN_SEED, region: "eu" }, depth);
+    expect(redactCredentialValues(text)).toBe(stringified({ password: "[REDACTED]", region: "eu" }, depth));
+  });
+
+  it.each([1, 2, 3])("keeps an ordinary pair and a placeholder stringified %ix", (depth) => {
+    const text = stringified({ headers: [["X-Request-Id", "req-42"]], password: "<password>" }, depth);
+    expect(containsCredentialValue(text)).toBe(false);
+  });
+});
+
 // URL user info for special schemes needs no "//": URL parsers read it after any run of "/" or "\\", even none.
 const URL_SEED = "hunter2pwSEED";
 const USER_INFO_URLS = [
@@ -669,6 +739,16 @@ const LONG_TEXTS: Array<[string, (size: number) => string]> = [
   ["tuple pairs", run("('token', 'a'), ")],
   ["ambiguous escaped quotes", run('password=\\"a" ')],
   ["XML closings around open same-name elements", run("<token> <token>a</token> ")],
+  // Unquoted values that run to the end of their line, and quotes escaped at depth.
+  ["spaced unquoted values", run("password: a b ")],
+  ["spaced values in containers", run("{password: a b, x: (c d)}, ")],
+  ["spaced pair values", run("('token', a b) ")],
+  ["unbalanced groups in values", run("password: a( ")],
+  ["values in strings", run('"password: a b", ')],
+  ["double-escaped pairs", run('[\\\\\\"X-Api-Key\\\\\\",\\\\\\"a\\\\\\"], ')],
+  ["double-escaped key/values", run('{\\\\\\"password\\\\\\":\\\\\\"a\\\\\\"}, ')],
+  ["long backslash runs", (n) => `password=${repeat("\\", n)}"`],
+  ["nested pair values before many lines", (n) => `${'("token", '.repeat(n / 20)}x${")".repeat(n / 20)}${repeat("\n", n / 2)}`],
 ];
 
 describe("credential rules run in linear time", () => {
@@ -702,6 +782,8 @@ describe("credential rules run in linear time", () => {
     '["token", [x]] ',
     "token=#a ",
     "password: #x ",
+    "password: a b ",
+    '[\\\\\\"X-Api-Key\\\\\\",\\\\\\"a\\\\\\"], ',
   ])("buildOperationCatalog scales linearly up to a 1 MB description of %j", (unit) => {
     const manifest = fixture("catalog/manifest.json");
     const specs = new Map(
