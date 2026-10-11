@@ -115,47 +115,84 @@ export function canonicalDigest(value: unknown): string {
   return `sha256:${sha256Hex(canonicalJson(value))}`;
 }
 
-export interface PlainSnapshot {
-  value: unknown;
-  /** JSON pointers of values that are not plain data (Maps, Dates, class instances, cycles). */
-  nonPlain: string[];
+/** One reason a value is not plain, bounded JSON data, at a JSON pointer. */
+export interface SnapshotProblem {
+  pointer: string;
+  reason: string;
 }
 
-const MAX_SNAPSHOT_DEPTH = 32;
+export interface PlainSnapshot {
+  value: unknown;
+  /** Where the input is not plain JSON data: Maps, Dates, class instances, functions, cycles, or past the limits. */
+  problems: SnapshotProblem[];
+}
+
+/**
+ * Nesting limit for every input the contracts read. The catalog builder
+ * accepts documents a few levels shallower (see buildOperationCatalog), so
+ * every catalog it builds is also accepted as release input.
+ */
+export const MAX_JSON_DEPTH = 256;
+/** Upper bound on values copied from one input, so shared references cannot expand without limit. */
+export const MAX_JSON_VALUES = 1_000_000;
 
 /**
  * Copies plain JSON-like data, reading each own enumerable property exactly
  * once, so a validator checks and returns the same values even when the input
- * has getters or proxies. Arrays and plain objects are copied; other objects
- * are reported in `nonPlain` and left out; primitives are kept as they are.
- * Throws only when reading the input throws.
+ * has getters or proxies. Arrays and plain objects are copied; anything else
+ * that is not JSON data is reported in `problems` and left out. A reference
+ * back to an enclosing object is a cycle; other shared references are copied
+ * per path, counted against {@link MAX_JSON_VALUES}. Throws only when reading
+ * the input throws.
  */
-export function snapshotPlainData(input: unknown): PlainSnapshot {
-  const nonPlain: string[] = [];
-  const copy = (value: unknown, path: string, depth: number): unknown => {
-    if (typeof value !== "object" || value === null) return value;
-    if (depth > MAX_SNAPSHOT_DEPTH) {
-      nonPlain.push(path);
+export function snapshotPlainData(input: unknown, options: { maxDepth?: number } = {}): PlainSnapshot {
+  const maxDepth = options.maxDepth ?? MAX_JSON_DEPTH;
+  const problems: SnapshotProblem[] = [];
+  const ancestors = new Set<object>();
+  let values = 0;
+  const copy = (value: unknown, pointer: string, depth: number): unknown => {
+    values += 1;
+    if (values > MAX_JSON_VALUES) {
+      if (values === MAX_JSON_VALUES + 1) problems.push({ pointer, reason: `exceeds ${MAX_JSON_VALUES} values` });
       return undefined;
     }
-    if (Array.isArray(value)) {
+    if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
+      problems.push({ pointer, reason: `is a ${typeof value}, not JSON data` });
+      return undefined;
+    }
+    if (typeof value !== "object" || value === null) return value;
+    if (ancestors.has(value)) {
+      problems.push({ pointer, reason: "refers back to an enclosing object (a cycle)" });
+      return undefined;
+    }
+    if (depth >= maxDepth) {
+      problems.push({ pointer, reason: `nests deeper than ${maxDepth} levels` });
+      return undefined;
+    }
+    const array = Array.isArray(value);
+    const proto = Object.getPrototypeOf(value);
+    if (!array && proto !== Object.prototype && proto !== null) {
+      problems.push({ pointer, reason: "must be plain JSON data, not a Map, Date or class instance" });
+      return undefined;
+    }
+    ancestors.add(value);
+    let output: unknown;
+    if (array) {
       const length = value.length;
       const items: unknown[] = [];
-      for (let index = 0; index < length; index += 1) items.push(copy(value[index], `${path}/${index}`, depth + 1));
-      return items;
+      for (let index = 0; index < length; index += 1) items.push(copy(value[index], `${pointer}/${index}`, depth + 1));
+      output = items;
+    } else {
+      const record: Record<string, unknown> = {};
+      for (const key of Object.keys(value)) {
+        const child = copy((value as Record<string, unknown>)[key], `${pointer}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`, depth + 1);
+        // defineProperty keeps an own "__proto__" key as data.
+        if (child !== undefined) Object.defineProperty(record, key, { value: child, enumerable: true, writable: true, configurable: true });
+      }
+      output = record;
     }
-    const proto = Object.getPrototypeOf(value);
-    if (proto !== Object.prototype && proto !== null) {
-      nonPlain.push(path);
-      return undefined;
-    }
-    const output: Record<string, unknown> = {};
-    for (const key of Object.keys(value)) {
-      const child = copy((value as Record<string, unknown>)[key], `${path}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`, depth + 1);
-      // defineProperty keeps an own "__proto__" key as data.
-      Object.defineProperty(output, key, { value: child, enumerable: true, writable: true, configurable: true });
-    }
+    ancestors.delete(value);
     return output;
   };
-  return { value: copy(input, "", 0), nonPlain };
+  return { value: copy(input, "", 0), problems };
 }

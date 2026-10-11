@@ -3,7 +3,7 @@
 // browsers and edge runtimes before reporting them.
 
 import { canonicalJson, snapshotPlainData } from "./canonical.js";
-import { containsCredentialIdentifier, containsCredentialValue, isCredentialKey, redactCredentialValues } from "./credentials.js";
+import { containsCredentialIdentifier, containsCredentialValue, isCredentialKey, pointerSegment, sanitizeReport } from "./credentials.js";
 import { API_ID_PATTERN, NAME_PATTERN, OPERATION_ID_PATTERN, TARGET_PATTERN, VERSION_PATTERN } from "./manifest.js";
 import { RELEASE_ID_PATTERN } from "./release.js";
 
@@ -209,7 +209,7 @@ function own<T>(record: Record<string, T>, key: string): T | undefined {
 
 function checkObject(value: Record<string, unknown>, fields: Record<string, Field>, path: string, issues: FailureEventIssue[]): void {
   for (const [key, child] of Object.entries(value)) {
-    const childPath = `${path}/${key}`;
+    const childPath = `${path}/${pointerSegment(key)}`;
     const field = own(fields, key);
     if (field) {
       if (child !== undefined) checkField(child, field, childPath, issues);
@@ -236,7 +236,7 @@ function checkAttributes(value: unknown, issues: FailureEventIssue[]): void {
     issues.push({ path: "/attributes", code: "TOO_MANY", message: `/attributes allows at most ${CLIENT_FAILURE_LIMITS.maxAttributes} entries.` });
   }
   for (const [key, child] of entries) {
-    const path = `/attributes/${key}`;
+    const path = `/attributes/${pointerSegment(key)}`;
     if (isCredentialKey(key) || containsCredentialIdentifier(key)) {
       issues.push({ path, code: "CREDENTIAL_KEY", message: `${path} is a credential-bearing key and is never accepted.` });
     } else if (!ATTRIBUTE_KEY.test(key)) {
@@ -268,16 +268,19 @@ export function validateClientFailureEvent(input: unknown): ValidateFailureEvent
   // Issue paths and messages quote keys from the input, which may themselves be credentials.
   return {
     ok: false,
-    issues: result.issues.map((issue) => ({ ...issue, path: redactCredentialValues(issue.path), message: redactCredentialValues(issue.message) })),
+    issues: result.issues.map((issue) => {
+      const { pointer, message } = sanitizeReport(issue.path, issue.message);
+      return { ...issue, path: pointer, message };
+    }),
   };
 }
 
 function validate(input: unknown): ValidateFailureEventResult {
-  const { value: snapshot, nonPlain } = snapshotPlainData(input);
-  if (nonPlain.length > 0) {
+  const { value: snapshot, problems } = snapshotPlainData(input);
+  if (problems.length > 0) {
     return {
       ok: false,
-      issues: nonPlain.map((path) => ({ path, code: "TYPE" as const, message: `${path || "The event"} must be plain JSON data, not a Map, Date, class instance or cycle.` })),
+      issues: problems.map(({ pointer, reason }) => ({ path: pointer, code: "TYPE" as const, message: `${pointer || "The event"} ${reason}.` })),
     };
   }
   if (!isRecord(snapshot)) {

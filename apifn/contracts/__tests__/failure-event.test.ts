@@ -86,6 +86,21 @@ describe("client-failure event envelope", () => {
     ["api as a Date", (event) => ({ ...event, api: new Date(0) }), "/api"],
     ["the event as a class instance", (event) => Object.assign(new (class Event {})(), event), ""],
     ["a throwing getter", (event) => Object.defineProperty({ ...event }, "eventId", { enumerable: true, get: () => { throw new Error("boom"); } }), ""],
+    ["a self-cycle", (event) => {
+      const loop: Record<string, unknown> = {};
+      loop.x = loop;
+      return { ...event, failure: { kind: "unknown", extra: loop } };
+    }, "/failure/extra/x"],
+    ["2^40 paths through shared references", (event) => {
+      let node: Record<string, unknown> = { leaf: 1 };
+      for (let level = 0; level < 40; level += 1) node = { a: node, b: node };
+      return { ...event, failure: { kind: "unknown", extra: node } };
+    }, expect.stringMatching(/^\/failure\/extra\//) as never],
+    ["nesting past the depth limit", (event) => {
+      let node: unknown = 1;
+      for (let level = 0; level < 300; level += 1) node = [node];
+      return { ...event, failure: { kind: "unknown", extra: node } };
+    }, expect.stringMatching(/^\/failure\/extra(?:\/0)+$/) as never],
   ])("returns a TYPE issue instead of throwing for %s", (_name, mutate, issuePath) => {
     const input = mutate(clone(fixture("client-failure/valid/network-minimal.json")));
     let result: ReturnType<typeof validateClientFailureEvent> | undefined;
@@ -93,6 +108,20 @@ describe("client-failure event envelope", () => {
       result = validateClientFailureEvent(input);
     }).not.toThrow();
     expect(result).toEqual({ ok: false, issues: [expect.objectContaining({ path: issuePath, code: "TYPE" })] });
+  });
+
+  it("reports a fan-out self-cycle at once instead of copying it per path", () => {
+    const loop: Record<string, unknown> = {};
+    loop.x = loop;
+    loop.y = loop;
+    const started = Date.now();
+    const event = clone(fixture("client-failure/valid/network-minimal.json"));
+    const result = validateClientFailureEvent({ ...event, failure: { kind: "unknown", extra: loop } });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(result).toEqual({
+      ok: false,
+      issues: [expect.objectContaining({ path: "/failure/extra/x", code: "TYPE" }), expect.objectContaining({ path: "/failure/extra/y", code: "TYPE" })],
+    });
   });
 
   it("validates and returns one snapshot, so a getter cannot swap in a credential after the check", () => {

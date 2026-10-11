@@ -101,6 +101,11 @@ describe("createReleaseDescriptor", () => {
     ["a generator given as a class instance", () => ({ ...input(), generator: new (class Generator { name = "x"; version = "1.0.0"; })() }), ["/generator"]],
     ["a throwing getter", () => Object.defineProperty(input(), "releaseId", { enumerable: true, get: () => { throw new Error("boom"); } }), [""]],
     ["a non-string release ID", () => ({ ...input(), releaseId: 7 }), ["/releaseId"]],
+    ["a cycle in the catalog", () => {
+      const next = input();
+      (next.catalog.schemas as any).Loop = { self: next.catalog.schemas };
+      return next;
+    }, ["/catalog/schemas/Loop/self"]],
   ])("INVALID_RELEASE instead of throwing for %s", (_name, make, pointers) => {
     let result: ReturnType<typeof createReleaseDescriptor> | undefined;
     expect(() => {
@@ -108,6 +113,26 @@ describe("createReleaseDescriptor", () => {
     }).not.toThrow();
     expect(result!.descriptor).toBeNull();
     expect(result!.diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`)).toEqual(pointers.map((pointer) => `INVALID_RELEASE ${pointer}`));
+  });
+
+  it("accepts every catalog the builder accepts, however deeply its schemas nest", () => {
+    const nested = (levels: number) => {
+      const spec = fixture("catalog/openapi.json");
+      let schema: Record<string, unknown> = { type: "string" };
+      for (let level = 0; level < levels; level += 1) schema = { type: "object", properties: { a: schema } };
+      // Behind a reference outside components, the parameter lands deeper in the catalog than in the document.
+      spec["x-deep"] = { name: "deep", in: "query", schema };
+      spec.paths["/workspaces/{workspaceId}/projects/{projectId}"].get.parameters.push({ $ref: "#/x-deep" });
+      return buildOperationCatalog(spec, fixture("catalog/manifest.json"));
+    };
+    let levels = 100;
+    while (nested(levels + 1).catalog) levels += 1;
+    const deepest = nested(levels);
+    expect(deepest.catalog).not.toBeNull();
+    expect(nested(levels + 1).diagnostics).toEqual([expect.objectContaining({ code: "INVALID_SPEC", message: expect.stringMatching(/nests deeper than/) })]);
+    const { descriptor, diagnostics } = createReleaseDescriptor({ ...input(), catalog: deepest.catalog! });
+    expect(diagnostics).toEqual([]);
+    expect(descriptor).not.toBeNull();
   });
 
   it("reads its input once, so a getter cannot change a value after it was checked", () => {

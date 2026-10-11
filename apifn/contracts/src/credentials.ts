@@ -7,9 +7,11 @@ const CREDENTIAL_KEY_FRAGMENTS = [
   "cookie",
   "password",
   "passwd",
+  "pwd",
   "passphrase",
   "secret",
   "apikey",
+  "accountkey",
   "token",
   "privatekey",
   "credential",
@@ -47,26 +49,32 @@ const AUTH_SCHEME_WORDS = new RegExp(`(?<![A-Za-z0-9-])(?:${AUTH_SCHEMES})(?![A-
 const LEADING_AUTH_SCHEME = new RegExp(`^(?:${AUTH_SCHEMES})\\s+`, "i");
 
 /**
- * True when a value holds nothing secret: only placeholders, scheme names,
- * parameter or cookie names (`name=` before a value) and punctuation.
+ * True when a value holds nothing secret: only placeholders and punctuation.
+ * In an Authorization or Cookie header, scheme names and parameter or cookie
+ * names (`name=` before a value) are not secret either; elsewhere a scheme
+ * word is part of the value.
  */
-function isPlaceholderValue(value: string): boolean {
-  const rest = value
-    .replace(/[A-Za-z0-9_.-]+\s*=(?![=\s]|$)/g, "")
-    .replace(PLACEHOLDER, "")
-    .replace(AUTH_SCHEME_WORDS, "")
-    .replace(/[\s"'`,;:=]/g, "");
-  return rest === "";
+function isPlaceholderValue(value: string, header: boolean): boolean {
+  let rest = value;
+  if (header) rest = rest.replace(/[A-Za-z0-9_.-]+\s*=(?![=\s]|$)/g, "").replace(AUTH_SCHEME_WORDS, "");
+  return rest.replace(PLACEHOLDER, "").replace(/[\s"'`,;:=\\]/g, "") === "";
 }
 
+const KEY_WORD = "[A-Za-z0-9_.%-]+";
 /**
- * A key, bare or quoted, followed by `:` or `=`: HTTP headers, JSON, JS
- * object literals and query strings. `scheme://` is a URL, not a key.
+ * A key of one or two words (`token`, `API key`), bare, quoted or with
+ * backslash-escaped quotes, then `:`, `=`, `=>` or `:=`. This covers HTTP
+ * headers, JSON (also escaped inside a string), JS object literals, query
+ * strings and prose such as `Invalid API key: ...`. `scheme://` is a URL.
  */
-const KEY_SEPARATOR = /(?<![A-Za-z0-9_.%-])(["'`]?)([A-Za-z0-9_.%-]+)\1[ \t]*([:=])(?!\/\/)[ \t]*/g;
-/** Identifiers use `:` as a namespace separator (`secrets:read`), so only `=` introduces a value there. */
-const IDENTIFIER_KEY_SEPARATOR = /(?<![A-Za-z0-9_.%-])(["'`]?)([A-Za-z0-9_.%-]+)\1[ \t]*(=)[ \t]*/g;
-const LEADING_PLACEHOLDER = new RegExp(`^(?:${PLACEHOLDER.source})`);
+const KEY_SEPARATOR = new RegExp(`(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\1[ \\t]*(=>|:=|[:=])(?!\\/\\/)[ \\t]*`, "g");
+/** Identifiers use `:` as a namespace separator (`secrets:read`), so only `=`, `=>` and `:=` introduce a value there. */
+const IDENTIFIER_KEY_SEPARATOR = new RegExp(`(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\1[ \\t]*(=>|:=|=)[ \\t]*`, "g");
+/** A value that is not quoted or bracketed runs to the next delimiter; placeholders such as `<your token>` may hold spaces. */
+const PLAIN_VALUE = new RegExp(`^(?:${PLACEHOLDER.source}|[^\\s&,;"'\`)\\]}])*`);
+const SCHEME_ONLY = new RegExp(`^(?:${AUTH_SCHEMES})$`, "i");
+/** An XML element named like a credential: `<password>...</password>`. */
+const XML_ELEMENT = /<([A-Za-z][A-Za-z0-9_.:-]*)>([^<]*)<\/\1>/g;
 
 /** Headers whose whole value, with every scheme parameter, is a credential. */
 function isHeaderKey(key: string): boolean {
@@ -74,25 +82,97 @@ function isHeaderKey(key: string): boolean {
   return normalized.endsWith("authorization") || normalized.endsWith("cookie");
 }
 
-/** Reads the value after a key: a quoted string, a header line, or a run up to the next delimiter. */
-function readValue(text: string, start: number, header: boolean): { end: number; value: string; quote: string } {
+/** End of a quoted string that opens at `start`, after its closing quote; -1 when unterminated. */
+function quotedEnd(text: string, start: number): number {
   const quote = text[start];
-  if (quote === '"' || quote === "'" || quote === "`") {
-    let index = start + 1;
-    while (index < text.length && text[index] !== quote) index += text[index] === "\\" ? 2 : 1;
-    return { end: Math.min(index + 1, text.length), value: text.slice(start + 1, Math.min(index, text.length)), quote };
+  for (let index = start + 1; index < text.length; index += 1) {
+    if (text[index] === "\\") index += 1;
+    else if (text[index] === quote) return index + 1;
   }
+  return -1;
+}
+
+/** End of a balanced `{...}` or `[...]` that opens at `start`; -1 when unbalanced. */
+function bracketedEnd(text: string, start: number): number {
+  const closers: string[] = [];
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "\\") {
+      index += 1; // An escaped character, such as \" inside escaped JSON, never opens or closes anything.
+    } else if (char === '"' || char === "'" || char === "`") {
+      const end = quotedEnd(text, index);
+      if (end === -1) return -1;
+      index = end - 1;
+    } else if (char === "{" || char === "[") {
+      closers.push(char === "{" ? "}" : "]");
+    } else if (char === "}" || char === "]") {
+      if (closers.pop() !== char) return -1;
+      if (closers.length === 0) return index + 1;
+    }
+  }
+  return -1;
+}
+
+interface ValueSpan {
+  /** Where the redacted span starts; after the separator unless the value is on the next line. */
+  begin?: number;
+  end: number;
+  /** The value without its delimiters. */
+  value: string;
+  /** Delimiters kept around the redacted value (`"`, `\\"`), or "" for none. */
+  quote: string;
+}
+
+/**
+ * Reads the whole value after a key: a quoted string (also with escaped
+ * quotes), a balanced `{...}`/`[...]`, an Authorization or Cookie header line,
+ * an indented YAML block line, or a run up to the next delimiter that also
+ * takes the token after a bare scheme word (`Bearer abc`). A value that
+ * cannot be delimited fails closed: it runs to the end of the text.
+ */
+function readValue(text: string, start: number, header: boolean): ValueSpan {
   const rest = text.slice(start);
-  const run = header
-    ? /^[^\r\n]*/.exec(rest)![0].trimEnd()
-    : (LEADING_PLACEHOLDER.exec(rest) ?? /^[^\s&,;"'`)\]}]*/.exec(rest)!)[0];
+  const escaped = /^\\(["'`])/.exec(rest);
+  if (escaped) {
+    const close = text.indexOf(`\\${escaped[1]}`, start + 2);
+    if (close === -1) return { end: text.length, value: text.slice(start), quote: "" };
+    return { end: close + 2, value: text.slice(start + 2, close), quote: `\\${escaped[1]}` };
+  }
+  const first = text[start];
+  if (first === '"' || first === "'" || first === "`") {
+    const end = quotedEnd(text, start);
+    if (end === -1) return { end: text.length, value: text.slice(start), quote: "" };
+    return { end, value: text.slice(start + 1, end - 1), quote: first };
+  }
+  if (first === "{" || first === "[") {
+    const end = bracketedEnd(text, start);
+    return { end: end === -1 ? text.length : end, value: text.slice(start, end === -1 ? text.length : end), quote: "" };
+  }
+  // `password:` at the end of a line, with the value indented on the next one (YAML block style).
+  const block = /^\r?\n([ \t]+)([^\r\n]*)/.exec(rest);
+  if (block && block[2].trim() !== "") {
+    const begin = start + block[0].length - block[2].length;
+    const line = block[2].trimEnd();
+    return { begin, end: begin + line.length, value: line, quote: "" };
+  }
+  if (header) {
+    const line = /^[^\r\n]*/.exec(rest)![0].trimEnd();
+    return { end: start + line.length, value: line, quote: "" };
+  }
+  let run = PLAIN_VALUE.exec(rest)![0];
+  if (SCHEME_ONLY.test(run)) {
+    const token = /^[ \t]+/.exec(rest.slice(run.length));
+    const next = token ? PLAIN_VALUE.exec(rest.slice(run.length + token[0].length))![0] : "";
+    if (next !== "") run = rest.slice(0, run.length + token![0].length + next.length);
+  }
   return { end: start + run.length, value: run, quote: "" };
 }
 
 /**
- * The key/value rule: a key that satisfies {@link isCredentialKey} makes its
- * whole value a credential unless the value is only placeholders. Scheme
- * names before the value are kept so redacted text stays readable.
+ * The key/value rule: a key that satisfies {@link isCredentialKey} (its last
+ * word, or its last two words joined) makes its whole value a credential
+ * unless all of the value is placeholders. In Authorization headers the
+ * scheme name is kept so redacted text stays readable.
  */
 function redactKeyValues(text: string, identifier: boolean): string {
   let output = "";
@@ -100,17 +180,21 @@ function redactKeyValues(text: string, identifier: boolean): string {
   const pattern = new RegExp((identifier ? IDENTIFIER_KEY_SEPARATOR : KEY_SEPARATOR).source, "g");
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
     const key = match[2];
-    if (!isCredentialKey(key)) continue;
+    const lastWord = key.split(/[ \t]+/).pop()!;
+    if (!isCredentialKey(lastWord) && !isCredentialKey(key)) continue;
     const start = match.index + match[0].length;
-    const { end, value, quote } = readValue(text, start, isHeaderKey(key));
+    const header = isHeaderKey(lastWord);
+    const { begin = start, end, value, quote } = readValue(text, start, header);
     if (end <= start) continue;
     pattern.lastIndex = end;
-    if (value === "" || isPlaceholderValue(value)) continue;
-    const scheme = LEADING_AUTH_SCHEME.exec(value)?.[0] ?? "";
-    output += `${text.slice(copied, start)}${quote}${scheme}${REDACTED}${quote}`;
+    if (value.trim() === "" || isPlaceholderValue(value, header)) continue;
+    const scheme = header ? (LEADING_AUTH_SCHEME.exec(value)?.[0] ?? "") : "";
+    output += `${text.slice(copied, begin)}${quote}${scheme}${REDACTED}${quote}`;
     copied = end;
   }
-  return output + text.slice(copied);
+  return (output + text.slice(copied)).replace(XML_ELEMENT, (element, name: string, value: string) =>
+    isCredentialKey(name) && !isPlaceholderValue(value, false) && value.trim() !== "" ? `<${name}>${REDACTED}</${name}>` : element
+  );
 }
 
 /**
@@ -147,6 +231,7 @@ const SHAPE_RULES: ShapeRule[] = [
   { pattern: /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g },
   { pattern: /(?<![A-Za-z0-9])(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}/g },
   { pattern: /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}/g },
+  { pattern: /(?<![A-Za-z0-9])AIza[A-Za-z0-9_-]{35}/g },
   { pattern: /(?<![A-Za-z0-9])(?:xox[abpr]|AKIA)[A-Za-z0-9-]{12,}/g },
   // Any URL user info, with or without a scheme and however many "@" it holds.
   {
@@ -230,4 +315,45 @@ function joinQuery(base: string, query: string | undefined, dropQuery = false): 
   if (dropQuery || query === undefined) return base;
   const kept = query.split("&").filter((pair) => pair !== "" && !isCredentialQueryParameter(pair));
   return kept.length > 0 ? `${base}?${kept.join("&")}` : base;
+}
+
+function unescapeSegment(segment: string): string {
+  let decoded = segment;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    // Not percent-encoded; judge the raw segment.
+  }
+  return decoded.replace(/~1/g, "/").replace(/~0/g, "~");
+}
+
+/**
+ * One JSON Pointer segment for a diagnostic or issue. The raw key is redacted
+ * before escaping: escaping first would turn the `//` of a URL key into
+ * `~1~1` and hide its user info from the URL rule.
+ */
+export function pointerSegment(key: string): string {
+  return redactCredentialValues(key).replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+/** Redacts each segment of a JSON Pointer, judged on its unescaped (and percent-decoded) key; clean segments are kept as they are. */
+export function sanitizePointer(pointer: string): string {
+  return pointer
+    .split("/")
+    .map((segment) => {
+      const key = unescapeSegment(segment);
+      return containsCredentialValue(key) ? pointerSegment(key) : segment;
+    })
+    .join("/");
+}
+
+/**
+ * The one sanitizer for every diagnostic and issue: the pointer is redacted
+ * segment by segment, and the message (which may quote that pointer, keys or
+ * values) is redacted as text.
+ */
+export function sanitizeReport(pointer: string, message: string): { pointer: string; message: string } {
+  const safePointer = sanitizePointer(pointer);
+  const quoted = pointer === "" ? message : message.split(pointer).join(safePointer);
+  return { pointer: safePointer, message: redactCredentialValues(quoted) };
 }

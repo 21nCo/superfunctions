@@ -1,4 +1,4 @@
-import { containsCredentialIdentifier, redactCredentialValues } from "./credentials.js";
+import { containsCredentialIdentifier, pointerSegment, redactCredentialValues, sanitizeReport } from "./credentials.js";
 import type { ApiManifest, Diagnostic } from "./types.js";
 
 export const API_ID_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
@@ -33,7 +33,8 @@ class ManifestChecker {
   readonly diagnostics: Diagnostic[] = [];
 
   fail(pointer: string, message: string, code: Diagnostic["code"] = "INVALID_MANIFEST"): void {
-    this.diagnostics.push({ code, severity: "error", message, pointer, source: "manifest" });
+    // Unknown keys and invalid values are quoted back, so every report goes through the shared sanitizer.
+    this.diagnostics.push({ code, severity: "error", ...sanitizeReport(pointer, message), source: "manifest" });
   }
 
   object(value: unknown, pointer: string, allowed: string[], required: string[] = []): value is Record<string, unknown> {
@@ -43,7 +44,7 @@ class ManifestChecker {
     }
     for (const key of Object.keys(value)) {
       if (!allowed.includes(key)) {
-        this.fail(`${pointer}/${key}`, `Unknown manifest field "${key}"; allowed fields are ${allowed.join(", ")}.`);
+        this.fail(`${pointer}/${pointerSegment(key)}`, `Unknown manifest field "${key}"; allowed fields are ${allowed.join(", ")}.`);
       }
     }
     for (const key of required) {

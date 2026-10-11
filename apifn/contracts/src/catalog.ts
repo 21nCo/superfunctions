@@ -1,6 +1,16 @@
 import { parseOpenAPI } from "@apifn/core";
-import { canonicalDigest, canonicalJson, compareCodeUnits } from "./canonical.js";
-import { containsCredentialIdentifier, containsCredentialValue, isCredentialKey, REDACTED, redactCredentialValues, stripUrlCredentials } from "./credentials.js";
+import { canonicalDigest, canonicalJson, compareCodeUnits, MAX_JSON_DEPTH, snapshotPlainData } from "./canonical.js";
+import {
+  containsCredentialIdentifier,
+  containsCredentialValue,
+  isCredentialKey,
+  pointerSegment,
+  REDACTED,
+  redactCredentialValues,
+  sanitizePointer,
+  sanitizeReport,
+  stripUrlCredentials,
+} from "./credentials.js";
 import { isSupportedMediaType, normalizeMediaType, validateManifest } from "./manifest.js";
 import {
   CATALOG_VERSION,
@@ -71,6 +81,14 @@ const SCHEMA_LIST_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"])
 const COMPONENT_SCHEMA_PREFIX = "#/components/schemas/";
 const SECURITY_SCHEME_TYPES = ["apiKey", "http", "mutualTLS", "oauth2", "openIdConnect"];
 const NAME_MAX_LENGTH = 128;
+/**
+ * Nesting limit for the OpenAPI document and manifest. A catalog nests a
+ * copied value at most 3 levels deeper than the document does (a parameter
+ * behind `#/x-param` moves to /operations/<i>/parameters/<j>) and release
+ * input nests the catalog 1 level deeper, so this margin keeps every catalog
+ * within MAX_JSON_DEPTH for createReleaseDescriptor.
+ */
+const MAX_DOCUMENT_DEPTH = MAX_JSON_DEPTH - 8;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -111,12 +129,37 @@ function patternLiterals(pattern: string): string {
   return pattern.replace(/\\[\s\S]|\[(?:\\[\s\S]|[^\]\\])*\]|\{\d*(?:,\d*)?\}|[\^$()|?*+]/g, " ");
 }
 
+interface MemberType<T> {
+  name: string;
+  accepts: (value: unknown) => value is T;
+}
+
+const OBJECT: MemberType<Record<string, unknown>> = { name: "an object", accepts: isRecord };
+const LIST: MemberType<unknown[]> = { name: "an array", accepts: Array.isArray };
+const STRING: MemberType<string> = { name: "a string", accepts: (value): value is string => typeof value === "string" };
+const BOOLEAN: MemberType<boolean> = { name: "a boolean", accepts: (value): value is boolean => typeof value === "boolean" };
+const STRING_LIST: MemberType<string[]> = {
+  name: "an array of strings",
+  accepts: (value): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string"),
+};
+
+/** True for a regular expression that matches exactly one string, such as `^hunter2$` or `^a\.b$`. */
+function isLiteralPattern(pattern: string): boolean {
+  return /^\^?(?:\\[^A-Za-z0-9]|[^\\.*+?()[\]{}|^$])+\$?$/.test(pattern);
+}
+
 function describeValue(value: unknown): string {
   return value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
 }
 
-function escapePointer(segment: string): string {
-  return segment.replace(/~/g, "~0").replace(/\//g, "~1");
+/** Escapes a component name for a `$ref` emitted into the catalog (diagnostic pointers use pointerSegment). */
+function refSegment(name: string): string {
+  return name.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+/** A reference for a message: a local one is a pointer, judged segment by segment so `~1~1` cannot hide URL user info. */
+function showRef(ref: string): string {
+  return ref.startsWith("#") ? `#${sanitizePointer(ref.slice(1))}` : redactCredentialValues(ref);
 }
 
 function decodePointerSegment(segment: string): string {
@@ -191,17 +234,18 @@ class CatalogBuilder {
   /** `<in>:<name>` of every parameter that a declared apiKey security scheme carries. */
   private readonly apiKeyParameters = new Set<string>();
   private readonly schemaComponents: Record<string, unknown>;
+  private readonly declaredSchemes: Record<string, unknown>;
 
   constructor(
     private readonly doc: Doc,
     private readonly manifest: ApiManifest
   ) {
     this.mediaTypes = new Set((manifest.serialization?.mediaTypes ?? ["application/json"]).map(normalizeMediaType));
-    const components = isRecord(doc.components) ? doc.components : {};
-    this.schemaComponents = isRecord(own(components, "schemas")) ? (own(components, "schemas") as Record<string, unknown>) : {};
-    const schemes = own(components, "securitySchemes");
-    for (const [name, value] of Object.entries(isRecord(schemes) ? schemes : {})) {
-      const scheme = this.deref(value, `/components/securitySchemes/${escapePointer(name)}`)?.value;
+    const components = this.member(doc, "components", "", OBJECT) ?? {};
+    this.schemaComponents = this.member(components, "schemas", "/components", OBJECT) ?? {};
+    this.declaredSchemes = this.member(components, "securitySchemes", "/components", OBJECT) ?? {};
+    for (const [name, value] of Object.entries(this.declaredSchemes)) {
+      const scheme = this.deref(value, `/components/securitySchemes/${pointerSegment(name)}`)?.value;
       if (scheme?.type === "apiKey" && typeof scheme.in === "string" && typeof scheme.name === "string") {
         this.apiKeyParameters.add(parameterKey(scheme.in, scheme.name));
       }
@@ -232,9 +276,26 @@ class CatalogBuilder {
     });
   }
 
-  /** Copies author text, redacting recognizable credentials. */
+  /**
+   * Reads an optional member of an OpenAPI object. Absent is undefined; a
+   * present value of the wrong type is INVALID_SPEC and also undefined, so a
+   * malformed container or flag is never silently replaced by a default.
+   */
+  member<T>(owner: Record<string, unknown>, key: string, pointer: string, type: MemberType<T>, operation?: string): T | undefined {
+    const value = own(owner, key);
+    if (value === undefined || type.accepts(value)) return value as T | undefined;
+    const at = `${pointer}/${pointerSegment(key)}`;
+    this.report("INVALID_SPEC", at, `Expected ${type.name} at ${at}, found ${describeValue(value)}.`, { operation });
+    return undefined;
+  }
+
+  /** Copies author text, redacting recognizable credentials. A present non-string is INVALID_SPEC. */
   text(value: unknown, pointer: string, source: Diagnostic["source"] = "spec"): string | null {
-    if (typeof value !== "string") return null;
+    if (value === undefined) return null;
+    if (typeof value !== "string") {
+      this.report("INVALID_SPEC", pointer, `Expected a string at ${pointer}, found ${describeValue(value)}.`, { source });
+      return null;
+    }
     const redacted = redactCredentialValues(value);
     if (redacted !== value) {
       this.report("CREDENTIAL_REDACTED", pointer, `Removed a credential-like value from ${pointer}; credentials never belong in API descriptions.`, { severity: "warning", source });
@@ -256,8 +317,8 @@ class CatalogBuilder {
 
   /** Copies a URL without user info, credential query parameters or fragment (`dropQuery` removes the whole query). */
   url(value: unknown, pointer: string, options: { source?: Diagnostic["source"]; dropQuery?: boolean } = {}): string | null {
-    if (typeof value !== "string") return null;
     const source = options.source ?? "spec";
+    if (typeof value !== "string") return this.text(value, pointer, source); // Reports a present non-string.
     const stripped = stripUrlCredentials(value, { dropQuery: options.dropQuery });
     if (stripped !== value) {
       this.report("CREDENTIAL_REDACTED", pointer, `Removed user info, credential or query parameters, or the fragment from the URL at ${pointer}.`, { severity: "warning", source });
@@ -283,7 +344,7 @@ class CatalogBuilder {
    */
   private refProblem(ref: unknown, expect: "schema" | "object"): string | null {
     if (typeof ref !== "string") return "A $ref value must be a string.";
-    const shown = redactCredentialValues(ref);
+    const shown = showRef(ref);
     if (!ref.startsWith("#")) {
       return `External reference "${shown}" is not supported; bundle external documents into the spec before building the catalog.`;
     }
@@ -296,7 +357,7 @@ class CatalogBuilder {
   private walkMap(value: unknown, pointer: string, walk: (entry: unknown, pointer: string) => void, skipExtensions = false): void {
     if (!isRecord(value)) return;
     for (const [key, entry] of Object.entries(value)) {
-      if (!(skipExtensions && key.startsWith("x-"))) walk(entry, `${pointer}/${escapePointer(key)}`);
+      if (!(skipExtensions && key.startsWith("x-"))) walk(entry, `${pointer}/${pointerSegment(key)}`);
     }
   }
 
@@ -309,7 +370,7 @@ class CatalogBuilder {
     if (!isRecord(value)) return;
     this.checkRef(value, pointer, "schema");
     for (const [key, child] of Object.entries(value)) {
-      const childPointer = `${pointer}/${escapePointer(key)}`;
+      const childPointer = `${pointer}/${pointerSegment(key)}`;
       if (SCHEMA_MAP_KEYWORDS.has(key)) this.walkMap(child, childPointer, (entry, entryPointer) => this.walkSchema(entry, entryPointer));
       else if (SCHEMA_KEYWORDS.has(key)) this.walkSchema(child, childPointer);
       else if (SCHEMA_LIST_KEYWORDS.has(key)) this.walkList(child, childPointer, (entry, entryPointer) => this.walkSchema(entry, entryPointer));
@@ -409,7 +470,7 @@ class CatalogBuilder {
         return null;
       }
       const ref = current.$ref as string;
-      currentPointer = ref.slice(1);
+      currentPointer = sanitizePointer(ref.slice(1));
       current = resolvePointer(this.doc, ref) as Record<string, unknown>;
     }
     this.report("UNRESOLVED_REF", pointer, `Reference chain at ${pointer} is cyclic or longer than 32 hops.`);
@@ -435,35 +496,46 @@ class CatalogBuilder {
     const drop = (key: string, childPointer: string, reason: string) =>
       this.report("CREDENTIAL_REDACTED", childPointer, `Dropped "${key}" at ${childPointer} because ${reason}.`, { severity: "warning" });
     for (const [key, child] of Object.entries(value)) {
-      const childPointer = `${pointer}/${escapePointer(key)}`;
+      const childPointer = `${pointer}/${pointerSegment(key)}`;
       if (key === "example" || key === "examples" || key.startsWith("x-")) continue;
       if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
-      } else if (key === "$ref" && typeof child === "string") {
-        this.schemaRef(child, childPointer, secret);
-        setOwn(output, key, child);
-      } else if (SCHEMA_MAP_KEYWORDS.has(key) && isRecord(child)) {
+      } else if (key === "$ref") {
+        if (this.schemaRef(child, childPointer, secret)) setOwn(output, key, child as string);
+      } else if (SCHEMA_MAP_KEYWORDS.has(key)) {
+        if (!isRecord(child)) {
+          this.report("INVALID_SPEC", childPointer, `Expected an object of schemas at ${childPointer}, found ${describeValue(child)}.`);
+          continue;
+        }
         const entries: Record<string, JsonValue> = {};
         const named = key === "properties" || key === "patternProperties";
         for (const [name, entry] of Object.entries(child)) {
-          this.identifier(name, `${childPointer}/${escapePointer(name)}`, "Schema member name");
-          const nested = this.schema(entry, `${childPointer}/${escapePointer(name)}`, secret || (named && isCredentialKey(name)));
+          this.identifier(name, `${childPointer}/${pointerSegment(name)}`, "Schema member name");
+          const nested = this.schema(entry, `${childPointer}/${pointerSegment(name)}`, secret || (named && isCredentialKey(name)));
           if (nested !== null) setOwn(entries, name, nested);
         }
         setOwn(output, key, entries);
       } else if (SCHEMA_KEYWORDS.has(key)) {
         const nested = this.schema(child, childPointer, secret);
         if (nested !== null) setOwn(output, key, nested);
-      } else if (SCHEMA_LIST_KEYWORDS.has(key) && Array.isArray(child)) {
-        setOwn(output, key, child.map((entry, index) => this.schema(entry, `${childPointer}/${index}`, secret) ?? {}));
-      } else if (key === "discriminator" && isRecord(child)) {
-        setOwn(output, key, this.discriminator(child, childPointer, secret));
+      } else if (SCHEMA_LIST_KEYWORDS.has(key)) {
+        if (Array.isArray(child)) setOwn(output, key, child.map((entry, index) => this.schema(entry, `${childPointer}/${index}`, secret) ?? {}));
+        else this.report("INVALID_SPEC", childPointer, `Expected an array of schemas at ${childPointer}, found ${describeValue(child)}.`);
+      } else if (key === "discriminator") {
+        if (isRecord(child)) setOwn(output, key, this.discriminator(child, childPointer, secret));
+        else this.report("INVALID_SPEC", childPointer, `Expected a Discriminator Object at ${childPointer}, found ${describeValue(child)}.`);
       } else if (key === "pattern" && typeof child === "string") {
         // A regular expression, not author text: redaction would change its meaning, so a credential-bearing one is dropped.
         if (containsCredentialValue(patternLiterals(child))) drop(key, childPointer, "the pattern holds a credential-like value");
+        // In a credential field, a pattern that matches one string is that string: a const under another name.
+        else if (secret && isLiteralPattern(child)) drop(key, childPointer, "a pattern without metacharacters in a credential field is the credential itself");
         else setOwn(output, key, child);
+      } else if (key === "required") {
+        if (STRING_LIST.accepts(child)) setOwn(output, key, this.data(child, childPointer));
+        else this.report("INVALID_SPEC", childPointer, `Expected an array of property names at ${childPointer}, found ${describeValue(child)}.`);
       } else if (NAME_KEYWORDS.has(key)) {
-        setOwn(output, key, this.data(child, childPointer));
+        if (isRecord(child) && Object.values(child).every((names) => STRING_LIST.accepts(names))) setOwn(output, key, this.data(child, childPointer));
+        else this.report("INVALID_SPEC", childPointer, `Expected an object of property-name arrays at ${childPointer}.`);
       } else if (secret && !CREDENTIAL_FIELD_KEYWORDS.has(key)) {
         drop(key, childPointer, "it is literal or unrecognized data inside a credential field");
       } else if (hasCredentialKey(child)) {
@@ -475,14 +547,26 @@ class CatalogBuilder {
     return output;
   }
 
-  /** Records a component schema reference; other targets cannot be shared by generated clients. */
-  private schemaRef(ref: string, pointer: string, secret: boolean): void {
-    const name = componentName(ref);
-    if (name !== null) {
-      this.componentRefs.set(name, this.componentRefs.get(name) === true || secret);
-    } else if (resolvePointer(this.doc, ref) !== undefined) {
-      this.report("UNRESOLVED_REF", pointer, `Schema reference "${redactCredentialValues(ref)}" must target ${COMPONENT_SCHEMA_PREFIX}<name> so generated clients can share the type.`);
+  /**
+   * Checks and records a schema reference that will be emitted. Every emitted
+   * reference is checked here, wherever it was reached from (a parameter
+   * behind `#/x-param` is never walked by checkRefs), so a successful catalog
+   * has no dangling reference. Only component schemas can be shared by
+   * generated clients. Returns true when the reference is usable.
+   */
+  private schemaRef(ref: unknown, pointer: string, secret: boolean): ref is string {
+    const problem = this.refProblem(ref, "schema");
+    if (problem) {
+      this.report("UNRESOLVED_REF", pointer, problem);
+      return false;
     }
+    const name = componentName(ref as string);
+    if (name === null) {
+      this.report("UNRESOLVED_REF", pointer, `Schema reference "${showRef(ref as string)}" must target ${COMPONENT_SCHEMA_PREFIX}<name> so generated clients can share the type.`);
+      return false;
+    }
+    this.componentRefs.set(name, this.componentRefs.get(name) === true || secret);
+    return true;
   }
 
   /**
@@ -492,24 +576,23 @@ class CatalogBuilder {
    */
   private discriminator(value: Record<string, unknown>, pointer: string, secret: boolean): JsonValue {
     const output: Record<string, JsonValue> = {};
-    if (typeof value.propertyName === "string") {
-      output.propertyName = this.identifier(value.propertyName, `${pointer}/propertyName`, "Discriminator property name");
-    }
-    const mapping = own(value, "mapping");
-    if (!isRecord(mapping)) return output;
+    const propertyName = this.member(value, "propertyName", pointer, STRING);
+    if (propertyName !== undefined) output.propertyName = this.identifier(propertyName, `${pointer}/propertyName`, "Discriminator property name");
+    const mapping = this.member(value, "mapping", pointer, OBJECT);
+    if (mapping === undefined) return output;
     const targets: Record<string, JsonValue> = {};
     for (const key of Object.keys(mapping).sort(compareCodeUnits)) {
       const target = mapping[key];
-      const targetPointer = `${pointer}/mapping/${escapePointer(key)}`;
+      const targetPointer = `${pointer}/mapping/${pointerSegment(key)}`;
       this.identifier(key, targetPointer, "Discriminator mapping value");
       const name = typeof target !== "string" ? null : target.startsWith("#") ? componentName(target) : target;
       if (name === null || !Object.hasOwn(this.schemaComponents, name)) {
-        const shown = typeof target === "string" ? redactCredentialValues(target) : String(target);
+        const shown = typeof target === "string" ? showRef(target) : String(target);
         this.report("UNRESOLVED_REF", targetPointer, `Discriminator mapping "${redactCredentialValues(key)}" targets "${shown}", which is not a schema in ${COMPONENT_SCHEMA_PREFIX}<name>.`);
         continue;
       }
       this.componentRefs.set(name, this.componentRefs.get(name) === true || secret);
-      setOwn(targets, key, `${COMPONENT_SCHEMA_PREFIX}${escapePointer(name)}`);
+      setOwn(targets, key, `${COMPONENT_SCHEMA_PREFIX}${refSegment(name)}`);
     }
     output.mapping = targets;
     return output;
@@ -522,7 +605,7 @@ class CatalogBuilder {
     if (isRecord(value)) {
       const output: Record<string, JsonValue> = {};
       for (const [key, child] of Object.entries(value)) {
-        const childPointer = `${pointer}/${escapePointer(key)}`;
+        const childPointer = `${pointer}/${pointerSegment(key)}`;
         setOwn(output, this.identifier(key, childPointer, "Key"), this.data(child, childPointer));
       }
       return output;
@@ -532,16 +615,17 @@ class CatalogBuilder {
 
   encoding(media: Record<string, unknown>, pointer: string, mediaType: string, operation: string): Record<string, CatalogEncoding> {
     const output: Record<string, CatalogEncoding> = {};
-    if (!FORM_MEDIA_TYPES.has(mediaType) || !isRecord(media.encoding)) return output;
-    for (const name of Object.keys(media.encoding).sort(compareCodeUnits)) {
-      const encoding = media.encoding[name];
-      const encodingPointer = `${pointer}/encoding/${escapePointer(name)}`;
+    const encodings = this.member(media, "encoding", pointer, OBJECT, operation);
+    if (!FORM_MEDIA_TYPES.has(mediaType) || encodings === undefined) return output;
+    for (const name of Object.keys(encodings).sort(compareCodeUnits)) {
+      const encoding = encodings[name];
+      const encodingPointer = `${pointer}/encoding/${pointerSegment(name)}`;
       this.identifier(name, encodingPointer, "Encoding property name", operation);
       if (!isRecord(encoding)) {
         this.report("INVALID_SPEC", encodingPointer, `Encoding of property "${name}" in operation "${operation}" must be an Encoding Object.`, { operation });
         continue;
       }
-      const style = typeof encoding.style === "string" ? encoding.style : "form";
+      const style = this.member(encoding, "style", encodingPointer, STRING, operation) ?? "form";
       if (!PARAMETER_STYLES.query.includes(style)) {
         this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/style`, `Property "${name}" of ${mediaType} in operation "${operation}" uses style "${style}"; supported styles are ${PARAMETER_STYLES.query.join(", ")}.`, { operation });
         continue;
@@ -550,17 +634,21 @@ class CatalogBuilder {
         this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/headers`, `Part headers of property "${name}" in operation "${operation}" are not described in the catalog; generated clients will not send them.`, { severity: "warning", operation });
       }
       setOwn(output, name, {
-        contentType: this.text(encoding.contentType, `${encodingPointer}/contentType`),
+        contentType: this.text(own(encoding, "contentType"), `${encodingPointer}/contentType`),
         style,
-        explode: typeof encoding.explode === "boolean" ? encoding.explode : style === "form",
-        allowReserved: encoding.allowReserved === true,
+        explode: this.member(encoding, "explode", encodingPointer, BOOLEAN, operation) ?? style === "form",
+        allowReserved: this.member(encoding, "allowReserved", encodingPointer, BOOLEAN, operation) ?? false,
       });
     }
     return output;
   }
 
   contents(content: unknown, pointer: string, operation: string, what: string): CatalogContent[] {
-    if (!isRecord(content)) return [];
+    if (content === undefined) return [];
+    if (!isRecord(content)) {
+      this.report("INVALID_SPEC", pointer, `${what} of operation "${operation}" needs an object of media types at ${pointer}, found ${describeValue(content)}.`, { operation });
+      return [];
+    }
     const byType = new Map<string, { rawType: string; content: CatalogContent }>();
     const unsupported: string[] = [];
     // Source keys are visited in code-unit order so collisions resolve the same way for any key order.
@@ -571,12 +659,12 @@ class CatalogBuilder {
         continue;
       }
       const media = content[rawType];
-      const mediaPointer = `${pointer}/${escapePointer(rawType)}`;
+      const mediaPointer = `${pointer}/${pointerSegment(rawType)}`;
       if (!isRecord(media)) {
         this.report("INVALID_SPEC", mediaPointer, `${what} of operation "${operation}" describes ${rawType} with ${describeValue(media)} instead of a Media Type Object.`, { operation });
         continue;
       }
-      const entry: CatalogContent = { mediaType, schema: this.schema(media.schema, `${mediaPointer}/schema`), encoding: this.encoding(media, mediaPointer, mediaType, operation) };
+      const entry: CatalogContent = { mediaType, schema: this.schema(own(media, "schema"), `${mediaPointer}/schema`), encoding: this.encoding(media, mediaPointer, mediaType, operation) };
       const existing = byType.get(mediaType);
       if (!existing) {
         byType.set(mediaType, { rawType, content: entry });
@@ -651,7 +739,7 @@ class CatalogBuilder {
         continue;
       }
       if (location === "header" && IGNORED_HEADERS.has(name.toLowerCase())) continue;
-      const style = typeof value.style === "string" ? value.style : location === "query" || location === "cookie" ? "form" : "simple";
+      const style = this.member(value, "style", pointer, STRING, id) ?? (location === "query" || location === "cookie" ? "form" : "simple");
       if (value.content !== undefined || !PARAMETER_STYLES[location].includes(style)) {
         this.report(
           "UNSUPPORTED_SERIALIZATION",
@@ -663,16 +751,17 @@ class CatalogBuilder {
         );
         continue;
       }
+      const required = this.member(value, "required", pointer, BOOLEAN, id) ?? false;
       parameters.push({
         name,
         in: location,
-        required: location === "path" ? true : value.required === true,
-        deprecated: value.deprecated === true,
+        required: location === "path" ? true : required,
+        deprecated: this.member(value, "deprecated", pointer, BOOLEAN, id) ?? false,
         style,
-        explode: typeof value.explode === "boolean" ? value.explode : style === "form",
-        allowReserved: value.allowReserved === true,
-        description: this.text(value.description, `${pointer}/description`),
-        schema: this.schema(value.schema, `${pointer}/schema`, this.isCredentialParameter(location, name)),
+        explode: this.member(value, "explode", pointer, BOOLEAN, id) ?? style === "form",
+        allowReserved: this.member(value, "allowReserved", pointer, BOOLEAN, id) ?? false,
+        description: this.text(own(value, "description"), `${pointer}/description`),
+        schema: this.schema(own(value, "schema"), `${pointer}/schema`, this.isCredentialParameter(location, name)),
       });
     }
     // Path parameters keep template order so generated clients get stable positional arguments.
@@ -687,25 +776,25 @@ class CatalogBuilder {
   }
 
   responses(entry: SpecOperation, id: string): CatalogResponse[] {
-    const responses = entry.operation.responses;
-    if (!isRecord(responses)) return [];
+    const responses = this.member(entry.operation, "responses", entry.pointer, OBJECT, id);
+    if (responses === undefined) return [];
     return Object.keys(responses)
       .sort(compareCodeUnits)
       .flatMap((status) => {
         if (status.startsWith("x-")) return [];
         if (!RESPONSE_STATUS.test(status)) {
-          this.report("INVALID_SPEC", `${entry.pointer}/responses/${escapePointer(status)}`, `Response key "${status}" of operation "${id}" is not an HTTP status, a 1XX-5XX range or "default".`, { operation: id });
+          this.report("INVALID_SPEC", `${entry.pointer}/responses/${pointerSegment(status)}`, `Response key "${status}" of operation "${id}" is not an HTTP status, a 1XX-5XX range or "default".`, { operation: id });
           return [];
         }
-        const resolved = this.deref(responses[status], `${entry.pointer}/responses/${escapePointer(status)}`);
+        const resolved = this.deref(responses[status], `${entry.pointer}/responses/${pointerSegment(status)}`);
         if (!resolved) return [];
         const kind: CatalogResponse["kind"] = status === "default" ? "default" : /^[45]/.test(status) ? "error" : "success";
         return [
           {
             status,
             kind,
-            description: this.text(resolved.value.description, `${resolved.pointer}/description`) ?? "",
-            contents: this.contents(resolved.value.content, `${resolved.pointer}/content`, id, `Response ${status}`),
+            description: this.text(own(resolved.value, "description"), `${resolved.pointer}/description`) ?? "",
+            contents: this.contents(own(resolved.value, "content"), `${resolved.pointer}/content`, id, `Response ${status}`),
           },
         ];
       });
@@ -720,9 +809,7 @@ class CatalogBuilder {
     const operationLevel = entry.operation.security !== undefined;
     const declared = operationLevel ? entry.operation.security : this.doc.security;
     const pointer = operationLevel ? `${entry.pointer}/security` : "/security";
-    const schemes = isRecord(this.doc.components) && isRecord(this.doc.components.securitySchemes)
-      ? this.doc.components.securitySchemes
-      : {};
+    const schemes = this.declaredSchemes;
     const invalid = (at: string, message: string) => this.report("INVALID_SPEC", at, message, { operation: id });
     if (declared !== undefined && !Array.isArray(declared)) {
       invalid(pointer, `Security of operation "${id}" at ${pointer} must be an array of security requirement objects.`);
@@ -737,7 +824,7 @@ class CatalogBuilder {
       }
       const terms: SecurityRequirementTerm[] = [];
       for (const scheme of Object.keys(requirement).sort(compareCodeUnits)) {
-        const schemePointer = `${requirementPointer}/${escapePointer(scheme)}`;
+        const schemePointer = `${requirementPointer}/${pointerSegment(scheme)}`;
         this.identifier(scheme, schemePointer, "Security scheme name", id);
         if (!Object.hasOwn(schemes, scheme)) {
           this.report("UNKNOWN_SECURITY_SCHEME", schemePointer, `Operation "${id}" requires security scheme "${scheme}", which is not declared in components.securitySchemes.`, { operation: id });
@@ -759,14 +846,17 @@ class CatalogBuilder {
 
   operation(entry: SpecOperation, binding: OperationBinding): CatalogOperation {
     const op = entry.operation;
-    const deprecated = op.deprecated === true || binding.deprecation !== undefined;
+    const deprecated = (this.member(op, "deprecated", entry.pointer, BOOLEAN, binding.id) ?? false) || binding.deprecation !== undefined;
     const requestBody = this.deref(op.requestBody, `${entry.pointer}/requestBody`);
     const bindingPointer = `/operations/${this.manifest.operations.indexOf(binding)}`;
     const name = binding.name ?? toIdentifier(entry.operationId ?? binding.id);
     if (name.length > NAME_MAX_LENGTH) {
       this.report("INVALID_MANIFEST", `${bindingPointer}/name`, `Name "${name.slice(0, 32)}…" derived for operation "${binding.id}" has ${name.length} characters; catalog names allow ${NAME_MAX_LENGTH}, so set a shorter manifest name.`, { source: "manifest", operation: binding.id });
     }
-    const tags = Array.isArray(op.tags) ? op.tags : [];
+    const tags = this.member(op, "tags", entry.pointer, LIST, binding.id) ?? [];
+    // A malformed operation-level list is reported and never falls back to the path item's servers.
+    const operationServers = this.member(op, "servers", entry.pointer, LIST, binding.id);
+    const pathServers = own(op, "servers") === undefined ? this.member(entry.pathItem, "servers", entry.pathItemPointer, LIST, binding.id) : undefined;
     tags.forEach((tag, index) => {
       if (typeof tag !== "string") this.report("INVALID_SPEC", `${entry.pointer}/tags/${index}`, `Tag ${index} of operation "${binding.id}" must be a string.`, { operation: binding.id });
     });
@@ -776,21 +866,21 @@ class CatalogBuilder {
       openapiOperationId: entry.operationId,
       method: entry.method,
       path: entry.path,
-      summary: this.text(op.summary, `${entry.pointer}/summary`),
-      description: this.text(op.description, `${entry.pointer}/description`),
+      summary: this.text(own(op, "summary"), `${entry.pointer}/summary`),
+      description: this.text(own(op, "description"), `${entry.pointer}/description`),
       tags: sortStrings(tags.flatMap((tag, index) => (typeof tag === "string" ? [this.text(tag, `${entry.pointer}/tags/${index}`) as string] : []))),
       parameters: this.parameters(entry, binding.id),
       requestBody: requestBody
         ? {
-            required: requestBody.value.required === true,
-            contents: this.contents(requestBody.value.content, `${requestBody.pointer}/content`, binding.id, "Request body"),
+            required: this.member(requestBody.value, "required", requestBody.pointer, BOOLEAN, binding.id) ?? false,
+            contents: this.contents(own(requestBody.value, "content"), `${requestBody.pointer}/content`, binding.id, "Request body"),
           }
         : null,
       responses: this.responses(entry, binding.id),
-      servers: Array.isArray(op.servers)
-        ? this.servers(op.servers, `${entry.pointer}/servers`)
-        : Array.isArray(entry.pathItem.servers)
-          ? this.servers(entry.pathItem.servers, `${entry.pathItemPointer}/servers`)
+      servers: operationServers
+        ? this.servers(operationServers, `${entry.pointer}/servers`)
+        : pathServers
+          ? this.servers(pathServers, `${entry.pathItemPointer}/servers`)
           : null,
       security: { alternatives: this.security(entry, binding.id) },
       sdk: {
@@ -809,11 +899,10 @@ class CatalogBuilder {
   }
 
   securitySchemes(): Record<string, CatalogSecurityScheme> {
-    const components = isRecord(this.doc.components) ? this.doc.components : {};
-    const declared = isRecord(components.securitySchemes) ? components.securitySchemes : {};
+    const declared = this.declaredSchemes;
     const output: Record<string, CatalogSecurityScheme> = {};
     for (const name of Object.keys(declared).sort(compareCodeUnits)) {
-      const schemePointer = `/components/securitySchemes/${escapePointer(name)}`;
+      const schemePointer = `/components/securitySchemes/${pointerSegment(name)}`;
       this.identifier(name, schemePointer, "Security scheme name");
       const resolved = this.deref(declared[name], schemePointer);
       if (!resolved) continue;
@@ -822,33 +911,33 @@ class CatalogBuilder {
         this.report("INVALID_SPEC", `${pointer}/type`, `Security scheme "${name}" needs a type of ${SECURITY_SCHEME_TYPES.join(", ")}.`);
         continue;
       }
-      const scheme: CatalogSecurityScheme = { type: value.type, description: this.text(value.description, `${pointer}/description`) };
+      const scheme: CatalogSecurityScheme = { type: value.type, description: this.text(own(value, "description"), `${pointer}/description`) };
       for (const key of ["scheme", "in", "name"] as const) {
-        if (typeof value[key] === "string") scheme[key] = this.identifier(value[key] as string, `${pointer}/${key}`, `Security scheme ${key}`);
+        const member = this.member(value, key, pointer, STRING);
+        if (member !== undefined) scheme[key] = this.identifier(member, `${pointer}/${key}`, `Security scheme ${key}`);
       }
-      const bearerFormat = this.text(value.bearerFormat, `${pointer}/bearerFormat`);
+      const bearerFormat = this.text(own(value, "bearerFormat"), `${pointer}/bearerFormat`);
       if (bearerFormat !== null) scheme.bearerFormat = bearerFormat;
-      if (typeof value.openIdConnectUrl === "string") {
-        scheme.openIdConnectUrl = this.url(value.openIdConnectUrl, `${pointer}/openIdConnectUrl`) ?? undefined;
-      }
-      if (value.flows !== undefined && !isRecord(value.flows)) {
-        this.report("INVALID_SPEC", `${pointer}/flows`, `OAuth flows of security scheme "${name}" must be an object.`);
-      } else if (isRecord(value.flows)) {
+      const openIdConnectUrl = this.url(own(value, "openIdConnectUrl"), `${pointer}/openIdConnectUrl`);
+      if (openIdConnectUrl !== null) scheme.openIdConnectUrl = openIdConnectUrl;
+      const declaredFlows = this.member(value, "flows", pointer, OBJECT);
+      if (declaredFlows !== undefined) {
         const flows: NonNullable<CatalogSecurityScheme["flows"]> = {};
-        for (const flowName of Object.keys(value.flows).sort(compareCodeUnits)) {
-          const flow = value.flows[flowName];
-          const flowPointer = `${pointer}/flows/${escapePointer(flowName)}`;
+        for (const flowName of Object.keys(declaredFlows).sort(compareCodeUnits)) {
+          const flow = declaredFlows[flowName];
+          const flowPointer = `${pointer}/flows/${pointerSegment(flowName)}`;
           this.identifier(flowName, flowPointer, "OAuth flow name");
           if (!isRecord(flow)) {
             this.report("INVALID_SPEC", flowPointer, `OAuth flow "${flowName}" of security scheme "${name}" must be an object.`);
             continue;
           }
-          const scopes = isRecord(flow.scopes) ? Object.keys(flow.scopes) : [];
+          const scopes = Object.keys(this.member(flow, "scopes", flowPointer, OBJECT) ?? {});
           const output: NonNullable<CatalogSecurityScheme["flows"]>[string] = {
-            scopes: sortStrings(scopes.map((scope) => this.identifier(scope, `${flowPointer}/scopes/${escapePointer(scope)}`, "Scope name"))),
+            scopes: sortStrings(scopes.map((scope) => this.identifier(scope, `${flowPointer}/scopes/${pointerSegment(scope)}`, "Scope name"))),
           };
           for (const key of ["authorizationUrl", "tokenUrl", "refreshUrl"] as const) {
-            if (typeof flow[key] === "string") output[key] = this.url(flow[key], `${flowPointer}/${key}`) ?? undefined;
+            const url = this.url(own(flow, key), `${flowPointer}/${key}`);
+            if (url !== null) output[key] = url;
           }
           setOwn(flows, flowName, output);
         }
@@ -860,7 +949,7 @@ class CatalogBuilder {
   }
 
   componentSchemas(): Record<string, JsonValue> {
-    const components = isRecord(this.doc.components) && isRecord(this.doc.components.schemas) ? this.doc.components.schemas : {};
+    const components = this.schemaComponents;
     const output: Record<string, JsonValue> = {};
     // A component reached from a credential field is emitted without literals; a
     // component first emitted normally is re-emitted once that taint reaches it.
@@ -870,8 +959,8 @@ class CatalogBuilder {
       if (pending.length === 0) break;
       for (const [name, secret] of pending) {
         emitted.set(name, secret);
-        this.identifier(name, `/components/schemas/${escapePointer(name)}`, "Component schema name");
-        const schema = this.schema(own(components, name), `/components/schemas/${escapePointer(name)}`, secret);
+        this.identifier(name, `/components/schemas/${pointerSegment(name)}`, "Component schema name");
+        const schema = this.schema(own(components, name), `/components/schemas/${pointerSegment(name)}`, secret);
         if (schema !== null) setOwn(output, name, schema);
       }
     }
@@ -886,10 +975,10 @@ class CatalogBuilder {
         return [];
       }
       const variables: CatalogServer["variables"] = {};
-      const declared = isRecord(server.variables) ? server.variables : {};
+      const declared = this.member(server, "variables", serverPointer, OBJECT) ?? {};
       for (const name of Object.keys(declared).sort(compareCodeUnits)) {
         const variable = declared[name];
-        const variablePointer = `${serverPointer}/variables/${escapePointer(name)}`;
+        const variablePointer = `${serverPointer}/variables/${pointerSegment(name)}`;
         this.identifier(name, variablePointer, "Server variable name");
         if (!isRecord(variable) || typeof variable.default !== "string") {
           this.report("INVALID_SPEC", variablePointer, `Server variable "${name}" at ${serverPointer} needs a string default.`);
@@ -898,19 +987,24 @@ class CatalogBuilder {
         if (isCredentialKey(name)) {
           this.report("CREDENTIAL_REDACTED", variablePointer, `Replaced the values of credential-named server variable "${name}"; credentials never belong in server URLs.`, { severity: "warning" });
         }
-        const values = Array.isArray(variable.enum) ? variable.enum.filter((value): value is string => typeof value === "string") : null;
+        const values = this.member(variable, "enum", variablePointer, STRING_LIST) ?? null;
         setOwn(variables, name, {
           default: isCredentialKey(name) ? REDACTED : (this.text(variable.default, `${variablePointer}/default`) as string),
           enum: values && !isCredentialKey(name) ? values.map((value, valueIndex) => this.text(value, `${variablePointer}/enum/${valueIndex}`) as string) : null,
-          description: this.text(variable.description, `${variablePointer}/description`),
+          description: this.text(own(variable, "description"), `${variablePointer}/description`),
         });
       }
       return [{
         url: this.url(server.url, `${serverPointer}/url`, { dropQuery: true }) as string,
-        description: this.text(server.description, `${serverPointer}/description`),
+        description: this.text(own(server, "description"), `${serverPointer}/description`),
         variables,
       }];
     });
+  }
+
+  private operationId(operation: Record<string, unknown>, pointer: string): string | null {
+    const operationId = this.member(operation, "operationId", pointer, STRING);
+    return operationId === undefined ? null : this.identifier(operationId, `${pointer}/operationId`, "OpenAPI operationId");
   }
 
   specOperations(): SpecOperation[] {
@@ -919,11 +1013,11 @@ class CatalogBuilder {
     for (const path of Object.keys(paths).sort(compareCodeUnits)) {
       if (path.startsWith("x-")) continue;
       if (!path.startsWith("/")) {
-        this.report("INVALID_SPEC", `/paths/${escapePointer(path)}`, `Path "${path}" must start with "/".`);
+        this.report("INVALID_SPEC", `/paths/${pointerSegment(path)}`, `Path "${path}" must start with "/".`);
         continue;
       }
-      this.identifier(path, `/paths/${escapePointer(path)}`, "Path template");
-      const resolved = this.deref(paths[path], `/paths/${escapePointer(path)}`);
+      this.identifier(path, `/paths/${pointerSegment(path)}`, "Path template");
+      const resolved = this.deref(paths[path], `/paths/${pointerSegment(path)}`);
       if (!resolved) continue;
       for (const method of METHODS) {
         const operation = own(resolved.value, method);
@@ -931,14 +1025,11 @@ class CatalogBuilder {
         operations.push({
           method,
           path,
-          pointer: `/paths/${escapePointer(path)}/${method}`,
+          pointer: `/paths/${pointerSegment(path)}/${method}`,
           pathItem: resolved.value,
           pathItemPointer: resolved.pointer,
           operation,
-          operationId:
-            typeof operation.operationId === "string"
-              ? this.identifier(operation.operationId, `/paths/${escapePointer(path)}/${method}/operationId`, "OpenAPI operationId")
-              : null,
+          operationId: this.operationId(operation, `/paths/${pointerSegment(path)}/${method}`),
         });
       }
     }
@@ -1016,18 +1107,18 @@ class CatalogBuilder {
       }
     }
 
-    const info = isRecord(this.doc.info) ? this.doc.info : {};
+    const info = this.doc.info as Record<string, unknown>;
     const provenance = this.manifest.provenance ?? {};
     return {
       catalogVersion: CATALOG_VERSION,
-      api: { id: this.manifest.api.id, version: this.manifest.api.version, title: this.text(info.title, "/info/title") ?? "" },
+      api: { id: this.manifest.api.id, version: this.manifest.api.version, title: this.text(own(info, "title"), "/info/title") ?? "" },
       provenance: {
         source: this.url(provenance.source, "/provenance/source", { source: "manifest" }),
         revision: this.text(provenance.revision, "/provenance/revision", "manifest"),
         exporter: this.text(provenance.exporter, "/provenance/exporter", "manifest"),
       },
       serialization: { mediaTypes: sortStrings(this.mediaTypes) },
-      servers: this.servers(Array.isArray(this.doc.servers) ? this.doc.servers : [], "/servers"),
+      servers: this.servers(this.member(this.doc, "servers", "", LIST) ?? [], "/servers"),
       securitySchemes: this.securitySchemes(),
       operations,
       schemas: this.componentSchemas(),
@@ -1058,11 +1149,7 @@ const SEVERITY_ORDER = { error: 0, warning: 1 } as const;
  * author keys and values, so both are redacted: no diagnostic carries a credential.
  */
 function sortDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
-  const redacted = diagnostics.map((diagnostic) => ({
-    ...diagnostic,
-    message: redactCredentialValues(diagnostic.message),
-    pointer: redactCredentialValues(diagnostic.pointer),
-  }));
+  const redacted = diagnostics.map((diagnostic) => ({ ...diagnostic, ...sanitizeReport(diagnostic.pointer, diagnostic.message) }));
   const unique = new Map(redacted.map((diagnostic) => [canonicalJson(diagnostic), diagnostic]));
   return Array.from(unique.values()).sort(
     (a, b) =>
@@ -1082,18 +1169,37 @@ function sortDiagnostics(diagnostics: Diagnostic[]): Diagnostic[] {
  */
 export function buildOperationCatalog(spec: string | Record<string, unknown>, manifest: unknown): BuildCatalogResult {
   const diagnostics: Diagnostic[] = [];
+  // Inputs are read once into bounded plain data: cycles, getters, class
+  // instances, YAML alias expansion and excessive nesting are reported, never thrown.
+  const plain = (value: unknown, code: "INVALID_SPEC" | "INVALID_MANIFEST", source: Diagnostic["source"]): unknown => {
+    let snapshot: ReturnType<typeof snapshotPlainData>;
+    try {
+      snapshot = snapshotPlainData(value, { maxDepth: MAX_DOCUMENT_DEPTH });
+    } catch {
+      snapshot = { value: undefined, problems: [{ pointer: "", reason: "could not be read (a getter or proxy threw)" }] };
+    }
+    for (const { pointer, reason } of snapshot.problems) {
+      diagnostics.push({ code, severity: "error", message: `The ${source === "spec" ? "OpenAPI document" : "manifest"} at ${pointer || "/"} ${reason}.`, pointer, source });
+    }
+    return snapshot.problems.length > 0 ? null : snapshot.value;
+  };
   let doc: Doc | null = null;
   let specDigest = "";
-  try {
-    doc = parseOpenAPI(spec) as unknown as Doc;
-    if (!isRecord(doc.paths) || !isRecord(doc.info)) throw new Error("document requires info and paths objects");
-    specDigest = canonicalDigest(doc);
-  } catch (error) {
-    doc = null;
-    diagnostics.push({ code: "INVALID_SPEC", severity: "error", message: parseFailure(error), pointer: "", source: "spec" });
+  const input = typeof spec === "string" ? spec : plain(spec, "INVALID_SPEC", "spec");
+  if (input !== null) {
+    try {
+      const parsed = parseOpenAPI(input as string | Record<string, unknown>);
+      doc = (typeof spec === "string" ? plain(parsed, "INVALID_SPEC", "spec") : parsed) as Doc | null;
+      if (doc && (!isRecord(doc.paths) || !isRecord(doc.info))) throw new Error("document requires info and paths objects");
+      if (doc) specDigest = canonicalDigest(doc);
+    } catch (error) {
+      doc = null;
+      diagnostics.push({ code: "INVALID_SPEC", severity: "error", message: parseFailure(error), pointer: "", source: "spec" });
+    }
   }
 
-  const validated = validateManifest(manifest);
+  const manifestData = plain(manifest, "INVALID_MANIFEST", "manifest");
+  const validated = manifestData === null ? { manifest: null, diagnostics: [] } : validateManifest(manifestData);
   diagnostics.push(...validated.diagnostics);
   let manifestDigest = "";
   if (validated.manifest) {

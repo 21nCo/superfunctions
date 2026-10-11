@@ -1,5 +1,5 @@
 import { canonicalDigest, canonicalJson, compareCodeUnits, snapshotPlainData } from "./canonical.js";
-import { containsCredentialIdentifier } from "./credentials.js";
+import { containsCredentialIdentifier, sanitizeReport } from "./credentials.js";
 import { API_ID_PATTERN, OPERATION_ID_PATTERN, TARGET_PATTERN, VERSION_PATTERN } from "./manifest.js";
 import {
   CATALOG_VERSION,
@@ -61,7 +61,7 @@ function matches(value: unknown, rule: FieldRule): value is string {
 export function createReleaseDescriptor(input: CreateReleaseInput): CreateReleaseResult {
   const diagnostics: Diagnostic[] = [];
   const fail = (pointer: string, message: string) =>
-    diagnostics.push({ code: "INVALID_RELEASE", severity: "error", message, pointer, source: "release" });
+    diagnostics.push({ code: "INVALID_RELEASE", severity: "error", ...sanitizeReport(pointer, message), source: "release" });
   // Read the input once: getters cannot change a value after it was checked.
   let snapshot: ReturnType<typeof snapshotPlainData>;
   try {
@@ -70,7 +70,7 @@ export function createReleaseDescriptor(input: CreateReleaseInput): CreateReleas
     fail("", "Release input must be plain JSON data; reading it threw.");
     return { descriptor: null, diagnostics };
   }
-  for (const pointer of snapshot.nonPlain) fail(pointer, `${pointer} must be plain JSON data, not a Map, Date, class instance or cycle.`);
+  for (const { pointer, reason } of snapshot.problems) fail(pointer, `${pointer || "Release input"} ${reason}.`);
   if (diagnostics.length > 0) return { descriptor: null, diagnostics };
   const data = snapshot.value;
   if (!isRecord(data)) {

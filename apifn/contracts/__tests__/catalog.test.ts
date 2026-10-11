@@ -761,6 +761,21 @@ describe("author strings copied into the catalog", () => {
     expect((result.catalog!.schemas.ProjectInput as any).properties.slug2.pattern).toBe("^Bearer [A-Za-z0-9._~+/-]+=*$");
   });
 
+  it("drops a pattern that matches one string in a credential field, and keeps it elsewhere", () => {
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.pw = { type: "string", format: "password", pattern: "^hunter2SEEDx9$" };
+      inputSchema(nextSpec).properties.pin = { type: "string", format: "password", pattern: "^[0-9]{6}$" };
+      inputSchema(nextSpec).properties.kind = { type: "string", pattern: "^project$" };
+    });
+    const properties = (result.catalog!.schemas.ProjectInput as any).properties;
+    expect(JSON.stringify(result)).not.toContain("hunter2SEEDx9");
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")).toEqual([
+      expect.objectContaining({ pointer: "/components/schemas/ProjectInput/properties/pw/pattern" }),
+    ]);
+    expect(properties.pin.pattern).toBe("^[0-9]{6}$");
+    expect(properties.kind.pattern).toBe("^project$");
+  });
+
   it("reports unparseable documents by line and column without quoting source text", () => {
     const yaml = 'openapi: 3.1.0\ninfo:\n  title: x\n  password: "SEEDEDyaml0025\n paths: [';
     const result = buildOperationCatalog(yaml, clone(manifest));
@@ -922,6 +937,72 @@ describe("malformed object targets", () => {
     const result = build(mutate);
     expect(result.catalog).toBeNull();
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ code, pointer }));
+  });
+});
+
+// Every member the catalog reads, set to a value of the wrong type: a present
+// container or flag of the wrong type is reported, never replaced by a default.
+const WRONG_TYPED_MEMBERS: Array<[pointer: string, value: unknown]> = [
+  ["/info/title", 7],
+  ["/servers", { url: "https://other.example.test" }],
+  ["/servers/0/description", 7],
+  ["/servers/0/variables", []],
+  ["/components", []],
+  ["/components/schemas", []],
+  ["/components/securitySchemes", "bearerAuth"],
+  [`/paths/${escape(LIST_ROUTE)}/get/responses`, null],
+  [`/paths/${escape(LIST_ROUTE)}/get/responses`, []],
+  [`/paths/${escape(LIST_ROUTE)}/get/responses/200/description`, 7],
+  [`/paths/${escape(LIST_ROUTE)}/get/responses/200/content`, "application/json"],
+  [`/paths/${escape(LIST_ROUTE)}/get/responses/200/content/application~1json/encoding`, []],
+  [`/paths/${escape(LIST_ROUTE)}/post/requestBody/content`, []],
+  [`/paths/${escape(LIST_ROUTE)}/post/requestBody/required`, "yes"],
+  [`/paths/${escape(PROJECT_ROUTE)}/servers`, "https://other.example.test"],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/servers`, { url: "https://other.example.test" }],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/tags`, "projects"],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/deprecated`, "yes"],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/operationId`, 7],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/summary`, ["Get"]],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/parameters/0/required`, "true"],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/parameters/0/style`, 7],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/parameters/0/explode`, "no"],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/parameters/0/allowReserved`, 1],
+  [`/paths/${escape(PROJECT_ROUTE)}/get/parameters/0/description`, 7],
+  ["/components/schemas/ProjectInput/properties", []],
+  ["/components/schemas/ProjectInput/required", "name"],
+  ["/components/schemas/ProjectInput/allOf", {}],
+  ["/components/schemas/ProjectInput/dependentRequired", []],
+  ["/components/schemas/Project/discriminator", "status"],
+  ["/components/securitySchemes/apiKeyAuth/name", 7],
+  ["/components/securitySchemes/bearerAuth/bearerFormat", 7],
+  ["/components/securitySchemes/oauth/flows/clientCredentials/scopes", []],
+  ["/components/securitySchemes/oauth/flows/clientCredentials/tokenUrl", 7],
+];
+
+function escape(segment: string): string {
+  return segment.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+function setAt(document: any, pointer: string, value: unknown): void {
+  const segments = pointer.slice(1).split("/").map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
+  const parent = segments.slice(0, -1).reduce((node, segment) => node[segment], document);
+  parent[segments[segments.length - 1]] = value;
+}
+
+describe("wrong-typed members", () => {
+  it.each(WRONG_TYPED_MEMBERS)("INVALID_SPEC: %s = %j", (pointer, value) => {
+    const result = build((nextSpec) => setAt(nextSpec, pointer, value));
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "INVALID_SPEC", pointer }));
+  });
+
+  it("UNRESOLVED_REF: a schema reference reached through a parameter outside components", () => {
+    const result = build((nextSpec) => {
+      nextSpec["x-param"] = { name: "q", in: "query", schema: { $ref: "#/components/schemas/Missing" } };
+      nextSpec.paths[PROJECT_ROUTE].get.parameters.push({ $ref: "#/x-param" });
+    });
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: "UNRESOLVED_REF", pointer: "/x-param/schema/$ref" }));
   });
 });
 
