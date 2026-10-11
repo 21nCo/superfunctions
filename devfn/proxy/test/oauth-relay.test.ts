@@ -371,6 +371,25 @@ describe("OAuth relay ticket contract", () => {
     expect(relayed).toMatchObject({ status: 303, headers: { location: `${origin("app-a")}${CALLBACK_PATH}?code=c0de&state=${value}` } });
   }, 30_000);
 
+  it("gives a client no redirect URI while the recorded relay is not running", async () => {
+    const m = await setup();
+    const client = new OAuthRelayClient({ stateDir: m.stateDir, ownerId: "owner-a", ownerLive: m.ownerLive });
+    expect(await client.redirectUri(CALLBACK_PATH)).toBe(REDIRECT_URI);
+    const record = path.join(m.stateDir, "oauth-relay", "service.json");
+    const valid = await readFile(record, "utf8");
+    // A relay that crashed leaves its record until status, gc or the next transition clears it.
+    const crashed = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const exited = new Promise((resolve) => crashed.once("exit", resolve));
+    const birthSignature = await processBirthSignature(crashed.pid!);
+    crashed.kill("SIGKILL");
+    await exited;
+    await writeFile(record, JSON.stringify({ ...JSON.parse(valid), pid: crashed.pid, birthSignature }));
+    await expect(client.redirectUri(CALLBACK_PATH)).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE" });
+    await expect(client.authorize({ state: state("dead-relay"), callbackUrl: `${origin("app-a")}${CALLBACK_PATH}` })).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE" });
+    await rm(record);
+    await expect(client.redirectUri(CALLBACK_PATH)).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE" });
+  }, 60_000);
+
   it("decides from the route state a transition leaves, not one read before it", async () => {
     const m = await setup();
     await registerA(m, state("moved"));

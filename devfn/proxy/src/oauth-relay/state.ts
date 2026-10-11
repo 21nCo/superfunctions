@@ -264,7 +264,7 @@ async function liveOwnerRoute(stateDir: string, ownerId: string, url: URL, owner
 }
 
 /** The relay service, when its recorded process is verifiably this record's process. */
-async function runningService(stateDir: string): Promise<OAuthRelayService> {
+export async function runningService(stateDir: string): Promise<OAuthRelayService> {
   const service = await readRelayService(stateDir);
   if (!service) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", "The DevFn OAuth relay is not running; run devfn oauth-relay start.");
   if (await processIdentityStatus(service.pid, service.birthSignature) !== "running") throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", "The recorded DevFn OAuth relay is not running.");

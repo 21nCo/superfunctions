@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-import { readRelayService, registerOAuthRelayState, OAuthRelayError, type RelayStateOptions } from "./state.js";
+import { registerOAuthRelayState, runningService, OAuthRelayError, type RelayStateOptions } from "./state.js";
 
 /** The machine state directory DevFn passes to every process it launches. */
 export const STATE_DIR_ENV = "DEVFN_STATE_DIR";
@@ -44,10 +44,13 @@ export class OAuthRelayClient {
     this.ownerId = ownerId;
   }
 
-  /** The registered redirect URI for a callback path on the running relay's origin. */
+  /**
+   * The registered redirect URI for a callback path on the running relay's
+   * origin. A missing record, or one whose process is not verifiably running,
+   * is DEVFN_OAUTH_RELAY_UNAVAILABLE, as it is for authorize().
+   */
   public async redirectUri(callbackPath: string): Promise<string> {
-    const service = await readRelayService(this.stateDir);
-    if (!service) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", "The DevFn OAuth relay is not running; run devfn oauth-relay start.");
+    const service = await runningService(this.stateDir);
     if (!callbackPath.startsWith("/")) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_REJECTED", "A callback path must be absolute.", "malformed");
     return `${service.origin}${callbackPath}`;
   }
