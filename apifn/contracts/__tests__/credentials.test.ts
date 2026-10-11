@@ -300,6 +300,91 @@ describe("name/value indirection", () => {
   });
 });
 
+/** Each surface that derives from the text rule: detection, a catalog description, a catalog string literal and an event message. */
+function expectSeedRemovedEverywhere(text: string, seed: string) {
+  expect(containsCredentialValue(text)).toBe(true);
+  expect(redactCredentialValues(text)).not.toContain(seed);
+
+  const nextSpec = clone(fixture("catalog/openapi.json"));
+  nextSpec.paths[PROJECT_ROUTE].get.description = text;
+  nextSpec.components.schemas.ProjectInput.properties.probe = { type: "string", default: text };
+  const built = buildOperationCatalog(nextSpec, clone(fixture("catalog/manifest.json")));
+  expect(built.catalog).not.toBeNull();
+  expect(JSON.stringify(built)).not.toContain(seed);
+
+  const event = fixture("client-failure/valid/network-minimal.json");
+  const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
+  expect(result.ok).toBe(false);
+  expect(JSON.stringify(result)).not.toContain(seed);
+}
+
+// The value of a credential-named XML element runs to the closing tag that matches it by nesting. A closing tag
+// inside CDATA or a comment does not count; where the structure cannot be trusted the value runs to the end.
+const XML_SEED = "SEEDxml4411";
+const XML_FORMS: Array<[form: string, text: string]> = [
+  ["nested same-name element", `<password><password></password>${XML_SEED}</password>`],
+  ["nested non-placeholder element", `<password><password>a</password>${XML_SEED}</password>`],
+  ["CDATA holding a closing tag", `<password><![CDATA[</password>${XML_SEED}]]></password>`],
+  ["comment holding a closing tag", `<password><!-- </password> -->${XML_SEED}</password>`],
+  ["nested self-closing element", `<token><token />${XML_SEED}</token>`],
+  ["stray closing tag after the element", `<password>a</password>${XML_SEED}</password>`],
+  ["closing tag with no opening tag", `log: ${XML_SEED}</password> done`],
+  ["unterminated CDATA", `<password><![CDATA[${XML_SEED}</password>`],
+  ["unterminated comment", `<password><!-- x ${XML_SEED}</password>`],
+  ["element inside a comment", `<!-- <client_secret>${XML_SEED}</client_secret> -->`],
+  ["element inside CDATA", `<![CDATA[<client_secret>${XML_SEED}</client_secret>]]>`],
+];
+
+describe("XML element boundaries", () => {
+  it.each(XML_FORMS)("%s", (_form, text) => expectSeedRemovedEverywhere(text, XML_SEED));
+
+  it.each([
+    ["flat placeholder", "<password>[REDACTED]</password>"],
+    ["CDATA placeholder", "<password><![CDATA[[REDACTED]]]></password>"],
+    ["bare placeholder tag in a comment", "<!-- <token> --> then text"],
+    ["ordinary nested elements", "<config><timeout>30</timeout><config>x</config></config>"],
+  ])("keeps a %s", (_name, text) => {
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+  });
+});
+
+// A two-element list opening with a credential key holds its value second, as header entries do. syntax x key.
+const POSITIONAL_SEED = "SEEDpair7731";
+const POSITIONAL_KEYS: Array<[key: string, value: string]> = [
+  ["X-Api-Key", POSITIONAL_SEED],
+  ["client_secret", POSITIONAL_SEED],
+  ["Authorization", `Bearer ${POSITIONAL_SEED}`],
+];
+const POSITIONAL_SYNTAXES: Array<[syntax: string, render: (key: string, value: string) => string]> = [
+  ["JSON entries", (key, value) => `[["X-Request-Id","req-42"],["${key}","${value}"]]`],
+  ["escaped JSON", (key, value) => `{\\"headers\\":[[\\"${key}\\",\\"${value}\\"]]}`],
+  ["JS Headers literal", (key, value) => `new Headers([['${key.toLowerCase()}', '${value}']])`],
+  ["flat JSON pair", (key, value) => `["${key}", "${value}"]`],
+];
+const POSITIONAL_MATRIX = POSITIONAL_SYNTAXES.flatMap(([syntax, render]) =>
+  POSITIONAL_KEYS.map(([key, value]) => ({ name: `${syntax} ${key}`, text: `Request failed: ${render(key, value)}` }))
+);
+
+describe("positional name/value pairs", () => {
+  it.each(POSITIONAL_MATRIX)("$name", ({ text }) => expectSeedRemovedEverywhere(text, POSITIONAL_SEED));
+
+  it("keeps the scheme of an Authorization pair", () => {
+    expect(redactCredentialValues(`[["Authorization","Bearer ${POSITIONAL_SEED}"]]`)).toBe('[["Authorization","Bearer [REDACTED]"]]');
+  });
+
+  it.each([
+    ["ordinary header", '[["X-Request-Id","req-42"]]'],
+    ["placeholder value", '[["X-Api-Key","[REDACTED]"]]'],
+    ["template placeholder", "new Headers([['authorization', `Bearer ${token}`]])"],
+    ["list of three field names", '["password","email","name"]'],
+    ["unquoted variable names", "const [token, setToken] = useState()"],
+  ])("keeps a %s", (_name, text) => {
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+  });
+});
+
 // URL user info for special schemes needs no "//": URL parsers read it after any run of "/" or "\\", even none.
 const URL_SEED = "hunter2pwSEED";
 const USER_INFO_URLS = [
@@ -514,6 +599,13 @@ const LONG_TEXTS: Array<[string, string]> = [
   ["PEM headers", run("-----BEGIN PRIVATE KEY PRIVATE KEY ")],
   ["special scheme runs", run("https:")],
   ["special scheme backslashes", `https:${run("\\")}`],
+  ["deep same-name XML nesting", `${run("<password>")}a${run("</password>")}`],
+  ["XML CDATA sections", run("<password><![CDATA[</password>a]]>")],
+  ["XML comments holding closing tags", run("<token><!-- </token> -->")],
+  ["unterminated XML comment", `<password>${run("<!-- </password> ")}`],
+  ["stray XML closing tags", run("a</password>")],
+  ["positional pairs", run('[["token","a"],')],
+  ["unterminated positional pairs", `${run('["token", ')}"a`],
 ];
 
 describe("credential rules run in linear time", () => {

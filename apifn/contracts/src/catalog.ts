@@ -5,6 +5,7 @@ import {
   containsCredentialValue,
   credentialValueFields,
   isCredentialKey,
+  isCredentialPair,
   pointerSegment,
   REDACTED,
   redactCredentialValues,
@@ -132,11 +133,12 @@ function isCredentialMember(key: string): boolean {
 
 /**
  * True when JSON data holds, at any depth, a credential-named or
- * credential-bearing key, or a name field naming a credential next to a value
- * field (`{name: "X-Api-Key", value: "..."}`), as the text rule reads it.
+ * credential-bearing key, or a name naming a credential next to its value, as
+ * the text rules read them: a name field and a value field
+ * (`{name: "X-Api-Key", value: "..."}`) or a pair (`["X-Api-Key", "..."]`).
  */
 function hasCredentialKey(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasCredentialKey);
+  if (Array.isArray(value)) return isCredentialPair(value) || value.some(hasCredentialKey);
   if (!isRecord(value)) return false;
   return credentialValueFields(value).length > 0 || Object.entries(value).some(([key, child]) => isCredentialMember(key) || hasCredentialKey(child));
 }
@@ -222,6 +224,13 @@ function judgeServerValue(template: string, values: Record<string, string>, name
 
 /** The most combinations of server variable values judged one by one; beyond it the judgement fails closed. */
 const SERVER_COMBINATION_LIMIT = 4096;
+/**
+ * The most characters of expanded server URLs judged together in one build.
+ * Each combination expands the whole URL, so the combination limit alone
+ * would let long values cost combinations x length; this keeps the work of a
+ * build linear in its input.
+ */
+const SERVER_SCAN_BUDGET = 4_000_000;
 
 /**
  * Hides every visible variable that some combination of declared values puts
@@ -229,22 +238,34 @@ const SERVER_COMBINATION_LIMIT = 4096;
  * variable's values are never published, so it takes each raw value; a
  * visible one each value the catalog would publish. Hiding a variable widens
  * its values to the raw ones, so this repeats until nothing more is hidden.
- * When the combinations exceed {@link SERVER_COMBINATION_LIMIT} and any value
- * or the template holds `@`, `?` or `#` (without one nothing can be
- * removed), every visible variable is hidden and true is returned.
+ * When any value or the template holds `@`, `?` or `#` (without one nothing
+ * can be removed) and the combinations exceed {@link SERVER_COMBINATION_LIMIT}
+ * or their expanded URLs would exceed what is left of the build's
+ * {@link SERVER_SCAN_BUDGET}, every visible variable is hidden and true is
+ * returned.
  */
-function hideJointServerValues(template: string, names: string[], hidden: Set<string>, candidates: (name: string) => string[]): boolean {
+function hideJointServerValues(
+  template: string,
+  names: string[],
+  hidden: Set<string>,
+  candidates: (name: string) => string[],
+  budget: { characters: number }
+): boolean {
   const used = names.filter((name) => template.includes(`{${name}}`));
+  const occurrences = new Map(used.map((name) => [name, template.split(`{${name}}`).length - 1]));
   for (;;) {
     const visible = used.filter((name) => !hidden.has(name));
     if (visible.length === 0) return false;
     const lists = used.map((name) => Array.from(new Set(candidates(name))));
     if (!template.includes("@") && lists.every((list) => list.every((value) => !/[@?#]/.test(value)))) return false;
     const count = lists.reduce((product, list) => product * list.length, 1);
-    if (count > SERVER_COMBINATION_LIMIT) {
+    // An upper bound on each expansion: the template with every placeholder at its variable's longest value.
+    const length = used.reduce((total, name, index) => total + occurrences.get(name)! * lists[index].reduce((longest, value) => Math.max(longest, value.length), 0), template.length);
+    if (count > SERVER_COMBINATION_LIMIT || count * length > budget.characters) {
       visible.forEach((name) => hidden.add(name));
       return true;
     }
+    budget.characters -= count * length;
     let grew = false;
     for (let combination = 0; combination < count; combination += 1) {
       const values: Record<string, string> = {};
@@ -352,6 +373,8 @@ class CatalogBuilder {
     reaching: new Set<Record<string, unknown>>(),
     parents: new Map<Record<string, unknown>, Array<Record<string, unknown>>>(),
   };
+  /** What is left of {@link SERVER_SCAN_BUDGET} for this build; servers are judged in a fixed order (paths sorted), so key order cannot change it. */
+  private readonly serverScanBudget = { characters: SERVER_SCAN_BUDGET };
   private readonly mediaTypes: Set<string>;
   /** `<in>:<name>` of every parameter that a declared apiKey security scheme carries. */
   private readonly apiKeyParameters = new Set<string>();
@@ -668,11 +691,19 @@ class CatalogBuilder {
         } else {
           this.report("INVALID_SPEC", childPointer, `Expected an object of property-name arrays at ${childPointer}.`);
         }
+      } else if ((key === "exclusiveMinimum" || key === "exclusiveMaximum") && typeof child === "boolean") {
+        // The OpenAPI 3.0 (JSON Schema draft 4) form qualifies `minimum`/`maximum`; in the catalog's 2020-12 the bound itself
+        // is exclusive. `false`, or `true` without a numeric bound, says nothing and is dropped.
+        const bound = own(value, key === "exclusiveMinimum" ? "minimum" : "maximum");
+        if (child && typeof bound === "number") setOwn(output, key, bound);
+      } else if ((key === "minimum" || key === "maximum") && own(value, `exclusive${key[0].toUpperCase()}${key.slice(1)}`) === true && typeof child === "number") {
+        continue; // Emitted as the exclusive bound.
       } else if (secret && !CREDENTIAL_FIELD_KEYWORDS.has(key)) {
         drop(key, childPointer, "it is literal or unrecognized data inside a credential field");
       } else if (LITERAL_KEYWORDS.has(key) && this.reachesCredentialField(value)) {
         drop(key, childPointer, "the schema contains a credential field whose value the literal would carry");
-      } else if (hasCredentialKey(child)) {
+      } else if (key === "enum" ? Array.isArray(child) && child.some(hasCredentialKey) : hasCredentialKey(child)) {
+        // An enum lists values, so it is judged member by member: ["password", "otp"] lists two methods, not a pair.
         drop(key, childPointer, "it holds credential-named keys or a value named as a credential");
       } else {
         setOwn(output, key, this.data(OBJECT_KEYWORDS.has(key) ? withoutExtensions(child) : child, childPointer));
@@ -1278,8 +1309,12 @@ class CatalogBuilder {
         }));
       }
       // Every combination of declared values, judged together: one variable's scheme and another's user info meet only there.
-      const overflow = hideJointServerValues(template, valid, hidden, (name) =>
-        hidden.has(name) ? [defaults[name], ...(enums.get(name) ?? [])] : [judged[name], ...(enumValues.get(name) ?? [])]
+      const overflow = hideJointServerValues(
+        template,
+        valid,
+        hidden,
+        (name) => (hidden.has(name) ? [defaults[name], ...(enums.get(name) ?? [])] : [judged[name], ...(enumValues.get(name) ?? [])]),
+        this.serverScanBudget
       );
       const variables: CatalogServer["variables"] = {};
       for (const name of valid) {
@@ -1291,7 +1326,7 @@ class CatalogBuilder {
           this.report("CREDENTIAL_REDACTED", variablePointer, `Replaced the values of credential-named server variable "${name}"; credentials never belong in server URLs.`, { severity: "warning" });
         } else if (hide) {
           const why = overflow
-            ? `server variable "${name}" of ${serverPointer}/url, whose values have more than ${SERVER_COMBINATION_LIMIT} combinations to judge for user info, a query or a fragment`
+            ? `server variable "${name}" of ${serverPointer}/url, whose values have more combinations than the catalog judges for user info, a query or a fragment (more than ${SERVER_COMBINATION_LIMIT}, or more than ${SERVER_SCAN_BUDGET} characters of expanded URLs in one document)`
             : `server variable "${name}" fills user info, a query or a fragment of ${serverPointer}/url, which the catalog removes`;
           this.report("CREDENTIAL_REDACTED", `${variablePointer}/default`, `Replaced the default of ${why}.`, { severity: "warning" });
           values?.forEach((_, valueIndex) => this.report("CREDENTIAL_REDACTED", `${variablePointer}/enum/${valueIndex}`, `Removed enum value ${valueIndex} of ${why}.`, { severity: "warning" }));

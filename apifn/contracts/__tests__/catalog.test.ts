@@ -811,7 +811,30 @@ describe("OpenAPI fields that change client behavior", () => {
       authority: { default: "[REDACTED]", enum: null, description: null },
       base: { default: "[REDACTED]", enum: null, description: null },
     });
-    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")[0].message).toMatch(/more than 4096 combinations/);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")[0].message).toMatch(/more combinations than the catalog judges .*more than 4096,/);
+  });
+
+  // Each combination expands the whole URL, so the joint judgement also has a budget of expanded characters per build.
+  const longServer = (index: number, length: number) => {
+    const variables: Record<string, { default: string; enum: string[] }> = {};
+    for (let variable = 0; variable < 12; variable += 1) {
+      variables[`v${variable}`] = { default: `u@${"a".repeat(length)}`, enum: [`u@${"a".repeat(length)}`, `u@${"b".repeat(length)}`] };
+    }
+    return { url: `https://h${index}.example.test/${Object.keys(variables).map((name) => `{${name}}`).join("/")}`, variables };
+  };
+
+  it.each([
+    ["one server, 12 variables x 2 values x 40000 characters", 1, 40_000],
+    ["20 servers, 12 variables x 2 values x 10000 characters", 20, 10_000],
+  ])("bounds the joint judgement of %s and fails closed", (_name, servers, length) => {
+    const nextSpec = clone(spec);
+    nextSpec.servers = Array.from({ length: servers }, (_, index) => longServer(index, length));
+    const started = performance.now();
+    const result = buildOperationCatalog(nextSpec, clone(manifest));
+    expect(performance.now() - started).toBeLessThan(3000);
+    expect(result.catalog).not.toBeNull();
+    expect(result.catalog!.servers.every((server) => Object.values(server.variables).every((variable) => variable.default === "[REDACTED]"))).toBe(true);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")[0].message).toMatch(/more than 4000000 characters of expanded URLs/);
   });
 
   it("keeps many value combinations that hold no @, ? or #", () => {
@@ -1171,6 +1194,80 @@ describe("credential name/value pairs in literals", () => {
     });
     expect(result.diagnostics).toEqual([]);
     expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual(probe);
+  });
+});
+
+// Positional pairs follow the text rule too: a two-element list whose first element is a credential key. key x place.
+const POSITIONAL_PAIRS: Array<[key: string, pair: [string, string]]> = [
+  ["X-Api-Key", ["X-Api-Key", PAIR_SEED]],
+  ["client_secret", ["client_secret", PAIR_SEED]],
+  ["Authorization", ["Authorization", `Bearer ${PAIR_SEED}`]],
+];
+const POSITIONAL_PLACES: Array<[place: string, keyword: "default" | "const" | "enum", literal: (pair: [string, string]) => unknown]> = [
+  ["flat default", "default", (pair) => pair],
+  ["flat const", "const", (pair) => pair],
+  ["enum member", "enum", (pair) => [pair]],
+  ["entries default", "default", (pair) => [["X-Request-Id", "req-42"], pair]],
+  ["entries in an object", "const", (pair) => ({ headers: [pair] })],
+];
+const POSITIONAL_CELLS = POSITIONAL_PAIRS.flatMap(([key, pair]) => POSITIONAL_PLACES.map(([place, keyword, literal]) => ({ name: `${key}, ${place}`, keyword, literal: literal(pair) })));
+
+describe("positional credential pairs in literals", () => {
+  it.each(POSITIONAL_CELLS)("drops the literal: $name", ({ keyword, literal }) => {
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.probe = { [keyword]: literal };
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(PAIR_SEED);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual({});
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual([`/components/schemas/ProjectInput/properties/probe/${keyword}`]);
+  });
+
+  it("keeps ordinary and placeholder pairs, and an enum listing a credential word among values", () => {
+    const probe = {
+      type: "string",
+      enum: ["password", "otp"],
+      default: [["X-Request-Id", "req-42"], ["X-Api-Key", "<token>"]],
+      const: ["password", "email", "name"],
+    };
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.probe = probe;
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual(probe);
+  });
+});
+
+// OpenAPI 3.0 boolean exclusive bounds become 2020-12 numeric bounds; 3.1 numeric bounds are copied verbatim.
+describe("exclusive bounds", () => {
+  const ajv = new Ajv2020({ strict: false });
+  const bounded = (version: string, schema: Record<string, unknown>) => {
+    const result = build((nextSpec) => {
+      nextSpec.openapi = version;
+      inputSchema(nextSpec).properties.count = schema;
+    });
+    expect(result.diagnostics).toEqual([]);
+    return (result.catalog!.schemas.ProjectInput as any).properties.count;
+  };
+
+  it.each<[string, Record<string, unknown>, Record<string, unknown>]>([
+    ["exclusiveMinimum: true", { type: "integer", minimum: 0, exclusiveMinimum: true }, { type: "integer", exclusiveMinimum: 0 }],
+    ["exclusiveMinimum: false", { type: "integer", minimum: 0, exclusiveMinimum: false }, { type: "integer", minimum: 0 }],
+    ["exclusiveMaximum: true", { type: "integer", maximum: 10, exclusiveMaximum: true }, { type: "integer", exclusiveMaximum: 10 }],
+    ["exclusiveMaximum: false", { type: "integer", maximum: 10, exclusiveMaximum: false }, { type: "integer", maximum: 10 }],
+    ["both bounds", { type: "integer", minimum: 0, exclusiveMinimum: true, maximum: 10, exclusiveMaximum: false }, { type: "integer", exclusiveMinimum: 0, maximum: 10 }],
+    ["a boolean without its bound", { type: "integer", exclusiveMinimum: true, exclusiveMaximum: true }, { type: "integer" }],
+  ])("3.0 %s", (_name, schema, expected) => {
+    const emitted = bounded("3.0.3", schema);
+    expect(emitted).toEqual(expected);
+    const validate = ajv.compile(emitted);
+    expect(validate(0)).toBe(emitted.exclusiveMinimum === undefined);
+    expect(validate(1)).toBe(true);
+  });
+
+  it("copies 3.1 numeric bounds verbatim", () => {
+    const schema = { type: "integer", minimum: 0, exclusiveMinimum: 0, maximum: 10, exclusiveMaximum: 11 };
+    expect(bounded("3.1.0", schema)).toEqual(schema);
   });
 });
 

@@ -79,8 +79,6 @@ const PLAIN_VALUE = new RegExp(`^(?:${PLACEHOLDER.source}|[^\\s&,;"'\`)\\]}])*`)
 const SCHEME_ONLY = new RegExp(`^(?:${AUTH_SCHEMES})$`, "i");
 /** A YAML block scalar indicator (`|`, `>-`, `|2+`, ...) or nothing, ending the key's line: the value is on the indented lines below. */
 const BLOCK_HEAD = /^(?:[|>](?:[1-9]?[+-]?|[+-]?[1-9]?))?[ \t]*(?:#[^\r\n]*)?(?=\r?\n)/;
-/** An XML opening tag: its name, then any attributes. */
-const XML_OPEN_TAG = /<([A-Za-z_][A-Za-z0-9_.:-]*)(\s[^<>]*)?>/g;
 /** CDATA delimiters, removed before an element value is judged as placeholders. */
 const CDATA_DELIMITERS = /<!\[CDATA\[|\]\]>/g;
 
@@ -368,11 +366,55 @@ function redactKeyValues(text: string, identifier: boolean): string {
   return output + text.slice(copied);
 }
 
+/**
+ * A two-element list opening with a quoted credential key: `["X-Api-Key", "..."]`
+ * in JSON, escaped JSON or a JS literal, as in header entries
+ * (`new Headers([[name, value]])`). The value follows the comma.
+ */
+const PAIR_KEY = new RegExp(`\\[[ \\t\\r\\n]*(\\\\?["'\`])((?:${KEY_WORD}[ \\t]+)?${KEY_WORD})\\1[ \\t\\r\\n]*,[ \\t\\r\\n]*`, "g");
+const PAIR_END = /[ \t\r\n]*\]/y;
+/** A key as {@link PAIR_KEY} reads it, for structured data. */
+const PAIR_KEY_TEXT = new RegExp(`^(?:${KEY_WORD}[ \\t]+)?${KEY_WORD}$`);
+
+/**
+ * True when `list` is a name/value pair naming a credential: two elements, the
+ * first a credential key (one or two words, as in text) and the second a value
+ * that is not empty, null or only placeholders. Text and structured data
+ * judge pairs alike.
+ */
+export function isCredentialPair(list: readonly unknown[]): boolean {
+  if (list.length !== 2 || typeof list[0] !== "string") return false;
+  const [name, value] = [list[0].trim(), list[1]];
+  if (!PAIR_KEY_TEXT.test(name) || !isCredentialKey(name) || value === null) return false;
+  return !(typeof value === "string" && (value.trim() === "" || isPlaceholderValue(value, isHeaderKey(name))));
+}
+
+/** The pair rule in text: the second element of a two-element list whose first is a quoted credential key is a credential. */
+function redactPairs(text: string): string {
+  let output = "";
+  let copied = 0;
+  const pattern = new RegExp(PAIR_KEY.source, "g");
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    const key = match[2];
+    if (!isCredentialKey(key)) continue;
+    const start = match.index + match[0].length;
+    const header = isHeaderKey(key);
+    const { end, value, quote } = readValue(text, start, match.index, header);
+    if (end <= start) continue;
+    PAIR_END.lastIndex = end;
+    // A longer list is not a pair; a value that cannot be delimited (it runs to the end of the text) fails closed.
+    if (end < text.length && !PAIR_END.test(text)) continue;
+    pattern.lastIndex = end;
+    if (value.trim() === "" || isPlaceholderValue(value, header)) continue;
+    const scheme = header ? (LEADING_AUTH_SCHEME.exec(value)?.[0] ?? "") : "";
+    output += `${text.slice(copied, start)}${quote}${scheme}${REDACTED}${quote}`;
+    copied = end;
+  }
+  return output + text.slice(copied);
+}
+
 /** An XML attribute: its name, then a quoted or bare value. A name starts only at the start of a word, so the scan is linear. */
 const XML_ATTRIBUTE = /(?<![A-Za-z0-9_.:-])([A-Za-z_][A-Za-z0-9_.:-]*)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'<>/=`]+))/g;
-/** An XML closing tag and its name. */
-const XML_CLOSE_TAG = /<\/([A-Za-z_][A-Za-z0-9_.:-]*)\s*>/g;
-
 /** Redacts every attribute value of a credential-named element that is not all placeholders. */
 function redactAttributeValues(attributes: string): string {
   return attributes.replace(XML_ATTRIBUTE, (whole, name: string, equals: string, double?: string, single?: string, bare?: string) => {
@@ -383,48 +425,115 @@ function redactAttributeValues(attributes: string): string {
   });
 }
 
+/** Markup that delimits an XML element value: comments, CDATA sections, closing tags and opening tags (name, then any attributes). */
+const XML_TOKEN = /<!--|<!\[CDATA\[|<\/([A-Za-z_][A-Za-z0-9_.:-]*)\s*>|<([A-Za-z_][A-Za-z0-9_.:-]*)(\s[^<>]*)?>/g;
+
+interface XmlElement {
+  /** Start of the opening tag; for a closing tag with nothing open, the end of the markup before it. */
+  index: number;
+  /** Where the value starts: the end of the opening tag. */
+  start: number;
+  name: string;
+  /** The opening tag's attributes, or null for a closing tag with nothing open. */
+  attributes: string | null;
+  /** Start of the nesting-matched closing tag; -1 runs the value to the end of the text. */
+  close: number;
+  /** The comment or CDATA section holding the opening tag (numbered from 1), or 0 outside one. */
+  scope: number;
+  /** Reopened by a closing tag with nothing of its name open: the value runs to the end of the text, placeholder or not. */
+  reopened: boolean;
+}
+
+/**
+ * Credential-named XML elements, in order, each with the closing tag that
+ * matches it by nesting: an opening tag of the same name nests one level
+ * deeper. A comment or CDATA section is a scope of its own, so a closing tag
+ * there never ends an element opened outside it, while elements wholly inside
+ * it are still found. Where the structure cannot be trusted the value runs to
+ * the end of the text: an element left open (also by an unterminated comment
+ * or CDATA section), or a closing tag with nothing of its name open, which
+ * reopens the first element of that name or, with none, takes the text since
+ * the markup before it. One linear pass.
+ */
+function credentialXmlElements(text: string): XmlElement[] {
+  const elements: XmlElement[] = [];
+  const open = new Map<string, XmlElement[]>();
+  const first = new Map<string, XmlElement>();
+  let scope = 0;
+  let scopes = 0;
+  let scopeEnd = -1;
+  let markupEnd = 0;
+  const leaveScope = () => {
+    // Elements the section left open stay unmatched (they run to the end of the text) and no longer nest.
+    for (const stack of open.values()) while (stack.length > 0 && stack[stack.length - 1].scope === scope) stack.pop();
+    scope = 0;
+  };
+  const pattern = new RegExp(XML_TOKEN.source, "g");
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    const [token, closing, opening, attributes = ""] = match;
+    if (scope !== 0 && match.index >= scopeEnd) {
+      leaveScope();
+      markupEnd = scopeEnd;
+    }
+    if (token === "<!--" || token === "<![CDATA[") {
+      if (scope !== 0) continue; // Sections do not nest; this is text inside one.
+      const end = text.indexOf(token === "<!--" ? "-->" : "]]>", match.index + token.length);
+      scopes += 1;
+      scope = scopes;
+      scopeEnd = end === -1 ? text.length + 1 : end + 3; // Unterminated: the section never ends.
+      continue;
+    }
+    const end = match.index + token.length;
+    const name = closing ?? opening;
+    if (isCredentialKey(name)) {
+      let stack = open.get(name);
+      if (!stack) open.set(name, (stack = []));
+      if (opening !== undefined) {
+        const element: XmlElement = { index: match.index, start: end, name, attributes, close: -1, scope, reopened: false };
+        elements.push(element);
+        if (!attributes.endsWith("/")) {
+          // `<password value="..."/>` has no element value.
+          stack.push(element);
+          if (!first.has(name)) first.set(name, element);
+        }
+      } else if (stack.length > 0 && stack[stack.length - 1].scope === scope) {
+        stack.pop()!.close = match.index;
+      } else if (scope === 0) {
+        // Nothing of this name is open: the structure cannot be trusted. (In a section, a closing tag of an outer element does not count.)
+        const earlier = first.get(name);
+        if (earlier) Object.assign(earlier, { close: -1, reopened: true });
+        else elements.push({ index: markupEnd, start: markupEnd, name, attributes: null, close: match.index, scope, reopened: false });
+      }
+    }
+    markupEnd = end;
+  }
+  return elements;
+}
+
 /**
  * XML elements named like a credential: every attribute value is a
  * credential, and the element value runs from the end of the opening tag to
- * the matching closing tag, CDATA included. Without a closing tag the value
- * fails closed to the end of the text, unless the tag is a bare placeholder
- * such as `<token>` followed by a space, punctuation or the end of the text.
+ * the closing tag that matches it by nesting, with any nested markup, CDATA
+ * and comments (see {@link credentialXmlElements}). Without a matching
+ * closing tag the value fails closed to the end of the text, unless the tag is
+ * a bare placeholder such as `<token>` followed by a space, punctuation or the
+ * end of the text.
  */
 function redactXmlElements(text: string): string {
   let output = "";
   let copied = 0;
-  // Closing tags by name, indexed in one pass on first use. Opening tags are read in order, so each name's cursor only moves forward.
-  let closings: Map<string, { at: number[]; length: number[]; next: number }> | null = null;
-  const closing = (name: string, from: number) => {
-    if (closings === null) {
-      closings = new Map();
-      for (const match of text.matchAll(XML_CLOSE_TAG)) {
-        const entry = closings.get(match[1]) ?? { at: [], length: [], next: 0 };
-        entry.at.push(match.index);
-        entry.length.push(match[0].length);
-        closings.set(match[1], entry);
+  for (const { index, start, name, attributes, close, reopened } of credentialXmlElements(text)) {
+    if (index < copied) continue; // Inside a value already redacted.
+    if (attributes !== null) {
+      const safeAttributes = redactAttributeValues(attributes);
+      if (safeAttributes !== attributes) {
+        output += `${text.slice(copied, index)}<${name}${safeAttributes}>`;
+        copied = start;
       }
+      if (attributes.endsWith("/")) continue;
+      if (close === -1 && !reopened && !attributes.includes("=") && /^(?:$|[\s"'`.,;:!?)\]}])/.test(text.slice(start, start + 1))) continue;
     }
-    const entry = closings.get(name);
-    if (!entry) return { at: -1, length: 0 };
-    while (entry.next < entry.at.length && entry.at[entry.next] < from) entry.next += 1;
-    return entry.next < entry.at.length ? { at: entry.at[entry.next], length: entry.length[entry.next] } : { at: -1, length: 0 };
-  };
-  const pattern = new RegExp(XML_OPEN_TAG.source, "g");
-  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
-    const [tag, name, attributes = ""] = match;
-    if (!isCredentialKey(name)) continue;
-    const start = match.index + tag.length;
-    const safeAttributes = redactAttributeValues(attributes);
-    if (safeAttributes !== attributes) {
-      output += `${text.slice(copied, match.index)}<${name}${safeAttributes}>`;
-      copied = start;
-    }
-    if (attributes.endsWith("/")) continue; // `<password value="..."/>` has no element value.
-    const close = closing(name, start);
-    if (close.at === -1 && !attributes.includes("=") && /^(?:$|[\s"'`.,;:!?)\]}])/.test(text.slice(start, start + 1))) continue;
-    const end = close.at === -1 ? text.length : close.at;
-    pattern.lastIndex = close.at === -1 ? text.length : close.at + close.length;
+    const end = close === -1 ? text.length : close;
     const value = text.slice(start, end).replace(CDATA_DELIMITERS, "");
     if (value.trim() === "" || isPlaceholderValue(value, false)) continue;
     output += `${text.slice(copied, start)}${REDACTED}`;
@@ -538,7 +647,7 @@ function redact(value: string, identifier: boolean): string {
         if (accept && !accept(groups)) return match;
         return replace ? replace(groups) : REDACTED;
       }),
-    identifier ? redactNamespaceSegments(redactXmlElements(redactKeyValues(text, true))) : redactXmlElements(redactKeyValues(text, false))
+    identifier ? redactNamespaceSegments(redactXmlElements(redactKeyValues(redactPairs(text), true))) : redactXmlElements(redactKeyValues(redactPairs(text), false))
   );
 }
 
