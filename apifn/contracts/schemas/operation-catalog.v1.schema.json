@@ -65,7 +65,7 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "type": {"type": "string", "minLength": 1},
+          "type": {"type": "string", "enum": ["apiKey", "http", "mutualTLS", "oauth2", "openIdConnect"]},
           "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
           "scheme": {"type": "string"},
           "bearerFormat": {"type": "string"},
@@ -74,20 +74,34 @@
           "openIdConnectUrl": {"type": "string"},
           "flows": {
             "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "authorizationUrl": {"type": "string"},
-                "tokenUrl": {"type": "string"},
-                "refreshUrl": {"type": "string"},
-                "scopes": {"type": "array", "items": {"type": "string"}}
-              },
-              "required": ["scopes"]
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "implicit": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["authorizationUrl"], "properties": {"authorizationUrl": {"type": "string", "minLength": 1}}}]},
+              "password": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["tokenUrl"], "properties": {"tokenUrl": {"type": "string", "minLength": 1}}}]},
+              "clientCredentials": {"allOf": [{"$ref": "#/$defs/oauthFlow"}, {"type": "object", "required": ["tokenUrl"], "properties": {"tokenUrl": {"type": "string", "minLength": 1}}}]},
+              "authorizationCode": {
+                "allOf": [
+                  {"$ref": "#/$defs/oauthFlow"},
+                  {"type": "object", "required": ["authorizationUrl", "tokenUrl"], "properties": {"authorizationUrl": {"type": "string", "minLength": 1}, "tokenUrl": {"type": "string", "minLength": 1}}}
+                ]
+              }
             }
           }
         },
-        "required": ["type", "description"]
+        "required": ["type", "description"],
+        "allOf": [
+          {
+            "if": {"type": "object", "properties": {"type": {"const": "apiKey"}}},
+            "then": {"type": "object", "required": ["in", "name"], "properties": {"in": {"type": "string", "enum": ["query", "header", "cookie"]}, "name": {"type": "string", "minLength": 1}}}
+          },
+          {"if": {"type": "object", "properties": {"type": {"const": "http"}}}, "then": {"type": "object", "required": ["scheme"], "properties": {"scheme": {"type": "string", "minLength": 1}}}},
+          {
+            "if": {"type": "object", "properties": {"type": {"const": "openIdConnect"}}},
+            "then": {"type": "object", "required": ["openIdConnectUrl"], "properties": {"openIdConnectUrl": {"type": "string", "minLength": 1}}}
+          },
+          {"if": {"type": "object", "properties": {"type": {"const": "oauth2"}}}, "then": {"type": "object", "required": ["flows"]}}
+        ]
       }
     },
     "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}},
@@ -109,6 +123,17 @@
     "schemas"
   ],
   "$defs": {
+    "oauthFlow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "authorizationUrl": {"type": "string"},
+        "tokenUrl": {"type": "string"},
+        "refreshUrl": {"type": "string"},
+        "scopes": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["scopes"]
+    },
     "operation": {
       "type": "object",
       "additionalProperties": false,

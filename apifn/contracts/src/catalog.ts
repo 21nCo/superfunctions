@@ -87,6 +87,14 @@ const SCHEMA_KEYWORDS = new Set([
 const SCHEMA_LIST_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
 const COMPONENT_SCHEMA_PREFIX = "#/components/schemas/";
 const SECURITY_SCHEME_TYPES = ["apiKey", "http", "mutualTLS", "oauth2", "openIdConnect"];
+const API_KEY_LOCATIONS = ["query", "header", "cookie"];
+/** The OAuth flows OpenAPI 3.0/3.1 define, each with the URLs it requires. */
+const OAUTH_FLOW_URLS: Record<string, ReadonlyArray<"authorizationUrl" | "tokenUrl">> = {
+  implicit: ["authorizationUrl"],
+  password: ["tokenUrl"],
+  clientCredentials: ["tokenUrl"],
+  authorizationCode: ["authorizationUrl", "tokenUrl"],
+};
 const NAME_MAX_LENGTH = 128;
 /**
  * Nesting limit for the OpenAPI document and manifest. A catalog nests a
@@ -991,11 +999,28 @@ class CatalogBuilder {
         const member = this.member(value, key, pointer, STRING);
         if (member !== undefined) scheme[key] = this.identifier(member, `${pointer}/${key}`, `Security scheme ${key}`);
       }
+      // Each type's required members, as OpenAPI defines them. A present value of the wrong type is already reported.
+      const requireMember = (key: string, valid: boolean, need: string) => {
+        const member = own(value, key);
+        if (!valid && (member === undefined || typeof member === "string" || (key === "flows" && isRecord(member)))) {
+          this.report("INVALID_SPEC", `${pointer}/${key}`, `Security scheme "${name}" of type ${value.type} needs ${need}.`);
+        }
+      };
+      if (value.type === "apiKey") {
+        requireMember("in", API_KEY_LOCATIONS.includes(scheme.in ?? ""), `"in" of ${API_KEY_LOCATIONS.join(", ")}`);
+        requireMember("name", Boolean(scheme.name), "a non-empty name");
+      }
+      if (value.type === "http") requireMember("scheme", Boolean(scheme.scheme), "a non-empty scheme");
       const bearerFormat = this.text(own(value, "bearerFormat"), `${pointer}/bearerFormat`);
       if (bearerFormat !== null) scheme.bearerFormat = bearerFormat;
       const openIdConnectUrl = this.url(own(value, "openIdConnectUrl"), `${pointer}/openIdConnectUrl`);
       if (openIdConnectUrl !== null) scheme.openIdConnectUrl = openIdConnectUrl;
+      if (value.type === "openIdConnect") requireMember("openIdConnectUrl", Boolean(openIdConnectUrl), "a non-empty openIdConnectUrl");
       const declaredFlows = this.member(value, "flows", pointer, OBJECT);
+      if (value.type === "oauth2") {
+        const flowCount = Object.keys(declaredFlows ?? {}).filter((key) => !key.startsWith("x-")).length;
+        requireMember("flows", flowCount > 0, `flows with at least one of ${Object.keys(OAUTH_FLOW_URLS).join(", ")}`);
+      }
       if (declaredFlows !== undefined) {
         const flows: NonNullable<CatalogSecurityScheme["flows"]> = {};
         // Specification extensions (`x-*`) are not flows.
@@ -1007,13 +1032,25 @@ class CatalogBuilder {
             this.report("INVALID_SPEC", flowPointer, `OAuth flow "${flowName}" of security scheme "${name}" must be an object.`);
             continue;
           }
-          const scopes = Object.keys(this.member(flow, "scopes", flowPointer, OBJECT) ?? {});
+          const requiredUrls = own(OAUTH_FLOW_URLS, flowName) as (typeof OAUTH_FLOW_URLS)[string] | undefined;
+          if (requiredUrls === undefined) {
+            this.report("INVALID_SPEC", flowPointer, `OAuth flow "${flowName}" of security scheme "${name}" is not one of ${Object.keys(OAUTH_FLOW_URLS).join(", ")}.`);
+          }
+          const declaredScopes = this.member(flow, "scopes", flowPointer, OBJECT);
+          if (own(flow, "scopes") === undefined) {
+            this.report("INVALID_SPEC", `${flowPointer}/scopes`, `OAuth flow "${flowName}" of security scheme "${name}" needs scopes (an object, possibly empty).`);
+          }
+          const scopes = Object.keys(declaredScopes ?? {});
           const output: NonNullable<CatalogSecurityScheme["flows"]>[string] = {
             scopes: sortStrings(scopes.map((scope) => this.identifier(scope, `${flowPointer}/scopes/${pointerSegment(scope)}`, "Scope name"))),
           };
           for (const key of ["authorizationUrl", "tokenUrl", "refreshUrl"] as const) {
-            const url = this.url(own(flow, key), `${flowPointer}/${key}`);
+            const declaredUrl = own(flow, key);
+            const url = this.url(declaredUrl, `${flowPointer}/${key}`);
             if (url !== null) output[key] = url;
+            if (!url && requiredUrls?.includes(key as "authorizationUrl" | "tokenUrl") && (declaredUrl === undefined || typeof declaredUrl === "string")) {
+              this.report("INVALID_SPEC", `${flowPointer}/${key}`, `OAuth flow "${flowName}" of security scheme "${name}" needs a non-empty ${key}.`);
+            }
           }
           setOwn(flows, flowName, output);
         }

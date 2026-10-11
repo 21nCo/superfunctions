@@ -152,6 +152,67 @@ describe("schema and runtime agreement", () => {
     if (!valid) expect(diagnostics.map((diagnostic) => diagnostic.pointer)).toContain("/catalog/operations/0/executionPolicyRef");
   });
 
+  // Each security scheme type's required members, as OpenAPI 3.0/3.1 define them: [label, declared scheme, INVALID_SPEC pointers].
+  // An empty pointer list is a valid control. The runtime rejects the spec and the catalog schema rejects the scheme as emitted.
+  const SCHEME = "/components/securitySchemes/auth";
+  const flows = (value: Record<string, unknown>) => ({ type: "oauth2", flows: value });
+  it.each<[string, Record<string, unknown>, string[]]>([
+    ["apiKey without in or name", { type: "apiKey" }, [`${SCHEME}/in`, `${SCHEME}/name`]],
+    ["apiKey in body", { type: "apiKey", in: "body", name: "key" }, [`${SCHEME}/in`]],
+    ["apiKey with an empty name", { type: "apiKey", in: "header", name: "" }, [`${SCHEME}/name`]],
+    ["http without a scheme", { type: "http" }, [`${SCHEME}/scheme`]],
+    ["openIdConnect without a URL", { type: "openIdConnect" }, [`${SCHEME}/openIdConnectUrl`]],
+    ["oauth2 without flows", { type: "oauth2" }, [`${SCHEME}/flows`]],
+    ["oauth2 with no flow", flows({}), [`${SCHEME}/flows`]],
+    ["oauth2 with only an extension", flows({ "x-internal": "owner-team" }), [`${SCHEME}/flows`]],
+    ["an unknown flow", flows({ deviceCode: { tokenUrl: "https://auth.example.test/token", scopes: {} } }), [`${SCHEME}/flows/deviceCode`]],
+    ["clientCredentials without tokenUrl or scopes", flows({ clientCredentials: {} }), [`${SCHEME}/flows/clientCredentials/scopes`, `${SCHEME}/flows/clientCredentials/tokenUrl`]],
+    ["clientCredentials without scopes", flows({ clientCredentials: { tokenUrl: "https://auth.example.test/token" } }), [`${SCHEME}/flows/clientCredentials/scopes`]],
+    ["password without tokenUrl", flows({ password: { scopes: {} } }), [`${SCHEME}/flows/password/tokenUrl`]],
+    ["implicit without authorizationUrl", flows({ implicit: { scopes: {} } }), [`${SCHEME}/flows/implicit/authorizationUrl`]],
+    ["implicit with an empty authorizationUrl", flows({ implicit: { authorizationUrl: "", scopes: {} } }), [`${SCHEME}/flows/implicit/authorizationUrl`]],
+    ["authorizationCode without authorizationUrl", flows({ authorizationCode: { tokenUrl: "https://auth.example.test/token", scopes: {} } }), [`${SCHEME}/flows/authorizationCode/authorizationUrl`]],
+    ["authorizationCode without tokenUrl", flows({ authorizationCode: { authorizationUrl: "https://auth.example.test/authorize", scopes: {} } }), [`${SCHEME}/flows/authorizationCode/tokenUrl`]],
+    ["valid apiKey", { type: "apiKey", in: "cookie", name: "sid" }, []],
+    ["valid http", { type: "http", scheme: "bearer" }, []],
+    ["valid mutualTLS", { type: "mutualTLS" }, []],
+    ["valid openIdConnect", { type: "openIdConnect", openIdConnectUrl: "https://auth.example.test/.well-known/openid-configuration" }, []],
+    ["valid implicit", flows({ implicit: { authorizationUrl: "https://auth.example.test/authorize", scopes: {} } }), []],
+    ["valid password", flows({ password: { tokenUrl: "https://auth.example.test/token", scopes: { read: "Read" } } }), []],
+    ["valid clientCredentials with empty scopes", flows({ clientCredentials: { tokenUrl: "https://auth.example.test/token", scopes: {} } }), []],
+    [
+      "valid authorizationCode with an extension member",
+      flows({ authorizationCode: { authorizationUrl: "https://auth.example.test/authorize", tokenUrl: "https://auth.example.test/token", scopes: {} }, "x-internal": "owner-team" }),
+      [],
+    ],
+  ])("security scheme %s: the runtime and the catalog schema agree", (_label, declared, pointers) => {
+    const spec = clone(fixture("catalog/openapi.json"));
+    spec.components.securitySchemes.auth = declared;
+    spec.paths["/workspaces/{workspaceId}/projects/{projectId}"].get.security = [{ auth: [] }];
+    const built = buildOperationCatalog(spec, clone(fixture("catalog/manifest.json")));
+    const invalid = built.diagnostics.filter((diagnostic) => diagnostic.code === "INVALID_SPEC").map((diagnostic) => diagnostic.pointer);
+    expect(invalid.sort()).toEqual([...pointers].sort());
+    expect(built.catalog === null).toBe(pointers.length > 0);
+    expect(built.digest === null).toBe(pointers.length > 0);
+
+    // The scheme as the catalog would emit it: scopes become a sorted list and extension members are dropped.
+    const emitted: Record<string, unknown> = { ...declared, description: null };
+    if (declared.flows) {
+      emitted.flows = Object.fromEntries(
+        Object.entries(declared.flows as Record<string, Record<string, unknown>>)
+          .filter(([name]) => !name.startsWith("x-"))
+          .map(([name, flow]) => {
+            const { scopes, ...rest } = flow;
+            return [name, scopes === undefined ? rest : { ...rest, scopes: Object.keys(scopes as object).sort() }];
+          })
+      );
+    }
+    const catalog = clone(fixture("catalog/catalog.json"));
+    catalog.securitySchemes.auth = emitted;
+    expect(check("operation-catalog", catalog), JSON.stringify(validators["operation-catalog"].errors)).toBe(pointers.length === 0);
+    if (built.catalog) expect(built.catalog.securitySchemes.auth).toEqual(emitted);
+  });
+
   // [errorCode, valid at runtime, valid by the schema]. errorCode is an identifier, so ":" is a namespace
   // separator; credential values are checked only at runtime, as the schema description documents.
   it.each<[string, boolean, boolean]>([

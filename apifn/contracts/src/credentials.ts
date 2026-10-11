@@ -242,39 +242,53 @@ function readValue(text: string, start: number, keyStart: number, header: boolea
 
 /** Fields that name a header, parameter or setting: `{"name": "X-Api-Key", ...}`, `<add key="password" .../>`. */
 const NAME_FIELD = new RegExp(
-  `(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)(?:(?:header[_-]?)?name|key|header|field|param(?:eter)?)\\1[ \\t]*(?:=>|:=|[:=])[ \\t]*(\\\\?["'\`]|)(${KEY_WORD})\\2(?![A-Za-z0-9_.%-])`,
+  `(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)(?:(?:(?:header|field|param(?:eter)?)[_-]?)?name|key|header|field|param(?:eter)?)\\1[ \\t]*(?:=>|:=|[:=])[ \\t]*(\\\\?["'\`]|)(${KEY_WORD})\\2(?![A-Za-z0-9_.%-])`,
   "gi"
 );
-/** Fields that hold the value of the header, parameter or setting their container names. */
-const VALUE_FIELDS = new Set(["value", "values", "content", "val", "data"]);
+/** Fields that hold the value of the header, parameter or setting their container names; mirrors {@link NAME_FIELD}. */
+const VALUE_FIELD = /^(?:(?:(?:header|field|param(?:eter)?)[_-]?)?(?:values?|val)|content|data|default|examples?)$/i;
 
 const CLOSERS: Record<string, string> = { "{": "}", "[": "]", "<": ">" };
+const QUOTES = new Set(['"', "'", "`"]);
 
 /**
  * For each index, the start of the innermost `{...}`, `[...]` or XML tag
- * holding it, or -1. Quotes are not tracked, so a bracket inside a string can
- * merge containers; that only makes more values credentials. A stray closer
- * is ignored, and a closer pops every container opened after its opener.
+ * holding it, or -1. Strings are skipped: a delimiter inside `"..."`,
+ * `'...'`, `` `...` `` or an escaped-quoted `\"...\"` (decoded one level, as
+ * {@link escapedQuotedEnd} reads it) neither opens nor closes a container, and
+ * neither does an escaped character. A stray closer is ignored. When the
+ * structure cannot be trusted (an unterminated or ambiguous quote, or a closer
+ * that does not match the innermost open container) the whole text is one
+ * container, which fails closed. One linear pass.
  */
 function containerStarts(text: string): Int32Array {
   const starts = new Int32Array(text.length + 1);
   const stack: number[] = [];
   const open: Record<string, number> = { "}": 0, "]": 0, ">": 0 };
-  for (let index = 0; index < text.length; index += 1) {
-    starts[index] = stack.length === 0 ? -1 : stack[stack.length - 1];
+  const current = () => (stack.length === 0 ? -1 : stack[stack.length - 1]);
+  for (let index = 0; index < text.length; ) {
     const char = text[index];
+    let skip = 0; // The end of a string or escaped character that starts here.
+    if (char === "\\") skip = QUOTES.has(text[index + 1] ?? "") ? escapedQuotedEnd(text, index) : Math.min(index + 2, text.length);
+    else if (QUOTES.has(char)) skip = quotedEnd(text, index);
+    if (skip < 0) return starts.fill(-1);
+    if (skip > 0) {
+      starts.fill(current(), index, skip);
+      index = skip;
+      continue;
+    }
+    starts[index] = current();
     if (char === "{" || char === "[" || (char === "<" && /[A-Za-z_]/.test(text[index + 1] ?? ""))) {
       stack.push(index);
       open[CLOSERS[char]] += 1;
     } else if (open[char] > 0) {
-      // Each opener is popped at most once, so this stays linear.
-      for (let popped = ""; popped !== char; ) {
-        popped = CLOSERS[text[stack.pop()!]];
-        open[popped] -= 1;
-      }
+      if (CLOSERS[text[current()]] !== char) return starts.fill(-1);
+      stack.pop();
+      open[char] -= 1;
     }
+    index += 1;
   }
-  starts[text.length] = stack.length === 0 ? -1 : stack[stack.length - 1];
+  starts[text.length] = current();
   return starts;
 }
 
@@ -311,7 +325,7 @@ function redactKeyValues(text: string, identifier: boolean): string {
     const key = match[2];
     const lastWord = key.split(/[ \t]+/).pop()!;
     // `{"name": "X-Api-Key", "value": "..."}`: the value field of a container whose name field holds a credential key.
-    const container = named && VALUE_FIELDS.has(lastWord.toLowerCase()) ? named.containers[match.index] : undefined;
+    const container = named && VALUE_FIELD.test(lastWord) ? named.containers[match.index] : undefined;
     const indirect = container !== undefined && named!.headers.has(container);
     if (!indirect && !isCredentialKey(lastWord) && !isCredentialKey(key)) continue;
     const start = match.index + match[0].length;

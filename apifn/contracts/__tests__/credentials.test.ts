@@ -149,12 +149,78 @@ const NAME_VALUE_MATRIX = NAME_FIELDS.flatMap((field) =>
   )
 );
 
+// Container boundaries skip strings: a delimiter inside a sibling string never splits the name field from the value field.
+// delimiter x position of the sibling x member order x syntax (XML attributes only for < and >).
+const DELIMITERS = ["{", "}", "[", "]", "<", ">"];
+const SIBLING_POSITIONS = ["before name", "between", "after value"] as const;
+const QUOTED_DELIMITER_SYNTAXES: Array<[syntax: string, delimiters: string[], render: (members: Array<[string, string]>) => string]> = [
+  ["JSON", DELIMITERS, (members) => `{${members.map(([key, value]) => `"${key}":"${value}"`).join(",")}}`],
+  ["escaped JSON", DELIMITERS, (members) => `{${members.map(([key, value]) => `\\"${key}\\":\\"${value}\\"`).join(",")}}`],
+  ["JS literal", DELIMITERS, (members) => `[{${members.map(([key, value]) => `${key}: '${value}'`).join(", ")}}]`],
+  ["XML attributes", ["<", ">"], (members) => `<add ${members.map(([key, value]) => `${key}="${value}"`).join(" ")}/>`],
+];
+const QUOTED_DELIMITER_MATRIX = QUOTED_DELIMITER_SYNTAXES.flatMap(([syntax, delimiters, render]) =>
+  delimiters.flatMap((delimiter) =>
+    SIBLING_POSITIONS.flatMap((position) =>
+      [true, false].map((nameFirst) => {
+        const pair: Array<[string, string]> = nameFirst ? [["name", "password"], ["value", NAME_SEED]] : [["value", NAME_SEED], ["name", "password"]];
+        const note: [string, string] = ["note", delimiter];
+        const members = position === "before name" ? [note, ...pair] : position === "between" ? [pair[0], note, pair[1]] : [...pair, note];
+        return { name: `${syntax} "${delimiter}" ${position} ${nameFirst ? "name first" : "value first"}`, text: `Request failed: ${render(members)}` };
+      })
+    )
+  )
+);
+
 describe("name/value indirection", () => {
   const spec = fixture("catalog/openapi.json");
   const manifest = fixture("catalog/manifest.json");
   const event = fixture("client-failure/valid/network-minimal.json");
 
   it.each(NAME_VALUE_MATRIX)("$name", ({ text }) => {
+    expect(containsCredentialValue(text)).toBe(true);
+    expect(redactCredentialValues(text)).not.toContain(NAME_SEED);
+
+    const nextSpec = clone(spec);
+    nextSpec.paths[PROJECT_ROUTE].get.description = text;
+    const built = buildOperationCatalog(nextSpec, clone(manifest));
+    expect(built.catalog).not.toBeNull();
+    expect(JSON.stringify(built)).not.toContain(NAME_SEED);
+
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain(NAME_SEED);
+  });
+
+  it.each([
+    ["headerName/headerValue", `{"headerName":"x-api-key","headerValue":"${NAME_SEED}"}`],
+    ["header_name/header_value", `{"header_name":"x-api-key","header_value":"${NAME_SEED}"}`],
+    ["paramName/paramValue", `{"paramName":"api_key","paramValue":"${NAME_SEED}"}`],
+    ["parameter/parameterValue", `{"parameter":"api_key","parameterValue":"${NAME_SEED}"}`],
+    ["fieldName/fieldValue", `{"fieldName":"password","fieldValue":"${NAME_SEED}"}`],
+    ["name/default", `{"name":"api_key","in":"query","default":"${NAME_SEED}"}`],
+    ["name/example", `{"name":"api_key","in":"query","example":"${NAME_SEED}"}`],
+  ])("value-field vocabulary mirrors the name fields: %s", (_name, text) => {
+    expect(containsCredentialValue(text)).toBe(true);
+    expect(redactCredentialValues(text)).not.toContain(NAME_SEED);
+  });
+
+  // When the structure cannot be trusted, the whole text is one container.
+  it.each([
+    ["closer that skips a container", `[{"name":"password"], {"value":"${NAME_SEED}"}`],
+    ["unterminated quote", `{"name":"password"} it's {"value":"${NAME_SEED}"}`],
+    ["ambiguous escaped quote", `{\\"name\\":\\"password\\"} \\"x" {"value":"${NAME_SEED}"}`],
+  ])("fails closed on a %s", (_name, text) => {
+    expect(containsCredentialValue(text)).toBe(true);
+    expect(redactCredentialValues(text)).not.toContain(NAME_SEED);
+  });
+
+  it("keeps the value of an ordinary header container when sibling strings hold brackets", () => {
+    const text = `[{"name":"X-Request-Id","note":"}","value":"req-42"},{"name":"password","note":"{","value":"${NAME_SEED}"}]`;
+    expect(redactCredentialValues(text)).toBe('[{"name":"X-Request-Id","note":"}","value":"req-42"},{"name":"password","note":"{","value":"[REDACTED]"}]');
+  });
+
+  it.each(QUOTED_DELIMITER_MATRIX)("quoted delimiter: $name", ({ text }) => {
     expect(containsCredentialValue(text)).toBe(true);
     expect(redactCredentialValues(text)).not.toContain(NAME_SEED);
 
@@ -379,6 +445,8 @@ const LONG_TEXTS: Array<[string, string]> = [
   ["credential XML attributes", run('<password a="b" ')],
   ["named containers", run('{"name":"token","value":[')],
   ["named containers closed", run('[{"name":"token","value":"<x>"},')],
+  ["quoted brackets", run('{"name":"token","note":"}]>{[<a","value":"<x>"},')],
+  ["unterminated quotes", `{"name":"token"} ${run("'{[<a ")}`],
   ["stray closers", `{"name":"token"}${run("}]>")}`],
   ["deep nesting", `${run("[{")}"name":"token","value":"x"`],
   ["escaped quote values", run('password=\\"a\\\\')],
