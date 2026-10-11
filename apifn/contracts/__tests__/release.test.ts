@@ -82,22 +82,53 @@ describe("createReleaseDescriptor", () => {
     expect(createReleaseDescriptor({ ...input(), catalog: {} as never }).diagnostics[0].pointer).toBe("/catalog/catalogVersion");
   });
 
-  it.each<[string, () => unknown, string]>([
-    ["a null input", () => null, ""],
-    ["a catalog without operations", () => ({ ...input(), catalog: { catalogVersion: CATALOG_VERSION } }), "/catalog"],
+  it.each<[string, () => unknown, string[]]>([
+    ["a null input", () => null, [""]],
+    ["a catalog without api, source or operations", () => ({ ...input(), catalog: { catalogVersion: CATALOG_VERSION } }), [
+      "/catalog/api/id", "/catalog/api/version", "/catalog/source/specDigest", "/catalog/source/manifestDigest", "/catalog/operations",
+    ]],
     ["an operation without sdk flags", () => {
       const next = input();
       delete (next.catalog.operations[0] as any).sdk;
       return next;
-    }, "/catalog"],
-    ["a catalog holding a Map", () => ({ ...input(), catalog: { ...clone(catalog), schemas: new Map() } }), "/catalog"],
-    ["a non-string release ID", () => ({ ...input(), releaseId: 7 }), "/releaseId"],
-  ])("INVALID_RELEASE instead of throwing for %s", (_name, make, pointer) => {
+    }, ["/catalog/operations/0"]],
+    ["an operation ID outside the contract", () => {
+      const next = input();
+      next.catalog.operations[0].id = "Not An ID";
+      return next;
+    }, ["/catalog/operations/0/id"]],
+    ["a catalog holding a Map", () => ({ ...input(), catalog: { ...clone(catalog), schemas: new Map() } }), ["/catalog/schemas"]],
+    ["a generator given as a class instance", () => ({ ...input(), generator: new (class Generator { name = "x"; version = "1.0.0"; })() }), ["/generator"]],
+    ["a throwing getter", () => Object.defineProperty(input(), "releaseId", { enumerable: true, get: () => { throw new Error("boom"); } }), [""]],
+    ["a non-string release ID", () => ({ ...input(), releaseId: 7 }), ["/releaseId"]],
+  ])("INVALID_RELEASE instead of throwing for %s", (_name, make, pointers) => {
     let result: ReturnType<typeof createReleaseDescriptor> | undefined;
     expect(() => {
       result = createReleaseDescriptor(make() as CreateReleaseInput);
     }).not.toThrow();
     expect(result!.descriptor).toBeNull();
-    expect(result!.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_RELEASE", pointer })]);
+    expect(result!.diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`)).toEqual(pointers.map((pointer) => `INVALID_RELEASE ${pointer}`));
+  });
+
+  it("reads its input once, so a getter cannot change a value after it was checked", () => {
+    let reads = 0;
+    const generator = { version: "0.1.0" };
+    Object.defineProperty(generator, "name", { enumerable: true, get: () => (reads++ === 0 ? "@apifn/contracts-fixture" : "sk_live_abcdefgh12345678") });
+    const { descriptor } = createReleaseDescriptor({ ...input(), generator } as CreateReleaseInput);
+    expect(reads).toBe(1);
+    expect(descriptor!.generator.name).toBe("@apifn/contracts-fixture");
+  });
+
+  it.each<[string, (next: CreateReleaseInput) => void, string]>([
+    ["generator.name", (next) => { next.generator.name = "sk_live_abcdefgh12345678"; }, "/generator/name"],
+    ["an artifact package name", (next) => { next.artifacts[0].package.name = "sk_live_abcdefgh12345678"; }, "/artifacts/0/package/name"],
+    ["releaseId", (next) => { next.releaseId = "sk_live_abcdefgh12345678"; }, "/releaseId"],
+  ])("INVALID_RELEASE: a credential in %s", (_name, mutate, pointer) => {
+    const next = input();
+    mutate(next);
+    const result = createReleaseDescriptor(next);
+    expect(result.descriptor).toBeNull();
+    expect(result.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_RELEASE", pointer })]);
+    expect(JSON.stringify(result)).not.toContain("abcdefgh12345678");
   });
 });

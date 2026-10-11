@@ -114,3 +114,48 @@ export function sha256Hex(input: string): string {
 export function canonicalDigest(value: unknown): string {
   return `sha256:${sha256Hex(canonicalJson(value))}`;
 }
+
+export interface PlainSnapshot {
+  value: unknown;
+  /** JSON pointers of values that are not plain data (Maps, Dates, class instances, cycles). */
+  nonPlain: string[];
+}
+
+const MAX_SNAPSHOT_DEPTH = 32;
+
+/**
+ * Copies plain JSON-like data, reading each own enumerable property exactly
+ * once, so a validator checks and returns the same values even when the input
+ * has getters or proxies. Arrays and plain objects are copied; other objects
+ * are reported in `nonPlain` and left out; primitives are kept as they are.
+ * Throws only when reading the input throws.
+ */
+export function snapshotPlainData(input: unknown): PlainSnapshot {
+  const nonPlain: string[] = [];
+  const copy = (value: unknown, path: string, depth: number): unknown => {
+    if (typeof value !== "object" || value === null) return value;
+    if (depth > MAX_SNAPSHOT_DEPTH) {
+      nonPlain.push(path);
+      return undefined;
+    }
+    if (Array.isArray(value)) {
+      const length = value.length;
+      const items: unknown[] = [];
+      for (let index = 0; index < length; index += 1) items.push(copy(value[index], `${path}/${index}`, depth + 1));
+      return items;
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) {
+      nonPlain.push(path);
+      return undefined;
+    }
+    const output: Record<string, unknown> = {};
+    for (const key of Object.keys(value)) {
+      const child = copy((value as Record<string, unknown>)[key], `${path}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`, depth + 1);
+      // defineProperty keeps an own "__proto__" key as data.
+      Object.defineProperty(output, key, { value: child, enumerable: true, writable: true, configurable: true });
+    }
+    return output;
+  };
+  return { value: copy(input, "", 0), nonPlain };
+}

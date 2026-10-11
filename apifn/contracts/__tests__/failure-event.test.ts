@@ -95,6 +95,30 @@ describe("client-failure event envelope", () => {
     expect(result).toEqual({ ok: false, issues: [expect.objectContaining({ path: issuePath, code: "TYPE" })] });
   });
 
+  it("validates and returns one snapshot, so a getter cannot swap in a credential after the check", () => {
+    const event = clone(fixture("client-failure/valid/network-minimal.json"));
+    let reads = 0;
+    const failure = {};
+    Object.defineProperty(failure, "kind", { enumerable: true, value: "http" });
+    Object.defineProperty(failure, "message", {
+      enumerable: true,
+      get: () => (reads++ === 0 ? "safe message" : "Authorization: Bearer stolen123"),
+    });
+    const result = validateClientFailureEvent({ ...event, failure });
+    expect(reads).toBe(1);
+    expect(result).toEqual({ ok: true, event: { ...event, failure: { kind: "http", message: "safe message" } } });
+  });
+
+  it("rejects attribute keys and unknown field names that hold a credential, without echoing it", () => {
+    const event = clone(fixture("client-failure/valid/network-minimal.json"));
+    const result = validateClientFailureEvent({ ...event, attributes: { sk_live_abcdefgh12345678: "x" }, failure: { kind: "unknown", "token=SEEDkey01": 1 } });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.map((issue) => issue.code)).toEqual(["CREDENTIAL_KEY", "CREDENTIAL_KEY"]);
+      expect(JSON.stringify(result.issues)).not.toMatch(/abcdefgh12345678|SEEDkey01/);
+    }
+  });
+
   it.each(["2026-99-99T99:99:99Z", "2026-02-30T12:00:00Z", "2025-02-29T00:00:00Z", "2026-04-31T08:00:00Z", "2026-10-11T24:00:00Z"])(
     "rejects the impossible timestamp %s",
     (occurredAt) => {

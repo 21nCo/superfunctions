@@ -2,8 +2,8 @@
 // this module must not import @apifn/core so SDKs can validate events in
 // browsers and edge runtimes before reporting them.
 
-import { canonicalJson } from "./canonical.js";
-import { containsCredentialValue, isCredentialKey } from "./credentials.js";
+import { canonicalJson, snapshotPlainData } from "./canonical.js";
+import { containsCredentialIdentifier, containsCredentialValue, isCredentialKey, redactCredentialValues } from "./credentials.js";
 import { API_ID_PATTERN, NAME_PATTERN, OPERATION_ID_PATTERN, TARGET_PATTERN, VERSION_PATTERN } from "./manifest.js";
 import { RELEASE_ID_PATTERN } from "./release.js";
 
@@ -213,7 +213,7 @@ function checkObject(value: Record<string, unknown>, fields: Record<string, Fiel
     const field = own(fields, key);
     if (field) {
       if (child !== undefined) checkField(child, field, childPath, issues);
-    } else if (isCredentialKey(key)) {
+    } else if (isCredentialKey(key) || containsCredentialIdentifier(key)) {
       issues.push({ path: childPath, code: "CREDENTIAL_KEY", message: `${childPath} is a credential-bearing field and is never accepted.` });
     } else {
       issues.push({ path: childPath, code: "UNKNOWN_FIELD", message: `${childPath} is not part of ${CLIENT_FAILURE_EVENT_VERSION}.` });
@@ -237,7 +237,7 @@ function checkAttributes(value: unknown, issues: FailureEventIssue[]): void {
   }
   for (const [key, child] of entries) {
     const path = `/attributes/${key}`;
-    if (isCredentialKey(key)) {
+    if (isCredentialKey(key) || containsCredentialIdentifier(key)) {
       issues.push({ path, code: "CREDENTIAL_KEY", message: `${path} is a credential-bearing key and is never accepted.` });
     } else if (!ATTRIBUTE_KEY.test(key)) {
       issues.push({ path, code: "PATTERN", message: `Attribute keys must match ${ATTRIBUTE_KEY.source}.` });
@@ -252,28 +252,44 @@ function checkAttributes(value: unknown, issues: FailureEventIssue[]): void {
 /**
  * Validates a client-failure event. Unknown fields, credential-bearing keys,
  * credential-like values and oversize fields are rejected rather than
- * trimmed, so a reporter can never persist a secret by accident.
+ * trimmed, so a reporter can never persist a secret by accident. The input is
+ * read once into a plain-data snapshot; that snapshot is what gets validated
+ * and returned, so getters cannot change a value after it was checked.
  */
 export function validateClientFailureEvent(input: unknown): ValidateFailureEventResult {
+  let result: ValidateFailureEventResult;
   try {
-    return validate(input);
+    result = validate(input);
   } catch {
-    // Every value is type-checked before use, so only exotic input (a throwing getter or proxy) gets here.
+    // Only reading exotic input (a throwing getter or proxy trap) gets here.
     return { ok: false, issues: [{ path: "", code: "TYPE", message: "A client-failure event must be plain JSON data." }] };
   }
+  if (result.ok) return result;
+  // Issue paths and messages quote keys from the input, which may themselves be credentials.
+  return {
+    ok: false,
+    issues: result.issues.map((issue) => ({ ...issue, path: redactCredentialValues(issue.path), message: redactCredentialValues(issue.message) })),
+  };
 }
 
 function validate(input: unknown): ValidateFailureEventResult {
-  const issues: FailureEventIssue[] = [];
-  if (!isRecord(input)) {
+  const { value: snapshot, nonPlain } = snapshotPlainData(input);
+  if (nonPlain.length > 0) {
+    return {
+      ok: false,
+      issues: nonPlain.map((path) => ({ path, code: "TYPE" as const, message: `${path || "The event"} must be plain JSON data, not a Map, Date, class instance or cycle.` })),
+    };
+  }
+  if (!isRecord(snapshot)) {
     return { ok: false, issues: [{ path: "", code: "TYPE", message: "A client-failure event must be a plain object." }] };
   }
-  const rest = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "attributes"));
+  const issues: FailureEventIssue[] = [];
+  const rest = Object.fromEntries(Object.entries(snapshot).filter(([key]) => key !== "attributes"));
   checkObject(rest, EVENT_FIELDS, "", issues);
-  const attributes = own(input, "attributes");
+  const attributes = own(snapshot, "attributes");
   if (attributes !== undefined) checkAttributes(attributes, issues);
   if (issues.length === 0) {
-    const serialized = canonicalJson(input);
+    const serialized = canonicalJson(snapshot);
     if (byteLength(serialized) > CLIENT_FAILURE_LIMITS.maxEventBytes) {
       issues.push({ path: "", code: "TOO_LARGE", message: `Event exceeds ${CLIENT_FAILURE_LIMITS.maxEventBytes} UTF-8 bytes when serialized.` });
     } else {

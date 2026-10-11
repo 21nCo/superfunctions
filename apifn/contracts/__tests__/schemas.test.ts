@@ -8,11 +8,16 @@ import {
   NAME_PATTERN,
   OCCURRED_AT_PATTERN,
   OPERATION_ID_PATTERN,
+  PACKAGE_NAME_PATTERN,
   RELEASE_ID_PATTERN,
+  SEMVER_PATTERN,
   TARGET_PATTERN,
   VERSION_PATTERN,
   buildOperationCatalog,
+  createReleaseDescriptor,
+  isCredentialKey,
   validateClientFailureEvent,
+  type CreateReleaseInput,
 } from "../src/index.js";
 import { clone, FIXTURES, fixture, readJson, SCHEMAS } from "./helpers.js";
 
@@ -100,6 +105,89 @@ describe("published JSON Schemas", () => {
     expect(failure.properties.release.properties.releaseId.pattern).toBe(RELEASE_ID_PATTERN.source);
     expect(failure.properties.occurredAt.pattern).toBe(OCCURRED_AT_PATTERN.source);
     expect(failure.properties.attributes.propertyNames.not.pattern).toBe(CREDENTIAL_KEY_PATTERN);
-    expect(schema("release-descriptor").properties.releaseId.pattern).toBe(RELEASE_ID_PATTERN.source);
+    const release = schema("release-descriptor");
+    expect(release.properties.releaseId.pattern).toBe(RELEASE_ID_PATTERN.source);
+    expect(release.properties.generator.properties.name.pattern).toBe(PACKAGE_NAME_PATTERN.source);
+    expect(release.properties.generator.properties.version.pattern).toBe(SEMVER_PATTERN.source);
+    expect(release.properties.artifacts.items.properties.package.properties.name.pattern).toBe(PACKAGE_NAME_PATTERN.source);
+  });
+
+});
+
+describe("schema and runtime agreement", () => {
+  const event = fixture("client-failure/valid/network-minimal.json");
+
+  it.each(["pass_word", "s.e.c.r.e.t", "api-key", "x.session-id", "auth.token", "private.key", "region", "page.size", "retry.count", "sessions"])(
+    "attribute key %s: the schema and the validator agree",
+    (key) => {
+      const candidate = { ...clone(event), attributes: { [key]: "v" } };
+      const runtime = validateClientFailureEvent(candidate).ok;
+      expect(check("client-failure-event", candidate)).toBe(runtime);
+      expect(runtime).toBe(!isCredentialKey(key));
+    }
+  );
+
+  // [label, JSON pointer, largest valid value]; one more character must fail in both.
+  const EVENT_BOUNDS: Array<[string, string[], string]> = [
+    ["eventId", ["eventId"], "e".repeat(64)],
+    ["operation.name", ["operation", "name"], "n".repeat(128)],
+    ["failure.errorCode", ["failure", "errorCode"], "E".repeat(128)],
+    ["failure.message", ["failure", "message"], "m".repeat(1024)],
+    ["release.sdk.package", ["release", "sdk", "package"], "p".repeat(214)],
+    ["runtime.version", ["runtime", "version"], "v".repeat(64)],
+    ["correlation.traceId", ["correlation", "traceId"], "t".repeat(128)],
+  ];
+
+  it.each(EVENT_BOUNDS)("event %s: the schema and the validator share the length bound", (_label, path, value) => {
+    for (const [candidateValue, valid] of [[value, true], [`${value}x`, false]] as const) {
+      const candidate: any = { ...clone(event), release: { releaseId: "rel_1", sdk: { target: "typescript", package: "p", version: "1.0.0" } }, runtime: { name: "node" }, correlation: {} };
+      let target = candidate;
+      for (const segment of path.slice(0, -1)) target = target[segment] ??= {};
+      target[path[path.length - 1]] = candidateValue;
+      expect(check("client-failure-event", candidate), `${path.join(".")} ${candidateValue.length}`).toBe(valid);
+      expect(validateClientFailureEvent(candidate).ok, `${path.join(".")} ${candidateValue.length}`).toBe(valid);
+    }
+  });
+
+  const catalog = buildOperationCatalog(fixture("catalog/openapi.json"), fixture("catalog/manifest.json")).catalog!;
+  const releaseInput = (): CreateReleaseInput => ({
+    catalog: clone(catalog),
+    generator: { name: "@apifn/contracts-fixture", version: "0.1.0" },
+    artifacts: [{ kind: "sdk", target: "typescript", package: { name: "@example/projects-sdk", version: "1.0.0" } }],
+  });
+
+  // [label, set the field on a release input, set the same field on a descriptor, value, valid]
+  const RELEASE_CASES: Array<[string, (input: any, value: string) => void, (descriptor: any, value: string) => void, string, boolean]> = [];
+  const release = (label: string, onInput: (input: any, value: string) => void, onDescriptor: (descriptor: any, value: string) => void, cases: Array<[string, boolean]>) =>
+    cases.forEach(([value, valid]) => RELEASE_CASES.push([label, onInput, onDescriptor, value, valid]));
+  release("generator.name", (input, value) => { input.generator.name = value; }, (descriptor, value) => { descriptor.generator.name = value; }, [
+    ["g".repeat(214), true], ["g".repeat(215), false], ["Not A Package", false], ["@scope/name", true],
+  ]);
+  release("generator.version", (input, value) => { input.generator.version = value; }, (descriptor, value) => { descriptor.generator.version = value; }, [
+    [`1.0.0-${"a".repeat(58)}`, true], [`1.0.0-${"a".repeat(59)}`, false], ["latest", false],
+  ]);
+  release("package.name", (input, value) => { input.artifacts[0].package.name = value; }, (descriptor, value) => { descriptor.artifacts[0].package.name = value; }, [
+    ["p".repeat(214), true], ["p".repeat(215), false],
+  ]);
+  release("package.version", (input, value) => { input.artifacts[0].package.version = value; }, (descriptor, value) => { descriptor.artifacts[0].package.version = value; }, [
+    ["1".repeat(64), true], ["1".repeat(65), false],
+  ]);
+  release("target", (input, value) => { input.artifacts[0].target = value; }, (descriptor, value) => { descriptor.artifacts[0].target = value; }, [
+    ["t".repeat(32), true], ["t".repeat(33), false],
+  ]);
+  release("releaseId", (input, value) => { input.releaseId = value; }, (descriptor, value) => { descriptor.releaseId = value; }, [
+    ["r".repeat(128), true], ["r".repeat(129), false],
+  ]);
+
+  it.each(RELEASE_CASES)("release %s = %#: the schema and createReleaseDescriptor agree", (_label, onInput, onDescriptor, value, valid) => {
+    const input = releaseInput();
+    onInput(input, value);
+    const { descriptor } = createReleaseDescriptor(input);
+    expect(descriptor !== null).toBe(valid);
+    if (descriptor) expect(check("release-descriptor", descriptor), JSON.stringify(validators["release-descriptor"].errors)).toBe(true);
+
+    const base = createReleaseDescriptor(releaseInput()).descriptor!;
+    onDescriptor(base, value);
+    expect(check("release-descriptor", base)).toBe(valid);
   });
 });

@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "properties": {
     "descriptorVersion": {"const": "apifn.release-descriptor/v1"},
-    "releaseId": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$"},
+    "releaseId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$"},
     "api": {
       "type": "object",
       "additionalProperties": false,
@@ -34,7 +34,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "name": {"type": "string", "minLength": 1, "maxLength": 214},
+        "name": {"type": "string", "minLength": 1, "maxLength": 214, "pattern": "^(?:@[a-z0-9][a-z0-9._~-]*\\/)?[A-Za-z0-9][A-Za-z0-9._~-]*$"},
         "version": {
           "type": "string",
           "minLength": 1,
@@ -57,7 +57,7 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "name": {"type": "string", "minLength": 1, "maxLength": 214},
+              "name": {"type": "string", "minLength": 1, "maxLength": 214, "pattern": "^(?:@[a-z0-9][a-z0-9._~-]*\\/)?[A-Za-z0-9][A-Za-z0-9._~-]*$"},
               "version": {
                 "type": "string",
                 "minLength": 1,

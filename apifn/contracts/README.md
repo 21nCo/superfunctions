@@ -73,14 +73,13 @@ Inside credential fields, literal `default`/`const`/`enum` values and unrecogniz
 - a credential-named property,
 - a `format: password` schema.
 
-The rule also covers every subschema, applicator (`anyOf`, `items`, …) and component schema reached from such a field. Schema members that contain credential-named keys are dropped everywhere. Credential-named server variables are replaced with `[REDACTED]`.
+The rule also covers every subschema, applicator (`anyOf`, `items`, …) and component schema reached from such a field. Schema members whose names, or nested keys, name or hold a credential are dropped everywhere, as are schema `pattern`s whose literal text holds one. Credential-named server variables are replaced with `[REDACTED]`.
 
-Every author string copied into the catalog is redacted: descriptions, summaries, titles, tags, OAuth scope names and security scheme fields. These count as credentials:
+Free text copied into the catalog is redacted: descriptions, summaries, titles, tags, server and scheme descriptions, and `bearerFormat`. Identifiers and map keys are copied verbatim into generated clients, so a credential in one (an `operationId`, path template, parameter, property, discriminator mapping, component, security scheme, flow or scope name, or a manifest identifier) is an `INVALID_SPEC` or `INVALID_MANIFEST` error, never redacted. In identifiers `:` is a namespace separator, so scopes such as `secrets:read` are names. These count as credentials:
 
-- an `Authorization`/`Proxy-Authorization` header value at any length,
-- `Cookie`/`Set-Cookie` values,
-- a standalone `Bearer`/`Basic` followed by a token-shaped word (containing a digit, `+/=_~` or a lower-to-upper case change, or 16+ characters long), so prose such as "Basic information" or "Bearer authentication" is kept, as are placeholders such as `<token>`,
-- JWTs, provider keys, `token=` pairs and URL user info.
+- the value after a credential-named key followed by `:` or `=`, in any syntax: HTTP headers (`X-Api-Key: …`), JSON (`"Cookie":"…"`), JS literals (`authorization: '…'`) and query strings (`client_secret=…`, `api%5Fkey=…`). The key test is the same `isCredentialKey` used for field names (percent-decoded, separators ignored). A quoted value ends at its closing quote; an `Authorization`/`Cookie` header value runs to the end of the line with every scheme parameter; other values run to the next delimiter. The value counts at any length and even when it reads as prose (`Authorization: missing`), unless it holds only placeholders such as `<token>`, `{{token}}`, `$TOKEN` or `[REDACTED]`,
+- a standalone `Bearer`/`Basic` followed by a token-shaped word: 8+ characters with letters and digits, `+=_~`, or two lower-to-upper case changes. Plain words and version-like words are prose, so "Basic internationalization support", "Bearer authentication/authorization required" and "Basic HTTP/1.1" are kept,
+- JWTs, provider keys and URL user info.
 
 The failure-event validator rejects exactly the text the catalog redacts. Every removal is reported as a `CREDENTIAL_REDACTED` warning. Diagnostic messages and pointers are redacted too, and parse failures report only a line and column, never source text. Authorization header parameters are ignored, as OpenAPI specifies.
 
@@ -88,19 +87,19 @@ The failure-event validator rejects exactly the text the catalog redacts. Every 
 
 | Code | Meaning |
 | --- | --- |
-| `INVALID_SPEC` | the document cannot be parsed or lacks `info`/`paths`; a path-template parameter is undeclared or a declared path parameter is not in the template; a parameter lacks a name or valid `in`; a response key is not a status, range or `default`; a path does not start with `/`; a server lacks a URL or a variable lacks a default; `security` is not an array, a requirement is not an object, or its scopes are not an array of strings (malformed requirements never become anonymous access) |
+| `INVALID_SPEC` | the document cannot be parsed or lacks `info`/`paths`; an OpenAPI object, schema, media type, flow or tag has the wrong type (never dropped silently); a security scheme lacks a valid `type`; a parameter is declared twice at one level (header names case-insensitively); an identifier or map key holds a credential; a path-template parameter is undeclared or a declared path parameter is not in the template; a parameter lacks a name or valid `in`; a response key is not a status, range or `default`; a path does not start with `/`; a server lacks a URL or a variable lacks a default; `security` is not an array, a requirement is not an object, or its scopes are not an array of strings (malformed requirements never become anonymous access) |
 | `INVALID_MANIFEST` | manifest shape error, including unknown (misspelled) fields; a name derived from a long operationId exceeds 128 characters (set `name`) |
 | `MISSING_OPERATION_ID` | a spec operation has no manifest binding |
 | `DUPLICATE_OPERATION_ID` | a stable ID is repeated, an operation is bound twice, or an OpenAPI operationId repeats |
 | `UNMATCHED_OPERATION_BINDING` | a binding matches no spec operation |
 | `NAME_COLLISION` | two names collide case- and underscore-insensitively (e.g. `getUser` / `get_user`) |
-| `UNRESOLVED_REF` | a `$ref` is missing, external (bundle first), cyclic, or a schema ref or discriminator mapping target that is not `#/components/schemas/<name>` (including pointers into a component); references are checked by OpenAPI context, so property, header and component names are never mistaken for keywords and literal schema data is never a reference |
+| `UNRESOLVED_REF` | a `$ref` is missing, external (bundle first), cyclic, resolves to a value of the wrong type (such as `null` or a string), or a schema ref or discriminator mapping target that is not `#/components/schemas/<name>` (including pointers into a component); references are checked by OpenAPI context, so property, header and component names are never mistaken for keywords and literal schema data is never a reference |
 | `UNKNOWN_SECURITY_SCHEME` | a security requirement names an undeclared scheme |
 | `UNSUPPORTED_SERIALIZATION` | no supported media type remains (error; dropped alternatives are warnings); two media types that normalize to the same type are described differently; a parameter or form encoding uses `content` or an unsupported style (the message says whether listing the type in the manifest helps or only a spec change does); the manifest lists an unsupported media type; or multipart part headers are dropped (warning) |
 | `UNKNOWN_REPLACEMENT` | a deprecation replacement is not another catalog operation |
 | `AGENT_POLICY_REQUIRED` | `agent.expose` without `executionPolicy` |
 | `CREDENTIAL_REDACTED` | warning: a credential-like value was removed |
-| `INVALID_RELEASE` | `createReleaseDescriptor` input error, including a catalog that is not plain JSON or lacks the fields a release reads; it never throws |
+| `INVALID_RELEASE` | `createReleaseDescriptor` input error: a field outside the pattern or length bound of `release-descriptor.v1` (generator, package, target, release ID, or the catalog API ID, version, digests and operation IDs it copies), a credential in any of them, or input that is not plain JSON; it never throws, and it reads its input once, so getters cannot change a value after it was checked |
 
 ## Release descriptors
 
@@ -116,10 +115,10 @@ These version axes stay separate: `descriptorVersion`, `api.version`, `specDiges
 
 ## Client-failure events
 
-`validateClientFailureEvent(input)` returns `{ ok: true, event }` (canonical, round-trippable) or `{ ok: false, issues }`; it never throws, and non-plain objects (Maps, Dates, class instances) are `TYPE` issues. Events (`apifn.client-failure/v1`) carry `eventId`, `occurredAt`, `api`, `operation {id, name?, method?, pathTemplate?}`, `release {releaseId, catalogDigest?, sdk?}`, `failure {kind, httpStatus?, errorCode?, message?, retryable?, attempt?}`, and optional `runtime`, `correlation` and `attributes`. The validator rejects, rather than trims, any of these:
+`validateClientFailureEvent(input)` returns `{ ok: true, event }` (canonical, round-trippable) or `{ ok: false, issues }`; it never throws, and non-plain objects (Maps, Dates, class instances) are `TYPE` issues. It reads the input once into a plain-data snapshot and validates and returns exactly that snapshot, so a getter cannot change a value after it was checked. Events (`apifn.client-failure/v1`) carry `eventId`, `occurredAt`, `api`, `operation {id, name?, method?, pathTemplate?}`, `release {releaseId, catalogDigest?, sdk?}`, `failure {kind, httpStatus?, errorCode?, message?, retryable?, attempt?}`, and optional `runtime`, `correlation` and `attributes`. The validator rejects, rather than trims, any of these:
 
 - unknown fields, including `Object.prototype` names such as `constructor` or `__proto__`,
-- credential-bearing keys (`authorization`, `cookie`, `*token*`, `*secret*`, `*password*`, `*api_key*`, …),
+- credential-bearing keys (`authorization`, `cookie`, `*token*`, `*secret*`, `*password*`, `*api_key*`, …, with `_`, `.` or `-` anywhere inside, as in `pass_word`) and keys that hold a credential; the schema's `propertyNames` pattern is generated from the same fragment list,
 - credential-like values,
 - path templates with query strings,
 - `occurredAt` values that are not real UTC calendar dates and times,

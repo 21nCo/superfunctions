@@ -1,4 +1,4 @@
-import { redactCredentialValues } from "./credentials.js";
+import { containsCredentialIdentifier, redactCredentialValues } from "./credentials.js";
 import type { ApiManifest, Diagnostic } from "./types.js";
 
 export const API_ID_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
@@ -52,10 +52,17 @@ class ManifestChecker {
     return true;
   }
 
-  string(value: unknown, pointer: string, pattern?: RegExp, max = 256): void {
+  /**
+   * Checks a manifest string. Identifiers are copied verbatim into artifacts,
+   * so a credential-like one is an error; `text` strings (provenance and
+   * deprecation messages) are redacted by the catalog builder instead.
+   */
+  string(value: unknown, pointer: string, pattern?: RegExp, max = 256, text = false): void {
     if (value === undefined) return;
     if (typeof value !== "string" || value.length === 0 || value.length > max) {
       this.fail(pointer, `Expected a non-empty string of at most ${max} characters at ${pointer}.`);
+    } else if (!text && containsCredentialIdentifier(value)) {
+      this.fail(pointer, `Value at ${pointer} holds a credential-like value; manifest identifiers are copied verbatim into artifacts.`);
     } else if (pattern && !pattern.test(value)) {
       this.fail(pointer, `Value "${redactCredentialValues(value)}" at ${pointer} must match ${pattern.source}.`);
     }
@@ -109,7 +116,7 @@ function checkBinding(check: ManifestChecker, binding: unknown, pointer: string)
     const deprecation = value.deprecation as Record<string, unknown>;
     check.string(deprecation.replacement, `${pointer}/deprecation/replacement`, OPERATION_ID_PATTERN, 128);
     check.string(deprecation.since, `${pointer}/deprecation/since`, VERSION_PATTERN, 64);
-    check.string(deprecation.message, `${pointer}/deprecation/message`, undefined, 1024);
+    check.string(deprecation.message, `${pointer}/deprecation/message`, undefined, 1024, true);
   }
 }
 
@@ -150,9 +157,9 @@ export function validateManifest(input: unknown): { manifest: ApiManifest | null
     }
     if (manifest.provenance !== undefined && check.object(manifest.provenance, "/provenance", ["source", "revision", "exporter"])) {
       const provenance = manifest.provenance as Record<string, unknown>;
-      check.string(provenance.source, "/provenance/source", undefined, 512);
-      check.string(provenance.revision, "/provenance/revision", undefined, 128);
-      check.string(provenance.exporter, "/provenance/exporter", undefined, 128);
+      check.string(provenance.source, "/provenance/source", undefined, 512, true);
+      check.string(provenance.revision, "/provenance/revision", undefined, 128, true);
+      check.string(provenance.exporter, "/provenance/exporter", undefined, 128, true);
     }
     if (!Array.isArray(manifest.operations)) {
       check.fail("/operations", "Expected an array of operation bindings.");

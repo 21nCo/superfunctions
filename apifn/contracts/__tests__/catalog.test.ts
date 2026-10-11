@@ -1,7 +1,7 @@
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import { buildOperationCatalog, canonicalJson, type Diagnostic } from "../src/index.js";
+import { buildOperationCatalog, canonicalJson, type Diagnostic, type OperationCatalog } from "../src/index.js";
 import { clone, fixture, matchFixture, readJson, reverseKeys, SCHEMAS } from "./helpers.js";
 
 const validateCatalog = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(
@@ -13,13 +13,51 @@ const manifest = fixture("catalog/manifest.json");
 const PROJECT_ROUTE = "/workspaces/{workspaceId}/projects/{projectId}";
 const LIST_ROUTE = "/workspaces/{workspaceId}/projects";
 
+/** Literal instance data, where a "$ref" key is data rather than a reference. */
+const LITERAL_KEYWORDS = new Set(["default", "const", "enum"]);
+
+/**
+ * Closure of a successful catalog: every schema $ref and discriminator
+ * mapping target names a schema in catalog.schemas, and every security
+ * requirement names a scheme in catalog.securitySchemes.
+ */
+function closureViolations(catalog: OperationCatalog): string[] {
+  const violations: string[] = [];
+  const target = (ref: string, at: string) => {
+    const name = ref.startsWith("#/components/schemas/") ? ref.slice("#/components/schemas/".length).replace(/~1/g, "/").replace(/~0/g, "~") : null;
+    if (name === null || !Object.hasOwn(catalog.schemas, name)) violations.push(`${at} -> ${ref}`);
+  };
+  const walk = (value: unknown, at: string): void => {
+    if (Array.isArray(value)) return value.forEach((item, index) => walk(item, `${at}/${index}`));
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (LITERAL_KEYWORDS.has(key)) continue;
+      if (key === "$ref" && typeof child === "string") target(child, at);
+      else if (key === "discriminator" && child && typeof child === "object" && "mapping" in child) {
+        for (const [value, ref] of Object.entries((child as { mapping: Record<string, string> }).mapping)) target(ref, `${at}/discriminator/mapping/${value}`);
+      } else walk(child, `${at}/${key}`);
+    }
+  };
+  walk(catalog.operations, "/operations");
+  walk(catalog.schemas, "/schemas");
+  for (const operation of catalog.operations) {
+    for (const term of operation.security.alternatives.flat()) {
+      if (!Object.hasOwn(catalog.securitySchemes, term.scheme)) violations.push(`${operation.id} security -> ${term.scheme}`);
+    }
+  }
+  return violations;
+}
+
 function build(mutate?: (spec: any, manifest: any) => void) {
   const nextSpec = clone(spec);
   const nextManifest = clone(manifest);
   mutate?.(nextSpec, nextManifest);
   const result = buildOperationCatalog(nextSpec, nextManifest);
-  // Every successful catalog must satisfy the published schema.
-  if (result.catalog) expect(validateCatalog(result.catalog), JSON.stringify(validateCatalog.errors)).toBe(true);
+  // Every successful catalog must satisfy the published schema and be closed.
+  if (result.catalog) {
+    expect(validateCatalog(result.catalog), JSON.stringify(validateCatalog.errors)).toBe(true);
+    expect(closureViolations(result.catalog)).toEqual([]);
+  }
   return result;
 }
 
@@ -644,18 +682,83 @@ describe("author strings copied into the catalog", () => {
     ["security scheme bearerFormat", (nextSpec) => {
       nextSpec.components.securitySchemes.bearerAuth.bearerFormat = "Bearer SEEDEDformat0022";
     }, "SEEDEDformat0022"],
-    ["security scheme name", (nextSpec) => {
-      nextSpec.components.securitySchemes.apiKeyAuth.name = "sk_live_SEEDEDname0023";
-    }, "SEEDEDname0023"],
-    ["OAuth scope names", (nextSpec) => {
-      nextSpec.components.securitySchemes.oauth.flows.clientCredentials.scopes["sk_live_SEEDEDscope0024"] = "x";
-      nextSpec.paths[PROJECT_ROUTE].get.security = [{ oauth: ["sk_live_SEEDEDscope0024"] }];
-    }, "SEEDEDscope0024"],
-  ])("redacts credentials in %s", (_name, mutate, secret) => {
+  ])("redacts credentials in the text of %s", (_name, mutate, secret) => {
     const result = build(mutate);
     expect(result.catalog).not.toBeNull();
     expect(canonicalJson(result)).not.toContain(secret);
     expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBeGreaterThan(0);
+  });
+
+  const ID_SECRET = "sk_live_SEEDEDident0030";
+  const GET = "/paths/~1workspaces~1{workspaceId}~1projects~1{projectId}/get";
+
+  it.each<[string, (nextSpec: any, nextManifest: any) => void, string]>([
+    ["an OpenAPI operationId", (nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.operationId = ID_SECRET;
+    }, `${GET}/operationId`],
+    ["a path template", (nextSpec, nextManifest) => {
+      nextSpec.paths[`/token=${ID_SECRET}`] = { get: { operationId: "probe", responses: { "200": { description: "ok" } } } };
+      nextManifest.operations.push({ id: "probe.get", operationId: "probe" });
+    }, `/paths/~1token=${ID_SECRET}`],
+    ["a parameter name", (nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.parameters.push({ name: ID_SECRET, in: "query", schema: { type: "string" } });
+    }, `${GET}/parameters/1/name`],
+    ["a property name", (nextSpec) => {
+      inputSchema(nextSpec).properties[`token=${ID_SECRET}`] = { type: "string" };
+    }, `/components/schemas/ProjectInput/properties/token=${ID_SECRET}`],
+    ["a discriminator mapping value", (nextSpec) => {
+      inputSchema(nextSpec).discriminator = { propertyName: "name", mapping: { [`token=${ID_SECRET}`]: "Project" } };
+    }, `/components/schemas/ProjectInput/discriminator/mapping/token=${ID_SECRET}`],
+    ["a security scheme name", (nextSpec) => {
+      nextSpec.components.securitySchemes[ID_SECRET] = { type: "http", scheme: "basic" };
+    }, `/components/securitySchemes/${ID_SECRET}`],
+    ["an apiKey scheme parameter name", (nextSpec) => {
+      nextSpec.components.securitySchemes.apiKeyAuth.name = ID_SECRET;
+    }, "/components/securitySchemes/apiKeyAuth/name"],
+    ["an OAuth scope name", (nextSpec) => {
+      nextSpec.components.securitySchemes.oauth.flows.clientCredentials.scopes[ID_SECRET] = "x";
+    }, `/components/securitySchemes/oauth/flows/clientCredentials/scopes/${ID_SECRET}`],
+    ["a security requirement scope", (nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.security = [{ oauth: [ID_SECRET] }];
+    }, `${GET}/security/0/oauth/0`],
+  ])("INVALID_SPEC: a credential in %s is rejected, not copied", (_name, mutate, pointer) => {
+    const result = build(mutate);
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "INVALID_SPEC")).toContainEqual(
+      expect.objectContaining({ pointer: pointer.replace(ID_SECRET, "[REDACTED]").replace(`token=[REDACTED]`, "token=[REDACTED]") })
+    );
+    expect(JSON.stringify(result)).not.toContain("SEEDEDident0030");
+  });
+
+  it("keeps namespaced scope names such as secrets:read", () => {
+    const result = build((nextSpec) => {
+      nextSpec.components.securitySchemes.oauth.flows.clientCredentials.scopes["secrets:read"] = "Read secrets";
+      nextSpec.paths[PROJECT_ROUTE].get.security = [{ oauth: ["secrets:read"] }];
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.catalog!.securitySchemes.oauth.flows!.clientCredentials.scopes).toContain("secrets:read");
+  });
+
+  it("INVALID_MANIFEST: a credential in a manifest identifier", () => {
+    const result = build((_spec, nextManifest) => {
+      nextManifest.operations[0].name = ID_SECRET;
+    });
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_MANIFEST", pointer: "/operations/0/name" })]);
+    expect(JSON.stringify(result)).not.toContain("SEEDEDident0030");
+  });
+
+  it("drops a schema pattern that holds a credential and keeps ordinary patterns", () => {
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.pin = { type: "string", format: "password", pattern: `^${ID_SECRET}$` };
+      inputSchema(nextSpec).properties.slug2 = { type: "string", pattern: "^Bearer [A-Za-z0-9._~+/-]+=*$" };
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(JSON.stringify(result)).not.toContain("SEEDEDident0030");
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")).toEqual([
+      expect.objectContaining({ pointer: "/components/schemas/ProjectInput/properties/pin/pattern" }),
+    ]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.slug2.pattern).toBe("^Bearer [A-Za-z0-9._~+/-]+=*$");
   });
 
   it("reports unparseable documents by line and column without quoting source text", () => {
@@ -778,5 +881,67 @@ describe("catalog output conformance", () => {
       nextManifest.operations.find((binding: any) => binding.id === "projects.list").name = "listProjects";
     });
     expect(named.diagnostics).toEqual([]);
+  });
+});
+
+describe("malformed object targets", () => {
+  const GET = "/paths/~1workspaces~1{workspaceId}~1projects~1{projectId}/get";
+
+  it.each<[string, (nextSpec: any) => void, Diagnostic["code"], string]>([
+    ["a referenced component schema that is null", (nextSpec) => {
+      nextSpec.components.schemas.ProjectInput = null;
+    }, "UNRESOLVED_REF", `/paths/~1workspaces~1{workspaceId}~1projects/post/requestBody/content/application~1json/schema/$ref`],
+    ["a property schema that is null", (nextSpec) => {
+      inputSchema(nextSpec).properties.broken = null;
+    }, "INVALID_SPEC", "/components/schemas/ProjectInput/properties/broken"],
+    ["a security scheme without a type", (nextSpec) => {
+      delete nextSpec.components.securitySchemes.bearerAuth.type;
+    }, "INVALID_SPEC", "/components/securitySchemes/bearerAuth/type"],
+    ["a referenced component response that is null", (nextSpec) => {
+      nextSpec.components.responses.NotFound = null;
+    }, "UNRESOLVED_REF", `${GET}/responses/404/$ref`],
+    ["a parameter reference to a string", (nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.parameters.push({ $ref: "#/info/title" });
+    }, "UNRESOLVED_REF", `${GET}/parameters/1/$ref`],
+    ["a null parameter", (nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.parameters.push(null);
+    }, "INVALID_SPEC", `${GET}/parameters/1`],
+    ["a response reference to a string", (nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.responses["200"] = { $ref: "#/info/title" };
+    }, "UNRESOLVED_REF", `${GET}/responses/200/$ref`],
+    ["a null media type", (nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.responses["200"].content["application/json"] = null;
+    }, "INVALID_SPEC", `${GET}/responses/200/content/application~1json`],
+    ["a null OAuth flow", (nextSpec) => {
+      nextSpec.components.securitySchemes.oauth.flows.clientCredentials = null;
+    }, "INVALID_SPEC", "/components/securitySchemes/oauth/flows/clientCredentials"],
+    ["a non-string tag", (nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.tags.push(7);
+    }, "INVALID_SPEC", `${GET}/tags/1`],
+  ])("%s is reported, never dropped silently", (_name, mutate, code, pointer) => {
+    const result = build(mutate);
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code, pointer }));
+  });
+});
+
+describe("header parameter names", () => {
+  it("merges path- and operation-level headers case-insensitively, operation level winning", () => {
+    const result = build((nextSpec) => {
+      nextSpec.paths[LIST_ROUTE].parameters.push({ name: "X-Trace", in: "header", schema: { type: "string" } });
+      nextSpec.paths[LIST_ROUTE].get.parameters.push({ name: "x-trace", in: "header", schema: { type: "integer" } });
+    });
+    const list = result.catalog!.operations.find((operation) => operation.id === "projects.list")!;
+    expect(list.parameters.filter((parameter) => parameter.in === "header")).toEqual([
+      expect.objectContaining({ name: "x-trace", schema: { type: "integer" } }),
+    ]);
+  });
+
+  it("INVALID_SPEC: the same header twice at one level, in any case", () => {
+    const result = build((nextSpec) => {
+      nextSpec.paths[LIST_ROUTE].get.parameters.push({ name: "X-A", in: "header" }, { name: "x-a", in: "header" });
+    });
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_SPEC", message: expect.stringMatching(/"x-a" in header is declared twice/) })]);
   });
 });

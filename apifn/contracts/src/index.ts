@@ -11,7 +11,7 @@ export {
   TARGET_PATTERN,
   VERSION_PATTERN,
 } from "./manifest.js";
-export { createReleaseDescriptor, RELEASE_ID_PATTERN } from "./release.js";
+export { createReleaseDescriptor, PACKAGE_NAME_PATTERN, RELEASE_ID_PATTERN, SEMVER_PATTERN } from "./release.js";
 export { canonicalJson, canonicalDigest, sha256Hex } from "./canonical.js";
-export { isCredentialKey, containsCredentialValue, CREDENTIAL_KEY_PATTERN } from "./credentials.js";
+export { isCredentialKey, containsCredentialValue, containsCredentialIdentifier, CREDENTIAL_KEY_PATTERN } from "./credentials.js";
 export * from "./failure-event.js";
