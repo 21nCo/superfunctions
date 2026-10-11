@@ -405,6 +405,57 @@ spawn(process.argv[2], process.argv.slice(3), { stdio: "inherit" });
   expect((await registry.read()).allocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => [item.port, item.state])).toEqual([[service.port, "active"]]);
 }, 60_000);
 
+it.skipIf(process.platform === "win32")("releases a failed start's relay only after a reload of the committed routes confirms Caddy no longer routes to it", async () => {
+  const stateDir = await registeredState();
+  const toolsDir = await mkdtemp(path.join(os.tmpdir(), "devfn-oauth-relay-caddy-"));
+  const originalPath = process.env.PATH;
+  const originalFailures = process.env.DEVFN_TEST_RELOAD_FAILURES;
+  cleanup.push(async () => {
+    if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    if (originalFailures === undefined) delete process.env.DEVFN_TEST_RELOAD_FAILURES; else process.env.DEVFN_TEST_RELOAD_FAILURES = originalFailures;
+    await rm(toolsDir, { recursive: true, force: true });
+  });
+  const live = path.join(toolsDir, "live.Caddyfile");
+  const reloads = path.join(toolsDir, "reloads");
+  // Every reload loads its configuration; the command then fails, as on a timeout, until DEVFN_TEST_RELOAD_FAILURES reloads have failed.
+  await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\nif [ "$1" = reload ]; then\n  cp "$3" '${live}'\n  n=$(( $(cat '${reloads}' 2>/dev/null || echo 0) + 1 )); echo "$n" > '${reloads}'\n  [ "$n" -gt "$DEVFN_TEST_RELOAD_FAILURES" ] || exit 1\nfi\nexit 0\n`, { mode: 0o700 });
+  process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
+  await writeFile(path.join(stateDir, "proxy-owner.json"), JSON.stringify({ pid: process.pid, birthSignature: await processBirthSignature(process.pid) }));
+  const statePath = path.join(stateDir, "proxy-routes.json");
+  const committed = `${JSON.stringify({ version: 1, routes: [{ id: "s", instanceId: "sibling", hostname: "sibling.localhost", targetHost: "127.0.0.1", targetPort: 41234, tls: "off", updatedAt: "before" }] })}\n`;
+  await writeFile(statePath, committed);
+  const proxy = new CaddyProxyController(stateDir, loopback);
+  const relayHost = `auth.${DOMAIN}`;
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+  const claims = async () => (await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state);
+  // Caddy loaded the relay route, and neither that reload nor a reload of the committed routes is confirmed.
+  process.env.DEVFN_TEST_RELOAD_FAILURES = "99";
+  const error = await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }).catch((caught: unknown) => caught);
+  expect(error).toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE", message: expect.stringMatching(/possibly live.*keeps running/) });
+  const service = (await readRelayService(stateDir))!;
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).toBe("running");
+  expect(await claims()).toEqual(["ready"]);
+  expect((await registry.read()).allocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => [item.port, item.state])).toEqual([[service.port, "active"]]);
+  expect(await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID)).toMatchObject({ committed: [], pending: [expect.objectContaining({ hostname: relayHost, targetPort: service.port })] });
+  expect(await readFile(statePath, "utf8")).toBe(committed);
+  // Once Caddy reloads the committed routes, stop withdraws the route, then the relay.
+  process.env.DEVFN_TEST_RELOAD_FAILURES = "0";
+  await expect(stopOAuthRelay(stateDir, proxy)).resolves.toMatchObject({ stopped: true });
+  expect(await readFile(live, "utf8")).not.toContain(relayHost);
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).not.toBe("running");
+  expect(await readFile(statePath, "utf8")).toBe(committed);
+  // A reload that fails after loading the relay route is released only once the committed reload confirms the route gone.
+  await rm(reloads);
+  process.env.DEVFN_TEST_RELOAD_FAILURES = "1";
+  await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND }))
+    .rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+  expect(await readFile(live, "utf8")).toContain("sibling.localhost");
+  expect(await readFile(live, "utf8")).not.toContain(relayHost);
+  expect(await readRelayService(stateDir)).toBeUndefined();
+  expect(await claims()).toEqual(["stopped", "failed"]);
+  expect(await readFile(statePath, "utf8")).toBe(committed);
+}, 90_000);
+
 it("does not declare the relay stopped while a route or claim records a live relay the service record does not name", async () => {
   const stateDir = await registeredState();
   const live = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { detached: true, stdio: "ignore" });

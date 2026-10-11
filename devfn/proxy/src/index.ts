@@ -226,6 +226,7 @@ async function withoutExitedServices(routes: readonly ProxyRoute[]): Promise<Pro
 export class CaddyProxyController {
   private readonly statePath: string;
   private readonly pendingPath: string;
+  private readonly uncertainPath: string;
   private readonly configPath: string;
   private readonly lockPath: string;
   private readonly ownerPath: string;
@@ -236,6 +237,7 @@ export class CaddyProxyController {
     private readonly liveConfigProbe?: () => Promise<boolean>) {
     this.statePath = path.join(stateDir, "proxy-routes.json");
     this.pendingPath = path.join(stateDir, "proxy-routes.pending.json");
+    this.uncertainPath = path.join(stateDir, "proxy-routes.pending.uncertain");
     this.configPath = path.join(stateDir, "Caddyfile");
     this.lockPath = path.join(stateDir, "proxy.lock");
     this.ownerPath = path.join(stateDir, "proxy-owner.json");
@@ -533,6 +535,9 @@ export class CaddyProxyController {
   private async read(): Promise<ProxyState> {
     const pending = await this.readState(this.pendingPath);
     if (pending) {
+      // An activation whose reload outcome is uncertain already failed for
+      // its caller: it is rolled back, never replayed.
+      if (await access(this.uncertainPath).then(() => true, () => false)) return await this.rollBackUncertain();
       const previous = await this.readState(this.statePath);
       try {
         // The journal is rewritten first, so the state recovery commits is the one Caddy runs.
@@ -563,6 +568,36 @@ export class CaddyProxyController {
     const committed = await this.readState(this.statePath) ?? { version: 1, routes: [] };
     await this.pruneCertificateSnapshots(committed.routes).catch(() => undefined);
     return committed;
+  }
+
+  /**
+   * Reload the committed route state through the same apply path and discard
+   * the journal it replaces. Only its success confirms which routes Caddy
+   * serves; a failure keeps the journal and its uncertain marker.
+   */
+  private async rollBackUncertain(): Promise<ProxyState> {
+    const committed = await this.readState(this.statePath) ?? { version: 1 as const, routes: [] };
+    await this.apply(committed, true, committed.routes, true);
+    return committed;
+  }
+
+  /**
+   * A failed reload, including a timeout, does not prove Caddy kept its
+   * previous configuration: it may already serve the candidate. The journal
+   * stays, marked uncertain, so every reader of pending route state still
+   * counts its routes as possibly live, until a reload of the committed
+   * state confirms what Caddy serves. A rejected configuration therefore
+   * blocks other owners only while Caddy cannot reload the committed one.
+   */
+  private async settleUncertainReload(failure: ProxyError, rollBack: boolean): Promise<never> {
+    await writeFile(this.uncertainPath, "", { encoding: "utf8", mode: 0o600 }).catch(() => undefined);
+    if (!rollBack) throw failure;
+    try { await this.rollBackUncertain(); }
+    catch (error) {
+      throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", `${failure.message} Caddy may already serve its routes, and reloading the committed routes also failed, so the activation journal is kept as possibly live.`,
+        { ...failure.details, rollback: error instanceof Error ? error.message : String(error) });
+    }
+    throw failure;
   }
 
   private async writeJournal(state: ProxyState): Promise<void> {
@@ -635,13 +670,17 @@ export class CaddyProxyController {
         throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A non-DevFn Caddy admin endpoint is already running; refusing to replace its configuration.");
       }
     }
-    if (!recovering) await this.writeJournal(next);
+    if (!recovering) {
+      await rm(this.uncertainPath, { force: true });
+      await this.writeJournal(next);
+    }
     if (owner) {
       try { await execFileAsync(caddy, ["reload", "--config", candidate, "--adapter", "caddyfile"], { timeout: 10_000 }); }
       catch (error) {
         await rm(candidate, { force: true });
-        if (!recovering) await rm(this.pendingPath, { force: true });
-        throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to reload the DevFn-owned Caddy proxy.", { cause: error instanceof Error ? error.message : String(error) });
+        // A rollback that fails is not rolled back again.
+        await this.settleUncertainReload(new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to reload the DevFn-owned Caddy proxy.",
+          { cause: error instanceof Error ? error.message : String(error) }), !rejectPending);
       }
     } else {
       // Caddy's admin endpoint answers before its sites bind their listeners.
@@ -720,8 +759,9 @@ export class CaddyProxyController {
           catch (error) {
             const stopped = await stopSpawnedChild();
             await rm(candidate, { force: true });
+            // A Caddy that did not exit may serve the candidate.
+            if (!stopped) await this.settleUncertainReload(unstoppable(), false);
             if (!recovering) await rm(this.pendingPath, { force: true });
-            if (!stopped) throw unstoppable();
             throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to persist the DevFn Caddy owner record.", { cause: error instanceof Error ? error.message : String(error) });
           }
         }
@@ -743,8 +783,8 @@ export class CaddyProxyController {
           const stopped = await stopSpawnedChild();
           if (stopped) await rm(this.ownerPath, { force: true });
           await rm(candidate, { force: true });
+          if (!stopped) await this.settleUncertainReload(unstoppable(), false);
           if (!recovering) await rm(this.pendingPath, { force: true });
-          if (!stopped) throw unstoppable();
           const privileged = proxyListenerPortsFor(next.routes).filter((port) => port < 1024);
           throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", `Unable to start the DevFn-owned Caddy proxy and confirm its listeners.${process.platform === "linux" && privileged.length
             ? ` Binding ports ${privileged.join(" and ")} needs net.ipv4.ip_unprivileged_port_start at or below ${Math.min(...privileged)} or cap_net_bind_service on the Caddy binary; DevFn changes neither.` : ""}`);
@@ -757,6 +797,7 @@ export class CaddyProxyController {
     // must never replace the last committed route state after Caddy recovers.
     if (rejectPending) await rm(this.pendingPath, { force: true });
     else await rename(this.pendingPath, this.statePath);
+    await rm(this.uncertainPath, { force: true });
     await this.pruneCertificateSnapshots(next.routes).catch(() => undefined);
   }
 

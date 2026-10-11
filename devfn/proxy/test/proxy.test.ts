@@ -384,6 +384,51 @@ process.stdout.write(String(member.pid), () => setTimeout(() => process.exit(0),
     }
   });
 
+  it("keeps an activation whose reload outcome is uncertain as possibly live until a reload of the committed routes confirms Caddy", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-uncertain-");
+    const toolsDir = (process.env.PATH ?? "").split(path.delimiter)[0];
+    const live = path.join(toolsDir, "live.Caddyfile");
+    const reloads = path.join(toolsDir, "reloads");
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const pendingPath = path.join(stateDir, "proxy-routes.pending.json");
+    // Every reload loads its configuration; the command then fails, as on a timeout, until DEVFN_TEST_RELOAD_FAILURES reloads have failed.
+    await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\nif [ "$1" = reload ]; then\n  cp "$3" '${live}'\n  n=$(( $(cat '${reloads}' 2>/dev/null || echo 0) + 1 )); echo "$n" > '${reloads}'\n  [ "$n" -gt "$DEVFN_TEST_RELOAD_FAILURES" ] || exit 1\nfi\nexit 0\n`, { mode: 0o700 });
+    const sibling = { id: "s", instanceId: "sibling", hostname: "sibling.localhost", targetHost: "127.0.0.1", targetPort: 4100, tls: "off", updatedAt: "before" } as const;
+    const committed = `${JSON.stringify({ version: 1, routes: [sibling] })}\n`;
+    await writeFile(statePath, committed);
+    const added = { id: "a", instanceId: "i", hostname: "added.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" } as const;
+    const controller = new CaddyProxyController(stateDir);
+    const originalFailures = process.env.DEVFN_TEST_RELOAD_FAILURES;
+    try {
+      // The candidate reached Caddy before its reload failed; a reload of the committed routes confirms it is gone.
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "1";
+      await expect(controller.upsert([added])).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+      expect(await readFile(live, "utf8")).toContain("sibling.localhost");
+      expect(await readFile(live, "utf8")).not.toContain("added.localhost");
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await controller.hasInstanceRoutes("i")).toBe(false);
+      // While no reload can be confirmed, the journal keeps the route possibly live, and no transition treats it as gone.
+      await rm(reloads);
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "99";
+      await expect(controller.upsert([added])).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED", message: expect.stringContaining("possibly live") });
+      expect(await controller.instanceRouteState("i")).toMatchObject({ committed: [], pending: [expect.objectContaining({ hostname: "added.localhost" })] });
+      await expect(controller.removeInstance("i")).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+      expect(await controller.hasInstanceRoutes("i")).toBe(true);
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      // Once Caddy reloads, the uncertain activation is rolled back rather than replayed; sibling state is byte-identical.
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "0";
+      await controller.removeInstance("i");
+      expect(await readFile(live, "utf8")).toContain("sibling.localhost");
+      expect(await readFile(live, "utf8")).not.toContain("added.localhost");
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await controller.routes()).toEqual([sibling]);
+    } finally {
+      if (originalFailures === undefined) delete process.env.DEVFN_TEST_RELOAD_FAILURES; else process.env.DEVFN_TEST_RELOAD_FAILURES = originalFailures;
+      await cleanup();
+    }
+  });
+
   it("serializes route reads with an in-flight proxy activation", async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-"));
     const toolsDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-tools-"));

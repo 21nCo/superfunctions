@@ -302,9 +302,11 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
     } catch (error) {
       started?.abandon();
       // A failed activation can still have reloaded Caddy or journaled the
-      // route. Any relay route, or unreadable route state, is withdrawn and
-      // confirmed gone before anything is released; if that fails, the
-      // committed relay keeps its record, claim and lease.
+      // route; the proxy keeps the journal until a reload of the committed
+      // routes confirms what Caddy serves. Any relay route, or unreadable
+      // route state, is withdrawn and confirmed gone before anything is
+      // released; if that fails, the committed relay keeps its record, claim
+      // and lease.
       if (service && routing) {
         try { await withdrawRelayRoute(proxy); }
         catch (cleanupError) {

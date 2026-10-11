@@ -91,7 +91,10 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("replaces selected proxy routes 
     config.hostnames!.native.hostname = "second.localhost";
     expect(await orchestrator.status({ config, root })).toMatchObject({ ok: false, state: "degraded", urls: {} });
     await mkdir(toolsDir);
-    await writeFile(path.join(toolsDir, "caddy"), "#!/bin/sh\ncase \"$1\" in version|validate) exit 0;; reload) exit 1;; esac\nexit 1\n", { mode: 0o700 });
+    // Caddy rejects the next candidate and keeps serving its configuration;
+    // the reload of the committed routes that confirms this reaches the real Caddy.
+    const rejected = path.join(toolsDir, "rejected");
+    await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\ncase "$1" in version|validate) exit 0;; reload) [ -e '${rejected}' ] && PATH='${originalPath ?? ""}' exec caddy "$@"; : > '${rejected}'; exit 1;; esac\nexit 1\n`, { mode: 0o700 });
     try {
       process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
       await expect(orchestrator.up({ config, root, stateDir })).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
@@ -117,6 +120,7 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("replaces selected proxy routes 
     expect(third.routes[0].tls).toBe("internal");
     config.profiles.default.proxy = false;
     expect(await orchestrator.status({ config, root })).toMatchObject({ ok: false, state: "degraded", urls: {} });
+    await rm(rejected);
     try {
       process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
       await expect(orchestrator.up({ config, root, stateDir })).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
