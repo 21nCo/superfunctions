@@ -60,31 +60,47 @@ The spec may be a JSON/YAML string or an object, OpenAPI 3.0 or 3.1.0; it is par
 
 ### Catalog shape
 
-`catalogVersion`, `api {id, version, title}`, `source {specDigest, manifestDigest, provenance}`, `serialization`, `servers`, `securitySchemes`, `operations[]` sorted by `id`, and `schemas` (component schemas reachable from operations). Schema `$ref`s keep the form `#/components/schemas/<name>`; resolve them against `catalog.schemas[<name>]`. Operations merge path-level and operation-level parameters (operation wins). Path parameters follow path-template order. Parameters keep `style`, `explode` and `allowReserved`. Form and multipart contents keep their per-property `encoding` (`contentType`, `style`, `explode`, `allowReserved`); other contents have an empty `encoding`. Responses are classified as `success`, `error` (4xx/5xx) or `default`; `x-*` response and path keys are extensions and are skipped. Servers keep their `variables`. `operation.servers` holds a path- or operation-level override, or `null` to use the catalog servers.
+`catalogVersion`, `api {id, version, title}`, `source {specDigest, manifestDigest, provenance}`, `serialization`, `servers`, `securitySchemes`, `operations[]` sorted by `id`, and `schemas` (component schemas reachable from operations). Schema `$ref`s keep the form `#/components/schemas/<name>`; resolve them against `catalog.schemas[<name>]`. Discriminator mapping targets (a schema name or reference) are emitted in the same form, and the schemas they name are included. Literal `default`/`const`/`enum` data and property-name maps such as `dependentRequired` are copied verbatim, including keys that start with `x-`. Operations merge path-level and operation-level parameters (operation wins). Path parameters follow path-template order. Parameters keep `style`, `explode` and `allowReserved`. Form and multipart contents keep their per-property `encoding` (`contentType`, `style`, `explode`, `allowReserved`); other contents have an empty `encoding`. Responses are classified as `success`, `error` (4xx/5xx) or `default`; `x-*` response and path keys are extensions and are skipped. Servers keep their `variables`. `operation.servers` holds a path- or operation-level override, or `null` to use the catalog servers.
 
 ### Credentials
 
 Catalogs never carry `example`/`examples` or `x-*` extensions. URLs lose all user info (with or without a scheme, however many `@` they hold), credential-like query parameters and fragments. Server URLs also lose their whole query. Benign query parameters on OAuth and OpenID Connect URLs are kept.
 
-Literal `default`/`const`/`enum` values are dropped inside credential fields. A credential field is a credential-named property or parameter, or a `format: password` schema. The rule also covers every subschema, applicator (`anyOf`, `items`, …) and component schema reached from such a field. Literals that contain credential-named keys are dropped everywhere. Credential-named server variables are replaced with `[REDACTED]`. Recognizable credentials in text are replaced with `[REDACTED]`: bearer/basic tokens (prose such as "Basic authentication" is kept), JWTs, provider keys, `token=` pairs and URL user info. Every removal is reported as a `CREDENTIAL_REDACTED` warning. Authorization header parameters are ignored, as OpenAPI specifies.
+Inside credential fields, literal `default`/`const`/`enum` values and unrecognized schema members are dropped. A credential field is one of these:
+
+- a parameter with a credential-like name,
+- a parameter at the `in` and `name` of a declared `apiKey` security scheme (header names match case-insensitively),
+- a credential-named property,
+- a `format: password` schema.
+
+The rule also covers every subschema, applicator (`anyOf`, `items`, …) and component schema reached from such a field. Schema members that contain credential-named keys are dropped everywhere. Credential-named server variables are replaced with `[REDACTED]`.
+
+Every author string copied into the catalog is redacted: descriptions, summaries, titles, tags, OAuth scope names and security scheme fields. These count as credentials:
+
+- an `Authorization`/`Proxy-Authorization` header value at any length,
+- `Cookie`/`Set-Cookie` values,
+- a standalone `Bearer`/`Basic` followed by a token-shaped word (containing a digit, `+/=_~` or a lower-to-upper case change, or 16+ characters long), so prose such as "Basic information" or "Bearer authentication" is kept, as are placeholders such as `<token>`,
+- JWTs, provider keys, `token=` pairs and URL user info.
+
+The failure-event validator rejects exactly the text the catalog redacts. Every removal is reported as a `CREDENTIAL_REDACTED` warning. Diagnostic messages and pointers are redacted too, and parse failures report only a line and column, never source text. Authorization header parameters are ignored, as OpenAPI specifies.
 
 ### Diagnostics
 
 | Code | Meaning |
 | --- | --- |
-| `INVALID_SPEC` | the document cannot be parsed or lacks `info`/`paths`; a path-template parameter is undeclared or a declared path parameter is not in the template; a parameter lacks a name or valid `in`; a response key is not a status, range or `default`; a path does not start with `/`; a server lacks a URL or a variable lacks a default |
-| `INVALID_MANIFEST` | manifest shape error, including unknown (misspelled) fields |
+| `INVALID_SPEC` | the document cannot be parsed or lacks `info`/`paths`; a path-template parameter is undeclared or a declared path parameter is not in the template; a parameter lacks a name or valid `in`; a response key is not a status, range or `default`; a path does not start with `/`; a server lacks a URL or a variable lacks a default; `security` is not an array, a requirement is not an object, or its scopes are not an array of strings (malformed requirements never become anonymous access) |
+| `INVALID_MANIFEST` | manifest shape error, including unknown (misspelled) fields; a name derived from a long operationId exceeds 128 characters (set `name`) |
 | `MISSING_OPERATION_ID` | a spec operation has no manifest binding |
 | `DUPLICATE_OPERATION_ID` | a stable ID is repeated, an operation is bound twice, or an OpenAPI operationId repeats |
 | `UNMATCHED_OPERATION_BINDING` | a binding matches no spec operation |
 | `NAME_COLLISION` | two names collide case- and underscore-insensitively (e.g. `getUser` / `get_user`) |
-| `UNRESOLVED_REF` | a `$ref` is missing, external (bundle first), cyclic, or a schema ref outside `#/components/schemas`; references are checked by OpenAPI context, so property, header and component names are never mistaken for keywords and literal schema data is never a reference |
+| `UNRESOLVED_REF` | a `$ref` is missing, external (bundle first), cyclic, or a schema ref or discriminator mapping target that is not `#/components/schemas/<name>` (including pointers into a component); references are checked by OpenAPI context, so property, header and component names are never mistaken for keywords and literal schema data is never a reference |
 | `UNKNOWN_SECURITY_SCHEME` | a security requirement names an undeclared scheme |
-| `UNSUPPORTED_SERIALIZATION` | no supported media type remains (error; dropped alternatives are warnings); two media types that normalize to the same type are described differently; a parameter or form encoding uses `content` or an unsupported style; the manifest lists an unsupported media type; or multipart part headers are dropped (warning) |
+| `UNSUPPORTED_SERIALIZATION` | no supported media type remains (error; dropped alternatives are warnings); two media types that normalize to the same type are described differently; a parameter or form encoding uses `content` or an unsupported style (the message says whether listing the type in the manifest helps or only a spec change does); the manifest lists an unsupported media type; or multipart part headers are dropped (warning) |
 | `UNKNOWN_REPLACEMENT` | a deprecation replacement is not another catalog operation |
 | `AGENT_POLICY_REQUIRED` | `agent.expose` without `executionPolicy` |
 | `CREDENTIAL_REDACTED` | warning: a credential-like value was removed |
-| `INVALID_RELEASE` | `createReleaseDescriptor` input error |
+| `INVALID_RELEASE` | `createReleaseDescriptor` input error, including a catalog that is not plain JSON or lacks the fields a release reads; it never throws |
 
 ## Release descriptors
 
@@ -100,12 +116,13 @@ These version axes stay separate: `descriptorVersion`, `api.version`, `specDiges
 
 ## Client-failure events
 
-`validateClientFailureEvent(input)` returns `{ ok: true, event }` (canonical, round-trippable) or `{ ok: false, issues }`. Events (`apifn.client-failure/v1`) carry `eventId`, `occurredAt`, `api`, `operation {id, name?, method?, pathTemplate?}`, `release {releaseId, catalogDigest?, sdk?}`, `failure {kind, httpStatus?, errorCode?, message?, retryable?, attempt?}`, and optional `runtime`, `correlation` and `attributes`. The validator rejects, rather than trims, any of these:
+`validateClientFailureEvent(input)` returns `{ ok: true, event }` (canonical, round-trippable) or `{ ok: false, issues }`; it never throws, and non-plain objects (Maps, Dates, class instances) are `TYPE` issues. Events (`apifn.client-failure/v1`) carry `eventId`, `occurredAt`, `api`, `operation {id, name?, method?, pathTemplate?}`, `release {releaseId, catalogDigest?, sdk?}`, `failure {kind, httpStatus?, errorCode?, message?, retryable?, attempt?}`, and optional `runtime`, `correlation` and `attributes`. The validator rejects, rather than trims, any of these:
 
 - unknown fields, including `Object.prototype` names such as `constructor` or `__proto__`,
 - credential-bearing keys (`authorization`, `cookie`, `*token*`, `*secret*`, `*password*`, `*api_key*`, …),
 - credential-like values,
 - path templates with query strings,
+- `occurredAt` values that are not real UTC calendar dates and times,
 - fields over their UTF-8 byte limits (message 1024, attribute value 256, at most 32 attributes),
 - events over 8192 bytes serialized.
 

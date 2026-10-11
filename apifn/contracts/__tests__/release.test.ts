@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOperationCatalog, canonicalJson, createReleaseDescriptor, type CreateReleaseInput } from "../src/index.js";
+import { buildOperationCatalog, CATALOG_VERSION, canonicalJson, createReleaseDescriptor, type CreateReleaseInput } from "../src/index.js";
 import { clone, fixture, matchFixture } from "./helpers.js";
 
 const catalog = buildOperationCatalog(fixture("catalog/openapi.json"), fixture("catalog/manifest.json")).catalog!;
@@ -80,5 +80,24 @@ describe("createReleaseDescriptor", () => {
       "INVALID_RELEASE /artifacts/4/package/version",
     ]);
     expect(createReleaseDescriptor({ ...input(), catalog: {} as never }).diagnostics[0].pointer).toBe("/catalog/catalogVersion");
+  });
+
+  it.each<[string, () => unknown, string]>([
+    ["a null input", () => null, ""],
+    ["a catalog without operations", () => ({ ...input(), catalog: { catalogVersion: CATALOG_VERSION } }), "/catalog"],
+    ["an operation without sdk flags", () => {
+      const next = input();
+      delete (next.catalog.operations[0] as any).sdk;
+      return next;
+    }, "/catalog"],
+    ["a catalog holding a Map", () => ({ ...input(), catalog: { ...clone(catalog), schemas: new Map() } }), "/catalog"],
+    ["a non-string release ID", () => ({ ...input(), releaseId: 7 }), "/releaseId"],
+  ])("INVALID_RELEASE instead of throwing for %s", (_name, make, pointer) => {
+    let result: ReturnType<typeof createReleaseDescriptor> | undefined;
+    expect(() => {
+      result = createReleaseDescriptor(make() as CreateReleaseInput);
+    }).not.toThrow();
+    expect(result!.descriptor).toBeNull();
+    expect(result!.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_RELEASE", pointer })]);
   });
 });

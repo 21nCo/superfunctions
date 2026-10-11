@@ -10,6 +10,34 @@ import {
   type ReleaseDescriptor,
 } from "./types.js";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/** Fields of a catalog that a release reads; anything else is checked by the catalog's own schema. */
+function isReleasableCatalog(catalog: unknown): catalog is CreateReleaseInput["catalog"] {
+  if (!isRecord(catalog) || !isRecord(catalog.api) || !isRecord(catalog.source) || !Array.isArray(catalog.operations)) return false;
+  const { api, source } = catalog;
+  return (
+    typeof api.id === "string" &&
+    typeof api.version === "string" &&
+    typeof source.specDigest === "string" &&
+    typeof source.manifestDigest === "string" &&
+    catalog.operations.every(
+      (operation) =>
+        isRecord(operation) &&
+        typeof operation.id === "string" &&
+        isRecord(operation.sdk) &&
+        typeof operation.sdk.include === "boolean" &&
+        Array.isArray(operation.sdk.excludedTargets) &&
+        isRecord(operation.agent) &&
+        typeof operation.agent.expose === "boolean"
+    )
+  );
+}
+
 const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 export const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$/;
@@ -25,10 +53,24 @@ export function createReleaseDescriptor(input: CreateReleaseInput): CreateReleas
   const diagnostics: Diagnostic[] = [];
   const fail = (pointer: string, message: string) =>
     diagnostics.push({ code: "INVALID_RELEASE", severity: "error", message, pointer, source: "release" });
+  if (!isRecord(input)) {
+    fail("", "Release input must be a plain object with catalog, generator and artifacts.");
+    return { descriptor: null, diagnostics };
+  }
   const { catalog, generator } = input;
 
-  if (catalog?.catalogVersion !== CATALOG_VERSION) {
+  if (!isRecord(catalog) || catalog.catalogVersion !== CATALOG_VERSION) {
     fail("/catalog/catalogVersion", `Expected a ${CATALOG_VERSION} catalog built by buildOperationCatalog.`);
+    return { descriptor: null, diagnostics };
+  }
+  let catalogDigest = "";
+  try {
+    catalogDigest = canonicalDigest(catalog);
+  } catch {
+    // Falls through to the shape error below: a catalog is plain JSON data.
+  }
+  if (!isReleasableCatalog(catalog) || catalogDigest === "") {
+    fail("/catalog", "Catalog is not plain JSON with api, source and operations as built by buildOperationCatalog.");
     return { descriptor: null, diagnostics };
   }
   if (typeof generator?.name !== "string" || !PACKAGE_NAME_PATTERN.test(generator.name)) {
@@ -37,7 +79,7 @@ export function createReleaseDescriptor(input: CreateReleaseInput): CreateReleas
   if (typeof generator?.version !== "string" || !SEMVER_PATTERN.test(generator.version)) {
     fail("/generator/version", "Generator version must be a semantic version such as 1.4.0.");
   }
-  if (input.releaseId !== undefined && !RELEASE_ID_PATTERN.test(input.releaseId)) {
+  if (input.releaseId !== undefined && (typeof input.releaseId !== "string" || !RELEASE_ID_PATTERN.test(input.releaseId))) {
     fail("/releaseId", `Release ID must match ${RELEASE_ID_PATTERN.source}.`);
   }
   if (!Array.isArray(input.artifacts) || input.artifacts.length === 0) {
@@ -87,7 +129,7 @@ export function createReleaseDescriptor(input: CreateReleaseInput): CreateReleas
   const body: Omit<ReleaseDescriptor, "releaseId"> = {
     descriptorVersion: RELEASE_DESCRIPTOR_VERSION,
     api: { id: catalog.api.id, version: catalog.api.version },
-    catalogDigest: canonicalDigest(catalog),
+    catalogDigest,
     specDigest: catalog.source.specDigest,
     manifestDigest: catalog.source.manifestDigest,
     generator: { name: generator.name, version: generator.version },

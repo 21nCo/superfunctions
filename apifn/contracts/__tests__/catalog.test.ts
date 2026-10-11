@@ -1,6 +1,12 @@
+import path from "node:path";
+import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { buildOperationCatalog, canonicalJson, type Diagnostic } from "../src/index.js";
-import { clone, fixture, matchFixture, reverseKeys } from "./helpers.js";
+import { clone, fixture, matchFixture, readJson, reverseKeys, SCHEMAS } from "./helpers.js";
+
+const validateCatalog = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(
+  readJson(path.join(SCHEMAS, "operation-catalog.v1.schema.json"))
+);
 
 const spec = fixture("catalog/openapi.json");
 const manifest = fixture("catalog/manifest.json");
@@ -11,7 +17,10 @@ function build(mutate?: (spec: any, manifest: any) => void) {
   const nextSpec = clone(spec);
   const nextManifest = clone(manifest);
   mutate?.(nextSpec, nextManifest);
-  return buildOperationCatalog(nextSpec, nextManifest);
+  const result = buildOperationCatalog(nextSpec, nextManifest);
+  // Every successful catalog must satisfy the published schema.
+  if (result.catalog) expect(validateCatalog(result.catalog), JSON.stringify(validateCatalog.errors)).toBe(true);
+  return result;
 }
 
 function only(diagnostics: Diagnostic[], code: Diagnostic["code"]) {
@@ -223,8 +232,16 @@ describe("catalog diagnostics", () => {
     expect(specOnly.catalog).toBeNull();
     expect(only(specOnly.diagnostics, "UNSUPPORTED_SERIALIZATION").map(({ severity, message }) => `${severity}: ${message}`)).toEqual([
       expect.stringMatching(/^error: Parameter "limit" of operation "projects.list" uses style "pipeDelimited"; supported query styles are form, deepObject/),
-      expect.stringMatching(/^error: Response 200 of operation "projects.list" only offers application\/xml; add a supported media type/),
+      // application/xml cannot be listed in the manifest, so only a spec change helps.
+      expect.stringMatching(/^error: Response 200 of operation "projects.list" only offers application\/xml; the catalog cannot describe application\/xml, so the spec must also offer one of application\/json/),
       expect.stringMatching(/^warning: Response 200 of operation "projects.get" drops unsupported media types application\/xml/),
+    ]);
+
+    const listable = build((nextSpec) => {
+      nextSpec.paths[LIST_ROUTE].get.responses["200"].content = { "application/octet-stream": { schema: { type: "string" } } };
+    });
+    expect(only(listable.diagnostics, "UNSUPPORTED_SERIALIZATION").map(({ message }) => message)).toEqual([
+      expect.stringMatching(/or add application\/octet-stream to manifest serialization\.mediaTypes\.$/),
     ]);
   });
 
@@ -337,6 +354,12 @@ describe("credential safety", () => {
     }],
     ["a credential-named server variable", (nextSpec) => {
       nextSpec.servers[0] = { url: "https://{token}.api.example.test", variables: { token: { default: SECRET, enum: [SECRET] } } };
+    }],
+    ["an unrecognized member holding credential-named keys", (nextSpec) => {
+      inputProperties(nextSpec).settings = { type: "object", defaultValue: { password: SECRET } };
+    }],
+    ["an unrecognized member inside a credential field", (nextSpec) => {
+      inputProperties(nextSpec).password = { type: "string", fallback: SECRET };
     }],
   ])("drops seeded literals reached through %s", (_name, mutate) => {
     const result = build((nextSpec) => mutate(nextSpec));
@@ -573,5 +596,187 @@ describe("OpenAPI fields that change client behavior", () => {
       expect.stringMatching(/^projects.list Parameter at .* needs a name and an "in" of path, query, header, cookie/),
       expect.stringMatching(/^projects.get Path parameter "version" .* does not appear in the path template/),
     ]);
+  });
+});
+
+describe("credential fields from declared apiKey schemes", () => {
+  const SECRET = "SEEDEDapikey0020";
+  const listParameters = (nextSpec: any) => nextSpec.paths[LIST_ROUTE].get.parameters;
+
+  it.each<[string, Record<string, unknown>, (nextSpec: any, parameter: Record<string, unknown>) => void]>([
+    ["a header parameter, matched case-insensitively", { type: "apiKey", in: "header", name: "X-Auth" }, (nextSpec, parameter) => {
+      listParameters(nextSpec).push({ ...parameter, name: "x-auth", in: "header" });
+    }],
+    ["a cookie parameter", { type: "apiKey", in: "cookie", name: "sid" }, (nextSpec, parameter) => {
+      listParameters(nextSpec).push({ ...parameter, name: "sid", in: "cookie" });
+    }],
+    ["a query parameter", { type: "apiKey", in: "query", name: "key" }, (nextSpec, parameter) => {
+      listParameters(nextSpec).push({ ...parameter, name: "key", in: "query" });
+    }],
+    ["a path-level parameter", { type: "apiKey", in: "query", name: "key" }, (nextSpec, parameter) => {
+      nextSpec.paths[LIST_ROUTE].parameters.push({ ...parameter, name: "key", in: "query" });
+    }],
+    ["a component parameter reached by $ref", { type: "apiKey", in: "query", name: "key" }, (nextSpec, parameter) => {
+      nextSpec.components.parameters.Key = { ...parameter, name: "key", in: "query" };
+      listParameters(nextSpec).push({ $ref: "#/components/parameters/Key" });
+    }],
+  ])("drops literals of %s", (_name, scheme, addParameter) => {
+    const parameter = { schema: { anyOf: [{ type: "string", default: SECRET, enum: [SECRET] }] } };
+    const withScheme = build((nextSpec) => {
+      nextSpec.components.securitySchemes.custom = scheme;
+      addParameter(nextSpec, parameter);
+    });
+    expect(withScheme.catalog).not.toBeNull();
+    expect(canonicalJson(withScheme)).not.toContain(SECRET);
+    expect(only(withScheme.diagnostics, "CREDENTIAL_REDACTED").length).toBeGreaterThan(0);
+
+    // Without the scheme declaration the same parameter is ordinary data.
+    const withoutScheme = build((nextSpec) => addParameter(nextSpec, parameter));
+    expect(canonicalJson(withoutScheme.catalog)).toContain(SECRET);
+  });
+});
+
+describe("author strings copied into the catalog", () => {
+  it.each<[string, (nextSpec: any) => void, string]>([
+    ["tags", (nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.tags.push("token=SEEDEDtag0021");
+    }, "SEEDEDtag0021"],
+    ["security scheme bearerFormat", (nextSpec) => {
+      nextSpec.components.securitySchemes.bearerAuth.bearerFormat = "Bearer SEEDEDformat0022";
+    }, "SEEDEDformat0022"],
+    ["security scheme name", (nextSpec) => {
+      nextSpec.components.securitySchemes.apiKeyAuth.name = "sk_live_SEEDEDname0023";
+    }, "SEEDEDname0023"],
+    ["OAuth scope names", (nextSpec) => {
+      nextSpec.components.securitySchemes.oauth.flows.clientCredentials.scopes["sk_live_SEEDEDscope0024"] = "x";
+      nextSpec.paths[PROJECT_ROUTE].get.security = [{ oauth: ["sk_live_SEEDEDscope0024"] }];
+    }, "SEEDEDscope0024"],
+  ])("redacts credentials in %s", (_name, mutate, secret) => {
+    const result = build(mutate);
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(secret);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBeGreaterThan(0);
+  });
+
+  it("reports unparseable documents by line and column without quoting source text", () => {
+    const yaml = 'openapi: 3.1.0\ninfo:\n  title: x\n  password: "SEEDEDyaml0025\n paths: [';
+    const result = buildOperationCatalog(yaml, clone(manifest));
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_SPEC", message: expect.stringMatching(/^Cannot parse the OpenAPI document as JSON or YAML \(line \d+, column \d+\)\.$/) })]);
+    expect(JSON.stringify(result.diagnostics)).not.toContain("SEEDEDyaml0025");
+  });
+});
+
+describe("literal instance data", () => {
+  it("copies default, const, enum and property-name maps verbatim, x- keys included", () => {
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.mode = {
+        type: "object",
+        const: { "x-a": 1 },
+        default: { "x-mode": "fast", nested: { "x-b": [{ "x-c": true }] } },
+        enum: [{ "x-mode": "fast" }],
+        dependentRequired: { "x-tenant": ["region"], password: ["user"] },
+        required: ["password"],
+        xml: { name: "mode", "x-ext": 1 },
+        "x-ext": 1,
+      };
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.mode).toEqual({
+      type: "object",
+      const: { "x-a": 1 },
+      default: { "x-mode": "fast", nested: { "x-b": [{ "x-c": true }] } },
+      enum: [{ "x-mode": "fast" }],
+      dependentRequired: { "x-tenant": ["region"], password: ["user"] },
+      required: ["password"],
+      xml: { name: "mode" },
+    });
+  });
+});
+
+describe("security requirements", () => {
+  it.each<[string, unknown, string]>([
+    ["a null requirement", [null], "/security/0"],
+    ["a scope string instead of an array", [{ oauth: "projects:write" }], "/security/0/oauth"],
+    ["non-string scopes", [{ oauth: ["projects:write", 7] }], "/security/0/oauth"],
+    ["a security object instead of an array", { oauth: [] }, "/security"],
+  ])("INVALID_SPEC: %s never becomes anonymous access or empty scopes", (_name, security, suffix) => {
+    const result = build((nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.security = security;
+    });
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: "INVALID_SPEC", operation: "projects.get", pointer: `/paths/~1workspaces~1{workspaceId}~1projects~1{projectId}/get${suffix}` }),
+    ]);
+  });
+
+  it("keeps an explicit empty requirement as the anonymous alternative", () => {
+    const result = build((nextSpec) => {
+      nextSpec.paths[PROJECT_ROUTE].get.security = [{}, { oauth: ["projects:read"] }];
+    });
+    const get = result.catalog!.operations.find((operation) => operation.id === "projects.get")!;
+    expect(get.security.alternatives).toEqual([[], [{ scheme: "oauth", scopes: ["projects:read"] }]]);
+  });
+});
+
+describe("component schema closure", () => {
+  const pets = (nextSpec: any, mapping: Record<string, string>) => {
+    Object.assign(nextSpec.components.schemas, {
+      Pet: { type: "object", discriminator: { propertyName: "petType", mapping }, properties: { petType: { type: "string" } } },
+      Dog: { allOf: [{ $ref: "#/components/schemas/Pet" }, { type: "object", properties: { bark: { type: "boolean" } } }] },
+      Cat: { allOf: [{ $ref: "#/components/schemas/Pet" }] },
+    });
+    inputSchema(nextSpec).properties.pet = { $ref: "#/components/schemas/Pet" };
+  };
+
+  it("emits discriminator mapping targets as component references and includes their schemas", () => {
+    const result = build((nextSpec) => pets(nextSpec, { dog: "#/components/schemas/Dog", cat: "Cat" }));
+    expect(result.diagnostics).toEqual([]);
+    const { schemas } = result.catalog!;
+    expect(Object.keys(schemas)).toEqual(expect.arrayContaining(["Cat", "Dog", "Pet"]));
+    expect((schemas.Pet as any).discriminator).toEqual({
+      propertyName: "petType",
+      mapping: { cat: "#/components/schemas/Cat", dog: "#/components/schemas/Dog" },
+    });
+  });
+
+  it.each([
+    ["a missing mapping target", { ghost: "#/components/schemas/Missing" }, "/components/schemas/Pet/discriminator/mapping/ghost"],
+    ["a mapping target outside components.schemas", { dog: "#/components/schemas/Dog/allOf/1" }, "/components/schemas/Pet/discriminator/mapping/dog"],
+  ])("UNRESOLVED_REF: %s", (_name, mapping, pointer) => {
+    const result = build((nextSpec) => pets(nextSpec, mapping));
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toEqual([expect.objectContaining({ code: "UNRESOLVED_REF", pointer })]);
+  });
+
+  it("UNRESOLVED_REF: a schema reference into a component instead of to it", () => {
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.owner = { $ref: "#/components/schemas/Project/properties/id" };
+    });
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: "UNRESOLVED_REF", pointer: "/components/schemas/ProjectInput/properties/owner/$ref" }),
+    ]);
+  });
+});
+
+describe("catalog output conformance", () => {
+  it("INVALID_MANIFEST: a derived name longer than the catalog allows needs a manifest name", () => {
+    const longId = `list${"x".repeat(125)}`;
+    const rebind = (nextSpec: any, nextManifest: any) => {
+      nextSpec.paths[LIST_ROUTE].get.operationId = longId;
+      nextManifest.operations.find((binding: any) => binding.id === "projects.list").operationId = longId;
+    };
+    const derived = build(rebind);
+    expect(derived.catalog).toBeNull();
+    expect(derived.diagnostics).toEqual([
+      expect.objectContaining({ code: "INVALID_MANIFEST", source: "manifest", operation: "projects.list", message: expect.stringMatching(/129 characters.*set a shorter manifest name/) }),
+    ]);
+
+    const named = build((nextSpec, nextManifest) => {
+      rebind(nextSpec, nextManifest);
+      nextManifest.operations.find((binding: any) => binding.id === "projects.list").name = "listProjects";
+    });
+    expect(named.diagnostics).toEqual([]);
   });
 });

@@ -80,6 +80,37 @@ describe("client-failure event envelope", () => {
     expect(result).toEqual({ ok: false, issues: [expect.objectContaining({ path: issuePath, code: "UNKNOWN_FIELD" })] });
   });
 
+  it.each<[string, (event: any) => any, string]>([
+    ["attributes as a Map", (event) => ({ ...event, attributes: new Map([["region", "eu"]]) }), "/attributes"],
+    ["runtime as a class instance", (event) => ({ ...event, runtime: new (class Runtime { name = "node"; })() }), "/runtime"],
+    ["api as a Date", (event) => ({ ...event, api: new Date(0) }), "/api"],
+    ["the event as a class instance", (event) => Object.assign(new (class Event {})(), event), ""],
+    ["a throwing getter", (event) => Object.defineProperty({ ...event }, "eventId", { enumerable: true, get: () => { throw new Error("boom"); } }), ""],
+  ])("returns a TYPE issue instead of throwing for %s", (_name, mutate, issuePath) => {
+    const input = mutate(clone(fixture("client-failure/valid/network-minimal.json")));
+    let result: ReturnType<typeof validateClientFailureEvent> | undefined;
+    expect(() => {
+      result = validateClientFailureEvent(input);
+    }).not.toThrow();
+    expect(result).toEqual({ ok: false, issues: [expect.objectContaining({ path: issuePath, code: "TYPE" })] });
+  });
+
+  it.each(["2026-99-99T99:99:99Z", "2026-02-30T12:00:00Z", "2025-02-29T00:00:00Z", "2026-04-31T08:00:00Z", "2026-10-11T24:00:00Z"])(
+    "rejects the impossible timestamp %s",
+    (occurredAt) => {
+      const event = clone(fixture("client-failure/valid/network-minimal.json"));
+      const result = validateClientFailureEvent({ ...event, occurredAt });
+      expect(result).toEqual({ ok: false, issues: [expect.objectContaining({ path: "/occurredAt", code: "PATTERN" })] });
+    }
+  );
+
+  it("accepts leap days, leap seconds and fractional seconds", () => {
+    const event = clone(fixture("client-failure/valid/network-minimal.json"));
+    for (const occurredAt of ["2024-02-29T23:59:60.123Z", "2000-02-29T00:00:00Z", "2026-12-31T23:59:59.999999999Z"]) {
+      expect(validateClientFailureEvent({ ...event, occurredAt }).ok, occurredAt).toBe(true);
+    }
+  });
+
   it("is exported from the runtime-neutral entry point", () => {
     expect(runtimeNeutral.validateClientFailureEvent).toBe(validateClientFailureEvent);
     expect(runtimeNeutral.CLIENT_FAILURE_LIMITS.maxEventBytes).toBe(8192);

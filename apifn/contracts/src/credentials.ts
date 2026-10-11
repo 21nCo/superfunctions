@@ -29,49 +29,87 @@ export function isCredentialKey(key: string): boolean {
   return CREDENTIAL_KEY_FRAGMENTS.some((fragment) => normalized.includes(fragment));
 }
 
-/**
- * True when the word after `Bearer`/`Basic` may be a token. Prose such as
- * "Basic authentication" or "Bearer token-based access" is the only exception.
- */
-function looksLikeToken(word: string): boolean {
-  return !/^(?:auth|token|credential|scheme|header|access|realm|challenge|login)[A-Za-z-]*$/i.test(word);
+/** Template placeholders such as `<token>`, `{token}`, `${TOKEN}`, `***` or `[REDACTED]`. */
+function isPlaceholder(value: string): boolean {
+  return /^(?:<[^<>]*>|\{+[^{}]*\}+|\[[^[\]]*\]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\*+|\.{3}|\u2026)$/.test(value);
 }
+
+/**
+ * True when a word could be a credential rather than prose: it holds a digit,
+ * base64 or token punctuation, a lower-to-upper case change, or is 16+ long.
+ */
+function isTokenShaped(word: string): boolean {
+  return word.length >= 16 || /\d|[+/=_~]|[a-z][A-Z]/.test(word);
+}
+
+/** HTTP authentication schemes that precede a credential in an Authorization header. */
+const AUTH_SCHEMES = "basic|bearer|digest|token|negotiate|ntlm|dpop|hoba|mutual|apikey|oauth|aws4-hmac-sha256";
 
 interface CredentialPattern {
   pattern: RegExp;
-  accept?: (match: string, ...groups: string[]) => boolean;
-  /** Replacement keeping the URL scheme so redacted text stays readable. */
-  keepPrefix?: boolean;
+  /** Receives the capture groups (unmatched groups as ""); false keeps the match. */
+  accept?: (groups: string[]) => boolean;
+  /** Replacement built from the capture groups, so redacted text keeps its context. */
+  replace?: (groups: string[]) => string;
 }
 
 const CREDENTIAL_VALUE_PATTERNS: CredentialPattern[] = [
-  { pattern: /\b(?:bearer|basic)\s+([A-Za-z0-9._~+/-]{8,}=*)/gi, accept: (_match, token) => looksLikeToken(token) },
+  // Header context: an Authorization value is a credential at any length; a
+  // single word without a scheme only when it is token-shaped.
+  {
+    pattern: new RegExp(`\\b((?:proxy-)?authorization\\s*:\\s*)(?:(${AUTH_SCHEMES})\\s+)?([^\\s"',;]+)`, "gi"),
+    accept: ([, scheme, value]) => !isPlaceholder(value) && (scheme !== "" || isTokenShaped(value)),
+    replace: ([prefix, scheme]) => `${prefix}${scheme ? `${scheme} ` : ""}${REDACTED}`,
+  },
+  // Cookie headers: every name=value pair up to the end of the line.
+  {
+    pattern: /\b((?:set-)?cookie\s*:\s*)([^\r\n"']*=[^\r\n"']*)/gi,
+    accept: ([, cookies]) => cookies.split(/[;,]/).some((pair) => {
+      const value = pair.slice(pair.indexOf("=") + 1).trim();
+      return pair.includes("=") && value !== "" && !isPlaceholder(value);
+    }),
+    replace: ([prefix]) => `${prefix}${REDACTED}`,
+  },
+  // A standalone Bearer/Basic counts only when the next word is token-shaped.
+  {
+    pattern: /\b(bearer|basic)\s+([^\s"',;]+?)(?=[.,;:!?)]*(?:\s|["',;]|$))/gi,
+    accept: ([, word]) => !isPlaceholder(word) && word.length >= 4 && isTokenShaped(word),
+    replace: ([scheme]) => `${scheme} ${REDACTED}`,
+  },
   { pattern: /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g },
   { pattern: /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}/g },
   { pattern: /\bgh[pousr]_[A-Za-z0-9]{20,}/g },
   { pattern: /\b(?:xox[abpr]|AKIA)[A-Za-z0-9-]{12,}/g },
   { pattern: /\b(?:access_token|refresh_token|api[_-]?key|password|secret|token)=[^&\s"']+/gi },
   // Any URL user info, with or without a scheme and however many "@" it holds.
-  { pattern: /((?:\b[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#]*@/gi, keepPrefix: true },
+  {
+    pattern: /((?:\b[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#]*@/gi,
+    replace: ([prefix]) => `${prefix}${REDACTED}@`,
+  },
 ];
 
 export const REDACTED = "[REDACTED]";
 
+function groupsOf(match: RegExpMatchArray | unknown[]): string[] {
+  return Array.from(match as ArrayLike<unknown>).slice(1).map((group) => (typeof group === "string" ? group : ""));
+}
+
 /** True when a free-text value contains a recognizable credential. */
 export function containsCredentialValue(value: string): boolean {
   return CREDENTIAL_VALUE_PATTERNS.some(({ pattern, accept }) =>
-    Array.from(value.matchAll(pattern)).some((match) => !accept || accept(...(match as unknown as [string, ...string[]])))
+    Array.from(value.matchAll(pattern)).some((match) => !accept || accept(groupsOf(match)))
   );
 }
 
 /** Replaces recognizable credentials in free text with `[REDACTED]`. */
 export function redactCredentialValues(value: string): string {
   return CREDENTIAL_VALUE_PATTERNS.reduce(
-    (text, { pattern, accept, keepPrefix }) =>
-      text.replace(pattern, (match: string, ...groups: unknown[]) => {
-        const captured = groups.filter((group): group is string => typeof group === "string");
-        if (accept && !accept(match, ...captured)) return match;
-        return keepPrefix ? `${captured[0]}${REDACTED}@` : REDACTED;
+    (text, { pattern, accept, replace }) =>
+      text.replace(pattern, (match: string, ...rest: unknown[]) => {
+        // `rest` ends with the offset and the whole string after the capture groups.
+        const groups = rest.slice(0, -2).map((group) => (typeof group === "string" ? group : ""));
+        if (accept && !accept(groups)) return match;
+        return replace ? replace(groups) : REDACTED;
       }),
     value
   );

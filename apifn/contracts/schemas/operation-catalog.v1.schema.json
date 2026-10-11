@@ -94,7 +94,7 @@
     "schemas": {
       "type": "object",
       "additionalProperties": {
-        "description": "JSON Schema (2020-12) with $ref values pointing at #/components/schemas/<name>; resolve them against the catalog's schemas map."
+        "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>; resolve them against the catalog's schemas map."
       }
     }
   },
@@ -141,7 +141,7 @@
               "allowReserved": {"type": "boolean"},
               "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
               "schema": {
-                "description": "JSON Schema (2020-12) with $ref values pointing at #/components/schemas/<name>; resolve them against the catalog's schemas map."
+                "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>; resolve them against the catalog's schemas map."
               }
             },
             "required": ["name", "in", "required", "deprecated", "style", "explode", "allowReserved", "description", "schema"]
@@ -269,7 +269,7 @@
       "properties": {
         "mediaType": {"type": "string", "minLength": 1, "maxLength": 128},
         "schema": {
-          "description": "JSON Schema (2020-12) with $ref values pointing at #/components/schemas/<name>; resolve them against the catalog's schemas map."
+          "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>; resolve them against the catalog's schemas map."
         },
         "encoding": {
           "description": "Per-property serialization of application/x-www-form-urlencoded and multipart/form-data bodies, keyed by property name; empty for other media types.",

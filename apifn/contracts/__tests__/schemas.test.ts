@@ -6,6 +6,7 @@ import {
   API_ID_PATTERN,
   CREDENTIAL_KEY_PATTERN,
   NAME_PATTERN,
+  OCCURRED_AT_PATTERN,
   OPERATION_ID_PATTERN,
   RELEASE_ID_PATTERN,
   TARGET_PATTERN,
@@ -97,6 +98,7 @@ describe("published JSON Schemas", () => {
     expect(binding.name.pattern).toBe(NAME_PATTERN.source);
     expect(binding.sdk.properties.excludeTargets.items.pattern).toBe(TARGET_PATTERN.source);
     expect(failure.properties.release.properties.releaseId.pattern).toBe(RELEASE_ID_PATTERN.source);
+    expect(failure.properties.occurredAt.pattern).toBe(OCCURRED_AT_PATTERN.source);
     expect(failure.properties.attributes.propertyNames.not.pattern).toBe(CREDENTIAL_KEY_PATTERN);
     expect(schema("release-descriptor").properties.releaseId.pattern).toBe(RELEASE_ID_PATTERN.source);
   });

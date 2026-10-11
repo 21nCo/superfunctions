@@ -69,18 +69,47 @@ export type ValidateFailureEventResult =
   | { ok: false; issues: FailureEventIssue[] };
 
 type Field =
-  | { type: "string"; maxBytes: number; pattern?: RegExp; values?: readonly string[]; required?: boolean }
+  | {
+      type: "string";
+      maxBytes: number;
+      pattern?: RegExp;
+      values?: readonly string[];
+      /** Semantic check after the pattern, such as a real calendar date. */
+      valid?: { test: (value: string) => boolean; message: string };
+      required?: boolean;
+    }
   | { type: "integer"; min: number; max: number; required?: boolean }
   | { type: "boolean"; required?: boolean }
   | { type: "object"; fields: Record<string, Field>; required?: boolean };
 
 const text = (maxBytes: number, pattern?: RegExp, required = false): Field => ({ type: "string", maxBytes, pattern, required });
 const PRINTABLE = /^[\x21-\x7e]+$/;
+/**
+ * RFC 3339 UTC timestamp with in-range fields; the published schema shares
+ * this pattern, and the validator also rejects dates such as February 30.
+ */
+export const OCCURRED_AT_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):([0-5]\d):([0-5]\d|60)(?:\.\d{1,9})?Z$/;
+
+/** True for an RFC 3339 UTC timestamp naming a real date and time (leap second allowed). */
+function isCalendarTimestamp(value: string): boolean {
+  const parts = OCCURRED_AT_PATTERN.exec(value);
+  if (!parts) return false;
+  const [year, month, day, hour, minute, second] = parts.slice(1).map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return days !== undefined && day >= 1 && day <= days && hour < 24 && minute < 60 && second <= 60;
+}
 
 const EVENT_FIELDS: Record<string, Field> = {
   schemaVersion: { type: "string", maxBytes: 64, values: [CLIENT_FAILURE_EVENT_VERSION], required: true },
   eventId: text(64, /^[A-Za-z0-9_-]{8,64}$/, true),
-  occurredAt: text(35, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/, true),
+  occurredAt: {
+    type: "string",
+    maxBytes: 35,
+    pattern: OCCURRED_AT_PATTERN,
+    valid: { test: isCalendarTimestamp, message: "must be a real calendar date and time" },
+    required: true,
+  },
   api: { type: "object", required: true, fields: { id: text(128, API_ID_PATTERN, true), version: text(64, VERSION_PATTERN, true) } },
   operation: {
     type: "object",
@@ -124,8 +153,11 @@ const ATTRIBUTE_KEY = /^[a-z][a-z0-9_.-]{0,63}$/;
 const encoder = new TextEncoder();
 const byteLength = (value: string) => encoder.encode(value).length;
 
+/** Plain JSON objects only: arrays, Maps, Dates and class instances are type errors, never thrown. */
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 function checkString(value: string, path: string, maxBytes: number, issues: FailureEventIssue[]): boolean {
@@ -164,6 +196,8 @@ function checkField(value: unknown, field: Field, path: string, issues: FailureE
       issues.push({ path, code: "PATTERN", message: `${path} must be one of ${field.values.join(", ")}.` });
     } else if (field.pattern && !field.pattern.test(value)) {
       issues.push({ path, code: "PATTERN", message: `${path} must match ${field.pattern.source}.` });
+    } else if (field.valid && !field.valid.test(value)) {
+      issues.push({ path, code: "PATTERN", message: `${path} ${field.valid.message}.` });
     }
   }
 }
@@ -221,9 +255,18 @@ function checkAttributes(value: unknown, issues: FailureEventIssue[]): void {
  * trimmed, so a reporter can never persist a secret by accident.
  */
 export function validateClientFailureEvent(input: unknown): ValidateFailureEventResult {
+  try {
+    return validate(input);
+  } catch {
+    // Every value is type-checked before use, so only exotic input (a throwing getter or proxy) gets here.
+    return { ok: false, issues: [{ path: "", code: "TYPE", message: "A client-failure event must be plain JSON data." }] };
+  }
+}
+
+function validate(input: unknown): ValidateFailureEventResult {
   const issues: FailureEventIssue[] = [];
   if (!isRecord(input)) {
-    return { ok: false, issues: [{ path: "", code: "TYPE", message: "A client-failure event must be an object." }] };
+    return { ok: false, issues: [{ path: "", code: "TYPE", message: "A client-failure event must be a plain object." }] };
   }
   const rest = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "attributes"));
   checkObject(rest, EVENT_FIELDS, "", issues);
