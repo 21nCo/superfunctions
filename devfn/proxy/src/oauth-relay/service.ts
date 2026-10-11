@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
-import { matchesProcessIdentity, processBirthSignature, processIdentityStatus } from "@devfn/processes";
+import { ProcessError, processBirthSignature, processGroupStatus, stopProcessGroup } from "@devfn/processes";
 
 import { CaddyProxyController, DomainError, proxyListenerPorts, proxyListenerPortsFor, readRegisteredDomains, type ProxyRoute } from "../index.js";
 import {
@@ -44,10 +44,11 @@ export interface OAuthRelayStatus {
 }
 
 const defaultCommand = (): string[] => [process.execPath, fileURLToPath(new URL("./serve.js", import.meta.url))];
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type ProcessIdentity = { pid: number; birthSignature?: string; recordedAt?: string };
-const identityStatus = async (identity: ProcessIdentity) => await processIdentityStatus(identity.pid, identity.birthSignature, identity.recordedAt);
+// The relay leads its own process group, and anything left in that group may
+// still serve its port, so a relay counts as gone only when its whole group is.
+const groupStatus = async (identity: ProcessIdentity) => await processGroupStatus(identity.pid, identity.birthSignature, identity.recordedAt);
 const mayRun = (status: string) => status === "running" || status === "unverified";
 
 const registryOf = (stateDir: string) => new FilePortRegistry(path.join(stateDir, "registry.json"));
@@ -69,9 +70,10 @@ async function recordedIdentities(stateDir: string, proxy: Pick<OAuthRelayProxy,
 /**
  * The relay process's status, decided from every recorded identity: the
  * service record, the relay routes and the relay's registry claims. It is
- * "stopped" only when every one is verifiably gone; an unreadable record, an
- * unverifiable identity, or a live identity the record does not name is
- * "unverified", so callers keep its route and refuse to replace it.
+ * "stopped" only when every one's process group is verifiably gone; an
+ * unreadable record, an unverifiable identity, a group that outlives its
+ * leader, or a live identity the record does not name is "unverified", so
+ * callers keep its route and refuse to replace it.
  */
 async function serviceStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState">): Promise<{ service?: OAuthRelayService; status: "running" | "stopped" | "unverified" }> {
   let service: OAuthRelayService | undefined;
@@ -80,27 +82,28 @@ async function serviceStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "ins
   catch (error) { if (!(error instanceof OAuthRelayError)) throw error; unreadable = true; }
   for (const identity of await recordedIdentities(stateDir, proxy)) {
     if (service && identity.pid === service.pid && identity.birthSignature === service.birthSignature) continue;
-    if (mayRun(await identityStatus(identity))) return { service, status: "unverified" };
+    if (mayRun(await groupStatus(identity))) return { service, status: "unverified" };
   }
   if (unreadable) return { status: "unverified" };
   if (!service) return { status: "stopped" };
-  const status = await identityStatus(service);
+  const status = await groupStatus(service);
   return { service, status: status === "running" ? "running" : status === "unverified" ? "unverified" : "stopped" };
 }
 
-/** Stop a relay process by its verified identity; false when it may still run. */
-async function stopRelayProcess(identity: ProcessIdentity): Promise<boolean> {
-  for (const [signal, waitMs] of [["SIGTERM", 5_000], ["SIGKILL", 2_000]] as const) {
-    const status = await identityStatus(identity);
-    if (status === "exited" || status === "identity-mismatch") return true;
-    if (status === "unverified" || !await matchesProcessIdentity(identity.pid, identity.birthSignature, identity.recordedAt)) return false;
-    try { process.kill(process.platform === "win32" ? identity.pid : -identity.pid, signal); } catch { /* already exited */ }
-    for (const deadline = Date.now() + waitMs; Date.now() < deadline; await delay(50)) {
-      const after = await identityStatus(identity);
-      if (after === "exited" || after === "identity-mismatch") return true;
-    }
+/**
+ * Stop a relay's process group through its verified leader, as DevFn stops
+ * every lifecycle group: members that outlive the leader are forced, and a
+ * group without a verified leader is never signalled. Returns why it may
+ * still run, or undefined once nothing of the group remains.
+ */
+async function stopRelayProcess(identity: ProcessIdentity): Promise<string | undefined> {
+  try {
+    await stopProcessGroup({ pid: identity.pid, birthSignature: identity.birthSignature, startedAt: identity.recordedAt }, "The DevFn OAuth relay", 5_000);
+    return undefined;
+  } catch (error) {
+    if (error instanceof ProcessError) return error.message;
+    throw error;
   }
-  return false;
 }
 
 interface LaunchedRelay { pid: number; birthSignature: string; port: number; commit: () => void; abandon: () => void }
@@ -224,7 +227,8 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
         await releaseClaims(input.stateDir, service.invocationId);
         return await relayStatus(input.stateDir, proxy);
       }
-      if (!await stopRelayProcess(service)) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `The unclaimed relay process (PID ${service.pid}) did not stop.`);
+      const running = await stopRelayProcess(service);
+      if (running) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `The unclaimed relay process (PID ${service.pid}) did not stop: ${running}`);
     }
     // The listener claim comes first: a conflicting sibling lease refuses the
     // start before any relay process or route exists.
@@ -246,7 +250,7 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
       // The route was not activated, so the new process, record and claim go;
       // a prior route, if any, still names the previous (dead) relay.
       started?.abandon();
-      if (!service || await stopRelayProcess(service)) {
+      if (!service || await stopRelayProcess(service) === undefined) {
         if (service) await rm(relayPaths(input.stateDir).service, { force: true });
         await registryOf(input.stateDir).release({ invocationId, errorCode: "DEVFN_START_FAILED" });
       }
@@ -260,7 +264,7 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
 
 /**
  * Remove the relay route first, so no callback is served, then stop every
- * recorded relay process by verified identity and end the relay's listener
+ * recorded relay process group by verified identity and end the relay's listener
  * claims. Tickets are left to expire. An unreadable service record is left
  * for inspection and reported as DEVFN_OAUTH_RELAY_STATE_INVALID, after the
  * processes the routes and claims name are stopped.
@@ -279,9 +283,10 @@ export async function stopOAuthRelay(stateDir: string, proxy: OAuthRelayProxy = 
     if (service && !identities.some((item) => item.pid === service.pid && item.birthSignature === service.birthSignature)) identities.unshift(service);
     let stopped = false;
     for (const identity of identities) {
-      stopped ||= await identityStatus(identity) === "running";
-      if (!await stopRelayProcess(identity)) {
-        throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `The relay process (PID ${identity.pid}) may still run but did not stop; its route is removed.`);
+      stopped ||= await groupStatus(identity) === "running";
+      const running = await stopRelayProcess(identity);
+      if (running) {
+        throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `${running} Its route is removed; its record and listener claim are kept until no process of the relay remains.`);
       }
     }
     await releaseClaims(stateDir);

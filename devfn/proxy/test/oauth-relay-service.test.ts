@@ -377,3 +377,51 @@ setInterval(() => undefined, 1000);
   const recorded = (await readRelayService(stateDir).catch(() => undefined))?.pid === relayPid;
   expect(recorded || !alive()).toBe(true);
 }, 60_000);
+
+it("counts the relay stopped only when its whole process group is gone", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  const wrapper = path.join(stateDir, "relay-group.cjs");
+  // The recorded relay leads a group with the relay entry and a member that ignores SIGTERM.
+  await writeFile(wrapper, `const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const [pidFile, ...relay] = process.argv.slice(2);
+spawn(process.execPath, ["-e", \`process.on("SIGTERM", () => undefined); require("node:fs").writeFileSync(\${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => undefined, 1000);\`], { stdio: "ignore" });
+const wait = () => fs.existsSync(pidFile) ? spawn(relay[0], relay.slice(1), { stdio: "inherit" }) : setTimeout(wait, 10);
+wait();
+`);
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+  const claims = async () => (await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state);
+  const start = async (pidFile: string) => await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy,
+    command: [process.execPath, wrapper, path.join(stateDir, pidFile), ...RELAY_COMMAND] });
+
+  // stop forces the member that ignored SIGTERM before it releases anything.
+  const first = await start("member-1");
+  const member = Number(await readFile(path.join(stateDir, "member-1"), "utf8"));
+  cleanup.push(async () => { try { process.kill(member, "SIGKILL"); } catch { /* stopped */ } });
+  expect(await stopOAuthRelay(stateDir, proxy)).toEqual({ stopped: true, routeRemoved: true });
+  expect(alive(member)).toBe(false);
+  expect(alive(first.pid!)).toBe(false);
+  expect(await claims()).toEqual(["stopped"]);
+  expect(await readRelayService(stateDir)).toBeUndefined();
+
+  // A group that outlives its leader cannot be verified as the relay's: it keeps
+  // its route, record and claim, refuses a new start, and stop signals none of it.
+  const second = await start("member-2");
+  const service = (await readRelayService(stateDir))!;
+  const survivor = Number(await readFile(path.join(stateDir, "member-2"), "utf8"));
+  cleanup.push(async () => { try { process.kill(-second.pid!, "SIGKILL"); } catch { /* stopped */ } });
+  const record = await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8");
+  process.kill(second.pid!, "SIGKILL");
+  for (let attempt = 0; attempt < 100 && await processIdentityStatus(service.pid, service.birthSignature) === "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  const routes = [...proxy.routes];
+  expect(await recoverOAuthRelayRoute(stateDir, proxy)).toBe(false);
+  expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: false, unverified: true });
+  expect(proxy.routes).toEqual(routes);
+  await expect(start("member-3")).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_STATE_INVALID" });
+  await expect(stopOAuthRelay(stateDir, proxy)).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE" });
+  expect(alive(survivor)).toBe(true);
+  expect(await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8")).toBe(record);
+  expect(await claims()).toEqual(["stopped", "ready"]);
+}, 90_000);

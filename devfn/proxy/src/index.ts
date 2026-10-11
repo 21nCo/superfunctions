@@ -9,7 +9,7 @@ import { lookup } from "node:dns/promises";
 import { promisify } from "node:util";
 
 import { connectionRefused, isPortAvailable, parsePersistedProxyRoutes, parseProxyOwner, proxyOwnerStatus, scanListenerState, withFileLock, withRoutingLock, type ProxyOwner } from "@devfn/ports";
-import { matchesProcessIdentity, processBirthSignature, processIdentityStatus } from "@devfn/processes";
+import { matchesProcessIdentity, processBirthSignature, processGroupStatus } from "@devfn/processes";
 import { domainContains, DomainError, ipv6LoopbackAvailable, readRegisteredDomains, verifyCertificate, verifyLocalDns } from "./domains.js";
 export { DomainError, domainContains, normalizeDomain, readRegisteredDomains, registerDomain, unregisterDomain, verifyCertificate, verifyLocalDns, type RegisteredDomain } from "./domains.js";
 
@@ -53,7 +53,7 @@ export interface ProxyRoute {
   certificateFile?: string; keyFile?: string;
   /** Private, immutable copy of the certificate used by an activated route. */
   certificateDigest?: string;
-  /** A route to a process DevFn started outside a lifecycle; the next transition that changes routes drops it once that process is verified gone. */
+  /** A route to a process group leader DevFn started outside a lifecycle; the next transition that changes routes drops it once that whole group is verified gone. */
   serviceProcess?: { pid: number; birthSignature: string };
 }
 interface ProxyState { version: 1; routes: ProxyRoute[] }
@@ -193,18 +193,31 @@ function canonicalJson(value: unknown): string {
 }
 
 /**
- * Routes without a service process whose recorded process is verified gone.
+ * The one check route state passes before it is written, the same parse and
+ * render every read applies, so no update can persist a state that later
+ * reads, updates or removals refuse.
+ */
+function validateRouteState(routes: readonly ProxyRoute[]): void {
+  renderCaddyfile(routes);
+  try { parsePersistedProxyRoutes({ version: 1, routes }); }
+  catch (error) { throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", "The proxy route update would not be readable route state.", { cause: error instanceof Error ? error.message : String(error) }); }
+}
+
+/**
+ * Routes without a service process whose recorded process group is verified gone.
  * Every apply that changes routes drops those: upsert, removeInstance, a
  * rollback restore and a recovered activation journal (or its rollback), so
- * a crashed service's route does not outlive the next such operation; an
- * unverifiable process keeps its route. A call that changes no routes never
+ * a crashed service's route does not outlive the next such operation. The
+ * service process leads its own process group, and a member that outlives
+ * the leader may still serve the route, so only a group verified gone drops
+ * it; an unverifiable process or group keeps its route. A call that changes no routes never
  * applies Caddy for this sweep alone, so route-less lifecycles stay
  * independent of Caddy.
  */
 async function withoutExitedServices(routes: readonly ProxyRoute[]): Promise<ProxyRoute[]> {
   const kept: ProxyRoute[] = [];
   for (const route of routes) {
-    const status = route.serviceProcess && await processIdentityStatus(route.serviceProcess.pid, route.serviceProcess.birthSignature);
+    const status = route.serviceProcess && await processGroupStatus(route.serviceProcess.pid, route.serviceProcess.birthSignature);
     if (status !== "exited" && status !== "identity-mismatch") kept.push(route);
   }
   return kept;
@@ -308,7 +321,7 @@ export class CaddyProxyController {
         if (routes.some((route) => siblings.some((saved) => saved.id === route.id))) {
           throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A selected proxy route ID is already owned by another instance.");
         }
-        renderCaddyfile([...siblings, ...routes.map((route) => ({ ...route, updatedAt: "preflight" }))]);
+        validateRouteState([...siblings, ...routes.map((route) => ({ ...route, updatedAt: "preflight" }))]);
       }
     }));
   }
@@ -498,7 +511,7 @@ export class CaddyProxyController {
       }
       const siblings = state.routes.filter((route) => route.instanceId !== instanceId);
       const restored = await withoutExitedServices([...siblings, ...snapshot.committed.map((route) => ({ ...route }))]);
-      renderCaddyfile(restored);
+      validateRouteState(restored);
       for (const [digest, material] of Object.entries(snapshot.certificates)) {
         if (restored.some((route) => route.certificateDigest === digest)) await this.writeCertificateSnapshot(digest, material.certificate, material.key);
       }
@@ -559,6 +572,7 @@ export class CaddyProxyController {
   }
 
   private async apply(next: ProxyState, recovering = false, previous: readonly ProxyRoute[] = [], rejectPending = false): Promise<void> {
+    validateRouteState(next.routes);
     const changed = next.routes.filter((route) => {
       const saved = previous.find((item) => item.id === route.id);
       return !saved || JSON.stringify({ ...saved, updatedAt: undefined }) !== JSON.stringify({ ...route, updatedAt: undefined });
@@ -762,7 +776,7 @@ export class CaddyProxyController {
       const now = new Date().toISOString();
       const others = state.routes.filter((route) => route.instanceId !== selectedOwner);
       const fresh = routes.map(({ certificateDigest: _ignored, ...route }) => ({ ...route, updatedAt: now }));
-      renderCaddyfile([...others, ...fresh]);
+      validateRouteState([...others, ...fresh]);
       if (routes.length === 0 && others.length === state.routes.length) return [];
       const kept = await withoutExitedServices(others);
       const nextRoutes = [...kept, ...fresh];

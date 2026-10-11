@@ -8,7 +8,7 @@ export interface PersistedProxyRoute {
   path?: string; match?: "exact" | "prefix"; stripPrefix?: boolean;
   registeredDomain?: string; projectId?: string; repositoryIdentity?: string;
   certificateFile?: string; keyFile?: string; certificateDigest?: string;
-  /** A route to a process DevFn started outside a lifecycle; it is dropped once that process is verified gone. */
+  /** A route to a process group leader DevFn started outside a lifecycle; it is dropped once that whole group is verified gone. */
   serviceProcess?: { pid: number; birthSignature: string };
 }
 

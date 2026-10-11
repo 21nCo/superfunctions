@@ -14,20 +14,22 @@ const withCaddyAdminPort = async <T>(action: () => Promise<T>): Promise<T> =>
 
 /**
  * A state directory owned by this live process, with a Caddy command stub
- * that accepts every command first on PATH. cleanup() restores PATH and
- * removes both directories.
+ * that accepts every command first on PATH and logs its subcommand for
+ * caddyCalls(). cleanup() restores PATH and removes both directories.
  */
-async function stubbedCaddyState(prefix: string): Promise<{ stateDir: string; cleanup: () => Promise<void> }> {
+async function stubbedCaddyState(prefix: string): Promise<{ stateDir: string; cleanup: () => Promise<void>; caddyCalls: () => Promise<string[]> }> {
   const stateDir = await mkdtemp(path.join(tmpdir(), prefix));
   const toolsDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-tools-"));
   const originalPath = process.env.PATH;
   const birthSignature = await processBirthSignature(process.pid);
   if (!birthSignature) throw new Error("Test process has no birth signature.");
   await writeFile(path.join(stateDir, "proxy-owner.json"), JSON.stringify({ pid: process.pid, birthSignature }));
-  await writeFile(path.join(toolsDir, "caddy"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  const calls = path.join(toolsDir, "calls.log");
+  await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\necho "$1" >> '${calls}'\nexit 0\n`, { mode: 0o700 });
   process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
   return {
     stateDir,
+    caddyCalls: async () => (await readFile(calls, "utf8").catch(() => "")).split("\n").filter(Boolean),
     cleanup: async () => {
       if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
       await rm(stateDir, { recursive: true, force: true });
@@ -201,6 +203,60 @@ describe("Caddy route rendering", () => {
       await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [{ ...plain, serviceProcess: { pid: 0, birthSignature: "x" } }] }));
       await expect(controller.routes()).rejects.toMatchObject({ code: "DEVFN_PROXY_CONFIG_INVALID" });
     } finally { await cleanup(); }
+  });
+
+  it("refuses a route update that route state reads would reject, before Caddy or any state changes", async () => {
+    const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-write-check-");
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const route = (id: string, targetPort: number) => ({ id, instanceId: id, hostname: `${id}.localhost`, targetHost: "127.0.0.1" as const, targetPort, tls: "off" as const });
+    try {
+      const controller = new CaddyProxyController(stateDir);
+      await controller.upsert([route("sibling", 4101)]);
+      const committed = await readFile(statePath, "utf8");
+      const calls = (await caddyCalls()).length;
+      for (const serviceProcess of [{ pid: 0, birthSignature: "x" }, { pid: process.pid, birthSignature: "" }]) {
+        await expect(controller.upsert([{ ...route("service", 4102), serviceProcess }])).rejects.toMatchObject({ code: "DEVFN_PROXY_CONFIG_INVALID" });
+      }
+      expect((await caddyCalls()).length).toBe(calls);
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      await expect(access(path.join(stateDir, "proxy-routes.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      // Every other owner's routes stay readable and removable.
+      expect((await controller.routes()).map((item) => item.id)).toEqual(["sibling"]);
+      await controller.removeInstance("sibling");
+      expect(await controller.routes()).toEqual([]);
+    } finally { await cleanup(); }
+  });
+
+  it("keeps a service route while a process of its group outlives the leader", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-service-group-");
+    // The leader starts a member of its own process group, prints its PID and exits.
+    const leader = spawn(process.execPath, ["-e", `const member = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { stdio: "ignore" });
+process.stdout.write(String(member.pid), () => setTimeout(() => process.exit(0), 300));`], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    leader.stdout.on("data", (chunk) => { output += String(chunk); });
+    const exited = new Promise((resolve) => leader.once("exit", resolve));
+    const birthSignature = (await processBirthSignature(leader.pid!))!;
+    await exited;
+    const member = Number(output);
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const service = { id: "relay:callback", instanceId: "relay", hostname: "auth.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" as const, updatedAt: "now",
+      serviceProcess: { pid: leader.pid!, birthSignature } };
+    const plain = (id: string, targetPort: number) => ({ id, instanceId: id, hostname: `${id}.localhost`, targetHost: "127.0.0.1", targetPort, tls: "off" as const, updatedAt: "now" });
+    try {
+      expect(alive(member)).toBe(true);
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [service, plain("a", 4102), plain("b", 4103)] }));
+      const controller = new CaddyProxyController(stateDir);
+      await controller.removeInstance("a");
+      expect(await controller.routes()).toEqual([service, plain("b", 4103)]);
+      // Once the whole group is gone, the next transition drops the route.
+      process.kill(-leader.pid!, "SIGKILL");
+      for (let attempt = 0; attempt < 100 && alive(member); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      await controller.removeInstance("b");
+      expect(await controller.routes()).toEqual([]);
+    } finally {
+      try { process.kill(-leader.pid!, "SIGKILL"); } catch { /* stopped */ }
+      await cleanup();
+    }
   });
 
   it("never applies Caddy for a dead service route when the caller's routes do not change", async () => {
