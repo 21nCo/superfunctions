@@ -3,6 +3,7 @@ import { canonicalDigest, canonicalJson, compareCodeUnits, MAX_JSON_DEPTH, snaps
 import {
   containsCredentialIdentifier,
   containsCredentialValue,
+  hasUrlUserInfo,
   isCredentialKey,
   pointerSegment,
   REDACTED,
@@ -48,7 +49,7 @@ const FORM_MEDIA_TYPES = new Set(["application/x-www-form-urlencoded", "multipar
 const RESPONSE_STATUS = /^(?:[1-5](?:\d\d|XX)|default)$/;
 /** Schema keywords holding literal instance data; dropped for credential fields. */
 const LITERAL_KEYWORDS = new Set(["default", "const", "enum"]);
-/** Keywords whose values are property names, copied verbatim (never instance values). */
+/** Keywords whose values are property names: checked like property names and copied verbatim, never redacted. */
 const NAME_KEYWORDS = new Set(["required", "dependentRequired"]);
 /** OpenAPI objects inside a schema; only their own `x-*` members are extensions. */
 const OBJECT_KEYWORDS = new Set(["xml", "externalDocs"]);
@@ -143,13 +144,18 @@ const STRING_LIST: MemberType<string[]> = {
   accepts: (value): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string"),
 };
 
-/** True for a regular expression that matches exactly one string, such as `^hunter2$` or `^a\.b$`. */
-function isLiteralPattern(pattern: string): boolean {
-  return /^\^?(?:\\[^A-Za-z0-9]|[^\\.*+?()[\]{}|^$])+\$?$/.test(pattern);
-}
-
 function describeValue(value: unknown): string {
   return value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
+}
+
+/** A server variable value without user info: everything up to its last "@". */
+function withoutUserInfo(value: string): string {
+  return value.slice(value.lastIndexOf("@") + 1);
+}
+
+/** Expands `{name}` server variables; undeclared ones stay as written. */
+function expandServerUrl(url: string, values: Record<string, string>): string {
+  return url.replace(/\{([^{}]*)\}/g, (placeholder, name: string) => (Object.hasOwn(values, name) ? values[name] : placeholder));
 }
 
 /** Escapes a component name for a `$ref` emitted into the catalog (diagnostic pointers use pointerSegment). */
@@ -501,7 +507,8 @@ class CatalogBuilder {
       if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
       } else if (key === "$ref") {
-        if (this.schemaRef(child, childPointer, secret)) setOwn(output, key, child as string);
+        const ref = this.schemaRef(child, childPointer, secret);
+        if (ref !== null) setOwn(output, key, ref);
       } else if (SCHEMA_MAP_KEYWORDS.has(key)) {
         if (!isRecord(child)) {
           this.report("INVALID_SPEC", childPointer, `Expected an object of schemas at ${childPointer}, found ${describeValue(child)}.`);
@@ -524,18 +531,27 @@ class CatalogBuilder {
       } else if (key === "discriminator") {
         if (isRecord(child)) setOwn(output, key, this.discriminator(child, childPointer, secret));
         else this.report("INVALID_SPEC", childPointer, `Expected a Discriminator Object at ${childPointer}, found ${describeValue(child)}.`);
+      } else if (key === "pattern" && secret) {
+        // A pattern can spell the credential in any regex syntax (`^(x)$`, `^x{1}$`, `^x|x$`), so a credential field carries none.
+        drop(key, childPointer, "a credential field carries no pattern; any pattern there can spell the credential");
       } else if (key === "pattern" && typeof child === "string") {
         // A regular expression, not author text: redaction would change its meaning, so a credential-bearing one is dropped.
         if (containsCredentialValue(patternLiterals(child))) drop(key, childPointer, "the pattern holds a credential-like value");
-        // In a credential field, a pattern that matches one string is that string: a const under another name.
-        else if (secret && isLiteralPattern(child)) drop(key, childPointer, "a pattern without metacharacters in a credential field is the credential itself");
         else setOwn(output, key, child);
       } else if (key === "required") {
-        if (STRING_LIST.accepts(child)) setOwn(output, key, this.data(child, childPointer));
+        if (STRING_LIST.accepts(child)) setOwn(output, key, this.names(child, childPointer));
         else this.report("INVALID_SPEC", childPointer, `Expected an array of property names at ${childPointer}, found ${describeValue(child)}.`);
       } else if (NAME_KEYWORDS.has(key)) {
-        if (isRecord(child) && Object.values(child).every((names) => STRING_LIST.accepts(names))) setOwn(output, key, this.data(child, childPointer));
-        else this.report("INVALID_SPEC", childPointer, `Expected an object of property-name arrays at ${childPointer}.`);
+        if (isRecord(child) && Object.values(child).every((names) => STRING_LIST.accepts(names))) {
+          const entries: Record<string, JsonValue> = {};
+          for (const [name, names] of Object.entries(child)) {
+            const namePointer = `${childPointer}/${pointerSegment(name)}`;
+            setOwn(entries, this.identifier(name, namePointer, "Property name"), this.names(names as string[], namePointer));
+          }
+          setOwn(output, key, entries);
+        } else {
+          this.report("INVALID_SPEC", childPointer, `Expected an object of property-name arrays at ${childPointer}.`);
+        }
       } else if (secret && !CREDENTIAL_FIELD_KEYWORDS.has(key)) {
         drop(key, childPointer, "it is literal or unrecognized data inside a credential field");
       } else if (hasCredentialKey(child)) {
@@ -547,26 +563,33 @@ class CatalogBuilder {
     return output;
   }
 
+  /** Property names (`required`, `dependentRequired`): checked like property names and copied verbatim, never rewritten. */
+  private names(values: string[], pointer: string): string[] {
+    return values.map((name, index) => this.identifier(name, `${pointer}/${index}`, "Property name"));
+  }
+
   /**
-   * Checks and records a schema reference that will be emitted. Every emitted
-   * reference is checked here, wherever it was reached from (a parameter
-   * behind `#/x-param` is never walked by checkRefs), so a successful catalog
-   * has no dangling reference. Only component schemas can be shared by
-   * generated clients. Returns true when the reference is usable.
+   * Checks and records a schema reference that will be emitted, and returns
+   * it in normal form: `#/components/schemas/<name>` with the name escaped
+   * only by JSON Pointer rules, so `catalog.schemas[<name>]` resolves it.
+   * Every emitted reference is checked here, wherever it was reached from (a
+   * parameter behind `#/x-param` is never walked by checkRefs), so a
+   * successful catalog has no dangling reference. Only component schemas can
+   * be shared by generated clients. Returns null when the reference is unusable.
    */
-  private schemaRef(ref: unknown, pointer: string, secret: boolean): ref is string {
+  private schemaRef(ref: unknown, pointer: string, secret: boolean): string | null {
     const problem = this.refProblem(ref, "schema");
     if (problem) {
       this.report("UNRESOLVED_REF", pointer, problem);
-      return false;
+      return null;
     }
     const name = componentName(ref as string);
     if (name === null) {
       this.report("UNRESOLVED_REF", pointer, `Schema reference "${showRef(ref as string)}" must target ${COMPONENT_SCHEMA_PREFIX}<name> so generated clients can share the type.`);
-      return false;
+      return null;
     }
     this.componentRefs.set(name, this.componentRefs.get(name) === true || secret);
-    return true;
+    return `${COMPONENT_SCHEMA_PREFIX}${refSegment(name)}`;
   }
 
   /**
@@ -974,8 +997,20 @@ class CatalogBuilder {
         this.report("INVALID_SPEC", serverPointer, `Server ${serverPointer} needs a non-empty url.`);
         return [];
       }
+      const url = this.url(server.url, `${serverPointer}/url`, { dropQuery: true }) as string;
       const variables: CatalogServer["variables"] = {};
       const declared = this.member(server, "variables", serverPointer, OBJECT) ?? {};
+      // Other variables expand to their defaults without user info, so a value is judged only by the user info it adds itself.
+      const neutral: Record<string, string> = {};
+      for (const [name, variable] of Object.entries(declared)) {
+        if (isRecord(variable) && typeof variable.default === "string") setOwn(neutral, name, withoutUserInfo(variable.default));
+      }
+      /** A variable value that puts user info into the expanded URL (`svc:pw@host` as `{authority}`) loses it. */
+      const value = (name: string, raw: string, valuePointer: string): string => {
+        if (!hasUrlUserInfo(expandServerUrl(url, { ...neutral, [name]: raw }))) return this.text(raw, valuePointer) as string;
+        this.report("CREDENTIAL_REDACTED", valuePointer, `Removed the user info that server variable "${name}" puts into the URL at ${serverPointer}/url; URLs never carry user info.`, { severity: "warning" });
+        return this.text(withoutUserInfo(raw), valuePointer) as string;
+      };
       for (const name of Object.keys(declared).sort(compareCodeUnits)) {
         const variable = declared[name];
         const variablePointer = `${serverPointer}/variables/${pointerSegment(name)}`;
@@ -989,13 +1024,13 @@ class CatalogBuilder {
         }
         const values = this.member(variable, "enum", variablePointer, STRING_LIST) ?? null;
         setOwn(variables, name, {
-          default: isCredentialKey(name) ? REDACTED : (this.text(variable.default, `${variablePointer}/default`) as string),
-          enum: values && !isCredentialKey(name) ? values.map((value, valueIndex) => this.text(value, `${variablePointer}/enum/${valueIndex}`) as string) : null,
+          default: isCredentialKey(name) ? REDACTED : value(name, variable.default, `${variablePointer}/default`),
+          enum: values && !isCredentialKey(name) ? values.map((entry, valueIndex) => value(name, entry, `${variablePointer}/enum/${valueIndex}`)) : null,
           description: this.text(own(variable, "description"), `${variablePointer}/description`),
         });
       }
       return [{
-        url: this.url(server.url, `${serverPointer}/url`, { dropQuery: true }) as string,
+        url,
         description: this.text(own(server, "description"), `${serverPointer}/description`),
         variables,
       }];
@@ -1171,7 +1206,13 @@ export function buildOperationCatalog(spec: string | Record<string, unknown>, ma
   const diagnostics: Diagnostic[] = [];
   // Inputs are read once into bounded plain data: cycles, getters, class
   // instances, YAML alias expansion and excessive nesting are reported, never thrown.
+  /** The snapshot, or null after reporting why the input is not plain data (or is not an object at all). */
   const plain = (value: unknown, code: "INVALID_SPEC" | "INVALID_MANIFEST", source: Diagnostic["source"]): unknown => {
+    if (!isRecord(value)) {
+      const what = source === "spec" ? "The OpenAPI document must be a JSON or YAML string or an object" : "The manifest must be an object";
+      diagnostics.push({ code, severity: "error", message: `${what}, found ${describeValue(value)}.`, pointer: "", source });
+      return null;
+    }
     let snapshot: ReturnType<typeof snapshotPlainData>;
     try {
       snapshot = snapshotPlainData(value, { maxDepth: MAX_DOCUMENT_DEPTH });

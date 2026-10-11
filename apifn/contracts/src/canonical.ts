@@ -119,6 +119,8 @@ export function canonicalDigest(value: unknown): string {
 export interface SnapshotProblem {
   pointer: string;
   reason: string;
+  /** True when a size limit was exceeded (reported at the root); reading stopped there. */
+  limit?: boolean;
 }
 
 export interface PlainSnapshot {
@@ -135,6 +137,11 @@ export interface PlainSnapshot {
 export const MAX_JSON_DEPTH = 256;
 /** Upper bound on values copied from one input, so shared references cannot expand without limit. */
 export const MAX_JSON_VALUES = 1_000_000;
+/** Reading stops after this many problems, so a report stays small however malformed the input is. */
+export const MAX_SNAPSHOT_PROBLEMS = 32;
+
+/** Thrown inside snapshotPlainData to stop reading once a budget is spent. */
+class StopReading {}
 
 /**
  * Copies plain JSON-like data, reading each own enumerable property exactly
@@ -142,50 +149,68 @@ export const MAX_JSON_VALUES = 1_000_000;
  * has getters or proxies. Arrays and plain objects are copied; anything else
  * that is not JSON data is reported in `problems` and left out. A reference
  * back to an enclosing object is a cycle; other shared references are copied
- * per path, counted against {@link MAX_JSON_VALUES}. Throws only when reading
- * the input throws.
+ * per path. Cost is bounded before any other check runs: reading stops at
+ * {@link MAX_JSON_VALUES} values (an array's length is checked before it is
+ * read, so sparse arrays cost nothing), at `maxBytes` (a lower bound on the
+ * UTF-8 size of the canonical JSON, counted as keys and strings are read) and
+ * after {@link MAX_SNAPSHOT_PROBLEMS} problems. Throws only when reading the
+ * input throws.
  */
-export function snapshotPlainData(input: unknown, options: { maxDepth?: number } = {}): PlainSnapshot {
+export function snapshotPlainData(input: unknown, options: { maxDepth?: number; maxBytes?: number } = {}): PlainSnapshot {
   const maxDepth = options.maxDepth ?? MAX_JSON_DEPTH;
+  const maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY;
   const problems: SnapshotProblem[] = [];
   const ancestors = new Set<object>();
   let values = 0;
+  let bytes = 0;
+  const problem = (pointer: string, reason: string): undefined => {
+    problems.push({ pointer, reason });
+    if (problems.length >= MAX_SNAPSHOT_PROBLEMS) throw new StopReading();
+    return undefined;
+  };
+  const limit = (reason: string): never => {
+    problems.push({ pointer: "", reason, limit: true });
+    throw new StopReading();
+  };
+  // Every serialized byte counted here is also in the canonical JSON: UTF-16 units never outnumber UTF-8 bytes.
+  const spend = (count: number, size: number) => {
+    values += count;
+    bytes += size;
+    if (bytes > maxBytes) limit(`exceeds ${maxBytes} bytes when serialized`);
+    if (values > MAX_JSON_VALUES) limit(`exceeds ${MAX_JSON_VALUES} values`);
+  };
   const copy = (value: unknown, pointer: string, depth: number): unknown => {
-    values += 1;
-    if (values > MAX_JSON_VALUES) {
-      if (values === MAX_JSON_VALUES + 1) problems.push({ pointer, reason: `exceeds ${MAX_JSON_VALUES} values` });
-      return undefined;
-    }
     if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
-      problems.push({ pointer, reason: `is a ${typeof value}, not JSON data` });
-      return undefined;
+      return problem(pointer, `is a ${typeof value}, not JSON data`);
     }
+    if (typeof value === "string") spend(1, value.length + 2);
+    else if (typeof value === "number") spend(1, String(value).length);
+    else if (typeof value === "boolean" || value === null) spend(1, 4);
     if (typeof value !== "object" || value === null) return value;
-    if (ancestors.has(value)) {
-      problems.push({ pointer, reason: "refers back to an enclosing object (a cycle)" });
-      return undefined;
-    }
-    if (depth >= maxDepth) {
-      problems.push({ pointer, reason: `nests deeper than ${maxDepth} levels` });
-      return undefined;
-    }
+    if (ancestors.has(value)) return problem(pointer, "refers back to an enclosing object (a cycle)");
+    if (depth >= maxDepth) return problem(pointer, `nests deeper than ${maxDepth} levels`);
     const array = Array.isArray(value);
     const proto = Object.getPrototypeOf(value);
     if (!array && proto !== Object.prototype && proto !== null) {
-      problems.push({ pointer, reason: "must be plain JSON data, not a Map, Date or class instance" });
-      return undefined;
+      return problem(pointer, "must be plain JSON data, not a Map, Date or class instance");
     }
     ancestors.add(value);
     let output: unknown;
     if (array) {
       const length = value.length;
+      // Each item is at least one value and one byte (its comma or bracket).
+      spend(1 + length, 1 + length);
       const items: unknown[] = [];
       for (let index = 0; index < length; index += 1) items.push(copy(value[index], `${pointer}/${index}`, depth + 1));
       output = items;
     } else {
+      spend(1, 2);
       const record: Record<string, unknown> = {};
       for (const key of Object.keys(value)) {
-        const child = copy((value as Record<string, unknown>)[key], `${pointer}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`, depth + 1);
+        const raw = (value as Record<string, unknown>)[key];
+        // A member is counted before its key is used, so an oversize key stops reading here; undefined members are not serialized.
+        if (raw !== undefined) spend(0, key.length + 3);
+        const child = copy(raw, `${pointer}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`, depth + 1);
         // defineProperty keeps an own "__proto__" key as data.
         if (child !== undefined) Object.defineProperty(record, key, { value: child, enumerable: true, writable: true, configurable: true });
       }
@@ -194,5 +219,10 @@ export function snapshotPlainData(input: unknown, options: { maxDepth?: number }
     ancestors.delete(value);
     return output;
   };
-  return { value: copy(input, "", 0), problems };
+  try {
+    return { value: copy(input, "", 0), problems };
+  } catch (error) {
+    if (error instanceof StopReading) return { value: undefined, problems };
+    throw error;
+  }
 }

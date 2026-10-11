@@ -255,6 +255,8 @@ function checkAttributes(value: unknown, issues: FailureEventIssue[]): void {
  * trimmed, so a reporter can never persist a secret by accident. The input is
  * read once into a plain-data snapshot; that snapshot is what gets validated
  * and returned, so getters cannot change a value after it was checked.
+ * Reading stops at maxEventBytes (TOO_LARGE), so cost and the issue list are
+ * bounded by the event size limit, not by the input.
  */
 export function validateClientFailureEvent(input: unknown): ValidateFailureEventResult {
   let result: ValidateFailureEventResult;
@@ -276,11 +278,12 @@ export function validateClientFailureEvent(input: unknown): ValidateFailureEvent
 }
 
 function validate(input: unknown): ValidateFailureEventResult {
-  const { value: snapshot, problems } = snapshotPlainData(input);
+  // The size bound comes first: reading stops once the event exceeds maxEventBytes, before any key or value is scanned.
+  const { value: snapshot, problems } = snapshotPlainData(input, { maxBytes: CLIENT_FAILURE_LIMITS.maxEventBytes });
   if (problems.length > 0) {
     return {
       ok: false,
-      issues: problems.map(({ pointer, reason }) => ({ path: pointer, code: "TYPE" as const, message: `${pointer || "The event"} ${reason}.` })),
+      issues: problems.map(({ pointer, reason, limit }) => ({ path: pointer, code: limit ? ("TOO_LARGE" as const) : ("TYPE" as const), message: `${pointer || "The event"} ${reason}.` })),
     };
   }
   if (!isRecord(snapshot)) {

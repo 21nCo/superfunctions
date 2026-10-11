@@ -56,7 +56,8 @@ const LEADING_AUTH_SCHEME = new RegExp(`^(?:${AUTH_SCHEMES})\\s+`, "i");
  */
 function isPlaceholderValue(value: string, header: boolean): boolean {
   let rest = value;
-  if (header) rest = rest.replace(/[A-Za-z0-9_.-]+\s*=(?![=\s]|$)/g, "").replace(AUTH_SCHEME_WORDS, "");
+  // The lookbehind starts a name only at the start of a word, so a long word is scanned once, not once per character.
+  if (header) rest = rest.replace(/(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]+\s*=(?![=\s]|$)/g, "").replace(AUTH_SCHEME_WORDS, "");
   return rest.replace(PLACEHOLDER, "").replace(/[\s"'`,;:=\\]/g, "") === "";
 }
 
@@ -73,8 +74,46 @@ const IDENTIFIER_KEY_SEPARATOR = new RegExp(`(?<![A-Za-z0-9_.%-])(\\\\?["'\`]|)(
 /** A value that is not quoted or bracketed runs to the next delimiter; placeholders such as `<your token>` may hold spaces. */
 const PLAIN_VALUE = new RegExp(`^(?:${PLACEHOLDER.source}|[^\\s&,;"'\`)\\]}])*`);
 const SCHEME_ONLY = new RegExp(`^(?:${AUTH_SCHEMES})$`, "i");
+/** A YAML block scalar indicator (`|`, `>-`, `|2+`, ...) or nothing, ending the key's line: the value is on the indented lines below. */
+const BLOCK_HEAD = /^(?:[|>](?:[1-9]?[+-]?|[+-]?[1-9]?))?[ \t]*(?:#[^\r\n]*)?(?=\r?\n)/;
 /** An XML element named like a credential: `<password>...</password>`. */
 const XML_ELEMENT = /<([A-Za-z][A-Za-z0-9_.:-]*)>([^<]*)<\/\1>/g;
+
+/**
+ * End of a YAML block value whose first line break is at `from`: every
+ * following line indented more than the key's line (`indent`), and blank
+ * lines between them. Returns the start of the first content character and
+ * the end of the last content line, or null when no line is indented further.
+ * When indentation cannot be compared (tabs and spaces mixed), the block
+ * fails closed and runs to the end of the text.
+ */
+function blockSpan(text: string, from: number, indent: string): { begin: number; end: number } | null {
+  let begin = -1;
+  let end = -1;
+  for (let lineStart = from + 1; lineStart <= text.length; ) {
+    const newline = text.indexOf("\n", lineStart);
+    const lineEnd = newline === -1 ? text.length : newline;
+    const line = text.slice(lineStart, lineEnd).replace(/\r$/, "");
+    if (line.trim() !== "") {
+      const lead = /^[ \t]*/.exec(line)![0];
+      if (!lead.startsWith(indent) && !indent.startsWith(lead)) return { begin: begin === -1 ? lineStart + lead.length : begin, end: text.length };
+      if (lead.length <= indent.length) break;
+      if (begin === -1) begin = lineStart + lead.length;
+      end = lineStart + line.length;
+    }
+    if (newline === -1) break;
+    lineStart = newline + 1;
+  }
+  return begin === -1 ? null : { begin, end };
+}
+
+/** Leading spaces and tabs of the line holding `index`. */
+function lineIndent(text: string, index: number): string {
+  const lineStart = text.lastIndexOf("\n", index - 1) + 1;
+  const indent = /[ \t]*/y;
+  indent.lastIndex = lineStart;
+  return indent.exec(text)![0];
+}
 
 /** Headers whose whole value, with every scheme parameter, is a credential. */
 function isHeaderKey(key: string): boolean {
@@ -126,11 +165,11 @@ interface ValueSpan {
 /**
  * Reads the whole value after a key: a quoted string (also with escaped
  * quotes), a balanced `{...}`/`[...]`, an Authorization or Cookie header line,
- * an indented YAML block line, or a run up to the next delimiter that also
- * takes the token after a bare scheme word (`Bearer abc`). A value that
- * cannot be delimited fails closed: it runs to the end of the text.
+ * a YAML block (every line indented below the key), or a run up to the next
+ * delimiter that also takes the token after a bare scheme word (`Bearer abc`).
+ * A value that cannot be delimited fails closed: it runs to the end of the text.
  */
-function readValue(text: string, start: number, header: boolean): ValueSpan {
+function readValue(text: string, start: number, keyStart: number, header: boolean): ValueSpan {
   const rest = text.slice(start);
   const escaped = /^\\(["'`])/.exec(rest);
   if (escaped) {
@@ -148,12 +187,13 @@ function readValue(text: string, start: number, header: boolean): ValueSpan {
     const end = bracketedEnd(text, start);
     return { end: end === -1 ? text.length : end, value: text.slice(start, end === -1 ? text.length : end), quote: "" };
   }
-  // `password:` at the end of a line, with the value indented on the next one (YAML block style).
-  const block = /^\r?\n([ \t]+)([^\r\n]*)/.exec(rest);
-  if (block && block[2].trim() !== "") {
-    const begin = start + block[0].length - block[2].length;
-    const line = block[2].trimEnd();
-    return { begin, end: begin + line.length, value: line, quote: "" };
+  // `password: |`, `password: >-` or `password:` ending a line: the value is every line indented below the key (YAML block style).
+  const head = BLOCK_HEAD.exec(rest);
+  if (head) {
+    const newline = text.indexOf("\n", start + head[0].length);
+    const block = blockSpan(text, newline, lineIndent(text, keyStart));
+    if (!block) return { end: start, value: "", quote: "" };
+    return { begin: block.begin, end: block.end, value: text.slice(block.begin, block.end), quote: "" };
   }
   if (header) {
     const line = /^[^\r\n]*/.exec(rest)![0].trimEnd();
@@ -184,7 +224,7 @@ function redactKeyValues(text: string, identifier: boolean): string {
     if (!isCredentialKey(lastWord) && !isCredentialKey(key)) continue;
     const start = match.index + match[0].length;
     const header = isHeaderKey(lastWord);
-    const { begin = start, end, value, quote } = readValue(text, start, header);
+    const { begin = start, end, value, quote } = readValue(text, start, match.index, header);
     if (end <= start) continue;
     pattern.lastIndex = end;
     if (value.trim() === "" || isPlaceholderValue(value, header)) continue;
@@ -231,11 +271,13 @@ const SHAPE_RULES: ShapeRule[] = [
   { pattern: /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g },
   { pattern: /(?<![A-Za-z0-9])(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}/g },
   { pattern: /(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}/g },
+  { pattern: /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{22,}/g },
   { pattern: /(?<![A-Za-z0-9])AIza[A-Za-z0-9_-]{35}/g },
   { pattern: /(?<![A-Za-z0-9])(?:xox[abpr]|AKIA)[A-Za-z0-9-]{12,}/g },
   // Any URL user info, with or without a scheme and however many "@" it holds.
+  // A scheme starts only at the start of a word, so a long word is scanned once, not once per character.
   {
-    pattern: /((?:\b[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#]*@/gi,
+    pattern: /((?:(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#]*@/gi,
     replace: ([prefix]) => `${prefix}${REDACTED}@`,
   },
 ];
@@ -278,6 +320,11 @@ export function containsCredentialIdentifier(value: string): boolean {
 }
 
 const URL_PARTS = /^((?:[a-z][a-z0-9+.-]*:)?\/\/)([^/?#]*)([^?#]*)(?:\?([^#]*))?/i;
+
+/** True when a URL or URL template has user info in its authority. */
+export function hasUrlUserInfo(url: string): boolean {
+  return URL_PARTS.exec(url)?.[2].includes("@") ?? false;
+}
 
 function isCredentialQueryParameter(pair: string): boolean {
   const separator = pair.indexOf("=");

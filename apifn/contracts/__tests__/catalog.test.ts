@@ -161,6 +161,18 @@ describe("catalog diagnostics", () => {
     });
   });
 
+  it.each<[string, unknown, unknown, Diagnostic["code"]]>([
+    ["a null spec", null, manifest, "INVALID_SPEC"],
+    ["a numeric spec", 42, manifest, "INVALID_SPEC"],
+    ["an array spec", [], manifest, "INVALID_SPEC"],
+    ["a null manifest", spec, null, "INVALID_MANIFEST"],
+    ["a string manifest", spec, "manifest", "INVALID_MANIFEST"],
+    ["an array manifest", spec, [], "INVALID_MANIFEST"],
+  ])("%s fails with a named diagnostic", (_name, nextSpec, nextManifest, code) => {
+    const result = buildOperationCatalog(clone(nextSpec) as never, clone(nextManifest));
+    expect(result).toEqual({ catalog: null, digest: null, diagnostics: [expect.objectContaining({ code, pointer: "", severity: "error" })] });
+  });
+
   it("INVALID_MANIFEST: rejects misspelled fields instead of ignoring them", () => {
     const result = build((_spec, nextManifest) => {
       nextManifest.operations[4].sdk = { exclude: ["python"] };
@@ -624,6 +636,30 @@ describe("OpenAPI fields that change client behavior", () => {
     expect(byId["projects.delete"].servers).toBeNull();
   });
 
+  it.each<[string, string, Record<string, unknown>, string]>([
+    ["the whole authority", "https://{authority}/v1", { default: "svc:SEEDEDhost0041@api.example.test", enum: ["svc:SEEDEDhost0041@api.example.test", "api.example.test"] }, "api.example.test"],
+    ["the host before a literal domain", "https://{tenant}.example.test/v1", { default: "u:SEEDEDhost0041@eu" }, "eu"],
+    ["several @ in one value", "https://{authority}/v1", { default: "a@b:SEEDEDhost0041@api.example.test" }, "api.example.test"],
+  ])("removes user info that a server variable puts into %s", (_name, url, variable, host) => {
+    const result = build((nextSpec) => {
+      nextSpec.servers[0] = { url, variables: { site: variable } };
+      nextSpec.servers[0].url = url.replace(/\{[a-z]+\}/, "{site}");
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain("SEEDEDhost0041");
+    const site = result.catalog!.servers[0].variables.site;
+    expect(site.default).toBe(host);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toContain("/servers/0/variables/site/default");
+  });
+
+  it("keeps an @ that a server variable puts into the path", () => {
+    const result = build((nextSpec) => {
+      nextSpec.servers[0] = { url: "https://api.example.test/{base}", variables: { base: { default: "users/@me", enum: ["users/@me", "v1"] } } };
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect(result.catalog!.servers[0].variables.base).toEqual({ default: "users/@me", enum: ["users/@me", "v1"], description: null });
+  });
+
   it("INVALID_SPEC: parameters without a usable name or location, and path parameters missing from the template", () => {
     const result = build((nextSpec) => {
       nextSpec.paths[LIST_ROUTE].get.parameters.push({ name: "filter", in: "body", schema: { type: "string" } });
@@ -761,19 +797,42 @@ describe("author strings copied into the catalog", () => {
     expect((result.catalog!.schemas.ProjectInput as any).properties.slug2.pattern).toBe("^Bearer [A-Za-z0-9._~+/-]+=*$");
   });
 
-  it("drops a pattern that matches one string in a credential field, and keeps it elsewhere", () => {
+  // A pattern can spell the credential in any regex syntax, so a credential field carries none.
+  const PATTERN_FORMS = ["^hunter2SEEDx9$", "^(hunter2SEEDx9)$", "^hunter2SEEDx9{1}$", "^(?:hunter2SEEDx9)$", "^[h]unter2SEEDx9$", "^hunter2SEEDx9|hunter2SEEDx9$", "^[0-9]{6}$"];
+  const CREDENTIAL_FIELDS: Array<[string, (nextSpec: any, pattern: string) => string]> = [
+    ["a credential-named property", (nextSpec, pattern) => {
+      inputSchema(nextSpec).properties.password = { type: "string", pattern };
+      return "/components/schemas/ProjectInput/properties/password/pattern";
+    }],
+    ["a format: password property", (nextSpec, pattern) => {
+      inputSchema(nextSpec).properties.pin = { type: "string", format: "password", pattern };
+      return "/components/schemas/ProjectInput/properties/pin/pattern";
+    }],
+    ["an apiKey query parameter", (nextSpec, pattern) => {
+      nextSpec.components.securitySchemes.custom = { type: "apiKey", in: "query", name: "key" };
+      nextSpec.paths[LIST_ROUTE].get.parameters.push({ name: "key", in: "query", schema: { type: "string", pattern } });
+      return "/paths/~1workspaces~1{workspaceId}~1projects/get/parameters/2/schema/pattern";
+    }],
+  ];
+  const PATTERN_MATRIX = CREDENTIAL_FIELDS.flatMap(([field, add]) => PATTERN_FORMS.map((pattern) => ({ name: `${field}: ${pattern}`, add, pattern })));
+
+  it.each(PATTERN_MATRIX)("drops every pattern of $name", ({ add, pattern }) => {
+    let pointer = "";
     const result = build((nextSpec) => {
-      inputSchema(nextSpec).properties.pw = { type: "string", format: "password", pattern: "^hunter2SEEDx9$" };
-      inputSchema(nextSpec).properties.pin = { type: "string", format: "password", pattern: "^[0-9]{6}$" };
-      inputSchema(nextSpec).properties.kind = { type: "string", pattern: "^project$" };
+      pointer = add(nextSpec, pattern);
     });
-    const properties = (result.catalog!.schemas.ProjectInput as any).properties;
-    expect(JSON.stringify(result)).not.toContain("hunter2SEEDx9");
-    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")).toEqual([
-      expect.objectContaining({ pointer: "/components/schemas/ProjectInput/properties/pw/pattern" }),
-    ]);
-    expect(properties.pin.pattern).toBe("^[0-9]{6}$");
-    expect(properties.kind.pattern).toBe("^project$");
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain("hunter2");
+    expect(canonicalJson(result.catalog)).not.toContain(JSON.stringify(pattern).slice(1, -1));
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")).toEqual([expect.objectContaining({ pointer })]);
+  });
+
+  it.each(PATTERN_FORMS)("keeps %s on an ordinary field", (pattern) => {
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.kind = { type: "string", pattern };
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.kind.pattern).toBe(pattern);
   });
 
   it("reports unparseable documents by line and column without quoting source text", () => {
@@ -809,6 +868,42 @@ describe("literal instance data", () => {
       required: ["password"],
       xml: { name: "mode" },
     });
+  });
+});
+
+describe("property-name references", () => {
+  const named = (nextSpec: any, name: string) => {
+    inputSchema(nextSpec).properties = { [name]: { type: "string" }, region: { type: "string" } };
+    inputSchema(nextSpec).required = [name];
+    inputSchema(nextSpec).dependentRequired = { region: [name], [name]: ["region"] };
+    inputSchema(nextSpec).additionalProperties = false;
+  };
+
+  it("copies required and dependentRequired names verbatim, so they still match properties", () => {
+    const result = build((nextSpec) => named(nextSpec, "secrets:read"));
+    expect(result.diagnostics).toEqual([]);
+    const schema = result.catalog!.schemas.ProjectInput as any;
+    expect(Object.keys(schema.properties)).toEqual(["region", "secrets:read"]);
+    expect(schema.required).toEqual(["secrets:read"]);
+    expect(schema.dependentRequired).toEqual({ region: ["secrets:read"], "secrets:read": ["region"] });
+  });
+
+  it.each<[string, (nextSpec: any) => void, string[]]>([
+    ["required", (nextSpec) => {
+      inputSchema(nextSpec).required = ["token=SEEDEDname0040"];
+    }, ["/components/schemas/ProjectInput/required/0"]],
+    ["a dependentRequired key", (nextSpec) => {
+      inputSchema(nextSpec).dependentRequired = { "token=SEEDEDname0040": ["name"] };
+    }, ["/components/schemas/ProjectInput/dependentRequired/token=[REDACTED]"]],
+    ["a dependentRequired value", (nextSpec) => {
+      inputSchema(nextSpec).dependentRequired = { name: ["token=SEEDEDname0040"] };
+    }, ["/components/schemas/ProjectInput/dependentRequired/name/0"]],
+  ])("INVALID_SPEC: a credential in %s is rejected, never rewritten", (_name, mutate, pointers) => {
+    const result = build(mutate);
+    expect(result.catalog).toBeNull();
+    expect(canonicalJson(result)).not.toContain("SEEDEDname0040");
+    expect(only(result.diagnostics, "INVALID_SPEC").map((diagnostic) => diagnostic.pointer)).toEqual(pointers);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED")).toEqual([]);
   });
 });
 
@@ -865,6 +960,20 @@ describe("component schema closure", () => {
     const result = build((nextSpec) => pets(nextSpec, mapping));
     expect(result.catalog).toBeNull();
     expect(result.diagnostics).toEqual([expect.objectContaining({ code: "UNRESOLVED_REF", pointer })]);
+  });
+
+  it.each([
+    ["a percent-encoded tilde escape", "#/components/schemas/a%7E1b", "a/b", "#/components/schemas/a~1b"],
+    ["a percent-encoded name", "#/components/schemas/Pro%6Aect", "Project", "#/components/schemas/Project"],
+    ["an escaped tilde", "#/components/schemas/a~0b", "a~b", "#/components/schemas/a~0b"],
+  ])("emits a schema reference through %s in normal form", (_name, ref, name, normal) => {
+    const result = build((nextSpec) => {
+      nextSpec.components.schemas[name] ??= { type: "string" };
+      inputSchema(nextSpec).properties.z = { $ref: ref };
+    });
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.z).toEqual({ $ref: normal });
+    expect(Object.hasOwn(result.catalog!.schemas, name)).toBe(true);
   });
 
   it("UNRESOLVED_REF: a schema reference into a component instead of to it", () => {

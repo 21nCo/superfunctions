@@ -91,11 +91,6 @@ describe("client-failure event envelope", () => {
       loop.x = loop;
       return { ...event, failure: { kind: "unknown", extra: loop } };
     }, "/failure/extra/x"],
-    ["2^40 paths through shared references", (event) => {
-      let node: Record<string, unknown> = { leaf: 1 };
-      for (let level = 0; level < 40; level += 1) node = { a: node, b: node };
-      return { ...event, failure: { kind: "unknown", extra: node } };
-    }, expect.stringMatching(/^\/failure\/extra\//) as never],
     ["nesting past the depth limit", (event) => {
       let node: unknown = 1;
       for (let level = 0; level < 300; level += 1) node = [node];
@@ -122,6 +117,59 @@ describe("client-failure event envelope", () => {
       ok: false,
       issues: [expect.objectContaining({ path: "/failure/extra/x", code: "TYPE" }), expect.objectContaining({ path: "/failure/extra/y", code: "TYPE" })],
     });
+  });
+
+  // Cost and output are bounded by maxEventBytes, not by the input: reading stops before any key or value is scanned.
+  it.each<[string, (event: any) => any]>([
+    ["one 60k-character top-level key", (event) => ({ ...event, ["a+".repeat(30_000)]: 1 })],
+    ["one 60k-character failure key", (event) => ({ ...event, failure: { kind: "unknown", ["a+".repeat(30_000)]: 1 } })],
+    ["one 60k-character attribute key", (event) => ({ ...event, attributes: { ["a+".repeat(30_000)]: "x" } })],
+    ["200 keys of 2k characters", (event) => Object.assign({ ...event }, Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`${"a+".repeat(1000)}${index}`, 1])))],
+    ["a 60k-character message", (event) => ({ ...event, failure: { kind: "unknown", message: "Authorization: ".concat("a".repeat(60_000)) } })],
+    ["a sparse array of 50M items", (event) => ({ ...event, failure: { kind: "unknown", extra: new Array(50_000_000) } })],
+    ["200k functions", (event) => ({ ...event, failure: { kind: "unknown", extra: Array.from({ length: 200_000 }, () => () => 1) } })],
+    ["2^40 paths through shared references", (event) => {
+      let node: Record<string, unknown> = { leaf: 1 };
+      for (let level = 0; level < 40; level += 1) node = { a: node, b: node };
+      return { ...event, failure: { kind: "unknown", extra: node } };
+    }],
+  ])("stops reading at the event size limit: %s", (_name, mutate) => {
+    const input = mutate(clone(fixture("client-failure/valid/network-minimal.json")));
+    const started = performance.now();
+    const result = validateClientFailureEvent(input);
+    expect(performance.now() - started).toBeLessThan(250);
+    expect(result).toEqual({ ok: false, issues: [{ path: "", code: "TOO_LARGE", message: expect.stringContaining("8192 bytes") }] });
+  });
+
+  it("stops after 32 problems, however many the input holds", () => {
+    const event = clone(fixture("client-failure/valid/network-minimal.json"));
+    const result = validateClientFailureEvent({ ...event, failure: { kind: "unknown", extra: Array.from({ length: 100 }, () => () => 1) } });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.map((issue) => issue.code)).toEqual(Array(32).fill("TYPE"));
+  });
+
+  it("applies the size bound to the serialized event exactly: just under is accepted, just over is TOO_LARGE", () => {
+    const base = clone(fixture("client-failure/valid/network-minimal.json"));
+    // Attribute values fill the event; the size check must agree with the canonical serialization at the boundary.
+    const sized = (bytes: number) => {
+      const attributes: Record<string, string> = {};
+      const event = { ...base, attributes };
+      for (let index = 0; index < 32; index += 1) {
+        const room = bytes - new TextEncoder().encode(canonicalJson(event)).length;
+        if (room <= 0) break;
+        const key = `k${String(index).padStart(2, "0")}`;
+        attributes[key] = "v".repeat(Math.min(256, Math.max(1, room - key.length - 6)));
+      }
+      return event;
+    };
+    for (const target of [8192, 8193]) {
+      const event = sized(target);
+      const bytes = new TextEncoder().encode(canonicalJson(event)).length;
+      const result = validateClientFailureEvent(event);
+      expect(bytes).toBe(target);
+      expect(result.ok, `${bytes} bytes`).toBe(bytes <= 8192);
+      if (!result.ok) expect(result.issues.map((issue) => issue.code)).toEqual(["TOO_LARGE"]);
+    }
   });
 
   it("validates and returns one snapshot, so a getter cannot swap in a credential after the check", () => {

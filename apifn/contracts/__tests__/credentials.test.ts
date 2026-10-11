@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { redactCredentialValues } from "../src/credentials.js";
-import { buildOperationCatalog, containsCredentialValue, createReleaseDescriptor, validateClientFailureEvent, validateManifest } from "../src/index.js";
+import {
+  buildOperationCatalog,
+  containsCredentialIdentifier,
+  containsCredentialValue,
+  createReleaseDescriptor,
+  validateClientFailureEvent,
+  validateManifest,
+} from "../src/index.js";
 import { clone, fixture } from "./helpers.js";
 
 const PROJECT_ROUTE = "/workspaces/{workspaceId}/projects/{projectId}";
@@ -41,6 +48,7 @@ const TEXT_CASES: Array<[text: string, credential: boolean, secrets?: string[]]>
   ["Server=db;User Id=sa;Pwd=SEEDpwd01;", true, ["SEEDpwd01"]],
   ["AccountName=x;AccountKey=SEEDacct01+/==;", true, ["SEEDacct01"]],
   ["key=AIzaSyA1234567890abcdefghijklmnopqrstuv", true, ["AIzaSyA1234567890abcdefghijklmnopqrstuv"]],
+  [`use ${"github_pat_" + "A1".repeat(41)} to clone`, true, ["github_pat_" + "A1".repeat(41)]],
   // A standalone scheme counts only before a token-shaped word.
   ["sent Bearer abcdefgh12345678", true, ["abcdefgh12345678"]],
   ["retry with Basic dTpwYXNzWord.", true, ["dTpwYXNzWord"]],
@@ -139,6 +147,95 @@ describe("credential value spans", () => {
     const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
     expect(result.ok).toBe(false);
     expect(JSON.stringify(result)).not.toContain(SEED);
+  });
+});
+
+// YAML block values: every block indicator, 1-3 lines, and a key that is itself indented.
+const BLOCK_INDICATORS = ["|", "|-", "|+", ">", ">-", ""];
+const BLOCK_MATRIX = BLOCK_INDICATORS.flatMap((indicator) =>
+  [1, 2, 3].flatMap((lines) =>
+    ["", "  "].map((indent) => {
+      const seeds = Array.from({ length: lines }, (_, index) => `${SEED}${index}`);
+      const head = `${indent}password:${indicator === "" ? "" : ` ${indicator}`}`;
+      const text = `config:\n${head}\n${seeds.map((seed) => `${indent}  ${seed}`).join("\n")}\n${indent}region: eu-west`;
+      return { name: `${JSON.stringify(indicator || "none")} x ${lines} line(s)${indent ? ", indented key" : ""}`, text, seeds };
+    })
+  )
+);
+
+describe("YAML block values", () => {
+  const spec = fixture("catalog/openapi.json");
+  const manifest = fixture("catalog/manifest.json");
+  const event = fixture("client-failure/valid/network-minimal.json");
+
+  it.each(BLOCK_MATRIX)("$name", ({ text, seeds }) => {
+    const redacted = redactCredentialValues(text);
+    expect(containsCredentialValue(text)).toBe(true);
+    for (const seed of seeds) expect(redacted).not.toContain(seed);
+    // The block ends at the first line indented no deeper than the key: later lines are kept.
+    expect(redacted).toContain("region: eu-west");
+
+    const nextSpec = clone(spec);
+    nextSpec.paths[PROJECT_ROUTE].get.description = text;
+    const built = buildOperationCatalog(nextSpec, clone(manifest));
+    expect(built.catalog).not.toBeNull();
+    for (const seed of seeds) expect(JSON.stringify(built)).not.toContain(seed);
+
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
+    expect(result.ok).toBe(false);
+    for (const seed of seeds) expect(JSON.stringify(result)).not.toContain(seed);
+  });
+
+  it.each([
+    ["blank lines inside the block", `password: |\n  ${SEED}a\n\n  ${SEED}b\nnext: kept`, "next: kept"],
+    ["mixed tab and space indentation fails closed to the end", `\tpassword:\n    ${SEED}a\n${SEED}b`, null],
+    ["a placeholder block is kept", "password: |\n  <password>\nnext: kept", "password: |\n  <password>\nnext: kept"],
+  ])("%s", (_name, text, kept) => {
+    const redacted = redactCredentialValues(text);
+    expect(redacted).not.toContain(SEED);
+    if (kept === null) expect(containsCredentialValue(text)).toBe(true);
+    else expect(redacted).toContain(kept);
+  });
+});
+
+// Every rule is linear in the text: long runs that a backtracking pattern would rescan per character.
+const LONG = 100_000;
+const run = (unit: string) => unit.repeat(Math.ceil(LONG / unit.length)).slice(0, LONG);
+const LONG_TEXTS: Array<[string, string]> = [
+  ["a+ chain", run("a+")],
+  ["dotted words", run("a.")],
+  ["Authorization header word", `Authorization: ${run("a")}`],
+  ["scheme-like run", `https://${run("a")}`],
+  ["spaced words", run("ab ")],
+  ["slashes", run("//a")],
+  ["escaped quotes", `password="${run('\\"')}`],
+  ["open brackets", `password=${run("[")}`],
+  ["Bearer repeats", run("Bearer x")],
+  ["key separators", run("token=a ")],
+  ["YAML keys", run("password:\n")],
+  ["YAML block lines", `password: |\n${run("  a\n")}`],
+  ["Digest parameters", `Authorization: Digest ${run('a="b", ')}`],
+  ["at signs", run("x@")],
+];
+
+describe("credential rules run in linear time", () => {
+  it.each(LONG_TEXTS)("%s", (_name, text) => {
+    const started = performance.now();
+    containsCredentialValue(text);
+    containsCredentialIdentifier(text);
+    redactCredentialValues(text);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("bounds validateManifest and buildOperationCatalog on long keys and descriptions", () => {
+    const manifest = fixture("catalog/manifest.json");
+    const spec = fixture("catalog/openapi.json");
+    const started = performance.now();
+    validateManifest({ ...clone(manifest), [run("a+")]: 1 });
+    const nextSpec = clone(spec);
+    nextSpec.paths[PROJECT_ROUTE].get.description = run("a+");
+    expect(buildOperationCatalog(nextSpec, clone(manifest)).catalog).not.toBeNull();
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });
 
