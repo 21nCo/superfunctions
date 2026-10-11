@@ -9,7 +9,7 @@ import { matchesProcessIdentity, processBirthSignature, processIdentityStatus } 
 
 import { CaddyProxyController, DomainError, proxyListenerPorts, proxyListenerPortsFor, readRegisteredDomains, type ProxyRoute } from "../index.js";
 import {
-  OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayError, readRelayService, relayDirectory, relayPaths, relayTicketSummary,
+  OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayError, RELAY_LOCK_STALE_MS, readRelayService, relayDirectory, relayPaths, relayTicketSummary,
   writePrivateJson, type OAuthRelayService,
 } from "./state.js";
 
@@ -255,7 +255,7 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
     // A crashed relay's claim is covered by this one, so it ends without being retained.
     await releaseClaims(input.stateDir, invocationId);
     return await relayStatus(input.stateDir, proxy);
-  }, { timeoutMs: SERVICE_LOCK_TIMEOUT_MS });
+  }, { timeoutMs: SERVICE_LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
 }
 
 /**
@@ -290,7 +290,7 @@ export async function stopOAuthRelay(stateDir: string, proxy: OAuthRelayProxy = 
     }
     await rm(relayPaths(stateDir).service, { force: true });
     return { stopped, routeRemoved };
-  }, { timeoutMs: SERVICE_LOCK_TIMEOUT_MS });
+  }, { timeoutMs: SERVICE_LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
 }
 
 async function relayStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState">): Promise<OAuthRelayStatus> {
@@ -332,5 +332,5 @@ export async function recoverOAuthRelayRoute(stateDir: string, proxy: Pick<OAuth
     await rm(relayPaths(stateDir).service, { force: true });
     await releaseClaims(stateDir);
     return routed;
-  }, { timeoutMs: options.lockTimeoutMs ?? SERVICE_LOCK_TIMEOUT_MS });
+  }, { timeoutMs: options.lockTimeoutMs ?? SERVICE_LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
 }

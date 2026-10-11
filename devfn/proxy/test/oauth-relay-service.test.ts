@@ -293,6 +293,26 @@ it("stops by every recorded identity when the service record is unreadable, and 
   expect((await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state)).toEqual(["stopped"]);
 }, 60_000);
 
+it("stops nothing when Caddy cannot remove the relay route, so no callback can reach a freed port", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+  const service = (await readRelayService(stateDir))!;
+  const record = await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8");
+  const routes = [...proxy.routes];
+  const unavailable = { ...proxy, removeInstance: async () => { throw Object.assign(new Error("Caddy is unavailable."), { code: "DEVFN_PROXY_UNAVAILABLE" }); } };
+  await expect(stopOAuthRelay(stateDir, unavailable)).rejects.toMatchObject({ code: "DEVFN_PROXY_UNAVAILABLE" });
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).toBe("running");
+  expect(proxy.routes).toEqual(routes);
+  expect(await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8")).toBe(record);
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+  expect((await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state)).toEqual(["ready"]);
+  // Once Caddy applies the removal, the same command stops the relay.
+  await expect(stopOAuthRelay(stateDir, proxy)).resolves.toEqual({ stopped: true, routeRemoved: true });
+  expect(await processIdentityStatus(service.pid, service.birthSignature)).not.toBe("running");
+  expect(proxy.routes).toEqual([sibling]);
+}, 60_000);
+
 it("does not declare the relay stopped while a route or claim records a live relay the service record does not name", async () => {
   const stateDir = await registeredState();
   const live = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { detached: true, stdio: "ignore" });

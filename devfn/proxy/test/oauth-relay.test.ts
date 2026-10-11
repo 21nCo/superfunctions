@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -8,7 +9,7 @@ import { FilePortRegistry, allocateEphemeralPort, withRoutingLock } from "@devfn
 import { processBirthSignature } from "@devfn/processes";
 import { proxyListenerPorts } from "../src/index.js";
 import {
-  consumeOAuthRelayCallback, createOAuthRelayHandler, OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayClient, registerOAuthRelayState, stateDigest,
+  consumeOAuthRelayCallback, createOAuthRelayHandler, OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayClient, oauthRelayStatus, registerOAuthRelayState, stateDigest,
 } from "../src/oauth-relay/index.js";
 import { createFakeProvider, createOAuthClientApp, FixtureBrowser, type FakeProvider, type OAuthClientApp } from "./fixtures/oauth.js";
 
@@ -216,7 +217,7 @@ describe("OAuth relay ticket contract", () => {
       await expect(consume(m, callback(m, state(label)), later)).resolves.toMatchObject({ location: `${origin("app-a")}${CALLBACK_PATH}?code=c0de&state=${state(label)}` });
       await expect(consume(m, callback(m, state(label)), later)).rejects.toMatchObject({ reason: "replayed" });
     }
-  });
+  }, 30_000);
 
   it("stores only tickets it can read back, so one owner's oversized URL cannot disable the shared store", async () => {
     const m = await setup();
@@ -285,6 +286,35 @@ describe("OAuth relay ticket contract", () => {
     expect(statuses.filter((status) => status === 303)).toHaveLength(1);
     expect(statuses.filter((status) => status === 403)).toHaveLength(15);
   });
+
+  it("recovers a relay lock from a holder killed inside it well within every waiter's timeout", async () => {
+    const m = await setup();
+    await registerA(m, state("held"));
+    // The owner record withFileLock writes, for a holder that has since been killed.
+    const holder = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 60_000)"], { stdio: "ignore" });
+    const birthSignature = await processBirthSignature(holder.pid!);
+    const killed = new Promise((resolve) => holder.once("exit", resolve));
+    holder.kill("SIGKILL");
+    await killed;
+    const holdLock = async (name: string) => {
+      await mkdir(path.join(m.stateDir, "oauth-relay", name), { mode: 0o700 });
+      await writeFile(path.join(m.stateDir, "oauth-relay", name, "owner.json"), JSON.stringify({ token: name, pid: holder.pid, birthSignature, createdAt: new Date().toISOString() }));
+    };
+    // Each waiter's lock timeout is 30 s or more; a killed holder must not consume it.
+    const within = async <T>(operation: () => Promise<T>): Promise<T> => {
+      const started = Date.now();
+      const result = await operation();
+      expect(Date.now() - started).toBeLessThan(15_000);
+      return result;
+    };
+    await holdLock("state.lock");
+    await within(async () => await registerA(m, state("after-holder")));
+    await holdLock("state.lock");
+    expect(await within(async () => await relayRequest(m, `code=c0de&state=${state("held")}`))).toMatchObject({ status: 303 });
+    await holdLock("service.lock");
+    const proxy = { instanceRouteState: async () => ({ committed: [] }), removeInstance: async () => undefined };
+    await expect(within(async () => await oauthRelayStatus(m.stateDir, proxy))).resolves.toMatchObject({ running: true });
+  }, 60_000);
 
   it("answers only GET on the relay origin and never sets cookies", async () => {
     const m = await setup();

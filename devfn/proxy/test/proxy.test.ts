@@ -232,6 +232,43 @@ describe("Caddy route rendering", () => {
     }
   });
 
+  it("drops a dead service route when a rollback or a recovered activation journal changes routes", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-service-recovery-");
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 200)"], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    const deadSignature = await processBirthSignature(child.pid!);
+    await exited;
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const pendingPath = path.join(stateDir, "proxy-routes.pending.json");
+    const dead = { id: "relay:callback", instanceId: "relay", hostname: "auth.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" as const, updatedAt: "now",
+      serviceProcess: { pid: child.pid!, birthSignature: deadSignature ?? "gone" } };
+    const live = { id: "live:callback", instanceId: "live", hostname: "live.localhost", targetHost: "127.0.0.1", targetPort: 4102, tls: "off" as const, updatedAt: "now",
+      serviceProcess: { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! } };
+    const app = { id: "a", instanceId: "a", hostname: "a.localhost", targetHost: "127.0.0.1", targetPort: 4103, tls: "off" as const, updatedAt: "now" };
+    const failed = { id: "new", instanceId: "new", hostname: "new.invalid.test", targetHost: "127.0.0.1", targetPort: 4104, tls: "internal" as const,
+      registeredDomain: "invalid.test", projectId: "fixture", repositoryIdentity: stateDir, updatedAt: "now" };
+    try {
+      const controller = new CaddyProxyController(stateDir, unresolvable);
+      // An activation rollback restores the instance's captured routes.
+      await writeFile(statePath, JSON.stringify({ version: 1, routes: [dead, live, app] }));
+      const snapshot = await controller.captureInstanceRoutes("a");
+      await controller.restoreInstanceRoutes("a", snapshot);
+      expect(await controller.routes()).toEqual([live, app]);
+      // A crashed activation's journal is recovered without the dead route, and committed so.
+      await writeFile(statePath, JSON.stringify({ version: 1, routes: [live] }));
+      await writeFile(pendingPath, JSON.stringify({ version: 1, routes: [dead, live, app] }));
+      expect(await controller.routes()).toEqual([live, app]);
+      expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({ version: 1, routes: [live, app] });
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+      // A journal that can no longer activate rolls back to the committed routes, still without the dead one.
+      await writeFile(statePath, JSON.stringify({ version: 1, routes: [dead, live, app] }));
+      await writeFile(pendingPath, JSON.stringify({ version: 1, routes: [dead, live, app, failed] }));
+      expect(await controller.routes()).toEqual([live, app]);
+      expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({ version: 1, routes: [live, app] });
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await cleanup(); }
+  });
+
   it("replays and commits a valid route activation journal", async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-"));
     const pendingPath = path.join(stateDir, "proxy-routes.pending.json");

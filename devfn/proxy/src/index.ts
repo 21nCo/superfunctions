@@ -194,10 +194,12 @@ function canonicalJson(value: unknown): string {
 
 /**
  * Routes without a service process whose recorded process is verified gone.
- * Every transition that changes routes drops those, so a crashed service's
- * route does not outlive the next such operation; an unverifiable process
- * keeps its route. A call that changes no routes never applies Caddy for
- * this sweep alone, so route-less lifecycles stay independent of Caddy.
+ * Every apply that changes routes drops those: upsert, removeInstance, a
+ * rollback restore and a recovered activation journal (or its rollback), so
+ * a crashed service's route does not outlive the next such operation; an
+ * unverifiable process keeps its route. A call that changes no routes never
+ * applies Caddy for this sweep alone, so route-less lifecycles stay
+ * independent of Caddy.
  */
 async function withoutExitedServices(routes: readonly ProxyRoute[]): Promise<ProxyRoute[]> {
   const kept: ProxyRoute[] = [];
@@ -495,7 +497,7 @@ export class CaddyProxyController {
         throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A restored route ID is now owned by another instance.");
       }
       const siblings = state.routes.filter((route) => route.instanceId !== instanceId);
-      const restored = [...siblings, ...snapshot.committed.map((route) => ({ ...route }))];
+      const restored = await withoutExitedServices([...siblings, ...snapshot.committed.map((route) => ({ ...route }))]);
       renderCaddyfile(restored);
       for (const [digest, material] of Object.entries(snapshot.certificates)) {
         if (restored.some((route) => route.certificateDigest === digest)) await this.writeCertificateSnapshot(digest, material.certificate, material.key);
@@ -520,21 +522,40 @@ export class CaddyProxyController {
     if (pending) {
       const previous = await this.readState(this.statePath);
       try {
-        await this.apply(pending, true, previous?.routes ?? []);
-        return pending;
+        // The journal is rewritten first, so the state recovery commits is the one Caddy runs.
+        const live = await withoutExitedServices(pending.routes);
+        const next = live.length === pending.routes.length ? pending : { version: 1 as const, routes: live };
+        if (next !== pending) await this.writeJournal(next);
+        await this.apply(next, true, previous?.routes ?? []);
+        return next;
       } catch (error) {
         if (!(error instanceof DomainError)) throw error;
         // A crashed activation must not hold every other owner hostage when
         // its DNS or certificate has since become invalid. Restore the last
         // committed configuration before accepting further updates.
         const committed = previous ?? { version: 1, routes: [] };
-        await this.apply(committed, true, committed.routes, true);
-        return committed;
+        const live = await withoutExitedServices(committed.routes);
+        if (live.length === committed.routes.length) {
+          await this.apply(committed, true, committed.routes, true);
+          return committed;
+        }
+        // Without its dead service routes, the rollback is a new committed
+        // state: it replaces the rejected journal, which is never replayed.
+        const rollback = { version: 1 as const, routes: live };
+        await this.writeJournal(rollback);
+        await this.apply(rollback, true, committed.routes);
+        return rollback;
       }
     }
     const committed = await this.readState(this.statePath) ?? { version: 1, routes: [] };
     await this.pruneCertificateSnapshots(committed.routes).catch(() => undefined);
     return committed;
+  }
+
+  private async writeJournal(state: ProxyState): Promise<void> {
+    const pendingTemp = `${this.pendingPath}.${process.pid}.tmp`;
+    await writeFile(pendingTemp, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await rename(pendingTemp, this.pendingPath);
   }
 
   private async apply(next: ProxyState, recovering = false, previous: readonly ProxyRoute[] = [], rejectPending = false): Promise<void> {
@@ -600,11 +621,7 @@ export class CaddyProxyController {
         throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A non-DevFn Caddy admin endpoint is already running; refusing to replace its configuration.");
       }
     }
-    if (!recovering) {
-      const pendingTemp = `${this.pendingPath}.${process.pid}.tmp`;
-      await writeFile(pendingTemp, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-      await rename(pendingTemp, this.pendingPath);
-    }
+    if (!recovering) await this.writeJournal(next);
     if (owner) {
       try { await execFileAsync(caddy, ["reload", "--config", candidate, "--adapter", "caddyfile"], { timeout: 10_000 }); }
       catch (error) {

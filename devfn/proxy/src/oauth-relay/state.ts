@@ -15,6 +15,13 @@ const DEFAULT_TTL_SECONDS = 600;
 const MAX_TTL_SECONDS = 900;
 const MAX_LIVE_TICKETS_PER_OWNER = 256;
 const LOCK_TIMEOUT_MS = 30_000;
+/**
+ * A relay lock whose holder is verified dead is recovered after this long,
+ * well within every relay lock timeout, so a killed holder never blocks
+ * other worktrees' registrations or callbacks. A live holder is never
+ * displaced.
+ */
+export const RELAY_LOCK_STALE_MS = 5_000;
 // Unreserved URL characters only, so the value is forwarded byte-exact. A
 // short value cannot be an unguessable OAuth state.
 const STATE_PATTERN = /^[A-Za-z0-9._~-]{22,512}$/;
@@ -317,7 +324,7 @@ export async function registerOAuthRelayState(stateDir: string, input: RegisterO
     tickets.push(ticket);
     await writePrivateJson(relayPaths(stateDir).tickets, { version: 1, tickets });
     return { expiresAt };
-  }, { timeoutMs: LOCK_TIMEOUT_MS });
+  }, { timeoutMs: LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
 }
 
 export interface OAuthRelayCallback {
@@ -370,7 +377,7 @@ export async function consumeOAuthRelayCallback(stateDir: string, input: OAuthRe
     if (Date.parse(ticket.expiresAt) <= at.getTime()) throw reject("expired", "This OAuth state expired.");
     if (`${input.origin}${input.requestPath}` !== ticket.redirectUri) throw reject("wrong-origin", "The callback did not arrive at the registered redirect URI.");
     return ticket;
-  }, { timeoutMs: LOCK_TIMEOUT_MS });
+  }, { timeoutMs: LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
   // The consumed ticket is this callback's alone, so the route check needs no ticket lock.
   await liveOwnerRoute(stateDir, ticket.ownerId, new URL(ticket.callbackUrl), options.ownerLive ?? defaultOwnerLive(stateDir), ticket.route);
   return { location: `${ticket.callbackUrl}?${input.rawQuery}` };
