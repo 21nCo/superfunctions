@@ -537,32 +537,22 @@ export class CaddyProxyController {
     if (pending) {
       // An activation whose reload outcome is uncertain already failed for
       // its caller: it is rolled back, never replayed.
-      if (await access(this.uncertainPath).then(() => true, () => false)) return await this.rollBackUncertain();
+      if (await access(this.uncertainPath).then(() => true, () => false)) return await this.rollBack();
       const previous = await this.readState(this.statePath);
       try {
-        // The journal is rewritten first, so the state recovery commits is the one Caddy runs.
+        // Without dead service routes the recovered state is not the
+        // journal, which stays as evidence of what Caddy may serve until
+        // Caddy confirms the recovered state.
         const live = await withoutExitedServices(pending.routes);
         const next = live.length === pending.routes.length ? pending : { version: 1 as const, routes: live };
-        if (next !== pending) await this.writeJournal(next);
-        await this.apply(next, true, previous?.routes ?? []);
+        await this.apply(next, true, previous?.routes ?? [], { commitDirectly: next !== pending });
         return next;
       } catch (error) {
         if (!(error instanceof DomainError)) throw error;
         // A crashed activation must not hold every other owner hostage when
         // its DNS or certificate has since become invalid. Restore the last
         // committed configuration before accepting further updates.
-        const committed = previous ?? { version: 1, routes: [] };
-        const live = await withoutExitedServices(committed.routes);
-        if (live.length === committed.routes.length) {
-          await this.apply(committed, true, committed.routes, true);
-          return committed;
-        }
-        // Without its dead service routes, the rollback is a new committed
-        // state: it replaces the rejected journal, which is never replayed.
-        const rollback = { version: 1 as const, routes: live };
-        await this.writeJournal(rollback);
-        await this.apply(rollback, true, committed.routes);
-        return rollback;
+        return await this.rollBack();
       }
     }
     const committed = await this.readState(this.statePath) ?? { version: 1, routes: [] };
@@ -571,14 +561,18 @@ export class CaddyProxyController {
   }
 
   /**
-   * Reload the committed route state through the same apply path and discard
-   * the journal it replaces. Only its success confirms which routes Caddy
-   * serves; a failure keeps the journal and its uncertain marker.
+   * Reload the committed route state, without routes of services verified
+   * gone, through the same apply path, and discard the journal it replaces.
+   * Only its success confirms which routes Caddy serves: the reloaded routes
+   * are then committed. A failure keeps the journal, as possibly live, and
+   * the committed state unchanged.
    */
-  private async rollBackUncertain(): Promise<ProxyState> {
+  private async rollBack(): Promise<ProxyState> {
     const committed = await this.readState(this.statePath) ?? { version: 1 as const, routes: [] };
-    await this.apply(committed, true, committed.routes, true);
-    return committed;
+    const live = await withoutExitedServices(committed.routes);
+    const next = live.length === committed.routes.length ? committed : { version: 1 as const, routes: live };
+    await this.apply(next, true, committed.routes, { rollback: true, commitDirectly: next !== committed });
+    return next;
   }
 
   /**
@@ -592,7 +586,7 @@ export class CaddyProxyController {
   private async settleUncertainReload(failure: ProxyError, rollBack: boolean): Promise<never> {
     await writeFile(this.uncertainPath, "", { encoding: "utf8", mode: 0o600 }).catch(() => undefined);
     if (!rollBack) throw failure;
-    try { await this.rollBackUncertain(); }
+    try { await this.rollBack(); }
     catch (error) {
       throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", `${failure.message} Caddy may already serve its routes, and reloading the committed routes also failed, so the activation journal is kept as possibly live.`,
         { ...failure.details, rollback: error instanceof Error ? error.message : String(error) });
@@ -600,13 +594,21 @@ export class CaddyProxyController {
     throw failure;
   }
 
-  private async writeJournal(state: ProxyState): Promise<void> {
-    const pendingTemp = `${this.pendingPath}.${process.pid}.tmp`;
-    await writeFile(pendingTemp, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(pendingTemp, this.pendingPath);
+  private async writeRouteState(file: string, state: ProxyState): Promise<void> {
+    const temp = `${file}.${process.pid}.tmp`;
+    await writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await rename(temp, file);
   }
 
-  private async apply(next: ProxyState, recovering = false, previous: readonly ProxyRoute[] = [], rejectPending = false): Promise<void> {
+  /**
+   * Validate, activate and commit route state. A recovery (`recovering`)
+   * applies the existing journal rather than writing one. A `rollback` is
+   * never itself rolled back and discards the journal rather than committing
+   * it. `commitDirectly` commits `next`, which the journal does not hold,
+   * after Caddy confirms it; until then the journal stays.
+   */
+  private async apply(next: ProxyState, recovering = false, previous: readonly ProxyRoute[] = [],
+    { rollback = false, commitDirectly = false }: { rollback?: boolean; commitDirectly?: boolean } = {}): Promise<void> {
     validateRouteState(next.routes);
     const changed = next.routes.filter((route) => {
       const saved = previous.find((item) => item.id === route.id);
@@ -672,7 +674,7 @@ export class CaddyProxyController {
     }
     if (!recovering) {
       await rm(this.uncertainPath, { force: true });
-      await this.writeJournal(next);
+      await this.writeRouteState(this.pendingPath, next);
     }
     if (owner) {
       try { await execFileAsync(caddy, ["reload", "--config", candidate, "--adapter", "caddyfile"], { timeout: 10_000 }); }
@@ -680,7 +682,7 @@ export class CaddyProxyController {
         await rm(candidate, { force: true });
         // A rollback that fails is not rolled back again.
         await this.settleUncertainReload(new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to reload the DevFn-owned Caddy proxy.",
-          { cause: error instanceof Error ? error.message : String(error) }), !rejectPending);
+          { cause: error instanceof Error ? error.message : String(error) }), !rollback);
       }
     } else {
       // Caddy's admin endpoint answers before its sites bind their listeners.
@@ -795,7 +797,8 @@ export class CaddyProxyController {
     await rename(candidate, this.configPath);
     // A rejected activation is a rollback, not a replay. Its pending journal
     // must never replace the last committed route state after Caddy recovers.
-    if (rejectPending) await rm(this.pendingPath, { force: true });
+    if (commitDirectly) await this.writeRouteState(this.statePath, next);
+    if (rollback || commitDirectly) await rm(this.pendingPath, { force: true });
     else await rename(this.pendingPath, this.statePath);
     await rm(this.uncertainPath, { force: true });
     await this.pruneCertificateSnapshots(next.routes).catch(() => undefined);
@@ -808,6 +811,7 @@ export class CaddyProxyController {
     }
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
     return await withRoutingLock(this.stateDir, async () => await withFileLock(this.lockPath, async () => {
+      if (routes.length === 0 && !await this.hasInstanceRoutes(selectedOwner)) return [];
       const state = await this.read();
       const ids = new Set(routes.map((route) => route.id));
       if (ids.size !== routes.length) throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", "Duplicate route IDs in one update.");
@@ -828,9 +832,17 @@ export class CaddyProxyController {
     }, { timeoutMs: PROXY_LOCK_TIMEOUT_MS }));
   }
 
+  /**
+   * An owner that neither committed nor pending route state names changes no
+   * routes: it returns without recovering another owner's journal or touching
+   * Caddy, as an empty upsert does, so a route-less lifecycle never depends
+   * on Caddy. Every call that changes routes, and routes(), first recovers or
+   * rolls back a pending journal, and fails while Caddy cannot confirm it.
+   */
   public async removeInstance(instanceId: string): Promise<void> {
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
     await withRoutingLock(this.stateDir, async () => await withFileLock(this.lockPath, async () => {
+      if (!await this.hasInstanceRoutes(instanceId)) return;
       const state = await this.read();
       const remaining = state.routes.filter((route) => route.instanceId !== instanceId);
       if (remaining.length === state.routes.length) return;
