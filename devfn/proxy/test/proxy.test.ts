@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -452,6 +452,25 @@ process.stdout.write(String(member.pid), () => setTimeout(() => process.exit(0),
       expect(await readFile(statePath, "utf8")).toBe(committed);
       expect(await readFile(live, "utf8")).not.toContain("added.localhost");
     } finally { delete process.env.DEVFN_TEST_RELOAD_FAILED; await cleanup(); }
+  });
+
+  it("fails closed on an uncertainty marker that cannot be written or read", async () => {
+    const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-uncertain-unreadable-");
+    const toolsDir = (process.env.PATH ?? "").split(path.delimiter)[0];
+    const [statePath, pendingPath, uncertainPath] = ["proxy-routes.json", "proxy-routes.pending.json", "proxy-routes.pending.uncertain"].map((name) => path.join(stateDir, name));
+    // A looping link makes the marker unwritable and unreadable (ELOOP) until a validation that finds a journal clears it.
+    await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\necho "$1" >> '${path.join(toolsDir, "calls.log")}'\n[ "$1" = validate ] && [ -e '${pendingPath}' ] && rm -f '${uncertainPath}'\nexit 0\n`, { mode: 0o700 });
+    const sibling = { id: "s", instanceId: "sibling", hostname: "sibling.localhost", targetHost: "127.0.0.1", targetPort: 4100, tls: "off", updatedAt: "before" } as const, added = { id: "a", instanceId: "i", hostname: "added.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off", updatedAt: "now" } as const;
+    const committed = `${JSON.stringify({ version: 1, routes: [sibling] })}\n`;
+    await Promise.all([symlink(uncertainPath, uncertainPath), writeFile(statePath, committed)]);
+    try {
+      await expect(new CaddyProxyController(stateDir).upsert([added])).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED", message: expect.stringContaining("Unable to mark") });
+      expect(await caddyCalls()).not.toContain("reload");
+      expect((await readdir(stateDir)).filter((name) => ["proxy-routes.pending.json", "Caddyfile.candidate"].includes(name))).toEqual([]);
+      await writeFile(pendingPath, `${JSON.stringify({ version: 1, routes: [sibling, added] })}\n`);
+      expect(await new CaddyProxyController(stateDir).routes()).toEqual([sibling]);
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+    } finally { await cleanup(); }
   });
 
   it("rolls an uncertain activation back without service routes verified gone, and commits only what Caddy confirmed", async () => {

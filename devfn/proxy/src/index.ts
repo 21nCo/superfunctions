@@ -538,7 +538,7 @@ export class CaddyProxyController {
       // An activation marked before its reload began has an uncertain
       // outcome, and may already have failed for its caller: it is rolled
       // back, never replayed.
-      if (await access(this.uncertainPath).then(() => true, () => false)) return await this.rollBack();
+      if (await access(this.uncertainPath).then(() => true, (error: NodeJS.ErrnoException) => error.code !== "ENOENT")) return await this.rollBack();
       const previous = await this.readState(this.statePath);
       try {
         // Without dead service routes the recovered state is not the
