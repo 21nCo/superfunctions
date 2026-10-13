@@ -561,6 +561,79 @@ describe("OpenAPI context traversal", () => {
   });
 });
 
+describe("Path Item $ref siblings", () => {
+  const health = () => clone(spec.paths["/health"]);
+  const nullable = (version: string) => (version === "3.0.3" ? { type: "string", nullable: true } : { type: ["string", "null"] });
+  const SIBLINGS: Record<string, (version: string) => Record<string, unknown>> = {
+    servers: () => ({ servers: [{ url: "https://other.example.com" }] }),
+    parameters: () => ({ parameters: [{ name: "tenant", in: "query", required: true, schema: { type: "string" } }] }),
+    post: () => ({ post: { operationId: "probePost", responses: { "200": { description: "ok" } } } }),
+    nullable: (version) => ({ parameters: [{ name: "probe", in: "query", schema: nullable(version) }] }),
+  };
+  /** `/health` reaching its path item through a $ref, with `fields` beside the $ref at the placement's hop. */
+  const PLACEMENTS: Record<string, { pointer: string; place: (nextSpec: any, fields: Record<string, unknown>) => void }> = {
+    "beside a $ref to #/x-pi": {
+      pointer: "/paths/~1health",
+      place: (nextSpec, fields) => {
+        nextSpec["x-pi"] = health();
+        nextSpec.paths["/health"] = { $ref: "#/x-pi", ...fields };
+      },
+    },
+    "beside a $ref to #/paths/~1other": {
+      pointer: "/paths/~1health",
+      place: (nextSpec, fields) => {
+        nextSpec.paths["/other"] = health();
+        nextSpec.paths["/health"] = { $ref: "#/paths/~1other", ...fields };
+      },
+    },
+    "in the middle of a 2-hop path-item chain": {
+      pointer: "/x-a",
+      place: (nextSpec, fields) => {
+        nextSpec["x-pi"] = health();
+        nextSpec["x-a"] = { $ref: "#/x-pi", ...fields };
+        nextSpec.paths["/health"] = { $ref: "#/x-a" };
+      },
+    },
+  };
+  const specFor = (version: string, placement: string, fields: Record<string, unknown>) => {
+    const nextSpec = clone(spec);
+    nextSpec.openapi = version;
+    PLACEMENTS[placement].place(nextSpec, fields);
+    return nextSpec;
+  };
+
+  const rows = Object.keys(SIBLINGS).flatMap((field) => ["3.0.3", "3.1.0"].flatMap((version) => Object.keys(PLACEMENTS).map((placement) => [field, version, placement] as const)));
+  it.each(rows)("reports %s on %s %s instead of dropping it", (field, version, placement) => {
+    const result = buildOperationCatalog(specFor(version, placement, SIBLINGS[field](version)), clone(manifest));
+    expect(result.catalog).toBeNull();
+    const fieldName = field === "nullable" ? "parameters" : field;
+    expect(only(result.diagnostics, "INVALID_SPEC")).toContainEqual(
+      expect.objectContaining({ pointer: PLACEMENTS[placement].pointer, message: expect.stringContaining(`"${fieldName}" beside its $ref`) })
+    );
+  });
+
+  it.each(["beside a $ref to #/x-pi", "in the middle of a 2-hop path-item chain"])("keeps a $ref alone or with summary, description and x-* %s", (placement) => {
+    const expected = build().catalog!.operations.find((operation) => operation.id === "system.health");
+    for (const fields of [{}, { summary: "Health", description: "Liveness", "x-meta": { servers: [], parameters: [] } }]) {
+      const result = build((nextSpec) => PLACEMENTS[placement].place(nextSpec, fields));
+      expect(result.diagnostics).toEqual([]);
+      expect(result.catalog!.operations.find((operation) => operation.id === "system.health")).toEqual(expected);
+    }
+  });
+
+  it("checks references beside a callback path item $ref", () => {
+    const result = build((nextSpec) => {
+      nextSpec["x-cb"] = { get: { responses: { "200": { description: "ok" } } } };
+      nextSpec.paths["/health"].get.callbacks = {
+        probe: { "{$request.query.url}": { $ref: "#/x-cb", post: { parameters: [{ $ref: "#/components/parameters/Missing" }], responses: { "200": { description: "ok" } } } } },
+      };
+    });
+    expect(only(result.diagnostics, "UNRESOLVED_REF").map((diagnostic) => diagnostic.pointer)).toEqual([
+      "/paths/~1health/get/callbacks/probe/{$request.query.url}/post/parameters/0/$ref",
+    ]);
+  });
+});
+
 describe("serialization metadata", () => {
   const FORM = "application/x-www-form-urlencoded";
   const formManifest = (nextManifest: any) => nextManifest.serialization.mediaTypes.push(FORM, "multipart/form-data");

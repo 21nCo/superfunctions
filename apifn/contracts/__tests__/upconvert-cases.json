@@ -2282,6 +2282,335 @@
           }
         }
       ]
+    },
+    {
+      "name": "an operation beside a callback path item $ref",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "get": {
+              "responses": {
+                "200": {
+                  "description": "ok"
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "callbacks"
+          ],
+          "openapi30": {
+            "probe": {
+              "{$request.query.url}": {
+                "$ref": "#/x-target",
+                "post": {
+                  "requestBody": {
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  },
+                  "responses": {
+                    "200": {
+                      "description": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "probe": {
+              "{$request.query.url}": {
+                "$ref": "#/x-target",
+                "post": {
+                  "requestBody": {
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "responses": {
+                    "200": {
+                      "description": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "x-* beside a path item $ref",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/x-target",
+            "summary": "Health",
+            "description": "Liveness",
+            "x-meta": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "rejected": [
+    {
+      "name": "a nullable parameter beside a path item $ref to #/x-pi",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/paths/~1health"
+      },
+      "edits": [
+        {
+          "path": [
+            "x-pi"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/x-pi",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "$ref": "#/x-pi",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a nullable parameter beside a path item $ref to #/paths/~1other",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/paths/~1health"
+      },
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/other"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/paths/~1other",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "$ref": "#/paths/~1other",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a nullable parameter beside a path item $ref in the middle of a chain",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/x-a"
+      },
+      "edits": [
+        {
+          "path": [
+            "x-pi"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "x-a"
+          ],
+          "openapi30": {
+            "$ref": "#/x-pi",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "$ref": "#/x-pi",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/x-a"
+          }
+        }
+      ]
     }
   ]
 }

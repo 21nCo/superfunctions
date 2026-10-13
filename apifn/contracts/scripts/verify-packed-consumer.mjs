@@ -57,6 +57,7 @@ console.log(JSON.stringify({ cjs: Object.keys(contracts).sort().length, resolved
 // @apifn/core) and the workspace build must give the 3.1 form's whole result for 3.0 objects and text,
 // keeping literals, map keys and "__proto__" keys verbatim and turning nullable schemas into null types,
 // including schemas in objects reached through references (read by the type of the referencing position).
+// A rejected case's 3.1 form reports its error, and the 3.0 form gives the same result.
 const protoRows = (specifier) => `
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -76,8 +77,12 @@ const specWith = (version, entry) => {
   return next;
 };
 const results = {};
-for (const entry of [...cases.literals, ...cases.schemas, ...cases.references]) {
-  const control = canonicalJson(buildOperationCatalog(specWith("3.1.0", entry), JSON.parse(JSON.stringify(manifest))));
+for (const entry of [...cases.literals, ...cases.schemas, ...cases.references, ...cases.rejected]) {
+  const current = buildOperationCatalog(specWith("3.1.0", entry), JSON.parse(JSON.stringify(manifest)));
+  const errors = current.diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+  if (entry.error) assert.ok(errors.some((diagnostic) => diagnostic.code === entry.error.code && diagnostic.pointer === entry.error.pointer), entry.name + " 3.1.0");
+  else assert.deepEqual(errors, [], entry.name + " 3.1.0");
+  const control = canonicalJson(current);
   const legacy = specWith("3.0.3", entry);
   for (const [form, input] of [["3.0.3", legacy], ["3.0.3 text", JSON.stringify(legacy)]]) {
     const result = canonicalJson(buildOperationCatalog(input, JSON.parse(JSON.stringify(manifest))));

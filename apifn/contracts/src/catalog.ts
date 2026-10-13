@@ -597,8 +597,10 @@ class CatalogBuilder {
     }
   }
 
+  /** A Path Item `$ref` is a Path Item field, not a Reference Object: the fields beside it are walked too. */
   private walkPathItem(value: unknown, pointer: string): void {
-    if (!isRecord(value) || this.checkRef(value, pointer, "object")) return;
+    if (!isRecord(value)) return;
+    this.checkRef(value, pointer, "object");
     this.walkList(value.parameters, `${pointer}/parameters`, (parameter, parameterPointer) => this.walkParameter(parameter, parameterPointer));
     for (const method of METHODS) {
       const operation = own(value, method);
@@ -641,7 +643,7 @@ class CatalogBuilder {
    * anything else that is not an object is reported, never dropped silently
    * (the reference diagnostic matches checkRefs, so the two deduplicate).
    */
-  deref(value: unknown, pointer: string): { value: Record<string, unknown>; pointer: string } | null {
+  deref(value: unknown, pointer: string, pathItem = false): { value: Record<string, unknown>; pointer: string } | null {
     if (value === undefined) return null;
     if (!isRecord(value)) {
       this.report("INVALID_SPEC", pointer, `Expected an object at ${pointer}, found ${describeValue(value)}.`);
@@ -651,6 +653,7 @@ class CatalogBuilder {
     let currentPointer = pointer;
     for (let hops = 0; hops < 32; hops += 1) {
       if (!Object.hasOwn(current, "$ref")) return { value: current, pointer: currentPointer };
+      if (pathItem) this.pathItemRefFields(current, currentPointer);
       const problem = this.refProblem(current.$ref, "object");
       if (problem) {
         this.report("UNRESOLVED_REF", `${currentPointer}/$ref`, problem);
@@ -662,6 +665,23 @@ class CatalogBuilder {
     }
     this.report("UNRESOLVED_REF", pointer, `Reference chain at ${pointer} is cyclic or longer than 32 hops.`);
     return null;
+  }
+
+  /**
+   * A Path Item `$ref` is a Path Item field, so the fields beside it are Path
+   * Item fields too; OpenAPI leaves their merge with the referenced path item
+   * undefined. The catalog does not merge them, so any field beside the
+   * `$ref` other than summary, description and `x-*` is an error, never dropped.
+   */
+  private pathItemRefFields(value: Record<string, unknown>, pointer: string): void {
+    const fields = Object.keys(value).filter((key) => key !== "$ref" && key !== "summary" && key !== "description" && !key.startsWith("x-"));
+    if (fields.length === 0) return;
+    const target = typeof value.$ref === "string" ? showRef(value.$ref) : "";
+    this.report(
+      "INVALID_SPEC",
+      pointer,
+      `Path Item at ${pointer} has ${fields.sort(compareCodeUnits).map(quote).join(", ")} beside its $ref; the catalog does not merge Path Item fields. Move them into the referenced path item ${quote(target)}.`
+    );
   }
 
   /**
@@ -1437,7 +1457,7 @@ class CatalogBuilder {
         continue;
       }
       this.identifier(path, `/paths/${pointerSegment(path)}`, "Path template");
-      const resolved = this.deref(paths[path], `/paths/${pointerSegment(path)}`);
+      const resolved = this.deref(paths[path], `/paths/${pointerSegment(path)}`, true);
       if (!resolved) continue;
       for (const method of METHODS) {
         const operation = own(resolved.value, method);
@@ -1601,7 +1621,8 @@ type OpenApiObjectKind = "pathItem" | "callback" | "parameter" | "requestBody" |
  * catalog resolves it: from the paths and components, and through every
  * Reference Object at a typed position, wherever its target is (`#/x-param`,
  * another operation's member, a chain of up to 32 objects as in deref).
- * A target is read with the type of the position referencing it. Literals,
+ * A target is read with the type of the position referencing it; the fields
+ * beside a Path Item `$ref` are Path Item fields, read as well. Literals,
  * map keys and `x-*` members of the Paths, Responses and Callback maps are
  * never Schema Object positions unless a reference reaches them. Schema
  * references are not followed: the catalog resolves them only to component
@@ -1637,10 +1658,11 @@ function schemaObjects(doc: Record<string, unknown>): Set<Record<string, unknown
     if ((kinds.get(kind) ?? Infinity) <= reached) return;
     kinds.set(kind, reached);
     if (reference) {
-      // A Reference Object: its siblings are ignored and a chain reads at most 32 objects, as in deref.
+      // A chain reads at most 32 objects, as in deref.
       const ref = own(value, "$ref");
       if (typeof ref === "string" && hops + 1 < 32) references.push([resolvePointer(doc as Doc, ref), kind, hops + 1]);
-      return;
+      // A Reference Object's siblings are ignored. A Path Item `$ref` is a Path Item field: the fields beside it are read too.
+      if (kind !== "pathItem") return;
     }
     switch (kind) {
       case "schema":
