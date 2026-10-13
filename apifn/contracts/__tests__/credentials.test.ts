@@ -565,6 +565,67 @@ describe("name/value names read like structured names", () => {
   });
 });
 
+// A quoted credential name that ends in its separator: what follows its closing quote on the line is its value,
+// unless a field ends there, when the container's value field holds the value.
+const SEPARATOR_NAMES = ["X-Api-Key:", "password:", "password=", "X-Api-Key: "];
+const SEPARATOR_NAME_MATRIX = ["header", "key", "name", "param"].flatMap((field) =>
+  SEPARATOR_NAMES.map((name): [string, string] => [`${field}: ${JSON.stringify(name)} then the value`, `${field}: ${JSON.stringify(name)} ${NAME_SEED}`])
+);
+
+describe("names that end in their separator", () => {
+  it.each(SEPARATOR_NAME_MATRIX)("%s", (_form, text) => expectSeedRemovedEverywhere(text, NAME_SEED));
+
+  it.each(NAME_SYNTAXES)("reads the value field after a name ending in a separator and a space in %s", (_syntax, render) =>
+    expectSeedRemovedEverywhere(render("X-Api-Key: ", NAME_SEED), NAME_SEED)
+  );
+
+  it.each<[string, string]>([
+    [`header: "X-Api-Key:" ${NAME_SEED}`, 'header: "X-Api-Key:" [REDACTED]'],
+    [`key: "password=" ${NAME_SEED}; x=1`, 'key: "password=" [REDACTED]; x=1'],
+    [`Use header: "Authorization:" Bearer ${NAME_SEED}`, 'Use header: "Authorization:" Bearer [REDACTED]'],
+    [`{"name":"X-Api-Key:","value":"${NAME_SEED}"}`, '{"name":"X-Api-Key:","value":"[REDACTED]"}'],
+    [`{"name":"X-Api-Key:" , "data":"${NAME_SEED}"}`, '{"name":"X-Api-Key:" , "data":"[REDACTED]"}'],
+    [`<add key="password:" value="${NAME_SEED}"/>`, '<add key="password:" value="[REDACTED]"/>'],
+    [`"header: \\"X-Api-Key:\\""`, `"header: \\"X-Api-Key:\\""`],
+  ])("redacts %j exactly", (text, expected) => {
+    expect(redactCredentialValues(text)).toBe(expected);
+  });
+
+  it.each([`header: "X-Request-Id:" abc`, `{"name":"X-Request-Id:","value":"abc"}`, `<add key="X-Request-Id:" value="abc"/>`])("keeps %j", (text) => {
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+  });
+});
+
+// A quoted name runs to its real closing delimiter: quotes of another type and deeper-escaped quotes are part of it.
+const INNER_QUOTE_SYNTAXES: Array<[syntax: string, render: (name: string, value: string) => string]> = [
+  ["JSON", (name, value) => JSON.stringify({ name, value })],
+  ["escaped JSON", (name, value) => stringified({ name, value }, 1)],
+  ["JSON stringified three times", (name, value) => stringified({ name, value }, 2)],
+  ["JS list literal", (name, value) => (name.includes("'") ? `[{name: "${name}", value: '${value}'}]` : `[{name: '${name}', value: '${value}'}]`)],
+  ["XML attributes", (name, value) => (name.includes('"') ? `<add key='${name}' value='${value}'/>` : `<add key="${name}" value="${value}"/>`)],
+];
+const INNER_QUOTE_MATRIX = ["user's password", 'the "API key"'].flatMap((name) =>
+  INNER_QUOTE_SYNTAXES.map(([syntax, render]): [string, string] => [`${JSON.stringify(name)} in ${syntax}`, render(name, NAME_SEED)])
+);
+
+describe("quoted names holding other quotes", () => {
+  it.each(INNER_QUOTE_MATRIX)("%s", (_form, text) => {
+    expectSeedRemovedEverywhere(text, NAME_SEED);
+    const event = fixture("client-failure/valid/network-minimal.json");
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
+    expect(JSON.stringify(result)).toContain("CREDENTIAL_VALUE");
+  });
+
+  it.each(INNER_QUOTE_SYNTAXES)("keeps an ordinary name holding a quote in %s", (_syntax, render) => {
+    for (const name of ["O'Brien's id", 'the "request id"']) {
+      const text = render(name, "req-42");
+      expect(containsCredentialValue(text)).toBe(false);
+      expect(redactCredentialValues(text)).toBe(text);
+    }
+  });
+});
+
 // When the text rule fires on a catalog string, the whole string is replaced: no part of the value survives a boundary misread.
 const ABSENT_SEED = "SEEDabsent6631";
 const PARTIAL_FORMS: Array<[form: string, text: string]> = [
@@ -979,6 +1040,13 @@ const LONG_TEXTS: Array<[string, (size: number) => string]> = [
   ["unterminated names with mixed quotes", run("name:\"a\u00a0b name:'a\u3000b ")],
   ["apostrophes in prose", run("Bob's password: first O'Brien x ")],
   ["quoted values then text", run('password: "first" a ')],
+  // Names ending in their separator, and names holding quotes of another type or a deeper escape level.
+  ["names ending in a separator then text", run('header: "X-Api-Key:" a ')],
+  ["names ending in a separator in containers", run('{"name":"X-Api-Key:","value":"a"},')],
+  ["names with many inner quotes", (n) => `{"name":"${repeat("a'", n)}key","value":"a"}`],
+  ["names with many deeper-escaped quotes", (n) => `{\\"name\\":\\"${repeat('a\\\\\\"', n)}key\\",\\"value\\":\\"a\\"}`],
+  ["unterminated names with inner quotes", run("name:\"a'b name:'a\"b name:`a ")],
+  ["unterminated escaped names of rising levels", run('name:\\"a name:\\\\\\"b ')],
 ];
 
 describe("credential rules run in linear time", () => {
@@ -1018,6 +1086,8 @@ describe("credential rules run in linear time", () => {
     '{"name":"API\u00a0key\u3000x","value":"a"},',
     "Bob's password: first O'Brien x ",
     'password: "first" a ',
+    'header: "X-Api-Key:" a ',
+    `{"name":"user's password","value":"a"},`,
   ])("buildOperationCatalog scales linearly up to a 1 MB description of %j", (unit) => {
     const manifest = fixture("catalog/manifest.json");
     const specs = new Map(
