@@ -1,0 +1,21 @@
+devfn/ports/src/proxy-state.ts
+  s_1900bb15a7199a::t_a0a268b17d4410 35-36,40,42-43,46-47
+devfn/proxy/test/proxy.test.ts
+  s_1900bb15a7199a::t_f607b3d91d4e54 291-294,297-300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bbe8da4ffa4250de0f3cea23536a8f5a56144de0",
+  "prompts": {},
+  "sessions": {
+    "s_1900bb15a7199a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e049926-ee38-44b5-a734-8c7117ee5ff7",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
