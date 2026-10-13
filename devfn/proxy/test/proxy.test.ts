@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } fro
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { withFileLock } from "@devfn/ports";
+import { parsePersistedProxyRoutes, withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { CaddyProxyController, proxyOwnerStatus, renderCaddyfile } from "../src/index.js";
 
@@ -280,6 +280,81 @@ describe("Caddy route rendering", () => {
       expect((await controller.routes()).map((item) => item.id)).toEqual(["sibling"]);
       await controller.removeInstance("sibling");
       expect(await controller.routes()).toEqual([]);
+    } finally { await cleanup(); }
+  });
+
+  // Each known format next to texts its producer never renders: the
+  // identity check compares text, so one of those reads as a reused PID.
+  const birthSignatures = {
+    linux: { canonical: ["linux:0", "linux:123456", "linux:18446744073709551615"], other: ["linux:012345", "linux:18446744073709551616", "linux:+1"] },
+    "darwin-utc": {
+      canonical: ["darwin-utc:Fri Oct  9 12:30:02 2026", "darwin-utc:Tue Oct 13 20:24:45 2026"],
+      other: ["darwin-utc:Wed Oct 99 99:99:99 2026", "darwin-utc:Fri Oct 9 12:30:02 2026", "darwin-utc:Tue Oct  13 20:24:45 2026", "darwin-utc:Wed Oct 13 20:24:45 2026", "darwin-utc:Mon Feb 30 20:24:45 2026"],
+    },
+    win32: {
+      canonical: ["win32:2026-10-13T18:27:33.1234567Z", "win32:2026-10-13T18:27:33.0000000Z"],
+      other: ["win32:2026-10-13T18:27:33Z", "win32:2026-10-13T18:27:33.123Z", "win32:2026-10-13T18:27:33.1234567+00:00", "win32:2026-02-30T18:27:33.1234567Z", "win32:2026-10-13T24:27:33.1234567Z"],
+    },
+  };
+
+  describe.each(Object.entries(birthSignatures))("a %s birth signature", (_format, { canonical, other }) => {
+    const serviceRoute = (birthSignature: string) => ({ id: "service", instanceId: "service", hostname: "service.localhost", targetHost: "127.0.0.1" as const, targetPort: 4102, tls: "off" as const, serviceProcess: { pid: process.pid, birthSignature } });
+    const persisted = (birthSignature: string) => ({ version: 1, routes: [{ ...serviceRoute(birthSignature), updatedAt: "now" }] });
+
+    it("is read only in the exact form its producer renders", () => {
+      for (const birthSignature of canonical) expect(parsePersistedProxyRoutes(persisted(birthSignature))).toHaveLength(1);
+      for (const birthSignature of other) expect(() => parsePersistedProxyRoutes(persisted(birthSignature)), birthSignature).toThrow("Invalid route service process.");
+      // A signature in no format DevFn reads is never compared, so it stays readable.
+      for (const birthSignature of ["unreadable", "gone", "darwin:Tue Oct 13 20:24:45 2026"]) expect(parsePersistedProxyRoutes(persisted(birthSignature))).toHaveLength(1);
+    });
+
+    it("in any other form is refused by updates, restores and both preflights before Caddy or any state changes", async () => {
+      const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-signature-");
+      const statePath = path.join(stateDir, "proxy-routes.json");
+      try {
+        const controller = new CaddyProxyController(stateDir);
+        await controller.upsert([{ id: "sibling", instanceId: "sibling", hostname: "sibling.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" }]);
+        const committed = await readFile(statePath, "utf8");
+        // The activation preflight first probes the executable; nothing else may reach Caddy.
+        const changes = async () => (await caddyCalls()).filter((call) => call !== "version");
+        const calls = (await changes()).length;
+        for (const birthSignature of other) {
+          const route = serviceRoute(birthSignature);
+          const invalid = { code: "DEVFN_PROXY_CONFIG_INVALID" };
+          await expect(controller.upsert([route]), birthSignature).rejects.toMatchObject(invalid);
+          await expect(controller.restoreInstanceRoutes("service", { committed: [{ ...route, updatedAt: "now" }], certificates: {} }), birthSignature).rejects.toMatchObject(invalid);
+          await expect(controller.assertRouteOwnershipAvailable([route], "service"), birthSignature).rejects.toMatchObject(invalid);
+          await expect(withCaddyAdminPort(() => controller.assertActivationReady([route], "service")), birthSignature).rejects.toMatchObject(invalid);
+        }
+        expect(await changes()).toHaveLength(calls);
+        expect(await readFile(statePath, "utf8")).toBe(committed);
+        await expect(access(path.join(stateDir, "proxy-routes.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      } finally { await cleanup(); }
+    });
+  });
+
+  it("refuses route state recording this live process in a form its producer never renders, instead of dropping its route as a reused PID", async () => {
+    const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-signature-live-");
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const signature = (await processBirthSignature(process.pid))!;
+    // The same start time, rendered with a leading zero, other day padding or no fraction.
+    const reworded = signature.startsWith("linux:") ? `linux:0${signature.slice(6)}`
+      : signature.startsWith("darwin-utc:") ? signature.replace(/^(\S+ \S+) +(\d+)/, (_all, prefix: string, day: string) => `${prefix}${day.length === 1 ? " " : "  "}${day}`)
+        : signature.replace(/\.\d+Z$/, "Z");
+    expect(reworded).not.toBe(signature);
+    const route = (id: string, targetPort: number, birthSignature?: string) =>
+      ({ id, instanceId: id, hostname: `${id}.localhost`, targetHost: "127.0.0.1" as const, targetPort, tls: "off" as const, updatedAt: "now", ...(birthSignature ? { serviceProcess: { pid: process.pid, birthSignature } } : {}) });
+    try {
+      const controller = new CaddyProxyController(stateDir);
+      await writeFile(statePath, JSON.stringify({ version: 1, routes: [route("live", 4101, signature), route("plain", 4103)] }));
+      await controller.removeInstance("plain");
+      expect((await controller.routes()).map((item) => item.id)).toEqual(["live"]);
+      const state = JSON.stringify({ version: 1, routes: [route("live", 4101, reworded), route("plain", 4103)] });
+      await writeFile(statePath, state);
+      const calls = (await caddyCalls()).length;
+      await expect(controller.removeInstance("plain")).rejects.toMatchObject({ code: "DEVFN_PROXY_CONFIG_INVALID" });
+      expect(await readFile(statePath, "utf8")).toBe(state);
+      expect(await caddyCalls()).toHaveLength(calls);
     } finally { await cleanup(); }
   });
 

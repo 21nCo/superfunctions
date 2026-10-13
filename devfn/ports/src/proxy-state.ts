@@ -15,17 +15,38 @@ export interface PersistedProxyRoute {
 const hostnamePattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
 const routePathPattern = /^\/[A-Za-z0-9._~!$&'()+,;=:@/-]*$/;
 const nonempty = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
-// A birth signature in a format DevFn reads must be well formed: the sweep
-// takes a malformed one as a different process reusing a live PID. One in no
+// A birth signature in a format DevFn reads must be exactly the text its
+// producer, processBirthSignature, renders: the sweep compares that text, so
+// any other rendering of a live start time reads as a reused PID. One in no
 // such format is never compared, so its route stays.
-const birthSignatureFormats: Record<string, RegExp> = {
-  linux: /^\d+$/,
-  "darwin-utc": /^[A-Z][a-z]{2} [A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4}$/,
-  win32: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/,
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** The UTC instant these calendar fields name, or undefined when they name no real date and time. */
+function utcInstant(year: number, month: number, day: number, hours: number, minutes: number, seconds: number): Date | undefined {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month, day);
+  date.setUTCHours(hours, minutes, seconds, 0);
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month && date.getUTCDate() === day &&
+    date.getUTCHours() === hours && date.getUTCMinutes() === minutes && date.getUTCSeconds() === seconds ? date : undefined;
+}
+const canonicalBirthSignatures: Record<string, (text: string) => boolean> = {
+  // The /proc start time in clock ticks, an unsigned 64-bit decimal.
+  linux: (text) => /^(?:0|[1-9]\d{0,19})$/.test(text) && (text.length < 20 || text <= "18446744073709551615"),
+  // ps lstart in the pinned C locale and UTC, "%a %b %e %H:%M:%S %Y".
+  "darwin-utc": (text) => {
+    const match = /^([A-Z][a-z]{2}) ([A-Z][a-z]{2}) ( [1-9]|[12]\d|3[01]) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/.exec(text);
+    const date = match ? utcInstant(Number(match[7]), MONTHS.indexOf(match[2]), Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6])) : undefined;
+    return date !== undefined && WEEKDAYS[date.getUTCDay()] === match![1];
+  },
+  // .NET's round-trip ("O") rendering of a UTC DateTime: seven fraction digits and Z.
+  win32: (text) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{7}Z$/.exec(text);
+    return match !== null && utcInstant(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6])) !== undefined;
+  },
 };
-const wellFormedBirthSignature = (signature: string): boolean => {
+const canonicalBirthSignature = (signature: string): boolean => {
   const format = signature.includes(":") ? signature.slice(0, signature.indexOf(":")) : "";
-  return !Object.hasOwn(birthSignatureFormats, format) || birthSignatureFormats[format].test(signature.slice(format.length + 1));
+  return !Object.hasOwn(canonicalBirthSignatures, format) || canonicalBirthSignatures[format](signature.slice(format.length + 1));
 };
 
 export function parsePersistedProxyRoutes(value: unknown): PersistedProxyRoute[] {
@@ -67,7 +88,7 @@ export function parsePersistedProxyRoutes(value: unknown): PersistedProxyRoute[]
     if (route.certificateDigest !== undefined && (typeof route.certificateDigest !== "string" || !/^[a-f0-9]{64}$/.test(route.certificateDigest))) throw new Error("Invalid certificate digest.");
     const service = route.serviceProcess as { pid?: unknown; birthSignature?: unknown } | undefined;
     if (service !== undefined && (!service || typeof service !== "object" || !Number.isSafeInteger(service.pid) || (service.pid as number) <= 0 ||
-      !nonempty(service.birthSignature) || !wellFormedBirthSignature(service.birthSignature))) throw new Error("Invalid route service process.");
+      !nonempty(service.birthSignature) || !canonicalBirthSignature(service.birthSignature))) throw new Error("Invalid route service process.");
     const hostname = route.hostname.toLowerCase();
     const host = hosts.get(hostname);
     if (ids.has(route.id) || (host && (host.owner !== route.instanceId || host.tls !== route.tls))) throw new Error("Conflicting proxy route.");
