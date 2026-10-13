@@ -31,6 +31,7 @@ export function mediaTypeParameters(mediaType: string): string[] {
     .split(";")
     .slice(1)
     .map((parameter) => parameter.trim())
+    // An empty parameter (`a/b;; c=d`) is valid HTTP: RFC 9110 section 5.6.6 has `*( OWS ";" OWS [ parameter ] )`.
     .filter((parameter) => parameter !== "" && !/^charset\s*=\s*(?:utf-8|"utf-8")$/i.test(parameter));
 }
 

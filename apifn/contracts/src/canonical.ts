@@ -197,13 +197,15 @@ export function snapshotPlainData(input: unknown, options: { maxDepth?: number; 
     if (bytes > maxBytes) limit(`exceeds ${maxBytes} bytes when serialized`);
     if (values > MAX_JSON_VALUES) limit(`exceeds ${MAX_JSON_VALUES} values`);
   };
-  const copy = (value: unknown, pointer: string, depth: number): unknown => {
+  // `counted`: an array item, whose value its array already counted.
+  const copy = (value: unknown, pointer: string, depth: number, counted = false): unknown => {
     if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
       return problem(pointer, `is a ${typeof value}, not JSON data`);
     }
-    if (typeof value === "string") spend(1, value.length + 2);
-    else if (typeof value === "number") spend(1, String(value).length);
-    else if (typeof value === "boolean" || value === null) spend(1, 4);
+    const count = counted ? 0 : 1;
+    if (typeof value === "string") spend(count, value.length + 2);
+    else if (typeof value === "number") spend(count, String(value).length);
+    else if (typeof value === "boolean" || value === null) spend(count, 4);
     if (typeof value !== "object" || value === null) return value;
     if (ancestors.has(value)) return problem(pointer, "refers back to an enclosing object (a cycle)");
     if (depth >= maxDepth) return problem(pointer, `nests deeper than ${maxDepth} levels`);
@@ -216,13 +218,13 @@ export function snapshotPlainData(input: unknown, options: { maxDepth?: number; 
     let output: unknown;
     if (array) {
       const length = value.length;
-      // Each item is at least one value and one byte (its comma or bracket).
-      spend(1 + length, 1 + length);
+      // Each item is one value, counted here once, and at least one byte (its comma or bracket), so a long array stops before its items are read.
+      spend(count + length, 1 + length);
       const items: unknown[] = [];
-      for (let index = 0; index < length; index += 1) items.push(copy(value[index], `${pointer}/${index}`, depth + 1));
+      for (let index = 0; index < length; index += 1) items.push(copy(value[index], `${pointer}/${index}`, depth + 1, true));
       output = items;
     } else {
-      spend(1, 2);
+      spend(count, 2);
       const record: Record<string, unknown> = {};
       for (const key of Object.keys(value)) {
         const raw = (value as Record<string, unknown>)[key];

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
@@ -2115,5 +2116,154 @@ describe("malformed references and inputs", () => {
     expect(result.catalog).toBeNull();
     // Its digest would otherwise hash U+FFFD in its place, sharing identity with a different document.
     expect(only(result.diagnostics, "INVALID_SPEC").map((diagnostic) => diagnostic.message)).toEqual(["Cannot read the OpenAPI document: it is malformed or not plain JSON data."]);
+  });
+});
+
+describe("path and server URL templates", () => {
+  const SERVER_SCOPES: Array<[string, string, (nextSpec: any, server: unknown) => void]> = [
+    ["root", "/servers/0", (nextSpec, server) => { nextSpec.servers = [server]; }],
+    ["path", `/paths/${LIST_ROUTE.replace(/\//g, "~1")}/servers/0`, (nextSpec, server) => { nextSpec.paths[LIST_ROUTE].servers = [server]; }],
+    ["operation", `/paths/${LIST_ROUTE.replace(/\//g, "~1")}/get/servers/0`, (nextSpec, server) => { nextSpec.paths[LIST_ROUTE].get.servers = [server]; }],
+  ];
+  const ok = { responses: { "200": { description: "ok" } } };
+
+  it.each(["/a/{", "/a/{{id}}", "/a/{id}}", "/a/}", "/a/{}", "/a/{b{c}"])("INVALID_SPEC: path template %j has a malformed brace", (key) => {
+    const result = build((nextSpec) => { nextSpec.paths[key] = { get: ok }; });
+    expect(result.catalog).toBeNull();
+    const pointer = `/paths/${key.replace(/\//g, "~1")}`;
+    expect(only(result.diagnostics, "INVALID_SPEC").filter((diagnostic) => diagnostic.pointer === pointer).map(({ message }) => message)).toEqual([
+      expect.stringMatching(/^Path template at .* has an? .*; write each path parameter as \{name\}\.$/),
+    ]);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.pointer.startsWith(`${pointer}/`))).toEqual([]);
+  });
+
+  it.each(SERVER_SCOPES)("INVALID_SPEC: a %s server URL with a placeholder no variable declares is not published", (_scope, pointer, place) => {
+    const result = build((nextSpec) => place(nextSpec, { url: "https://{region}.api.example.test/{stage}/v1", variables: { stage: { default: "prod" } } }));
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "INVALID_SPEC").map(({ pointer, message }) => [pointer, message])).toEqual([
+      [`${pointer}/url`, expect.stringMatching(/uses "region" but declares no such variable/)],
+    ]);
+  });
+
+  it("reports only the missing default when a used server variable has none", () => {
+    const result = build((nextSpec) => { nextSpec.servers = [{ url: "https://{region}.api.example.test", variables: { region: { enum: ["eu"] } } }]; });
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "INVALID_SPEC").map(({ pointer, message }) => [pointer, message])).toEqual([
+      ["/servers/0/variables/region", expect.stringMatching(/needs a string default/)],
+    ]);
+  });
+
+  it.each(["https://{h.example.test", "https://{a{b}}.example.test", "https://h.example.test/}", "https://{}.example.test", "https://h.example.test/v1?q={"])(
+    "INVALID_SPEC: server URL template %j has a malformed brace",
+    (url) => {
+      const result = build((nextSpec) => { nextSpec.servers = [{ url, variables: { h: { default: "api" } } }]; });
+      expect(result.catalog).toBeNull();
+      expect(only(result.diagnostics, "INVALID_SPEC").map(({ pointer, message }) => [pointer, message])).toEqual([
+        ["/servers/0/url", expect.stringMatching(/^Server URL template at \/servers\/0\/url has an? .*; write each server variable as \{name\}\.$/)],
+      ]);
+    }
+  );
+
+  it.each(SERVER_SCOPES)("INVALID_SPEC: a %s server URL that is a credential as a whole is never published as [REDACTED]", (_scope, pointer, place) => {
+    const seed = "SEEDEDsrv0091abcd";
+    const result = build((nextSpec) => place(nextSpec, { url: `sk_live_${seed}` }));
+    expect(result.catalog).toBeNull();
+    expect(canonicalJson(result)).not.toContain(seed);
+    expect(only(result.diagnostics, "INVALID_SPEC").map(({ pointer, message }) => [pointer, message])).toEqual([
+      [`${pointer}/url`, expect.stringMatching(/is credential-like as a whole/)],
+    ]);
+  });
+
+  it("reports an ambiguous server URL once and does not publish it", () => {
+    const result = build((nextSpec) => { nextSpec.servers = [{ url: "https://api.example.test\\users\\@me" }]; });
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "INVALID_SPEC").map(({ pointer, message }) => [pointer, message])).toEqual([
+      ["/servers/0/url", expect.stringMatching(/URL parsers disagree on its host/)],
+    ]);
+  });
+
+  it("keeps well-formed templates: declared server variables and path parameters in template order", () => {
+    const result = build((nextSpec) => { nextSpec.servers = [{ url: "https://{region}.api.example.test/v1", variables: { region: { default: "eu", enum: ["eu", "us"] } } }]; });
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    expect(result.catalog!.servers).toEqual([{ url: "https://{region}.api.example.test/v1", description: null, variables: { region: { default: "eu", enum: ["eu", "us"], description: null } } }]);
+    expect(result.catalog!.operations.find((operation) => operation.id === "projects.get")!.parameters.filter((parameter) => parameter.in === "path").map((parameter) => parameter.name)).toEqual(["workspaceId", "projectId"]);
+  });
+
+  // Rules that rescanned to the end from every "[" or "{" of an unclosed run; each row is timed at n and 4n characters.
+  const BACKTRACK = 8000;
+  const firstOperation = (nextSpec: any) => nextSpec.paths[LIST_ROUTE].get;
+  it.each<[string, (nextSpec: any, text: string) => void, string]>([
+    ["schema pattern of unclosed [", (nextSpec, text) => { firstOperation(nextSpec).parameters.push({ name: "zz", in: "query", schema: { type: "string", pattern: text } }); }, "["],
+    ["schema pattern of backslashes", (nextSpec, text) => { firstOperation(nextSpec).parameters.push({ name: "zz", in: "query", schema: { type: "string", pattern: text } }); }, "\\"],
+    ["schema pattern of {1", (nextSpec, text) => { firstOperation(nextSpec).parameters.push({ name: "zz", in: "query", schema: { type: "string", pattern: text } }); }, "{1"],
+    // The bound list route moves under the long segment, so its parameters are read against that template.
+    ["path of {", (nextSpec, text) => { nextSpec.paths[`${LIST_ROUTE}/${text}`] = nextSpec.paths[LIST_ROUTE]; delete nextSpec.paths[LIST_ROUTE]; }, "{"],
+    ["path of {a", (nextSpec, text) => { nextSpec.paths[`${LIST_ROUTE}/${text}`] = nextSpec.paths[LIST_ROUTE]; delete nextSpec.paths[LIST_ROUTE]; }, "{a"],
+    ["server URL of {", (nextSpec, text) => { nextSpec.servers = [{ url: `https://api.example.test/${text}` }]; }, "{"],
+  ])("builds a catalog with a %s in linear time", (_name, place, unit) => {
+    const specs = new Map(
+      [BACKTRACK, BACKTRACK * 4].map((size) => {
+        const nextSpec = clone(spec);
+        place(nextSpec, unit.repeat(size / unit.length));
+        return [size, nextSpec];
+      })
+    );
+    const ratio = scalingRatio((size) => buildOperationCatalog(specs.get(size)!, clone(manifest)), BACKTRACK);
+    expect(ratio).toBeLessThan(LINEAR_RATIO);
+  }, SCALING_TIMEOUT);
+});
+
+describe("documented schema reference reading", () => {
+  /** The README's reading, written from its text: percent-decode the fragment, split on "/", unescape ~1 then ~0. */
+  const documentedName = (ref: string): string | null => {
+    const segments = decodeURIComponent(ref.slice(1)).split("/");
+    const [root, components, schemas, name] = segments;
+    return ref.startsWith("#") && segments.length === 4 && root === "" && components === "components" && schemas === "schemas" ? name.replace(/~1/g, "/").replace(/~0/g, "~") : null;
+  };
+  // Component name -> how a source document refers to it (RFC 6901 section 6).
+  const NAMES: Array<[string, string]> = [
+    ["a%b", "a%25b"],
+    ["a%25b", "a%2525b"],
+    ["a/b", "a~1b"],
+    ["a~b", "a~0b"],
+    ["é", "%C3%A9"],
+    ["%", "%25"],
+  ];
+
+  it("resolves every emitted $ref and discriminator mapping target to its exact component name", () => {
+    const result = build((nextSpec) => {
+      const ref = (encoded: string) => ({ $ref: `#/components/schemas/${encoded}` });
+      for (const [name] of NAMES) nextSpec.components.schemas[name] = { type: "object", properties: { kind: { type: "string" } } };
+      const operation = nextSpec.paths[LIST_ROUTE].get;
+      NAMES.forEach(([, encoded], index) => operation.parameters.push({ name: `p${index}`, in: "query", schema: ref(encoded) }));
+      nextSpec.paths[LIST_ROUTE].post.requestBody.content["application/json"].schema = {
+        oneOf: NAMES.map(([, encoded]) => ref(encoded)),
+        discriminator: { propertyName: "kind", mapping: Object.fromEntries(NAMES.map(([, encoded], index) => [`k${index}`, `#/components/schemas/${encoded}`])) },
+      };
+      operation.responses["200"].content["application/json"].schema = { type: "array", items: { anyOf: NAMES.map(([, encoded]) => ref(encoded)) } };
+    });
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    const catalog = result.catalog!;
+    const list = catalog.operations.find((operation) => operation.id === "projects.list")!;
+    const create = catalog.operations.find((operation) => operation.id === "projects.create")!;
+    const emitted = [
+      ...list.parameters.filter((parameter) => /^p\d$/.test(parameter.name)).map((parameter) => (parameter.schema as { $ref: string }).$ref),
+      ...(create.requestBody!.contents[0].schema as { oneOf: Array<{ $ref: string }> }).oneOf.map((member) => member.$ref),
+      ...Object.values((create.requestBody!.contents[0].schema as { discriminator: { mapping: Record<string, string> } }).discriminator.mapping),
+      ...(list.responses.find((response) => response.status === "200")!.contents[0].schema as { items: { anyOf: Array<{ $ref: string }> } }).items.anyOf.map((member) => member.$ref),
+    ];
+    const names = NAMES.map(([name]) => name);
+    expect(emitted.map(documentedName)).toEqual([...names, ...names, ...names, ...names]);
+    for (const name of names) expect(Object.hasOwn(catalog.schemas, name)).toBe(true);
+    // The emitted form itself is unchanged: ~ as ~0, / as ~1 and % as %25.
+    expect(emitted.slice(0, NAMES.length)).toEqual(["a%25b", "a%2525b", "a~1b", "a~0b", "é", "%25"].map((segment) => `#/components/schemas/${segment}`));
+  });
+
+  it("states that reading once in the README and in each schema description", () => {
+    const readme = readFileSync(path.join(SCHEMAS, "../README.md"), "utf8");
+    expect(readme).toContain("To read one, apply RFC 6901 section 6: percent-decode the whole fragment, split it on `/`, then unescape `~1` to `/` and `~0` to `~`");
+    expect(readme).not.toMatch(/escaped only by JSON Pointer rules|unescape `~1` and `~0` and resolve/);
+    const descriptions = JSON.stringify(readJson(path.join(SCHEMAS, "operation-catalog.v1.schema.json"))).match(/percent-decoding the fragment, splitting it on \/, then unescaping ~1 to \/ and ~0 to ~/g);
+    expect(descriptions).toHaveLength(3);
   });
 });

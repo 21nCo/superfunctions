@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { MAX_JSON_VALUES, snapshotPlainData } from "../src/canonical.js";
 import { canonicalDigest, canonicalJson, sha256Hex } from "../src/index.js";
 
 describe("canonical JSON", () => {
@@ -80,5 +81,18 @@ describe("sha256Hex", () => {
     expect(canonicalDigest({ a: 1, b: [1, 2] })).toBe(canonicalDigest({ b: [1, 2], a: 1 }));
     expect(canonicalDigest({ a: 1, b: [1, 2] })).not.toBe(canonicalDigest({ a: 1, b: [2, 1] }));
     expect(canonicalDigest({})).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+});
+
+describe("snapshot value limit", () => {
+  // Each array item is one value: the array counts it once, before reading it, and its copy does not count it again.
+  it.each<[string, number, boolean]>([
+    ["primitives", MAX_JSON_VALUES - 1, true],
+    ["primitives", MAX_JSON_VALUES, false],
+    ["empty objects", MAX_JSON_VALUES - 1, true],
+    ["empty objects", MAX_JSON_VALUES, false],
+  ])("an array of %s with %i items is accepted: %s", (kind, length, accepted) => {
+    const snapshot = snapshotPlainData(Array.from({ length }, () => (kind === "primitives" ? 0 : {})));
+    expect(snapshot.problems).toEqual(accepted ? [] : [{ pointer: "", reason: `exceeds ${MAX_JSON_VALUES} values`, limit: true }]);
   });
 });

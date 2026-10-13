@@ -1275,6 +1275,65 @@ describe("credential rules run in linear time", () => {
   }, SCALING_TIMEOUT);
 });
 
+// Regexes that backtrack: a run restarted at every position that something after it rejects (trailing dots before
+// a letter) or adjacent quantifiers over shared characters ("{{" then spaces). Rules with those shapes took about a
+// second at the larger size; each row is timed at n and 4n characters.
+const BACKTRACK = 8000;
+
+describe("text scanners never backtrack", () => {
+  it.each<[string, (size: number) => string]>([
+    ["Bearer then dots", (n) => `Bearer ${repeat(".", n)}x`],
+    ["Basic then dots", (n) => `Basic ${repeat(".", n)}x`],
+    ["password: {{ then spaces", (n) => `password: {{${repeat(" ", n)}x`],
+    ["Authorization: {{ then spaces", (n) => `Authorization: {{${repeat(" ", n)}x`],
+    ["password: {{ then line breaks", (n) => `password: {{${repeat("\n", n)}!`],
+    ["relative URL with fragment marks", (n) => `/a?b=1${repeat("#", n)}`],
+    ["relative URL with query marks", (n) => `/a${repeat("?", n)}#`],
+  ])("%s", (_name, build) => {
+    const texts = new Map([BACKTRACK, BACKTRACK * 4].map((size) => [size, build(size)]));
+    const ratio = scalingRatio((size) => {
+      const text = texts.get(size)!;
+      containsCredentialValue(text);
+      containsCredentialIdentifier(text);
+      redactCredentialValues(text);
+      stripUrlCredentials(text);
+    }, BACKTRACK);
+    expect(ratio).toBeLessThan(LINEAR_RATIO);
+  }, SCALING_TIMEOUT);
+
+  // The rewritten rules read the same values: placeholders stay exempt and sentence dots stay outside a token.
+  it.each<[string, boolean]>([
+    ["password: {{ token }}", false],
+    ["password: {{}}", false],
+    ["password: {{ }}", false],
+    ["password: {{\ttoken\n}}", false],
+    ["password: <token>", false],
+    ["password: ${TOKEN}", false],
+    ["password: $TOKEN", false],
+    ["password: ***", false],
+    ["password: [REDACTED]", false],
+    ["password: {{ a b }}", true],
+    ["password: {{ token", true],
+    ["Bearer abc123def456...", true],
+    ["Bearer authentication.", false],
+    ["Bearer HTTP/1.1.", false],
+    ["Bearer ........", false],
+  ])("%j is a credential: %s", (text, credential) => {
+    expect(containsCredentialValue(text)).toBe(credential);
+  });
+
+  it.each<[string, string, boolean]>([
+    ["/a?b=1&token=x#frag", "/a?b=1", false],
+    ["/a?b=1?c#d?e", "/a?b=1?c", false],
+    ["/a#?token=x", "/a", false],
+    ["a?b?token=x", "a", false],
+    ["?x=1", "?x=1", false],
+    ["/a?b\n#c", "/a", true],
+  ])("strips relative URL %j to %j", (url, stripped, dropQuery) => {
+    expect(stripUrlCredentials(url, { dropQuery })).toBe(stripped);
+  });
+});
+
 // Keys are quoted back in pointers and messages, so every report goes through one sanitizer.
 const KEY_SEEDS = [`https://user:${SEED}@host.test`, `//user:${SEED}@host.test`, `sk_live_${SEED}abcd`, `token=${SEED}`];
 

@@ -152,7 +152,58 @@ function hasCredentialKey(value: unknown): boolean {
  * as `token=` (no value) while `^sk_live_abc123…$` keeps its key.
  */
 function patternLiterals(pattern: string): string {
-  return pattern.replace(/\\[\s\S]|\[(?:\\[\s\S]|[^\]\\])*\]|\{\d*(?:,\d*)?\}|[\^$()|?*+]/g, " ");
+  // One pass. An escape is read before anything else, so a class or quantifier never starts inside one, and once a
+  // "[" finds no "]" none after it can either: a later "[" is copied, not scanned again to the end.
+  let literal = "";
+  let classes = true;
+  let index = 0;
+  while (index < pattern.length) {
+    const char = pattern[index];
+    let end = index + 1;
+    if (char === "\\" && end < pattern.length) {
+      end += 1;
+    } else if (char === "[" && classes) {
+      while (end < pattern.length && pattern[end] !== "]" && !(pattern[end] === "\\" && end + 1 === pattern.length)) end += pattern[end] === "\\" ? 2 : 1;
+      if (pattern[end] === "]") end += 1;
+      else [classes, end] = [false, index + 1];
+    } else if (char === "{") {
+      end = digitsEnd(pattern, end);
+      if (pattern[end] === ",") end = digitsEnd(pattern, end + 1);
+      end = pattern[end] === "}" ? end + 1 : index + 1;
+    }
+    literal += end > index + 1 || "^$()|?*+".includes(char) ? " " : char;
+    index = end;
+  }
+  return literal;
+}
+
+function digitsEnd(text: string, from: number): number {
+  let end = from;
+  while (end < text.length && text[end] >= "0" && text[end] <= "9") end += 1;
+  return end;
+}
+
+/**
+ * The `{name}` placeholders of a path or server URL template, in order, read
+ * in one pass; or what makes the template malformed: a nested, empty, stray
+ * or unclosed brace. OpenAPI has no escape for a literal brace.
+ */
+function templateNames(template: string): { names: string[] } | { problem: string } {
+  const names: string[] = [];
+  let open = -1;
+  for (let index = 0; index < template.length; index += 1) {
+    const char = template[index];
+    if (char === "{") {
+      if (open !== -1) return { problem: "a \"{\" inside a placeholder" };
+      open = index;
+    } else if (char === "}") {
+      if (open === -1) return { problem: "a \"}\" that closes no placeholder" };
+      if (index === open + 1) return { problem: "an empty placeholder \"{}\"" };
+      names.push(template.slice(open + 1, index));
+      open = -1;
+    }
+  }
+  return open === -1 ? { names } : { problem: "a \"{\" that is never closed" };
 }
 
 interface MemberType<T> {
@@ -339,8 +390,10 @@ function hideJointServerValues(
 }
 
 /**
- * Escapes a component name for a `$ref` emitted into the catalog, so
- * {@link parseLocalRef} reads it back as that name (diagnostic pointers use pointerSegment).
+ * Escapes a component name for a `$ref` emitted into the catalog: `~` as
+ * `~0`, `/` as `~1` and `%` as `%25`, so the documented reading
+ * ({@link parseLocalRef}: percent-decode, split on `/`, unescape `~1` and
+ * `~0`) returns that name. Diagnostic pointers use pointerSegment.
  */
 function refSegment(name: string): string {
   return name.replace(/~/g, "~0").replace(/\//g, "~1").replace(/%/g, "%25");
@@ -428,6 +481,8 @@ function sortStrings(values: Iterable<string>): string[] {
 interface SpecOperation {
   method: HttpMethod;
   path: string;
+  /** Path-template parameter names, in template order. */
+  template: string[];
   pointer: string;
   pathItem: Record<string, unknown>;
   pathItemPointer: string;
@@ -929,8 +984,9 @@ class CatalogBuilder {
 
   /**
    * Checks and records a schema reference that will be emitted, and returns
-   * it in normal form: `#/components/schemas/<name>` with the name escaped
-   * only by JSON Pointer rules, so `catalog.schemas[<name>]` resolves it.
+   * it in normal form: `#/components/schemas/<name>` with the name escaped by
+   * {@link refSegment}, so reading it as RFC 6901 section 6 reads a fragment
+   * gives the key of `catalog.schemas`.
    * Every emitted reference is checked here, wherever it was reached from (a
    * parameter behind `#/x-param` is never walked by checkRefs), so a
    * successful catalog has no dangling reference. Only component schemas can
@@ -1122,7 +1178,7 @@ class CatalogBuilder {
       });
     }
 
-    const template = Array.from(entry.path.matchAll(/\{([^}]+)\}/g), (match) => match[1]);
+    const { template } = entry;
     const parameters: CatalogParameter[] = [];
     for (const { value, pointer } of merged.values()) {
       const location = value.in as CatalogParameter["in"];
@@ -1417,9 +1473,19 @@ class CatalogBuilder {
         return [];
       }
       const template = server.url;
+      const parsed = templateNames(template);
+      if ("problem" in parsed) {
+        this.report("INVALID_SPEC", `${serverPointer}/url`, `Server URL template at ${serverPointer}/url has ${parsed.problem}; write each server variable as {name}.`);
+        return [];
+      }
       const url = this.url(template, `${serverPointer}/url`, { dropQuery: true }) as string;
       if (url === "") {
         this.report("INVALID_SPEC", `${serverPointer}/url`, `Server ${serverPointer} has no URL left once its query and fragment are removed; give it a base URL.`);
+        return [];
+      }
+      if (url === REDACTED) {
+        // A credential-like URL is replaced whole; "[REDACTED]" is no base URL, so the server is not published.
+        if (!isAmbiguousUrl(template)) this.report("INVALID_SPEC", `${serverPointer}/url`, `Server URL at ${serverPointer}/url is credential-like as a whole, so no part of it can be published; give it a plain base URL.`);
         return [];
       }
       const declared = this.member(server, "variables", serverPointer, OBJECT) ?? {};
@@ -1442,6 +1508,13 @@ class CatalogBuilder {
       // fragment (or none left in the emitted URL) only fills a removed part, so its values may be credentials.
       const occurrences = placeholderCounts(template);
       const kept = placeholderCounts(url);
+      // Every placeholder left in the published URL needs a variable with a default, or clients cannot expand it.
+      const unusable = [...kept.keys()].filter((name) => !valid.includes(name));
+      const undeclared = unusable.filter((name) => !Object.hasOwn(declared, name)).sort(compareCodeUnits);
+      if (undeclared.length > 0) {
+        this.report("INVALID_SPEC", `${serverPointer}/url`, `Server URL at ${serverPointer}/url uses ${undeclared.map((name) => quote(name)).join(", ")} but declares no such variable; declare each placeholder under variables with a string default.`);
+      }
+      if (unusable.length > 0) return []; // A declared variable without a valid default was reported above.
       const removed = (name: string) => (kept.get(name) ?? 0) === 0 || kept.get(name)! < (occurrences.get(name) ?? 0);
       const hidden = new Set(valid.filter((name) => isCredentialKey(name) || removed(name)));
       // Values are judged in the URL expanded with all defaults, then with each enum value in turn (other variables at
@@ -1550,6 +1623,11 @@ class CatalogBuilder {
         this.report("INVALID_SPEC", `/paths/${pointerSegment(path)}`, `Path ${quote(path)} must start with "/".`);
         continue;
       }
+      const parsed = templateNames(path);
+      if ("problem" in parsed) {
+        this.report("INVALID_SPEC", `/paths/${pointerSegment(path)}`, `Path template at /paths/${pointerSegment(path)} has ${parsed.problem}; write each path parameter as {name}.`);
+        continue;
+      }
       this.identifier(path, `/paths/${pointerSegment(path)}`, "Path template");
       const resolved = this.deref(paths[path], `/paths/${pointerSegment(path)}`, true);
       if (!resolved) continue;
@@ -1563,6 +1641,7 @@ class CatalogBuilder {
         operations.push({
           method,
           path,
+          template: parsed.names,
           pointer: `/paths/${pointerSegment(path)}/${method}`,
           pathItem: resolved.value,
           pathItemPointer: resolved.pointer,

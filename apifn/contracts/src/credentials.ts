@@ -41,8 +41,11 @@ export function isCredentialKey(key: string): boolean {
 
 export const REDACTED = "[REDACTED]";
 
-/** Template placeholders such as `<token>`, `{{token}}`, `${TOKEN}`, `$TOKEN`, `***` or `[REDACTED]`. */
-const PLACEHOLDER = /<[A-Za-z _.-]*>|\{\{\s*[A-Za-z_.-]*\s*\}\}|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\{[A-Za-z_.-]*\}|\[[A-Z _-]+\]|\$[A-Z_][A-Z0-9_]*|\*{3,}|\.{3}|…/g;
+/**
+ * Template placeholders such as `<token>`, `{{token}}`, `${TOKEN}`, `$TOKEN`, `***` or `[REDACTED]`. No two adjacent
+ * quantifiers share characters (`{{ token }}` reads its spaces once), so a long unclosed placeholder is scanned in linear time.
+ */
+const PLACEHOLDER = /<[A-Za-z _.-]*>|\{\{\s*(?:[A-Za-z_.-]+\s*)?\}\}|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\{[A-Za-z_.-]*\}|\[[A-Z _-]+\]|\$[A-Z_][A-Z0-9_]*|\*{3,}|\.{3}|…/g;
 /** HTTP authentication schemes that precede a credential in an Authorization header. */
 const AUTH_SCHEMES = "basic|bearer|digest|token|negotiate|ntlm|dpop|hoba|mutual|apikey|oauth|aws4-hmac-sha256";
 const AUTH_SCHEME_WORDS = new RegExp(`(?<![A-Za-z0-9-])(?:${AUTH_SCHEMES})(?![A-Za-z0-9-])`, "gi");
@@ -271,24 +274,26 @@ class TextScan {
       for (const opener of open) memo.set(opener, -1);
       return -1;
     };
-    for (let index = start; index < text.length; index += 1) {
+    let index = start;
+    while (index < text.length) {
       const char = text[index];
+      let next = index + 1;
       if (char === "\\") {
-        index += 1; // An escaped character, such as \" inside escaped JSON, never opens or closes anything.
+        next = index + 2; // An escaped character, such as \" inside escaped JSON, never opens or closes anything.
       } else if (QUOTES.has(char)) {
-        const end = this.quotedEnd(index);
-        if (end === -1) return fail();
-        index = end - 1;
+        next = this.quotedEnd(index);
+        if (next === -1) return fail();
       } else if (char === "{" || char === "[" || (parentheses && char === "(")) {
         const inner = index === start ? undefined : memo.get(index);
         if (inner === -1) return fail(); // Unbalanced inside means unbalanced outside.
-        if (inner !== undefined) index = inner - 1;
-        else open.push(index);
+        if (inner === undefined) open.push(index);
+        else next = inner;
       } else if (char === "}" || char === "]" || (parentheses && char === ")")) {
         if (GROUP_CLOSERS[text[open[open.length - 1]]] !== char) return fail();
-        memo.set(open.pop()!, index + 1);
-        if (open.length === 0) return index + 1;
+        memo.set(open.pop()!, next);
+        if (open.length === 0) return next;
       }
+      index = next;
     }
     return fail();
   }
@@ -981,7 +986,10 @@ function redactNamespaceSegments(text: string): string {
  * words such as `HTTP/1.1` or `OAuth2.0` are prose.
  */
 function isTokenShaped(word: string): boolean {
-  const trimmed = word.replace(/[.]+$/, "");
+  // Trailing dots end a sentence. Trimmed by index: /[.]+$/ restarts at every dot of a run that something else ends.
+  let end = word.length;
+  while (end > 0 && word[end - 1] === ".") end -= 1;
+  const trimmed = word.slice(0, end);
   if (trimmed.length < 8 || /^[A-Za-z]{1,8}[/-]?v?\d{1,3}(?:\.\d{1,3})*$/.test(trimmed)) return false;
   return (
     (/\d/.test(trimmed) && /[A-Za-z]/.test(trimmed)) ||
@@ -1165,8 +1173,10 @@ export function stripUrlCredentials(url: string, options: { dropQuery?: boolean 
   const parts = urlParts(url);
   if (!parts) {
     // Relative references have no authority; only the query and fragment can carry secrets.
-    const [base, query] = url.replace(/#.*$/s, "").split(/\?(.*)/s, 2);
-    return joinQuery(base, query, options.dropQuery);
+    const hash = url.indexOf("#");
+    const reference = hash === -1 ? url : url.slice(0, hash);
+    const mark = reference.indexOf("?");
+    return mark === -1 ? joinQuery(reference, undefined, options.dropQuery) : joinQuery(reference.slice(0, mark), reference.slice(mark + 1), options.dropQuery);
   }
   const { prefix, authority, path, query } = parts;
   const host = authority.slice(authority.lastIndexOf("@") + 1);
