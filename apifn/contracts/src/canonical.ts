@@ -7,8 +7,18 @@ export function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : 1;
 }
 
+/** A UTF-16 surrogate without its pair: ill-formed Unicode, which has no UTF-8 encoding (RFC 8785 rejects it). */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+function serializeString(value: string, path: string, what: string): string {
+  // The message names where, never the string itself, so it stays well-formed.
+  if (LONE_SURROGATE.test(value)) throw new TypeError(`Cannot canonicalize ill-formed Unicode (a lone surrogate) in ${what} at ${path || "/"}`);
+  return JSON.stringify(value);
+}
+
 function serialize(value: unknown, path: string): string {
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
+  if (typeof value === "string") return serializeString(value, path, "a string");
+  if (value === null || typeof value === "boolean") {
     return JSON.stringify(value);
   }
   if (typeof value === "number") {
@@ -18,7 +28,13 @@ function serialize(value: unknown, path: string): string {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((item, index) => serialize(item, `${path}/${index}`)).join(",")}]`;
+    // Every index, holes included: map would skip a hole and emit "[1,,3]", or "[]" for new Array(1).
+    const items: string[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(value, index)) throw new TypeError(`Cannot canonicalize a sparse array hole at ${path}/${index}`);
+      items.push(serialize(value[index], `${path}/${index}`));
+    }
+    return `[${items.join(",")}]`;
   }
   if (typeof value === "object") {
     const proto = Object.getPrototypeOf(value);
@@ -31,7 +47,7 @@ function serialize(value: unknown, path: string): string {
     const members: string[] = [];
     for (const key of Object.keys(record).sort(compareCodeUnits)) {
       if (record[key] !== undefined) {
-        members.push(`${JSON.stringify(key)}:${serialize(record[key], `${path}/${key}`)}`);
+        members.push(`${serializeString(key, path, "a member name")}:${serialize(record[key], `${path}/${key}`)}`);
       }
     }
     return `{${members.join(",")}}`;

@@ -98,14 +98,19 @@ const text = (maxBytes: number, pattern?: RegExp, required = false): Field => ({
  */
 export const OCCURRED_AT_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):([0-5]\d):([0-5]\d|60)(?:\.\d{1,9})?Z$/;
 
-/** True for an RFC 3339 UTC timestamp naming a real date and time (leap second allowed). */
+/**
+ * True for an RFC 3339 UTC timestamp naming a real date and time. A leap
+ * second (`:60`) is only ever inserted at 23:59:60 UTC on 30 June or
+ * 31 December, so second 60 anywhere else is not a real time.
+ */
 function isCalendarTimestamp(value: string): boolean {
   const parts = OCCURRED_AT_PATTERN.exec(value);
   if (!parts) return false;
   const [year, month, day, hour, minute, second] = parts.slice(1).map(Number);
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
-  return days !== undefined && day >= 1 && day <= days && hour < 24 && minute < 60 && second <= 60;
+  const leapSecond = hour === 23 && minute === 59 && ((month === 6 && day === 30) || (month === 12 && day === 31));
+  return days !== undefined && day >= 1 && day <= days && hour < 24 && minute < 60 && (second < 60 || (second === 60 && leapSecond));
 }
 
 const EVENT_FIELDS: Record<string, Field> = {

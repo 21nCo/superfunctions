@@ -131,7 +131,7 @@ try {
       pending.push(path.posix.join("dist", match[1]));
     }
   }
-  console.log(`runtime-neutral failure-event graph: ${[...neutral].sort().join(", ")}`);
+  console.log(`runtime-neutral failure-event graph: ${[...neutral].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join(", ")}`);
 
   writeFileSync(path.join(consumer, "esm.mjs"), consumerEsm);
   writeFileSync(path.join(consumer, "cjs.cjs"), consumerCjs);

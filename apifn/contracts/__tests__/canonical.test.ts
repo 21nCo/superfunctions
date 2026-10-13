@@ -26,6 +26,23 @@ describe("canonical JSON", () => {
     expect(() => canonicalJson({ when: new Date(0) })).toThrow(/non-plain object at \/when/);
     expect(() => canonicalJson({ big: 1n })).toThrow(/bigint at \/big/);
   });
+
+  it("rejects sparse array holes rather than emitting invalid JSON or the empty array's digest", () => {
+    // eslint-disable-next-line no-sparse-arrays
+    expect(() => canonicalJson({ list: [1, , 3] })).toThrow(/sparse array hole at \/list\/1/);
+    expect(() => canonicalJson(new Array(1))).toThrow(/sparse array hole at \/0/);
+    expect(() => canonicalJson([1, undefined])).toThrow(/undefined at \/1/);
+    expect(canonicalJson([])).toBe("[]");
+  });
+
+  it("rejects lone surrogates in values and member names, and keeps surrogate pairs", () => {
+    expect(() => canonicalJson({ a: "x\ud800" })).toThrow(/lone surrogate\) in a string at \/a/);
+    expect(() => canonicalJson({ a: ["\udc00x"] })).toThrow(/in a string at \/a\/0/);
+    expect(() => canonicalJson({ nested: { "\ud800": 1 } })).toThrow(/in a member name at \/nested$/);
+    expect(() => canonicalDigest("\udfff\ud800")).toThrow(/lone surrogate/);
+    expect(canonicalJson({ "🚀": "契約 🚀" })).toBe('{"🚀":"契約 🚀"}');
+    expect(canonicalDigest("🚀")).toBe(`sha256:${createHash("sha256").update('"🚀"').digest("hex")}`);
+  });
 });
 
 describe("sha256Hex", () => {

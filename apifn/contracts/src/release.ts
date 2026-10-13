@@ -16,7 +16,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export const PACKAGE_NAME_PATTERN = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*$/;
-export const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+/** SemVer 2.0.0: no leading zeros in numbers or numeric prerelease identifiers, and no empty identifiers. */
+export const SEMVER_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 export const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@+-]{0,127}$/;
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 

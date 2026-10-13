@@ -214,7 +214,11 @@ describe("client-failure event envelope", () => {
     expect(validateClientFailureEvent({ ...event, attributes })).toEqual({ ok: true, event: { ...event, attributes } });
   });
 
-  it.each(["2026-99-99T99:99:99Z", "2026-02-30T12:00:00Z", "2025-02-29T00:00:00Z", "2026-04-31T08:00:00Z", "2026-10-11T24:00:00Z"])(
+  it.each([
+    "2026-99-99T99:99:99Z", "2026-02-30T12:00:00Z", "2025-02-29T00:00:00Z", "2026-04-31T08:00:00Z", "2026-10-11T24:00:00Z",
+    // A leap second is only inserted at 23:59:60 on 30 June or 31 December.
+    "2026-10-11T09:31:60Z", "2024-02-29T23:59:60.123Z", "2016-12-31T23:58:60Z", "2016-06-30T22:59:60Z",
+  ])(
     "rejects the impossible timestamp %s",
     (occurredAt) => {
       const event = clone(fixture("client-failure/valid/network-minimal.json"));
@@ -225,7 +229,7 @@ describe("client-failure event envelope", () => {
 
   it("accepts leap days, leap seconds and fractional seconds", () => {
     const event = clone(fixture("client-failure/valid/network-minimal.json"));
-    for (const occurredAt of ["2024-02-29T23:59:60.123Z", "2000-02-29T00:00:00Z", "2026-12-31T23:59:59.999999999Z"]) {
+    for (const occurredAt of ["2016-12-31T23:59:60.123Z", "2015-06-30T23:59:60Z", "2000-02-29T00:00:00Z", "2026-12-31T23:59:59.999999999Z"]) {
       expect(validateClientFailureEvent({ ...event, occurredAt }).ok, occurredAt).toBe(true);
     }
   });

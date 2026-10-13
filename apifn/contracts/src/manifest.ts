@@ -51,8 +51,9 @@ class ManifestChecker {
   }
 
   object(value: unknown, pointer: string, allowed: string[], required: string[] = []): value is Record<string, unknown> {
-    if (!isRecord(value)) {
-      this.fail(pointer, `Expected an object at ${pointer || "/"}.`);
+    if (!isRecord(value) || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
+      // Plain data only: an inherited field would pass the checks and then vanish when the manifest is serialized.
+      this.fail(pointer, `Expected a plain JSON object at ${pointer || "/"}.`);
       return false;
     }
     for (const key of Object.keys(value)) {
@@ -61,7 +62,7 @@ class ManifestChecker {
       }
     }
     for (const key of required) {
-      if (value[key] === undefined) this.fail(`${pointer}/${key}`, `Missing required manifest field ${quote(key)}.`);
+      if (!Object.hasOwn(value, key) || value[key] === undefined) this.fail(`${pointer}/${key}`, `Missing required manifest field ${quote(key)}.`);
     }
     return true;
   }
@@ -101,7 +102,7 @@ function checkBinding(check: ManifestChecker, binding: unknown, pointer: string)
   const byOperationId = value.operationId !== undefined;
   const byRoute = value.method !== undefined || value.path !== undefined;
   if (byOperationId === byRoute || (byRoute && (value.method === undefined || value.path === undefined))) {
-    check.fail(pointer, `Operation binding ${quote(String(value.id))} must set either operationId or both method and path.`);
+    check.fail(pointer, `Operation binding ${quote(value.id)} must set either operationId or both method and path.`);
   }
   if (typeof value.method === "string" && !METHODS.has(value.method.toLowerCase())) {
     check.fail(`${pointer}/method`, `Unknown HTTP method ${quote(value.method)}.`);

@@ -55,13 +55,15 @@ const LEADING_AUTH_SCHEME = new RegExp(`^(?:${AUTH_SCHEMES})\\s+`, "i");
  * word is part of the value.
  */
 function isPlaceholderValue(value: string, header: boolean): boolean {
+  // Each recognized part becomes a space, never "": joining its neighbours could form a new one (`Bea<x>rer`), and
+  // this is a classification, not a sanitizer, so whatever is not wholly recognized stays and makes the value secret.
   let rest = value;
   // The lookbehind starts a name only at the start of a word, so a long word is scanned once, not once per character.
-  if (header) rest = rest.replace(/(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]+\s*=(?![=\s]|$)/g, "");
+  if (header) rest = rest.replace(/(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]+\s*=(?![=\s]|$)/g, " ");
   // Placeholders go first, so a scheme word inside one (`$TOKEN`) cannot break it apart.
-  rest = rest.replace(PLACEHOLDER, "");
-  if (header) rest = rest.replace(AUTH_SCHEME_WORDS, "");
-  return rest.replace(/[\s"'`,;:=\\]/g, "") === "";
+  rest = rest.replace(PLACEHOLDER, " ");
+  if (header) rest = rest.replace(AUTH_SCHEME_WORDS, " ");
+  return /^[\s"'`,;:=\\]*$/.test(rest);
 }
 
 const KEY_WORD = "[A-Za-z0-9_.%-]+";
@@ -1009,16 +1011,24 @@ const SHAPE_RULES: ShapeRule[] = [
   // A scheme starts only at the start of a word, so a long word is scanned once, not once per character.
   // Special schemes need no "//": URL parsers read user info from `https:user:pw@host` and `https:\\user:pw@host`.
   // The match takes the whole authority whether or not it holds an "@", so the scan never restarts inside it.
+  // Where URL parsers disagree on the host (see urlParts), the host is redacted too, never shown as a different one.
   {
     pattern: /((?<![a-z0-9+.-])(?:https?|wss?|ftp|file):[\/\\]*)([^/\s?#]*)/gi,
     accept: ([, authority]) => authority.includes("@"),
-    replace: ([prefix, authority]) => `${prefix}${REDACTED}@${authority.slice(authority.lastIndexOf("@") + 1)}`,
+    replace: ([prefix, authority]) => redactUserInfo(prefix, authority, true),
   },
   {
-    pattern: /((?:(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#]*@/gi,
-    replace: ([prefix]) => `${prefix}${REDACTED}@`,
+    pattern: /((?:(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:))?\/\/)([^/\s?#]*@[^/\s?#]*)/gi,
+    replace: ([prefix, scheme, authority]) => redactUserInfo(prefix, authority, scheme === ""),
   },
 ];
+
+/** `prefix` + authority with its user info redacted, or with the whole authority redacted when a "\\" comes before its last "@" in a special URL. */
+function redactUserInfo(prefix: string, authority: string, special: boolean): string {
+  const at = authority.lastIndexOf("@");
+  if (special && authority.lastIndexOf("\\", at) !== -1) return `${prefix}${REDACTED}`;
+  return `${prefix}${REDACTED}@${authority.slice(at + 1)}`;
+}
 
 /**
  * Replaces credentials in free text with `[REDACTED]`. This is the single
@@ -1063,7 +1073,14 @@ export function redactWhole(value: string): string {
 
 /** An author string quoted for a report: unchanged, or `"[REDACTED]"` whole when it holds a credential. */
 export function quote(value: unknown): string {
-  return `"${redactWhole(String(value))}"`;
+  let text: string;
+  try {
+    text = String(value);
+  } catch {
+    // Plain JSON data can still refuse conversion: {"toString": "x"} has a toString that is not a function.
+    text = Object.prototype.toString.call(value);
+  }
+  return `"${redactWhole(text)}"`;
 }
 
 /**
@@ -1077,15 +1094,47 @@ export function containsCredentialIdentifier(value: string): boolean {
 }
 
 /**
- * Prefix, authority, path and query. Special schemes (http, https, ws, wss,
- * ftp, file) need no "//": any run of "/" or "\\", even none, starts the
- * authority, as URL parsers read it.
+ * A special URL (http, https, ws, wss, ftp, file, or a scheme-relative "//"
+ * one, resolved against such a base) needs no "//": any run of "/" or "\\",
+ * even none, starts the authority, and "\\" ends it as "/" does, as WHATWG URL
+ * parsers read it. Other schemes need "//" and their authority ends only at
+ * "/", "?" or "#".
  */
-const URL_PARTS = /^((?:https?|wss?|ftp|file):[\/\\]*|(?:[a-z][a-z0-9+.-]*:)?\/\/)([^/?#]*)([^?#]*)(?:\?([^#]*))?/i;
+const SPECIAL_URL = /^((?:https?|wss?|ftp|file):[\/\\]*|\/\/)([^/\\?#]*)/i;
+const OTHER_URL = /^([a-z][a-z0-9+.-]*:\/\/)([^/?#]*)/i;
+
+interface UrlParts {
+  prefix: string;
+  authority: string;
+  path: string;
+  query: string | undefined;
+  /**
+   * A special URL with a "\\" before an "@" that is still in its authority for a
+   * parser that, like RFC 3986, does not end the authority at "\\". The two
+   * kinds of parser read different hosts, so no host can be shown for it.
+   */
+  ambiguous: boolean;
+}
+
+/** The scheme-aware parts of a URL or URL template, or null for a relative reference. The single authority rule of this module. */
+function urlParts(url: string): UrlParts | null {
+  const special = SPECIAL_URL.exec(url);
+  const match = special ?? OTHER_URL.exec(url);
+  if (!match) return null;
+  const [, prefix, authority] = match;
+  const rest = url.slice(prefix.length + authority.length);
+  const [, path, query] = /^([^?#]*)(?:\?([^#]*))?/s.exec(rest)!;
+  return { prefix, authority, path, query, ambiguous: special !== null && rest.startsWith("\\") && /^[^/?#]*@/.test(rest) };
+}
 
 /** True when a URL or URL template has user info in its authority. */
 export function hasUrlUserInfo(url: string): boolean {
-  return URL_PARTS.exec(url)?.[2].includes("@") ?? false;
+  return urlParts(url)?.authority.includes("@") ?? false;
+}
+
+/** True when URL parsers disagree on the host of a URL or URL template (see urlParts). */
+export function isAmbiguousUrl(url: string): boolean {
+  return urlParts(url)?.ambiguous ?? false;
 }
 
 function isCredentialQueryParameter(pair: string): boolean {
@@ -1109,13 +1158,13 @@ function isCredentialQueryParameter(pair: string): boolean {
  * kept. With `dropQuery`, the whole query is removed (server base URLs).
  */
 export function stripUrlCredentials(url: string, options: { dropQuery?: boolean } = {}): string {
-  const match = URL_PARTS.exec(url);
-  if (!match) {
+  const parts = urlParts(url);
+  if (!parts) {
     // Relative references have no authority; only the query and fragment can carry secrets.
     const [base, query] = url.replace(/#.*$/s, "").split(/\?(.*)/s, 2);
     return joinQuery(base, query, options.dropQuery);
   }
-  const [, prefix, authority, path, query] = match;
+  const { prefix, authority, path, query } = parts;
   const host = authority.slice(authority.lastIndexOf("@") + 1);
   return joinQuery(`${prefix}${host}${path}`, query, options.dropQuery);
 }
@@ -1123,13 +1172,19 @@ export function stripUrlCredentials(url: string, options: { dropQuery?: boolean 
 /**
  * The spans that `stripUrlCredentials(url, { dropQuery: true })` removes:
  * the user info through its last "@", and everything from the first "?" or
- * "#" on. Lets a caller tell which part of an expanded URL template is gone.
+ * "#" on, plus, in an ambiguous URL (see urlParts), the part another parser
+ * reads as user info, which the catalog never publishes. Lets a caller tell which part of an expanded URL template is gone.
  */
 export function removedServerUrlSpans(url: string): Array<{ start: number; end: number; userInfo: boolean }> {
   const spans: Array<{ start: number; end: number; userInfo: boolean }> = [];
-  const match = URL_PARTS.exec(url);
-  const at = match ? match[2].lastIndexOf("@") : -1;
-  if (match && at !== -1) spans.push({ start: match[1].length, end: match[1].length + at + 1, userInfo: true });
+  const parts = urlParts(url);
+  const at = parts ? parts.authority.lastIndexOf("@") : -1;
+  if (parts && at !== -1) spans.push({ start: parts.prefix.length, end: parts.prefix.length + at + 1, userInfo: true });
+  if (parts?.ambiguous) {
+    // From the end of the authority through the last "@" another parser still reads as user info.
+    const start = parts.prefix.length + parts.authority.length;
+    spans.push({ start, end: start + /^[^/?#]*/.exec(parts.path)![0].lastIndexOf("@") + 1, userInfo: false });
+  }
   const tail = url.search(/[?#]/);
   if (tail !== -1) spans.push({ start: tail, end: url.length, userInfo: false });
   return spans;

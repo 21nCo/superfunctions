@@ -55,6 +55,16 @@ describe("createReleaseDescriptor", () => {
     expect(createReleaseDescriptor(input({ releaseId: "2026.10.1-rc.1" })).descriptor!.releaseId).toBe("2026.10.1-rc.1");
   });
 
+  it.each(["01.0.0", "1.00.0", "1.0.0-alpha..1", "1.0.0-01", "1.0.0-", "1.0.0+", "1.0.0+a..b", "1.0"])("INVALID_RELEASE: generator version %s is not SemVer 2.0.0", (version) => {
+    const result = createReleaseDescriptor(input({ generator: { name: "@apifn/sdk-typescript", version } }));
+    expect(result.descriptor).toBeNull();
+    expect(result.diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`)).toEqual(["INVALID_RELEASE /generator/version"]);
+  });
+
+  it.each(["0.0.0", "10.20.30", "1.0.0-alpha.1", "1.0.0-0.3.7", "1.0.0-x-y.0a", "1.0.0-rc.1+build.001", "1.0.0+20261014"])("accepts generator version %s", (version) => {
+    expect(createReleaseDescriptor(input({ generator: { name: "@apifn/sdk-typescript", version } })).diagnostics).toEqual([]);
+  });
+
   it("INVALID_RELEASE: rejects malformed generators, artifacts, duplicates and release IDs", () => {
     const result = createReleaseDescriptor(
       input({

@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "../src/canonical.js";
@@ -23,7 +24,7 @@ export const UPCONVERT_CASES = readJson<{
   schemas: UpconvertCase[];
   references: UpconvertCase[];
   rejected: RejectedUpconvertCase[];
-}>(new URL("./upconvert-cases.json", import.meta.url).pathname);
+}>(fileURLToPath(new URL("./upconvert-cases.json", import.meta.url)));
 
 /** The catalog fixture spec at `version` with each edit's 3.0 or 3.1 value placed at its path. */
 export function specWith(version: string, entry: UpconvertCase): Record<string, any> {

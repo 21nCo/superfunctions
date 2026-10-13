@@ -14,7 +14,7 @@ import { clone, fixture, LINEAR_RATIO, SCALING_TIMEOUT, scalingRatio } from "./h
 const PROJECT_ROUTE = "/workspaces/{workspaceId}/projects/{projectId}";
 
 const ED25519_PEM = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string;
-const RSA_PEM = generateKeyPairSync("rsa", { modulusLength: 1024 }).privateKey.export({ type: "pkcs1", format: "pem" }) as string;
+const RSA_PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs1", format: "pem" }) as string;
 const pemBody = (pem: string) => pem.split("\n").filter((line) => line !== "" && !line.startsWith("-----"));
 
 // One table for every consumer of the credential text rules: the catalog
@@ -876,6 +876,68 @@ describe("URL user info without //", () => {
     expect(stripUrlCredentials("https:api.example.test/v1")).toBe("https:api.example.test/v1");
     // A non-special scheme without "//" has no authority.
     expect(stripUrlCredentials("urn:example:svc@host")).toBe("urn:example:svc@host");
+  });
+});
+
+// A special URL's authority ends at "\\" as at "/" (WHATWG). Where a "\\" comes before an "@" that RFC 3986 parsers still
+// read as user info, the two read different hosts, so the URL is reported rather than published with either host.
+const AMBIGUOUS_URLS = ["https://api.example.test\\users\\@me", "https://u:p@a.test\\x@y", "http://a.test\\@b", "ws://a.test\\u@b", "ftp://a\\b@c", "//a.test\\u@me"];
+const URL_POINTERS = ["/servers/0/url", "/components/securitySchemes/oauth/flows/clientCredentials/tokenUrl", "/components/securitySchemes/oidc/openIdConnectUrl", "/provenance/source"];
+
+describe("URL authority boundaries", () => {
+  const spec = fixture("catalog/openapi.json");
+  const manifest = fixture("catalog/manifest.json");
+  const event = fixture("client-failure/valid/network-minimal.json");
+  const build = (url: string, place = 0) => {
+    const nextSpec = clone(spec);
+    const nextManifest = clone(manifest);
+    URL_PLACES[place][1](nextSpec, nextManifest, url);
+    return buildOperationCatalog(nextSpec, nextManifest);
+  };
+
+  it.each(AMBIGUOUS_URLS.flatMap((url) => URL_PLACES.map(([place], index) => ({ name: `${place}: ${url}`, url, index }))))("reports $name", ({ url, index }) => {
+    const result = build(url, index);
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error").map(({ code, pointer }) => `${code} ${pointer}`)).toEqual([
+      `${index === 3 ? "INVALID_MANIFEST" : "INVALID_SPEC"} ${URL_POINTERS[index]}`,
+    ]);
+  });
+
+  // Every other URL is published with the host a WHATWG parser reads from the original.
+  it.each([
+    ["https://u:p@a.test/x", "https://a.test/x"],
+    ["https://u:p@a.test\\x", "https://a.test\\x"],
+    ["https://api.example.test\\users", "https://api.example.test\\users"],
+    ["wss://u:p@a.test/x", "wss://a.test/x"],
+    ["x://a\\b@c/v1", "x://c/v1"],
+  ])("server %s is published as %s", (url, published) => {
+    const result = build(url);
+    expect(result.catalog?.servers.map((server) => server.url)).toEqual([published]);
+    expect(new URL(published).host).toBe(new URL(url).host);
+  });
+
+  it("hides a server variable whose value makes the URL ambiguous, and reports an ambiguous template", () => {
+    const hidden = (() => {
+      const nextSpec = clone(spec);
+      nextSpec.servers = [{ url: "https://{h}", variables: { h: { default: "a.test\\u:p@me" } } }];
+      return buildOperationCatalog(nextSpec, clone(manifest));
+    })();
+    expect(hidden.catalog?.servers[0].variables.h.default).toBe("[REDACTED]");
+    expect(JSON.stringify(hidden)).not.toContain("u:p@me");
+    const nextSpec = clone(spec);
+    nextSpec.servers = [{ url: "https://{h}\\{p}@me", variables: { h: { default: "a.test" }, p: { default: "x", enum: ["x", "y"] } } }];
+    const template = buildOperationCatalog(nextSpec, clone(manifest));
+    expect(template.catalog).toBeNull();
+    expect(template.diagnostics.filter((diagnostic) => diagnostic.code === "INVALID_SPEC").map((diagnostic) => diagnostic.pointer)).toEqual(["/servers/0/url"]);
+  });
+
+  it("never shows a host other than the one URL parsers agree on in redacted text", () => {
+    expect(redactCredentialValues("fetch https://api.example.test\\users\\@me failed")).toBe("fetch https://[REDACTED] failed");
+    expect(redactCredentialValues("fetch //a.test\\u:p@me failed")).toBe("fetch //[REDACTED] failed");
+    expect(redactCredentialValues("fetch https://u:p@a.test\\x failed")).toBe("fetch https://[REDACTED]@a.test\\x failed");
+    expect(redactCredentialValues("fetch x://a\\b@c/v1 failed")).toBe("fetch x://[REDACTED]@c/v1 failed");
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "network", message: "fetch https://api.example.test\\users\\@me failed" } });
+    expect(result.ok).toBe(false);
   });
 });
 

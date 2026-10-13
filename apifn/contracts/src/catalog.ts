@@ -6,6 +6,7 @@ import {
   containsCredentialValue,
   credentialValueFields,
   isCredentialKey,
+  isAmbiguousUrl,
   isCredentialPair,
   pointerSegment,
   quote,
@@ -205,8 +206,15 @@ interface Expansion {
   spans: Array<{ name: string; start: number; end: number }>;
 }
 
+/** The `{name}` placeholders of a server URL template, counted by name, in one pass as {@link expandServerUrl} reads them. */
+function placeholderCounts(url: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const match of url.matchAll(/\{([^{}]*)\}/g)) counts.set(match[1], (counts.get(match[1]) ?? 0) + 1);
+  return counts;
+}
+
 /** Expands `{name}` server variables, recording where each value lands; undeclared ones stay as written. */
-function expandServerUrl(url: string, values: Record<string, string>): Expansion {
+function expandServerUrl(url: string, values: Record<string, string>, override?: { name: string; value: string }): Expansion {
   const spans: Expansion["spans"] = [];
   let text = "";
   let copied = 0;
@@ -214,12 +222,13 @@ function expandServerUrl(url: string, values: Record<string, string>): Expansion
     text += url.slice(copied, match.index);
     copied = match.index + match[0].length;
     const name = match[1];
-    if (!Object.hasOwn(values, name)) {
+    const value = name === override?.name ? override.value : Object.hasOwn(values, name) ? values[name] : undefined;
+    if (value === undefined) {
       text += match[0];
       continue;
     }
-    spans.push({ name, start: text.length, end: text.length + values[name].length });
-    text += values[name];
+    spans.push({ name, start: text.length, end: text.length + value.length });
+    text += value;
   }
   return { text: text + url.slice(copied), spans };
 }
@@ -234,21 +243,35 @@ function expandServerUrl(url: string, values: Record<string, string>): Expansion
  * `https://api.test`). Otherwise every variable touching the removed part is
  * hidden.
  */
-function judgeServerValue(template: string, values: Record<string, string>, name: string): { value: string; cut: boolean } | { hide: string[] } {
-  const expansion = expandServerUrl(template, values);
+function judgeServerValue(
+  template: string,
+  values: Record<string, string>,
+  name: string,
+  raw: string,
+  charge: () => boolean
+): { value: string; cut: boolean } | { hide: string[] } | { overflow: true } {
+  if (!charge()) return { overflow: true };
+  const expansion = expandServerUrl(template, values, { name, value: raw });
   const overlaps = (span: { start: number; end: number }, part: { start: number; end: number }) => span.start < part.end && span.end > part.start;
   const own = expansion.spans.filter((span) => span.name === name);
   const hits = removedServerUrlSpans(expansion.text).filter((part) => own.some((span) => overlaps(span, part)));
-  if (hits.length === 0) return { value: values[name], cut: false };
+  if (hits.length === 0) return { value: raw, cut: false };
   const [part] = hits;
   const occurrence = own.find((span) => span.start <= part.start && span.end >= part.end);
   if (hits.length === 1 && part.userInfo && occurrence && expansion.spans.every((span) => span === occurrence || !overlaps(span, part))) {
-    const raw = values[name];
     const value = raw.slice(0, part.start - occurrence.start) + raw.slice(part.end - occurrence.start);
-    const retry = judgeServerValue(template, { ...values, [name]: value }, name);
-    return "hide" in retry ? retry : { value: retry.value, cut: true };
+    // A shorter value expands no longer, so the same charge bounds the retry.
+    const retry = judgeServerValue(template, values, name, value, charge);
+    return "value" in retry ? { value: retry.value, cut: true } : retry;
   }
   return { hide: Array.from(new Set(expansion.spans.filter((span) => hits.some((hit) => overlaps(span, hit))).map((span) => span.name))) };
+}
+
+/** Charges `budget` with `characters` of server URL work before it is done; false, with nothing charged, when too little is left. */
+function chargeBudget(budget: { characters: number }, characters: number): boolean {
+  if (characters > budget.characters) return false;
+  budget.characters -= characters;
+  return true;
 }
 
 /** The most combinations of server variable values judged one by one; beyond it the judgement fails closed. */
@@ -276,12 +299,12 @@ const SERVER_SCAN_BUDGET = 4_000_000;
 function hideJointServerValues(
   template: string,
   names: string[],
+  occurrences: Map<string, number>,
   hidden: Set<string>,
   candidates: (name: string) => string[],
   budget: { characters: number }
 ): boolean {
-  const used = names.filter((name) => template.includes(`{${name}}`));
-  const occurrences = new Map(used.map((name) => [name, template.split(`{${name}}`).length - 1]));
+  const used = names.filter((name) => occurrences.has(name));
   for (;;) {
     const visible = used.filter((name) => !hidden.has(name));
     if (visible.length === 0) return false;
@@ -290,11 +313,10 @@ function hideJointServerValues(
     const count = lists.reduce((product, list) => product * list.length, 1);
     // An upper bound on each expansion: the template with every placeholder at its variable's longest value.
     const length = used.reduce((total, name, index) => total + occurrences.get(name)! * lists[index].reduce((longest, value) => Math.max(longest, value.length), 0), template.length);
-    if (count > SERVER_COMBINATION_LIMIT || count * length > budget.characters) {
+    if (count > SERVER_COMBINATION_LIMIT || !chargeBudget(budget, count * length)) {
       visible.forEach((name) => hidden.add(name));
       return true;
     }
-    budget.characters -= count * length;
     let grew = false;
     for (let combination = 0; combination < count; combination += 1) {
       const values: Record<string, string> = {};
@@ -337,11 +359,13 @@ function decodePointerSegment(segment: string): string {
 }
 
 function resolvePointer(doc: Doc, ref: string): unknown {
-  if (!ref.startsWith("#/") && ref !== "#") return undefined;
+  if (ref === "#") return doc;
+  if (!ref.startsWith("#/")) return undefined;
   let current: unknown = doc;
-  for (const raw of ref.slice(2).split("/").filter((segment, index) => segment !== "" || index > 0)) {
+  // Every segment counts, empty ones included (`#/` is the member named ""), and array indices are canonical (RFC 6901).
+  for (const raw of ref.slice(2).split("/")) {
     const segment = decodePointerSegment(raw);
-    if (Array.isArray(current) && /^\d+$/.test(segment)) {
+    if (Array.isArray(current) && /^(?:0|[1-9]\d*)$/.test(segment)) {
       current = current[Number(segment)];
     } else if (isRecord(current) && Object.prototype.hasOwnProperty.call(current, segment)) {
       current = current[segment];
@@ -414,6 +438,8 @@ class CatalogBuilder {
   };
   /** What is left of {@link SERVER_SCAN_BUDGET} for this build; servers are judged in a fixed order (paths sorted), so key order cannot change it. */
   private readonly serverScanBudget = { characters: SERVER_SCAN_BUDGET };
+  /** The innermost schema being copied that declares a resource `$id`, against which JSON Schema resolves the references inside it. */
+  private resource: { id: string; pointer: string } | null = null;
   private readonly mediaTypes: Set<string>;
   /** `<in>:<name>` of every parameter that a declared apiKey security scheme carries. */
   private readonly apiKeyParameters = new Set<string>();
@@ -506,6 +532,10 @@ class CatalogBuilder {
   url(value: unknown, pointer: string, options: { source?: Diagnostic["source"]; dropQuery?: boolean } = {}): string | null {
     const source = options.source ?? "spec";
     if (typeof value !== "string") return this.text(value, pointer, source); // Reports a present non-string.
+    if (isAmbiguousUrl(value)) {
+      this.report(source === "manifest" ? "INVALID_MANIFEST" : "INVALID_SPEC", pointer, `The URL at ${pointer} has a "\\" before an "@" in its authority, so URL parsers disagree on its host; use "/" instead of "\\".`, { source });
+      return REDACTED;
+    }
     const stripped = stripUrlCredentials(value, { dropQuery: options.dropQuery });
     if (stripped !== value) {
       this.report("CREDENTIAL_REDACTED", pointer, `Removed user info, credential or query parameters, or the fragment from the URL at ${pointer}.`, { severity: "warning", source });
@@ -696,6 +726,17 @@ class CatalogBuilder {
    * literal data is copied verbatim.
    */
   schema(value: unknown, pointer: string, credential = false, sameInstance = false): JsonValue | null {
+    const outer = this.resource;
+    // "" and fragment-only identifiers resolve to the document itself, so they start no resource.
+    if (isRecord(value) && typeof value.$id === "string" && value.$id !== "" && !value.$id.startsWith("#")) this.resource = { id: value.$id, pointer };
+    try {
+      return this.schemaObject(value, pointer, credential, sameInstance);
+    } finally {
+      this.resource = outer;
+    }
+  }
+
+  private schemaObject(value: unknown, pointer: string, credential: boolean, sameInstance: boolean): JsonValue | null {
     if (value === undefined) return null;
     if (typeof value === "boolean") return value;
     if (!isRecord(value)) {
@@ -718,6 +759,10 @@ class CatalogBuilder {
         this.report("INVALID_SPEC", childPointer, `Expected ${expected.name} at ${childPointer}, found ${describeValue(child)}.`);
       } else if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
+      } else if (REFERENCE_KEYWORDS.has(key) && this.resource) {
+        // The catalog resolves every reference against the document; inside a resource JSON Schema would not.
+        const { id, pointer: at } = this.resource;
+        this.report("UNRESOLVED_REF", childPointer, `Reference at ${childPointer} lies inside the schema resource ${quote(id)} declared at ${at}/$id, where JSON Schema resolves it against that $id rather than this document; remove the $id or move the reference out of that schema.`);
       } else if (REFERENCE_KEYWORDS.has(key)) {
         const ref = this.schemaRef(child, childPointer, taint());
         if (ref !== null) setOwn(output, key, ref);
@@ -903,7 +948,7 @@ class CatalogBuilder {
       this.identifier(key, targetPointer, "Discriminator mapping value");
       const name = typeof target !== "string" ? null : target.startsWith("#") ? componentName(target) : target;
       if (name === null || !Object.hasOwn(this.schemaComponents, name)) {
-        const shown = typeof target === "string" ? showRef(target) : String(target);
+        const shown = typeof target === "string" ? showRef(target) : describeValue(target);
         this.report("UNRESOLVED_REF", targetPointer, `Discriminator mapping ${quote(key)} targets ${quote(shown)}, which is not a schema in ${COMPONENT_SCHEMA_PREFIX}<name>.`);
         continue;
       }
@@ -1366,19 +1411,31 @@ class CatalogBuilder {
       const valid = names.filter((name) => Object.hasOwn(defaults, name));
       // Judged against the original template: a variable with an occurrence in the removed user info, query or
       // fragment (or none left in the emitted URL) only fills a removed part, so its values may be credentials.
-      const removed = (name: string) => {
-        const placeholder = `{${name}}`;
-        const kept = url.split(placeholder).length - 1;
-        return kept === 0 || kept < template.split(placeholder).length - 1;
-      };
+      const occurrences = placeholderCounts(template);
+      const kept = placeholderCounts(url);
+      const removed = (name: string) => (kept.get(name) ?? 0) === 0 || kept.get(name)! < (occurrences.get(name) ?? 0);
       const hidden = new Set(valid.filter((name) => isCredentialKey(name) || removed(name)));
       // Values are judged in the URL expanded with all defaults, then with each enum value in turn (other variables at
       // their judged defaults), so values that only together form user info, a query or a fragment are caught.
+      // Every judgement is charged to the build's server budget before its expansion; one beyond it hides every
+      // visible variable, as hideJointServerValues does.
+      const expandedLength = (values: Record<string, string>) =>
+        valid.reduce((total, name) => total + (occurrences.get(name) ?? 0) * values[name].length, template.length);
+      const charge = (length: number) => () => chargeBudget(this.serverScanBudget, length);
+      let exhausted = false;
+      const exhaust = () => {
+        if (exhausted) return;
+        exhausted = true;
+        valid.forEach((name) => hidden.add(name));
+      };
       const cuts = new Set<string>();
       const judged: Record<string, string> = { ...defaults };
+      const defaultsLength = expandedLength(defaults);
       for (const name of valid.filter((name) => !hidden.has(name))) {
-        const verdict = judgeServerValue(template, defaults, name);
-        if ("hide" in verdict) {
+        const verdict = judgeServerValue(template, defaults, name, defaults[name], charge(defaultsLength));
+        if ("overflow" in verdict) {
+          exhaust();
+        } else if ("hide" in verdict) {
           verdict.hide.forEach((other) => hidden.add(other));
         } else if (verdict.cut) {
           setOwn(judged, name, verdict.value);
@@ -1386,9 +1443,15 @@ class CatalogBuilder {
         }
       }
       const enumValues = new Map<string, string[]>();
+      const judgedLength = expandedLength(judged);
       for (const name of valid.filter((name) => !hidden.has(name) && enums.get(name))) {
+        const count = occurrences.get(name) ?? 0;
         enumValues.set(name, enums.get(name)!.map((entry, index) => {
-          const verdict = judgeServerValue(template, { ...judged, [name]: entry }, name);
+          const verdict = judgeServerValue(template, judged, name, entry, charge(judgedLength + count * (entry.length - judged[name].length)));
+          if ("overflow" in verdict) {
+            exhaust();
+            return entry;
+          }
           if ("hide" in verdict) {
             verdict.hide.forEach((other) => hidden.add(other));
             return entry;
@@ -1398,13 +1461,15 @@ class CatalogBuilder {
         }));
       }
       // Every combination of declared values, judged together: one variable's scheme and another's user info meet only there.
-      const overflow = hideJointServerValues(
+      const joint = hideJointServerValues(
         template,
         valid,
+        occurrences,
         hidden,
         (name) => (hidden.has(name) ? [defaults[name], ...(enums.get(name) ?? [])] : [judged[name], ...(enumValues.get(name) ?? [])]),
         this.serverScanBudget
       );
+      const overflow = exhausted || joint;
       const variables: CatalogServer["variables"] = {};
       for (const name of valid) {
         const variable = declared[name] as Record<string, unknown>;
@@ -1803,7 +1868,7 @@ export function buildOperationCatalog(spec: string | Record<string, unknown>, ma
     try {
       manifestDigest = canonicalDigest(validated.manifest);
     } catch {
-      diagnostics.push({ code: "INVALID_MANIFEST", severity: "error", message: "The manifest must be plain JSON data (no class instances, Maps or non-finite numbers).", pointer: "", source: "manifest" });
+      diagnostics.push({ code: "INVALID_MANIFEST", severity: "error", message: "The manifest must be plain JSON data (no class instances, Maps, non-finite numbers, sparse arrays or lone surrogates).", pointer: "", source: "manifest" });
     }
   }
   if (!doc || !validated.manifest || manifestDigest === "") {

@@ -1,7 +1,7 @@
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import { buildOperationCatalog, canonicalJson, type Diagnostic, type OperationCatalog } from "../src/index.js";
+import { buildOperationCatalog, canonicalJson, type Diagnostic, type OperationCatalog, validateManifest } from "../src/index.js";
 import { clone, fixture, LINEAR_RATIO, matchFixture, readJson, reverseKeys, SCALING_TIMEOUT, scalingRatio, SCHEMAS } from "./helpers.js";
 
 const validateCatalog = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(
@@ -924,6 +924,32 @@ describe("OpenAPI fields that change client behavior", () => {
     expect(result.catalog!.servers.every((server) => Object.values(server.variables).every((variable) => variable.default === "[REDACTED]"))).toBe(true);
     expect(only(result.diagnostics, "CREDENTIAL_REDACTED")[0].message).toMatch(/more than 4000000 characters of expanded URLs/);
   });
+
+  // Each default and enum judgement expands the whole URL too, so it is charged to the same budget before it runs.
+  // Both inputs grow linearly with n while the uncharged judgements grow with n squared.
+  const judgementRows: Array<[string, (size: number) => Record<string, unknown>, number]> = [
+    ["n variables with 1000-character defaults", (size) => {
+      const variables = Object.fromEntries(Array.from({ length: size }, (_, index) => [`v${index}`, { default: "a".repeat(1000) }]));
+      return { url: `https://api.example.test/${Object.keys(variables).map((name) => `{${name}}`).join("/")}`, variables };
+    }, 40],
+    ["n enum values in an n-character template", (size) => ({
+      url: `https://{region}.example.test/${"p".repeat(size)}`,
+      variables: { region: { default: "eu", enum: Array.from({ length: size }, (_, index) => `r${index}`) } },
+    }), 4000],
+  ];
+
+  it.each(judgementRows)("charges every judgement of %s to the budget", (_name, server, size) => {
+    const buildWith = (n: number) => {
+      const nextSpec = clone(spec);
+      nextSpec.servers = [server(n)];
+      return buildOperationCatalog(nextSpec, clone(manifest));
+    };
+    expect(buildWith(size / 4).diagnostics).toEqual([]);
+    const over = buildWith(size * 4);
+    expect(Object.values(over.catalog!.servers[0].variables).every((variable) => variable.default === "[REDACTED]")).toBe(true);
+    expect(only(over.diagnostics, "CREDENTIAL_REDACTED")[0].message).toMatch(/more than 4000000 characters of expanded URLs/);
+    expect(scalingRatio((n) => buildWith(n), size)).toBeLessThan(LINEAR_RATIO);
+  }, SCALING_TIMEOUT);
 
   it("keeps many value combinations that hold no @, ? or #", () => {
     const many = (prefix: string) => Array.from({ length: 70 }, (_, index) => `${prefix}${index}`);
@@ -1911,5 +1937,65 @@ describe("header parameter names", () => {
     });
     expect(result.catalog).toBeNull();
     expect(result.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_SPEC", message: expect.stringMatching(/"x-a" in header is declared twice/) })]);
+  });
+});
+
+describe("malformed references and inputs", () => {
+  const withParameterRef = (ref: string) =>
+    build((nextSpec) => {
+      nextSpec["x-store"] = [{ name: "a", in: "query", schema: { type: "string" } }, { name: "b", in: "query", schema: { type: "string" } }];
+      nextSpec[""] = { param: { name: "empty", in: "query", schema: { type: "string" } } };
+      nextSpec.paths[LIST_ROUTE].get.parameters.push({ $ref: ref });
+    });
+  const listParameters = (result: ReturnType<typeof build>) =>
+    result.catalog!.operations.find((operation) => operation.id === "projects.list")!.parameters.map((parameter) => parameter.name);
+
+  // RFC 6901: every segment counts, "" included, and an array index has no leading zero.
+  it.each([["#/x-store/1", "b"], ["#//param", "empty"]])("resolves %s to the parameter %s", (ref, name) => {
+    expect(listParameters(withParameterRef(ref))).toContain(name);
+  });
+
+  it.each(["#/x-store/01", "#/x-store/-0", "#/x-store/1/"])("UNRESOLVED_REF: %s names no parameter", (ref) => {
+    const result = withParameterRef(ref);
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "UNRESOLVED_REF").length).toBeGreaterThan(0);
+  });
+
+  it("validateManifest accepts only own fields of plain objects", () => {
+    const valid = clone(manifest);
+    expect(validateManifest(valid).diagnostics).toEqual([]);
+    const inherited = validateManifest(Object.create(valid));
+    expect(inherited.manifest).toBeNull();
+    expect(inherited.diagnostics.map(({ code, pointer }) => `${code} ${pointer}`)).toEqual(["INVALID_MANIFEST "]);
+    const nested = clone(manifest);
+    nested.api = Object.create(nested.api);
+    nested.operations[0] = Object.assign(Object.create({ id: "projects.list" }), { operationId: "listProjects" });
+    expect(validateManifest(nested).diagnostics.map(({ code, pointer }) => `${code} ${pointer}`)).toEqual(["INVALID_MANIFEST /api", "INVALID_MANIFEST /operations/0"]);
+    const missing = clone(manifest);
+    missing.api = { id: "example.projects", version: undefined };
+    expect(validateManifest(missing).diagnostics.map(({ pointer }) => pointer)).toEqual(["/api/version"]);
+  });
+
+  // JSON data can hold a toString that is not a function; quoting it in a diagnostic must not throw.
+  it.each([
+    ["a binding id", (_spec: any, nextManifest: any) => (nextManifest.operations[0].id = { toString: "x" }), "INVALID_MANIFEST"],
+    ["a discriminator mapping target", (nextSpec: any) => (nextSpec.components.schemas.Project.discriminator = { propertyName: "status", mapping: { cat: { toString: "x" } } }), "INVALID_SPEC"],
+  ])("reports %s with a non-callable toString", (_name, mutate, code) => {
+    for (const asText of [false, true]) {
+      const nextSpec = clone(spec);
+      const nextManifest = clone(manifest);
+      mutate(nextSpec, nextManifest);
+      const result = buildOperationCatalog(asText ? JSON.stringify(nextSpec) : nextSpec, nextManifest);
+      expect(result.catalog).toBeNull();
+      expect(result.diagnostics.some((diagnostic) => diagnostic.code === code || diagnostic.code === "UNRESOLVED_REF")).toBe(true);
+    }
+  });
+
+  it("rejects a lone surrogate in the spec instead of hashing it", () => {
+    const text = JSON.stringify(spec).replace('"title":', '"x-bad":"\\ud800","title":');
+    const result = buildOperationCatalog(text, clone(manifest));
+    expect(result.catalog).toBeNull();
+    // Its digest would otherwise hash U+FFFD in its place, sharing identity with a different document.
+    expect(only(result.diagnostics, "INVALID_SPEC").map((diagnostic) => diagnostic.message)).toEqual(["Cannot read the OpenAPI document: it is malformed or not plain JSON data."]);
   });
 });

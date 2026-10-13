@@ -371,6 +371,42 @@
           }
         }
       ]
+    },
+    {
+      "name": "a schema $id with no reference inside",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "https://schemas.example.test/meta",
+        "type": "object"
+      }
+    },
+    {
+      "name": "a $ref beside an empty or fragment-only $id",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "tag": {
+            "$id": "#tag",
+            "$ref": "#/components/schemas/ProjectStatus"
+          }
+        }
+      }
     }
   ],
   "schemas": [
@@ -2611,6 +2647,116 @@
           }
         }
       ]
+    },
+    {
+      "name": "a $ref inside a component schema with an absolute $id",
+      "error": {
+        "code": "UNRESOLVED_REF",
+        "pointer": "/components/schemas/Project/properties/status/$ref"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "Project"
+      ],
+      "openapi30": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "owner": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "example": {
+          "id": "proj_1",
+          "name": "Docs",
+          "status": "active",
+          "owner": null
+        },
+        "$id": "https://schemas.example.test/project"
+      },
+      "openapi31": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "owner": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "id": "proj_1",
+          "name": "Docs",
+          "status": "active",
+          "owner": null
+        },
+        "$id": "https://schemas.example.test/project"
+      }
+    },
+    {
+      "name": "a $ref inside a nullable property schema with a relative $id",
+      "error": {
+        "code": "UNRESOLVED_REF",
+        "pointer": "/components/schemas/ProjectInput/properties/meta/properties/status/$ref"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "meta.json",
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          }
+        }
+      },
+      "openapi31": {
+        "$id": "meta.json",
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          }
+        }
+      }
     }
   ]
 }
