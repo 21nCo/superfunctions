@@ -4,23 +4,28 @@ import { canonicalJson } from "../src/canonical.js";
 import { buildOperationCatalog } from "../src/index.js";
 import { clone, fixture, readJson } from "./helpers.js";
 
-interface UpconvertCase {
-  name: string;
+interface UpconvertEdit {
   path: string[];
   openapi30: unknown;
+  /** The value in the 3.1 form; the 3.0 value when absent. */
   openapi31?: unknown;
 }
 
-/** Shared with scripts/verify-packed-consumer.mjs, which runs the same rows against the registry @apifn/core. */
-export const UPCONVERT_CASES = readJson<{ literals: UpconvertCase[]; schemas: UpconvertCase[] }>(new URL("./upconvert-cases.json", import.meta.url).pathname);
+/** One value placed at `path`, or several `edits` (a reference and its target). */
+type UpconvertCase = { name: string } & (UpconvertEdit | { edits: UpconvertEdit[] });
 
-/** The catalog fixture spec at `version` with `value` placed at `path`. */
-export function specWith(version: string, path: string[], value: unknown): Record<string, any> {
+/** Shared with scripts/verify-packed-consumer.mjs, which runs the same rows against the registry @apifn/core. */
+export const UPCONVERT_CASES = readJson<{ literals: UpconvertCase[]; schemas: UpconvertCase[]; references: UpconvertCase[] }>(new URL("./upconvert-cases.json", import.meta.url).pathname);
+
+/** The catalog fixture spec at `version` with each edit's 3.0 or 3.1 value placed at its path. */
+export function specWith(version: string, entry: UpconvertCase): Record<string, any> {
   const spec = clone(fixture("catalog/openapi.json"));
   spec.openapi = version;
-  let node: any = spec;
-  for (const key of path.slice(0, -1)) node = node[key];
-  node[path[path.length - 1]] = JSON.parse(JSON.stringify(value));
+  for (const edit of "edits" in entry ? entry.edits : [entry]) {
+    let node: any = spec;
+    for (const key of edit.path.slice(0, -1)) node = node[key];
+    node[edit.path[edit.path.length - 1]] = clone(version.startsWith("3.0.") ? edit.openapi30 : (edit.openapi31 ?? edit.openapi30));
+  }
   return spec;
 }
 
@@ -30,9 +35,9 @@ export function specWith(version: string, path: string[], value: unknown): Recor
  */
 export function describeUpconvertParity(label: string): void {
   const expectParity = (entry: UpconvertCase) => {
-    const current = buildOperationCatalog(specWith("3.1.0", entry.path, entry.openapi31 ?? entry.openapi30), clone(fixture("catalog/manifest.json")));
+    const current = buildOperationCatalog(specWith("3.1.0", entry), clone(fixture("catalog/manifest.json")));
     expect(current.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
-    const legacy = specWith("3.0.3", entry.path, entry.openapi30);
+    const legacy = specWith("3.0.3", entry);
     for (const input of [legacy, JSON.stringify(legacy), stringify(legacy)]) {
       expect(canonicalJson(buildOperationCatalog(input, clone(fixture("catalog/manifest.json"))))).toBe(canonicalJson(current));
     }
@@ -41,5 +46,6 @@ export function describeUpconvertParity(label: string): void {
   describe(`OpenAPI 3.0 upconversion ${label}`, () => {
     it.each(UPCONVERT_CASES.literals.map((entry) => [entry.name, entry] as const))("copies %s verbatim, as 3.1 does", (_name, entry) => expectParity(entry));
     it.each(UPCONVERT_CASES.schemas.map((entry) => [entry.name, entry] as const))("makes nullable on %s a null type", (_name, entry) => expectParity(entry));
+    it.each(UPCONVERT_CASES.references.map((entry) => [entry.name, entry] as const))("reads %s by the type of its reference", (_name, entry) => expectParity(entry));
   });
 }

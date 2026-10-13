@@ -1576,114 +1576,124 @@ function readOpenApiText(text: string): Record<string, unknown> {
  * @apifn/core upconvert rewrites every `nullable: true` member, literals and
  * map keys included, and the published 0.0.3 loses own `"__proto__"` keys;
  * core returns a 3.1.0 document as given, so the catalog does not depend on
- * which core is installed.
+ * which core is installed. `doc` is the build's own snapshot (a tree: no
+ * object is reachable by two paths), so it is converted in place.
  */
 function parseDocument(doc: Record<string, unknown>): unknown {
   if (typeof doc.openapi !== "string" || !doc.openapi.startsWith("3.0.")) return parseOpenAPI(doc);
-  const converted: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(doc)) setOwn(converted, key, value);
-  converted.openapi = "3.1.0";
-  if (isRecord(doc.paths)) converted.paths = mapValues(doc.paths, upconvertPathItem);
-  const components = doc.components;
-  if (isRecord(components)) {
-    const kinds: Record<string, (value: unknown) => unknown> = {
-      schemas: upconvertSchema,
-      parameters: upconvertParameter,
-      headers: upconvertParameter,
-      requestBodies: upconvertContentHolder,
-      responses: upconvertResponse,
-      callbacks: upconvertCallback,
-    };
-    converted.components = mapMembers(components, (key, value) => (Object.hasOwn(kinds, key) && isRecord(value) ? mapValues(value, kinds[key]) : value));
+  // Every Schema Object is found before any is changed, so references resolve in the source document.
+  for (const schema of schemaObjects(doc)) {
+    if (own(schema, "nullable") !== true) continue;
+    delete schema.nullable;
+    const type = own(schema, "type");
+    if (typeof type === "string") schema.type = [type, "null"];
+    else if (Array.isArray(type)) schema.type = Array.from(new Set([...type, "null"]));
   }
-  return parseOpenAPI(converted);
+  doc.openapi = "3.1.0";
+  return parseOpenAPI(doc);
 }
 
-/** A copy of an object with each own member replaced by `convert(key, value)`. */
-function mapMembers(value: Record<string, unknown>, convert: (key: string, child: unknown) => unknown): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) setOwn(output, key, convert(key, child));
-  return output;
-}
-
-/** A copy of a map (its keys are names, kept verbatim) with every value converted. */
-function mapValues(value: Record<string, unknown>, convert: (child: unknown) => unknown): Record<string, unknown> {
-  return mapMembers(value, (_key, child) => convert(child));
-}
-
-/** The members of one OpenAPI object that hold other OpenAPI objects; everything else is copied verbatim. */
-function upconvertObject(value: unknown, members: Record<string, (child: unknown) => unknown>): unknown {
-  if (!isRecord(value)) return value;
-  return mapMembers(value, (key, child) => (Object.hasOwn(members, key) ? members[key](child) : child));
-}
-
-const listOf = (convert: (child: unknown) => unknown) => (value: unknown) => (Array.isArray(value) ? value.map(convert) : value);
-const mapOf = (convert: (child: unknown) => unknown) => (value: unknown) => (isRecord(value) ? mapValues(value, convert) : value);
-
-function upconvertPathItem(value: unknown): unknown {
-  return upconvertObject(value, {
-    parameters: listOf(upconvertParameter),
-    ...Object.fromEntries(METHODS.map((method) => [method, upconvertOperation])),
-  });
-}
-
-function upconvertOperation(value: unknown): unknown {
-  return upconvertObject(value, {
-    parameters: listOf(upconvertParameter),
-    requestBody: upconvertContentHolder,
-    responses: mapOf(upconvertResponse),
-    callbacks: mapOf(upconvertCallback),
-  });
-}
-
-function upconvertCallback(value: unknown): unknown {
-  return mapOf(upconvertPathItem)(value);
-}
-
-/** A Parameter or Header Object. */
-function upconvertParameter(value: unknown): unknown {
-  return upconvertObject(value, { schema: upconvertSchema, content: mapOf(upconvertMediaType) });
-}
-
-/** A Request Body Object. */
-function upconvertContentHolder(value: unknown): unknown {
-  return upconvertObject(value, { content: mapOf(upconvertMediaType) });
-}
-
-function upconvertResponse(value: unknown): unknown {
-  return upconvertObject(value, { headers: mapOf(upconvertParameter), content: mapOf(upconvertMediaType) });
-}
-
-function upconvertMediaType(value: unknown): unknown {
-  return upconvertObject(value, {
-    schema: upconvertSchema,
-    encoding: mapOf((encoding) => upconvertObject(encoding, { headers: mapOf(upconvertParameter) })),
-  });
-}
+/** The OpenAPI objects that can hold Schema Objects, as the catalog reads them. */
+type OpenApiObjectKind = "pathItem" | "callback" | "parameter" | "requestBody" | "response" | "schema";
 
 /**
- * One Schema Object, upconverted as @apifn/core does (`nullable: true` is
- * dropped and adds "null" to a string or array `type`), recursing only into
- * subschemas. Literals (`default`, `enum`, `example`, `x-*`) and map keys are
- * copied verbatim.
+ * The Schema Objects of a document, found by OpenAPI object context as the
+ * catalog resolves it: from the paths and components, and through every
+ * Reference Object at a typed position, wherever its target is (`#/x-param`,
+ * another operation's member, a chain of up to 32 objects as in deref).
+ * A target is read with the type of the position referencing it. Literals,
+ * map keys and `x-*` members of the Paths, Responses and Callback maps are
+ * never Schema Object positions unless a reference reaches them. Schema
+ * references are not followed: the catalog resolves them only to component
+ * schemas, which are walked from the components.
  */
-function upconvertSchema(value: unknown): unknown {
-  if (!isRecord(value)) return value;
-  const output: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "nullable" && child === true) continue;
-    let converted = child;
-    if (SCHEMA_MAP_KEYWORDS.has(key)) converted = mapOf(upconvertSchema)(child);
-    else if (SCHEMA_LIST_KEYWORDS.has(key) || (key === "items" && Array.isArray(child))) converted = listOf(upconvertSchema)(child);
-    else if (SCHEMA_KEYWORDS.has(key)) converted = upconvertSchema(child);
-    setOwn(output, key, converted);
+function schemaObjects(doc: Record<string, unknown>): Set<Record<string, unknown>> {
+  const schemas = new Set<Record<string, unknown>>();
+  // The fewest reference hops each object was reached with, per kind: a shorter chain may follow further.
+  const seen = new Map<Record<string, unknown>, Map<OpenApiObjectKind, number>>();
+  const references: Array<[target: unknown, kind: OpenApiObjectKind, hops: number]> = [];
+  const map = (value: unknown, kind: OpenApiObjectKind, skipExtensions = false) => {
+    if (!isRecord(value)) return;
+    for (const [key, entry] of Object.entries(value)) if (!(skipExtensions && key.startsWith("x-"))) visit(entry, kind);
+  };
+  const list = (value: unknown, kind: OpenApiObjectKind) => {
+    if (Array.isArray(value)) for (const entry of value) visit(entry, kind);
+  };
+  const content = (value: unknown) => {
+    if (!isRecord(value)) return;
+    for (const media of Object.values(value)) {
+      if (!isRecord(media)) continue;
+      visit(own(media, "schema"), "schema");
+      const encodings = own(media, "encoding");
+      if (isRecord(encodings)) for (const encoding of Object.values(encodings)) if (isRecord(encoding)) map(own(encoding, "headers"), "parameter");
+    }
+  };
+  const visit = (value: unknown, kind: OpenApiObjectKind, hops = 0): void => {
+    if (!isRecord(value)) return;
+    const reference = kind !== "schema" && Object.hasOwn(value, "$ref");
+    const kinds = seen.get(value) ?? new Map<OpenApiObjectKind, number>();
+    seen.set(value, kinds);
+    const reached = reference ? hops : 0;
+    if ((kinds.get(kind) ?? Infinity) <= reached) return;
+    kinds.set(kind, reached);
+    if (reference) {
+      // A Reference Object: its siblings are ignored and a chain reads at most 32 objects, as in deref.
+      const ref = own(value, "$ref");
+      if (typeof ref === "string" && hops + 1 < 32) references.push([resolvePointer(doc as Doc, ref), kind, hops + 1]);
+      return;
+    }
+    switch (kind) {
+      case "schema":
+        schemas.add(value);
+        for (const [key, child] of Object.entries(value)) {
+          if (SCHEMA_MAP_KEYWORDS.has(key)) map(child, "schema");
+          else if (SCHEMA_LIST_KEYWORDS.has(key) || (key === "items" && Array.isArray(child))) list(child, "schema");
+          else if (SCHEMA_KEYWORDS.has(key)) visit(child, "schema");
+        }
+        return;
+      case "pathItem":
+        list(own(value, "parameters"), "parameter");
+        for (const method of METHODS) {
+          const operation = own(value, method);
+          if (!isRecord(operation)) continue;
+          list(own(operation, "parameters"), "parameter");
+          visit(own(operation, "requestBody"), "requestBody");
+          map(own(operation, "responses"), "response", true);
+          map(own(operation, "callbacks"), "callback");
+        }
+        return;
+      case "callback":
+        map(value, "pathItem", true);
+        return;
+      case "parameter":
+        visit(own(value, "schema"), "schema");
+        content(own(value, "content"));
+        return;
+      case "requestBody":
+        content(own(value, "content"));
+        return;
+      case "response":
+        map(own(value, "headers"), "parameter");
+        content(own(value, "content"));
+        return;
+    }
+  };
+  map(own(doc, "paths"), "pathItem", true);
+  const components = own(doc, "components");
+  if (isRecord(components)) {
+    const kinds: Record<string, OpenApiObjectKind> = {
+      schemas: "schema",
+      parameters: "parameter",
+      headers: "parameter",
+      requestBodies: "requestBody",
+      responses: "response",
+      callbacks: "callback",
+    };
+    for (const [section, kind] of Object.entries(kinds)) map(own(components, section), kind);
   }
-  if (own(value, "nullable") === true) {
-    const type = own(output, "type");
-    if (typeof type === "string") output.type = [type, "null"];
-    else if (Array.isArray(type)) output.type = Array.from(new Set([...type, "null"]));
-  }
-  return output;
+  // A queue, not recursion, so a long chain of references cannot exhaust the stack.
+  for (let index = 0; index < references.length; index += 1) visit(...references[index]);
+  return schemas;
 }
 
 /**

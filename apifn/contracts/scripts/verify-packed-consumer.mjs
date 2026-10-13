@@ -55,33 +55,40 @@ console.log(JSON.stringify({ cjs: Object.keys(contracts).sort().length, resolved
 
 // OpenAPI 3.0 upconversion (__tests__/upconvert-cases.json): the installed package (with the registry
 // @apifn/core) and the workspace build must give the 3.1 form's whole result for 3.0 objects and text,
-// keeping literals, map keys and "__proto__" keys verbatim and turning nullable schemas into null types.
+// keeping literals, map keys and "__proto__" keys verbatim and turning nullable schemas into null types,
+// including schemas in objects reached through references (read by the type of the referencing position).
 const protoRows = (specifier) => `
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { buildOperationCatalog, canonicalJson } from ${JSON.stringify(specifier)};
 const spec = ${readFileSync(path.join(packageDir, "fixtures/catalog/openapi.json"), "utf8").trim()};
 const manifest = ${readFileSync(path.join(packageDir, "fixtures/catalog/manifest.json"), "utf8").trim()};
 // JSON.parse, not an object literal, which would read "__proto__" as the prototype.
 const cases = JSON.parse(${JSON.stringify(readFileSync(path.join(packageDir, "__tests__/upconvert-cases.json"), "utf8"))});
-const specWith = (version, keys, value) => {
+const specWith = (version, entry) => {
   const next = JSON.parse(JSON.stringify(spec));
   next.openapi = version;
-  let node = next;
-  for (const key of keys.slice(0, -1)) node = node[key];
-  node[keys[keys.length - 1]] = JSON.parse(JSON.stringify(value));
+  for (const edit of entry.edits ?? [entry]) {
+    let node = next;
+    for (const key of edit.path.slice(0, -1)) node = node[key];
+    node[edit.path[edit.path.length - 1]] = JSON.parse(JSON.stringify(version === "3.0.3" ? edit.openapi30 : (edit.openapi31 ?? edit.openapi30)));
+  }
   return next;
 };
 const results = {};
-for (const entry of [...cases.literals, ...cases.schemas]) {
-  const control = canonicalJson(buildOperationCatalog(specWith("3.1.0", entry.path, entry.openapi31 ?? entry.openapi30), JSON.parse(JSON.stringify(manifest))));
-  const legacy = specWith("3.0.3", entry.path, entry.openapi30);
+for (const entry of [...cases.literals, ...cases.schemas, ...cases.references]) {
+  const control = canonicalJson(buildOperationCatalog(specWith("3.1.0", entry), JSON.parse(JSON.stringify(manifest))));
+  const legacy = specWith("3.0.3", entry);
   for (const [form, input] of [["3.0.3", legacy], ["3.0.3 text", JSON.stringify(legacy)]]) {
     const result = canonicalJson(buildOperationCatalog(input, JSON.parse(JSON.stringify(manifest))));
     assert.equal(result, control, entry.name + " " + form);
-    results[entry.name + " " + form] = result;
+    if (entry.name === "a __proto__ property name") {
+      assert.deepEqual(Object.keys(JSON.parse(result).catalog.schemas.ProjectInput.properties.meta.properties), ["__proto__", "a"]);
+    }
+    // A hash per row keeps the output small; equal hashes mean byte-identical results.
+    results[entry.name + " " + form] = createHash("sha256").update(result).digest("hex");
   }
 }
-assert.deepEqual(Object.keys(JSON.parse(results["a __proto__ property name 3.0.3"]).catalog.schemas.ProjectInput.properties.meta.properties), ["__proto__", "a"]);
 console.log(JSON.stringify(results));
 `;
 
