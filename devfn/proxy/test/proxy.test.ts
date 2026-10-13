@@ -288,12 +288,16 @@ describe("Caddy route rendering", () => {
   const birthSignatures = {
     linux: { canonical: ["linux:0", "linux:123456", "linux:18446744073709551615"], other: ["linux:012345", "linux:18446744073709551616", "linux:+1"] },
     "darwin-utc": {
-      canonical: ["darwin-utc:Fri Oct  9 12:30:02 2026", "darwin-utc:Tue Oct 13 20:24:45 2026"],
-      other: ["darwin-utc:Wed Oct 99 99:99:99 2026", "darwin-utc:Fri Oct 9 12:30:02 2026", "darwin-utc:Tue Oct  13 20:24:45 2026", "darwin-utc:Wed Oct 13 20:24:45 2026", "darwin-utc:Mon Feb 30 20:24:45 2026"],
+      // ps renders a time_t start, so nothing before the epoch.
+      canonical: ["darwin-utc:Fri Oct  9 12:30:02 2026", "darwin-utc:Tue Oct 13 20:24:45 2026", "darwin-utc:Thu Jan  1 00:00:00 1970", "darwin-utc:Fri Dec 31 23:59:59 9999"],
+      other: ["darwin-utc:Wed Oct 99 99:99:99 2026", "darwin-utc:Fri Oct 9 12:30:02 2026", "darwin-utc:Tue Oct  13 20:24:45 2026", "darwin-utc:Wed Oct 13 20:24:45 2026", "darwin-utc:Mon Feb 30 20:24:45 2026",
+        "darwin-utc:Sat Jan  1 00:00:00 0000", "darwin-utc:Wed Dec 31 23:59:59 1969", "darwin-utc:Mon Jan  1 00:00:00 0001"],
     },
     win32: {
-      canonical: ["win32:2026-10-13T18:27:33.1234567Z", "win32:2026-10-13T18:27:33.0000000Z"],
-      other: ["win32:2026-10-13T18:27:33Z", "win32:2026-10-13T18:27:33.123Z", "win32:2026-10-13T18:27:33.1234567+00:00", "win32:2026-02-30T18:27:33.1234567Z", "win32:2026-10-13T24:27:33.1234567Z"],
+      // A .NET DateTime falls in years 0001 through 9999.
+      canonical: ["win32:2026-10-13T18:27:33.1234567Z", "win32:2026-10-13T18:27:33.0000000Z", "win32:0001-01-01T00:00:00.0000000Z", "win32:9999-12-31T23:59:59.9999999Z"],
+      other: ["win32:2026-10-13T18:27:33Z", "win32:2026-10-13T18:27:33.123Z", "win32:2026-10-13T18:27:33.1234567+00:00", "win32:2026-02-30T18:27:33.1234567Z", "win32:2026-10-13T24:27:33.1234567Z",
+        "win32:0000-01-01T00:00:00.0000000Z", "win32:0000-12-31T23:59:59.9999999Z"],
     },
   };
 

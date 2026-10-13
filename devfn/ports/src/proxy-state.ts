@@ -32,16 +32,19 @@ function utcInstant(year: number, month: number, day: number, hours: number, min
 const canonicalBirthSignatures: Record<string, (text: string) => boolean> = {
   // The /proc start time in clock ticks, an unsigned 64-bit decimal.
   linux: (text) => /^(?:0|[1-9]\d{0,19})$/.test(text) && (text.length < 20 || text <= "18446744073709551615"),
-  // ps lstart in the pinned C locale and UTC, "%a %b %e %H:%M:%S %Y".
+  // ps lstart in the pinned C locale and UTC, "%a %b %e %H:%M:%S %Y", of a
+  // time_t start, so never before the epoch.
   "darwin-utc": (text) => {
     const match = /^([A-Z][a-z]{2}) ([A-Z][a-z]{2}) ( [1-9]|[12]\d|3[01]) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/.exec(text);
     const date = match ? utcInstant(Number(match[7]), MONTHS.indexOf(match[2]), Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6])) : undefined;
-    return date !== undefined && WEEKDAYS[date.getUTCDay()] === match![1];
+    return date !== undefined && date.getTime() >= 0 && WEEKDAYS[date.getUTCDay()] === match![1];
   },
-  // .NET's round-trip ("O") rendering of a UTC DateTime: seven fraction digits and Z.
+  // .NET's round-trip ("O") rendering of a UTC DateTime: seven fraction digits
+  // and Z, in DateTime's years 0001 through 9999.
   win32: (text) => {
     const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.\d{7}Z$/.exec(text);
-    return match !== null && utcInstant(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6])) !== undefined;
+    return match !== null && Number(match[1]) >= 1 &&
+      utcInstant(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6])) !== undefined;
   },
 };
 const canonicalBirthSignature = (signature: string): boolean => {
