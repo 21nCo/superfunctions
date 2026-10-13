@@ -8,6 +8,8 @@ export interface PersistedProxyRoute {
   path?: string; match?: "exact" | "prefix"; stripPrefix?: boolean;
   registeredDomain?: string; projectId?: string; repositoryIdentity?: string;
   certificateFile?: string; keyFile?: string; certificateDigest?: string;
+  /** A route to a process group leader DevFn started outside a lifecycle; it is dropped once that whole group is verified gone. */
+  serviceProcess?: { pid: number; birthSignature: string };
 }
 
 const hostnamePattern = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
@@ -51,6 +53,9 @@ export function parsePersistedProxyRoutes(value: unknown): PersistedProxyRoute[]
       throw new Error("Unexpected certificate route fields.");
     }
     if (route.certificateDigest !== undefined && (typeof route.certificateDigest !== "string" || !/^[a-f0-9]{64}$/.test(route.certificateDigest))) throw new Error("Invalid certificate digest.");
+    const service = route.serviceProcess as { pid?: unknown; birthSignature?: unknown } | undefined;
+    if (service !== undefined && (!service || typeof service !== "object" || !Number.isSafeInteger(service.pid) || (service.pid as number) <= 0 ||
+      !nonempty(service.birthSignature))) throw new Error("Invalid route service process.");
     const hostname = route.hostname.toLowerCase();
     const host = hosts.get(hostname);
     if (ids.has(route.id) || (host && (host.owner !== route.instanceId || host.tls !== route.tls))) throw new Error("Conflicting proxy route.");

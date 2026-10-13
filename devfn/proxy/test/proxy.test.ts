@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,20 +14,22 @@ const withCaddyAdminPort = async <T>(action: () => Promise<T>): Promise<T> =>
 
 /**
  * A state directory owned by this live process, with a Caddy command stub
- * that accepts every command first on PATH. cleanup() restores PATH and
- * removes both directories.
+ * that accepts every command first on PATH and logs its subcommand for
+ * caddyCalls(). cleanup() restores PATH and removes both directories.
  */
-async function stubbedCaddyState(prefix: string): Promise<{ stateDir: string; cleanup: () => Promise<void> }> {
+async function stubbedCaddyState(prefix: string): Promise<{ stateDir: string; cleanup: () => Promise<void>; caddyCalls: () => Promise<string[]> }> {
   const stateDir = await mkdtemp(path.join(tmpdir(), prefix));
   const toolsDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-tools-"));
   const originalPath = process.env.PATH;
   const birthSignature = await processBirthSignature(process.pid);
   if (!birthSignature) throw new Error("Test process has no birth signature.");
   await writeFile(path.join(stateDir, "proxy-owner.json"), JSON.stringify({ pid: process.pid, birthSignature }));
-  await writeFile(path.join(toolsDir, "caddy"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  const calls = path.join(toolsDir, "calls.log");
+  await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\necho "$1" >> '${calls}'\nexit 0\n`, { mode: 0o700 });
   process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
   return {
     stateDir,
+    caddyCalls: async () => (await readFile(calls, "utf8").catch(() => "")).split("\n").filter(Boolean),
     cleanup: async () => {
       if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
       await rm(stateDir, { recursive: true, force: true });
@@ -174,6 +177,154 @@ describe("Caddy route rendering", () => {
     } finally { await cleanup(); }
   });
 
+  it("drops a route whose service process is verified gone at the next transition that changes routes", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-service-");
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 200)"], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    const deadSignature = await processBirthSignature(child.pid!);
+    await exited;
+    const route = (id: string, targetPort: number, serviceProcess?: { pid: number; birthSignature: string }) =>
+      ({ id, instanceId: id, hostname: `${id}.localhost`, targetHost: "127.0.0.1", targetPort, tls: "off" as const, updatedAt: "now", ...(serviceProcess ? { serviceProcess } : {}) });
+    const dead = route("dead", 4101, { pid: child.pid!, birthSignature: deadSignature ?? "gone" });
+    const live = route("live", 4102, { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! });
+    // A signature in no readable format cannot be judged, so its route stays.
+    const unverifiable = route("unverifiable", 4103, { pid: process.pid, birthSignature: "unreadable" });
+    const plain = route("plain", 4104);
+    try {
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [dead, live, unverifiable, plain] }));
+      const controller = new CaddyProxyController(stateDir);
+      await controller.removeInstance("unrelated");
+      expect(await controller.routes()).toEqual([dead, live, unverifiable, plain]);
+      await controller.removeInstance("plain");
+      expect(await controller.routes()).toEqual([live, unverifiable]);
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [dead, plain] }));
+      await controller.upsert([{ id: "next", instanceId: "next", hostname: "next.localhost", targetHost: "127.0.0.1", targetPort: 4105, tls: "off" }]);
+      expect((await controller.routes()).map((item) => item.id)).toEqual(["plain", "next"]);
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [{ ...plain, serviceProcess: { pid: 0, birthSignature: "x" } }] }));
+      await expect(controller.routes()).rejects.toMatchObject({ code: "DEVFN_PROXY_CONFIG_INVALID" });
+    } finally { await cleanup(); }
+  });
+
+  it("refuses a route update that route state reads would reject, before Caddy or any state changes", async () => {
+    const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-write-check-");
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const route = (id: string, targetPort: number) => ({ id, instanceId: id, hostname: `${id}.localhost`, targetHost: "127.0.0.1" as const, targetPort, tls: "off" as const });
+    try {
+      const controller = new CaddyProxyController(stateDir);
+      await controller.upsert([route("sibling", 4101)]);
+      const committed = await readFile(statePath, "utf8");
+      const calls = (await caddyCalls()).length;
+      for (const serviceProcess of [{ pid: 0, birthSignature: "x" }, { pid: process.pid, birthSignature: "" }]) {
+        await expect(controller.upsert([{ ...route("service", 4102), serviceProcess }])).rejects.toMatchObject({ code: "DEVFN_PROXY_CONFIG_INVALID" });
+      }
+      expect((await caddyCalls()).length).toBe(calls);
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      await expect(access(path.join(stateDir, "proxy-routes.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      // Every other owner's routes stay readable and removable.
+      expect((await controller.routes()).map((item) => item.id)).toEqual(["sibling"]);
+      await controller.removeInstance("sibling");
+      expect(await controller.routes()).toEqual([]);
+    } finally { await cleanup(); }
+  });
+
+  it.skipIf(process.platform === "win32")("keeps a service route while a process of its group outlives the leader", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-service-group-");
+    // The leader starts a member of its own process group, prints its PID and exits.
+    const leader = spawn(process.execPath, ["-e", `const member = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], { stdio: "ignore" });
+process.stdout.write(String(member.pid), () => setTimeout(() => process.exit(0), 300));`], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    leader.stdout.on("data", (chunk) => { output += String(chunk); });
+    const exited = new Promise((resolve) => leader.once("exit", resolve));
+    const birthSignature = (await processBirthSignature(leader.pid!))!;
+    await exited;
+    const member = Number(output);
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const service = { id: "relay:callback", instanceId: "relay", hostname: "auth.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" as const, updatedAt: "now",
+      serviceProcess: { pid: leader.pid!, birthSignature } };
+    const plain = (id: string, targetPort: number) => ({ id, instanceId: id, hostname: `${id}.localhost`, targetHost: "127.0.0.1", targetPort, tls: "off" as const, updatedAt: "now" });
+    try {
+      expect(alive(member)).toBe(true);
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [service, plain("a", 4102), plain("b", 4103)] }));
+      const controller = new CaddyProxyController(stateDir);
+      await controller.removeInstance("a");
+      expect(await controller.routes()).toEqual([service, plain("b", 4103)]);
+      // Once the whole group is gone, the next transition drops the route.
+      process.kill(-leader.pid!, "SIGKILL");
+      for (let attempt = 0; attempt < 100 && alive(member); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      await controller.removeInstance("b");
+      expect(await controller.routes()).toEqual([]);
+    } finally {
+      try { process.kill(-leader.pid!, "SIGKILL"); } catch { /* stopped */ }
+      await cleanup();
+    }
+  });
+
+  it("never applies Caddy for a dead service route when the caller's routes do not change", async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-routeless-"));
+    const toolsDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-tools-"));
+    const originalPath = process.env.PATH;
+    const marker = path.join(toolsDir, "caddy-invoked");
+    // No Caddy owner is recorded and this Caddy fails every command, as on a host without DevFn's Caddy.
+    await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, { mode: 0o700 });
+    process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 200)"], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    const deadSignature = await processBirthSignature(child.pid!);
+    await exited;
+    const dead = { id: "relay:callback", instanceId: "relay", hostname: "auth.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" as const, updatedAt: "now",
+      serviceProcess: { pid: child.pid!, birthSignature: deadSignature ?? "gone" } };
+    try {
+      await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [dead] }));
+      const controller = new CaddyProxyController(stateDir);
+      // A route-less lifecycle's teardown and empty selection.
+      await controller.removeInstance("routeless");
+      await expect(controller.upsert([], "routeless")).resolves.toEqual([]);
+      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await controller.routes()).toEqual([dead]);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+      await rm(stateDir, { recursive: true, force: true });
+      await rm(toolsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("drops a dead service route when a rollback or a recovered activation journal changes routes", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-service-recovery-");
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 200)"], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    const deadSignature = await processBirthSignature(child.pid!);
+    await exited;
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const pendingPath = path.join(stateDir, "proxy-routes.pending.json");
+    const dead = { id: "relay:callback", instanceId: "relay", hostname: "auth.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" as const, updatedAt: "now",
+      serviceProcess: { pid: child.pid!, birthSignature: deadSignature ?? "gone" } };
+    const live = { id: "live:callback", instanceId: "live", hostname: "live.localhost", targetHost: "127.0.0.1", targetPort: 4102, tls: "off" as const, updatedAt: "now",
+      serviceProcess: { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! } };
+    const app = { id: "a", instanceId: "a", hostname: "a.localhost", targetHost: "127.0.0.1", targetPort: 4103, tls: "off" as const, updatedAt: "now" };
+    const failed = { id: "new", instanceId: "new", hostname: "new.invalid.test", targetHost: "127.0.0.1", targetPort: 4104, tls: "internal" as const,
+      registeredDomain: "invalid.test", projectId: "fixture", repositoryIdentity: stateDir, updatedAt: "now" };
+    try {
+      const controller = new CaddyProxyController(stateDir, unresolvable);
+      // An activation rollback restores the instance's captured routes.
+      await writeFile(statePath, JSON.stringify({ version: 1, routes: [dead, live, app] }));
+      const snapshot = await controller.captureInstanceRoutes("a");
+      await controller.restoreInstanceRoutes("a", snapshot);
+      expect(await controller.routes()).toEqual([live, app]);
+      // A crashed activation's journal is recovered without the dead route, and committed so.
+      await writeFile(statePath, JSON.stringify({ version: 1, routes: [live] }));
+      await writeFile(pendingPath, JSON.stringify({ version: 1, routes: [dead, live, app] }));
+      expect(await controller.routes()).toEqual([live, app]);
+      expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({ version: 1, routes: [live, app] });
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+      // A journal that can no longer activate rolls back to the committed routes, still without the dead one.
+      await writeFile(statePath, JSON.stringify({ version: 1, routes: [dead, live, app] }));
+      await writeFile(pendingPath, JSON.stringify({ version: 1, routes: [dead, live, app, failed] }));
+      expect(await controller.routes()).toEqual([live, app]);
+      expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({ version: 1, routes: [live, app] });
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { await cleanup(); }
+  });
+
   it("replays and commits a valid route activation journal", async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-"));
     const pendingPath = path.join(stateDir, "proxy-routes.pending.json");
@@ -231,6 +382,147 @@ describe("Caddy route rendering", () => {
       await rm(stateDir, { recursive: true, force: true });
       await rm(toolsDir, { recursive: true, force: true });
     }
+  });
+
+  it("keeps an activation whose reload outcome is uncertain as possibly live until a reload of the committed routes confirms Caddy", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-uncertain-");
+    const toolsDir = (process.env.PATH ?? "").split(path.delimiter)[0];
+    const live = path.join(toolsDir, "live.Caddyfile");
+    const reloads = path.join(toolsDir, "reloads");
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const pendingPath = path.join(stateDir, "proxy-routes.pending.json");
+    // Every reload loads its configuration; the command then fails, as on a timeout, until DEVFN_TEST_RELOAD_FAILURES reloads have failed.
+    await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\nif [ "$1" = reload ]; then\n  cp "$3" '${live}'\n  n=$(( $(cat '${reloads}' 2>/dev/null || echo 0) + 1 )); echo "$n" > '${reloads}'\n  [ "$n" -gt "$DEVFN_TEST_RELOAD_FAILURES" ] || exit 1\nfi\nexit 0\n`, { mode: 0o700 });
+    const sibling = { id: "s", instanceId: "sibling", hostname: "sibling.localhost", targetHost: "127.0.0.1", targetPort: 4100, tls: "off", updatedAt: "before" } as const;
+    const committed = `${JSON.stringify({ version: 1, routes: [sibling] })}\n`;
+    await writeFile(statePath, committed);
+    const added = { id: "a", instanceId: "i", hostname: "added.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" } as const;
+    const controller = new CaddyProxyController(stateDir);
+    const originalFailures = process.env.DEVFN_TEST_RELOAD_FAILURES;
+    try {
+      // The candidate reached Caddy before its reload failed; a reload of the committed routes confirms it is gone.
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "1";
+      await expect(controller.upsert([added])).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+      expect(await readFile(live, "utf8")).toContain("sibling.localhost");
+      expect(await readFile(live, "utf8")).not.toContain("added.localhost");
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await controller.hasInstanceRoutes("i")).toBe(false);
+      // While no reload can be confirmed, the journal keeps the route possibly live, and no transition treats it as gone.
+      await rm(reloads);
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "99";
+      await expect(controller.upsert([added])).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED", message: expect.stringContaining("possibly live") });
+      expect(await controller.instanceRouteState("i")).toMatchObject({ committed: [], pending: [expect.objectContaining({ hostname: "added.localhost" })] });
+      await expect(controller.removeInstance("i")).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+      expect(await controller.hasInstanceRoutes("i")).toBe(true);
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      // Once Caddy reloads, the uncertain activation is rolled back rather than replayed; sibling state is byte-identical.
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "0";
+      await controller.removeInstance("i");
+      expect(await readFile(live, "utf8")).toContain("sibling.localhost");
+      expect(await readFile(live, "utf8")).not.toContain("added.localhost");
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await controller.routes()).toEqual([sibling]);
+    } finally {
+      if (originalFailures === undefined) delete process.env.DEVFN_TEST_RELOAD_FAILURES; else process.env.DEVFN_TEST_RELOAD_FAILURES = originalFailures;
+      await cleanup();
+    }
+  });
+
+  it("rolls an uncertain activation back without service routes verified gone, and commits only what Caddy confirmed", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-uncertain-dead-");
+    const toolsDir = (process.env.PATH ?? "").split(path.delimiter)[0];
+    const live = path.join(toolsDir, "live.Caddyfile");
+    const reloads = path.join(toolsDir, "reloads");
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const pendingPath = path.join(stateDir, "proxy-routes.pending.json");
+    const uncertainPath = path.join(stateDir, "proxy-routes.pending.uncertain");
+    await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\nif [ "$1" = reload ]; then\n  cp "$3" '${live}'\n  n=$(( $(cat '${reloads}' 2>/dev/null || echo 0) + 1 )); echo "$n" > '${reloads}'\n  [ "$n" -gt "$DEVFN_TEST_RELOAD_FAILURES" ] || exit 1\nfi\nexit 0\n`, { mode: 0o700 });
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 200)"], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    const deadSignature = await processBirthSignature(child.pid!);
+    await exited;
+    const dead = { id: "relay:callback", instanceId: "relay", hostname: "auth.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" as const, updatedAt: "now",
+      serviceProcess: { pid: child.pid!, birthSignature: deadSignature ?? "gone" } };
+    const sibling = { id: "s", instanceId: "sibling", hostname: "sibling.localhost", targetHost: "127.0.0.1", targetPort: 4100, tls: "off", updatedAt: "before" } as const;
+    const committed = `${JSON.stringify({ version: 1, routes: [dead, sibling] })}\n`;
+    const added = { id: "a", instanceId: "i", hostname: "added.localhost", targetHost: "127.0.0.1", targetPort: 4102, tls: "off" } as const;
+    const controller = new CaddyProxyController(stateDir);
+    const originalFailures = process.env.DEVFN_TEST_RELOAD_FAILURES;
+    try {
+      // The upsert drops the dead route and its reload fails; the immediate rollback must not bring that route back.
+      await writeFile(statePath, committed);
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "1";
+      await expect(controller.upsert([added])).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+      expect(await readFile(live, "utf8")).toContain("sibling.localhost");
+      expect(await readFile(live, "utf8")).not.toContain("auth.localhost");
+      expect(await readFile(live, "utf8")).not.toContain("added.localhost");
+      expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({ version: 1, routes: [sibling] });
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(uncertainPath)).rejects.toMatchObject({ code: "ENOENT" });
+      // While no reload is confirmed, the committed state is unchanged and the journal stays possibly live.
+      await writeFile(statePath, committed);
+      await rm(reloads);
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "99";
+      await expect(controller.upsert([added])).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED", message: expect.stringContaining("possibly live") });
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      expect(await controller.instanceRouteState("i")).toMatchObject({ pending: [expect.objectContaining({ hostname: "added.localhost" })] });
+      await access(uncertainPath);
+      // The marked journal's recovery also rolls back without the dead route, then commits what Caddy confirmed.
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "0";
+      expect(await controller.routes()).toEqual([sibling]);
+      expect(await readFile(live, "utf8")).toContain("sibling.localhost");
+      expect(await readFile(live, "utf8")).not.toContain("auth.localhost");
+      expect(await readFile(live, "utf8")).not.toContain("added.localhost");
+      expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({ version: 1, routes: [sibling] });
+      await expect(access(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(uncertainPath)).rejects.toMatchObject({ code: "ENOENT" });
+      // A crashed activation's journal recovered without the dead route is not rewritten before Caddy confirms it.
+      const crashed = `${JSON.stringify({ version: 1, routes: [dead, sibling, { ...added, updatedAt: "now" }] })}\n`;
+      await writeFile(statePath, committed);
+      await writeFile(pendingPath, crashed);
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "99";
+      await expect(controller.routes()).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+      expect(await readFile(pendingPath, "utf8")).toBe(crashed);
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      process.env.DEVFN_TEST_RELOAD_FAILURES = "0";
+      expect(await controller.routes()).toEqual([sibling]);
+      expect(await readFile(live, "utf8")).not.toContain("auth.localhost");
+    } finally {
+      if (originalFailures === undefined) delete process.env.DEVFN_TEST_RELOAD_FAILURES; else process.env.DEVFN_TEST_RELOAD_FAILURES = originalFailures;
+      await cleanup();
+    }
+  });
+
+  it("tears down a route-less owner without Caddy while another owner's uncertain journal cannot be rolled back", async () => {
+    const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-uncertain-routeless-");
+    const toolsDir = (process.env.PATH ?? "").split(path.delimiter)[0];
+    // Caddy logs every command and fails every reload.
+    await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\necho "$1" >> '${path.join(toolsDir, "calls.log")}'\n[ "$1" != reload ]\n`, { mode: 0o700 });
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const pendingPath = path.join(stateDir, "proxy-routes.pending.json");
+    const uncertainPath = path.join(stateDir, "proxy-routes.pending.uncertain");
+    const sibling = { id: "s", instanceId: "sibling", hostname: "sibling.localhost", targetHost: "127.0.0.1", targetPort: 4100, tls: "off", updatedAt: "before" } as const;
+    const added = { id: "a", instanceId: "i", hostname: "added.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off", updatedAt: "now" } as const;
+    const committed = `${JSON.stringify({ version: 1, routes: [sibling] })}\n`;
+    const journal = `${JSON.stringify({ version: 1, routes: [sibling, added] })}\n`;
+    try {
+      await writeFile(statePath, committed);
+      await writeFile(pendingPath, journal);
+      await writeFile(uncertainPath, "");
+      const controller = new CaddyProxyController(stateDir);
+      // A route-less lifecycle's teardown and empty selection change no routes.
+      await controller.removeInstance("routeless");
+      await expect(controller.upsert([], "routeless")).resolves.toEqual([]);
+      expect(await caddyCalls()).toEqual([]);
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      expect(await readFile(pendingPath, "utf8")).toBe(journal);
+      await access(uncertainPath);
+      // An owner the journal names still waits for its rollback.
+      await expect(controller.removeInstance("i")).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+      expect(await readFile(pendingPath, "utf8")).toBe(journal);
+      await access(uncertainPath);
+    } finally { await cleanup(); }
   });
 
   it("serializes route reads with an in-flight proxy activation", async () => {
