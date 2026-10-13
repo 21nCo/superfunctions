@@ -1551,10 +1551,6 @@ class CatalogBuilder {
 }
 
 /**
- * Describes why the document could not be read. Parser failures report only
- * line and column: parser messages quote source text, which may hold secrets.
- */
-/**
  * Reads OpenAPI text as @apifn/core's parseOpenAPI does (JSON, else YAML, with
  * its error messages), so that the document reaches {@link parseKeepingProtoKeys}
  * as data.
@@ -1610,6 +1606,10 @@ function renameKeys(value: unknown, from: string, to: string): unknown {
   return output;
 }
 
+/**
+ * Describes why the document could not be read. Parser failures report only
+ * line and column: parser messages quote source text, which may hold secrets.
+ */
 function parseFailure(error: unknown): string {
   const reason = error instanceof Error ? error.message : String(error);
   if (/failed to parse JSON or YAML/.test(reason)) {

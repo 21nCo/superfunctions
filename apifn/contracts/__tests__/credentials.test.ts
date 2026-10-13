@@ -506,6 +506,14 @@ const PADDED_NAMES: Array<[form: string, name: string]> = [
   ["padded trailing", "X-Api-Key "],
   ["padded leading", " X-Api-Key"],
   ["two-word", "API key"],
+  // Words joined by whitespace other than a space, as String.trim and the structured rule read it.
+  ["no-break-space-joined", "API\u00a0key"],
+  ["em-space-joined", "client\u2003secret"],
+  ["ideographic-space-joined", "API\u3000key"],
+  // Punctuation inside a quoted name.
+  ["slash-suffixed", "x-api-key/v2"],
+  ["parenthesized-suffix", "Api-Key (prod)"],
+  ["colon-suffixed", "X-Api-Key:"],
 ];
 const NAME_SYNTAXES: Array<[syntax: string, render: (name: string, value: string) => string]> = [
   ["JSON", (name, value) => JSON.stringify({ name, value })],
@@ -524,6 +532,36 @@ describe("name/value names read like structured names", () => {
     const text = render("X-Request-Id ", "req-42");
     expect(containsCredentialValue(text)).toBe(false);
     expect(redactCredentialValues(text)).toBe(text);
+  });
+
+  it.each(NAME_SYNTAXES)("keeps ordinary names joined by other whitespace or punctuation in %s", (_syntax, render) => {
+    for (const name of ["request\u00a0id", "X-Request-Id\u3000(v2)", "X-Request-Id:"]) {
+      const text = render(name, "req-42");
+      expect(containsCredentialValue(text)).toBe(false);
+      expect(redactCredentialValues(text)).toBe(text);
+    }
+  });
+
+  it.each<[string, string]>([
+    ["a JSON tab escape", JSON.stringify({ name: "API\tkey", value: NAME_SEED })],
+    ["a tab escape in JSON stringified twice", stringified({ name: "API\tkey", value: NAME_SEED }, 1)],
+    ["a tab escape in JSON stringified three times", stringified({ name: "API\tkey", value: NAME_SEED }, 2)],
+    ["a JSON Unicode escape", `{"name":"client\\u2003secret","value":"${NAME_SEED}"}`],
+    ["a JS Unicode escape in a list literal", `[{name: 'API\\u00a0key', value: '${NAME_SEED}'}]`],
+  ])("reads a name joined by %s", (_form, text) => expectSeedRemovedEverywhere(text, NAME_SEED));
+
+  it("keeps an ordinary name joined by an escape", () => {
+    const text = JSON.stringify({ name: "request\tid", value: "req-42" });
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+  });
+
+  it.each(NAME_SYNTAXES)("rejects an event naming a credential with other whitespace in %s with CREDENTIAL_VALUE", (_syntax, render) => {
+    const event = fixture("client-failure/valid/network-minimal.json");
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: render("API\u00a0key", NAME_SEED) } });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).toContain("CREDENTIAL_VALUE");
+    expect(JSON.stringify(result)).not.toContain(NAME_SEED);
   });
 });
 
@@ -932,6 +970,13 @@ const LONG_TEXTS: Array<[string, (size: number) => string]> = [
   ["nested pair values before many lines", (n) => `${'("token", '.repeat(n / 20)}x${")".repeat(n / 20)}${repeat("\n", n / 2)}`],
   // Padded and two-word names, and the quote forms whose catalog strings are replaced whole.
   ["padded and two-word names", run('{"name":" API key ","value":"a"},')],
+  ["names joined by other whitespace", run('{"name":"API\u00a0key\u3000x","value":"a"},')],
+  ["long names joined by other whitespace", (n) => `{"name":"${repeat("a\u2003", n)}key","value":"a"}`],
+  ["unterminated names joined by other whitespace", (n) => `name:"${repeat("a\u00a0b: ", n)}`],
+  ["escaped names", run('{"name":"API\\tkey\\u00a0x","value":"a"},')],
+  ["backslash runs in names", (n) => `{"name":"a${repeat("\\", n)}"}`],
+  ["escaped quotes in names", run('name:"a\\\\\\" ')],
+  ["unterminated names with mixed quotes", run("name:\"a\u00a0b name:'a\u3000b ")],
   ["apostrophes in prose", run("Bob's password: first O'Brien x ")],
   ["quoted values then text", run('password: "first" a ')],
 ];
@@ -970,6 +1015,7 @@ describe("credential rules run in linear time", () => {
     "password: a b ",
     '[\\\\\\"X-Api-Key\\\\\\",\\\\\\"a\\\\\\"], ',
     '{"name":" API key ","value":"a"},',
+    '{"name":"API\u00a0key\u3000x","value":"a"},',
     "Bob's password: first O'Brien x ",
     'password: "first" a ',
   ])("buildOperationCatalog scales linearly up to a 1 MB description of %j", (unit) => {

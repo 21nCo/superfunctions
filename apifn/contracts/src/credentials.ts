@@ -448,14 +448,33 @@ function readValue(scan: TextScan, start: number, keyStart: number, header: bool
 }
 
 /**
+ * A word of a quoted name: anything but whitespace, quotes and backslashes, or
+ * an escape at any depth (`\t`, `\\u00a0`); never a quote, so a word does not
+ * run into its closing quote, escaped or not.
+ */
+const NAME_WORD = "(?:[^\\s\"'`\\\\]|\\\\+[^\\s\"'`\\\\])+";
+/** A JSON or JS escape in a name, at any depth. */
+const NAME_ESCAPE = /\\+(?:u([0-9a-fA-F]{4})|(.))/g;
+const NAME_ESCAPE_CHARACTERS: Record<string, string> = { t: "\t", n: "\n", r: "\r", f: "\f", v: "\v", b: "\b" };
+
+/** A quoted name as its string holds it: `API\tkey` read as `API<tab>key`, as structured data has it. */
+function decodeNameEscapes(name: string): string {
+  return name.replace(NAME_ESCAPE, (_match, hex: string | undefined, character: string) =>
+    hex === undefined ? (NAME_ESCAPE_CHARACTERS[character] ?? character) : String.fromCharCode(Number.parseInt(hex, 16))
+  );
+}
+/** Whitespace between the words of a quoted name: the String.trim set, without line breaks. */
+const NAME_SPACE = "[^\\S\\r\\n\\u2028\\u2029]+";
+/**
  * Fields that name a header, parameter or setting: `{"name": "X-Api-Key", ...}`,
  * `<add key="password" .../>`. A quoted name is read as the structured rule
- * reads it, trimmed and of any number of words (`" X-Api-Key "`, `"API key"`);
+ * reads it: trimmed, of any number of words joined by any whitespace on one
+ * line, punctuation included (`" X-Api-Key "`, `"API\u00a0key"`, `"X-Api-Key:"`);
  * a bare name is one or two words.
  */
 const NAME_FIELD = new RegExp(
   `(?<![A-Za-z0-9_.%-])(${QUOTE_DELIMITER}|)(?:(?:(?:header|field|param(?:eter)?)[_-]?)?name|key|header|field|param(?:eter)?)\\1[ \\t]*(?:=>|:=|[:=])[ \\t]*` +
-    `(?:(${QUOTE_DELIMITER})\\s*(${KEY_WORD}(?:[ \\t]+${KEY_WORD})*)\\s*\\2|(${KEY_WORD}(?:[ \\t]+${KEY_WORD})?)(?![A-Za-z0-9_.%-]))`,
+    `(?:(${QUOTE_DELIMITER})\\s*(${NAME_WORD}(?:${NAME_SPACE}${NAME_WORD})*)\\s*\\2|(${KEY_WORD}(?:[ \\t]+${KEY_WORD})?)(?![A-Za-z0-9_.%-]))`,
   "gi"
 );
 /** Fields that hold the value of the header, parameter or setting their container names; mirrors {@link NAME_FIELD}. */
@@ -561,19 +580,27 @@ function keyValueContext(scan: TextScan, keyStart: number, start: number, separa
   };
 }
 
+interface NamedContainers {
+  containers: Int32Array;
+  headers: Map<number, boolean>;
+  /** Where the quote closing each credential name starts. */
+  nameCloses: Set<number>;
+}
+
 /**
  * The containers whose name field holds a credential key, each mapped to
  * whether that key is an Authorization or Cookie header; null when there are
  * none, so ordinary text never pays for the container index.
  */
-function namedCredentialContainers(scan: TextScan): { containers: Int32Array; headers: Map<number, boolean> } | null {
-  let found: { containers: Int32Array; headers: Map<number, boolean> } | null = null;
+function namedCredentialContainers(scan: TextScan): NamedContainers | null {
+  let found: NamedContainers | null = null;
   for (const match of scan.text.matchAll(NAME_FIELD)) {
-    const name = match[3] ?? match[4];
+    const name = match[3] === undefined ? match[4] : decodeNameEscapes(match[3]);
     if (!isCredentialKey(name)) continue;
-    found ??= { containers: scan.structure().containers, headers: new Map() };
+    found ??= { containers: scan.structure().containers, headers: new Map(), nameCloses: new Set() };
     const container = found.containers[match.index];
     found.headers.set(container, (found.headers.get(container) ?? false) || isHeaderKey(name));
+    if (match[2] !== undefined) found.nameCloses.add(match.index + match[0].length - match[2].length);
   }
   return found;
 }
@@ -600,6 +627,8 @@ function redactKeyValues(text: string, identifier: boolean): string {
     const indirect = container !== undefined && named!.headers.has(container);
     if (!indirect && !isCredentialKey(lastWord) && !isCredentialKey(key)) continue;
     const start = match.index + match[0].length;
+    // A credential name that ends in a separator (`"X-Api-Key:"`) has no value of its own: its container's value field holds it.
+    if (named?.nameCloses.has(start)) continue;
     const header = indirect ? named!.headers.get(container)! : isHeaderKey(lastWord);
     const { begin = start, end, value, quote, closing = quote } = readValue(scan, start, match.index, header, () => keyValueContext(scan, match.index, start, match[3]));
     if (end <= start) continue;
