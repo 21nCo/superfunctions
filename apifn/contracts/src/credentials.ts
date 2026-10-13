@@ -306,13 +306,15 @@ class TextScan {
   /**
    * When the value at `start` is a YAML block head (`|`, `>-` or nothing,
    * optionally a `#` comment, then the end of the line), the `\n` ending the
-   * key's line and where the comment starts (or -1); otherwise null.
+   * key's line and where the comment starts (or -1); otherwise null. As in
+   * YAML, a `#` starts a comment only after a space or tab: `Pwd=#abc` and
+   * `password: |#abc` are values.
    */
   blockHead(start: number): { newline: number; comment: number } | null {
     BLOCK_INDICATOR.lastIndex = start;
     BLOCK_INDICATOR.exec(this.text);
     const after = BLOCK_INDICATOR.lastIndex;
-    const comment = this.text[after] === "#" ? after : -1;
+    const comment = this.text[after] === "#" && (this.text[after - 1] === " " || this.text[after - 1] === "\t") ? after : -1;
     const stop = comment === -1 ? after : this.lineBreak(after);
     if (this.text[stop] === "\n") return { newline: stop, comment };
     if (this.text[stop] === "\r" && this.text[stop + 1] === "\n") return { newline: stop + 1, comment };

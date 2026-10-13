@@ -1010,6 +1010,40 @@ describe("YAML block values", () => {
   });
 });
 
+const HASH_SEED = "SEEDhash7731";
+const HASH_HEADS = ["Pwd=#", "client_secret=#", "token=>#", "token:=#", "password:#", "password: |#"];
+const HASH_TAILS: Array<[tail: string, text: string]> = [
+  ["then a \\n line", "\nretry"],
+  ["then a \\r\\n line", "\r\nretry"],
+  ["at the end of the text", ""],
+];
+const HASH_ROWS = HASH_TAILS.flatMap(([tail, rest]) => [
+  ...HASH_HEADS.map((head) => [`${head} ${tail}`, `${head}${HASH_SEED}${rest}`]),
+  [`Server=db;Pwd=#…;User=a ${tail}`, `Server=db;Pwd=#${HASH_SEED};User=a${rest}`],
+]);
+
+// As in YAML, a `#` starts a comment only after a space or tab; next to the separator or a block indicator it is part of the value.
+describe("a # next to the separator is part of the value", () => {
+  const event = fixture("client-failure/valid/network-minimal.json");
+
+  it.each(HASH_ROWS)("%s", (_name, text) => {
+    expectSeedRemovedEverywhere(text, HASH_SEED);
+    const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
+    expect(JSON.stringify(result)).toContain("CREDENTIAL_VALUE");
+  });
+
+  it.each(["password: # note", "password: | # note"])("redacts the block below %j", (head) => {
+    const text = `${head}\n  ${HASH_SEED}\nnext: kept`;
+    expect(containsCredentialValue(text)).toBe(true);
+    expect(redactCredentialValues(text)).toBe(`${head}\n  [REDACTED]\nnext: kept`);
+  });
+
+  it.each(["Pwd= #comment\nx", "retry=#abc\nx"])("keeps %j", (text) => {
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+  });
+});
+
 // Every rule is linear in the text: long runs that a backtracking pattern, or a per-match scan reaching past the
 // span the match consumes, would rescan per character. Each row is timed at n and 4n characters.
 const LONG = 100_000;
@@ -1099,6 +1133,7 @@ const LONG_TEXTS: Array<[string, (size: number) => string]> = [
   ["names with many deeper-escaped quotes", (n) => `{\\"name\\":\\"${repeat('a\\\\\\"', n)}key\\",\\"value\\":\\"a\\"}`],
   ["unterminated names with inner quotes", run("name:\"a'b name:'a\"b name:`a ")],
   ["unterminated escaped names of rising levels", run('name:\\"a name:\\\\\\"b ')],
+  ["values led by # before a line break", run("Pwd=#x;\n")],
 ];
 
 describe("credential rules run in linear time", () => {
