@@ -53,34 +53,35 @@ assert.equal(failure.validateClientFailureEvent(require("@apifn/contracts/fixtur
 console.log(JSON.stringify({ cjs: Object.keys(contracts).sort().length, resolved: require.resolve("@apifn/contracts") }));
 `;
 
-// OpenAPI 3.0 "__proto__" keys: the installed package (with the registry @apifn/core) and the workspace build
-// must give the same whole result, which keeps the key as 3.1 does.
+// OpenAPI 3.0 upconversion (__tests__/upconvert-cases.json): the installed package (with the registry
+// @apifn/core) and the workspace build must give the 3.1 form's whole result for 3.0 objects and text,
+// keeping literals, map keys and "__proto__" keys verbatim and turning nullable schemas into null types.
 const protoRows = (specifier) => `
 import assert from "node:assert/strict";
 import { buildOperationCatalog, canonicalJson } from ${JSON.stringify(specifier)};
 const spec = ${readFileSync(path.join(packageDir, "fixtures/catalog/openapi.json"), "utf8").trim()};
 const manifest = ${readFileSync(path.join(packageDir, "fixtures/catalog/manifest.json"), "utf8").trim()};
-const rows = {
-  literal: ['{"type":"object","default":{"__proto__":"x","a":1}}', "default"],
-  property: ['{"type":"object","properties":{"__proto__":{"type":"string"},"a":{"type":"string"}}}', "properties"],
+// JSON.parse, not an object literal, which would read "__proto__" as the prototype.
+const cases = JSON.parse(${JSON.stringify(readFileSync(path.join(packageDir, "__tests__/upconvert-cases.json"), "utf8"))});
+const specWith = (version, keys, value) => {
+  const next = JSON.parse(JSON.stringify(spec));
+  next.openapi = version;
+  let node = next;
+  for (const key of keys.slice(0, -1)) node = node[key];
+  node[keys[keys.length - 1]] = JSON.parse(JSON.stringify(value));
+  return next;
 };
 const results = {};
-for (const [row, [schema, member]] of Object.entries(rows)) {
-  const versioned = (version) => {
-    const next = JSON.parse(JSON.stringify(spec));
-    next.openapi = version;
-    next.components.schemas.ProjectInput.properties.meta = JSON.parse(schema);
-    return next;
-  };
-  const control = buildOperationCatalog(versioned("3.1.0"), JSON.parse(JSON.stringify(manifest)));
-  for (const [form, input] of [["3.0.3", versioned("3.0.3")], ["3.0.3 text", JSON.stringify(versioned("3.0.3"))], ["3.1.0", versioned("3.1.0")]]) {
-    const result = buildOperationCatalog(input, JSON.parse(JSON.stringify(manifest)));
-    assert.deepEqual(result.diagnostics, [], row + " " + form);
-    assert.deepEqual(Object.keys(result.catalog.schemas.ProjectInput.properties.meta[member]), ["__proto__", "a"], row + " " + form);
-    assert.equal(canonicalJson(result), canonicalJson(control), row + " " + form);
-    results[row + " " + form] = canonicalJson(result);
+for (const entry of [...cases.literals, ...cases.schemas]) {
+  const control = canonicalJson(buildOperationCatalog(specWith("3.1.0", entry.path, entry.openapi31 ?? entry.openapi30), JSON.parse(JSON.stringify(manifest))));
+  const legacy = specWith("3.0.3", entry.path, entry.openapi30);
+  for (const [form, input] of [["3.0.3", legacy], ["3.0.3 text", JSON.stringify(legacy)]]) {
+    const result = canonicalJson(buildOperationCatalog(input, JSON.parse(JSON.stringify(manifest))));
+    assert.equal(result, control, entry.name + " " + form);
+    results[entry.name + " " + form] = result;
   }
 }
+assert.deepEqual(Object.keys(JSON.parse(results["a __proto__ property name 3.0.3"]).catalog.schemas.ProjectInput.properties.meta.properties), ["__proto__", "a"]);
 console.log(JSON.stringify(results));
 `;
 
@@ -128,8 +129,8 @@ try {
   writeFileSync(path.join(workdir, "proto-workspace.mjs"), protoRows(pathToFileURL(path.join(packageDir, "dist/index.js")).href));
   const installedRows = run("node", ["proto.mjs"], consumer).trim();
   const workspaceRows = run("node", ["proto-workspace.mjs"], workdir).trim();
-  if (installedRows !== workspaceRows) throw new Error("OpenAPI 3.0 __proto__ rows differ between the installed package and the workspace build");
-  console.log(`__proto__ rows match the workspace build: ${Object.keys(JSON.parse(installedRows)).join(", ")}`);
+  if (installedRows !== workspaceRows) throw new Error("OpenAPI 3.0 upconversion rows differ between the installed package and the workspace build");
+  console.log(`${Object.keys(JSON.parse(installedRows)).length} OpenAPI 3.0 upconversion rows match 3.1 and the workspace build`);
   console.log(`PACKED_CONSUMER_OK ${packed[0].filename} in ${consumer}`);
 } finally {
   if (!keep) rmSync(workdir, { recursive: true, force: true });

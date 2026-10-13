@@ -1,0 +1,447 @@
+{
+  "literals": [
+    {
+      "name": "a default object",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "default": {
+          "nullable": true,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "a const object",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "const": {
+          "type": "string",
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "an enum object item",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "enum": [
+          {
+            "nullable": true,
+            "b": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "an example object",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "example": {
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "an allOf member default",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "allOf": [
+          {
+            "type": "object",
+            "default": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "a property named nullable with schema true",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "properties": {
+          "nullable": true,
+          "a": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "a patternProperties key nullable",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "patternProperties": {
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "a $defs key nullable",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "$defs": {
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "an x-* schema literal",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "string",
+        "x-meta": {
+          "type": "string",
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "an x-* operation literal",
+      "path": [
+        "paths",
+        "/workspaces/{workspaceId}/projects",
+        "post",
+        "x-meta"
+      ],
+      "openapi30": {
+        "type": "string",
+        "nullable": true
+      }
+    },
+    {
+      "name": "a parameter example",
+      "path": [
+        "paths",
+        "/workspaces/{workspaceId}/projects",
+        "post",
+        "parameters",
+        "0",
+        "example"
+      ],
+      "openapi30": {
+        "type": "string",
+        "nullable": true
+      }
+    },
+    {
+      "name": "a __proto__ literal",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "default": {
+          "__proto__": "x",
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "a __proto__ object literal holding nullable",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "default": {
+          "__proto__": {
+            "nullable": true
+          },
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "a __proto__ property name",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "properties": {
+          "__proto__": {
+            "type": "string"
+          },
+          "a": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "schemas": [
+    {
+      "name": "a property schema",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "string",
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    {
+      "name": "a property with a type list",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": [
+          "string",
+          "integer"
+        ],
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "integer",
+          "null"
+        ]
+      }
+    },
+    {
+      "name": "items",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "nullable": true
+        }
+      },
+      "openapi31": {
+        "type": "array",
+        "items": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "name": "an allOf member",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "allOf": [
+          {
+            "type": "string",
+            "nullable": true
+          }
+        ]
+      },
+      "openapi31": {
+        "allOf": [
+          {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a __proto__ property schema",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "properties": {
+          "__proto__": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "openapi31": {
+        "type": "object",
+        "properties": {
+          "__proto__": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a component",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectStatus"
+      ],
+      "openapi30": {
+        "type": "string",
+        "enum": [
+          "active",
+          "archived"
+        ],
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "active",
+          "archived"
+        ]
+      }
+    },
+    {
+      "name": "a component parameter schema",
+      "path": [
+        "components",
+        "parameters",
+        "WorkspaceId",
+        "schema"
+      ],
+      "openapi30": {
+        "type": "string",
+        "format": "uuid",
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "uuid"
+      }
+    },
+    {
+      "name": "an operation parameter schema",
+      "path": [
+        "paths",
+        "/workspaces/{workspaceId}/projects",
+        "post",
+        "parameters",
+        "0",
+        "schema"
+      ],
+      "openapi30": {
+        "type": "string",
+        "maxLength": 64,
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "maxLength": 64
+      }
+    }
+  ]
+}

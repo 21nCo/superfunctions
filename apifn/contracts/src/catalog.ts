@@ -1552,8 +1552,7 @@ class CatalogBuilder {
 
 /**
  * Reads OpenAPI text as @apifn/core's parseOpenAPI does (JSON, else YAML, with
- * its error messages), so that the document reaches {@link parseKeepingProtoKeys}
- * as data.
+ * its error messages), so that the document reaches {@link parseDocument} as data.
  */
 function readOpenApiText(text: string): Record<string, unknown> {
   const trimmed = text.trim();
@@ -1573,36 +1572,117 @@ function readOpenApiText(text: string): Record<string, unknown> {
 }
 
 /**
- * parseOpenAPI with every own `"__proto__"` key kept as data. The published
- * @apifn/core 0.0.3 upconverts OpenAPI 3.0 by plain assignment, which loses
- * that key; renaming it to a key the document does not use for the call gives
- * the same document with any core version, and 3.0 the same catalog as 3.1.
+ * parseOpenAPI on the document, with OpenAPI 3.0 upconverted here first. The
+ * @apifn/core upconvert rewrites every `nullable: true` member, literals and
+ * map keys included, and the published 0.0.3 loses own `"__proto__"` keys;
+ * core returns a 3.1.0 document as given, so the catalog does not depend on
+ * which core is installed.
  */
-function parseKeepingProtoKeys(doc: Record<string, unknown>): unknown {
-  const keys = new Set<string>();
-  const stack: unknown[] = [doc];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (Array.isArray(node)) for (const entry of node) stack.push(entry);
-    else if (isRecord(node)) {
-      for (const [key, child] of Object.entries(node)) {
-        keys.add(key);
-        stack.push(child);
-      }
-    }
+function parseDocument(doc: Record<string, unknown>): unknown {
+  if (typeof doc.openapi !== "string" || !doc.openapi.startsWith("3.0.")) return parseOpenAPI(doc);
+  const converted: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(doc)) setOwn(converted, key, value);
+  converted.openapi = "3.1.0";
+  if (isRecord(doc.paths)) converted.paths = mapValues(doc.paths, upconvertPathItem);
+  const components = doc.components;
+  if (isRecord(components)) {
+    const kinds: Record<string, (value: unknown) => unknown> = {
+      schemas: upconvertSchema,
+      parameters: upconvertParameter,
+      headers: upconvertParameter,
+      requestBodies: upconvertContentHolder,
+      responses: upconvertResponse,
+      callbacks: upconvertCallback,
+    };
+    converted.components = mapMembers(components, (key, value) => (Object.hasOwn(kinds, key) && isRecord(value) ? mapValues(value, kinds[key]) : value));
   }
-  if (!keys.has("__proto__")) return parseOpenAPI(doc);
-  let standIn = "__proto__\u0000";
-  while (keys.has(standIn)) standIn += "\u0000";
-  return renameKeys(parseOpenAPI(renameKeys(doc, "__proto__", standIn) as Record<string, unknown>), standIn, "__proto__");
+  return parseOpenAPI(converted);
 }
 
-/** A copy of plain data with every own key `from` renamed to `to` (depth is bounded by the snapshot). */
-function renameKeys(value: unknown, from: string, to: string): unknown {
-  if (Array.isArray(value)) return value.map((entry) => renameKeys(entry, from, to));
+/** A copy of an object with each own member replaced by `convert(key, value)`. */
+function mapMembers(value: Record<string, unknown>, convert: (key: string, child: unknown) => unknown): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) setOwn(output, key, convert(key, child));
+  return output;
+}
+
+/** A copy of a map (its keys are names, kept verbatim) with every value converted. */
+function mapValues(value: Record<string, unknown>, convert: (child: unknown) => unknown): Record<string, unknown> {
+  return mapMembers(value, (_key, child) => convert(child));
+}
+
+/** The members of one OpenAPI object that hold other OpenAPI objects; everything else is copied verbatim. */
+function upconvertObject(value: unknown, members: Record<string, (child: unknown) => unknown>): unknown {
+  if (!isRecord(value)) return value;
+  return mapMembers(value, (key, child) => (Object.hasOwn(members, key) ? members[key](child) : child));
+}
+
+const listOf = (convert: (child: unknown) => unknown) => (value: unknown) => (Array.isArray(value) ? value.map(convert) : value);
+const mapOf = (convert: (child: unknown) => unknown) => (value: unknown) => (isRecord(value) ? mapValues(value, convert) : value);
+
+function upconvertPathItem(value: unknown): unknown {
+  return upconvertObject(value, {
+    parameters: listOf(upconvertParameter),
+    ...Object.fromEntries(METHODS.map((method) => [method, upconvertOperation])),
+  });
+}
+
+function upconvertOperation(value: unknown): unknown {
+  return upconvertObject(value, {
+    parameters: listOf(upconvertParameter),
+    requestBody: upconvertContentHolder,
+    responses: mapOf(upconvertResponse),
+    callbacks: mapOf(upconvertCallback),
+  });
+}
+
+function upconvertCallback(value: unknown): unknown {
+  return mapOf(upconvertPathItem)(value);
+}
+
+/** A Parameter or Header Object. */
+function upconvertParameter(value: unknown): unknown {
+  return upconvertObject(value, { schema: upconvertSchema, content: mapOf(upconvertMediaType) });
+}
+
+/** A Request Body Object. */
+function upconvertContentHolder(value: unknown): unknown {
+  return upconvertObject(value, { content: mapOf(upconvertMediaType) });
+}
+
+function upconvertResponse(value: unknown): unknown {
+  return upconvertObject(value, { headers: mapOf(upconvertParameter), content: mapOf(upconvertMediaType) });
+}
+
+function upconvertMediaType(value: unknown): unknown {
+  return upconvertObject(value, {
+    schema: upconvertSchema,
+    encoding: mapOf((encoding) => upconvertObject(encoding, { headers: mapOf(upconvertParameter) })),
+  });
+}
+
+/**
+ * One Schema Object, upconverted as @apifn/core does (`nullable: true` is
+ * dropped and adds "null" to a string or array `type`), recursing only into
+ * subschemas. Literals (`default`, `enum`, `example`, `x-*`) and map keys are
+ * copied verbatim.
+ */
+function upconvertSchema(value: unknown): unknown {
   if (!isRecord(value)) return value;
   const output: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) setOwn(output, key === from ? to : key, renameKeys(child, from, to));
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "nullable" && child === true) continue;
+    let converted = child;
+    if (SCHEMA_MAP_KEYWORDS.has(key)) converted = mapOf(upconvertSchema)(child);
+    else if (SCHEMA_LIST_KEYWORDS.has(key) || (key === "items" && Array.isArray(child))) converted = listOf(upconvertSchema)(child);
+    else if (SCHEMA_KEYWORDS.has(key)) converted = upconvertSchema(child);
+    setOwn(output, key, converted);
+  }
+  if (own(value, "nullable") === true) {
+    const type = own(output, "type");
+    if (typeof type === "string") output.type = [type, "null"];
+    else if (Array.isArray(type)) output.type = Array.from(new Set([...type, "null"]));
+  }
   return output;
 }
 
@@ -1674,7 +1754,7 @@ export function buildOperationCatalog(spec: string | Record<string, unknown>, ma
   try {
     const input = plain(typeof spec === "string" ? readOpenApiText(spec) : spec, "INVALID_SPEC", "spec");
     if (input !== null) {
-      doc = parseKeepingProtoKeys(input as Record<string, unknown>) as Doc;
+      doc = parseDocument(input as Record<string, unknown>) as Doc;
       if (!isRecord(doc.paths) || !isRecord(doc.info)) throw new Error("document requires info and paths objects");
       specDigest = canonicalDigest(doc);
     }

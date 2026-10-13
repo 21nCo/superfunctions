@@ -3,11 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import { canonicalJson } from "../src/canonical.js";
 import { buildOperationCatalog } from "../src/index.js";
 import { clone, fixture } from "./helpers.js";
+import { describeUpconvertParity } from "./upconvert-rows.js";
 
 /**
  * The published @apifn/core 0.0.3, which a packed @apifn/contracts installs,
- * upconverts OpenAPI 3.0 by plain assignment and so loses own "__proto__" keys.
- * The catalog must not depend on which core is installed.
+ * upconverts OpenAPI 3.0 by plain assignment, losing own "__proto__" keys, and
+ * rewrites nullable everywhere. The catalog must not depend on which core is installed.
  */
 vi.mock("@apifn/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@apifn/core")>();
@@ -21,6 +22,7 @@ vi.mock("@apifn/core", async (importOriginal) => {
       output[key] = upconvertNode(nodeValue);
     }
     if (value.nullable === true && typeof output.type === "string") output.type = [output.type, "null"];
+    else if (value.nullable === true && Array.isArray(output.type)) output.type = Array.from(new Set([...output.type, "null"]));
     return output;
   };
   const parseOpenAPI = (input: string | Record<string, unknown>) => {
@@ -55,11 +57,6 @@ describe("OpenAPI 3.0 __proto__ keys with the published @apifn/core upconvert", 
       expect(canonicalJson(legacy)).toBe(canonicalJson(current));
     }
   });
-
-  it("still upconverts nullable through the installed core", () => {
-    const schema = '{"type":"object","properties":{"__proto__":{"type":"string","nullable":true}}}';
-    const legacy = buildOperationCatalog(versioned("3.0.3", schema), clone(fixture("catalog/manifest.json")));
-    expect(legacy.diagnostics).toEqual([]);
-    expect((legacy.catalog!.schemas.ProjectInput as any).properties.meta.properties.__proto__).toEqual({ type: ["string", "null"] });
-  });
 });
+
+describeUpconvertParity("with the published @apifn/core upconvert");
