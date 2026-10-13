@@ -234,6 +234,31 @@ describe("Caddy route rendering", () => {
     } finally { await cleanup(); }
   });
 
+  it("drops a selected, proposed or restored route whose service is verified gone before it can conflict with a live owner", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-service-candidate-");
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => undefined, 200)"], { stdio: "ignore" });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    const serviceProcess = { pid: child.pid!, birthSignature: (await processBirthSignature(child.pid!)) ?? "gone" };
+    await exited;
+    const live = { id: "relay:callback", instanceId: "relay-new", hostname: "auth.localhost", targetHost: "127.0.0.1" as const, targetPort: 4102, tls: "off" as const, updatedAt: "now" };
+    const controller = new CaddyProxyController(stateDir);
+    try {
+      // The same route ID, then the same hostname, as the live owner's route.
+      for (const { id, hostname } of [{ ...live, hostname: "old.localhost" }, { ...live, id: "relay:old" }]) {
+        const dead = { ...live, id, hostname, instanceId: "relay-old", targetPort: 4101, serviceProcess };
+        const { serviceProcess: _alive, ...unswept } = dead;
+        await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [live] }));
+        await expect(controller.assertRouteOwnershipAvailable([unswept], "relay-old")).rejects.toMatchObject({ code: "DEVFN_PROXY_OWNERSHIP_CONFLICT" });
+        await expect(controller.assertRouteOwnershipAvailable([dead], "relay-old")).resolves.toBeUndefined();
+        // Rendered without the dead proposal, activation gets past its routes to the Caddy owner checks.
+        await expect(withCaddyAdminPort(() => controller.assertActivationReady([dead], "relay-old"))).rejects.toThrow(/Caddy admin listener/);
+        await expect(controller.upsert([dead])).resolves.toEqual([]);
+        await expect(controller.restoreInstanceRoutes("relay-old", { committed: [dead], certificates: {} })).resolves.toBeUndefined();
+        expect(await controller.routes()).toEqual([live]);
+      }
+    } finally { await cleanup(); }
+  });
+
   it("refuses a route update that route state reads would reject, before Caddy or any state changes", async () => {
     const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-write-check-");
     const statePath = path.join(stateDir, "proxy-routes.json");
@@ -267,15 +292,16 @@ process.stdout.write(String(member.pid), () => setTimeout(() => process.exit(0),
     leader.stdout.on("data", (chunk) => { output += String(chunk); });
     // Only close, not exit, proves the leader's stdout was read.
     const closed = new Promise((resolve) => leader.once("close", resolve));
-    const birthSignature = (await processBirthSignature(leader.pid!))!;
-    await closed;
-    const member = Number(output);
-    expect(member).toBeGreaterThan(0);
     const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-    const service = { id: "relay:callback", instanceId: "relay", hostname: "auth.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" as const, updatedAt: "now",
-      serviceProcess: { pid: leader.pid!, birthSignature } };
     const plain = (id: string, targetPort: number) => ({ id, instanceId: id, hostname: `${id}.localhost`, targetHost: "127.0.0.1", targetPort, tls: "off" as const, updatedAt: "now" });
+    // Every step after the spawn is protected, so a failure still kills the group and cleans up.
     try {
+      const birthSignature = (await processBirthSignature(leader.pid!))!;
+      await closed;
+      const member = Number(output);
+      expect(member).toBeGreaterThan(0);
+      const service = { id: "relay:callback", instanceId: "relay", hostname: "auth.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" as const, updatedAt: "now",
+        serviceProcess: { pid: leader.pid!, birthSignature } };
       expect(alive(member)).toBe(true);
       await writeFile(path.join(stateDir, "proxy-routes.json"), JSON.stringify({ version: 1, routes: [service, plain("a", 4102), plain("b", 4103)] }));
       const controller = new CaddyProxyController(stateDir);
