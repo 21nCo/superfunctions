@@ -9,7 +9,7 @@ import { lookup } from "node:dns/promises";
 import { promisify } from "node:util";
 
 import { connectionRefused, isPortAvailable, parsePersistedProxyRoutes, parseProxyOwner, proxyOwnerStatus, scanListenerState, withFileLock, withRoutingLock, type ProxyOwner } from "@devfn/ports";
-import { matchesProcessIdentity, processBirthSignature } from "@devfn/processes";
+import { matchesProcessIdentity, processBirthSignature, processGroupStatus } from "@devfn/processes";
 import { domainContains, DomainError, ipv6LoopbackAvailable, readRegisteredDomains, verifyCertificate, verifyLocalDns } from "./domains.js";
 export { DomainError, domainContains, normalizeDomain, readRegisteredDomains, registerDomain, unregisterDomain, verifyCertificate, verifyLocalDns, type RegisteredDomain } from "./domains.js";
 
@@ -53,6 +53,8 @@ export interface ProxyRoute {
   certificateFile?: string; keyFile?: string;
   /** Private, immutable copy of the certificate used by an activated route. */
   certificateDigest?: string;
+  /** A route to a process group leader DevFn started outside a lifecycle; the next transition that changes routes drops it once that whole group is verified gone. */
+  serviceProcess?: { pid: number; birthSignature: string };
 }
 interface ProxyState { version: 1; routes: ProxyRoute[] }
 
@@ -190,9 +192,51 @@ function canonicalJson(value: unknown): string {
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => compareText(a, b))) : item);
 }
 
+/**
+ * The one check route state passes before it is written, the same parse and
+ * render every read applies, so no update can persist a state that later
+ * reads, updates or removals refuse.
+ */
+function validateRouteState(routes: readonly ProxyRoute[]): void {
+  renderCaddyfile(routes);
+  try { parsePersistedProxyRoutes({ version: 1, routes }); }
+  catch (error) { throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", "The proxy route update would not be readable route state.", { cause: error instanceof Error ? error.message : String(error) }); }
+}
+
+/**
+ * Routes without a service process whose recorded process group is verified gone.
+ * Every apply that changes routes drops those: upsert, removeInstance, a
+ * rollback restore and a recovered activation journal (or its rollback), so
+ * a crashed service's route does not outlive the next such operation. The
+ * service process leads its own process group, and a member that outlives
+ * the leader may still serve the route, so only a group verified gone drops
+ * it; an unverifiable process or group keeps its route. A call that changes no routes never
+ * applies Caddy for this sweep alone, so route-less lifecycles stay
+ * independent of Caddy.
+ */
+async function withoutExitedServices(routes: readonly ProxyRoute[]): Promise<ProxyRoute[]> {
+  const statuses = await Promise.all(routes.map(async (route) => route.serviceProcess && await processGroupStatus(route.serviceProcess.pid, route.serviceProcess.birthSignature)));
+  return routes.filter((_route, index) => statuses[index] !== "exited" && statuses[index] !== "identity-mismatch");
+}
+
+/**
+ * The routes a transition or its preflight leaves. Each candidate is first
+ * validated alone, so malformed input still rejects. Routes of services
+ * verified gone, siblings and candidates alike, are then dropped, and only
+ * the survivors are checked for route ID ownership and as one route state.
+ */
+async function survivingRoutes(siblings: readonly ProxyRoute[], candidates: readonly ProxyRoute[], conflict: string): Promise<{ kept: ProxyRoute[]; selected: ProxyRoute[] }> {
+  for (const route of candidates) validateRouteState([route]);
+  const [kept, selected] = await Promise.all([withoutExitedServices(siblings), withoutExitedServices(candidates)]);
+  if (selected.some((route) => kept.some((saved) => saved.id === route.id))) throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", conflict);
+  validateRouteState([...kept, ...selected]);
+  return { kept, selected };
+}
+
 export class CaddyProxyController {
   private readonly statePath: string;
   private readonly pendingPath: string;
+  private readonly uncertainPath: string;
   private readonly configPath: string;
   private readonly lockPath: string;
   private readonly ownerPath: string;
@@ -203,6 +247,7 @@ export class CaddyProxyController {
     private readonly liveConfigProbe?: () => Promise<boolean>) {
     this.statePath = path.join(stateDir, "proxy-routes.json");
     this.pendingPath = path.join(stateDir, "proxy-routes.pending.json");
+    this.uncertainPath = path.join(stateDir, "proxy-routes.pending.uncertain");
     this.configPath = path.join(stateDir, "Caddyfile");
     this.lockPath = path.join(stateDir, "proxy.lock");
     this.ownerPath = path.join(stateDir, "proxy-owner.json");
@@ -264,6 +309,16 @@ export class CaddyProxyController {
     try { await execFileAsync(await caddyCommand(), ["version"], { timeout: 5000 }); return true; } catch { return false; }
   }
 
+  /**
+   * A call that changes no routes prunes certificate snapshots as read()
+   * does, from the committed routes and without Caddy, unless a pending
+   * journal may still need them.
+   */
+  private async pruneWithoutJournal(): Promise<void> {
+    if (await this.readState(this.pendingPath)) return;
+    await this.pruneCertificateSnapshots((await this.readState(this.statePath))?.routes ?? []).catch(() => undefined);
+  }
+
   private async readState(file: string): Promise<ProxyState | undefined> {
     try {
       const state = JSON.parse(await readFile(file, "utf8")) as ProxyState;
@@ -281,15 +336,11 @@ export class CaddyProxyController {
   public async assertRouteOwnershipAvailable(routes: readonly Omit<ProxyRoute, "updatedAt">[], instanceId: string): Promise<void> {
     if (routes.some((route) => route.instanceId !== instanceId)) throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", "One preflight must name routes for one instance.");
     await withRoutingLock(this.stateDir, async () => await withFileLock(this.lockPath, async () => {
-      for (const file of [this.statePath, this.pendingPath]) {
-        const state = await this.readState(file);
-        if (!state) continue;
-        const siblings = state.routes.filter((route) => route.instanceId !== instanceId);
-        if (routes.some((route) => siblings.some((saved) => saved.id === route.id))) {
-          throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A selected proxy route ID is already owned by another instance.");
-        }
-        renderCaddyfile([...siblings, ...routes.map((route) => ({ ...route, updatedAt: "preflight" }))]);
-      }
+      if (routes.length) await this.settleMarkedJournal();
+      const proposed = routes.map((route) => ({ ...route, updatedAt: "preflight" }));
+      const states = await Promise.all([this.readState(this.statePath), this.readState(this.pendingPath)]);
+      await Promise.all(states.map(async (state) => state && await survivingRoutes(state.routes.filter((route) => route.instanceId !== instanceId), proposed,
+        "A selected proxy route ID is already owned by another instance.")));
     }));
   }
 
@@ -298,10 +349,12 @@ export class CaddyProxyController {
     if (!routes.length) return;
     await withRoutingLock(this.stateDir, async () => await withFileLock(this.lockPath, async () => {
       if (!await this.available()) throw new ProxyError("DEVFN_PROXY_UNAVAILABLE", "Caddy is required for this profile but is unavailable.");
+      await this.settleMarkedJournal();
       const committed = await this.readState(this.statePath);
       const pending = await this.readState(this.pendingPath);
-      const siblings = (pending ?? committed)?.routes.filter((route) => route.instanceId !== instanceId) ?? [];
-      const candidateRoutes = [...siblings, ...routes.map((route) => ({ ...route, updatedAt: "preflight" }))];
+      const { kept, selected } = await survivingRoutes((pending ?? committed)?.routes.filter((route) => route.instanceId !== instanceId) ?? [],
+        routes.map((route) => ({ ...route, updatedAt: "preflight" })), "A selected proxy route ID is already owned by another instance.");
+      const candidateRoutes = [...kept, ...selected];
       // Render exactly as activation does: activated siblings use their
       // private certificate snapshots, not sources that may since be gone.
       const config = this.renderState({ version: 1, routes: candidateRoutes }, await ipv6LoopbackAvailable());
@@ -473,12 +526,9 @@ export class CaddyProxyController {
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
     await withRoutingLock(this.stateDir, async () => await withFileLock(this.lockPath, async () => {
       const state = await this.read();
-      if (snapshot.committed.some((route) => state.routes.some((saved) => saved.id === route.id && saved.instanceId !== instanceId))) {
-        throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A restored route ID is now owned by another instance.");
-      }
-      const siblings = state.routes.filter((route) => route.instanceId !== instanceId);
-      const restored = [...siblings, ...snapshot.committed.map((route) => ({ ...route }))];
-      renderCaddyfile(restored);
+      const { kept, selected } = await survivingRoutes(state.routes.filter((route) => route.instanceId !== instanceId),
+        snapshot.committed.map((route) => ({ ...route })), "A restored route ID is now owned by another instance.");
+      const restored = [...kept, ...selected];
       for (const [digest, material] of Object.entries(snapshot.certificates)) {
         if (restored.some((route) => route.certificateDigest === digest)) await this.writeCertificateSnapshot(digest, material.certificate, material.key);
       }
@@ -500,18 +550,25 @@ export class CaddyProxyController {
   private async read(): Promise<ProxyState> {
     const pending = await this.readState(this.pendingPath);
     if (pending) {
+      // An activation marked before its reload began has an uncertain
+      // outcome, and may already have failed for its caller: it is rolled
+      // back, never replayed.
+      if (await this.marked()) return await this.rollBack();
       const previous = await this.readState(this.statePath);
       try {
-        await this.apply(pending, true, previous?.routes ?? []);
-        return pending;
+        // Without dead service routes the recovered state is not the
+        // journal, which stays as evidence of what Caddy may serve until
+        // Caddy confirms the recovered state.
+        const live = await withoutExitedServices(pending.routes);
+        const next = live.length === pending.routes.length ? pending : { version: 1 as const, routes: live };
+        await this.apply(next, true, previous?.routes ?? [], { commitDirectly: next !== pending });
+        return next;
       } catch (error) {
         if (!(error instanceof DomainError)) throw error;
         // A crashed activation must not hold every other owner hostage when
         // its DNS or certificate has since become invalid. Restore the last
         // committed configuration before accepting further updates.
-        const committed = previous ?? { version: 1, routes: [] };
-        await this.apply(committed, true, committed.routes, true);
-        return committed;
+        return await this.rollBack();
       }
     }
     const committed = await this.readState(this.statePath) ?? { version: 1, routes: [] };
@@ -519,7 +576,75 @@ export class CaddyProxyController {
     return committed;
   }
 
-  private async apply(next: ProxyState, recovering = false, previous: readonly ProxyRoute[] = [], rejectPending = false): Promise<void> {
+  /**
+   * Whether the journal is marked uncertain. Only a marker path that does not
+   * exist leaves it unmarked: an unreadable marker, or a link at its path
+   * even if dangling, may mark an activation that already failed.
+   */
+  private async marked(): Promise<boolean> {
+    return await lstat(this.uncertainPath).then(() => true, (error: NodeJS.ErrnoException) => error.code !== "ENOENT");
+  }
+
+  /**
+   * A route preflight checks the state the next routing command starts from.
+   * That command rolls a marked journal back, never replays it, so the
+   * preflight settles it the same way first, and fails as that command would
+   * while Caddy cannot reload the committed routes.
+   */
+  private async settleMarkedJournal(): Promise<void> {
+    if (await this.readState(this.pendingPath) && await this.marked()) await this.rollBack();
+  }
+
+  /**
+   * Reload the committed route state, without routes of services verified
+   * gone, through the same apply path, and discard the journal it replaces.
+   * Only its success confirms which routes Caddy serves: the reloaded routes
+   * are then committed. A failure keeps the journal, as possibly live, and
+   * the committed state unchanged.
+   */
+  private async rollBack(): Promise<ProxyState> {
+    const committed = await this.readState(this.statePath) ?? { version: 1 as const, routes: [] };
+    const live = await withoutExitedServices(committed.routes);
+    const next = live.length === committed.routes.length ? committed : { version: 1 as const, routes: live };
+    await this.apply(next, true, committed.routes, { rollback: true, commitDirectly: next !== committed });
+    return next;
+  }
+
+  /**
+   * A failed reload, including a timeout, does not prove Caddy kept its
+   * previous configuration: it may already serve the candidate. The journal
+   * stays, marked uncertain before that reload began, so every reader of
+   * pending route state still counts its routes as possibly live, until a
+   * reload of the committed state confirms what Caddy serves. A rejected
+   * configuration therefore blocks other owners only while Caddy cannot
+   * reload the committed one.
+   */
+  private async settleUncertainReload(failure: ProxyError, rollBack: boolean): Promise<never> {
+    if (!rollBack) throw failure;
+    try { await this.rollBack(); }
+    catch (error) {
+      throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", `${failure.message} Caddy may already serve its routes, and reloading the committed routes also failed, so the activation journal is kept as possibly live.`,
+        { ...failure.details, rollback: error instanceof Error ? error.message : String(error) });
+    }
+    throw failure;
+  }
+
+  private async writeRouteState(file: string, state: ProxyState): Promise<void> {
+    const temp = `${file}.${process.pid}.tmp`;
+    await writeFile(temp, `${JSON.stringify(state, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    await rename(temp, file);
+  }
+
+  /**
+   * Validate, activate and commit route state. A recovery (`recovering`)
+   * applies the existing journal rather than writing one. A `rollback` is
+   * never itself rolled back and discards the journal rather than committing
+   * it. `commitDirectly` commits `next`, which the journal does not hold,
+   * after Caddy confirms it; until then the journal stays.
+   */
+  private async apply(next: ProxyState, recovering = false, previous: readonly ProxyRoute[] = [],
+    { rollback = false, commitDirectly = false }: { rollback?: boolean; commitDirectly?: boolean } = {}): Promise<void> {
+    validateRouteState(next.routes);
     const changed = next.routes.filter((route) => {
       const saved = previous.find((item) => item.id === route.id);
       return !saved || JSON.stringify({ ...saved, updatedAt: undefined }) !== JSON.stringify({ ...route, updatedAt: undefined });
@@ -582,17 +707,34 @@ export class CaddyProxyController {
         throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A non-DevFn Caddy admin endpoint is already running; refusing to replace its configuration.");
       }
     }
+    // Caddy may serve the candidate once its reload or start begins, and a
+    // failure reported then must not depend on a later write succeeding.
+    // The journal is therefore marked uncertain before it is published or
+    // reloaded, so an interrupted activation is rolled back too; only an
+    // unmarked journal, which no reload of this release started, is replayed.
+    try { await writeFile(this.uncertainPath, "", { encoding: "utf8", mode: 0o600 }); }
+    catch (error) {
+      await rm(candidate, { force: true });
+      throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to mark the route activation journal before reloading Caddy.", { cause: error instanceof Error ? error.message : String(error) });
+    }
+    // An activation that Caddy never served discards its journal, and only
+    // then its marker, which must not outlive it to roll back a later journal.
+    const discardJournal = async (): Promise<void> => {
+      if (recovering) return;
+      await rm(this.pendingPath, { force: true });
+      await rm(this.uncertainPath, { force: true });
+    };
     if (!recovering) {
-      const pendingTemp = `${this.pendingPath}.${process.pid}.tmp`;
-      await writeFile(pendingTemp, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-      await rename(pendingTemp, this.pendingPath);
+      try { await this.writeRouteState(this.pendingPath, next); }
+      catch (error) { await rm(candidate, { force: true }); await discardJournal(); throw error; }
     }
     if (owner) {
       try { await execFileAsync(caddy, ["reload", "--config", candidate, "--adapter", "caddyfile"], { timeout: 10_000 }); }
       catch (error) {
         await rm(candidate, { force: true });
-        if (!recovering) await rm(this.pendingPath, { force: true });
-        throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to reload the DevFn-owned Caddy proxy.", { cause: error instanceof Error ? error.message : String(error) });
+        // A rollback that fails is not rolled back again.
+        await this.settleUncertainReload(new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to reload the DevFn-owned Caddy proxy.",
+          { cause: error instanceof Error ? error.message : String(error) }), !rollback);
       }
     } else {
       // Caddy's admin endpoint answers before its sites bind their listeners.
@@ -613,7 +755,7 @@ export class CaddyProxyController {
       try { await new Promise<void>((resolve, reject) => { pingback.once("error", reject); pingback.listen(0, "127.0.0.1", resolve); }); }
       catch (error) {
         await rm(candidate, { force: true });
-        if (!recovering) await rm(this.pendingPath, { force: true });
+        await discardJournal();
         throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to prepare DevFn Caddy startup confirmation.", { cause: error instanceof Error ? error.message : String(error) });
       }
       const closePingback = async (): Promise<void> => {
@@ -671,8 +813,9 @@ export class CaddyProxyController {
           catch (error) {
             const stopped = await stopSpawnedChild();
             await rm(candidate, { force: true });
-            if (!recovering) await rm(this.pendingPath, { force: true });
-            if (!stopped) throw unstoppable();
+            // A Caddy that did not exit may serve the candidate.
+            if (!stopped) await this.settleUncertainReload(unstoppable(), false);
+            await discardJournal();
             throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to persist the DevFn Caddy owner record.", { cause: error instanceof Error ? error.message : String(error) });
           }
         }
@@ -694,8 +837,8 @@ export class CaddyProxyController {
           const stopped = await stopSpawnedChild();
           if (stopped) await rm(this.ownerPath, { force: true });
           await rm(candidate, { force: true });
-          if (!recovering) await rm(this.pendingPath, { force: true });
-          if (!stopped) throw unstoppable();
+          if (!stopped) await this.settleUncertainReload(unstoppable(), false);
+          await discardJournal();
           const privileged = proxyListenerPortsFor(next.routes).filter((port) => port < 1024);
           throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", `Unable to start the DevFn-owned Caddy proxy and confirm its listeners.${process.platform === "linux" && privileged.length
             ? ` Binding ports ${privileged.join(" and ")} needs net.ipv4.ip_unprivileged_port_start at or below ${Math.min(...privileged)} or cap_net_bind_service on the Caddy binary; DevFn changes neither.` : ""}`);
@@ -706,8 +849,10 @@ export class CaddyProxyController {
     await rename(candidate, this.configPath);
     // A rejected activation is a rollback, not a replay. Its pending journal
     // must never replace the last committed route state after Caddy recovers.
-    if (rejectPending) await rm(this.pendingPath, { force: true });
+    if (commitDirectly) await this.writeRouteState(this.statePath, next);
+    if (rollback || commitDirectly) await rm(this.pendingPath, { force: true });
     else await rename(this.pendingPath, this.statePath);
+    await rm(this.uncertainPath, { force: true });
     await this.pruneCertificateSnapshots(next.routes).catch(() => undefined);
   }
 
@@ -718,29 +863,40 @@ export class CaddyProxyController {
     }
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
     return await withRoutingLock(this.stateDir, async () => await withFileLock(this.lockPath, async () => {
+      if (routes.length === 0 && !await this.hasInstanceRoutes(selectedOwner)) { await this.pruneWithoutJournal(); return []; }
       const state = await this.read();
       const ids = new Set(routes.map((route) => route.id));
       if (ids.size !== routes.length) throw new ProxyError("DEVFN_PROXY_CONFIG_INVALID", "Duplicate route IDs in one update.");
-      if (routes.some((route) => state.routes.some((saved) => saved.id === route.id && saved.instanceId !== route.instanceId))) {
-        throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A route ID is already owned by another instance.");
-      }
+      const others = state.routes.filter((route) => route.instanceId !== selectedOwner);
+      if (routes.length === 0 && others.length === state.routes.length) return [];
       const now = new Date().toISOString();
-      const nextRoutes = [...state.routes.filter((route) => route.instanceId !== selectedOwner), ...routes.map(({ certificateDigest: _ignored, ...route }) => ({ ...route, updatedAt: now }))];
-      renderCaddyfile(nextRoutes);
-      if (routes.length === 0 && nextRoutes.length === state.routes.length) return [];
+      const fresh = routes.map(({ certificateDigest: _ignored, ...route }) => ({ ...route, updatedAt: now }));
+      // A route of a service verified gone owns no ID or hostname, and a
+      // selected one is not activated again.
+      const { kept, selected } = await survivingRoutes(others, fresh, "A route ID is already owned by another instance.");
+      const nextRoutes = [...kept, ...selected];
       // Every explicitly selected route is activated again. Only routes from
       // other instances are exempt from fresh DNS and certificate checks.
-      await this.apply({ version: 1, routes: nextRoutes }, false, state.routes.filter((route) => route.instanceId !== selectedOwner));
-      return nextRoutes.filter((route) => ids.has(route.id));
+      await this.apply({ version: 1, routes: nextRoutes }, false, kept);
+      return selected;
     }, { timeoutMs: PROXY_LOCK_TIMEOUT_MS }));
   }
 
+  /**
+   * An owner that neither committed nor pending route state names changes no
+   * routes: it returns without recovering another owner's journal or touching
+   * Caddy, as an empty upsert does, so a route-less lifecycle never depends
+   * on Caddy. Every call that changes routes, and routes(), first recovers or
+   * rolls back a pending journal, and fails while Caddy cannot confirm it.
+   */
   public async removeInstance(instanceId: string): Promise<void> {
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
     await withRoutingLock(this.stateDir, async () => await withFileLock(this.lockPath, async () => {
+      if (!await this.hasInstanceRoutes(instanceId)) { await this.pruneWithoutJournal(); return; }
       const state = await this.read();
-      const routes = state.routes.filter((route) => route.instanceId !== instanceId);
-      if (routes.length !== state.routes.length) await this.apply({ version: 1, routes }, false, state.routes);
+      const remaining = state.routes.filter((route) => route.instanceId !== instanceId);
+      if (remaining.length === state.routes.length) return;
+      await this.apply({ version: 1, routes: await withoutExitedServices(remaining) }, false, state.routes);
     }, { timeoutMs: PROXY_LOCK_TIMEOUT_MS }));
   }
 
