@@ -47,6 +47,9 @@ const canonicalBirthSignatures: Record<string, (text: string) => boolean> = {
       utcInstant(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6])) !== undefined;
   },
 };
+// Node's process APIs take a 32-bit PID and probe a group as the negated PID,
+// so a service PID beyond int32 can never be judged and would keep its route forever.
+const MAX_SERVICE_PID = 2 ** 31 - 1;
 const canonicalBirthSignature = (signature: string): boolean => {
   const format = signature.includes(":") ? signature.slice(0, signature.indexOf(":")) : "";
   return !Object.hasOwn(canonicalBirthSignatures, format) || canonicalBirthSignatures[format](signature.slice(format.length + 1));
@@ -90,7 +93,7 @@ export function parsePersistedProxyRoutes(value: unknown): PersistedProxyRoute[]
     }
     if (route.certificateDigest !== undefined && (typeof route.certificateDigest !== "string" || !/^[a-f0-9]{64}$/.test(route.certificateDigest))) throw new Error("Invalid certificate digest.");
     const service = route.serviceProcess as { pid?: unknown; birthSignature?: unknown } | undefined;
-    if (service !== undefined && (!service || typeof service !== "object" || !Number.isSafeInteger(service.pid) || (service.pid as number) <= 0 ||
+    if (service !== undefined && (!service || typeof service !== "object" || !Number.isInteger(service.pid) || (service.pid as number) < 1 || (service.pid as number) > MAX_SERVICE_PID ||
       !nonempty(service.birthSignature) || !canonicalBirthSignature(service.birthSignature))) throw new Error("Invalid route service process.");
     const hostname = route.hostname.toLowerCase();
     const host = hosts.get(hostname);

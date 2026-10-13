@@ -337,6 +337,51 @@ describe("Caddy route rendering", () => {
     });
   });
 
+  // Node's process APIs take a 32-bit PID and signal a group as its negation,
+  // so only these PIDs name a process whose group DevFn can judge.
+  const servicePids = { valid: [1, 2 ** 31 - 1], invalid: [0, -1, 1.5, 2 ** 31, 2 ** 31 + 1, 2 ** 40, Number.MAX_SAFE_INTEGER] };
+  const pidRoute = (pid: number, id = "service", instanceId = id, hostname = `${id}.localhost`) =>
+    ({ id, instanceId, hostname, targetHost: "127.0.0.1" as const, targetPort: 4102, tls: "off" as const, updatedAt: "now", serviceProcess: { pid, birthSignature: "linux:1" } });
+
+  it("reads a service PID only in the range DevFn's process APIs can query", () => {
+    for (const pid of servicePids.valid) expect(parsePersistedProxyRoutes({ version: 1, routes: [pidRoute(pid)] })).toHaveLength(1);
+    for (const pid of servicePids.invalid) expect(() => parsePersistedProxyRoutes({ version: 1, routes: [pidRoute(pid)] }), String(pid)).toThrow("Invalid route service process.");
+  });
+
+  it("refuses a service PID out of that range in updates, restores, both preflights and route state, instead of keeping a phantom owner", async () => {
+    const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-service-pid-");
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const invalid = { code: "DEVFN_PROXY_CONFIG_INVALID" };
+    try {
+      const controller = new CaddyProxyController(stateDir);
+      await controller.upsert([{ id: "sibling", instanceId: "sibling", hostname: "sibling.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" }]);
+      const committed = await readFile(statePath, "utf8");
+      // The activation preflight first probes the executable; nothing else may reach Caddy.
+      const changes = async () => (await caddyCalls()).filter((call) => call !== "version");
+      const calls = (await changes()).length;
+      for (const pid of servicePids.invalid) {
+        const { updatedAt: _now, ...route } = pidRoute(pid);
+        await expect(controller.upsert([route]), String(pid)).rejects.toMatchObject(invalid);
+        await expect(controller.restoreInstanceRoutes("service", { committed: [pidRoute(pid)], certificates: {} }), String(pid)).rejects.toMatchObject(invalid);
+        await expect(controller.assertRouteOwnershipAvailable([route], "service"), String(pid)).rejects.toMatchObject(invalid);
+        await expect(withCaddyAdminPort(() => controller.assertActivationReady([route], "service")), String(pid)).rejects.toMatchObject(invalid);
+      }
+      expect(await changes()).toHaveLength(calls);
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      await expect(access(path.join(stateDir, "proxy-routes.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      // Recorded state naming such a PID is refused, not kept as an unjudgeable owner of its ID and hostname.
+      const replacement = { id: "relay:callback", instanceId: "relay-new", hostname: "auth.localhost", targetHost: "127.0.0.1" as const, targetPort: 4103, tls: "off" as const };
+      for (const pid of [2 ** 31 + 1, 2 ** 40, Number.MAX_SAFE_INTEGER]) {
+        const state = JSON.stringify({ version: 1, routes: [pidRoute(pid, "relay:callback", "relay-old", "auth.localhost")] });
+        await writeFile(statePath, state);
+        await expect(controller.assertRouteOwnershipAvailable([replacement], "relay-new"), String(pid)).rejects.toMatchObject(invalid);
+        await expect(controller.upsert([replacement]), String(pid)).rejects.toMatchObject(invalid);
+        expect(await readFile(statePath, "utf8")).toBe(state);
+      }
+      expect(await changes()).toHaveLength(calls);
+    } finally { await cleanup(); }
+  });
+
   it("refuses route state recording this live process in a form its producer never renders, instead of dropping its route as a reused PID", async () => {
     const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-signature-live-");
     const statePath = path.join(stateDir, "proxy-routes.json");
