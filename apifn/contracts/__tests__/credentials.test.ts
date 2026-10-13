@@ -236,9 +236,20 @@ describe("name/value indirection", () => {
     ["fieldName/fieldValue", `{"fieldName":"password","fieldValue":"${NAME_SEED}"}`],
     ["name/default", `{"name":"api_key","in":"query","default":"${NAME_SEED}"}`],
     ["name/example", `{"name":"api_key","in":"query","example":"${NAME_SEED}"}`],
+    // Every value word takes the prefix.
+    ["headerName/headerContent", `{"headerName":"X-Api-Key","headerContent":"${NAME_SEED}"}`],
+    ["paramName/paramDefault", `{"paramName":"api_key","paramDefault":"${NAME_SEED}"}`],
+    ["name/field_example", `{"name":"password","field_example":"${NAME_SEED}"}`],
+    ["name/parameter-data", `{"name":"password","parameter-data":"${NAME_SEED}"}`],
+    ["paramName/paramExamples", `{"paramName":"api_key","paramExamples":["${NAME_SEED}"]}`],
   ])("value-field vocabulary mirrors the name fields: %s", (_name, text) => {
     expect(containsCredentialValue(text)).toBe(true);
     expect(redactCredentialValues(text)).not.toContain(NAME_SEED);
+  });
+
+  it.each([`{"name":"password","paramDescription":"req-42"}`, `{"headerName":"X-Api-Key","headerNote":"req-42"}`])("keeps a prefixed field that is not a value field: %s", (text) => {
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
   });
 
   // When the structure cannot be trusted, the whole text is one container.
@@ -550,6 +561,20 @@ describe("name/value names read like structured names", () => {
     ["a JS Unicode escape in a list literal", `[{name: 'API\\u00a0key', value: '${NAME_SEED}'}]`],
   ])("reads a name joined by %s", (_form, text) => expectSeedRemovedEverywhere(text, NAME_SEED));
 
+  // A raw line separator and its escape read alike: only \r and \n end a quoted name's line.
+  it.each(["\u2028", "\u2029"].flatMap((separator) => NAME_SYNTAXES.flatMap(([syntax, render]): Array<[string, string]> => [
+    [`a raw U+${separator.charCodeAt(0).toString(16)} in ${syntax}`, render(`API${separator}key`, NAME_SEED)],
+    [`an escaped U+${separator.charCodeAt(0).toString(16)} in ${syntax}`, render(`API\\u${separator.charCodeAt(0).toString(16)}key`, NAME_SEED)],
+  ])))("reads a name joined by %s", (_form, text) => expectSeedRemovedEverywhere(text, NAME_SEED));
+
+  it.each(NAME_SYNTAXES)("keeps an ordinary name joined by a line separator in %s", (_syntax, render) => {
+    for (const name of ["request\u2028id", "request\\u2029id"]) {
+      const text = render(name, "req-42");
+      expect(containsCredentialValue(text)).toBe(false);
+      expect(redactCredentialValues(text)).toBe(text);
+    }
+  });
+
   it("keeps an ordinary name joined by an escape", () => {
     const text = JSON.stringify({ name: "request\tid", value: "req-42" });
     expect(containsCredentialValue(text)).toBe(false);
@@ -572,8 +597,32 @@ const SEPARATOR_NAME_MATRIX = ["header", "key", "name", "param"].flatMap((field)
   SEPARATOR_NAMES.map((name): [string, string] => [`${field}: ${JSON.stringify(name)} then the value`, `${field}: ${JSON.stringify(name)} ${NAME_SEED}`])
 );
 
+// Outside a container a comma or closer after the name does not end its field: no value field can hold the value.
+const TOP_LEVEL_SEPARATOR_MATRIX = ["header:", "key:", "name:", "param:", "- name:"].flatMap((field) =>
+  ["X-Api-Key:", "password:", "password="].flatMap((name) =>
+    [", ", ";", ") ", "] "].map((delimiter): [string, string] => [`${field} ${JSON.stringify(name)}${delimiter}then the value`, `${field} ${JSON.stringify(name)}${delimiter}${NAME_SEED}`])
+  )
+);
+
 describe("names that end in their separator", () => {
   it.each(SEPARATOR_NAME_MATRIX)("%s", (_form, text) => expectSeedRemovedEverywhere(text, NAME_SEED));
+
+  it.each(TOP_LEVEL_SEPARATOR_MATRIX)("at top level, %s", (_form, text) => expectSeedRemovedEverywhere(text, NAME_SEED));
+
+  it.each<[string, string]>([
+    [`Send header: "X-Api-Key:", ${NAME_SEED}`, 'Send header: "X-Api-Key:"[REDACTED]'],
+    [`(name: "X-Api-Key:") ${NAME_SEED}`, '(name: "X-Api-Key:"[REDACTED]'],
+    [`header: "X-Api-Key:"\n  ${NAME_SEED}`, 'header: "X-Api-Key:"\n  [REDACTED]'],
+    [`{"name":"Authorization:","value":"Bearer ${NAME_SEED}"}`, '{"name":"Authorization:","value":"Bearer [REDACTED]"}'],
+  ])("redacts %j at the field the name ends", (text, expected) => {
+    expect(redactCredentialValues(text)).toBe(expected);
+  });
+
+  // Inside a container a comma ends the field; a sibling that is not a value field keeps its value, as in structured data.
+  it.each([`header: "X-Request-Id:", abc`, `{header: "X-Api-Key:", note: abc}`, `<h name="X-Api-Key:" note="abc"/>`])("keeps %j", (text) => {
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+  });
 
   it.each(NAME_SYNTAXES)("reads the value field after a name ending in a separator and a space in %s", (_syntax, render) =>
     expectSeedRemovedEverywhere(render("X-Api-Key: ", NAME_SEED), NAME_SEED)
@@ -581,7 +630,8 @@ describe("names that end in their separator", () => {
 
   it.each<[string, string]>([
     [`header: "X-Api-Key:" ${NAME_SEED}`, 'header: "X-Api-Key:" [REDACTED]'],
-    [`key: "password=" ${NAME_SEED}; x=1`, 'key: "password=" [REDACTED]; x=1'],
+    // The name's own `=` does not make the field a setting: `;` does not end its value.
+    [`key: "password=" ${NAME_SEED}; x=1`, 'key: "password=" [REDACTED]'],
     [`Use header: "Authorization:" Bearer ${NAME_SEED}`, 'Use header: "Authorization:" Bearer [REDACTED]'],
     [`{"name":"X-Api-Key:","value":"${NAME_SEED}"}`, '{"name":"X-Api-Key:","value":"[REDACTED]"}'],
     [`{"name":"X-Api-Key:" , "data":"${NAME_SEED}"}`, '{"name":"X-Api-Key:" , "data":"[REDACTED]"}'],
@@ -1043,6 +1093,8 @@ const LONG_TEXTS: Array<[string, (size: number) => string]> = [
   // Names ending in their separator, and names holding quotes of another type or a deeper escape level.
   ["names ending in a separator then text", run('header: "X-Api-Key:" a ')],
   ["names ending in a separator in containers", run('{"name":"X-Api-Key:","value":"a"},')],
+  ["names ending in a separator then a comma at top level", run('header: "X-Api-Key:", x ')],
+  ["names ending in a separator then closers at top level", run('name: "password:"] x ) ')],
   ["names with many inner quotes", (n) => `{"name":"${repeat("a'", n)}key","value":"a"}`],
   ["names with many deeper-escaped quotes", (n) => `{\\"name\\":\\"${repeat('a\\\\\\"', n)}key\\",\\"value\\":\\"a\\"}`],
   ["unterminated names with inner quotes", run("name:\"a'b name:'a\"b name:`a ")],

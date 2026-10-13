@@ -1301,8 +1301,23 @@ describe("credential name/value pairs in literals", () => {
     expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual([`/components/schemas/ProjectInput/properties/probe/${keyword}`]);
   });
 
+  it.each<[string, Record<string, unknown>]>([
+    ["headerContent", { headerName: "X-Api-Key", headerContent: PAIR_SEED }],
+    ["paramDefault", { paramName: "api_key", paramDefault: PAIR_SEED }],
+    ["field_example", { name: "password", field_example: PAIR_SEED }],
+    ["parameter-data", { name: "password", "parameter-data": PAIR_SEED }],
+    ["paramExamples", { paramName: "api_key", paramExamples: [PAIR_SEED] }],
+  ])("drops the literal of a prefixed value field: %s", (_field, pair) => {
+    const result = build((nextSpec) => {
+      inputSchema(nextSpec).properties.probe = { type: "object", default: pair };
+    });
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(PAIR_SEED);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual(["/components/schemas/ProjectInput/properties/probe/default"]);
+  });
+
   it("keeps an ordinary name/value pair and a placeholder value", () => {
-    const probe = { type: "object", default: { headers: [{ name: "X-Request-Id", value: "req-42" }, { name: "X-Api-Key", value: "<token>" }] } };
+    const probe = { type: "object", default: { headers: [{ name: "X-Request-Id", value: "req-42" }, { name: "X-Api-Key", value: "<token>" }, { name: "password", paramDescription: "req-42" }, { headerName: "X-Api-Key", headerNote: "req-42" }] } };
     const result = build((nextSpec) => {
       inputSchema(nextSpec).properties.probe = probe;
     });

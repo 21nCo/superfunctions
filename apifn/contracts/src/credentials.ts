@@ -468,17 +468,15 @@ const NAME_FIELD = new RegExp(
     `(?:(${QUOTE_DELIMITER})|(${KEY_WORD}(?:[ \\t]+${KEY_WORD})?)(?![A-Za-z0-9_.%-]))`,
   "gi"
 );
-/** Line breaks other than `\r` and `\n`, which a quoted name does not span either. */
-const OTHER_LINE_BREAKS = /[\u2028\u2029]/;
-
 /**
  * A quoted name whose opening delimiter starts at `start`, read as the
  * structured rule reads a name: up to its real closing delimiter (the same
  * quote at the same escape level, as {@link quotedEnd} and
  * {@link escapedQuotedEnd} read strings), so quotes of another type and
  * deeper-escaped quotes are part of it (`user's password`, `the \"API key\"`);
- * then decoded and trimmed. Null when the line ends first. Returns where the
- * closing delimiter starts and ends.
+ * then decoded and trimmed, so a raw character and its escape read alike.
+ * Null when the line ends first. Returns where the closing delimiter starts
+ * and ends.
  */
 function quotedName(scan: TextScan, start: number): { name: string; close: number; end: number } | null {
   const { text } = scan;
@@ -500,11 +498,10 @@ function quotedName(scan: TextScan, start: number): { name: string; close: numbe
     if (quoted.status === "closed") found = { from: start + quoted.open, close: quoted.end - quoted.close, end: quoted.end };
   }
   if (!found) return null;
-  const content = text.slice(found.from, found.close);
-  return OTHER_LINE_BREAKS.test(content) ? null : { name: decodeNameEscapes(content).trim(), close: found.close, end: found.end };
+  return { name: decodeNameEscapes(text.slice(found.from, found.close)).trim(), close: found.close, end: found.end };
 }
 /** Fields that hold the value of the header, parameter or setting their container names; mirrors {@link NAME_FIELD}. */
-const VALUE_FIELD = /^(?:(?:(?:header|field|param(?:eter)?)[_-]?)?(?:values?|val)|content|data|default|examples?)$/i;
+const VALUE_FIELD = /^(?:(?:header|field|param(?:eter)?)[_-]?)?(?:values?|val|content|data|default|examples?)$/i;
 /** The member names {@link NAME_FIELD} matches in text, for structured data. */
 const NAME_FIELD_KEY = /^(?:(?:(?:header|field|param(?:eter)?)[_-]?)?name|key|header|field|param(?:eter)?)$/i;
 
@@ -650,14 +647,16 @@ function afterSpaces(text: string, index: number): number {
 const NEXT_XML_ATTRIBUTE = /[A-Za-z_:][\w.:-]*\s*=/y;
 
 /**
- * Whether a field ends at `index`, right after a quoted name: a member
- * separator or closer (`,` `;` `}` `]` `)` `>` `/>`), the closing delimiter of
- * a string holding the name, the next attribute of an XML tag, or the end of
- * the text. Nothing there can be the name's value.
+ * Whether a field ends at `index`, right after a quoted name, so nothing there
+ * can be the name's value: the closing delimiter of a string holding the
+ * name, the next attribute of an XML tag, the end of the text, or a comma or
+ * closer where {@link plainEnd} ends a field, which is only for the container
+ * holding it. At top level a comma or closer is part of the value.
  */
 function endsNameField(scan: TextScan, index: number): boolean {
   const { text } = scan;
-  if (index >= text.length || ",;}])>".includes(text[index]) || text.startsWith("/>", index)) return true;
+  if (index >= text.length) return true;
+  if (",}])>/".includes(text[index]) && plainEnd(scan, index, keyValueContext(scan, index, index, ":")) === index) return true;
   const { containers, stringCloses } = scan.structure();
   if (stringCloses[index] === index) return true;
   NEXT_XML_ATTRIBUTE.lastIndex = index;
@@ -690,13 +689,16 @@ function redactKeyValues(text: string, identifier: boolean): string {
     const nameEnd = named?.nameCloses.get(afterSpaces(text, start));
     if (nameEnd !== undefined) {
       // A quoted credential name that ends in its separator (`"X-Api-Key:"`): what follows its closing quote on the
-      // line is its value. When a field ends right there, the container's value field holds the value instead.
+      // line is its value. When a field ends right there (an empty read at the comma or closer of its container), the
+      // container's value field holds the value instead. The name's own separator is not the field's, so `;` and `&`
+      // do not end the value.
       start = afterSpaces(text, nameEnd);
       if (endsNameField(scan, start)) continue;
       keyStart = start;
     }
     const header = indirect ? named!.headers.get(container)! : isHeaderKey(lastWord);
-    const { begin = start, end, value, quote, closing = quote } = readValue(scan, start, match.index, header, () => keyValueContext(scan, keyStart, start, match[3]));
+    const separator = nameEnd === undefined ? match[3] : ":";
+    const { begin = start, end, value, quote, closing = quote } = readValue(scan, start, match.index, header, () => keyValueContext(scan, keyStart, start, separator));
     if (end <= start) continue;
     pattern.lastIndex = end;
     if (begin > start) {
