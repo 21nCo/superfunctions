@@ -962,6 +962,11 @@ export function redactWhole(value: string): string {
   return containsCredentialValue(value) ? REDACTED : value;
 }
 
+/** An author string quoted for a report: unchanged, or `"[REDACTED]"` whole when it holds a credential. */
+export function quote(value: unknown): string {
+  return `"${redactWhole(String(value))}"`;
+}
+
 /**
  * True when an identifier or map key (an operationId, scope, package or
  * attribute name) holds a credential. The rules are those of
@@ -1075,5 +1080,50 @@ export function sanitizePointer(pointer: string): string {
 export function sanitizeReport(pointer: string, message: string): { pointer: string; message: string } {
   const safePointer = sanitizePointer(pointer);
   const quoted = pointer === "" ? message : message.split(pointer).join(safePointer);
-  return { pointer: safePointer, message: redactCredentialValues(quoted) };
+  return { pointer: safePointer, message: redactQuotedSegments(quoted) };
+}
+
+/**
+ * The backstop behind {@link quote}, so a call site that quoted author text
+ * without it cannot publish the part of a value a boundary rule reads past.
+ * The first credential is found in the whole message or, judged on its own
+ * content, in a double-quoted segment (one opened after a space or bracket and
+ * closed before one or before punctuation). From the opening quote before it
+ * through the message's last quote becomes `"[REDACTED]"`: an author string
+ * holding quotes cannot end before the last one. Text outside is redacted as text.
+ */
+function redactQuotedSegments(message: string): string {
+  const redacted = redactCredentialValues(message);
+  let open = firstCredentialSegment(message);
+  let end = -1;
+  if (redacted !== message) {
+    // Every change lies in [start, end): the first differing character through the common suffix.
+    let start = 0;
+    while (message[start] === redacted[start]) start += 1;
+    let suffix = 0;
+    while (suffix < Math.min(message.length, redacted.length) - start && message[message.length - 1 - suffix] === redacted[redacted.length - 1 - suffix]) suffix += 1;
+    end = message.length - suffix;
+    const before = message.lastIndexOf('"', start);
+    if (before !== -1 && (open === -1 || before < open)) open = before;
+  }
+  if (open === -1) return redacted;
+  const cut = Math.max(end, message.lastIndexOf('"') + 1);
+  return `${redactCredentialValues(message.slice(0, open))}"${REDACTED}"${redactCredentialValues(message.slice(cut))}`;
+}
+
+const SEGMENT_OPEN = /(?:^|[\s([{,:=])"/g;
+const SEGMENT_CLOSE = /"(?=$|[\s.,;:)\]}])/g;
+
+/** The opening quote of the first double-quoted segment whose content holds a credential, or -1. Segments are disjoint, so this is linear. */
+function firstCredentialSegment(message: string): number {
+  SEGMENT_OPEN.lastIndex = 0;
+  for (let match = SEGMENT_OPEN.exec(message); match; match = SEGMENT_OPEN.exec(message)) {
+    const opening = match.index + match[0].length - 1;
+    SEGMENT_CLOSE.lastIndex = opening + 1;
+    const close = SEGMENT_CLOSE.exec(message);
+    if (!close) return -1;
+    if (containsCredentialValue(message.slice(opening + 1, close.index))) return opening;
+    SEGMENT_OPEN.lastIndex = close.index + 1;
+  }
+  return -1;
 }

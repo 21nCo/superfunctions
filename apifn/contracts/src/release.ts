@@ -1,5 +1,5 @@
 import { canonicalDigest, canonicalJson, compareCodeUnits, snapshotPlainData } from "./canonical.js";
-import { containsCredentialIdentifier, sanitizeReport } from "./credentials.js";
+import { containsCredentialIdentifier, quote, sanitizeReport } from "./credentials.js";
 import { API_ID_PATTERN, OPERATION_ID_PATTERN, POLICY_REF_PATTERN, TARGET_PATTERN, VERSION_PATTERN } from "./manifest.js";
 import {
   CATALOG_VERSION,
@@ -147,7 +147,7 @@ export function createReleaseDescriptor(input: CreateReleaseInput): CreateReleas
     const versionOk = check(pkg.version, `${pointer}/package/version`, RULES.packageVersion);
     const key = `${kind}:${target}`;
     if (seen.has(key)) {
-      fail(pointer, `Release already has a ${kind} artifact for target "${target}".`);
+      fail(pointer, `Release already has a ${kind} artifact for target ${quote(target)}.`);
       return;
     }
     seen.add(key);

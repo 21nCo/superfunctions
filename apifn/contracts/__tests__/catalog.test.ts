@@ -1249,6 +1249,31 @@ describe("literals of allOf groups holding credential fields", () => {
   }, SCALING_TIMEOUT);
 });
 
+// An unrecognized member could hold a default under another name, so it is judged like a literal (S2).
+const UNRECOGNIZED_SHAPES: Array<[shape: string, entries: Record<string, unknown>, at: string]> = [
+  ["password property + unrecognized object", { probe: { type: "object", properties: { pin: PASSWORD }, fallback: { pin: LITERAL_SEED } } }, "ProjectInput/properties/probe/fallback"],
+  ["$ref to a password component + unrecognized scalar", { probe: { ...PIN_REF, defaultValue: LITERAL_SEED } }, "ProjectInput/properties/probe/defaultValue"],
+  ["password items + unrecognized array", { probe: { type: "array", items: PASSWORD, sampleValue: [LITERAL_SEED] } }, "ProjectInput/properties/probe/sampleValue"],
+  ["allOf member beside a password member", { probe: { allOf: [PASSWORD, { sampleValue: LITERAL_SEED }] } }, "ProjectInput/properties/probe/allOf/1/sampleValue"],
+  ["component reached beside a password member", { probe: { allOf: [PIN_REF, { $ref: "#/components/schemas/Lit" }] }, Lit: { type: "string", fallback: LITERAL_SEED } }, "Lit/fallback"],
+];
+
+describe("unrecognized members of schemas holding credential fields", () => {
+  it.each(UNRECOGNIZED_SHAPES)("drops it: %s", (_shape, entries, at) => {
+    const result = build((nextSpec) => placeGroup(nextSpec, entries));
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(LITERAL_SEED);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual([`/components/schemas/${at}`]);
+  });
+
+  it("keeps an unrecognized member of an ordinary schema", () => {
+    const probe = { type: "object", properties: { size: { type: "string" } }, fallback: { size: "keepme" }, sampleValue: ["keepme"] };
+    const result = build((nextSpec) => placeGroup(nextSpec, { probe }));
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual(probe);
+  });
+});
+
 // Structured data follows the text name/value rule: a value field next to a name field naming a credential.
 const PAIR_SEED = "SEEDpair0081";
 const PAIRS: Array<[field: string, pair: Record<string, string>]> = [

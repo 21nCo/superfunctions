@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { redactCredentialValues, stripUrlCredentials } from "../src/credentials.js";
+import { redactCredentialValues, sanitizeReport, stripUrlCredentials } from "../src/credentials.js";
 import {
   buildOperationCatalog,
   containsCredentialIdentifier,
@@ -578,6 +578,107 @@ describe("detected credentials are absent from the catalog", () => {
     const { result, description, literal } = built(text);
     expect([description, literal]).toEqual([text, text]);
     expect(result.diagnostics).toEqual([]);
+  });
+});
+
+const REDACTED_TEXT = "[REDACTED]";
+// An author string quoted in a report is unchanged or [REDACTED] whole, whatever the boundary rules read (C14 with the C15 forms).
+const REPORT_SITES: Array<[site: string, run: (form: string) => { diagnostics: Array<{ pointer: string; message: string }> }, published: boolean]> = [
+  ["unknown manifest field (validateManifest)", (form) => validateManifest({ ...clone(fixture<Record<string, any>>("catalog/manifest.json")), [form]: 1 }), false],
+  ["unknown manifest field (buildOperationCatalog)", (form) => buildOperationCatalog(clone(fixture("catalog/openapi.json")), { ...clone(fixture<Record<string, any>>("catalog/manifest.json")), [form]: 1 }), false],
+  [
+    "unknown binding field",
+    (form) => {
+      const manifest = clone(fixture("catalog/manifest.json"));
+      manifest.operations[0][form] = true;
+      return buildOperationCatalog(clone(fixture("catalog/openapi.json")), manifest);
+    },
+    false,
+  ],
+  [
+    "schema member key",
+    (form) => {
+      const spec = clone(fixture("catalog/openapi.json"));
+      spec.components.schemas.ProjectInput.properties.probe = { type: "string", [form]: 1 };
+      return buildOperationCatalog(spec, clone(fixture("catalog/manifest.json")));
+    },
+    false,
+  ],
+  [
+    "credential-named server variable",
+    (form) => {
+      const spec = clone(fixture("catalog/openapi.json"));
+      spec.servers = [{ url: "https://api.example.test/{region}", variables: { region: { default: "eu" }, [form]: { default: "x", enum: ["x"] } } }];
+      return buildOperationCatalog(spec, clone(fixture("catalog/manifest.json")));
+    },
+    true,
+  ],
+  [
+    "discriminator mapping key",
+    (form) => {
+      const spec = clone(fixture("catalog/openapi.json"));
+      spec.components.schemas.ProjectInput.properties.probe = { type: "object", discriminator: { propertyName: "kind", mapping: { [form]: "#/components/schemas/Missing" } } };
+      return buildOperationCatalog(spec, clone(fixture("catalog/manifest.json")));
+    },
+    false,
+  ],
+  [
+    "schema $ref",
+    (form) => {
+      const spec = clone(fixture("catalog/openapi.json"));
+      spec.components.schemas.ProjectInput.properties.probe = { $ref: form };
+      spec.components.schemas.ProjectInput.properties.local = { $ref: `#/components/schemas/${form.replace(/~/g, "~0").replace(/\//g, "~1")}` };
+      return buildOperationCatalog(spec, clone(fixture("catalog/manifest.json")));
+    },
+    false,
+  ],
+  [
+    "api id",
+    (form) => {
+      const manifest = clone(fixture("catalog/manifest.json"));
+      manifest.api.id = form;
+      return buildOperationCatalog(clone(fixture("catalog/openapi.json")), manifest);
+    },
+    false,
+  ],
+];
+const REPORT_CELLS = REPORT_SITES.flatMap(([site, run, published]) => PARTIAL_FORMS.map(([form, text]) => ({ name: `${site}: ${form}`, run, published, text })));
+
+describe("reports quote author strings unchanged or redacted whole", () => {
+  it.each(REPORT_CELLS)("$name", ({ run, published, text }) => {
+    const result = run(text);
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+    for (const { pointer, message } of result.diagnostics) {
+      expect(pointer).not.toContain(ABSENT_SEED);
+      expect(message).not.toContain(ABSENT_SEED);
+    }
+    if (!published) expect(JSON.stringify(result)).not.toContain(ABSENT_SEED);
+  });
+
+  it.each(PARTIAL_FORMS)("the sanitizer redacts a quoted segment whole: %s", (_form, text) => {
+    const { message } = sanitizeReport("", `Unknown field "${text}" at /x; see the docs.`);
+    expect(message).not.toContain(ABSENT_SEED);
+    expect(message).toContain('"[REDACTED]"');
+    expect(message.endsWith(" at /x; see the docs.")).toBe(true);
+  });
+
+  it.each([
+    ["many ordinary segments", (count: number) => `Fields ${'"a" '.repeat(count)}"password: x" are unknown.`],
+    ["segments never closed", (count: number) => `Fields ${'"a"b '.repeat(count)}password: x`],
+  ])("judges %s in linear time", (_name, message) => {
+    const ratio = scalingRatio((count) => expect(sanitizeReport("", message(count)).message).toContain(REDACTED_TEXT), 25_000);
+    expect(ratio).toBeLessThan(LINEAR_RATIO);
+  }, SCALING_TIMEOUT);
+
+  it("keeps messages quoting ordinary keys", () => {
+    expect(validateManifest({ ...clone(fixture<Record<string, any>>("catalog/manifest.json")), extra: 1 }).diagnostics.map((diagnostic) => diagnostic.message)).toEqual([
+      'Unknown manifest field "extra"; allowed fields are manifestVersion, api, serialization, provenance, operations.',
+    ]);
+    const spec = clone(fixture("catalog/openapi.json"));
+    spec.components.schemas.ProjectInput.properties.probe = { $ref: "#/components/schemas/Missing" };
+    const messages = buildOperationCatalog(spec, clone(fixture("catalog/manifest.json"))).diagnostics.map((diagnostic) => diagnostic.message);
+    expect(messages).toContain('Reference "#/components/schemas/Missing" does not resolve to a value in the spec.');
+    expect(sanitizeReport("/a", 'Unknown field "X-Request-Id: req-42" at /a.')).toEqual({ pointer: "/a", message: 'Unknown field "X-Request-Id: req-42" at /a.' });
   });
 });
 

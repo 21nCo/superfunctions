@@ -1,4 +1,5 @@
 import { parseOpenAPI } from "@apifn/core";
+import { parse as parseYaml } from "yaml";
 import { canonicalDigest, canonicalJson, compareCodeUnits, MAX_JSON_DEPTH, snapshotPlainData } from "./canonical.js";
 import {
   containsCredentialIdentifier,
@@ -7,6 +8,7 @@ import {
   isCredentialKey,
   isCredentialPair,
   pointerSegment,
+  quote,
   REDACTED,
   redactWhole,
   removedServerUrlSpans,
@@ -49,8 +51,6 @@ const IGNORED_HEADERS = new Set(["accept", "content-type", "authorization"]);
 /** Request media types whose properties can carry an Encoding Object. */
 const FORM_MEDIA_TYPES = new Set(["application/x-www-form-urlencoded", "multipart/form-data"]);
 const RESPONSE_STATUS = /^(?:[1-5](?:\d\d|XX)|default)$/;
-/** Schema keywords holding literal instance data; dropped for credential fields. */
-const LITERAL_KEYWORDS = new Set(["default", "const", "enum"]);
 /** Keywords whose values are property names: checked like property names and copied verbatim, never redacted. */
 const NAME_KEYWORDS = new Set(["required", "dependentRequired"]);
 /** OpenAPI objects inside a schema; only their own `x-*` members are extensions. */
@@ -533,12 +533,12 @@ class CatalogBuilder {
     if (typeof ref !== "string") return "A $ref value must be a string.";
     const shown = showRef(ref);
     if (!ref.startsWith("#")) {
-      return `External reference "${shown}" is not supported; bundle external documents into the spec before building the catalog.`;
+      return `External reference ${quote(shown)} is not supported; bundle external documents into the spec before building the catalog.`;
     }
     const target = resolvePointer(this.doc, ref);
-    if (target === undefined) return `Reference "${shown}" does not resolve to a value in the spec.`;
+    if (target === undefined) return `Reference ${quote(shown)} does not resolve to a value in the spec.`;
     if (isRecord(target) || (expect === "schema" && typeof target === "boolean")) return null;
-    return `Reference "${shown}" resolves to ${describeValue(target)}, not ${expect === "schema" ? "a Schema Object or boolean" : "an object"}.`;
+    return `Reference ${quote(shown)} resolves to ${describeValue(target)}, not ${expect === "schema" ? "a Schema Object or boolean" : "an object"}.`;
   }
 
   private walkMap(value: unknown, pointer: string, walk: (entry: unknown, pointer: string) => void, skipExtensions = false): void {
@@ -669,7 +669,7 @@ class CatalogBuilder {
    * (a credential parameter or property, `format: password`, or any
    * subschema, applicator or component reached from one) literal values and
    * unrecognized members are dropped. Members holding credential-named keys
-   * are dropped everywhere. A literal is also dropped when the instance it
+   * are dropped everywhere. A literal or unrecognized member is also dropped when the instance it
    * describes could hold a credential field's value: when this schema, or
    * any schema for the same instance (`sameInstance`: an `allOf`, `anyOf` or
    * `oneOf` sibling, a `$ref` target, transitively), reaches one. Other
@@ -689,7 +689,7 @@ class CatalogBuilder {
     const taint = (): Taint => (secret ? 2 : instanceReaches() ? 1 : 0);
     const output: Record<string, JsonValue> = {};
     const drop = (key: string, childPointer: string, reason: string) =>
-      this.report("CREDENTIAL_REDACTED", childPointer, `Dropped "${key}" at ${childPointer} because ${reason}.`, { severity: "warning" });
+      this.report("CREDENTIAL_REDACTED", childPointer, `Dropped ${quote(key)} at ${childPointer} because ${reason}.`, { severity: "warning" });
     for (const [key, child] of Object.entries(value)) {
       const childPointer = `${pointer}/${pointerSegment(key)}`;
       if (key === "example" || key === "examples" || key.startsWith("x-")) continue;
@@ -756,8 +756,9 @@ class CatalogBuilder {
         continue; // Emitted as the exclusive bound.
       } else if (secret && !CREDENTIAL_FIELD_KEYWORDS.has(key)) {
         drop(key, childPointer, "it is literal or unrecognized data inside a credential field");
-      } else if (LITERAL_KEYWORDS.has(key) && instanceReaches()) {
-        drop(key, childPointer, "the schema, or a schema for the same instance, contains a credential field whose value the literal would carry");
+      } else if (!CREDENTIAL_FIELD_KEYWORDS.has(key) && instanceReaches()) {
+        // Literals and unrecognized members alike: an unrecognized member could hold a default under another name.
+        drop(key, childPointer, "the schema, or a schema for the same instance, contains a credential field whose value the literal or unrecognized member would carry");
       } else if (key === "enum" && Array.isArray(child) ? child.some(hasCredentialKey) : hasCredentialKey(child)) {
         // An enum lists values, so it is judged member by member: ["password", "otp"] lists two methods, not a pair.
         drop(key, childPointer, "it holds credential-named keys or a value named as a credential");
@@ -849,7 +850,7 @@ class CatalogBuilder {
     }
     const name = componentName(ref as string);
     if (name === null) {
-      this.report("UNRESOLVED_REF", pointer, `Schema reference "${showRef(ref as string)}" must target ${COMPONENT_SCHEMA_PREFIX}<name> so generated clients can share the type.`);
+      this.report("UNRESOLVED_REF", pointer, `Schema reference ${quote(showRef(ref as string))} must target ${COMPONENT_SCHEMA_PREFIX}<name> so generated clients can share the type.`);
       return null;
     }
     this.referComponent(name, taint);
@@ -883,7 +884,7 @@ class CatalogBuilder {
       const name = typeof target !== "string" ? null : target.startsWith("#") ? componentName(target) : target;
       if (name === null || !Object.hasOwn(this.schemaComponents, name)) {
         const shown = typeof target === "string" ? showRef(target) : String(target);
-        this.report("UNRESOLVED_REF", targetPointer, `Discriminator mapping "${redactWhole(key)}" targets "${shown}", which is not a schema in ${COMPONENT_SCHEMA_PREFIX}<name>.`);
+        this.report("UNRESOLVED_REF", targetPointer, `Discriminator mapping ${quote(key)} targets ${quote(shown)}, which is not a schema in ${COMPONENT_SCHEMA_PREFIX}<name>.`);
         continue;
       }
       this.referComponent(name, taint);
@@ -917,16 +918,16 @@ class CatalogBuilder {
       const encodingPointer = `${pointer}/encoding/${pointerSegment(name)}`;
       this.identifier(name, encodingPointer, "Encoding property name", operation);
       if (!isRecord(encoding)) {
-        this.report("INVALID_SPEC", encodingPointer, `Encoding of property "${name}" in operation "${operation}" must be an Encoding Object.`, { operation });
+        this.report("INVALID_SPEC", encodingPointer, `Encoding of property ${quote(name)} in operation ${quote(operation)} must be an Encoding Object.`, { operation });
         continue;
       }
       const style = this.member(encoding, "style", encodingPointer, STRING, operation) ?? "form";
       if (!PARAMETER_STYLES.query.includes(style)) {
-        this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/style`, `Property "${name}" of ${mediaType} in operation "${operation}" uses style "${style}"; supported styles are ${PARAMETER_STYLES.query.join(", ")}.`, { operation });
+        this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/style`, `Property ${quote(name)} of ${mediaType} in operation ${quote(operation)} uses style ${quote(style)}; supported styles are ${PARAMETER_STYLES.query.join(", ")}.`, { operation });
         continue;
       }
       if (encoding.headers !== undefined) {
-        this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/headers`, `Part headers of property "${name}" in operation "${operation}" are not described in the catalog; generated clients will not send them.`, { severity: "warning", operation });
+        this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/headers`, `Part headers of property ${quote(name)} in operation ${quote(operation)} are not described in the catalog; generated clients will not send them.`, { severity: "warning", operation });
       }
       setOwn(output, name, {
         contentType: this.text(own(encoding, "contentType"), `${encodingPointer}/contentType`),
@@ -941,7 +942,7 @@ class CatalogBuilder {
   contents(content: unknown, pointer: string, operation: string, what: string): CatalogContent[] {
     if (content === undefined) return [];
     if (!isRecord(content)) {
-      this.report("INVALID_SPEC", pointer, `${what} of operation "${operation}" needs an object of media types at ${pointer}, found ${describeValue(content)}.`, { operation });
+      this.report("INVALID_SPEC", pointer, `${what} of operation ${quote(operation)} needs an object of media types at ${pointer}, found ${describeValue(content)}.`, { operation });
       return [];
     }
     const byType = new Map<string, { rawType: string; content: CatalogContent }>();
@@ -956,7 +957,7 @@ class CatalogBuilder {
       const media = content[rawType];
       const mediaPointer = `${pointer}/${pointerSegment(rawType)}`;
       if (!isRecord(media)) {
-        this.report("INVALID_SPEC", mediaPointer, `${what} of operation "${operation}" describes ${rawType} with ${describeValue(media)} instead of a Media Type Object.`, { operation });
+        this.report("INVALID_SPEC", mediaPointer, `${what} of operation ${quote(operation)} describes ${redactWhole(rawType)} with ${describeValue(media)} instead of a Media Type Object.`, { operation });
         continue;
       }
       const entry: CatalogContent = { mediaType, schema: this.schema(own(media, "schema"), `${mediaPointer}/schema`), encoding: this.encoding(media, mediaPointer, mediaType, operation) };
@@ -967,7 +968,7 @@ class CatalogBuilder {
         this.report(
           "UNSUPPORTED_SERIALIZATION",
           mediaPointer,
-          `${what} of operation "${operation}" describes "${existing.rawType}" and "${rawType}" differently, but both are ${mediaType} to clients; keep one description per media type.`,
+          `${what} of operation ${quote(operation)} describes ${quote(existing.rawType)} and ${quote(rawType)} differently, but both are ${mediaType} to clients; keep one description per media type.`,
           { operation }
         );
       }
@@ -981,13 +982,13 @@ class CatalogBuilder {
         : "";
       const advice = listable.length > 0
         ? `add a media type the manifest lists (${allowed}) or add ${sortStrings(listable.map(normalizeMediaType)).join(", ")} to manifest serialization.mediaTypes`
-        : `the catalog cannot describe ${unsupported.join(", ")}, so the spec must also offer one of ${allowed}`;
+        : `the catalog cannot describe ${unsupported.map(redactWhole).join(", ")}, so the spec must also offer one of ${allowed}`;
       this.report(
         "UNSUPPORTED_SERIALIZATION",
         pointer,
         byType.size === 0
-          ? `${what} of operation "${operation}" only offers ${unsupported.join(", ")}${parameterized}; ${advice}.`
-          : `${what} of operation "${operation}" drops unsupported media types ${unsupported.join(", ")}${parameterized}; clients use ${allowed}.`,
+          ? `${what} of operation ${quote(operation)} only offers ${unsupported.map(redactWhole).join(", ")}${parameterized}; ${advice}.`
+          : `${what} of operation ${quote(operation)} drops unsupported media types ${unsupported.map(redactWhole).join(", ")}${parameterized}; clients use ${allowed}.`,
         { severity: byType.size === 0 ? "error" : "warning", operation }
       );
     }
@@ -1003,7 +1004,7 @@ class CatalogBuilder {
     for (const [list, pointer] of sources) {
       if (list === undefined) continue;
       if (!Array.isArray(list)) {
-        this.report("INVALID_SPEC", pointer, `Parameters at ${pointer} of operation "${id}" must be an array.`, { operation: id });
+        this.report("INVALID_SPEC", pointer, `Parameters at ${pointer} of operation ${quote(id)} must be an array.`, { operation: id });
         continue;
       }
       // Header names are case-insensitive: X-A and x-a are one parameter, and the operation level wins.
@@ -1013,13 +1014,13 @@ class CatalogBuilder {
         if (!resolved) return; // deref reported why.
         const { name, in: location } = resolved.value;
         if (typeof name !== "string" || name === "" || !PARAMETER_LOCATIONS.includes(location as CatalogParameter["in"])) {
-          this.report("INVALID_SPEC", resolved.pointer, `Parameter at ${resolved.pointer} of operation "${id}" needs a name and an "in" of ${PARAMETER_LOCATIONS.join(", ")}.`, { operation: id });
+          this.report("INVALID_SPEC", resolved.pointer, `Parameter at ${resolved.pointer} of operation ${quote(id)} needs a name and an "in" of ${PARAMETER_LOCATIONS.join(", ")}.`, { operation: id });
           return;
         }
         this.identifier(name, `${resolved.pointer}/name`, "Parameter name", id);
         const key = parameterKey(location as string, name);
         if (level.has(key)) {
-          this.report("INVALID_SPEC", `${pointer}/${index}`, `Parameter "${name}" in ${location} is declared twice at ${pointer} of operation "${id}"${location === "header" ? " (header names are case-insensitive)" : ""}.`, { operation: id });
+          this.report("INVALID_SPEC", `${pointer}/${index}`, `Parameter ${quote(name)} in ${location} is declared twice at ${pointer} of operation ${quote(id)}${location === "header" ? " (header names are case-insensitive)" : ""}.`, { operation: id });
           return;
         }
         level.add(key);
@@ -1033,7 +1034,7 @@ class CatalogBuilder {
       const location = value.in as CatalogParameter["in"];
       const name = value.name as string;
       if (location === "path" && !template.includes(name)) {
-        this.report("INVALID_SPEC", pointer, `Path parameter "${name}" of operation "${id}" is declared but does not appear in the path template ${entry.path}.`, { operation: id });
+        this.report("INVALID_SPEC", pointer, `Path parameter ${quote(name)} of operation ${quote(id)} is declared but does not appear in the path template ${redactWhole(entry.path)}.`, { operation: id });
         continue;
       }
       if (location === "header" && IGNORED_HEADERS.has(name.toLowerCase())) continue;
@@ -1043,8 +1044,8 @@ class CatalogBuilder {
           "UNSUPPORTED_SERIALIZATION",
           pointer,
           value.content !== undefined
-            ? `Parameter "${name}" of operation "${id}" uses content-based serialization; describe it with a schema instead.`
-            : `Parameter "${name}" of operation "${id}" uses style "${style}"; supported ${location} styles are ${PARAMETER_STYLES[location].join(", ")}.`,
+            ? `Parameter ${quote(name)} of operation ${quote(id)} uses content-based serialization; describe it with a schema instead.`
+            : `Parameter ${quote(name)} of operation ${quote(id)} uses style ${quote(style)}; supported ${location} styles are ${PARAMETER_STYLES[location].join(", ")}.`,
           { operation: id }
         );
         continue;
@@ -1065,7 +1066,7 @@ class CatalogBuilder {
     // Path parameters keep template order so generated clients get stable positional arguments.
     for (const name of template) {
       if (!parameters.some((parameter) => parameter.in === "path" && parameter.name === name)) {
-        this.report("INVALID_SPEC", entry.pointer, `Path parameter "${name}" of operation "${id}" appears in the path template but is not declared.`, { operation: id });
+        this.report("INVALID_SPEC", entry.pointer, `Path parameter ${quote(name)} of operation ${quote(id)} appears in the path template but is not declared.`, { operation: id });
       }
     }
     const rank = (parameter: CatalogParameter) =>
@@ -1081,7 +1082,7 @@ class CatalogBuilder {
       .flatMap((status) => {
         if (status.startsWith("x-")) return [];
         if (!RESPONSE_STATUS.test(status)) {
-          this.report("INVALID_SPEC", `${entry.pointer}/responses/${pointerSegment(status)}`, `Response key "${status}" of operation "${id}" is not an HTTP status, a 1XX-5XX range or "default".`, { operation: id });
+          this.report("INVALID_SPEC", `${entry.pointer}/responses/${pointerSegment(status)}`, `Response key ${quote(status)} of operation ${quote(id)} is not an HTTP status, a 1XX-5XX range or "default".`, { operation: id });
           return [];
         }
         const resolved = this.deref(responses[status], `${entry.pointer}/responses/${pointerSegment(status)}`);
@@ -1090,7 +1091,7 @@ class CatalogBuilder {
         const headers = this.member(resolved.value, "headers", resolved.pointer, OBJECT, id);
         // Header names are not extensions (`x-ratelimit-remaining` is a header); OpenAPI ignores Content-Type here.
         if (headers && Object.keys(headers).some((name) => name.toLowerCase() !== "content-type")) {
-          this.report("UNSUPPORTED_SERIALIZATION", `${resolved.pointer}/headers`, `Response ${status} headers of operation "${id}" are not described in the catalog; generated clients will not expose them.`, { severity: "warning", operation: id });
+          this.report("UNSUPPORTED_SERIALIZATION", `${resolved.pointer}/headers`, `Response ${status} headers of operation ${quote(id)} are not described in the catalog; generated clients will not expose them.`, { severity: "warning", operation: id });
         }
         return [
           {
@@ -1115,14 +1116,14 @@ class CatalogBuilder {
     const schemes = this.declaredSchemes;
     const invalid = (at: string, message: string) => this.report("INVALID_SPEC", at, message, { operation: id });
     if (declared !== undefined && !Array.isArray(declared)) {
-      invalid(pointer, `Security of operation "${id}" at ${pointer} must be an array of security requirement objects.`);
+      invalid(pointer, `Security of operation ${quote(id)} at ${pointer} must be an array of security requirement objects.`);
       return [[]];
     }
     const alternatives = new Map<string, SecurityRequirementTerm[]>();
     (declared ?? []).forEach((requirement: unknown, index: number) => {
       const requirementPointer = `${pointer}/${index}`;
       if (!isRecord(requirement)) {
-        invalid(requirementPointer, `Security requirement ${requirementPointer} of operation "${id}" must be an object of scheme names to scope arrays; use {} for anonymous access.`);
+        invalid(requirementPointer, `Security requirement ${requirementPointer} of operation ${quote(id)} must be an object of scheme names to scope arrays; use {} for anonymous access.`);
         return;
       }
       const terms: SecurityRequirementTerm[] = [];
@@ -1130,11 +1131,11 @@ class CatalogBuilder {
         const schemePointer = `${requirementPointer}/${pointerSegment(scheme)}`;
         this.identifier(scheme, schemePointer, "Security scheme name", id);
         if (!Object.hasOwn(schemes, scheme)) {
-          this.report("UNKNOWN_SECURITY_SCHEME", schemePointer, `Operation "${id}" requires security scheme "${scheme}", which is not declared in components.securitySchemes.`, { operation: id });
+          this.report("UNKNOWN_SECURITY_SCHEME", schemePointer, `Operation ${quote(id)} requires security scheme ${quote(scheme)}, which is not declared in components.securitySchemes.`, { operation: id });
         }
         const scopes = requirement[scheme];
         if (!Array.isArray(scopes) || scopes.some((scope) => typeof scope !== "string")) {
-          invalid(schemePointer, `Scopes of security scheme "${scheme}" in operation "${id}" must be an array of strings; use [] for none.`);
+          invalid(schemePointer, `Scopes of security scheme ${quote(scheme)} in operation ${quote(id)} must be an array of strings; use [] for none.`);
           continue;
         }
         terms.push({ scheme, scopes: sortStrings(scopes.map((scope: string, scopeIndex) => this.identifier(scope, `${schemePointer}/${scopeIndex}`, "Scope name", id))) });
@@ -1154,14 +1155,14 @@ class CatalogBuilder {
     const bindingPointer = `/operations/${this.manifest.operations.indexOf(binding)}`;
     const name = binding.name ?? toIdentifier(entry.operationId ?? binding.id);
     if (name.length > NAME_MAX_LENGTH) {
-      this.report("INVALID_MANIFEST", `${bindingPointer}/name`, `Name "${name.slice(0, 32)}…" derived for operation "${binding.id}" has ${name.length} characters; catalog names allow ${NAME_MAX_LENGTH}, so set a shorter manifest name.`, { source: "manifest", operation: binding.id });
+      this.report("INVALID_MANIFEST", `${bindingPointer}/name`, `Name "${redactWhole(name).slice(0, 32)}…" derived for operation ${quote(binding.id)} has ${name.length} characters; catalog names allow ${NAME_MAX_LENGTH}, so set a shorter manifest name.`, { source: "manifest", operation: binding.id });
     }
     const tags = this.member(op, "tags", entry.pointer, LIST, binding.id) ?? [];
     // A malformed operation-level list is reported and never falls back to the path item's servers.
     const operationServers = this.member(op, "servers", entry.pointer, LIST, binding.id);
     const pathServers = own(op, "servers") === undefined ? this.member(entry.pathItem, "servers", entry.pathItemPointer, LIST, binding.id) : undefined;
     tags.forEach((tag, index) => {
-      if (typeof tag !== "string") this.report("INVALID_SPEC", `${entry.pointer}/tags/${index}`, `Tag ${index} of operation "${binding.id}" must be a string.`, { operation: binding.id });
+      if (typeof tag !== "string") this.report("INVALID_SPEC", `${entry.pointer}/tags/${index}`, `Tag ${index} of operation ${quote(binding.id)} must be a string.`, { operation: binding.id });
     });
     return {
       id: binding.id,
@@ -1211,7 +1212,7 @@ class CatalogBuilder {
       if (!resolved) continue;
       const { value, pointer } = resolved;
       if (typeof value.type !== "string" || !SECURITY_SCHEME_TYPES.includes(value.type)) {
-        this.report("INVALID_SPEC", `${pointer}/type`, `Security scheme "${name}" needs a type of ${SECURITY_SCHEME_TYPES.join(", ")}.`);
+        this.report("INVALID_SPEC", `${pointer}/type`, `Security scheme ${quote(name)} needs a type of ${SECURITY_SCHEME_TYPES.join(", ")}.`);
         continue;
       }
       const scheme: CatalogSecurityScheme = { type: value.type, description: this.text(own(value, "description"), `${pointer}/description`) };
@@ -1223,7 +1224,7 @@ class CatalogBuilder {
       const requireMember = (key: string, valid: boolean, need: string) => {
         const member = own(value, key);
         if (!valid && (member === undefined || typeof member === "string" || (key === "flows" && isRecord(member)))) {
-          this.report("INVALID_SPEC", `${pointer}/${key}`, `Security scheme "${name}" of type ${value.type} needs ${need}.`);
+          this.report("INVALID_SPEC", `${pointer}/${key}`, `Security scheme ${quote(name)} of type ${value.type} needs ${need}.`);
         }
       };
       if (value.type === "apiKey") {
@@ -1250,16 +1251,16 @@ class CatalogBuilder {
           const flowPointer = `${pointer}/flows/${pointerSegment(flowName)}`;
           this.identifier(flowName, flowPointer, "OAuth flow name");
           if (!isRecord(flow)) {
-            this.report("INVALID_SPEC", flowPointer, `OAuth flow "${flowName}" of security scheme "${name}" must be an object.`);
+            this.report("INVALID_SPEC", flowPointer, `OAuth flow ${quote(flowName)} of security scheme ${quote(name)} must be an object.`);
             continue;
           }
           const requiredUrls = own(OAUTH_FLOW_URLS, flowName) as (typeof OAUTH_FLOW_URLS)[string] | undefined;
           if (requiredUrls === undefined) {
-            this.report("INVALID_SPEC", flowPointer, `OAuth flow "${flowName}" of security scheme "${name}" is not one of ${Object.keys(OAUTH_FLOW_URLS).join(", ")}.`);
+            this.report("INVALID_SPEC", flowPointer, `OAuth flow ${quote(flowName)} of security scheme ${quote(name)} is not one of ${Object.keys(OAUTH_FLOW_URLS).join(", ")}.`);
           }
           const declaredScopes = this.member(flow, "scopes", flowPointer, OBJECT);
           if (own(flow, "scopes") === undefined) {
-            this.report("INVALID_SPEC", `${flowPointer}/scopes`, `OAuth flow "${flowName}" of security scheme "${name}" needs scopes (an object, possibly empty).`);
+            this.report("INVALID_SPEC", `${flowPointer}/scopes`, `OAuth flow ${quote(flowName)} of security scheme ${quote(name)} needs scopes (an object, possibly empty).`);
           }
           const scopes = Object.keys(declaredScopes ?? {});
           const output: NonNullable<CatalogSecurityScheme["flows"]>[string] = {
@@ -1270,7 +1271,7 @@ class CatalogBuilder {
             const url = this.url(declaredUrl, `${flowPointer}/${key}`);
             if (url !== null) output[key] = url;
             if (!url?.trim() && requiredUrls?.includes(key as "authorizationUrl" | "tokenUrl") && (declaredUrl === undefined || typeof declaredUrl === "string")) {
-              this.report("INVALID_SPEC", `${flowPointer}/${key}`, `OAuth flow "${flowName}" of security scheme "${name}" needs a non-empty ${key}.`);
+              this.report("INVALID_SPEC", `${flowPointer}/${key}`, `OAuth flow ${quote(flowName)} of security scheme ${quote(name)} needs a non-empty ${key}.`);
             }
           }
           setOwn(flows, flowName, output);
@@ -1336,7 +1337,7 @@ class CatalogBuilder {
         const variablePointer = `${serverPointer}/variables/${pointerSegment(name)}`;
         this.identifier(name, variablePointer, "Server variable name");
         if (!isRecord(variable) || typeof variable.default !== "string") {
-          this.report("INVALID_SPEC", variablePointer, `Server variable "${name}" at ${serverPointer} needs a string default.`);
+          this.report("INVALID_SPEC", variablePointer, `Server variable ${quote(name)} at ${serverPointer} needs a string default.`);
           continue;
         }
         setOwn(defaults, name, variable.default);
@@ -1391,11 +1392,11 @@ class CatalogBuilder {
         const values = enums.get(name) ?? null;
         const hide = hidden.has(name);
         if (isCredentialKey(name)) {
-          this.report("CREDENTIAL_REDACTED", variablePointer, `Replaced the values of credential-named server variable "${name}"; credentials never belong in server URLs.`, { severity: "warning" });
+          this.report("CREDENTIAL_REDACTED", variablePointer, `Replaced the values of credential-named server variable ${quote(name)}; credentials never belong in server URLs.`, { severity: "warning" });
         } else if (hide) {
           const why = overflow
-            ? `server variable "${name}" of ${serverPointer}/url, whose values have more combinations than the catalog judges for user info, a query or a fragment (more than ${SERVER_COMBINATION_LIMIT}, or more than ${SERVER_SCAN_BUDGET} characters of expanded URLs in one document)`
-            : `server variable "${name}" fills user info, a query or a fragment of ${serverPointer}/url, which the catalog removes`;
+            ? `server variable ${quote(name)} of ${serverPointer}/url, whose values have more combinations than the catalog judges for user info, a query or a fragment (more than ${SERVER_COMBINATION_LIMIT}, or more than ${SERVER_SCAN_BUDGET} characters of expanded URLs in one document)`
+            : `server variable ${quote(name)} fills user info, a query or a fragment of ${serverPointer}/url, which the catalog removes`;
           this.report("CREDENTIAL_REDACTED", `${variablePointer}/default`, `Replaced the default of ${why}.`, { severity: "warning" });
           values?.forEach((_, valueIndex) => this.report("CREDENTIAL_REDACTED", `${variablePointer}/enum/${valueIndex}`, `Removed enum value ${valueIndex} of ${why}.`, { severity: "warning" }));
         }
@@ -1403,7 +1404,7 @@ class CatalogBuilder {
         const value = (raw: string, field: string): string => {
           const valuePointer = `${variablePointer}/${field}`;
           if (cuts.has(`${name}/${field}`)) {
-            this.report("CREDENTIAL_REDACTED", valuePointer, `Removed the user info that server variable "${name}" puts into the URL at ${serverPointer}/url; URLs never carry user info.`, { severity: "warning" });
+            this.report("CREDENTIAL_REDACTED", valuePointer, `Removed the user info that server variable ${quote(name)} puts into the URL at ${serverPointer}/url; URLs never carry user info.`, { severity: "warning" });
           }
           return this.text(raw, valuePointer) as string;
         };
@@ -1432,7 +1433,7 @@ class CatalogBuilder {
     for (const path of Object.keys(paths).sort(compareCodeUnits)) {
       if (path.startsWith("x-")) continue;
       if (!path.startsWith("/")) {
-        this.report("INVALID_SPEC", `/paths/${pointerSegment(path)}`, `Path "${path}" must start with "/".`);
+        this.report("INVALID_SPEC", `/paths/${pointerSegment(path)}`, `Path ${quote(path)} must start with "/".`);
         continue;
       }
       this.identifier(path, `/paths/${pointerSegment(path)}`, "Path template");
@@ -1442,7 +1443,7 @@ class CatalogBuilder {
         const operation = own(resolved.value, method);
         if (operation === undefined) continue;
         if (!isRecord(operation)) {
-          this.report("INVALID_SPEC", `/paths/${pointerSegment(path)}/${method}`, `Operation ${method.toUpperCase()} ${path} must be an object, not ${describeValue(operation)}.`);
+          this.report("INVALID_SPEC", `/paths/${pointerSegment(path)}/${method}`, `Operation ${method.toUpperCase()} ${redactWhole(path)} must be an object, not ${describeValue(operation)}.`);
           continue;
         }
         operations.push({
@@ -1470,7 +1471,7 @@ class CatalogBuilder {
       if (entry.operationId === null) continue;
       const existing = byOperationId.get(entry.operationId);
       if (existing) {
-        this.report("DUPLICATE_OPERATION_ID", `${entry.pointer}/operationId`, `OpenAPI operationId "${entry.operationId}" is used by both ${existing.method.toUpperCase()} ${existing.path} and ${entry.method.toUpperCase()} ${entry.path}.`);
+        this.report("DUPLICATE_OPERATION_ID", `${entry.pointer}/operationId`, `OpenAPI operationId ${quote(entry.operationId)} is used by both ${existing.method.toUpperCase()} ${redactWhole(existing.path)} and ${entry.method.toUpperCase()} ${redactWhole(entry.path)}.`);
       } else {
         byOperationId.set(entry.operationId, entry);
       }
@@ -1481,7 +1482,7 @@ class CatalogBuilder {
     this.manifest.operations.forEach((binding, index) => {
       const pointer = `/operations/${index}`;
       if (stableIds.has(binding.id)) {
-        this.report("DUPLICATE_OPERATION_ID", `${pointer}/id`, `Stable operation ID "${binding.id}" is declared more than once in the manifest.`, { source: "manifest", operation: binding.id });
+        this.report("DUPLICATE_OPERATION_ID", `${pointer}/id`, `Stable operation ID ${quote(binding.id)} is declared more than once in the manifest.`, { source: "manifest", operation: binding.id });
         return;
       }
       stableIds.add(binding.id);
@@ -1489,13 +1490,13 @@ class CatalogBuilder {
         ? byOperationId.get(binding.operationId)
         : byRoute.get(`${binding.method?.toLowerCase()} ${binding.path}`);
       if (!entry) {
-        const target = binding.operationId !== undefined ? `operationId "${binding.operationId}"` : `${binding.method?.toUpperCase()} ${binding.path}`;
-        this.report("UNMATCHED_OPERATION_BINDING", pointer, `Stable operation "${binding.id}" binds ${target}, which is not in the spec; update or remove the binding.`, { source: "manifest", operation: binding.id });
+        const target = binding.operationId !== undefined ? `operationId ${quote(binding.operationId)}` : `${binding.method?.toUpperCase()} ${redactWhole(binding.path ?? "")}`;
+        this.report("UNMATCHED_OPERATION_BINDING", pointer, `Stable operation ${quote(binding.id)} binds ${target}, which is not in the spec; update or remove the binding.`, { source: "manifest", operation: binding.id });
         return;
       }
       const previous = bound.get(entry);
       if (previous) {
-        this.report("DUPLICATE_OPERATION_ID", pointer, `${entry.method.toUpperCase()} ${entry.path} is bound by both "${previous.id}" and "${binding.id}"; each operation needs exactly one stable ID.`, { source: "manifest", operation: binding.id });
+        this.report("DUPLICATE_OPERATION_ID", pointer, `${entry.method.toUpperCase()} ${redactWhole(entry.path)} is bound by both ${quote(previous.id)} and ${quote(binding.id)}; each operation needs exactly one stable ID.`, { source: "manifest", operation: binding.id });
         return;
       }
       bound.set(entry, binding);
@@ -1505,7 +1506,7 @@ class CatalogBuilder {
     for (const entry of specOperations) {
       const binding = bound.get(entry);
       if (!binding) {
-        this.report("MISSING_OPERATION_ID", entry.pointer, `${entry.method.toUpperCase()} ${entry.path}${entry.operationId ? ` (operationId "${entry.operationId}")` : ""} has no stable operation ID; add a manifest binding.`);
+        this.report("MISSING_OPERATION_ID", entry.pointer, `${entry.method.toUpperCase()} ${redactWhole(entry.path)}${entry.operationId ? ` (operationId ${quote(entry.operationId)})` : ""} has no stable operation ID; add a manifest binding.`);
         continue;
       }
       operations.push(this.operation(entry, binding));
@@ -1517,16 +1518,16 @@ class CatalogBuilder {
       const pointer = `/operations/${this.manifest.operations.findIndex((binding) => binding.id === operation.id)}`;
       const existing = names.get(nameKey(operation.name));
       if (existing) {
-        this.report("NAME_COLLISION", pointer, `Operations "${existing.id}" and "${operation.id}" resolve to colliding names "${existing.name}" and "${operation.name}"; set a distinct manifest name.`, { source: "manifest", operation: operation.id });
+        this.report("NAME_COLLISION", pointer, `Operations ${quote(existing.id)} and ${quote(operation.id)} resolve to colliding names ${quote(existing.name)} and ${quote(operation.name)}; set a distinct manifest name.`, { source: "manifest", operation: operation.id });
       } else {
         names.set(nameKey(operation.name), operation);
       }
       const replacement = operation.deprecation.replacement;
       if (replacement !== null && (replacement === operation.id || !operations.some((op) => op.id === replacement))) {
-        this.report("UNKNOWN_REPLACEMENT", `${pointer}/deprecation/replacement`, `Operation "${operation.id}" names replacement "${replacement}", which is not another operation in this catalog.`, { source: "manifest", operation: operation.id });
+        this.report("UNKNOWN_REPLACEMENT", `${pointer}/deprecation/replacement`, `Operation ${quote(operation.id)} names replacement ${quote(replacement)}, which is not another operation in this catalog.`, { source: "manifest", operation: operation.id });
       }
       if (operation.agent.expose && operation.executionPolicyRef === null) {
-        this.report("AGENT_POLICY_REQUIRED", `${pointer}/agent/expose`, `Operation "${operation.id}" is exposed to agents without an executionPolicy reference; HTTP method and schema never imply authorization or idempotency.`, { source: "manifest", operation: operation.id });
+        this.report("AGENT_POLICY_REQUIRED", `${pointer}/agent/expose`, `Operation ${quote(operation.id)} is exposed to agents without an executionPolicy reference; HTTP method and schema never imply authorization or idempotency.`, { source: "manifest", operation: operation.id });
       }
     }
 
@@ -1553,6 +1554,62 @@ class CatalogBuilder {
  * Describes why the document could not be read. Parser failures report only
  * line and column: parser messages quote source text, which may hold secrets.
  */
+/**
+ * Reads OpenAPI text as @apifn/core's parseOpenAPI does (JSON, else YAML, with
+ * its error messages), so that the document reaches {@link parseKeepingProtoKeys}
+ * as data.
+ */
+function readOpenApiText(text: string): Record<string, unknown> {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error("Invalid OpenAPI input: empty string");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(trimmed);
+  } catch {
+    try {
+      raw = parseYaml(trimmed);
+    } catch (error) {
+      throw new Error(`Invalid OpenAPI input: failed to parse JSON or YAML (${error instanceof Error ? error.message : String(error)})`);
+    }
+  }
+  if (!isRecord(raw)) throw new Error("Invalid OpenAPI document: expected object");
+  return raw;
+}
+
+/**
+ * parseOpenAPI with every own `"__proto__"` key kept as data. The published
+ * @apifn/core 0.0.3 upconverts OpenAPI 3.0 by plain assignment, which loses
+ * that key; renaming it to a key the document does not use for the call gives
+ * the same document with any core version, and 3.0 the same catalog as 3.1.
+ */
+function parseKeepingProtoKeys(doc: Record<string, unknown>): unknown {
+  const keys = new Set<string>();
+  const stack: unknown[] = [doc];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (Array.isArray(node)) for (const entry of node) stack.push(entry);
+    else if (isRecord(node)) {
+      for (const [key, child] of Object.entries(node)) {
+        keys.add(key);
+        stack.push(child);
+      }
+    }
+  }
+  if (!keys.has("__proto__")) return parseOpenAPI(doc);
+  let standIn = "__proto__\u0000";
+  while (keys.has(standIn)) standIn += "\u0000";
+  return renameKeys(parseOpenAPI(renameKeys(doc, "__proto__", standIn) as Record<string, unknown>), standIn, "__proto__");
+}
+
+/** A copy of plain data with every own key `from` renamed to `to` (depth is bounded by the snapshot). */
+function renameKeys(value: unknown, from: string, to: string): unknown {
+  if (Array.isArray(value)) return value.map((entry) => renameKeys(entry, from, to));
+  if (!isRecord(value)) return value;
+  const output: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) setOwn(output, key === from ? to : key, renameKeys(child, from, to));
+  return output;
+}
+
 function parseFailure(error: unknown): string {
   const reason = error instanceof Error ? error.message : String(error);
   if (/failed to parse JSON or YAML/.test(reason)) {
@@ -1614,17 +1671,16 @@ export function buildOperationCatalog(spec: string | Record<string, unknown>, ma
   };
   let doc: Doc | null = null;
   let specDigest = "";
-  const input = typeof spec === "string" ? spec : plain(spec, "INVALID_SPEC", "spec");
-  if (input !== null) {
-    try {
-      const parsed = parseOpenAPI(input as string | Record<string, unknown>);
-      doc = (typeof spec === "string" ? plain(parsed, "INVALID_SPEC", "spec") : parsed) as Doc | null;
-      if (doc && (!isRecord(doc.paths) || !isRecord(doc.info))) throw new Error("document requires info and paths objects");
-      if (doc) specDigest = canonicalDigest(doc);
-    } catch (error) {
-      doc = null;
-      diagnostics.push({ code: "INVALID_SPEC", severity: "error", message: parseFailure(error), pointer: "", source: "spec" });
+  try {
+    const input = plain(typeof spec === "string" ? readOpenApiText(spec) : spec, "INVALID_SPEC", "spec");
+    if (input !== null) {
+      doc = parseKeepingProtoKeys(input as Record<string, unknown>) as Doc;
+      if (!isRecord(doc.paths) || !isRecord(doc.info)) throw new Error("document requires info and paths objects");
+      specDigest = canonicalDigest(doc);
     }
+  } catch (error) {
+    doc = null;
+    diagnostics.push({ code: "INVALID_SPEC", severity: "error", message: parseFailure(error), pointer: "", source: "spec" });
   }
 
   const manifestData = plain(manifest, "INVALID_MANIFEST", "manifest");

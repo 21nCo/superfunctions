@@ -1,4 +1,4 @@
-import { containsCredentialIdentifier, pointerSegment, redactWhole, sanitizeReport } from "./credentials.js";
+import { containsCredentialIdentifier, pointerSegment, quote, sanitizeReport } from "./credentials.js";
 import type { ApiManifest, Diagnostic } from "./types.js";
 
 export const API_ID_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
@@ -57,11 +57,11 @@ class ManifestChecker {
     }
     for (const key of Object.keys(value)) {
       if (!allowed.includes(key)) {
-        this.fail(`${pointer}/${pointerSegment(key)}`, `Unknown manifest field "${key}"; allowed fields are ${allowed.join(", ")}.`);
+        this.fail(`${pointer}/${pointerSegment(key)}`, `Unknown manifest field ${quote(key)}; allowed fields are ${allowed.join(", ")}.`);
       }
     }
     for (const key of required) {
-      if (value[key] === undefined) this.fail(`${pointer}/${key}`, `Missing required manifest field "${key}".`);
+      if (value[key] === undefined) this.fail(`${pointer}/${key}`, `Missing required manifest field ${quote(key)}.`);
     }
     return true;
   }
@@ -78,7 +78,7 @@ class ManifestChecker {
     } else if (!text && containsCredentialIdentifier(value)) {
       this.fail(pointer, `Value at ${pointer} holds a credential-like value; manifest identifiers are copied verbatim into artifacts.`);
     } else if (pattern && !pattern.test(value)) {
-      this.fail(pointer, `Value "${redactWhole(value)}" at ${pointer} must match ${pattern.source}.`);
+      this.fail(pointer, `Value ${quote(value)} at ${pointer} must match ${pattern.source}.`);
     }
   }
 
@@ -101,10 +101,10 @@ function checkBinding(check: ManifestChecker, binding: unknown, pointer: string)
   const byOperationId = value.operationId !== undefined;
   const byRoute = value.method !== undefined || value.path !== undefined;
   if (byOperationId === byRoute || (byRoute && (value.method === undefined || value.path === undefined))) {
-    check.fail(pointer, `Operation binding "${String(value.id)}" must set either operationId or both method and path.`);
+    check.fail(pointer, `Operation binding ${quote(String(value.id))} must set either operationId or both method and path.`);
   }
   if (typeof value.method === "string" && !METHODS.has(value.method.toLowerCase())) {
-    check.fail(`${pointer}/method`, `Unknown HTTP method "${redactWhole(value.method)}".`);
+    check.fail(`${pointer}/method`, `Unknown HTTP method ${quote(value.method)}.`);
   }
 
   if (value.sdk !== undefined && check.object(value.sdk, `${pointer}/sdk`, ["include", "excludeTargets"])) {
@@ -162,7 +162,7 @@ export function validateManifest(input: unknown): { manifest: ApiManifest | null
           if (typeof mediaType === "string" && (!isSupportedMediaType(normalizeMediaType(mediaType)) || mediaTypeParameters(mediaType).length > 0)) {
             check.fail(
               pointer,
-              `Media type "${mediaType}" is not a supported serialization; use JSON (application/json or +json), text/plain, application/octet-stream, application/x-www-form-urlencoded or multipart/form-data, with no parameter other than charset=utf-8.`,
+              `Media type ${quote(mediaType)} is not a supported serialization; use JSON (application/json or +json), text/plain, application/octet-stream, application/x-www-form-urlencoded or multipart/form-data, with no parameter other than charset=utf-8.`,
               "UNSUPPORTED_SERIALIZATION"
             );
           }

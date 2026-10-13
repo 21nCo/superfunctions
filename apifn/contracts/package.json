@@ -39,7 +39,8 @@
     "verify:packed": "node scripts/verify-packed-consumer.mjs"
   },
   "dependencies": {
-    "@apifn/core": "0.0.3"
+    "@apifn/core": "0.0.3",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@superfunctions/http-openapi": "0.1.0",
