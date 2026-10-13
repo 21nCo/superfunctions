@@ -429,6 +429,31 @@ process.stdout.write(String(member.pid), () => setTimeout(() => process.exit(0),
     }
   });
 
+  it("never replays a reload that failed with its rollback, even when no uncertainty marker can be written after it", async () => {
+    const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-uncertain-unmarked-");
+    const toolsDir = (process.env.PATH ?? "").split(path.delimiter)[0];
+    const live = path.join(toolsDir, "live.Caddyfile");
+    const statePath = path.join(stateDir, "proxy-routes.json");
+    const uncertainPath = path.join(stateDir, "proxy-routes.pending.uncertain");
+    // Every reload loads its configuration and fails while DEVFN_TEST_RELOAD_FAILED is set. Afterwards no
+    // marker can be created (a dangling link stands in for EIO); a marker that already exists is untouched.
+    await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\nif [ "$1" = reload ]; then\n  cp "$3" '${live}'\n  [ -z "$DEVFN_TEST_RELOAD_FAILED" ] && exit 0\n  [ -e '${uncertainPath}' ] || ln -sf '${path.join(toolsDir, "missing", "marker")}' '${uncertainPath}'\n  exit 1\nfi\nexit 0\n`, { mode: 0o700 });
+    const sibling = { id: "s", instanceId: "sibling", hostname: "sibling.localhost", targetHost: "127.0.0.1", targetPort: 4100, tls: "off", updatedAt: "before" } as const;
+    const committed = `${JSON.stringify({ version: 1, routes: [sibling] })}\n`;
+    await writeFile(statePath, committed);
+    const controller = new CaddyProxyController(stateDir);
+    try {
+      process.env.DEVFN_TEST_RELOAD_FAILED = "1";
+      await expect(controller.upsert([{ id: "a", instanceId: "i", hostname: "added.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off" }]))
+        .rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED", message: expect.stringContaining("possibly live") });
+      // Once Caddy recovers, the activation is rolled back rather than replayed.
+      delete process.env.DEVFN_TEST_RELOAD_FAILED;
+      expect(await controller.routes()).toEqual([sibling]);
+      expect(await readFile(statePath, "utf8")).toBe(committed);
+      expect(await readFile(live, "utf8")).not.toContain("added.localhost");
+    } finally { delete process.env.DEVFN_TEST_RELOAD_FAILED; await cleanup(); }
+  });
+
   it("rolls an uncertain activation back without service routes verified gone, and commits only what Caddy confirmed", async () => {
     const { stateDir, cleanup } = await stubbedCaddyState("devfn-proxy-uncertain-dead-");
     const toolsDir = (process.env.PATH ?? "").split(path.delimiter)[0];
@@ -563,6 +588,26 @@ process.stdout.write(String(member.pid), () => setTimeout(() => process.exit(0),
     await expect(proxyOwnerStatus({ pid: process.pid, birthSignature: `${(await processBirthSignature(process.pid))!.split(":")[0]}:different-process` })).resolves.toBe("identity-mismatch");
     await expect(proxyOwnerStatus({ pid: process.pid })).resolves.toBe("unverified");
   });
+
+  it("marks a spawned Caddy's activation uncertain before it starts, so a failed start is never replayed", async () => await withCaddyAdminPort(async () => {
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-spawn-marked-"));
+    const toolsDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-tools-"));
+    const originalPath = process.env.PATH;
+    const seen = path.join(toolsDir, "seen");
+    try {
+      // Caddy lists the state it starts with, then exits as a failed start. A
+      // Caddy that cannot be stopped is kept with exactly this state.
+      await writeFile(path.join(toolsDir, "caddy"), `#!/bin/sh\n[ "$1" != run ] || ls '${stateDir}' > '${seen}'\nexit 0\n`, { mode: 0o700 });
+      process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
+      await expect(new CaddyProxyController(stateDir).upsert([{
+        id: "spawn", instanceId: "spawn", hostname: "spawn.localhost", targetHost: "127.0.0.1", targetPort: 4100, tls: "off",
+      }])).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
+      expect((await readFile(seen, "utf8")).split("\n")).toEqual(expect.arrayContaining(["proxy-routes.pending.json", "proxy-routes.pending.uncertain"]));
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+      await rm(stateDir, { recursive: true, force: true }); await rm(toolsDir, { recursive: true, force: true });
+    }
+  }), 150_000);
 
   it("clears a reused-PID owner on retry without signaling the unrelated process", async () => await withCaddyAdminPort(async () => {
     const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-proxy-reused-owner-"));

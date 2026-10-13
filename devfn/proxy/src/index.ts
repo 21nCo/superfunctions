@@ -535,8 +535,9 @@ export class CaddyProxyController {
   private async read(): Promise<ProxyState> {
     const pending = await this.readState(this.pendingPath);
     if (pending) {
-      // An activation whose reload outcome is uncertain already failed for
-      // its caller: it is rolled back, never replayed.
+      // An activation marked before its reload began has an uncertain
+      // outcome, and may already have failed for its caller: it is rolled
+      // back, never replayed.
       if (await access(this.uncertainPath).then(() => true, () => false)) return await this.rollBack();
       const previous = await this.readState(this.statePath);
       try {
@@ -578,13 +579,13 @@ export class CaddyProxyController {
   /**
    * A failed reload, including a timeout, does not prove Caddy kept its
    * previous configuration: it may already serve the candidate. The journal
-   * stays, marked uncertain, so every reader of pending route state still
-   * counts its routes as possibly live, until a reload of the committed
-   * state confirms what Caddy serves. A rejected configuration therefore
-   * blocks other owners only while Caddy cannot reload the committed one.
+   * stays, marked uncertain before that reload began, so every reader of
+   * pending route state still counts its routes as possibly live, until a
+   * reload of the committed state confirms what Caddy serves. A rejected
+   * configuration therefore blocks other owners only while Caddy cannot
+   * reload the committed one.
    */
   private async settleUncertainReload(failure: ProxyError, rollBack: boolean): Promise<never> {
-    await writeFile(this.uncertainPath, "", { encoding: "utf8", mode: 0o600 }).catch(() => undefined);
     if (!rollBack) throw failure;
     try { await this.rollBack(); }
     catch (error) {
@@ -672,10 +673,17 @@ export class CaddyProxyController {
         throw new ProxyError("DEVFN_PROXY_OWNERSHIP_CONFLICT", "A non-DevFn Caddy admin endpoint is already running; refusing to replace its configuration.");
       }
     }
-    if (!recovering) {
-      await rm(this.uncertainPath, { force: true });
-      await this.writeRouteState(this.pendingPath, next);
+    // Caddy may serve the candidate once its reload or start begins, and a
+    // failure reported then must not depend on a later write succeeding.
+    // The journal is therefore marked uncertain before it is published or
+    // reloaded, so an interrupted activation is rolled back too; only an
+    // unmarked journal, which no reload of this release started, is replayed.
+    try { await writeFile(this.uncertainPath, "", { encoding: "utf8", mode: 0o600 }); }
+    catch (error) {
+      await rm(candidate, { force: true });
+      throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to mark the route activation journal before reloading Caddy.", { cause: error instanceof Error ? error.message : String(error) });
     }
+    if (!recovering) await this.writeRouteState(this.pendingPath, next);
     if (owner) {
       try { await execFileAsync(caddy, ["reload", "--config", candidate, "--adapter", "caddyfile"], { timeout: 10_000 }); }
       catch (error) {
