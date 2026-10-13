@@ -1,4 +1,4 @@
-import { containsCredentialIdentifier, pointerSegment, redactCredentialValues, sanitizeReport } from "./credentials.js";
+import { containsCredentialIdentifier, pointerSegment, redactWhole, sanitizeReport } from "./credentials.js";
 import type { ApiManifest, Diagnostic } from "./types.js";
 
 export const API_ID_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/;
@@ -78,7 +78,7 @@ class ManifestChecker {
     } else if (!text && containsCredentialIdentifier(value)) {
       this.fail(pointer, `Value at ${pointer} holds a credential-like value; manifest identifiers are copied verbatim into artifacts.`);
     } else if (pattern && !pattern.test(value)) {
-      this.fail(pointer, `Value "${redactCredentialValues(value)}" at ${pointer} must match ${pattern.source}.`);
+      this.fail(pointer, `Value "${redactWhole(value)}" at ${pointer} must match ${pattern.source}.`);
     }
   }
 
@@ -104,7 +104,7 @@ function checkBinding(check: ManifestChecker, binding: unknown, pointer: string)
     check.fail(pointer, `Operation binding "${String(value.id)}" must set either operationId or both method and path.`);
   }
   if (typeof value.method === "string" && !METHODS.has(value.method.toLowerCase())) {
-    check.fail(`${pointer}/method`, `Unknown HTTP method "${redactCredentialValues(value.method)}".`);
+    check.fail(`${pointer}/method`, `Unknown HTTP method "${redactWhole(value.method)}".`);
   }
 
   if (value.sdk !== undefined && check.object(value.sdk, `${pointer}/sdk`, ["include", "excludeTargets"])) {

@@ -85,6 +85,8 @@ const IDENTIFIER_KEY_SEPARATOR = new RegExp(`(?<![A-Za-z0-9_.%-])(${QUOTE_DELIMI
 const BLOCK_INDICATOR = /(?:[|>](?:[1-9][+-]?|[+-][1-9]?)?)?[ \t]*/y;
 /** What may follow a bracketed header value for it to end there: a delimiter or the end of the line. */
 const HEADER_VALUE_END = /[^\S\r\n]*(?:[,;\]})]|[\r\n]|$)/y;
+/** Characters that continue a word after a closing quote; punctuation that ends a sentence or a member does not. */
+const WORD_CONTINUATION = /[A-Za-z0-9_$%+~*@-]/;
 /** CDATA delimiters, removed before an element value is judged as placeholders. */
 const CDATA_DELIMITERS = /<!\[CDATA\[|\]\]>/g;
 
@@ -398,9 +400,15 @@ function plainEnd(scan: TextScan, start: number, context: PlainContext): number 
 function readValue(scan: TextScan, start: number, keyStart: number, header: boolean, context: () => PlainContext): ValueSpan {
   const { text } = scan;
   const first = text[start];
+  // A closing quote directly followed by a word character does not end the value: the shell or dotenv word goes on (`PASSWORD="<token>"abc`).
+  const concatenated = (end: number): ValueSpan | null => {
+    if (!WORD_CONTINUATION.test(text[end] ?? "")) return null;
+    const stop = plainEnd(scan, end, context());
+    return { end: stop, value: text.slice(start, stop), quote: "" };
+  };
   if (escapedQuoteAt(text, start) > 0) {
     const { end, status, open, close } = escapedQuotedEnd(text, start);
-    if (status === "closed") return { end, value: text.slice(start + open, end - close), quote: text.slice(start, start + open), closing: text.slice(end - close, end) };
+    if (status === "closed") return concatenated(end) ?? { end, value: text.slice(start + open, end - close), quote: text.slice(start, start + open), closing: text.slice(end - close, end) };
     // Ambiguous: to the end of the line, or past the lower-level quote when that is further. Unterminated: to the end of the text.
     const stop = Math.max(end, lineEnd(text, start));
     return { end: stop, value: text.slice(start, stop), quote: "" };
@@ -408,7 +416,7 @@ function readValue(scan: TextScan, start: number, keyStart: number, header: bool
   if (QUOTES.has(first)) {
     const end = scan.quotedEnd(start);
     if (end === -1) return { end: text.length, value: text.slice(start), quote: "" };
-    return { end, value: text.slice(start + 1, end - 1), quote: first };
+    return concatenated(end) ?? { end, value: text.slice(start + 1, end - 1), quote: first };
   }
   // `password: |`, `password: >-` or `password:` ending a line: the value is every line indented below the key (YAML block style).
   const head = scan.blockHead(start);
@@ -439,9 +447,15 @@ function readValue(scan: TextScan, start: number, keyStart: number, header: bool
   return { end, value: text.slice(start, end), quote: "" };
 }
 
-/** Fields that name a header, parameter or setting: `{"name": "X-Api-Key", ...}`, `<add key="password" .../>`. */
+/**
+ * Fields that name a header, parameter or setting: `{"name": "X-Api-Key", ...}`,
+ * `<add key="password" .../>`. A quoted name is read as the structured rule
+ * reads it, trimmed and of any number of words (`" X-Api-Key "`, `"API key"`);
+ * a bare name is one or two words.
+ */
 const NAME_FIELD = new RegExp(
-  `(?<![A-Za-z0-9_.%-])(${QUOTE_DELIMITER}|)(?:(?:(?:header|field|param(?:eter)?)[_-]?)?name|key|header|field|param(?:eter)?)\\1[ \\t]*(?:=>|:=|[:=])[ \\t]*(${QUOTE_DELIMITER}|)(${KEY_WORD})\\2(?![A-Za-z0-9_.%-])`,
+  `(?<![A-Za-z0-9_.%-])(${QUOTE_DELIMITER}|)(?:(?:(?:header|field|param(?:eter)?)[_-]?)?name|key|header|field|param(?:eter)?)\\1[ \\t]*(?:=>|:=|[:=])[ \\t]*` +
+    `(?:(${QUOTE_DELIMITER})\\s*(${KEY_WORD}(?:[ \\t]+${KEY_WORD})*)\\s*\\2|(${KEY_WORD}(?:[ \\t]+${KEY_WORD})?)(?![A-Za-z0-9_.%-]))`,
   "gi"
 );
 /** Fields that hold the value of the header, parameter or setting their container names; mirrors {@link NAME_FIELD}. */
@@ -555,10 +569,11 @@ function keyValueContext(scan: TextScan, keyStart: number, start: number, separa
 function namedCredentialContainers(scan: TextScan): { containers: Int32Array; headers: Map<number, boolean> } | null {
   let found: { containers: Int32Array; headers: Map<number, boolean> } | null = null;
   for (const match of scan.text.matchAll(NAME_FIELD)) {
-    if (!isCredentialKey(match[3])) continue;
+    const name = match[3] ?? match[4];
+    if (!isCredentialKey(name)) continue;
     found ??= { containers: scan.structure().containers, headers: new Map() };
     const container = found.containers[match.index];
-    found.headers.set(container, (found.headers.get(container) ?? false) || isHeaderKey(match[3]));
+    found.headers.set(container, (found.headers.get(container) ?? false) || isHeaderKey(name));
   }
   return found;
 }
@@ -938,6 +953,16 @@ export function containsCredentialValue(value: string): boolean {
 }
 
 /**
+ * `value`, or `[REDACTED]` in its place when it holds a credential. Copied and
+ * quoted author text uses this, so no part of a value survives however its
+ * end is read; {@link redactCredentialValues} keeps the readable rest and is
+ * only the last-resort sanitizer of whole diagnostic messages.
+ */
+export function redactWhole(value: string): string {
+  return containsCredentialValue(value) ? REDACTED : value;
+}
+
+/**
  * True when an identifier or map key (an operationId, scope, package or
  * attribute name) holds a credential. The rules are those of
  * {@link containsCredentialValue}, except that `:` is a namespace separator
@@ -1023,12 +1048,12 @@ function unescapeSegment(segment: string): string {
 }
 
 /**
- * One JSON Pointer segment for a diagnostic or issue. The raw key is redacted
- * before escaping: escaping first would turn the `//` of a URL key into
+ * One JSON Pointer segment for a diagnostic or issue. A raw key holding a
+ * credential becomes `[REDACTED]`, judged before escaping: escaping first would turn the `//` of a URL key into
  * `~1~1` and hide its user info from the URL rule.
  */
 export function pointerSegment(key: string): string {
-  return redactCredentialValues(key).replace(/~/g, "~0").replace(/\//g, "~1");
+  return redactWhole(key).replace(/~/g, "~0").replace(/\//g, "~1");
 }
 
 /** Redacts each segment of a JSON Pointer, judged on its unescaped (and percent-decoded) key; clean segments are kept as they are. */

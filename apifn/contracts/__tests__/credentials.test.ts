@@ -501,6 +501,86 @@ describe("quotes escaped at any depth", () => {
   });
 });
 
+// A quoted name counts as the structured rule reads it: trimmed, of one or more words.
+const PADDED_NAMES: Array<[form: string, name: string]> = [
+  ["padded trailing", "X-Api-Key "],
+  ["padded leading", " X-Api-Key"],
+  ["two-word", "API key"],
+];
+const NAME_SYNTAXES: Array<[syntax: string, render: (name: string, value: string) => string]> = [
+  ["JSON", (name, value) => JSON.stringify({ name, value })],
+  ["escaped JSON", (name, value) => stringified({ name, value }, 1)],
+  ["JS list literal", (name, value) => `[{name: '${name}', value: '${value}'}]`],
+  ["XML attributes", (name, value) => `<add key="${name}" value="${value}"/>`],
+];
+const PADDED_NAME_MATRIX = PADDED_NAMES.flatMap(([form, name]) =>
+  NAME_SYNTAXES.map(([syntax, render]): [string, string] => [`${form} name in ${syntax}`, render(name, NAME_SEED)])
+);
+
+describe("name/value names read like structured names", () => {
+  it.each(PADDED_NAME_MATRIX)("%s", (_form, text) => expectSeedRemovedEverywhere(text, NAME_SEED));
+
+  it.each(NAME_SYNTAXES)("keeps a padded ordinary name in %s", (_syntax, render) => {
+    const text = render("X-Request-Id ", "req-42");
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+  });
+});
+
+// When the text rule fires on a catalog string, the whole string is replaced: no part of the value survives a boundary misread.
+const ABSENT_SEED = "SEEDabsent6631";
+const PARTIAL_FORMS: Array<[form: string, text: string]> = [
+  ["shell double-quote concatenation", `PASSWORD="first"${ABSENT_SEED}`],
+  ["shell concatenation after a quoted placeholder", `PASSWORD="***"${ABSENT_SEED}`],
+  ["single-quote concatenation", `password='abc'${ABSENT_SEED}`],
+  ["quoted value then text", `password: "first" ${ABSENT_SEED}`],
+  ["pair value quoted then text", `["X-Api-Key", "first"${ABSENT_SEED}]`],
+  ["escaped concatenation", `{\\"password\\":\\"first\\"${ABSENT_SEED}}`],
+  ["apostrophe before the key", `Can't authenticate with password: abc'${ABSENT_SEED}`],
+  ["apostrophes around the value", `Bob's password: first O'Brien ${ABSENT_SEED}`],
+];
+
+describe("detected credentials are absent from the catalog", () => {
+  /** The fixture with `text` as an operation description and as a string default. */
+  const built = (text: string) => {
+    const nextSpec = clone(fixture("catalog/openapi.json"));
+    nextSpec.paths[PROJECT_ROUTE].get.description = text;
+    nextSpec.components.schemas.ProjectInput.properties.probe = { type: "string", default: text };
+    const result = buildOperationCatalog(nextSpec, clone(fixture("catalog/manifest.json")));
+    const operation = result.catalog?.operations.find((entry) => entry.path === PROJECT_ROUTE && entry.method === "get");
+    const probe = (result.catalog?.schemas.ProjectInput as any)?.properties.probe;
+    return { result, description: operation?.description, literal: probe?.default };
+  };
+
+  it.each(PARTIAL_FORMS)("%s", (_form, text) => {
+    expect(containsCredentialValue(text)).toBe(true);
+    const event = fixture("client-failure/valid/network-minimal.json");
+    const rejected = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } });
+    expect(rejected.ok).toBe(false);
+    expect(JSON.stringify(rejected)).not.toContain(ABSENT_SEED);
+    const { result, description, literal } = built(text);
+    expect(result.catalog).not.toBeNull();
+    expect(JSON.stringify(result)).not.toContain(ABSENT_SEED);
+    expect([description, literal]).toEqual(["[REDACTED]", "[REDACTED]"]);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer).sort()).toEqual([
+      "/components/schemas/ProjectInput/properties/probe/default",
+      `/paths/${PROJECT_ROUTE.replace(/\//g, "~1")}/get/description`,
+    ]);
+  });
+
+  it.each([
+    ["ordinary prose", "Returns the project; callers need read access."],
+    ["ordinary header line", "X-Request-Id: req-42"],
+    ["ordinary header pair", '["X-Request-Id", "req-42"]'],
+    ["placeholder value", "password: <token>"],
+    ["placeholder after prose", "Enter your password: <password>"],
+  ])("keeps %s", (_name, text) => {
+    const { result, description, literal } = built(text);
+    expect([description, literal]).toEqual([text, text]);
+    expect(result.diagnostics).toEqual([]);
+  });
+});
+
 // URL user info for special schemes needs no "//": URL parsers read it after any run of "/" or "\\", even none.
 const URL_SEED = "hunter2pwSEED";
 const USER_INFO_URLS = [
@@ -749,6 +829,10 @@ const LONG_TEXTS: Array<[string, (size: number) => string]> = [
   ["double-escaped key/values", run('{\\\\\\"password\\\\\\":\\\\\\"a\\\\\\"}, ')],
   ["long backslash runs", (n) => `password=${repeat("\\", n)}"`],
   ["nested pair values before many lines", (n) => `${'("token", '.repeat(n / 20)}x${")".repeat(n / 20)}${repeat("\n", n / 2)}`],
+  // Padded and two-word names, and the quote forms whose catalog strings are replaced whole.
+  ["padded and two-word names", run('{"name":" API key ","value":"a"},')],
+  ["apostrophes in prose", run("Bob's password: first O'Brien x ")],
+  ["quoted values then text", run('password: "first" a ')],
 ];
 
 describe("credential rules run in linear time", () => {
@@ -784,6 +868,9 @@ describe("credential rules run in linear time", () => {
     "password: #x ",
     "password: a b ",
     '[\\\\\\"X-Api-Key\\\\\\",\\\\\\"a\\\\\\"], ',
+    '{"name":" API key ","value":"a"},',
+    "Bob's password: first O'Brien x ",
+    'password: "first" a ',
   ])("buildOperationCatalog scales linearly up to a 1 MB description of %j", (unit) => {
     const manifest = fixture("catalog/manifest.json");
     const specs = new Map(

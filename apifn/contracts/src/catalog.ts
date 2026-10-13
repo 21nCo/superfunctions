@@ -8,7 +8,7 @@ import {
   isCredentialPair,
   pointerSegment,
   REDACTED,
-  redactCredentialValues,
+  redactWhole,
   removedServerUrlSpans,
   sanitizePointer,
   sanitizeReport,
@@ -87,6 +87,8 @@ const SCHEMA_KEYWORDS = new Set([
   "contentSchema",
 ]);
 const SCHEMA_LIST_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
+/** Applicators whose subschemas describe the same instance as the schema holding them, as `$ref` targets do. */
+const SAME_INSTANCE_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas"]);
 const COMPONENT_SCHEMA_PREFIX = "#/components/schemas/";
 const SECURITY_SCHEME_TYPES = ["apiKey", "http", "mutualTLS", "oauth2", "openIdConnect"];
 const API_KEY_LOCATIONS = ["query", "header", "cookie"];
@@ -321,7 +323,7 @@ function refSegment(name: string): string {
 
 /** A reference for a message: a local one is a pointer, judged segment by segment so `~1~1` cannot hide URL user info. */
 function showRef(ref: string): string {
-  return ref.startsWith("#") ? `#${sanitizePointer(ref.slice(1))}` : redactCredentialValues(ref);
+  return ref.startsWith("#") ? `#${sanitizePointer(ref.slice(1))}` : redactWhole(ref);
 }
 
 function decodePointerSegment(segment: string): string {
@@ -388,12 +390,20 @@ interface SpecOperation {
   operationId: string | null;
 }
 
+/**
+ * How a schema is reached: 0 plainly; 1 where it describes an instance that a
+ * credential field could fill (another schema for the same instance reaches
+ * one), so its literals are dropped; 2 from a credential field, so its
+ * literals and unrecognized members are dropped.
+ */
+type Taint = 0 | 1 | 2;
+
 class CatalogBuilder {
   readonly diagnostics: Diagnostic[] = [];
   /** While positive, reports are discarded: componentSchemas settles component taint in a dry run before emitting. */
   private muted = 0;
-  /** Component schemas reached from operations; true when reached from a credential field. */
-  private readonly componentRefs = new Map<string, boolean>();
+  /** Component schemas reached from operations, with the strongest {@link Taint} they are reached with. */
+  private readonly componentRefs = new Map<string, Taint>();
   /** Component names whose entry in componentRefs is new or newly tainted, for componentSchemas to emit. */
   private readonly pendingComponents: string[] = [];
   /** The schema graph {@link reachesCredentialField} has explored, the schemas known to reach a credential field, and reverse edges. */
@@ -464,18 +474,20 @@ class CatalogBuilder {
     return undefined;
   }
 
-  /** Copies author text, redacting recognizable credentials. A present non-string is INVALID_SPEC. */
+  /**
+   * Copies author text. Text holding a recognizable credential is replaced
+   * whole with `[REDACTED]`, so no part of the value survives however its end
+   * is read. A present non-string is INVALID_SPEC.
+   */
   text(value: unknown, pointer: string, source: Diagnostic["source"] = "spec"): string | null {
     if (value === undefined) return null;
     if (typeof value !== "string") {
       this.report("INVALID_SPEC", pointer, `Expected a string at ${pointer}, found ${describeValue(value)}.`, { source });
       return null;
     }
-    const redacted = redactCredentialValues(value);
-    if (redacted !== value) {
-      this.report("CREDENTIAL_REDACTED", pointer, `Removed a credential-like value from ${pointer}; credentials never belong in API descriptions.`, { severity: "warning", source });
-    }
-    return redacted;
+    if (!containsCredentialValue(value)) return value;
+    this.report("CREDENTIAL_REDACTED", pointer, `Replaced the text at ${pointer}, which holds a credential-like value; credentials never belong in API descriptions.`, { severity: "warning", source });
+    return REDACTED;
   }
 
   /**
@@ -657,9 +669,13 @@ class CatalogBuilder {
    * (a credential parameter or property, `format: password`, or any
    * subschema, applicator or component reached from one) literal values and
    * unrecognized members are dropped. Members holding credential-named keys
-   * are dropped everywhere. Other literal data is copied verbatim.
+   * are dropped everywhere. A literal is also dropped when the instance it
+   * describes could hold a credential field's value: when this schema, or
+   * any schema for the same instance (`sameInstance`: an `allOf`, `anyOf` or
+   * `oneOf` sibling, a `$ref` target, transitively), reaches one. Other
+   * literal data is copied verbatim.
    */
-  schema(value: unknown, pointer: string, credential = false): JsonValue | null {
+  schema(value: unknown, pointer: string, credential = false, sameInstance = false): JsonValue | null {
     if (value === undefined) return null;
     if (typeof value === "boolean") return value;
     if (!isRecord(value)) {
@@ -667,6 +683,10 @@ class CatalogBuilder {
       return null;
     }
     const secret = credential || value.format === "password";
+    // Computed once per schema and only when needed; reachesCredentialField is linear over a whole build.
+    let reaches: boolean | undefined;
+    const instanceReaches = () => (reaches ??= sameInstance || this.reachesCredentialField(value));
+    const taint = (): Taint => (secret ? 2 : instanceReaches() ? 1 : 0);
     const output: Record<string, JsonValue> = {};
     const drop = (key: string, childPointer: string, reason: string) =>
       this.report("CREDENTIAL_REDACTED", childPointer, `Dropped "${key}" at ${childPointer} because ${reason}.`, { severity: "warning" });
@@ -679,7 +699,7 @@ class CatalogBuilder {
       } else if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
       } else if (REFERENCE_KEYWORDS.has(key)) {
-        const ref = this.schemaRef(child, childPointer, secret);
+        const ref = this.schemaRef(child, childPointer, taint());
         if (ref !== null) setOwn(output, key, ref);
       } else if (SCHEMA_MAP_KEYWORDS.has(key)) {
         if (!isRecord(child)) {
@@ -690,18 +710,21 @@ class CatalogBuilder {
         const named = key === "properties" || key === "patternProperties";
         for (const [name, entry] of Object.entries(child)) {
           this.identifier(name, `${childPointer}/${pointerSegment(name)}`, "Schema member name");
-          const nested = this.schema(entry, `${childPointer}/${pointerSegment(name)}`, secret || (named && isCredentialKey(name)));
+          const nested = this.schema(entry, `${childPointer}/${pointerSegment(name)}`, secret || (named && isCredentialKey(name)), SAME_INSTANCE_KEYWORDS.has(key) && instanceReaches());
           if (nested !== null) setOwn(entries, name, nested);
         }
         setOwn(output, key, entries);
       } else if (SCHEMA_KEYWORDS.has(key)) {
-        const nested = this.schema(child, childPointer, secret);
+        const nested = this.schema(child, childPointer, secret, SAME_INSTANCE_KEYWORDS.has(key) && instanceReaches());
         if (nested !== null) setOwn(output, key, nested);
       } else if (SCHEMA_LIST_KEYWORDS.has(key)) {
-        if (Array.isArray(child)) setOwn(output, key, child.map((entry, index) => this.schema(entry, `${childPointer}/${index}`, secret) ?? {}));
+        if (Array.isArray(child)) {
+          const same = SAME_INSTANCE_KEYWORDS.has(key) && instanceReaches();
+          setOwn(output, key, child.map((entry, index) => this.schema(entry, `${childPointer}/${index}`, secret, same) ?? {}));
+        }
         else this.report("INVALID_SPEC", childPointer, `Expected an array of schemas at ${childPointer}, found ${describeValue(child)}.`);
       } else if (key === "discriminator") {
-        if (isRecord(child)) setOwn(output, key, this.discriminator(child, childPointer, secret));
+        if (isRecord(child)) setOwn(output, key, this.discriminator(child, childPointer, taint()));
         else this.report("INVALID_SPEC", childPointer, `Expected a Discriminator Object at ${childPointer}, found ${describeValue(child)}.`);
       } else if (key === "pattern" && secret) {
         // A pattern can spell the credential in any regex syntax (`^(x)$`, `^x{1}$`, `^x|x$`), so a credential field carries none.
@@ -733,8 +756,8 @@ class CatalogBuilder {
         continue; // Emitted as the exclusive bound.
       } else if (secret && !CREDENTIAL_FIELD_KEYWORDS.has(key)) {
         drop(key, childPointer, "it is literal or unrecognized data inside a credential field");
-      } else if (LITERAL_KEYWORDS.has(key) && this.reachesCredentialField(value)) {
-        drop(key, childPointer, "the schema contains a credential field whose value the literal would carry");
+      } else if (LITERAL_KEYWORDS.has(key) && instanceReaches()) {
+        drop(key, childPointer, "the schema, or a schema for the same instance, contains a credential field whose value the literal would carry");
       } else if (key === "enum" && Array.isArray(child) ? child.some(hasCredentialKey) : hasCredentialKey(child)) {
         // An enum lists values, so it is judged member by member: ["password", "otp"] lists two methods, not a pair.
         drop(key, childPointer, "it holds credential-named keys or a value named as a credential");
@@ -818,7 +841,7 @@ class CatalogBuilder {
    * successful catalog has no dangling reference. Only component schemas can
    * be shared by generated clients. Returns null when the reference is unusable.
    */
-  private schemaRef(ref: unknown, pointer: string, secret: boolean): string | null {
+  private schemaRef(ref: unknown, pointer: string, taint: Taint): string | null {
     const problem = this.refProblem(ref, "schema");
     if (problem) {
       this.report("UNRESOLVED_REF", pointer, problem);
@@ -829,16 +852,15 @@ class CatalogBuilder {
       this.report("UNRESOLVED_REF", pointer, `Schema reference "${showRef(ref as string)}" must target ${COMPONENT_SCHEMA_PREFIX}<name> so generated clients can share the type.`);
       return null;
     }
-    this.referComponent(name, secret);
+    this.referComponent(name, taint);
     return `${COMPONENT_SCHEMA_PREFIX}${refSegment(name)}`;
   }
 
-  /** Records a reference to component schema `name`, queueing it for componentSchemas when it is new or newly reached from a credential field. */
-  private referComponent(name: string, secret: boolean): void {
+  /** Records a reference to component schema `name`, queueing it for componentSchemas when it is new or newly reached with a stronger taint. */
+  private referComponent(name: string, taint: Taint): void {
     const before = this.componentRefs.get(name);
-    const after = before === true || secret;
-    if (before === after) return;
-    this.componentRefs.set(name, after);
+    if (before !== undefined && before >= taint) return;
+    this.componentRefs.set(name, taint);
     this.pendingComponents.push(name);
   }
 
@@ -847,7 +869,7 @@ class CatalogBuilder {
    * schema (by name or `#/components/schemas/<name>`); targets are emitted as
    * references and the schemas they name join the catalog.
    */
-  private discriminator(value: Record<string, unknown>, pointer: string, secret: boolean): JsonValue {
+  private discriminator(value: Record<string, unknown>, pointer: string, taint: Taint): JsonValue {
     const output: Record<string, JsonValue> = {};
     const propertyName = this.member(value, "propertyName", pointer, STRING);
     if (propertyName !== undefined) output.propertyName = this.identifier(propertyName, `${pointer}/propertyName`, "Discriminator property name");
@@ -861,10 +883,10 @@ class CatalogBuilder {
       const name = typeof target !== "string" ? null : target.startsWith("#") ? componentName(target) : target;
       if (name === null || !Object.hasOwn(this.schemaComponents, name)) {
         const shown = typeof target === "string" ? showRef(target) : String(target);
-        this.report("UNRESOLVED_REF", targetPointer, `Discriminator mapping "${redactCredentialValues(key)}" targets "${shown}", which is not a schema in ${COMPONENT_SCHEMA_PREFIX}<name>.`);
+        this.report("UNRESOLVED_REF", targetPointer, `Discriminator mapping "${redactWhole(key)}" targets "${shown}", which is not a schema in ${COMPONENT_SCHEMA_PREFIX}<name>.`);
         continue;
       }
-      this.referComponent(name, secret);
+      this.referComponent(name, taint);
       setOwn(targets, key, `${COMPONENT_SCHEMA_PREFIX}${refSegment(name)}`);
     }
     output.mapping = targets;
@@ -1262,7 +1284,8 @@ class CatalogBuilder {
 
   /**
    * Emits every component schema reached from an operation. A component
-   * reached from a credential field is emitted without literals. Its final
+   * reached from a credential field, or describing an instance one could fill
+   * (see {@link Taint}), is emitted without literals. Its final
    * taint is settled first, in a dry run with reports discarded: each name is
    * queued when first referenced and again when tainted, so a long chain is
    * walked once. Then each component is emitted once, in name order, so its
@@ -1270,21 +1293,22 @@ class CatalogBuilder {
    */
   componentSchemas(): Record<string, JsonValue> {
     const components = this.schemaComponents;
-    const settled = new Map<string, boolean>();
+    const settled = new Map<string, Taint>();
     this.muted += 1;
     for (let next = 0; next < this.pendingComponents.length; next += 1) {
       const name = this.pendingComponents[next];
-      const secret = this.componentRefs.get(name) === true;
-      if (settled.has(name) && (!secret || settled.get(name))) continue;
-      settled.set(name, secret);
-      this.schema(own(components, name), `/components/schemas/${pointerSegment(name)}`, secret);
+      const taint = this.componentRefs.get(name)!;
+      if ((settled.get(name) ?? -1) >= taint) continue;
+      settled.set(name, taint);
+      this.schema(own(components, name), `/components/schemas/${pointerSegment(name)}`, taint === 2, taint >= 1);
     }
     this.muted -= 1;
     const output: Record<string, JsonValue> = {};
     for (const name of Array.from(settled.keys()).sort(compareCodeUnits)) {
       const pointer = `/components/schemas/${pointerSegment(name)}`;
       this.identifier(name, pointer, "Component schema name");
-      const schema = this.schema(own(components, name), pointer, this.componentRefs.get(name) === true);
+      const taint = this.componentRefs.get(name)!;
+      const schema = this.schema(own(components, name), pointer, taint === 2, taint >= 1);
       if (schema !== null) setOwn(output, name, schema);
     }
     return output;
@@ -1536,7 +1560,7 @@ function parseFailure(error: unknown): string {
     return `Cannot parse the OpenAPI document as JSON or YAML${location ? ` (line ${location[1]}, column ${location[2]})` : ""}.`;
   }
   if (/^(?:Invalid OpenAPI|Unsupported OpenAPI version|document requires)/.test(reason)) {
-    return `Cannot read the OpenAPI document: ${redactCredentialValues(reason.split("\n")[0]).slice(0, 200)}`;
+    return `Cannot read the OpenAPI document: ${redactWhole(reason.split("\n")[0]).slice(0, 200)}`;
   }
   return "Cannot read the OpenAPI document: it is malformed or not plain JSON data.";
 }

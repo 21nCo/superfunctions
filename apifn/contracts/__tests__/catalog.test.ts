@@ -484,6 +484,21 @@ describe("prototype-safe JSON records", () => {
     expect(without.catalog!.source.specDigest).not.toBe(result.catalog!.source.specDigest);
   });
 
+  it.each([
+    ["a literal", '{"type":"object","default":{"__proto__":"x","a":1}}', "default"],
+    ["a property name", '{"type":"object","properties":{"__proto__":{"type":"string"},"a":{"type":"string"}}}', "properties"],
+  ])("keeps a __proto__ key in %s of an OpenAPI 3.0 document as 3.1 does", (_name, schema, member) => {
+    const versioned = (version: string) =>
+      build((nextSpec) => {
+        nextSpec.openapi = version;
+        inputSchema(nextSpec).properties.meta = JSON.parse(schema);
+      });
+    const legacy = versioned("3.0.3");
+    expect(legacy.diagnostics).toEqual([]);
+    expect(Object.keys((legacy.catalog!.schemas.ProjectInput as any).properties.meta[member])).toEqual(["__proto__", "a"]);
+    expect(canonicalJson(legacy)).toBe(canonicalJson(versioned("3.1.0")));
+  });
+
   it("does not resolve component or security scheme names through Object.prototype", () => {
     const result = build((nextSpec) => {
       inputSchema(nextSpec).properties.owner = { $ref: "#/components/schemas/constructor" };
@@ -978,16 +993,16 @@ describe("author strings copied into the catalog", () => {
     ["a path template", (nextSpec, nextManifest) => {
       nextSpec.paths[`/token=${ID_SECRET}`] = { get: { operationId: "probe", responses: { "200": { description: "ok" } } } };
       nextManifest.operations.push({ id: "probe.get", operationId: "probe" });
-    }, `/paths/~1token=${ID_SECRET}`],
+    }, "/paths/[REDACTED]"],
     ["a parameter name", (nextSpec) => {
       nextSpec.paths[PROJECT_ROUTE].get.parameters.push({ name: ID_SECRET, in: "query", schema: { type: "string" } });
     }, `${GET}/parameters/1/name`],
     ["a property name", (nextSpec) => {
       inputSchema(nextSpec).properties[`token=${ID_SECRET}`] = { type: "string" };
-    }, `/components/schemas/ProjectInput/properties/token=${ID_SECRET}`],
+    }, "/components/schemas/ProjectInput/properties/[REDACTED]"],
     ["a discriminator mapping value", (nextSpec) => {
       inputSchema(nextSpec).discriminator = { propertyName: "name", mapping: { [`token=${ID_SECRET}`]: "Project" } };
-    }, `/components/schemas/ProjectInput/discriminator/mapping/token=${ID_SECRET}`],
+    }, "/components/schemas/ProjectInput/discriminator/mapping/[REDACTED]"],
     ["a security scheme name", (nextSpec) => {
       nextSpec.components.securitySchemes[ID_SECRET] = { type: "http", scheme: "basic" };
     }, `/components/securitySchemes/${ID_SECRET}`],
@@ -1004,7 +1019,8 @@ describe("author strings copied into the catalog", () => {
     const result = build(mutate);
     expect(result.catalog).toBeNull();
     expect(only(result.diagnostics, "INVALID_SPEC")).toContainEqual(
-      expect.objectContaining({ pointer: pointer.replace(ID_SECRET, "[REDACTED]").replace(`token=[REDACTED]`, "token=[REDACTED]") })
+      // A pointer segment holding a credential is replaced whole, like copied text.
+      expect.objectContaining({ pointer: pointer.replace(ID_SECRET, "[REDACTED]") })
     );
     expect(JSON.stringify(result)).not.toContain("SEEDEDident0030");
   });
@@ -1158,6 +1174,79 @@ describe("literals of schemas holding credential fields", () => {
     expect(result.diagnostics).toEqual([]);
     expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual(probe);
   });
+});
+
+// An allOf member describes the same instance as its siblings: a literal anywhere in the group is judged against all of them.
+const PASSWORD = { type: "string", format: "password" };
+const PIN_REF = { $ref: "#/components/schemas/Pin" };
+const GROUP_SHAPES: Array<[shape: string, place: (literal: Record<string, unknown>) => Record<string, unknown>, at: string]> = [
+  ["inline password member", (literal) => ({ probe: { allOf: [PASSWORD, literal] } }), "ProjectInput/properties/probe/allOf/1"],
+  ["$ref member to a password component", (literal) => ({ probe: { allOf: [PIN_REF, literal] } }), "ProjectInput/properties/probe/allOf/1"],
+  ["$ref to an allOf component", (literal) => ({ probe: { $ref: "#/components/schemas/Mixed" }, Mixed: { allOf: [PASSWORD, literal] } }), "Mixed/allOf/1"],
+  ["nested allOf", (literal) => ({ probe: { allOf: [{ allOf: [PIN_REF] }, { allOf: [literal] }] } }), "ProjectInput/properties/probe/allOf/1/allOf/0"],
+  ["literal component beside a password member", (literal) => ({ probe: { allOf: [PASSWORD, { $ref: "#/components/schemas/Lit" }] }, Lit: { type: "string", ...literal } }), "Lit"],
+  ["anyOf branch beside a password branch", (literal) => ({ probe: { anyOf: [PIN_REF, literal] } }), "ProjectInput/properties/probe/anyOf/1"],
+];
+const GROUP_CELLS = GROUP_SHAPES.flatMap(([shape, place, at]) =>
+  (["default", "const", "enum"] as const).map((keyword) => ({ name: `${shape} ${keyword}`, keyword, place, at }))
+);
+/** Puts `probe` under ProjectInput's properties and every other entry under components.schemas. */
+const placeGroup = (nextSpec: any, entries: Record<string, unknown>) => {
+  nextSpec.components.schemas.Pin = clone(PASSWORD);
+  for (const [name, schema] of Object.entries(clone(entries))) {
+    if (name === "probe") inputSchema(nextSpec).properties.probe = schema;
+    else nextSpec.components.schemas[name] = schema;
+  }
+};
+
+describe("literals of allOf groups holding credential fields", () => {
+  it.each(GROUP_CELLS)("$name", ({ keyword, place, at }) => {
+    const result = build((nextSpec) => placeGroup(nextSpec, place({ [keyword]: keyword === "enum" ? [LITERAL_SEED] : LITERAL_SEED })));
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(LITERAL_SEED);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual([`/components/schemas/${at}/${keyword}`]);
+  });
+
+  it.each([
+    ["an object default beside a member declaring a password property", { allOf: [{ type: "object", properties: { pin: PASSWORD } }, { type: "object", default: { pin: LITERAL_SEED } }] }, "allOf/1/default"],
+    ["a member default under a password parent", { ...PASSWORD, allOf: [{ default: LITERAL_SEED }] }, "allOf/0/default"],
+    ["a sibling $ref to a password component", { ...PIN_REF, default: LITERAL_SEED }, "default"],
+  ])("drops %s", (_name, probe, at) => {
+    const result = build((nextSpec) => placeGroup(nextSpec, { probe }));
+    expect(result.catalog).not.toBeNull();
+    expect(canonicalJson(result)).not.toContain(LITERAL_SEED);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual([`/components/schemas/ProjectInput/properties/probe/${at}`]);
+  });
+
+  it("keeps the literals of an ordinary allOf group and of the components it shares", () => {
+    const probe = { allOf: [{ type: "string", format: "uuid" }, { $ref: "#/components/schemas/Lit" }, { default: "6f1c2a52-0000-4000-8000-000000000000" }] };
+    const result = build((nextSpec) => placeGroup(nextSpec, { probe, Lit: { type: "string", enum: ["6f1c2a52-0000-4000-8000-000000000000"] } }));
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties.probe).toEqual(probe);
+    expect(result.catalog!.schemas.Lit).toEqual({ type: "string", enum: ["6f1c2a52-0000-4000-8000-000000000000"] });
+  });
+
+  it("judges a chain of allOf groups in linear time", () => {
+    for (const last of [{ type: "string" }, PASSWORD]) {
+      const specs = new Map(
+        [2_500, 10_000].map((length) => {
+          const nextSpec = clone(spec);
+          for (let index = 0; index < length; index += 1) {
+            const next = index + 1 < length ? { $ref: `#/components/schemas/G${index + 1}` } : last;
+            nextSpec.components.schemas[`G${index}`] = { allOf: [next, { type: "string", default: "ok" }] };
+          }
+          inputSchema(nextSpec).properties.probe = { $ref: "#/components/schemas/G0" };
+          return [length, nextSpec];
+        })
+      );
+      const ratio = scalingRatio((length) => {
+        const result = buildOperationCatalog(specs.get(length)!, clone(manifest));
+        expect(result.catalog).not.toBeNull();
+        expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBe(last === PASSWORD ? length : 0);
+      }, 2_500, 2);
+      expect(ratio).toBeLessThan(LINEAR_RATIO);
+    }
+  }, SCALING_TIMEOUT);
 });
 
 // Structured data follows the text name/value rule: a value field next to a name field naming a credential.
@@ -1381,7 +1470,7 @@ describe("property-name references", () => {
     }, ["/components/schemas/ProjectInput/required/0"]],
     ["a dependentRequired key", (nextSpec) => {
       inputSchema(nextSpec).dependentRequired = { "token=SEEDEDname0040": ["name"] };
-    }, ["/components/schemas/ProjectInput/dependentRequired/token=[REDACTED]"]],
+    }, ["/components/schemas/ProjectInput/dependentRequired/[REDACTED]"]],
     ["a dependentRequired value", (nextSpec) => {
       inputSchema(nextSpec).dependentRequired = { name: ["token=SEEDEDname0040"] };
     }, ["/components/schemas/ProjectInput/dependentRequired/name/0"]],
