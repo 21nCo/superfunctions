@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { redactCredentialValues, sanitizeReport, stripUrlCredentials } from "../src/credentials.js";
 import {
   buildOperationCatalog,
+  canonicalJson,
   containsCredentialIdentifier,
   containsCredentialValue,
   createReleaseDescriptor,
@@ -931,6 +932,26 @@ describe("URL authority boundaries", () => {
     expect(template.diagnostics.filter((diagnostic) => diagnostic.code === "INVALID_SPEC").map((diagnostic) => diagnostic.pointer)).toEqual(["/servers/0/url"]);
   });
 
+  // RFC 3986 parsers read everything before the last "@" of https://SEED\u@me as user info, the part before the "\\" included.
+  const SPLIT_SEED = "SEEDEDsecret9911";
+  it.each([
+    ["split defaults", { url: "https://{h}{p}", variables: { h: { default: SPLIT_SEED }, p: { default: "\\u@me" } } }, ["h", "p"]],
+    ["split enum values", { url: "https://{h}{p}", variables: { h: { default: "ok", enum: ["ok", SPLIT_SEED] }, p: { default: "x", enum: ["x", "\\u@me"] } } }, ["h", "p"]],
+    ["three variables", { url: "https://{a}{b}{c}", variables: { a: { default: SPLIT_SEED }, b: { default: "x@y" }, c: { default: "\\z@me" } } }, ["a", "b", "c"]],
+    ["a literal prefix", { url: "https://pre{h}{p}", variables: { h: { default: SPLIT_SEED }, p: { default: "\\u@me" } } }, ["h", "p"]],
+  ] as const)("hides every variable either parser reads as user info: %s", (_name, server, names) => {
+    for (const version of ["3.0.3", "3.1.0"]) {
+      const nextSpec = clone(spec);
+      nextSpec.openapi = version;
+      nextSpec.servers = [clone(server)];
+      const result = buildOperationCatalog(nextSpec, clone(manifest));
+      expect(result.catalog).not.toBeNull();
+      expect(names.map((name) => result.catalog!.servers[0].variables[name].default)).toEqual(names.map(() => "[REDACTED]"));
+      expect(result.diagnostics.some((diagnostic) => diagnostic.code === "CREDENTIAL_REDACTED")).toBe(true);
+      expect(canonicalJson(result)).not.toContain(SPLIT_SEED);
+    }
+  });
+
   it("never shows a host other than the one URL parsers agree on in redacted text", () => {
     expect(redactCredentialValues("fetch https://api.example.test\\users\\@me failed")).toBe("fetch https://[REDACTED] failed");
     expect(redactCredentialValues("fetch //a.test\\u:p@me failed")).toBe("fetch //[REDACTED] failed");
@@ -1132,6 +1153,9 @@ const LONG_TEXTS: Array<[string, (size: number) => string]> = [
   ["namespace chain", run("a:")],
   ["credential namespaces", run("password:a")],
   ["distinct unclosed XML tags", (n) => Array.from({ length: n / 10 }, (_, index) => `<token_${index}> `).join("").slice(0, n)],
+  // Leaving a comment or CDATA section touches only the names opened in it, not every name seen so far.
+  ["distinct XML tags then comments", (n) => Array.from({ length: n / 10 }, (_, index) => `<token${index}><!---->`).join("").slice(0, n)],
+  ["distinct XML tags then CDATA sections", (n) => Array.from({ length: n / 10 }, (_, index) => `<token${index}><![CDATA[]]>`).join("").slice(0, n)],
   ["distinct XML tags then closings", (n) => `${Array.from({ length: n / 20 }, (_, index) => `<token_${index}>a`).join("")}${Array.from({ length: n / 20 }, (_, index) => `</token_${index}>`).join("")}`],
   ["credential XML attributes", run('<password a="b" ')],
   ["named containers", run('{"name":"token","value":[')],

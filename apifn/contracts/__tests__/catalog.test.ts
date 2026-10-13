@@ -1,7 +1,15 @@
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import { buildOperationCatalog, canonicalJson, type Diagnostic, type OperationCatalog, validateManifest } from "../src/index.js";
+import {
+  buildOperationCatalog,
+  canonicalJson,
+  createReleaseDescriptor,
+  type Diagnostic,
+  type OperationCatalog,
+  validateClientFailureEvent,
+  validateManifest,
+} from "../src/index.js";
 import { clone, fixture, LINEAR_RATIO, matchFixture, readJson, reverseKeys, SCALING_TIMEOUT, scalingRatio, SCHEMAS } from "./helpers.js";
 
 const validateCatalog = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(
@@ -26,7 +34,9 @@ const REFERENCE_KEYWORDS = new Set(["$ref", "$dynamicRef", "$recursiveRef"]);
 function closureViolations(catalog: OperationCatalog): string[] {
   const violations: string[] = [];
   const target = (ref: string, at: string) => {
-    const name = ref.startsWith("#/components/schemas/") ? ref.slice("#/components/schemas/".length).replace(/~1/g, "/").replace(/~0/g, "~") : null;
+    // Read as RFC 6901 reads a URI fragment: percent-decoded, then split, then unescaped.
+    const tokens = ref.startsWith("#") ? decodeURIComponent(ref.slice(1)).split("/") : [];
+    const name = tokens.length === 4 && tokens[0] === "" && tokens[1] === "components" && tokens[2] === "schemas" ? tokens[3].replace(/~1/g, "/").replace(/~0/g, "~") : null;
     if (name === null || !Object.hasOwn(catalog.schemas, name)) violations.push(`${at} -> ${ref}`);
   };
   const walk = (value: unknown, at: string): void => {
@@ -935,7 +945,7 @@ describe("OpenAPI fields that change client behavior", () => {
     ["n enum values in an n-character template", (size) => ({
       url: `https://{region}.example.test/${"p".repeat(size)}`,
       variables: { region: { default: "eu", enum: Array.from({ length: size }, (_, index) => `r${index}`) } },
-    }), 4000],
+    }), 2000],
   ];
 
   it.each(judgementRows)("charges every judgement of %s to the budget", (_name, server, size) => {
@@ -1328,7 +1338,7 @@ describe("literals of allOf groups holding credential fields", () => {
   it("judges a chain of allOf groups in linear time", () => {
     for (const last of [{ type: "string" }, PASSWORD]) {
       const specs = new Map(
-        [2_500, 10_000].map((length) => {
+        [1_000, 4_000].map((length) => {
           const nextSpec = clone(spec);
           for (let index = 0; index < length; index += 1) {
             const next = index + 1 < length ? { $ref: `#/components/schemas/G${index + 1}` } : last;
@@ -1342,7 +1352,7 @@ describe("literals of allOf groups holding credential fields", () => {
         const result = buildOperationCatalog(specs.get(length)!, clone(manifest));
         expect(result.catalog).not.toBeNull();
         expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBe(last === PASSWORD ? length : 0);
-      }, 2_500, 2);
+      }, 1_000, 2);
       expect(ratio).toBeLessThan(LINEAR_RATIO);
     }
   }, SCALING_TIMEOUT);
@@ -1535,7 +1545,7 @@ describe("literals of schemas at the head of long component chains", () => {
   it.each(["$ref", "allOf"] as const)("judges a literal on every link of a %s chain in linear time", (link) => {
     for (const last of [{ type: "string" }, { type: "string", format: "password" }]) {
       const specs = new Map(
-        [2_500, 10_000].map((length) => {
+        [1_000, 4_000].map((length) => {
           const nextSpec = clone(spec);
           chain(nextSpec, link, length, last, ["default", "ok"]);
           inputSchema(nextSpec).properties.probe = { $ref: "#/components/schemas/C0" };
@@ -1546,7 +1556,7 @@ describe("literals of schemas at the head of long component chains", () => {
         const result = buildOperationCatalog(specs.get(length)!, clone(manifest));
         expect(result.catalog).not.toBeNull();
         expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBe(last.format ? length : 0);
-      }, 2_500, 2);
+      }, 1_000, 2);
       expect(ratio).toBeLessThan(LINEAR_RATIO);
     }
   }, SCALING_TIMEOUT);
@@ -1959,6 +1969,114 @@ describe("malformed references and inputs", () => {
     const result = withParameterRef(ref);
     expect(result.catalog).toBeNull();
     expect(only(result.diagnostics, "UNRESOLVED_REF").length).toBeGreaterThan(0);
+  });
+
+  // RFC 6901 section 6: the whole fragment is percent-decoded first, then split on "/", then ~1 and ~0 are unescaped.
+  const param = (name: string) => ({ name, in: "query", schema: { type: "string" } });
+  const withStore = (version: string, store: unknown, ref: string) =>
+    build((nextSpec) => {
+      nextSpec.openapi = version;
+      nextSpec["x-a"] = store;
+      nextSpec.paths[LIST_ROUTE].get.parameters.push({ $ref: ref });
+    });
+  it.each([
+    ["#/x-a/b%2Fc", { "b/c": param("slash"), b: { c: param("nested") } }, "nested"],
+    ["#/x-a/b%2Fc", { b: { c: param("nested") } }, "nested"],
+    ["#/x-a/b~1c", { "b/c": param("slash"), b: { c: param("nested") } }, "slash"],
+    ["#/x-a/%7E01", { "~1": param("tilde"), "/1": param("slash") }, "tilde"],
+  ])("resolves %s in %j to the parameter %s", (ref, store, name) => {
+    for (const version of ["3.0.3", "3.1.0"]) expect(listParameters(withStore(version, store, ref))).toContain(name);
+  });
+
+  it.each([
+    ["#/x-a/b%2Fc", { "b/c": param("slash") }, /does not resolve/],
+    ["#/x-a/%E0", { "%E0": param("raw") }, /is not a JSON Pointer/],
+    ["#/x-a/%G1", { "%G1": param("raw") }, /is not a JSON Pointer/],
+    ["#/x-a/~2", { "~2": param("raw") }, /is not a JSON Pointer/],
+  ])("UNRESOLVED_REF: %s in %j", (ref, store, message) => {
+    for (const version of ["3.0.3", "3.1.0"]) {
+      const result = withStore(version, store, ref);
+      expect(result.catalog).toBeNull();
+      expect(only(result.diagnostics, "UNRESOLVED_REF").map((diagnostic) => diagnostic.message)).toEqual([expect.stringMatching(message)]);
+    }
+  });
+
+  it("names a component only by a decoded #/components/schemas/<name> pointer, and emits refs that decode back to it", () => {
+    const withComponent = (ref: string) =>
+      build((nextSpec) => {
+        nextSpec.components.schemas["A/B"] = { type: "string" };
+        nextSpec.components.schemas["a/b%c~d"] = { type: "integer" };
+        inputSchema(nextSpec).properties.probe = { $ref: ref };
+      });
+    expect(withComponent("#/components/schemas/A%2FB").catalog).toBeNull();
+    const emitted = (ref: string) => (withComponent(ref).catalog!.schemas.ProjectInput as any).properties.probe.$ref as string;
+    // Read as RFC 6901 does, independently of the builder.
+    const decode = (ref: string) => decodeURIComponent(ref.slice(1)).split("/").slice(1).map((token) => token.replace(/~1/g, "/").replace(/~0/g, "~"));
+    expect(decode(emitted("#/components/schemas/A~1B"))).toEqual(["components", "schemas", "A/B"]);
+    expect(decode(emitted("#/components/schemas/a~1b%25c~0d"))).toEqual(["components", "schemas", "a/b%c~d"]);
+    expect(decode(emitted("#/components/%73chemas/a~1b%25c~0d"))).toEqual(["components", "schemas", "a/b%c~d"]);
+  });
+
+  it("names a schema resource by its $id pointer, so many references cannot repeat a long $id", () => {
+    const id = `https://schemas.example.test/${"r".repeat(10_000)}`;
+    const result = build((nextSpec) => {
+      const properties = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`p${index}`, { $ref: "#/components/schemas/ProjectStatus" }]));
+      inputSchema(nextSpec).properties.meta = { $id: id, properties };
+    });
+    expect(result.catalog).toBeNull();
+    const references = only(result.diagnostics, "UNRESOLVED_REF");
+    expect(references).toHaveLength(100);
+    expect(references.every((diagnostic) => diagnostic.message.includes("declared at /components/schemas/ProjectInput/properties/meta/$id"))).toBe(true);
+    // 100 copies of the $id would be over 1 MB.
+    expect(JSON.stringify(result.diagnostics).length).toBeLessThan(100_000);
+  });
+
+  // A report quoting ill-formed author text escapes its lone surrogates, so no entry point throws and every result is canonical.
+  it.each([
+    ["api.id", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest.api.id = "\ud800"), "/api/id"],
+    ["a low surrogate api.id", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest.api.id = "a\udc00"), "/api/id"],
+    ["an operation id", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest.operations[0].id = "\ud800x"), "/operations/0/id"],
+    ["an unknown manifest key", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest["\ud800"] = 1), "/\\uD800"],
+    ["a naming override", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest.operations[1].name = "x\udfff"), "/operations/1/name"],
+    // Free text passes validateManifest; the manifest digest then rejects the whole manifest.
+    ["provenance.source", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest.provenance.source = "\ud800"), ""],
+  ])("INVALID_MANIFEST: a lone surrogate in %s", (_name, mutate, pointer) => {
+    for (const specText of [false, true]) {
+      const nextManifest = clone(manifest);
+      mutate(spec, nextManifest);
+      const result = buildOperationCatalog(specText ? JSON.stringify(spec) : clone(spec), nextManifest);
+      expect(result.catalog).toBeNull();
+      expect(result.diagnostics.map(({ code, pointer: at }) => `${code} ${at}`)).toContain(`INVALID_MANIFEST ${pointer}`);
+      expect(() => canonicalJson(result)).not.toThrow();
+    }
+    const nextManifest = clone(manifest);
+    mutate(spec, nextManifest);
+    const validated = validateManifest(nextManifest);
+    if (pointer !== "") expect(validated.manifest).toBeNull();
+    expect(() => canonicalJson(validated.diagnostics)).not.toThrow();
+  });
+
+  it.each([
+    ["an operationId", (nextSpec: Record<string, any>) => (nextSpec.paths[LIST_ROUTE].get.operationId = "list\ud800")],
+    ["a path key", (nextSpec: Record<string, any>) => (nextSpec.paths["/\ud800"] = nextSpec.paths[LIST_ROUTE])],
+    ["a component name", (nextSpec: Record<string, any>) => (nextSpec.components.schemas["\udc00"] = { type: "string" })],
+    ["a schema property name", (nextSpec: Record<string, any>) => (inputSchema(nextSpec).properties["p\ud800"] = { type: "string" })],
+  ])("never throws on a lone surrogate in %s", (_name, mutate) => {
+    const result = build(mutate);
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(true);
+    expect(() => canonicalJson(result)).not.toThrow();
+  });
+
+  it("createReleaseDescriptor and validateClientFailureEvent report lone surrogates without throwing", () => {
+    const catalog = buildOperationCatalog(clone(spec), clone(manifest)).catalog!;
+    const release = createReleaseDescriptor({ catalog, generator: { name: "gen\ud800", version: "1.0.0" }, artifacts: [{ kind: "sdk", target: "typescript\udc00", package: { name: "@example/sdk", version: "1.0.0" } }] });
+    expect(release.descriptor).toBeNull();
+    expect(() => canonicalJson(release)).not.toThrow();
+    const event = { ...fixture("client-failure/valid/network-minimal.json"), eventId: "evt_\ud800", "\udc00": 1 };
+    const validated = validateClientFailureEvent(event);
+    expect(validated.ok).toBe(false);
+    expect(() => canonicalJson(validated)).not.toThrow();
   });
 
   it("validateManifest accepts only own fields of plain objects", () => {

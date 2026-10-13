@@ -35,6 +35,24 @@ describe("canonical JSON", () => {
     expect(canonicalJson([])).toBe("[]");
   });
 
+  it("reads an array's length once, so an element getter that grows the array cannot extend the walk", () => {
+    const list: unknown[] = [];
+    let reads = 0;
+    // Each read appends another such getter; stopped at 100 so a walk that rereads the length still ends.
+    const grow = (index: number) =>
+      Object.defineProperty(list, index, {
+        enumerable: true,
+        get() {
+          reads += 1;
+          if (reads < 100) grow(list.length);
+          return "a";
+        },
+      });
+    grow(0);
+    expect(canonicalJson(list)).toBe('["a"]');
+    expect(reads).toBe(1);
+  });
+
   it("rejects lone surrogates in values and member names, and keeps surrogate pairs", () => {
     expect(() => canonicalJson({ a: "x\ud800" })).toThrow(/lone surrogate\) in a string at \/a/);
     expect(() => canonicalJson({ a: ["\udc00x"] })).toThrow(/in a string at \/a\/0/);

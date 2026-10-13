@@ -853,9 +853,12 @@ function credentialXmlElements(text: string): XmlElement[] {
     }
     return element;
   };
+  // The stacks that took an element in the current section: only they can hold one of its elements, so leaving it is linear.
+  const inScope = new Set<OpenStack>();
   const leaveScope = () => {
     // Elements the section left open stay unmatched (they run to the end of the text) and no longer nest.
-    for (const stack of open.values()) while (stack.elements.length > 0 && stack.elements[stack.elements.length - 1].scope === scope) pop(stack);
+    for (const stack of inScope) while (stack.elements.length > 0 && stack.elements[stack.elements.length - 1].scope === scope) pop(stack);
+    inScope.clear();
     scope = 0;
   };
   const pattern = new RegExp(XML_TOKEN.source, "g");
@@ -885,6 +888,7 @@ function credentialXmlElements(text: string): XmlElement[] {
         if (!attributes.endsWith("/")) {
           // `<password value="..."/>` has no element value.
           stack.elements.push(element);
+          if (scope !== 0) inScope.add(stack);
           if (!first.has(name)) first.set(name, element);
         }
       } else if (top !== undefined && top.scope === scope) {
@@ -1172,7 +1176,7 @@ export function stripUrlCredentials(url: string, options: { dropQuery?: boolean 
 /**
  * The spans that `stripUrlCredentials(url, { dropQuery: true })` removes:
  * the user info through its last "@", and everything from the first "?" or
- * "#" on, plus, in an ambiguous URL (see urlParts), the part another parser
+ * "#" on, plus, in an ambiguous URL (see urlParts), everything either parser
  * reads as user info, which the catalog never publishes. Lets a caller tell which part of an expanded URL template is gone.
  */
 export function removedServerUrlSpans(url: string): Array<{ start: number; end: number; userInfo: boolean }> {
@@ -1181,9 +1185,9 @@ export function removedServerUrlSpans(url: string): Array<{ start: number; end: 
   const at = parts ? parts.authority.lastIndexOf("@") : -1;
   if (parts && at !== -1) spans.push({ start: parts.prefix.length, end: parts.prefix.length + at + 1, userInfo: true });
   if (parts?.ambiguous) {
-    // From the end of the authority through the last "@" another parser still reads as user info.
-    const start = parts.prefix.length + parts.authority.length;
-    spans.push({ start, end: start + /^[^/?#]*/.exec(parts.path)![0].lastIndexOf("@") + 1, userInfo: false });
+    // Both readings' user info: from the start of the authority through the last "@" the other parser still reads in it.
+    const end = parts.prefix.length + parts.authority.length + /^[^/?#]*/.exec(parts.path)![0].lastIndexOf("@") + 1;
+    spans.push({ start: parts.prefix.length, end, userInfo: false });
   }
   const tail = url.search(/[?#]/);
   if (tail !== -1) spans.push({ start: tail, end: url.length, userInfo: false });
@@ -1226,12 +1230,21 @@ export function sanitizePointer(pointer: string): string {
     .join("/");
 }
 
+const LONE_SURROGATES = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** Writes each lone surrogate as the text `\uD800`, so a report quoting ill-formed author text is well-formed and canonicalizable. */
+function escapeLoneSurrogates(text: string): string {
+  return text.replace(LONE_SURROGATES, (unit) => `\\u${unit.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
 /**
- * The one sanitizer for every diagnostic and issue: the pointer is redacted
- * segment by segment, and the message (which may quote that pointer, keys or
- * values) is redacted as text.
+ * The one sanitizer for every diagnostic and issue: lone surrogates are
+ * escaped, the pointer is redacted segment by segment, and the message (which
+ * may quote that pointer, keys or values) is redacted as text.
  */
-export function sanitizeReport(pointer: string, message: string): { pointer: string; message: string } {
+export function sanitizeReport(rawPointer: string, rawMessage: string): { pointer: string; message: string } {
+  const pointer = escapeLoneSurrogates(rawPointer);
+  const message = escapeLoneSurrogates(rawMessage);
   const safePointer = sanitizePointer(pointer);
   const quoted = pointer === "" ? message : message.split(pointer).join(safePointer);
   return { pointer: safePointer, message: redactQuotedSegments(quoted) };

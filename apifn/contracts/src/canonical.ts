@@ -29,8 +29,10 @@ function serialize(value: unknown, path: string): string {
   }
   if (Array.isArray(value)) {
     // Every index, holes included: map would skip a hole and emit "[1,,3]", or "[]" for new Array(1).
+    // The length is read once, so an element getter that grows the array cannot extend the walk.
     const items: string[] = [];
-    for (let index = 0; index < value.length; index += 1) {
+    const length = value.length;
+    for (let index = 0; index < length; index += 1) {
       if (!Object.hasOwn(value, index)) throw new TypeError(`Cannot canonicalize a sparse array hole at ${path}/${index}`);
       items.push(serialize(value[index], `${path}/${index}`));
     }

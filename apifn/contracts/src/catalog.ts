@@ -338,9 +338,12 @@ function hideJointServerValues(
   }
 }
 
-/** Escapes a component name for a `$ref` emitted into the catalog (diagnostic pointers use pointerSegment). */
+/**
+ * Escapes a component name for a `$ref` emitted into the catalog, so
+ * {@link parseLocalRef} reads it back as that name (diagnostic pointers use pointerSegment).
+ */
 function refSegment(name: string): string {
-  return name.replace(/~/g, "~0").replace(/\//g, "~1");
+  return name.replace(/~/g, "~0").replace(/\//g, "~1").replace(/%/g, "%25");
 }
 
 /** A reference for a message: a local one is a pointer, judged segment by segment so `~1~1` cannot hide URL user info. */
@@ -348,23 +351,41 @@ function showRef(ref: string): string {
   return ref.startsWith("#") ? `#${sanitizePointer(ref.slice(1))}` : redactWhole(ref);
 }
 
-function decodePointerSegment(segment: string): string {
-  let decoded = segment;
+/**
+ * The reference tokens of a local `$ref`, read as RFC 6901 section 6 reads a
+ * URI fragment: the whole fragment is percent-decoded, then split on "/",
+ * then "~1" and "~0" are unescaped in each token. Every token counts, empty
+ * ones included (`#/` is the member named ""). Null for a reference that is
+ * not local or not a pointer, a malformed percent escape, or a "~" not
+ * followed by 0 or 1. The single reader of local references.
+ */
+function parseLocalRef(ref: string): string[] | null {
+  if (!ref.startsWith("#")) return null;
+  let pointer: string;
   try {
-    decoded = decodeURIComponent(segment);
+    pointer = decodeURIComponent(ref.slice(1));
   } catch {
-    // Keep the raw segment; resolution fails below if it is not a key.
+    return null;
   }
-  return decoded.replace(/~1/g, "/").replace(/~0/g, "~");
+  if (pointer === "") return [];
+  if (!pointer.startsWith("/")) return null;
+  const tokens = pointer.slice(1).split("/");
+  if (tokens.some((token) => /~(?![01])/.test(token))) return null;
+  return tokens.map((token) => token.replace(/~1/g, "/").replace(/~0/g, "~"));
+}
+
+/** The diagnostic pointer of a local reference's target; the raw fragment for one {@link parseLocalRef} rejects. */
+function refPointer(ref: string): string {
+  const tokens = parseLocalRef(ref);
+  return tokens ? tokens.map((token) => `/${pointerSegment(token)}`).join("") : sanitizePointer(ref.slice(1));
 }
 
 function resolvePointer(doc: Doc, ref: string): unknown {
-  if (ref === "#") return doc;
-  if (!ref.startsWith("#/")) return undefined;
+  const tokens = parseLocalRef(ref);
+  if (!tokens) return undefined;
   let current: unknown = doc;
-  // Every segment counts, empty ones included (`#/` is the member named ""), and array indices are canonical (RFC 6901).
-  for (const raw of ref.slice(2).split("/")) {
-    const segment = decodePointerSegment(raw);
+  // Array indices are canonical (RFC 6901): no leading zeros.
+  for (const segment of tokens) {
     if (Array.isArray(current) && /^(?:0|[1-9]\d*)$/.test(segment)) {
       current = current[Number(segment)];
     } else if (isRecord(current) && Object.prototype.hasOwnProperty.call(current, segment)) {
@@ -391,9 +412,9 @@ function toIdentifier(value: string): string {
 
 /** Component name of a `#/components/schemas/<name>` reference; null for any other target, including nested pointers. */
 function componentName(ref: string): string | null {
-  if (!ref.startsWith(COMPONENT_SCHEMA_PREFIX)) return null;
-  const segment = ref.slice(COMPONENT_SCHEMA_PREFIX.length);
-  return segment === "" || segment.includes("/") ? null : decodePointerSegment(segment);
+  const tokens = parseLocalRef(ref);
+  if (tokens?.length !== 3 || tokens[0] !== "components" || tokens[1] !== "schemas" || tokens[2] === "") return null;
+  return tokens[2];
 }
 
 function nameKey(name: string): string {
@@ -439,7 +460,7 @@ class CatalogBuilder {
   /** What is left of {@link SERVER_SCAN_BUDGET} for this build; servers are judged in a fixed order (paths sorted), so key order cannot change it. */
   private readonly serverScanBudget = { characters: SERVER_SCAN_BUDGET };
   /** The innermost schema being copied that declares a resource `$id`, against which JSON Schema resolves the references inside it. */
-  private resource: { id: string; pointer: string } | null = null;
+  private resource: { pointer: string } | null = null;
   private readonly mediaTypes: Set<string>;
   /** `<in>:<name>` of every parameter that a declared apiKey security scheme carries. */
   private readonly apiKeyParameters = new Set<string>();
@@ -564,6 +585,9 @@ class CatalogBuilder {
     const shown = showRef(ref);
     if (!ref.startsWith("#")) {
       return `External reference ${quote(shown)} is not supported; bundle external documents into the spec before building the catalog.`;
+    }
+    if (!parseLocalRef(ref)) {
+      return `Reference ${quote(shown)} is not a JSON Pointer: after percent-decoding it must be empty or start with "/", every percent escape must be well-formed UTF-8, and every "~" must be followed by 0 or 1 (RFC 6901).`;
     }
     const target = resolvePointer(this.doc, ref);
     if (target === undefined) return `Reference ${quote(shown)} does not resolve to a value in the spec.`;
@@ -690,7 +714,7 @@ class CatalogBuilder {
         return null;
       }
       const ref = current.$ref as string;
-      currentPointer = sanitizePointer(ref.slice(1));
+      currentPointer = refPointer(ref);
       current = resolvePointer(this.doc, ref) as Record<string, unknown>;
     }
     this.report("UNRESOLVED_REF", pointer, `Reference chain at ${pointer} is cyclic or longer than 32 hops.`);
@@ -727,8 +751,13 @@ class CatalogBuilder {
    */
   schema(value: unknown, pointer: string, credential = false, sameInstance = false): JsonValue | null {
     const outer = this.resource;
-    // "" and fragment-only identifiers resolve to the document itself, so they start no resource.
-    if (isRecord(value) && typeof value.$id === "string" && value.$id !== "" && !value.$id.startsWith("#")) this.resource = { id: value.$id, pointer };
+    const id = isRecord(value) ? value.$id : undefined;
+    if (typeof id === "string" && /#./s.test(id)) {
+      this.report("INVALID_SPEC", `${pointer}/$id`, `The $id at ${pointer}/$id has a non-empty fragment, which JSON Schema 2020-12 forbids; name the schema with $anchor instead.`);
+    } else if (typeof id === "string" && id !== "" && id !== "#") {
+      // "" and "#" (an empty fragment) resolve to the document itself, so they start no resource.
+      this.resource = { pointer };
+    }
     try {
       return this.schemaObject(value, pointer, credential, sameInstance);
     } finally {
@@ -761,8 +790,8 @@ class CatalogBuilder {
         drop(key, childPointer, "its name is or holds a credential");
       } else if (REFERENCE_KEYWORDS.has(key) && this.resource) {
         // The catalog resolves every reference against the document; inside a resource JSON Schema would not.
-        const { id, pointer: at } = this.resource;
-        this.report("UNRESOLVED_REF", childPointer, `Reference at ${childPointer} lies inside the schema resource ${quote(id)} declared at ${at}/$id, where JSON Schema resolves it against that $id rather than this document; remove the $id or move the reference out of that schema.`);
+        // The $id is named by its pointer, not its value, so many references cannot repeat a long one.
+        this.report("UNRESOLVED_REF", childPointer, `Reference at ${childPointer} lies inside the schema resource declared at ${this.resource.pointer}/$id, where JSON Schema resolves it against that $id rather than this document; remove the $id or move the reference out of that schema.`);
       } else if (REFERENCE_KEYWORDS.has(key)) {
         const ref = this.schemaRef(child, childPointer, taint());
         if (ref !== null) setOwn(output, key, ref);

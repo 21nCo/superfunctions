@@ -387,7 +387,7 @@
       }
     },
     {
-      "name": "a $ref beside an empty or fragment-only $id",
+      "name": "a $ref beside an empty $id or an empty-fragment $id",
       "path": [
         "components",
         "schemas",
@@ -402,7 +402,7 @@
             "$ref": "#/components/schemas/ProjectStatus"
           },
           "tag": {
-            "$id": "#tag",
+            "$id": "#",
             "$ref": "#/components/schemas/ProjectStatus"
           }
         }
@@ -2756,6 +2756,68 @@
             "$ref": "#/components/schemas/ProjectStatus"
           }
         }
+      }
+    },
+    {
+      "name": "a fragment-only $id",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/components/schemas/ProjectInput/properties/meta/properties/tag/$id"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "tag": {
+            "$id": "#tag",
+            "type": "string"
+          }
+        }
+      },
+      "openapi31": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "tag": {
+            "$id": "#tag",
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "an absolute $id with a fragment",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/components/schemas/ProjectInput/properties/meta/$id"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "https://schemas.example.test/meta#tag",
+        "type": "string",
+        "nullable": true
+      },
+      "openapi31": {
+        "$id": "https://schemas.example.test/meta#tag",
+        "type": [
+          "string",
+          "null"
+        ]
       }
     }
   ]
