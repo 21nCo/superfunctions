@@ -683,7 +683,17 @@ export class CaddyProxyController {
       await rm(candidate, { force: true });
       throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to mark the route activation journal before reloading Caddy.", { cause: error instanceof Error ? error.message : String(error) });
     }
-    if (!recovering) await this.writeRouteState(this.pendingPath, next);
+    // An activation that Caddy never served discards its journal, and only
+    // then its marker, which must not outlive it to roll back a later journal.
+    const discardJournal = async (): Promise<void> => {
+      if (recovering) return;
+      await rm(this.pendingPath, { force: true });
+      await rm(this.uncertainPath, { force: true });
+    };
+    if (!recovering) {
+      try { await this.writeRouteState(this.pendingPath, next); }
+      catch (error) { await rm(candidate, { force: true }); await discardJournal(); throw error; }
+    }
     if (owner) {
       try { await execFileAsync(caddy, ["reload", "--config", candidate, "--adapter", "caddyfile"], { timeout: 10_000 }); }
       catch (error) {
@@ -711,7 +721,7 @@ export class CaddyProxyController {
       try { await new Promise<void>((resolve, reject) => { pingback.once("error", reject); pingback.listen(0, "127.0.0.1", resolve); }); }
       catch (error) {
         await rm(candidate, { force: true });
-        if (!recovering) await rm(this.pendingPath, { force: true });
+        await discardJournal();
         throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to prepare DevFn Caddy startup confirmation.", { cause: error instanceof Error ? error.message : String(error) });
       }
       const closePingback = async (): Promise<void> => {
@@ -771,7 +781,7 @@ export class CaddyProxyController {
             await rm(candidate, { force: true });
             // A Caddy that did not exit may serve the candidate.
             if (!stopped) await this.settleUncertainReload(unstoppable(), false);
-            if (!recovering) await rm(this.pendingPath, { force: true });
+            await discardJournal();
             throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", "Unable to persist the DevFn Caddy owner record.", { cause: error instanceof Error ? error.message : String(error) });
           }
         }
@@ -794,7 +804,7 @@ export class CaddyProxyController {
           if (stopped) await rm(this.ownerPath, { force: true });
           await rm(candidate, { force: true });
           if (!stopped) await this.settleUncertainReload(unstoppable(), false);
-          if (!recovering) await rm(this.pendingPath, { force: true });
+          await discardJournal();
           const privileged = proxyListenerPortsFor(next.routes).filter((port) => port < 1024);
           throw new ProxyError("DEVFN_PROXY_RELOAD_FAILED", `Unable to start the DevFn-owned Caddy proxy and confirm its listeners.${process.platform === "linux" && privileged.length
             ? ` Binding ports ${privileged.join(" and ")} needs net.ipv4.ip_unprivileged_port_start at or below ${Math.min(...privileged)} or cap_net_bind_service on the Caddy binary; DevFn changes neither.` : ""}`);

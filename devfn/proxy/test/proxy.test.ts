@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -603,6 +603,14 @@ process.stdout.write(String(member.pid), () => setTimeout(() => process.exit(0),
         id: "spawn", instanceId: "spawn", hostname: "spawn.localhost", targetHost: "127.0.0.1", targetPort: 4100, tls: "off",
       }])).rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
       expect((await readFile(seen, "utf8")).split("\n")).toEqual(expect.arrayContaining(["proxy-routes.pending.json", "proxy-routes.pending.uncertain"]));
+      // A start whose Caddy exited discards the journal and its marker, so a later unmarked journal is still replayed.
+      const left = await readdir(stateDir);
+      expect(left).not.toContain("proxy-routes.pending.json");
+      expect(left).not.toContain("proxy-routes.pending.uncertain");
+      const route = { id: "later", instanceId: "later", hostname: "later.localhost", targetHost: "127.0.0.1", targetPort: 4101, tls: "off", updatedAt: "now" } as const;
+      await writeFile(path.join(stateDir, "proxy-routes.pending.json"), `${JSON.stringify({ version: 1, routes: [route] })}\n`);
+      await writeFile(path.join(stateDir, "proxy-owner.json"), `${JSON.stringify({ pid: process.pid, birthSignature: await processBirthSignature(process.pid) })}\n`);
+      await expect(new CaddyProxyController(stateDir).routes()).resolves.toEqual([route]);
     } finally {
       if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
       await rm(stateDir, { recursive: true, force: true }); await rm(toolsDir, { recursive: true, force: true });
