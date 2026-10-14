@@ -49,14 +49,19 @@ export interface ApiManifest {
   operations: OperationBinding[];
 }
 
-export interface OperationBinding {
+/**
+ * Binds a stable operation ID to one spec operation: by OpenAPI operationId,
+ * or by route (method and path together), never both.
+ */
+export type OperationBinding = OperationBindingFields &
+  (
+    | { /** Bind by OpenAPI operationId... */ operationId: string; method?: never; path?: never }
+    | { operationId?: never; /** ...or by route, which survives operationId renames. Case-insensitive. */ method: string; path: string }
+  );
+
+interface OperationBindingFields {
   /** Stable operation identity; never derived from method names or paths. */
   id: string;
-  /** Bind by OpenAPI operationId... */
-  operationId?: string;
-  /** ...or by route, which survives operationId renames. */
-  method?: string;
-  path?: string;
   /** Naming override for generated method/tool names. */
   name?: string;
   sdk?: { include?: boolean; excludeTargets?: string[] };
@@ -74,7 +79,7 @@ export interface OperationBinding {
 export interface CatalogEncoding {
   /** Part content type; null keeps the default for the property type. */
   contentType: string | null;
-  style: string;
+  style: "form" | "deepObject";
   explode: boolean;
   allowReserved: boolean;
 }
@@ -94,7 +99,8 @@ export interface CatalogParameter {
   in: "path" | "query" | "header" | "cookie";
   required: boolean;
   deprecated: boolean;
-  style: string;
+  /** `simple` for path and header, `form` or `deepObject` for query, `form` for cookie. */
+  style: "simple" | "form" | "deepObject";
   explode: boolean;
   allowReserved: boolean;
   description: string | null;
@@ -152,17 +158,21 @@ export interface CatalogOperation {
 }
 
 export interface CatalogSecurityScheme {
-  type: string;
+  type: "apiKey" | "http" | "mutualTLS" | "oauth2" | "openIdConnect";
   description: string | null;
   scheme?: string;
   bearerFormat?: string;
-  in?: string;
+  in?: "query" | "header" | "cookie";
   name?: string;
   openIdConnectUrl?: string;
-  flows?: Record<
-    string,
-    { authorizationUrl?: string; tokenUrl?: string; refreshUrl?: string; scopes: string[] }
-  >;
+  flows?: Partial<Record<"implicit" | "password" | "clientCredentials" | "authorizationCode", CatalogOAuthFlow>>;
+}
+
+export interface CatalogOAuthFlow {
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  refreshUrl?: string;
+  scopes: string[];
 }
 
 export interface OperationCatalog {

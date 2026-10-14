@@ -253,6 +253,25 @@ describe("name/value indirection", () => {
     expect(redactCredentialValues(text)).toBe(text);
   });
 
+  // Text outside every container and string is prose, not a record: a name phrase there never reaches a later value phrase.
+  it.each([
+    "Set name=password for the account; today value=Monday",
+    "The field name: api_key is required. Default value: 20",
+    "Rotate the header Authorization yearly; the value: weekly",
+  ])("keeps prose with a name phrase and a value phrase: %s", (text) => {
+    expect(containsCredentialValue(text)).toBe(false);
+    expect(redactCredentialValues(text)).toBe(text);
+    expect(validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, message: text } }).ok).toBe(true);
+  });
+
+  it.each([
+    ["a JSON object", `Set {"name": "password", "value": "${NAME_SEED}"}`],
+    ["a string holding escaped JSON", JSON.stringify(JSON.stringify({ name: "password", value: NAME_SEED }))],
+  ])("still reads a name/value record in %s", (_name, text) => {
+    expect(containsCredentialValue(text)).toBe(true);
+    expect(redactCredentialValues(text)).not.toContain(NAME_SEED);
+  });
+
   // When the structure cannot be trusted, the whole text is one container.
   it.each([
     ["closer that skips a container", `[{"name":"password"], {"value":"${NAME_SEED}"}`],
@@ -989,7 +1008,7 @@ describe("credential identifier rules", () => {
     const { catalog, diagnostics } = buildOperationCatalog(nextSpec, clone(manifest));
     const rejected = diagnostics.filter((diagnostic) => diagnostic.code === "INVALID_SPEC" && diagnostic.pointer.includes("/scopes/"));
     expect(rejected.length > 0).toBe(credential);
-    if (!credential) expect(catalog!.securitySchemes.oauth.flows!.clientCredentials.scopes).toContain(identifier);
+    if (!credential) expect(catalog!.securitySchemes.oauth.flows!.clientCredentials!.scopes).toContain(identifier);
 
     const result = validateClientFailureEvent({ ...clone(event), failure: { kind: "http", httpStatus: 401, errorCode: identifier } });
     expect(result.ok).toBe(!credential);

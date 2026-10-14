@@ -537,6 +537,8 @@ interface Structure {
   containers: Int32Array;
   /** For each index inside a string, where the string's closing delimiter starts; -1 outside strings. */
   stringCloses: Int32Array;
+  /** False when the structure cannot be trusted and the whole text is read as one container (-1). */
+  trusted: boolean;
 }
 
 /**
@@ -553,7 +555,7 @@ interface Structure {
 function textStructure(text: string): Structure {
   const containers = new Int32Array(text.length + 1);
   const stringCloses = new Int32Array(text.length + 1).fill(-1);
-  const untrusted = () => ({ containers: containers.fill(-1), stringCloses: stringCloses.fill(-1) });
+  const untrusted = () => ({ containers: containers.fill(-1), stringCloses: stringCloses.fill(-1), trusted: false });
   const stack: number[] = [];
   const current = () => (stack.length === 0 ? -1 : stack[stack.length - 1]);
   for (let index = 0; index < text.length; ) {
@@ -590,7 +592,7 @@ function textStructure(text: string): Structure {
     index += 1;
   }
   containers[text.length] = current();
-  return { containers, stringCloses };
+  return { containers, stringCloses, trusted: true };
 }
 
 /**
@@ -613,16 +615,32 @@ function keyValueContext(scan: TextScan, keyStart: number, start: number, separa
 }
 
 interface NamedContainers {
-  containers: Int32Array;
+  structure: Structure;
+  /** Each record (see {@link recordAt}) whose name field holds a credential key, mapped to whether that key is a header. */
   headers: Map<number, boolean>;
   /** Where the delimiter closing each quoted credential name starts, mapped to where it ends. */
   nameCloses: Map<number, number>;
 }
 
 /**
- * The containers whose name field holds a credential key, each mapped to
- * whether that key is an Authorization or Cookie header; null when there are
- * none, so ordinary text never pays for the container index.
+ * The record holding `index`, as a key: its innermost container, else the
+ * string holding it (escaped JSON quoted whole, `"{\"name\": ...}"`, is one
+ * record), else, when the structure cannot be trusted, the whole text (-1),
+ * which fails closed. Null for text outside every container and string:
+ * `Set name=password; today value=Monday` is prose, not a record.
+ */
+function recordAt(structure: Structure, index: number): number | null {
+  const container = structure.containers[index];
+  if (container !== -1 || !structure.trusted) return container;
+  const close = structure.stringCloses[index];
+  return close === -1 ? null : -2 - close;
+}
+
+/**
+ * The records whose name field holds a credential key, each mapped to whether
+ * that key is an Authorization or Cookie header, and where each quoted
+ * credential name closes; null when there are no credential names, so
+ * ordinary text never pays for the container index.
  */
 function namedCredentialContainers(scan: TextScan): NamedContainers | null {
   let found: NamedContainers | null = null;
@@ -638,9 +656,9 @@ function namedCredentialContainers(scan: TextScan): NamedContainers | null {
       [name, close] = [quoted.name, quoted];
     }
     if (!isCredentialKey(name)) continue;
-    found ??= { containers: scan.structure().containers, headers: new Map(), nameCloses: new Map() };
-    const container = found.containers[match.index];
-    found.headers.set(container, (found.headers.get(container) ?? false) || isHeaderKey(name));
+    found ??= { structure: scan.structure(), headers: new Map(), nameCloses: new Map() };
+    const record = recordAt(found.structure, match.index);
+    if (record !== null) found.headers.set(record, (found.headers.get(record) ?? false) || isHeaderKey(name));
     if (close) found.nameCloses.set(close.close, close.end);
   }
   return found;
@@ -689,9 +707,9 @@ function redactKeyValues(text: string, identifier: boolean): string {
   for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
     const key = match[2];
     const lastWord = key.split(/[ \t]+/).pop()!;
-    // `{"name": "X-Api-Key", "value": "..."}`: the value field of a container whose name field holds a credential key.
-    const container = named && VALUE_FIELD.test(lastWord) ? named.containers[match.index] : undefined;
-    const indirect = container !== undefined && named!.headers.has(container);
+    // `{"name": "X-Api-Key", "value": "..."}`: the value field of a record whose name field holds a credential key.
+    const record = named && VALUE_FIELD.test(lastWord) ? recordAt(named.structure, match.index) : null;
+    const indirect = record !== null && named!.headers.has(record);
     if (!indirect && !isCredentialKey(lastWord) && !isCredentialKey(key)) continue;
     let start = match.index + match[0].length;
     let keyStart = match.index;
@@ -705,7 +723,7 @@ function redactKeyValues(text: string, identifier: boolean): string {
       if (endsNameField(scan, start)) continue;
       keyStart = start;
     }
-    const header = indirect ? named!.headers.get(container)! : isHeaderKey(lastWord);
+    const header = indirect ? named!.headers.get(record)! : isHeaderKey(lastWord);
     const separator = nameEnd === undefined ? match[3] : ":";
     const { begin = start, end, value, quote, closing = quote } = readValue(scan, start, match.index, header, () => keyValueContext(scan, keyStart, start, separator));
     if (end <= start) continue;

@@ -75,8 +75,8 @@ class ManifestChecker {
    */
   string(value: unknown, pointer: string, pattern?: RegExp, max = 256, text = false): void {
     if (value === undefined) return;
-    if (typeof value !== "string" || value.length === 0 || value.length > max) {
-      this.fail(pointer, `Expected a non-empty string of at most ${max} characters at ${pointer}.`);
+    if (typeof value !== "string" || value.length === 0 || codePointLength(value) > max) {
+      this.fail(pointer, `Expected a non-empty string of at most ${max} characters (Unicode code points) at ${pointer}.`);
     } else if (!text && containsCredentialIdentifier(value)) {
       this.fail(pointer, `Value at ${pointer} holds a credential-like value; manifest identifiers are copied verbatim into artifacts.`);
     } else if (pattern && !pattern.test(value)) {
@@ -87,6 +87,20 @@ class ManifestChecker {
   boolean(value: unknown, pointer: string): void {
     if (value !== undefined && typeof value !== "boolean") this.fail(pointer, `Expected a boolean at ${pointer}.`);
   }
+}
+
+/** The length JSON Schema `maxLength` counts: Unicode code points, so a surrogate pair counts once and a lone surrogate once. */
+function codePointLength(value: string): number {
+  let length = value.length;
+  for (let index = 0; index < value.length - 1; index += 1) {
+    const high = value.charCodeAt(index);
+    const low = value.charCodeAt(index + 1);
+    if (high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff) {
+      length -= 1;
+      index += 1;
+    }
+  }
+  return length;
 }
 
 function checkBinding(check: ManifestChecker, binding: unknown, pointer: string): void {

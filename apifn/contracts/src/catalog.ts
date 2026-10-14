@@ -23,6 +23,7 @@ import {
   type ApiManifest,
   type BuildCatalogResult,
   type CatalogContent,
+  type CatalogOAuthFlow,
   type CatalogOperation,
   type CatalogEncoding,
   type CatalogParameter,
@@ -41,12 +42,18 @@ type Doc = Record<string, unknown>;
 
 const METHODS: HttpMethod[] = ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
 const PARAMETER_LOCATIONS = ["path", "query", "header", "cookie"] as const;
-const PARAMETER_STYLES: Record<CatalogParameter["in"], string[]> = {
+const PARAMETER_STYLES: Record<CatalogParameter["in"], Array<CatalogParameter["style"]>> = {
   path: ["simple"],
   query: ["form", "deepObject"],
   header: ["simple"],
   cookie: ["form"],
 };
+const ENCODING_STYLES: Array<CatalogEncoding["style"]> = ["form", "deepObject"];
+
+/** Narrows a string checked against one of the catalog's closed lists to that list's members. */
+function isOneOf<T extends string>(list: readonly T[], value: string): value is T {
+  return (list as readonly string[]).includes(value);
+}
 /** OpenAPI ignores header parameters with these names (OAS 3.1 §4.8.12.1). */
 const IGNORED_HEADERS = new Set(["accept", "content-type", "authorization"]);
 /** Request media types whose properties can carry an Encoding Object. */
@@ -91,7 +98,7 @@ const SCHEMA_LIST_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"])
 /** Applicators whose subschemas describe the same instance as the schema holding them, as `$ref` targets do. */
 const SAME_INSTANCE_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas"]);
 const COMPONENT_SCHEMA_PREFIX = "#/components/schemas/";
-const SECURITY_SCHEME_TYPES = ["apiKey", "http", "mutualTLS", "oauth2", "openIdConnect"];
+const SECURITY_SCHEME_TYPES: Array<CatalogSecurityScheme["type"]> = ["apiKey", "http", "mutualTLS", "oauth2", "openIdConnect"];
 const API_KEY_LOCATIONS = ["query", "header", "cookie"];
 /** The OAuth flows OpenAPI 3.0/3.1 define, each with the URLs it requires. */
 const OAUTH_FLOW_URLS: Record<string, ReadonlyArray<"authorizationUrl" | "tokenUrl">> = {
@@ -498,6 +505,13 @@ interface SpecOperation {
  */
 type Taint = 0 | 1 | 2;
 
+/** An OpenAPI object reached through its Reference Objects, with the description that overrides its own, if any. */
+interface Resolved {
+  value: Record<string, unknown>;
+  pointer: string;
+  override: { value: unknown; pointer: string } | null;
+}
+
 class CatalogBuilder {
   readonly diagnostics: Diagnostic[] = [];
   /** While positive, reports are discarded: componentSchemas settles component taint in a dry run before emitting. */
@@ -524,7 +538,9 @@ class CatalogBuilder {
 
   constructor(
     private readonly doc: Doc,
-    private readonly manifest: ApiManifest
+    private readonly manifest: ApiManifest,
+    /** OpenAPI 3.1 lets a Reference Object's description override its target's; 3.0 ignores fields beside `$ref`. */
+    private readonly referenceOverrides: boolean
   ) {
     this.mediaTypes = new Set((manifest.serialization?.mediaTypes ?? ["application/json"]).map(normalizeMediaType));
     const components = this.member(doc, "components", "", OBJECT) ?? {};
@@ -751,8 +767,10 @@ class CatalogBuilder {
    * Follows Reference Objects to an OpenAPI object. Undefined means absent;
    * anything else that is not an object is reported, never dropped silently
    * (the reference diagnostic matches checkRefs, so the two deduplicate).
+   * In OpenAPI 3.1 the description of the first Reference Object holding one
+   * overrides the target's; read it with {@link description}.
    */
-  deref(value: unknown, pointer: string, pathItem = false): { value: Record<string, unknown>; pointer: string } | null {
+  deref(value: unknown, pointer: string, pathItem = false): Resolved | null {
     if (value === undefined) return null;
     if (!isRecord(value)) {
       this.report("INVALID_SPEC", pointer, `Expected an object at ${pointer}, found ${describeValue(value)}.`);
@@ -760,9 +778,13 @@ class CatalogBuilder {
     }
     let current: Record<string, unknown> = value;
     let currentPointer = pointer;
+    let override: Resolved["override"] = null;
     for (let hops = 0; hops < 32; hops += 1) {
-      if (!Object.hasOwn(current, "$ref")) return { value: current, pointer: currentPointer };
+      if (!Object.hasOwn(current, "$ref")) return { value: current, pointer: currentPointer, override };
       if (pathItem) this.pathItemRefFields(current, currentPointer);
+      else if (this.referenceOverrides && override === null && Object.hasOwn(current, "description")) {
+        override = { value: current.description, pointer: `${currentPointer}/description` };
+      }
       const problem = this.refProblem(current.$ref, "object");
       if (problem) {
         this.report("UNRESOLVED_REF", `${currentPointer}/$ref`, problem);
@@ -774,6 +796,12 @@ class CatalogBuilder {
     }
     this.report("UNRESOLVED_REF", pointer, `Reference chain at ${pointer} is cyclic or longer than 32 hops.`);
     return null;
+  }
+
+  /** The description of a dereferenced object: a Reference Object's own one when it overrides the target's. */
+  description(resolved: Resolved): string | null {
+    const { value, pointer } = resolved.override ?? { value: own(resolved.value, "description"), pointer: `${resolved.pointer}/description` };
+    return this.text(value, pointer);
   }
 
   /**
@@ -1072,8 +1100,8 @@ class CatalogBuilder {
         continue;
       }
       const style = this.member(encoding, "style", encodingPointer, STRING, operation) ?? "form";
-      if (!PARAMETER_STYLES.query.includes(style)) {
-        this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/style`, `Property ${quote(name)} of ${mediaType} in operation ${quote(operation)} uses style ${quote(style)}; supported styles are ${PARAMETER_STYLES.query.join(", ")}.`, { operation });
+      if (!isOneOf(ENCODING_STYLES, style)) {
+        this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/style`, `Property ${quote(name)} of ${mediaType} in operation ${quote(operation)} uses style ${quote(style)}; supported styles are ${ENCODING_STYLES.join(", ")}.`, { operation });
         continue;
       }
       if (encoding.headers !== undefined) {
@@ -1146,7 +1174,7 @@ class CatalogBuilder {
   }
 
   parameters(entry: SpecOperation, id: string): CatalogParameter[] {
-    const merged = new Map<string, { value: Record<string, unknown>; pointer: string }>();
+    const merged = new Map<string, Resolved>();
     const sources: Array<[unknown, string]> = [
       [entry.pathItem.parameters, `${entry.pathItemPointer}/parameters`],
       [entry.operation.parameters, `${entry.pointer}/parameters`],
@@ -1180,7 +1208,8 @@ class CatalogBuilder {
 
     const { template } = entry;
     const parameters: CatalogParameter[] = [];
-    for (const { value, pointer } of merged.values()) {
+    for (const resolved of merged.values()) {
+      const { value, pointer } = resolved;
       const location = value.in as CatalogParameter["in"];
       const name = value.name as string;
       if (location === "path" && !template.includes(name)) {
@@ -1189,7 +1218,7 @@ class CatalogBuilder {
       }
       if (location === "header" && IGNORED_HEADERS.has(name.toLowerCase())) continue;
       const style = this.member(value, "style", pointer, STRING, id) ?? (location === "query" || location === "cookie" ? "form" : "simple");
-      if (value.content !== undefined || !PARAMETER_STYLES[location].includes(style)) {
+      if (value.content !== undefined || !isOneOf(PARAMETER_STYLES[location], style)) {
         this.report(
           "UNSUPPORTED_SERIALIZATION",
           pointer,
@@ -1209,7 +1238,7 @@ class CatalogBuilder {
         style,
         explode: this.member(value, "explode", pointer, BOOLEAN, id) ?? style === "form",
         allowReserved: this.member(value, "allowReserved", pointer, BOOLEAN, id) ?? false,
-        description: this.text(own(value, "description"), `${pointer}/description`),
+        description: this.description(resolved),
         schema: this.schema(own(value, "schema"), `${pointer}/schema`, this.isCredentialParameter(location, name)),
       });
     }
@@ -1247,7 +1276,7 @@ class CatalogBuilder {
           {
             status,
             kind,
-            description: this.text(own(resolved.value, "description"), `${resolved.pointer}/description`) ?? "",
+            description: this.description(resolved) ?? "",
             contents: this.contents(own(resolved.value, "content"), `${resolved.pointer}/content`, id, `Response ${status}`),
           },
         ];
@@ -1361,14 +1390,16 @@ class CatalogBuilder {
       const resolved = this.deref(declared[name], schemePointer);
       if (!resolved) continue;
       const { value, pointer } = resolved;
-      if (typeof value.type !== "string" || !SECURITY_SCHEME_TYPES.includes(value.type)) {
+      const type = value.type;
+      if (typeof type !== "string" || !isOneOf(SECURITY_SCHEME_TYPES, type)) {
         this.report("INVALID_SPEC", `${pointer}/type`, `Security scheme ${quote(name)} needs a type of ${SECURITY_SCHEME_TYPES.join(", ")}.`);
         continue;
       }
-      const scheme: CatalogSecurityScheme = { type: value.type, description: this.text(own(value, "description"), `${pointer}/description`) };
+      const scheme: CatalogSecurityScheme = { type, description: this.description(resolved) };
       for (const key of ["scheme", "in", "name"] as const) {
         const member = this.member(value, key, pointer, STRING);
-        if (member !== undefined) scheme[key] = this.identifier(member, `${pointer}/${key}`, `Security scheme ${key}`);
+        // An "in" outside the apiKey locations is reported below, so the catalog is never published with it.
+        if (member !== undefined) Object.assign(scheme, { [key]: this.identifier(member, `${pointer}/${key}`, `Security scheme ${key}`) });
       }
       // Each type's required members, as OpenAPI defines them. A present value of the wrong type is already reported.
       const requireMember = (key: string, valid: boolean, need: string) => {
@@ -1394,7 +1425,7 @@ class CatalogBuilder {
         requireMember("flows", flowCount > 0, `flows with at least one of ${Object.keys(OAUTH_FLOW_URLS).join(", ")}`);
       }
       if (declaredFlows !== undefined) {
-        const flows: NonNullable<CatalogSecurityScheme["flows"]> = {};
+        const flows: Record<string, CatalogOAuthFlow> = {};
         // Specification extensions (`x-*`) are not flows.
         for (const flowName of Object.keys(declaredFlows).filter((key) => !key.startsWith("x-")).sort(compareCodeUnits)) {
           const flow = declaredFlows[flowName];
@@ -1413,7 +1444,7 @@ class CatalogBuilder {
             this.report("INVALID_SPEC", `${flowPointer}/scopes`, `OAuth flow ${quote(flowName)} of security scheme ${quote(name)} needs scopes (an object, possibly empty).`);
           }
           const scopes = Object.keys(declaredScopes ?? {});
-          const output: NonNullable<CatalogSecurityScheme["flows"]>[string] = {
+          const output: CatalogOAuthFlow = {
             scopes: sortStrings(scopes.map((scope) => this.identifier(scope, `${flowPointer}/scopes/${pointerSegment(scope)}`, "Scope name"))),
           };
           for (const key of ["authorizationUrl", "tokenUrl", "refreshUrl"] as const) {
@@ -1509,7 +1540,8 @@ class CatalogBuilder {
       const occurrences = placeholderCounts(template);
       const kept = placeholderCounts(url);
       // Every placeholder left in the published URL needs a variable with a default, or clients cannot expand it.
-      const unusable = [...kept.keys()].filter((name) => !valid.includes(name));
+      // Membership is an own-property test, so this stays linear in placeholders plus variables.
+      const unusable = [...kept.keys()].filter((name) => !Object.hasOwn(defaults, name));
       const undeclared = unusable.filter((name) => !Object.hasOwn(declared, name)).sort(compareCodeUnits);
       if (undeclared.length > 0) {
         this.report("INVALID_SPEC", `${serverPointer}/url`, `Server URL at ${serverPointer}/url uses ${undeclared.map((name) => quote(name)).join(", ")} but declares no such variable; declare each placeholder under variables with a string default.`);
@@ -1634,19 +1666,21 @@ class CatalogBuilder {
       for (const method of METHODS) {
         const operation = own(resolved.value, method);
         if (operation === undefined) continue;
+        // Diagnostics point where the operation is written, through any Path Item $ref; the route stays the paths key.
+        const pointer = `${resolved.pointer}/${method}`;
         if (!isRecord(operation)) {
-          this.report("INVALID_SPEC", `/paths/${pointerSegment(path)}/${method}`, `Operation ${method.toUpperCase()} ${redactWhole(path)} must be an object, not ${describeValue(operation)}.`);
+          this.report("INVALID_SPEC", pointer, `Operation ${method.toUpperCase()} ${redactWhole(path)} must be an object, not ${describeValue(operation)}.`);
           continue;
         }
         operations.push({
           method,
           path,
           template: parsed.names,
-          pointer: `/paths/${pointerSegment(path)}/${method}`,
+          pointer,
           pathItem: resolved.value,
           pathItemPointer: resolved.pointer,
           operation,
-          operationId: this.operationId(operation, `/paths/${pointerSegment(path)}/${method}`),
+          operationId: this.operationId(operation, pointer),
         });
       }
     }
@@ -1955,10 +1989,13 @@ export function buildOperationCatalog(spec: string | Record<string, unknown>, ma
     return snapshot.problems.length > 0 ? null : snapshot.value;
   };
   let doc: Doc | null = null;
+  let referenceOverrides = true;
   let specDigest = "";
   try {
     const input = plain(typeof spec === "string" ? readOpenApiText(spec) : spec, "INVALID_SPEC", "spec");
     if (input !== null) {
+      const version = (input as Doc).openapi;
+      referenceOverrides = !(typeof version === "string" && version.startsWith("3.0."));
       doc = parseDocument(input as Record<string, unknown>) as Doc;
       if (!isRecord(doc.paths) || !isRecord(doc.info)) throw new Error("document requires info and paths objects");
       specDigest = canonicalDigest(doc);
@@ -1983,7 +2020,7 @@ export function buildOperationCatalog(spec: string | Record<string, unknown>, ma
     return { catalog: null, digest: null, diagnostics: sortDiagnostics(diagnostics) };
   }
 
-  const builder = new CatalogBuilder(doc, validated.manifest);
+  const builder = new CatalogBuilder(doc, validated.manifest, referenceOverrides);
   const { provenance, ...built } = builder.build();
   diagnostics.push(...builder.diagnostics);
   const sorted = sortDiagnostics(diagnostics);

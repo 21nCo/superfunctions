@@ -455,7 +455,7 @@ describe("credential safety", () => {
       nextSpec.components.securitySchemes.oauth.flows.clientCredentials.tokenUrl =
         "https://auth.example.test/oauth/token?audience=projects&client_secret=SEEDEDurl0015&x=sk_live_SEEDEDurl0016";
     });
-    expect(result.catalog!.securitySchemes.oauth.flows!.clientCredentials.tokenUrl).toBe("https://auth.example.test/oauth/token?audience=projects");
+    expect(result.catalog!.securitySchemes.oauth.flows!.clientCredentials!.tokenUrl).toBe("https://auth.example.test/oauth/token?audience=projects");
     expect(canonicalJson(result)).not.toMatch(/SEEDEDurl001[56]/);
   });
 
@@ -1141,7 +1141,7 @@ describe("author strings copied into the catalog", () => {
       nextSpec.paths[PROJECT_ROUTE].get.security = [{ oauth: ["secrets:read"] }];
     });
     expect(result.diagnostics).toEqual([]);
-    expect(result.catalog!.securitySchemes.oauth.flows!.clientCredentials.scopes).toContain("secrets:read");
+    expect(result.catalog!.securitySchemes.oauth.flows!.clientCredentials!.scopes).toContain("secrets:read");
   });
 
   it.each([
@@ -2211,6 +2211,38 @@ describe("path and server URL templates", () => {
     const ratio = scalingRatio((size) => buildOperationCatalog(specs.get(size)!, clone(manifest)), BACKTRACK);
     expect(ratio).toBeLessThan(LINEAR_RATIO);
   }, SCALING_TIMEOUT);
+
+  // Matching placeholders against variables was a search of every variable per placeholder; each row is timed at n and 4n.
+  // Only the first shape grows with placeholders x variables; the others are linear controls.
+  const declaredServer = (variables: number, placeholders: number, prefix: string) => ({
+    url: `https://api.example.test/${Array.from({ length: placeholders }, (_, index) => `{${prefix}${index}}`).join("/")}`,
+    variables: Object.fromEntries(Array.from({ length: variables }, (_, index) => [`v${index}`, { default: "a" }])),
+  });
+  const SERVER_SHAPES: Array<[string, (size: number) => unknown, number, boolean]> = [
+    ["n undeclared placeholders and n declared, unused variables", (size) => declaredServer(size, size, "u"), 10_000, false],
+    ["n used variables", (size) => declaredServer(size, size, "v"), 2_500, true],
+    ["n declared, unused variables", (size) => declaredServer(size, 1, "v"), 2_500, true],
+    ["n undeclared placeholders", (size) => declaredServer(1, size, "u"), 2_500, false],
+  ];
+  const SERVER_SCALING_CELLS = SERVER_SHAPES.flatMap(([shape, server, size, publishes], row) =>
+    SERVER_SCOPES.filter((_, scope) => row === 0 || scope === 0).map(([scope, pointer, place]) => [scope, shape, pointer, place, server, size, publishes] as const)
+  );
+
+  it.each(SERVER_SCALING_CELLS)("judges the %s server with %s in linear time", (_scope, _shape, pointer, place, server, size, publishes) => {
+    const specs = new Map(
+      [size, size * 4].map((n) => {
+        const nextSpec = clone(spec);
+        place(nextSpec, server(n));
+        return [n, nextSpec];
+      })
+    );
+    const ratio = scalingRatio((n) => {
+      const result = buildOperationCatalog(specs.get(n)!, clone(manifest));
+      expect(result.catalog !== null).toBe(publishes);
+      if (!publishes) expect(only(result.diagnostics, "INVALID_SPEC").map((diagnostic) => diagnostic.pointer)).toEqual([`${pointer}/url`]);
+    }, size, 2);
+    expect(ratio).toBeLessThan(LINEAR_RATIO);
+  }, SCALING_TIMEOUT);
 });
 
 describe("documented schema reference reading", () => {
@@ -2265,5 +2297,89 @@ describe("documented schema reference reading", () => {
     expect(readme).not.toMatch(/escaped only by JSON Pointer rules|unescape `~1` and `~0` and resolve/);
     const descriptions = JSON.stringify(readJson(path.join(SCHEMAS, "operation-catalog.v1.schema.json"))).match(/percent-decoding the fragment, splitting it on \/, then unescaping ~1 to \/ and ~0 to ~/g);
     expect(descriptions).toHaveLength(3);
+  });
+});
+
+// OpenAPI 3.1: a Reference Object's description overrides its target's; the first one along a chain wins. 3.0 ignores it.
+describe("Reference Object description overrides", () => {
+  const OVERRIDE_SEED = "SEEDEDref0412abcd";
+  const referenced = (openapi: string, outer: string | undefined, middle: string | undefined) =>
+    build((nextSpec) => {
+      nextSpec.openapi = openapi;
+      const beside = (description: string | undefined) => (description === undefined ? {} : { description });
+      Object.assign(nextSpec.components.parameters, {
+        Target: { name: "zz", in: "query", description: "target text", schema: { type: "string" } },
+        Middle: { $ref: "#/components/parameters/Target", ...beside(middle) },
+      });
+      Object.assign(nextSpec.components.responses, { Middle: { $ref: "#/components/responses/NotFound", ...beside(middle) } });
+      nextSpec.components.securitySchemes.Middle = { $ref: "#/components/securitySchemes/bearerAuth", ...beside(middle) };
+      nextSpec.components.securitySchemes.Outer = { $ref: "#/components/securitySchemes/Middle", ...beside(outer) };
+      const operation = nextSpec.paths[LIST_ROUTE].get;
+      operation.parameters.push({ $ref: "#/components/parameters/Middle", ...beside(outer) });
+      operation.responses["404"] = { $ref: "#/components/responses/Middle", ...beside(outer) };
+    });
+  const descriptions = (result: ReturnType<typeof build>) => {
+    const operation = result.catalog!.operations.find((candidate) => candidate.id === "projects.list")!;
+    return [
+      operation.parameters.find((parameter) => parameter.name === "zz")!.description,
+      operation.responses.find((response) => response.status === "404")!.description,
+      result.catalog!.securitySchemes.Outer.description,
+    ];
+  };
+
+  it.each([
+    ["3.1.0", "outer", "middle", "outer"],
+    ["3.1.0", undefined, "middle", "middle"],
+    ["3.1.0", "outer", undefined, "outer"],
+  ])("OpenAPI %s: the first description along the chain wins (outer %j, middle %j)", (openapi, outer, middle, expected) => {
+    const result = referenced(openapi, outer, middle);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")).toEqual([]);
+    expect(descriptions(result)).toEqual([expected, expected, expected]);
+  });
+
+  it.each([
+    ["3.1.0 without an override", "3.1.0", undefined],
+    ["3.0.3 with an override", "3.0.3", "outer"],
+  ])("%s keeps the target's description", (_name, openapi, outer) => {
+    const result = referenced(openapi, outer, outer);
+    expect(descriptions(result)).toEqual(["target text", "Not found", null]);
+  });
+
+  it("redacts a credential in an overriding description at its own pointer", () => {
+    const result = referenced("3.1.0", `password: ${OVERRIDE_SEED}`, "middle");
+    expect(canonicalJson(result)).not.toContain(OVERRIDE_SEED);
+    expect(descriptions(result)).toEqual(["[REDACTED]", "[REDACTED]", "[REDACTED]"]);
+    expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toEqual(
+      expect.arrayContaining([
+        `/paths/${LIST_ROUTE.replace(/\//g, "~1")}/get/parameters/2/description`,
+        `/paths/${LIST_ROUTE.replace(/\//g, "~1")}/get/responses/404/description`,
+        "/components/securitySchemes/Outer/description",
+      ])
+    );
+  });
+});
+
+// A Path Item that is only a $ref: its operations are written at the target, so their diagnostics point there.
+describe("diagnostics of operations behind a Path Item $ref", () => {
+  const ITEM = "/components/pathItems/Things";
+  it.each([
+    ["direct", { $ref: `#${ITEM}` }],
+    ["chained", { $ref: "#/x-alias" }],
+  ])("%s reference: diagnostics point at the referenced path item, the route stays the paths key", (_name, item) => {
+    const result = build((nextSpec, nextManifest) => {
+      nextSpec["x-alias"] = { $ref: `#${ITEM}` };
+      nextSpec.components.pathItems = {
+        Things: {
+          get: { operationId: "listThings", tags: "things", responses: { "200": { description: "ok" }, nope: { description: "bad" } } },
+          post: 5,
+        },
+      };
+      nextSpec.paths["/things"] = item;
+      nextManifest.operations.push({ id: "things.list", operationId: "listThings" });
+    });
+    expect(result.catalog).toBeNull();
+    expect(only(result.diagnostics, "INVALID_SPEC").map((diagnostic) => diagnostic.pointer).sort()).toEqual([`${ITEM}/get/responses/nope`, `${ITEM}/get/tags`, `${ITEM}/post`]);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.pointer.startsWith("/paths/~1things/"))).toEqual([]);
+    expect(only(result.diagnostics, "INVALID_SPEC").find((diagnostic) => diagnostic.pointer === `${ITEM}/post`)!.message).toMatch(/^Operation POST \/things must be an object/);
   });
 });

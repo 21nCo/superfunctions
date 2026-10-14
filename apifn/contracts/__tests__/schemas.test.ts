@@ -17,6 +17,7 @@ import {
   createReleaseDescriptor,
   isCredentialKey,
   validateClientFailureEvent,
+  validateManifest,
   type CreateReleaseInput,
 } from "../src/index.js";
 import { clone, FIXTURES, fixture, readJson, SCHEMAS } from "./helpers.js";
@@ -118,10 +119,78 @@ describe("published JSON Schemas", () => {
     expect(release.properties.artifacts.items.properties.package.properties.name.pattern).toBe(PACKAGE_NAME_PATTERN.source);
   });
 
+  // Every value the builder can emit at a schema position (a Schema Object, a boolean schema, or null for none) and nothing else.
+  it.each<[string, unknown, boolean, boolean]>([
+    ["an object", { type: "string" }, true, true],
+    ["true", true, true, true],
+    ["null", null, true, false],
+    ["a string", "string", false, false],
+    ["a number", 42, false, false],
+    ["an array", [{ type: "string" }], false, false],
+  ])("catalog schema positions accept %s only as the builder emits it", (_name, value, inOperation, inComponents) => {
+    const catalog = clone(fixture("catalog/catalog.json"));
+    const operation = catalog.operations.find((candidate: any) => candidate.parameters.length > 0 && candidate.responses.some((response: any) => response.contents.length > 0));
+    const withParameter = clone(catalog);
+    withParameter.operations[catalog.operations.indexOf(operation)].parameters[0].schema = value;
+    expect(check("operation-catalog", withParameter)).toBe(inOperation);
+    const withContent = clone(catalog);
+    withContent.operations[catalog.operations.indexOf(operation)].responses.find((response: any) => response.contents.length > 0).contents[0].schema = value;
+    expect(check("operation-catalog", withContent)).toBe(inOperation);
+    expect(check("operation-catalog", { ...clone(catalog), schemas: { ...catalog.schemas, Extra: value } })).toBe(inComponents);
+  });
+
+  // kind follows status as buildOperationCatalog classifies it.
+  it.each<[string, string, boolean]>([
+    ["200", "success", true],
+    ["1XX", "success", true],
+    ["302", "success", true],
+    ["404", "error", true],
+    ["5XX", "error", true],
+    ["default", "default", true],
+    ["404", "success", false],
+    ["200", "error", false],
+    ["default", "error", false],
+    ["500", "default", false],
+  ])("catalog response status %s with kind %s is %s", (status, kind, valid) => {
+    const catalog = clone(fixture("catalog/catalog.json"));
+    Object.assign(catalog.operations[0].responses[0], { status, kind });
+    expect(check("operation-catalog", catalog)).toBe(valid);
+  });
+
+  it("rejects a release artifact that exposes an operation twice", () => {
+    const descriptor = clone(fixture("catalog/release-descriptor.json"));
+    const artifact = descriptor.artifacts.find((candidate: any) => candidate.operations.length > 0);
+    expect(check("release-descriptor", descriptor)).toBe(true);
+    artifact.operations.push(artifact.operations[0]);
+    expect(check("release-descriptor", descriptor)).toBe(false);
+  });
 });
 
 describe("schema and runtime agreement", () => {
   const event = fixture("client-failure/valid/network-minimal.json");
+
+  // maxLength counts code points: an astral character (two UTF-16 units) counts once in the schema and the validator.
+  const BOUNDED_TEXT: Array<[string, number, (manifest: any, text: string) => void]> = [
+    ["deprecation message", 1024, (manifest, text) => { manifest.operations[0].deprecation = { message: text }; }],
+    ["provenance source", 512, (manifest, text) => { manifest.provenance = { ...manifest.provenance, source: text }; }],
+    ["provenance exporter", 128, (manifest, text) => { manifest.provenance = { ...manifest.provenance, exporter: text }; }],
+  ];
+  const LENGTH_CELLS = BOUNDED_TEXT.flatMap(([field, max, place]) =>
+    ([
+      ["BMP characters", "\u00e9", max, true],
+      ["BMP characters", "\u00e9", max + 1, false],
+      ["astral characters", "\u{1F600}", max, true],
+      ["astral characters", "\u{1F600}", max + 1, false],
+      ["astral characters", "\u{1F600}", Math.floor(max / 2) + 1, true],
+    ] as const).map(([kind, char, count, valid]) => [field, count, kind, place, char, valid] as const)
+  );
+
+  it.each(LENGTH_CELLS)("manifest %s of %i %s: the schema and validateManifest agree", (_field, count, _kind, place, char, valid) => {
+    const manifest = clone(fixture("catalog/manifest.json"));
+    place(manifest, char.repeat(count));
+    expect(check("manifest", manifest)).toBe(valid);
+    expect(validateManifest(manifest).manifest !== null).toBe(valid);
+  });
 
   it.each(["pass_word", "s.e.c.r.e.t", "api-key", "x.session-id", "auth.token", "private.key", "region", "page.size", "retry.count", "sessions"])(
     "attribute key %s: the schema and the validator agree",
