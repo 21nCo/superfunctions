@@ -945,7 +945,7 @@ describe("OpenAPI fields that change client behavior", () => {
     }, 40],
     ["n enum values in an n-character template", (size) => ({
       url: `https://{region}.example.test/${"p".repeat(size)}`,
-      variables: { region: { default: "eu", enum: Array.from({ length: size }, (_, index) => `r${index}`) } },
+      variables: { region: { default: "r0", enum: Array.from({ length: size }, (_, index) => `r${index}`) } },
     }), 2000],
   ];
 
@@ -2151,6 +2151,29 @@ describe("path and server URL templates", () => {
     expect(only(result.diagnostics, "INVALID_SPEC").map(({ pointer, message }) => [pointer, message])).toEqual([
       ["/servers/0/variables/region", expect.stringMatching(/needs a string default/)],
     ]);
+  });
+
+  it.each(SERVER_SCOPES)("INVALID_SPEC: a %s server variable default outside its enum is reported without its value", (_scope, pointer, place) => {
+    const seed = "SEEDEDdefault0207";
+    const result = build((nextSpec) => place(nextSpec, { url: "https://{region}.api.example.test/v1", variables: { region: { default: seed, enum: ["eu", "us"] } } }));
+    expect(result.catalog).toBeNull();
+    expect(canonicalJson(result)).not.toContain(seed);
+    expect(only(result.diagnostics, "INVALID_SPEC").map(({ pointer, message }) => [pointer, message])).toEqual([
+      [`${pointer}/variables/region/default`, expect.stringMatching(/has a default that is not one of its enum values/)],
+    ]);
+  });
+
+  it.each<[string, string[], boolean]>([
+    ["an enum holding the default", ["eu", "us"], true],
+    ["an enum of one other value", ["eu"], false],
+    ["an empty enum", [], false],
+  ])("server variable default \"us\" with %s", (_label, values, valid) => {
+    const result = build((nextSpec) => {
+      nextSpec.servers = [{ url: "https://{region}.api.example.test/v1", variables: { region: { default: "us", enum: values } } }];
+    });
+    expect(result.catalog !== null).toBe(valid);
+    expect(only(result.diagnostics, "INVALID_SPEC").map(({ pointer }) => pointer)).toEqual(valid ? [] : ["/servers/0/variables/region/default"]);
+    if (valid) expect(result.catalog!.servers[0].variables.region).toEqual({ default: "us", enum: ["eu", "us"], description: null });
   });
 
   it.each(["https://{h.example.test", "https://{a{b}}.example.test", "https://h.example.test/}", "https://{}.example.test", "https://h.example.test/v1?q={"])(

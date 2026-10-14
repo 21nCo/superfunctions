@@ -39,6 +39,10 @@ import {
 } from "./types.js";
 
 type Doc = Record<string, unknown>;
+/** A security scheme while its members are read: every member optional, `in` any string until it is checked. */
+type SecuritySchemeDraft = { type: CatalogSecurityScheme["type"]; description: string | null } & Partial<Record<"scheme" | "in" | "name" | "bearerFormat" | "openIdConnectUrl", string>> & {
+  flows?: Record<string, CatalogOAuthFlow>;
+};
 
 const METHODS: HttpMethod[] = ["get", "put", "post", "delete", "options", "head", "patch", "trace"];
 const PARAMETER_LOCATIONS = ["path", "query", "header", "cookie"] as const;
@@ -100,6 +104,15 @@ const SAME_INSTANCE_KEYWORDS = new Set(["allOf", "anyOf", "oneOf", "not", "if", 
 const COMPONENT_SCHEMA_PREFIX = "#/components/schemas/";
 const SECURITY_SCHEME_TYPES: Array<CatalogSecurityScheme["type"]> = ["apiKey", "http", "mutualTLS", "oauth2", "openIdConnect"];
 const API_KEY_LOCATIONS = ["query", "header", "cookie"];
+/** The members OpenAPI 3.0/3.1 define for one security scheme type only. A member of another type is an error, never emitted. */
+const SECURITY_SCHEME_MEMBERS: Record<string, CatalogSecurityScheme["type"]> = {
+  in: "apiKey",
+  name: "apiKey",
+  scheme: "http",
+  bearerFormat: "http",
+  openIdConnectUrl: "openIdConnect",
+  flows: "oauth2",
+};
 /** The OAuth flows OpenAPI 3.0/3.1 define, each with the URLs it requires. */
 const OAUTH_FLOW_URLS: Record<string, ReadonlyArray<"authorizationUrl" | "tokenUrl">> = {
   implicit: ["authorizationUrl"],
@@ -1395,11 +1408,18 @@ class CatalogBuilder {
         this.report("INVALID_SPEC", `${pointer}/type`, `Security scheme ${quote(name)} needs a type of ${SECURITY_SCHEME_TYPES.join(", ")}.`);
         continue;
       }
-      const scheme: CatalogSecurityScheme = { type, description: this.description(resolved) };
+      // A member of another type (an http scheme with "in", flows on apiKey) usually means a mistyped scheme; the catalog never guesses.
+      const foreign = Object.keys(SECURITY_SCHEME_MEMBERS).filter((key) => SECURITY_SCHEME_MEMBERS[key] !== type && own(value, key) !== undefined);
+      for (const key of foreign) {
+        this.report("INVALID_SPEC", `${pointer}/${key}`, `Security scheme ${quote(name)} of type ${type} has ${key}, which OpenAPI defines for ${SECURITY_SCHEME_MEMBERS[key]} schemes only; remove it or correct the type.`);
+      }
+      if (foreign.length > 0) continue;
+      // Built member by member; a scheme that lacks a member its type requires is reported below, so no catalog carries it.
+      const scheme: SecuritySchemeDraft = { type, description: this.description(resolved) };
       for (const key of ["scheme", "in", "name"] as const) {
         const member = this.member(value, key, pointer, STRING);
         // An "in" outside the apiKey locations is reported below, so the catalog is never published with it.
-        if (member !== undefined) Object.assign(scheme, { [key]: this.identifier(member, `${pointer}/${key}`, `Security scheme ${key}`) });
+        if (member !== undefined) scheme[key] = this.identifier(member, `${pointer}/${key}`, `Security scheme ${key}`);
       }
       // Each type's required members, as OpenAPI defines them. A present value of the wrong type is already reported.
       const requireMember = (key: string, valid: boolean, need: string) => {
@@ -1418,8 +1438,7 @@ class CatalogBuilder {
       const openIdConnectUrl = this.url(own(value, "openIdConnectUrl"), `${pointer}/openIdConnectUrl`);
       if (openIdConnectUrl !== null) scheme.openIdConnectUrl = openIdConnectUrl;
       if (value.type === "openIdConnect") requireMember("openIdConnectUrl", Boolean(openIdConnectUrl?.trim()), "a non-empty openIdConnectUrl");
-      // OpenAPI defines flows for oauth2 only; other types never carry them.
-      const declaredFlows = value.type === "oauth2" ? this.member(value, "flows", pointer, OBJECT) : undefined;
+      const declaredFlows = this.member(value, "flows", pointer, OBJECT);
       if (value.type === "oauth2") {
         const flowCount = Object.keys(declaredFlows ?? {}).filter((key) => !key.startsWith("x-")).length;
         requireMember("flows", flowCount > 0, `flows with at least one of ${Object.keys(OAUTH_FLOW_URLS).join(", ")}`);
@@ -1459,7 +1478,7 @@ class CatalogBuilder {
         }
         scheme.flows = flows;
       }
-      setOwn(output, name, scheme);
+      setOwn(output, name, scheme as CatalogSecurityScheme);
     }
     return output;
   }
@@ -1531,8 +1550,15 @@ class CatalogBuilder {
           this.report("INVALID_SPEC", variablePointer, `Server variable ${quote(name)} at ${serverPointer} needs a string default.`);
           continue;
         }
+        const values = this.member(variable, "enum", variablePointer, STRING_LIST);
+        // OpenAPI: an enum is non-empty and holds the default. Checked on the declared values, before any is judged or
+        // redacted, and the message names no value. One scan per variable keeps this linear in the declared values.
+        if (values !== undefined && !values.includes(variable.default)) {
+          this.report("INVALID_SPEC", `${variablePointer}/default`, `Server variable ${quote(name)} at ${serverPointer} has a default that is not one of its enum values; OpenAPI requires a non-empty enum that holds the default.`);
+          continue;
+        }
         setOwn(defaults, name, variable.default);
-        enums.set(name, this.member(variable, "enum", variablePointer, STRING_LIST) ?? null);
+        enums.set(name, values ?? null);
       }
       const valid = names.filter((name) => Object.hasOwn(defaults, name));
       // Judged against the original template: a variable with an occurrence in the removed user info, query or

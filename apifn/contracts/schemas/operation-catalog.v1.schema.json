@@ -69,7 +69,7 @@
           "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
           "scheme": {"type": "string"},
           "bearerFormat": {"type": "string"},
-          "in": {"type": "string"},
+          "in": {"type": "string", "enum": ["query", "header", "cookie"]},
           "name": {"type": "string"},
           "openIdConnectUrl": {"type": "string"},
           "flows": {
@@ -90,21 +90,32 @@
           }
         },
         "required": ["type", "description"],
+        "description": "Each type carries only the members OpenAPI defines for it: apiKey in and name, http scheme and bearerFormat, openIdConnect openIdConnectUrl, oauth2 flows, mutualTLS none.",
         "allOf": [
           {
             "if": {"type": "object", "properties": {"type": {"const": "apiKey"}}},
-            "then": {"type": "object", "required": ["in", "name"], "properties": {"in": {"type": "string", "enum": ["query", "header", "cookie"]}, "name": {"type": "string", "minLength": 1, "pattern": "\\S"}}}
+            "then": {"type": "object", "required": ["in", "name"], "properties": {"in": {"type": "string", "enum": ["query", "header", "cookie"]}, "name": {"type": "string", "minLength": 1, "pattern": "\\S"}}},
+            "else": {"not": {"anyOf": [{"required": ["in"]}, {"required": ["name"]}]}}
           },
-          {"if": {"type": "object", "properties": {"type": {"const": "http"}}}, "then": {"type": "object", "required": ["scheme"], "properties": {"scheme": {"type": "string", "minLength": 1, "pattern": "\\S"}}}},
+          {
+            "if": {"type": "object", "properties": {"type": {"const": "http"}}},
+            "then": {"type": "object", "required": ["scheme"], "properties": {"scheme": {"type": "string", "minLength": 1, "pattern": "\\S"}}},
+            "else": {"not": {"anyOf": [{"required": ["scheme"]}, {"required": ["bearerFormat"]}]}}
+          },
           {
             "if": {"type": "object", "properties": {"type": {"const": "openIdConnect"}}},
-            "then": {"type": "object", "required": ["openIdConnectUrl"], "properties": {"openIdConnectUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}}
+            "then": {"type": "object", "required": ["openIdConnectUrl"], "properties": {"openIdConnectUrl": {"type": "string", "minLength": 1, "pattern": "\\S"}}},
+            "else": {"not": {"required": ["openIdConnectUrl"]}}
           },
           {"if": {"type": "object", "properties": {"type": {"const": "oauth2"}}}, "then": {"type": "object", "required": ["flows"]}, "else": {"not": {"required": ["flows"]}}}
         ]
       }
     },
-    "operations": {"type": "array", "items": {"$ref": "#/$defs/operation"}},
+    "operations": {
+      "description": "Sorted by id. Each id is unique; JSON Schema cannot express uniqueness of one member across items (uniqueItems compares whole items), so buildOperationCatalog reports DUPLICATE_OPERATION_ID and createReleaseDescriptor rejects a repeated id with INVALID_RELEASE.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/operation"}
+    },
     "schemas": {
       "type": "object",
       "additionalProperties": {

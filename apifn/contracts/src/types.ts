@@ -157,16 +157,29 @@ export interface CatalogOperation {
   executionPolicyRef: string | null;
 }
 
-export interface CatalogSecurityScheme {
-  type: "apiKey" | "http" | "mutualTLS" | "oauth2" | "openIdConnect";
-  description: string | null;
-  scheme?: string;
-  bearerFormat?: string;
-  in?: "query" | "header" | "cookie";
-  name?: string;
-  openIdConnectUrl?: string;
-  flows?: Partial<Record<"implicit" | "password" | "clientCredentials" | "authorizationCode", CatalogOAuthFlow>>;
+/** Every type-specific security scheme member. Each belongs to one type, as in OpenAPI 3.0/3.1. */
+interface SecuritySchemeMembers {
+  in: "query" | "header" | "cookie";
+  name: string;
+  scheme: string;
+  bearerFormat: string;
+  openIdConnectUrl: string;
+  flows: Partial<Record<"implicit" | "password" | "clientCredentials" | "authorizationCode", CatalogOAuthFlow>>;
 }
+
+/** A scheme of one type: its required and optional members, and never a member of another type. */
+type SecuritySchemeOf<Type extends string, Required extends keyof SecuritySchemeMembers, Optional extends keyof SecuritySchemeMembers = never> = {
+  type: Type;
+  description: string | null;
+} & Pick<SecuritySchemeMembers, Required> &
+  Partial<Pick<SecuritySchemeMembers, Optional>> & { [Key in Exclude<keyof SecuritySchemeMembers, Required | Optional>]?: never };
+
+export type CatalogSecurityScheme =
+  | SecuritySchemeOf<"apiKey", "in" | "name">
+  | SecuritySchemeOf<"http", "scheme", "bearerFormat">
+  | SecuritySchemeOf<"mutualTLS", never>
+  | SecuritySchemeOf<"oauth2", "flows">
+  | SecuritySchemeOf<"openIdConnect", "openIdConnectUrl">;
 
 export interface CatalogOAuthFlow {
   authorizationUrl?: string;

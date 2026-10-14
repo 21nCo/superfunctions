@@ -1,8 +1,27 @@
+import path from "node:path";
+import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import { buildOperationCatalog, CATALOG_VERSION, canonicalJson, createReleaseDescriptor, type CreateReleaseInput } from "../src/index.js";
-import { clone, fixture, matchFixture } from "./helpers.js";
+import {
+  buildOperationCatalog,
+  CATALOG_VERSION,
+  canonicalJson,
+  createReleaseDescriptor as createDescriptor,
+  type CatalogOperation,
+  type CreateReleaseInput,
+} from "../src/index.js";
+import { clone, fixture, matchFixture, readJson, SCHEMAS } from "./helpers.js";
 
 const catalog = buildOperationCatalog(fixture("catalog/openapi.json"), fixture("catalog/manifest.json")).catalog!;
+const validateDescriptor = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(
+  readJson(path.join(SCHEMAS, "release-descriptor.v1.schema.json"))
+);
+
+/** createReleaseDescriptor, checking that every descriptor it returns in this file validates against release-descriptor.v1. */
+function createReleaseDescriptor(next: CreateReleaseInput): ReturnType<typeof createDescriptor> {
+  const result = createDescriptor(next);
+  if (result.descriptor !== null) expect(validateDescriptor(result.descriptor), JSON.stringify(validateDescriptor.errors)).toBe(true);
+  return result;
+}
 
 function input(overrides: Partial<CreateReleaseInput> = {}): CreateReleaseInput {
   return {
@@ -123,6 +142,29 @@ describe("createReleaseDescriptor", () => {
     }).not.toThrow();
     expect(result!.descriptor).toBeNull();
     expect(result!.diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`)).toEqual(pointers.map((pointer) => `INVALID_RELEASE ${pointer}`));
+  });
+
+  // A catalog given by hand can repeat an ID that buildOperationCatalog would reject; artifacts list each ID once, whatever a copy's flags.
+  it.each<[string, (copy: CatalogOperation) => void, CreateReleaseInput["artifacts"]]>([
+    ["an SDK artifact", () => {}, [{ kind: "sdk", target: "typescript", package: { name: "@example/projects-sdk", version: "1.0.0" } }]],
+    ["an agent-tools artifact", () => {}, [{ kind: "agent-tools", target: "mcp", package: { name: "@example/projects-mcp", version: "1.0.0" } }]],
+    ["a copy excluded from SDKs", (copy) => {
+      copy.sdk.include = false;
+    }, [{ kind: "sdk", target: "typescript", package: { name: "@example/projects-sdk", version: "1.0.0" } }]],
+    ["a copy hidden from agents", (copy) => {
+      copy.agent.expose = false;
+    }, [{ kind: "agent-tools", target: "mcp", package: { name: "@example/projects-mcp", version: "1.0.0" } }]],
+  ])("INVALID_RELEASE: a repeated operation ID with %s", (_name, edit, artifacts) => {
+    const next = input({ artifacts });
+    const copy = clone(next.catalog.operations.find((operation) => operation.id === "projects.create")!);
+    edit(copy);
+    next.catalog.operations.push(copy);
+    const result = createReleaseDescriptor(next);
+    expect(result.descriptor).toBeNull();
+    expect(result.diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`)).toEqual([
+      `INVALID_RELEASE /catalog/operations/${next.catalog.operations.length - 1}/id`,
+    ]);
+    expect(createReleaseDescriptor(input({ artifacts })).diagnostics).toEqual([]);
   });
 
   it("accepts every catalog the builder accepts, however deeply its schemas nest", () => {

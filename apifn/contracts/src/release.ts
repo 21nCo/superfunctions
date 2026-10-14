@@ -100,12 +100,20 @@ export function createReleaseDescriptor(input: CreateReleaseInput): CreateReleas
   if (!Array.isArray(catalog.operations)) {
     fail("/catalog/operations", "Catalog operations must be an array as built by buildOperationCatalog.");
   } else {
+    // Operation IDs are unique in a catalog; each artifact lists an ID once (release-descriptor.v1 uniqueItems), whatever a copy's flags.
+    const firstPointers = new Map<string, string>();
     catalog.operations.forEach((operation, index) => {
       const pointer = `/catalog/operations/${index}`;
       const sdk = isRecord(operation) && isRecord(operation.sdk) ? operation.sdk : {};
       const agent = isRecord(operation) && isRecord(operation.agent) ? operation.agent : {};
       const id = isRecord(operation) ? operation.id : undefined;
       if (!check(id, `${pointer}/id`, RULES.operationId)) return;
+      const first = firstPointers.get(id);
+      if (first !== undefined) {
+        fail(`${pointer}/id`, `Operation ID ${quote(id)} is already used at ${first}; each catalog operation needs a unique stable ID.`);
+        return;
+      }
+      firstPointers.set(id, pointer);
       const excluded = sdk.excludedTargets;
       if (typeof sdk.include !== "boolean" || !Array.isArray(excluded) || excluded.some((target) => typeof target !== "string") || typeof agent.expose !== "boolean") {
         fail(pointer, `Operation ${pointer} needs sdk.include, sdk.excludedTargets and agent.expose as built by buildOperationCatalog.`);

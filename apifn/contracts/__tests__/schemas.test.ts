@@ -246,8 +246,30 @@ describe("schema and runtime agreement", () => {
     ["apiKey with a blank name", { type: "apiKey", in: "header", name: " " }, [`${SCHEME}/name`]],
     ["openIdConnect with a blank URL", { type: "openIdConnect", openIdConnectUrl: " " }, [`${SCHEME}/openIdConnectUrl`]],
     ["clientCredentials with a blank tokenUrl", flows({ clientCredentials: { tokenUrl: "   ", scopes: {} } }), [`${SCHEME}/flows/clientCredentials/tokenUrl`]],
+    ["apiKey in path", { type: "apiKey", in: "path", name: "key" }, [`${SCHEME}/in`]],
+    // A member OpenAPI defines for another type is reported and never emitted; the catalog schema rejects it as well.
+    ["http with in body", { type: "http", scheme: "basic", in: "body" }, [`${SCHEME}/in`]],
+    ["http with in header and a name", { type: "http", scheme: "bearer", in: "header", name: "Authorization" }, [`${SCHEME}/in`, `${SCHEME}/name`]],
+    ["oauth2 with in", { ...flows({ clientCredentials: { tokenUrl: "https://auth.example.test/token", scopes: {} } }), in: "header" }, [`${SCHEME}/in`]],
+    ["openIdConnect with in", { type: "openIdConnect", openIdConnectUrl: "https://auth.example.test/.well-known/openid-configuration", in: "query" }, [`${SCHEME}/in`]],
+    ["mutualTLS with in", { type: "mutualTLS", in: "cookie" }, [`${SCHEME}/in`]],
+    ["apiKey with a scheme", { type: "apiKey", in: "header", name: "X-Key", scheme: "bearer" }, [`${SCHEME}/scheme`]],
+    ["apiKey with a bearerFormat", { type: "apiKey", in: "header", name: "X-Key", bearerFormat: "JWT" }, [`${SCHEME}/bearerFormat`]],
+    ["http with an openIdConnectUrl", { type: "http", scheme: "bearer", openIdConnectUrl: "https://auth.example.test/.well-known/openid-configuration" }, [`${SCHEME}/openIdConnectUrl`]],
+    ["oauth2 with a scheme", { ...flows({ clientCredentials: { tokenUrl: "https://auth.example.test/token", scopes: {} } }), scheme: "bearer" }, [`${SCHEME}/scheme`]],
+    ["apiKey with flows {}", { type: "apiKey", in: "header", name: "X-Key", flows: {} }, [`${SCHEME}/flows`]],
+    ["http with only an extension flow", { type: "http", scheme: "bearer", flows: { "x-internal": "owner-team" } }, [`${SCHEME}/flows`]],
+    ["mutualTLS with flows {}", { type: "mutualTLS", flows: {} }, [`${SCHEME}/flows`]],
+    [
+      "http with a complete flow",
+      { type: "http", scheme: "bearer", flows: { implicit: { authorizationUrl: "https://auth.example.test/authorize", scopes: {} } } },
+      [`${SCHEME}/flows`],
+    ],
     ["valid apiKey", { type: "apiKey", in: "cookie", name: "sid" }, []],
+    ["valid apiKey in a header", { type: "apiKey", in: "header", name: "X-Key" }, []],
+    ["valid apiKey in a query", { type: "apiKey", in: "query", name: "key" }, []],
     ["valid http", { type: "http", scheme: "bearer" }, []],
+    ["valid http with a bearerFormat", { type: "http", scheme: "bearer", bearerFormat: "JWT" }, []],
     ["valid mutualTLS", { type: "mutualTLS" }, []],
     ["valid openIdConnect", { type: "openIdConnect", openIdConnectUrl: "https://auth.example.test/.well-known/openid-configuration" }, []],
     ["valid implicit", flows({ implicit: { authorizationUrl: "https://auth.example.test/authorize", scopes: {} } }), []],
@@ -286,25 +308,15 @@ describe("schema and runtime agreement", () => {
     if (built.catalog) expect(built.catalog.securitySchemes.auth).toEqual(emitted);
   });
 
-  // OpenAPI defines flows for oauth2 only: other types never emit them (an emitted {} would fail the schema), and the schema rejects them.
-  it.each<[string, Record<string, unknown>]>([
-    ["apiKey with flows {}", { type: "apiKey", in: "header", name: "X-Key", flows: {} }],
-    ["http with only an extension flow", { type: "http", scheme: "bearer", flows: { "x-internal": "owner-team" } }],
-    ["mutualTLS with flows {}", { type: "mutualTLS", flows: {} }],
-    ["http with a complete flow", { type: "http", scheme: "bearer", flows: { implicit: { authorizationUrl: "https://auth.example.test/authorize", scopes: {} } } }],
-  ])("security scheme %s: flows are not emitted and the catalog validates", (_label, declared) => {
+  it("a member of another type behind a $ref is reported at the resolved scheme, without its value", () => {
     const spec = clone(fixture("catalog/openapi.json"));
-    spec.components.securitySchemes.auth = declared;
+    spec["x-schemes"] = { basic: { type: "http", scheme: "basic", in: "SEEDEDschemeIn0101" } };
+    spec.components.securitySchemes.auth = { $ref: "#/x-schemes/basic" };
     spec.paths["/workspaces/{workspaceId}/projects/{projectId}"].get.security = [{ auth: [] }];
     const built = buildOperationCatalog(spec, clone(fixture("catalog/manifest.json")));
-    expect(built.diagnostics).toEqual([]);
-    const { flows: _flows, ...rest } = declared;
-    expect(built.catalog!.securitySchemes.auth).toEqual({ ...rest, description: null });
-    expect(check("operation-catalog", built.catalog), JSON.stringify(validators["operation-catalog"].errors)).toBe(true);
-
-    const withFlows = clone(built.catalog!) as any;
-    withFlows.securitySchemes.auth.flows = { implicit: { authorizationUrl: "https://auth.example.test/authorize", scopes: [] } };
-    expect(check("operation-catalog", withFlows)).toBe(false);
+    expect(built.catalog).toBeNull();
+    expect(built.diagnostics).toContainEqual(expect.objectContaining({ code: "INVALID_SPEC", pointer: "/x-schemes/basic/in" }));
+    expect(JSON.stringify(built)).not.toContain("SEEDEDschemeIn0101");
   });
 
   it("the catalog schema rejects a content media type with parameters", () => {

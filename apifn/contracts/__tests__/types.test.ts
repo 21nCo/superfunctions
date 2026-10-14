@@ -10,6 +10,8 @@ const accepted = {
   encodingStyle: "form" satisfies CatalogEncoding["style"],
   scheme: { type: "oauth2", description: null, flows: { clientCredentials: { tokenUrl: "https://auth.example.test/token", scopes: [] } } } satisfies CatalogSecurityScheme,
   apiKey: { type: "apiKey", description: null, in: "header", name: "X-Api-Key" } satisfies CatalogSecurityScheme,
+  http: { type: "http", description: null, scheme: "bearer", bearerFormat: "JWT" } satisfies CatalogSecurityScheme,
+  mutualTLS: { type: "mutualTLS", description: null } satisfies CatalogSecurityScheme,
 };
 
 export const rejected: unknown[] = [
@@ -31,11 +33,17 @@ export const rejected: unknown[] = [
   { type: "apiKey", description: null, in: "body", name: "key" } satisfies CatalogSecurityScheme,
   // @ts-expect-error unknown OAuth flow
   { type: "oauth2", description: null, flows: { deviceCode: { scopes: [] } } } satisfies CatalogSecurityScheme,
+  // @ts-expect-error "in" belongs to apiKey schemes only
+  { type: "http", description: null, scheme: "basic", in: "header" } satisfies CatalogSecurityScheme,
+  // @ts-expect-error flows belong to oauth2 schemes only
+  { type: "apiKey", description: null, in: "header", name: "X-Api-Key", flows: {} } satisfies CatalogSecurityScheme,
+  // @ts-expect-error an http scheme needs its scheme
+  { type: "http", description: null } satisfies CatalogSecurityScheme,
 ];
 
 describe("public contract types", () => {
   it("accept the forms the runtime accepts", () => {
     expect(JSON.parse(JSON.stringify(accepted))).toEqual(accepted);
-    expect(rejected).toHaveLength(9);
+    expect(rejected).toHaveLength(12);
   });
 });
