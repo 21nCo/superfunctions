@@ -1,0 +1,37 @@
+cachefn/.conduct/automatic-fallback-acceptance.md
+  s_e1c5fc1a65c0cf::t_26046ae5ed79b4 1-42
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_e2da0f41a12e26 138,191,307-349,354-355
+cachefn/typescript/__tests__/auto-local-storage.test.ts
+  s_e1c5fc1a65c0cf::t_b19ec58d3d3868 1-153
+cachefn/typescript/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_ece637a8deb685 106-143
+cachefn/typescript/src/core/cache.ts
+  s_e1c5fc1a65c0cf::t_2d2f2f4f13800c 14-15,334,345-361
+cachefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_e026d4f910dcb7 8,18-23
+cachefn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_69165909437d86 25-28
+cachefn/typescript/src/storage/auto-storage.ts
+  s_e1c5fc1a65c0cf::t_c543b8bf72e22b 1-111
+cachefn/typescript/src/storage/indexeddb-storage.ts
+  s_e1c5fc1a65c0cf::t_d2585c93ad0bcc 20-22
+cachefn/typescript/src/storage/local-storage.ts
+  s_e1c5fc1a65c0cf::t_2b63531532f598 1-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9e3c87e3e02871f8c505d9ece7edb9c11f56ea7",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
