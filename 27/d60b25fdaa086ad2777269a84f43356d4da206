@@ -1,0 +1,23 @@
+cachefn/.conduct/runtime-acceptance.md
+  s_e1c5fc1a65c0cf::t_0142819a1f49c8 1-83
+cachefn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_d27ae28abed766 11-18,31-32
+cachefn/typescript/scripts/packed-consumer.mjs
+  s_e1c5fc1a65c0cf::t_59896e93501866 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27d60b25fdaa086ad2777269a84f43356d4da206",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
