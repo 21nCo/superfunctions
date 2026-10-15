@@ -1,0 +1,37 @@
+cachefn/.conduct/adaptive-memory-acceptance.md
+  s_e1c5fc1a65c0cf::t_4b3d3f76ec4f7e 1-33
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_b389522ef1c58b 350-388,401
+cachefn/typescript/__tests__/adaptive-memory.test.ts
+  s_e1c5fc1a65c0cf::t_c5977395bdcf1d 1-83
+cachefn/typescript/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_195b696cedf1f9 144-160
+cachefn/typescript/src/core/cache.ts
+  s_e1c5fc1a65c0cf::t_1d4b35f46b5ef4 7,32-34,46-78,106,115,153-164
+cachefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_b15e00e9e9c761 13-22,24-25,48,59
+cachefn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_867313dec37492 11-13
+cachefn/typescript/src/storage/auto-storage.ts
+  s_e1c5fc1a65c0cf::t_b9b16254849bf6 99-106
+cachefn/typescript/src/storage/memory-storage.ts
+  s_e1c5fc1a65c0cf::t_331e48eeb04b7b 78,238,247-257
+cachefn/typescript/src/storage/storage-interface.ts
+  s_e1c5fc1a65c0cf::t_c2a6145e0cd250 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "981dc32e1e6b989f40940cabe998dbb7f2dd5aef",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
