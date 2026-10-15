@@ -1,0 +1,128 @@
+chartfn/scripts/packed-consumer.mjs
+  s_e1c5fc1a65c0cf::t_3806ed9bf4a8b2 1-46
+  s_e1c5fc1a65c0cf::t_2e43b89a3b792a 47
+chartfn/LICENSE
+  s_e1c5fc1a65c0cf::t_48e81048fb5b2d 1-21
+chartfn/README.md
+  s_e1c5fc1a65c0cf::t_78c518acfb527b 1-146
+chartfn/__tests__/adapter-error.test.ts
+  s_e1c5fc1a65c0cf::t_746063f37dd17c 1-28
+chartfn/__tests__/carbon-adapter.test.tsx
+  s_e1c5fc1a65c0cf::t_8e28c12ca60972 1-77
+chartfn/__tests__/chart-fn.test.ts
+  s_e1c5fc1a65c0cf::t_46628ad5ad91cf 1-153
+chartfn/__tests__/chartjs-adapter.test.ts
+  s_e1c5fc1a65c0cf::t_1fb1b7c2a98a6b 1-111
+chartfn/__tests__/core-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_9955b43a1c63c4 1-30
+chartfn/__tests__/echarts-adapter.test.ts
+  s_e1c5fc1a65c0cf::t_1075a21e704ca7 1-64
+chartfn/__tests__/echarts-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_254871e7ed67f3 1-31
+chartfn/__tests__/handle-lifecycle.test.ts
+  s_e1c5fc1a65c0cf::t_24c2e17612f5c8 1-53
+chartfn/__tests__/mock-adapter.ts
+  s_e1c5fc1a65c0cf::t_e6361626c0567b 1-22
+chartfn/__tests__/observability.test.ts
+  s_e1c5fc1a65c0cf::t_da132736f20e72 1-55
+chartfn/__tests__/passthrough-determinism.test.ts
+  s_e1c5fc1a65c0cf::t_258746923be678 1-48
+chartfn/__tests__/toimage-adapter.test.ts
+  s_e1c5fc1a65c0cf::t_d8b6177f285b2b 1-29
+chartfn/__tests__/validate.test.ts
+  s_e1c5fc1a65c0cf::t_4814c3821fbc73 1-110
+chartfn/package.json
+  s_e1c5fc1a65c0cf::t_ff89ff0ae6a3a7 1-70
+chartfn/react/LICENSE
+  s_e1c5fc1a65c0cf::t_45d55da4c7f133 1-21
+chartfn/react/README.md
+  s_e1c5fc1a65c0cf::t_102c342636e5fe 1-38
+chartfn/react/__tests__/chart-react.test.tsx
+  s_e1c5fc1a65c0cf::t_1995d617738a79 1-60
+chartfn/react/package.json
+  s_e1c5fc1a65c0cf::t_d0fefdf4078d7e 1-69
+chartfn/react/src/Chart.tsx
+  s_e1c5fc1a65c0cf::t_8974e2a4c0fe12 1-37
+chartfn/react/src/index.ts
+  s_e1c5fc1a65c0cf::t_15e18c078ee693 1-2
+chartfn/react/src/useChart.tsx
+  s_e1c5fc1a65c0cf::t_5029f49d598b53 1-72
+chartfn/react/tsconfig.json
+  s_e1c5fc1a65c0cf::t_0b4a1dc4a0dbab 1-21
+chartfn/react/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_6ba7dbe65636c0 1-10
+chartfn/react/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_45abd61e4b4c82 1-28
+chartfn/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_fdbe4722ca16c5 1-97
+chartfn/scripts/framework-browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_ab9d5cc681b6d3 1-98
+chartfn/src/adapters/carbon.ts
+  s_e1c5fc1a65c0cf::t_ab8bf684f33858 1-149
+chartfn/src/adapters/chartjs.ts
+  s_e1c5fc1a65c0cf::t_22df891ade8fd7 1-188
+chartfn/src/adapters/echarts.ts
+  s_e1c5fc1a65c0cf::t_e976f0b257f7f9 1-268
+chartfn/src/chart-fn.ts
+  s_e1c5fc1a65c0cf::t_4cc7fa6331692f 1-127
+chartfn/src/constants.ts
+  s_e1c5fc1a65c0cf::t_b31676239ee234 1-3
+chartfn/src/index.ts
+  s_e1c5fc1a65c0cf::t_7db040d8404de7 1-9
+chartfn/src/logger.ts
+  s_e1c5fc1a65c0cf::t_57ea23a1362741 1-66
+chartfn/src/resolve-container.ts
+  s_e1c5fc1a65c0cf::t_17b4aa00e90a97 1-12
+chartfn/src/types.ts
+  s_e1c5fc1a65c0cf::t_0e185453f85df5 1-90
+chartfn/src/validate.ts
+  s_e1c5fc1a65c0cf::t_c72b684ea3cfcb 1-130
+chartfn/svelte/LICENSE
+  s_e1c5fc1a65c0cf::t_fb79c92a87c133 1-21
+chartfn/svelte/README.md
+  s_e1c5fc1a65c0cf::t_dbdfbaf62dbfa0 1-24
+chartfn/svelte/__tests__/chart-svelte.test.ts
+  s_e1c5fc1a65c0cf::t_4cca379ea8508d 1-50
+chartfn/svelte/package.json
+  s_e1c5fc1a65c0cf::t_ede8413183c0be 1-69
+chartfn/svelte/scripts/fix-declarations.mjs
+  s_e1c5fc1a65c0cf::t_cd49706f0ce990 1-7
+chartfn/svelte/src/Chart.svelte
+  s_e1c5fc1a65c0cf::t_5ba6a4e592701e 1-46
+chartfn/svelte/src/index.ts
+  s_e1c5fc1a65c0cf::t_df024c4dc64f45 1
+chartfn/svelte/tsconfig.json
+  s_e1c5fc1a65c0cf::t_a762a9e495dcd7 1-20
+chartfn/svelte/vite.ssr.config.ts
+  s_e1c5fc1a65c0cf::t_1365d17721afb4 1-12
+chartfn/svelte/vitest.config.mts
+  s_e1c5fc1a65c0cf::t_345408d0edaeff 1-16
+chartfn/svelte/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_32ee9936547a9b 1
+chartfn/tsconfig.json
+  s_e1c5fc1a65c0cf::t_289b376c435472 1-20
+chartfn/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_de86b88827ed69 1-10
+chartfn/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_04d5cf5dcb7ee8 1-7
+package-lock.json
+  s_e1c5fc1a65c0cf::t_eb68526419568e 13-15,7436-8209,23672-23726,23733-23740,26177-26185,26975-26980,33506-33557,36045-36060,36880-36894,37275-37284,37731-37733,50467-50486
+package.json
+  s_e1c5fc1a65c0cf::t_4a29eae62c0e07 8-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd4a3201af3025235ba6dbc10d5d9cbd61213d90",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
