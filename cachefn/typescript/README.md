@@ -383,8 +383,101 @@ heap pressure. The heap API is browser-specific and may be unavailable or coarse
 backend, preserving other entries and accumulated statistics. An unfiltered
 `clear()` retains its original behavior. `dispose()` is idempotent, stops future
 samples, and preserves cached data; call it to release the monitoring timer.
-Timers do not keep Node.js processes alive. Monitoring does not implement the
-separate offline queue or synchronization requirements.
+Timers do not keep Node.js processes alive.
+
+## Offline reads, refresh, and queued updates
+
+```typescript
+const cache = cacheFn({
+  name: 'offline-data',
+  storage: 'indexeddb',
+  offlineStrategy: 'cache-first',
+  offlineQueue: {
+    maxSize: 1000,
+    sync: async ({ id, key, value, attempt }) => {
+      const response = await fetch('/api/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': id },
+        body: JSON.stringify({ key, value }),
+      });
+      if (!response.ok) throw new Error(`Update failed: ${response.status}`);
+    },
+  },
+});
+const data = await cache.getOrFetch('api:/data', {
+  fetcher: async () => {
+    const response = await fetch('/api/data');
+    if (!response.ok) throw new Error(`Fetch failed: ${response.status}`);
+    return response.json();
+  },
+  offlineFallback: () => ({ data: [], cached: false }),
+});
+const id = await cache.queueUpdate('api:/data', updatedData);
+const pending = await cache.queuedUpdates();
+// await cache.sync(); // retry retained jobs explicitly while online
+// await cache.cancelQueuedUpdate(id); // cancel an undelivered job
+// await cache.refresh(); // re-fetch registered keys while online
+cache.dispose();
+```
+
+Both `getOrFetch(key, fetcher, options)` and the object overload prefer a cached
+value, including cached `undefined`. In cache-first mode an offline miss invokes
+`offlineFallback`, or rejects if none is supplied. Placeholders are returned but
+not cached. The object overload's fallback also observes offline state without
+requiring the configuration flag. Online fetch failures propagate; navigator's
+online flag does not prove that a server is reachable. Node environments without
+navigator are treated as online.
+
+`refresh()` re-fetches keys registered by the object overload or cache-first
+`getOrFetch` calls, bypassing cache hits. Concurrent refresh calls share one run.
+It stops on the first fetch error, preserves previous entries on error, and skips
+keys with pending updates. A newer local write/delete suppresses a fetch already
+in progress. Registered fetchers are instance-local, so register them again after
+reopening. Future explicit refreshes intentionally re-fetch registered keys,
+including previously invalidated keys. Offline/disposed refresh calls reject.
+
+`queueUpdate` is an explicit remote-write operation; ordinary `set` changes only
+the cache. It persists a delivery record before applying the optimistic cache
+write. A config-level `offlineQueue.sync` handler enables reload persistence on
+IndexedDB/localStorage. Records use a separate store for the cache name and
+namespace: cache TTL, adaptive/LRU eviction, and `clear()` cannot discard them.
+A full queue rejects new jobs instead of evicting old work. Values are serialized
+snapshots; unsupported values reject. If the optimistic cache write fails after
+record persistence, the job remains visible through `queuedUpdates()` and can be
+cancelled or delivered. Queue storage errors propagate rather than silently
+falling back and losing work.
+
+Queue storage defaults to the selected backend; `auto` caches use explicit
+IndexedDB for their queue. Set `offlineQueue.storage` to `indexeddb`, `localstorage`,
+or `memory` to choose explicitly. Memory queues do not survive reload. Per-call
+`queueUpdate(key, value, { sync })` callbacks are a convenience for ephemeral jobs;
+closures cannot be restored after reload. Do not use them for durable updates.
+Use one active delivery owner per named queue; coordinate ownership across tabs
+or workers in the application. The SDK does not provide a distributed consumer
+lease or cross-tab conflict resolution.
+
+Online construction with a configured queue, an `online` event, or a new online
+queued update triggers delivery. Reconnection syncs queued writes before refreshing
+registered reads. `sync()` delivers FIFO and is single-flight within the instance.
+Success removes the persisted job; failure retains it, increments its attempt
+count, and blocks later jobs until an explicit retry, a later online event, or
+cancellation. `queuedUpdates()` reports pending/syncing/failed state; the exception
+object is instance-local, while status and attempts persist. `synced` and
+`sync-error` events expose background outcomes.
+
+Delivery is at least once: an acknowledgement may be lost after the server commits
+but before the queue record is removed. The stable job `id` must be used by the
+server for idempotency. Server version checks/conflict resolution belong in the
+handler; rejecting a conflict retains the job. A handler's return value never
+overwrites newer optimistic local data. Cancellation refuses an active delivery,
+removes an undelivered record, and does not roll back its local value. Deleting a
+cache entry does not cancel a separately queued remote update.
+
+`dispose()` detaches online listeners and stops starting queued deliveries and
+refreshes. An already-running remote request may finish and acknowledge its job;
+remaining durable jobs survive for a reconstructed instance. It also prevents
+late refresh results from writing into the cache. Disposal cannot retract a
+remote operation that the server has already accepted.
 
 ## Runtime and performance requirements
 

@@ -21,6 +21,15 @@ export interface MemoryMonitoringOptions {
 export interface ClearOptions { priority?: CachePriority }
 
 export interface CacheFnConfig {
+  offlineStrategy?: 'cache-first';
+  offlineQueue?: {
+    /** Stable application handler restored when reopening a persistent queue. */
+    sync: (update: QueuedUpdateContext<any>) => Promise<void>;
+    /** Defaults to the cache backend; auto caches use explicit IndexedDB here. */
+    storage?: 'memory' | 'indexeddb' | 'localstorage';
+    /** Reject new jobs instead of evicting queued updates. Default 1000. */
+    maxSize?: number;
+  };
   eviction?: 'lru' | 'adaptive';
   memoryMonitoring?: MemoryMonitoringOptions;
   /** Unique name for the cache instance */
@@ -50,6 +59,28 @@ export interface SetOptions {
   ttl?: number;
   /** Tags for invalidation */
   tags?: string[];
+}
+
+export interface FetchOptions<T> extends SetOptions {
+  fetcher: () => Promise<T>;
+  offlineFallback?: () => T | Promise<T>;
+}
+export interface QueuedUpdateContext<T> {
+  id: string;
+  key: string;
+  value: T;
+  /** Increments for each attempted delivery; use id for remote idempotency. */
+  attempt: number;
+}
+export interface QueueUpdateOptions<T> extends SetOptions {
+  sync?: (update: QueuedUpdateContext<T>) => Promise<void>;
+}
+export interface QueuedUpdateStatus {
+  id: string;
+  key: string;
+  attempts: number;
+  status: 'pending' | 'syncing' | 'failed';
+  error?: unknown;
 }
 
 /**
@@ -99,6 +130,8 @@ export interface CacheStats {
  * Cache event types
  */
 export interface CacheEvents {
+  synced: { id: string; key: string };
+  'sync-error': { error: unknown };
   hit: { key: string; accessTime: number };
   miss: { key: string };
   set: { key: string; size: number };
@@ -165,7 +198,7 @@ export type ExtractValueType<Schema extends CacheSchema, Key extends string> =
 /** Typed view over the same CacheFn implementation; no extra runtime cache. */
 export type SchemaCache<Schema extends CacheSchema> = Omit<
   import("./cache.js").CacheFn<Schema[keyof Schema]>,
-  "get" | "set" | "has" | "delete" | "invalidate" | "touch" | "getMany" | "setMany" | "deleteMany" | "getOrFetch"
+  "get" | "set" | "has" | "delete" | "invalidate" | "touch" | "getMany" | "setMany" | "deleteMany" | "getOrFetch" | "queueUpdate"
 > & {
   get<Key extends SchemaKeys<Schema>>(key: Key): Promise<ExtractValueType<Schema, Key> | undefined>;
   set<Key extends SchemaKeys<Schema>>(key: Key, value: NoInfer<ExtractValueType<Schema, Key>>, options?: SetOptions): Promise<void>;
@@ -181,4 +214,6 @@ export type SchemaCache<Schema extends CacheSchema> = Omit<
   }): Promise<void>;
   deleteMany(keys: SchemaKeys<Schema>[]): Promise<void>;
   getOrFetch<Key extends SchemaKeys<Schema>>(key: Key, fetcher: () => Promise<NoInfer<ExtractValueType<Schema, Key>>>, options?: SetOptions): Promise<ExtractValueType<Schema, Key>>;
+  getOrFetch<Key extends SchemaKeys<Schema>>(key: Key, options: FetchOptions<NoInfer<ExtractValueType<Schema, Key>>>): Promise<ExtractValueType<Schema, Key>>;
+  queueUpdate<Key extends SchemaKeys<Schema>>(key: Key, value: NoInfer<ExtractValueType<Schema, Key>>, options?: QueueUpdateOptions<NoInfer<ExtractValueType<Schema, Key>>>): Promise<string>;
 };

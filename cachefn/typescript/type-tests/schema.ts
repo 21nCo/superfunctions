@@ -38,3 +38,11 @@ const overlapping = cacheFn<{ '*': { any: true }; 'exact': boolean }>({ name: 'o
 overlapping.set('exact', true);
 // @ts-expect-error Exact entries take precedence over broad wildcard entries.
 overlapping.setMany([{ key: 'exact', value: { any: true } }]);
+
+const offlineFetched: Promise<User> = cache.getOrFetch('user:123', { fetcher: async () => ({ id: '123', name: 'Alice' }), offlineFallback: () => ({ id: '123', name: 'Offline' }) });
+cache.queueUpdate('user:123', { id: '123', name: 'Alice' }, { sync: async ({ value }) => { const user: User = value; void user; } });
+// @ts-expect-error Offline fallback must match the selected schema key.
+cache.getOrFetch('user:123', { fetcher: async () => ({ id: '123', name: 'Alice' }), offlineFallback: () => false });
+// @ts-expect-error Queued values retain schema key/value correlation.
+cache.queueUpdate('user:123', { title: 'not a user' });
+void offlineFetched;

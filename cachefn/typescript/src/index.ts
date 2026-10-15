@@ -9,6 +9,10 @@ export { EventEmitter } from "./core/events.js";
 export type {
   CacheFnConfig,
   CachePriority,
+  FetchOptions,
+  QueueUpdateOptions,
+  QueuedUpdateContext,
+  QueuedUpdateStatus,
   ClearOptions,
   MemoryMonitoringOptions,
   SetOptions,
