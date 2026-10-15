@@ -62,10 +62,10 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
         if (isExpired(entry)) void this.delete(storedKey);
       }
     }
-    // Evict if at capacity and key doesn't exist
-    if (!this.cache.has(key) && this.cache.size >= this.maxSize) {
-      this.evictLRU();
-    }
+    // Defer observer notification until the replacement is fully committed.
+    // Observers may synchronously write into this same storage instance.
+    const evicted = !this.cache.has(key) && this.cache.size >= this.maxSize
+      ? this.evictLRU() : undefined;
 
     // Remove old tags if updating existing entry
     if (this.cache.has(key)) {
@@ -91,6 +91,7 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
         void this.addTag(tag, key);
       }
     }
+    if (evicted !== undefined) this.onEviction?.(evicted, "lru");
   }
 
   async has(key: string): Promise<boolean> {
@@ -175,6 +176,10 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   }
 
   async addTag(tag: string, key: string): Promise<void> {
+    const entry = this.cache.get(key);
+    if (!entry) return;
+    if (isExpired(entry)) { void this.delete(key); return; }
+    entry.tags = [...new Set([...(entry.tags ?? []), tag])];
     // Update tag index
     if (!this.tagIndex.has(tag)) {
       this.tagIndex.set(tag, new Set());
@@ -189,6 +194,9 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   }
 
   async removeTag(tag: string, key: string): Promise<void> {
+    const entry = this.cache.get(key);
+    if (entry && isExpired(entry)) { void this.delete(key); return; }
+    if (entry) entry.tags = entry.tags?.filter(value => value !== tag);
     // Remove from tag index
     const keys = this.tagIndex.get(tag);
     if (keys) {
@@ -209,6 +217,7 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   }
 
   async getTagsForKey(key: string): Promise<string[]> {
+    if (!await this.has(key)) return [];
     const tags = this.keyTags.get(key);
     return tags ? Array.from(tags) : [];
   }
@@ -248,12 +257,10 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   /**
    * Evict the least recently used entry
    */
-  private evictLRU(): void {
+  private evictLRU(): string | undefined {
     const key = this.lru.evictLRU();
-    if (key !== undefined) {
-      void this.delete(key);
-      this.onEviction?.(key, "lru");
-    }
+    if (key !== undefined) void this.delete(key);
+    return key;
   }
 
   /**
