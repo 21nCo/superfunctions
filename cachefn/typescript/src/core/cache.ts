@@ -28,9 +28,9 @@ import { filterByPattern } from "../utils/pattern.js";
  * CacheFn - Self-hosted caching solution
  */
 export class CacheFn<T = any> {
-  private storage: StorageBackend<T>;
-  private events: EventEmitter;
-  private stats: StatsTracker;
+  protected storage: StorageBackend<T>;
+  protected events: EventEmitter;
+  protected stats: StatsTracker;
   private defaultTTL?: number;
   private namespace?: string;
   private memoryTimer?: ReturnType<typeof setInterval>;
@@ -537,7 +537,7 @@ export class CacheFn<T = any> {
     return key.startsWith(this.keyPrefix());
   }
 
-  private getFullKey(key: string): string {
+  protected getFullKey(key: string): string {
     return this.keyPrefix() + key;
   }
 

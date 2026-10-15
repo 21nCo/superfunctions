@@ -1,0 +1,117 @@
+{
+  "timestamp": "2026-10-15T07:06:46.894Z",
+  "host": {
+    "platform": "darwin",
+    "release": "27.0.0",
+    "architecture": "arm64",
+    "cpu": "Apple M4 Pro",
+    "logicalCPUs": 14,
+    "memoryBytes": 25769803776,
+    "node": "v20.20.0"
+  },
+  "engine": "webkit",
+  "browser": "26.0",
+  "timer_resolution_ms": 0.019999999998617568,
+  "crossOriginIsolated": true,
+  "entries": 10000,
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+  "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+  "results": {
+    "memory_set": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0.020000000000003126,
+      "target_ms": 1,
+      "pass": true
+    },
+    "memory_get": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0.01999999999998181,
+      "p99_ms": 0.020000000000010232,
+      "target_ms": 1,
+      "pass": true
+    },
+    "memory_overwrite_full": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0.020000000000010232,
+      "target_ms": 1,
+      "pass": true
+    },
+    "memory_concurrent_1000_reads": {
+      "elapsed_ms": 1.1399999999999864,
+      "operations": 1000
+    },
+    "indexeddb_set": {
+      "samples": 10000,
+      "p50_ms": 0.12000000000011823,
+      "p95_ms": 0.30000000000001137,
+      "p99_ms": 0.7599999999999909,
+      "target_ms": 10,
+      "pass": true
+    },
+    "indexeddb_get": {
+      "samples": 10000,
+      "p50_ms": 0.15999999999985448,
+      "p95_ms": 0.27999999999974534,
+      "p99_ms": 0.4400000000005093,
+      "target_ms": 10,
+      "pass": true
+    },
+    "indexeddb_overwrite_full": {
+      "samples": 10000,
+      "p50_ms": 0.13999999999987267,
+      "p95_ms": 0.6999999999998181,
+      "p99_ms": 1.6199999999998909,
+      "target_ms": 10,
+      "pass": true
+    },
+    "indexeddb_concurrent_1000_reads": {
+      "elapsed_ms": 168.53999999999996,
+      "operations": 1000
+    },
+    "lru_at_1000_entries": {
+      "samples": 1000,
+      "p50_ms": 0,
+      "p95_ms": 0.019999999998617568,
+      "p99_ms": 0.020000000000436557,
+      "target_ms": 5,
+      "pass": true
+    },
+    "pattern_invalidation_1000": {
+      "samples": 30,
+      "p50_ms": 0.6999999999989086,
+      "p95_ms": 0.8999999999996362,
+      "p99_ms": 3.899999999999636,
+      "target_ms": 50,
+      "pass": true
+    },
+    "async_memoized_hit": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0.019999999998617568,
+      "p99_ms": 0.020000000000436557,
+      "target_ms": 0.1,
+      "pass": true
+    },
+    "sync_memoized_hit": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0.020000000000436557,
+      "target_ms": 0.1,
+      "pass": true
+    },
+    "factory_memoized_hit": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0.020000000000436557,
+      "target_ms": 0.1,
+      "pass": true
+    }
+  }
+}

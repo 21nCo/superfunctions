@@ -1,0 +1,104 @@
+{
+  "timestamp": "2026-10-15T07:00:51.975Z",
+  "engine": "chromium",
+  "browser": "154.0.8037.58",
+  "entries": 10000,
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+  "timing": "performance.now; sequential awaited operations; p99 strict target; no baseline subtraction",
+  "results": {
+    "memory_set": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0,
+      "target_ms": 1,
+      "pass": true
+    },
+    "memory_get": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0,
+      "target_ms": 1,
+      "pass": true
+    },
+    "memory_overwrite_full": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0.10000002384185791,
+      "p99_ms": 0.10000002384185791,
+      "target_ms": 1,
+      "pass": true
+    },
+    "memory_concurrent_1000_reads": {
+      "elapsed_ms": 0.7000000476837158,
+      "operations": 1000
+    },
+    "indexeddb_set": {
+      "samples": 10000,
+      "p50_ms": 0.09999996423721313,
+      "p95_ms": 0.19999998807907104,
+      "p99_ms": 0.20000004768371582,
+      "target_ms": 10,
+      "pass": true
+    },
+    "indexeddb_get": {
+      "samples": 10000,
+      "p50_ms": 0.10000002384185791,
+      "p95_ms": 0.20000004768371582,
+      "p99_ms": 0.30000001192092896,
+      "target_ms": 10,
+      "pass": true
+    },
+    "indexeddb_overwrite_full": {
+      "samples": 10000,
+      "p50_ms": 0.10000002384185791,
+      "p95_ms": 0.19999998807907104,
+      "p99_ms": 0.20000004768371582,
+      "target_ms": 10,
+      "pass": true
+    },
+    "indexeddb_concurrent_1000_reads": {
+      "elapsed_ms": 157,
+      "operations": 1000
+    },
+    "lru_at_1000_entries": {
+      "samples": 1000,
+      "p50_ms": 0,
+      "p95_ms": 0.10000002384185791,
+      "p99_ms": 0.10000002384185791,
+      "target_ms": 5,
+      "pass": true
+    },
+    "pattern_invalidation_1000": {
+      "samples": 30,
+      "p50_ms": 0.5,
+      "p95_ms": 0.8999999761581421,
+      "p99_ms": 1.199999988079071,
+      "target_ms": 50,
+      "pass": true
+    },
+    "async_memoized_hit": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0,
+      "target_ms": 0.1,
+      "pass": true
+    },
+    "sync_memoized_hit": {
+      "samples": 10000,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "p99_ms": 0,
+      "target_ms": 0.1,
+      "pass": true
+    },
+    "retained_bytes_per_numeric_entry": {
+      "bytes": 172.4176,
+      "target_bytes": 200,
+      "pass": true,
+      "method": "CDP full GC before/after, delta includes string keys, metadata, indexes, LRU, instance"
+    }
+  }
+}

@@ -304,6 +304,38 @@ factories use a typed view of the same cache implementation. Existing
 value type; `cacheFn(config)` without a schema remains untyped. Schema types require
 TypeScript 5.4 or newer.
 
+## Factory convenience methods
+
+`cacheFn.middleware`, `cacheFn.hono`, and `cacheFn.fastify` refer to the same
+implementations as `expressMiddleware`, `honoMiddleware`, and `fastifyPlugin`.
+All standalone imports remain supported.
+
+`cacheFn.memoize(fn, options)` preserves synchronous return values with memory
+storage, including recursive functions. Promise-returning functions remain
+asynchronous, share pending work, retry rejected calls, and start TTL after
+successful completion. Persistent storage always returns a Promise. The standalone
+`memoize` retains its always-async contract; `memoizeSync` and
+`cacheFn.memoizeSync` retain their synchronous, memory-only contract.
+
+```typescript
+const increment = cacheFn.memoize((n: number) => n + 1, {
+  keyGenerator: n => String(n),
+});
+increment(1); // 2, synchronously
+await increment.cache.set('1', 10);
+increment(1); // 10, from the same backing cache
+await increment.cache.delete('1');
+await cacheFn.memoize.clear(increment); // also available as increment.clear()
+```
+
+Factory-memoized functions and standalone async memoized functions expose their
+actual `CacheFn` as `.cache`. Its keys are the generated memoization keys. Direct
+cache writes, deletes, clears, and tag/pattern invalidations share entries and
+invalidate pending fills; `.stats()` and `.cache.getStats()` report the same
+counters. The memory convenience cache stores the function's return values, so
+Promise-returning functions require Promise-valued manual writes. The standalone
+async wrapper and persistent convenience modes store awaited result values.
+
 ## Automatic browser storage
 
 ```typescript

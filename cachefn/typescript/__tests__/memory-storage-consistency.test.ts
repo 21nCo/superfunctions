@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MemoryStorage } from '../src/storage/memory-storage.js';
 import { CacheFn } from '../src/core/cache.js';
 const metadata = (tags = ['old'], expiresAt?: number) => ({ createdAt: Date.now(), lastAccess: Date.now(), hits: 0, tags, expiresAt });
@@ -57,5 +57,27 @@ describe('eviction observer reentrancy', () => {
     await cache.set('outer', 2);
     await clearing;
     expect(await cache.size()).toBe(0);
+  });
+});
+
+describe('expiration deadline capacity cleanup', () => {
+  it('skips full scans until expiration and reclaims expired entries before live LRU entries', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1000);
+      const storage = new MemoryStorage({ maxSize: 2 });
+      await storage.set('live', 1, metadata([], 10000));
+      await storage.set('short', 2, metadata([], 1050));
+      await storage.set('short', 3, metadata([], 1100));
+      vi.setSystemTime(1060);
+      await storage.set('short', 4, metadata([], 1100));
+      expect(await storage.keys()).toEqual(['live', 'short']);
+      vi.setSystemTime(1110);
+      await storage.set('new', 5, metadata());
+      expect(await storage.keys()).toEqual(['live', 'new']);
+      await storage.clear();
+      await storage.set('after-clear', 6, metadata());
+      expect(await storage.get('after-clear')).toBe(6);
+    } finally { vi.useRealTimers(); }
   });
 });

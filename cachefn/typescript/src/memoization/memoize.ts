@@ -6,7 +6,7 @@ import { generateKey } from "../utils/hash.js";
 import { calculateExpiration } from "../strategies/ttl-manager.js";
 
 export type AsyncMemoized<T extends (...args: any[]) => any> =
-  ((this: ThisParameterType<T>, ...args: Parameters<T>) => Promise<Awaited<ReturnType<T>>>) & MemoizedFunction;
+  ((this: ThisParameterType<T>, ...args: Parameters<T>) => Promise<Awaited<ReturnType<T>>>) & MemoizedFunction & { cache: CacheFn<Awaited<ReturnType<T>>> };
 
 let instanceId = 0;
 
@@ -23,7 +23,7 @@ export function memoize<T extends (...args: any[]) => any>(
   options?: MemoizeOptions<T>
 ): AsyncMemoized<T> {
   const maxSize = capacity(options?.maxSize);
-  const cache = new CacheFn<{ value: Awaited<ReturnType<T>> }>({
+  const cache = new CacheFn<Awaited<ReturnType<T>>>({
     // Function names are not unique; persistent backends must also be isolated.
     name: `memoize-${Date.now()}-${++instanceId}-${Math.random().toString(36).slice(2)}`,
     storage: options?.storage ?? "memory",
@@ -35,6 +35,14 @@ export function memoize<T extends (...args: any[]) => any>(
   const pending = new Map<string, object>();
   const flights = new Map<string, Promise<Awaited<ReturnType<T>>>>();
 
+  const clearCache = cache.clear.bind(cache), deleteCache = cache.delete.bind(cache), setCache = cache.set.bind(cache);
+  cache.clear = async options => { pending.clear(); flights.clear(); await clearCache(options); };
+  cache.delete = async key => { pending.delete(key); flights.delete(key); return deleteCache(key); };
+  cache.set = async (key, value, options) => { pending.delete(key); flights.delete(key); await setCache(key, value, options); };
+  const invalidateTag = cache.invalidateByTag.bind(cache), invalidatePattern = cache.invalidateByPattern.bind(cache);
+  cache.invalidateByTag = async tag => { pending.clear(); flights.clear(); await invalidateTag(tag); };
+  cache.invalidateByPattern = async pattern => { pending.clear(); flights.clear(); await invalidatePattern(pattern); };
+
   const memoized = async function (this: ThisParameterType<T>, ...args: Parameters<T>): Promise<Awaited<ReturnType<T>>> {
     const key = keyGenerator(...args);
     const existing = flights.get(key);
@@ -43,11 +51,11 @@ export function memoize<T extends (...args: any[]) => any>(
     pending.set(key, token);
     const result = (async (): Promise<Awaited<ReturnType<T>>> => {
       const cached = await cache.get(key);
-      if (cached !== undefined && pending.get(key) === token) return cached.value;
+      if ((cached !== undefined || await cache.has(key)) && pending.get(key) === token) return cached as Awaited<ReturnType<T>>;
       const value: Awaited<ReturnType<T>> = await fn.apply(this, args);
       // Invalidation must not allow an earlier computation to repopulate the cache.
       if (maxSize > 0 && pending.get(key) === token) {
-        await cache.set(key, { value }, { tags: options?.tags });
+        await cache.set(key, value, { tags: options?.tags });
       }
       return value;
     })();
@@ -61,6 +69,7 @@ export function memoize<T extends (...args: any[]) => any>(
     result.then(cleanup, cleanup);
     return result;
   };
+  memoized.cache = cache;
   memoized.clear = async () => {
     pending.clear();
     flights.clear();

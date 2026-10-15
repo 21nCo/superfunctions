@@ -23,6 +23,7 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   private tagIndex: Map<string, Set<string>> = new Map();
   private keyTags: Map<string, Set<string>> = new Map();
   private maxSize: number;
+  private nextExpiration = Infinity;
   private onEviction?: (key: string, reason: string) => void;
 
   constructor(config: MemoryStorageConfig = {}) {
@@ -33,7 +34,9 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
     this.onEviction = config.onEviction;
   }
 
-  async get(key: string): Promise<T | undefined> {
+  async get(key: string): Promise<T | undefined> { return this.getSync(key); }
+
+  getSync(key: string): T | undefined {
     const entry = this.cache.get(key);
 
     if (!entry) {
@@ -42,7 +45,7 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
 
     // Check if expired
     if (isExpired(entry)) {
-      await this.delete(key);
+      void this.delete(key);
       return undefined;
     }
 
@@ -54,12 +57,16 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
     return entry.value;
   }
 
-  async set(key: string, value: T, metadata: EntryMetadata): Promise<void> {
+  async set(key: string, value: T, metadata: EntryMetadata): Promise<void> { this.setSync(key, value, metadata); }
+
+  setSync(key: string, value: T, metadata: EntryMetadata): void {
     if (this.maxSize === 0) return;
     // Reclaim expired entries before evicting a live least-recently-used value.
-    if (this.cache.size >= this.maxSize) {
+    if (this.cache.size >= this.maxSize && Date.now() >= this.nextExpiration) {
+      this.nextExpiration = Infinity;
       for (const [storedKey, entry] of this.cache) {
         if (isExpired(entry)) void this.delete(storedKey);
+        else if (entry.expiresAt !== undefined) this.nextExpiration = Math.min(this.nextExpiration, entry.expiresAt);
       }
     }
     // Defer observer notification until the replacement is fully committed.
@@ -83,6 +90,7 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
       lastAccess: metadata.lastAccess,
     };
 
+    if (entry.expiresAt !== undefined) this.nextExpiration = Math.min(this.nextExpiration, entry.expiresAt);
     this.cache.set(key, entry);
     this.lru.touch(key);
 
@@ -95,14 +103,16 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
     if (evicted !== undefined) this.onEviction?.(evicted, "lru");
   }
 
-  async has(key: string): Promise<boolean> {
+  async has(key: string): Promise<boolean> { return this.hasSync(key); }
+
+  hasSync(key: string): boolean {
     const entry = this.cache.get(key);
     if (!entry) {
       return false;
     }
 
     if (isExpired(entry)) {
-      await this.delete(key);
+      void this.delete(key);
       return false;
     }
 
@@ -124,6 +134,7 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
 
   async clear(): Promise<void> {
     this.cache.clear();
+    this.nextExpiration = Infinity;
     this.lru.clear();
     this.tagIndex.clear();
     this.keyTags.clear();

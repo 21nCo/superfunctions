@@ -85,3 +85,19 @@ export function cacheFn<Schema extends CacheSchema = any>(
 
 // Default export
 export default cacheFn;
+
+// V0 factory convenience methods; standalone imports remain supported.
+import { compatibleMemoize } from './memoization/compatible.js';
+import { memoizeSync as syncMemoize } from './memoization/memoize.js';
+import { middleware as expressFactory } from './middleware/express.js';
+import { hono as honoFactory } from './middleware/hono.js';
+import { fastify as fastifyFactory } from './middleware/fastify.js';
+export namespace cacheFn {
+  export const memoize = Object.assign(compatibleMemoize, {
+    clear: (fn: import('./core/types.js').MemoizedFunction): Promise<void> => fn.clear(),
+  });
+  export const memoizeSync = syncMemoize;
+  export const middleware = expressFactory;
+  export const hono = honoFactory;
+  export const fastify = fastifyFactory;
+}
