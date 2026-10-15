@@ -1,0 +1,80 @@
+{
+  "name": "browsefn",
+  "version": "0.1.0",
+  "description": "Self-hosted web browsing and data extraction platform with web scraping, image search, and geolocation services",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "rm -rf dist",
+    "lint": "echo 'lint not configured'",
+    "test": "vitest run",
+    "test:watch": "vitest --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "web-scraping",
+    "scraper",
+    "crawler",
+    "image-search",
+    "geocoding",
+    "geolocation",
+    "puppeteer",
+    "playwright",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "browsefn/typescript"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "browseFn",
+    "schemaVersion": 1,
+    "namespace": "browsefn"
+  },
+  "dependencies": {
+    "@superfunctions/http": "0.3.0",
+    "@superfunctions/middleware": "0.3.0",
+    "cheerio": "^1.0.0-rc.12"
+  },
+  "peerDependencies": {
+    "puppeteer": ">=21.0.0",
+    "playwright": ">=1.40.0"
+  },
+  "peerDependenciesMeta": {
+    "puppeteer": {
+      "optional": true
+    },
+    "playwright": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  }
+}
