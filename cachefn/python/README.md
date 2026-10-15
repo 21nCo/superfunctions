@@ -2,17 +2,17 @@
 
 > Self-hosted caching solution for Python applications
 
-CacheFn is a developer-first caching library that provides memory caching, function memoization, and tag-based invalidation with zero external dependencies.
+CacheFn is a developer-first caching library that provides memory caching, function memoization, and tag-based invalidation without requiring an external cache service. The SDK depends on Pydantic.
 
 ## Status
 
-- **Version**: 0.1.0 (V0)
-- **Python**: ✅ Complete (Memory storage)
-- **TypeScript SDK**: ✅ Complete
+- **Version**: 0.0.1
+- **Python scope**: Memory storage and memoization
+- Production-readiness validation is in progress; the roadmap below is future scope.
 
 ## Features
 
-✅ **Zero Dependencies** - No Redis, Memcached, or external services required\
+✅ **No external cache service** - No Redis, Memcached, or external services required\
 ✅ **Memory Storage** - In-memory cache with LRU eviction\
 ✅ **Type-Safe** - Full type hints with Pydantic models\
 ✅ **Function Memoization** - Cache expensive function results\
@@ -132,6 +132,7 @@ async def fetch_user_from_db(user_id: str):
 
 async def main():
     cache = cache_fn(name="users", max_size=100)
+    user_id = "123"
 
     # Get or fetch pattern
     user = await cache.get_or_fetch(

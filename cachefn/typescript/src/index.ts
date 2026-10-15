@@ -17,6 +17,8 @@ export type {
   MemoizedFunction,
   CacheSchema,
   ExtractValueType,
+  SchemaCache,
+  SchemaKeys,
 } from "./core/types.js";
 
 // Storage exports
@@ -59,15 +61,15 @@ export { StatsTracker } from "./analytics/stats.js";
 
 // Factory function
 import { CacheFn } from "./core/cache.js";
-import type { CacheFnConfig, CacheSchema } from "./core/types.js";
+import type { CacheFnConfig, CacheSchema, SchemaCache } from "./core/types.js";
 
 /**
  * Create a new cache instance
  */
 export function cacheFn<Schema extends CacheSchema = any>(
   config: CacheFnConfig
-): CacheFn<Schema[keyof Schema]> {
-  return new CacheFn<Schema[keyof Schema]>(config);
+): 0 extends (1 & Schema) ? CacheFn<any> : SchemaCache<Schema> {
+  return new CacheFn(config) as 0 extends (1 & Schema) ? CacheFn<any> : SchemaCache<Schema>;
 }
 
 // Default export

@@ -7,6 +7,9 @@ import { cacheFn, expressMiddleware } from "../src/index.js";
 
 const app = express();
 const port = 3000;
+// Local demonstration with simulated data. Real deployments must authenticate
+// mutations and expose administration through the shared admin dispatcher.
+const host = "127.0.0.1";
 
 // Create cache instance
 const cache = cacheFn({
@@ -150,7 +153,7 @@ app.post("/api/cache/invalidate/:tag", async (req, res) => {
   res.json({ message: `Invalidated tag: ${req.params.tag}` });
 });
 
-app.listen(port, () => {
+app.listen(port, host, () => {
   console.log(`Server running at http://localhost:${port}`);
   console.log("Try these endpoints:");
   console.log("  GET  /api/users");

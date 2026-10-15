@@ -287,23 +287,37 @@ const cache = cacheFn<CacheSchema>({
   storage: "memory",
 });
 
-// TypeScript knows the return type!
+// Inferred as { id: string; name: string; email: string } | undefined.
 const user = await cache.get("user:123");
+await cache.set("post:1", { title: "Hello", content: "World" });
+// cache.set("user:123", { title: "Wrong shape" }); // Compile-time error.
+// cache.get("unknown:123"); // Compile-time error.
 ```
 
-## Performance
+Schema keys support literal strings and `*` wildcards (including multiple wildcards).
+Exact entries take precedence over wildcard matches; overlapping wildcard patterns
+produce a union of their value types. Batch reads preserve tuple positions when
+passed an `as const` tuple, and writes/fetchers are checked against their key.
+This is compile-time validation, not runtime validation of external input. Schema
+factories use a typed view of the same cache implementation. Existing
+`new CacheFn<Value>(config)` consumers retain arbitrary string keys and a uniform
+value type; `cacheFn(config)` without a schema remains untyped. Schema types require
+TypeScript 5.4 or newer.
 
-- **Memory Cache**: <1ms access time
-- **IndexedDB Cache**: 1-10ms access time
-- **LRU Eviction**: O(1) operations
-- **Pattern Matching**: O(n) where n = total keys
+## Runtime and performance requirements
 
-## Browser Support
+The build targets ES2021. Use a modern browser with native IndexedDB (for that
+backend), Promise, Map/Set, BigInt and `performance.now`, or Node.js 18+ for memory
+caching. Native IndexedDB must be available when selecting `indexeddb`; automatic
+localStorage/memory fallback is not part of the current SDK. Historical browser
+version floors from the original design are not a supported compatibility matrix.
+See the readiness evidence for the runtimes actually exercised.
 
-- Chrome/Edge 24+
-- Firefox 16+
-- Safari 10+
-- Node.js 18+
+Memory lookups and LRU bookkeeping use maps and a linked list. Expiration cleanup,
+key enumeration, patterns and tag scans may traverse entries. Latency depends on
+cache size, values, browser storage and runtime; original sub-millisecond targets
+are design goals, not measured guarantees. `memoryUsage` is an estimate, not a
+memory quota or adaptive eviction mechanism.
 
 ## License
 
