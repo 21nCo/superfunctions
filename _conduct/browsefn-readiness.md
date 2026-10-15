@@ -31,3 +31,22 @@ Snapshot 2026-10-15. Worktree `/Volumes/Dev/n/worktrees/superfunctions/browsefn-
 7. Inspect full SPEC/README promises against implementations, including Python differences. Existing gate only verifies a subset and currently fails. Prepare scoped PR only when remaining requirements are implemented and validated.
 
 Full objective remains active. BrowseFn is not production-ready yet.
+
+## Persistent backend and browser/geocoder checkpoint
+
+The previous duplication failure and memory-only storage findings are now fixed.
+Full current release gate passes: 92 TypeScript tests/build/typecheck, 69 Python
+3.12 tests, duplication 4.938383% under unchanged 5% threshold. Python3.10 full
+suite also passes 69 tests. Native Chrome IndexedDB acceptance and real Drizzle
+and SQLAlchemy SQLite persistence pass. Detailed limitations and schema/bridge
+requirements are in browsefn/.conduct/cache-backends.md.
+
+Browser providers now await extraction before cleanup, preserve primary errors,
+apply proxy settings, and report final redirected URLs. Browser wrapper defaults
+retain the browser sandbox. Nominatim bounds/components now work in both languages,
+including polar/antimeridian cases. Local Chromium browser and mocked provider
+contract evidence is in browsefn/.conduct/browser-geo-acceptance.md.
+
+Still open: image-download security, packaged consumers, provider contract sweep,
+dependency audit, reproducible scanner pinning, CI and remaining specification
+requirements. Passing this gate does not close these wider requirements.

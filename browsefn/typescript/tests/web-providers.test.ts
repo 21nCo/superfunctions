@@ -88,6 +88,7 @@ describe('Web providers', () => {
   it('executes custom scrape scripts with Puppeteer providers', async () => {
     const page = {
       marker: 'puppeteer-page',
+      url: () => 'https://example.com/product',
       setExtraHTTPHeaders: vi.fn(),
       setCookie: vi.fn(),
       setViewport: vi.fn(),
@@ -125,6 +126,7 @@ describe('Web providers', () => {
   it('executes custom scrape scripts with Playwright providers', async () => {
     const page = {
       marker: 'playwright-page',
+      url: () => 'https://example.com/product',
       goto: vi.fn(),
       screenshot: vi.fn(),
       content: vi.fn().mockResolvedValue('<html></html>'),

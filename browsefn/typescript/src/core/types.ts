@@ -35,6 +35,11 @@ export interface RateLimitConfig {
 }
 
 export interface CacheConfig {
+  /** Persistent-cache identity; separate identities never share entries. */
+  name?: string;
+  directory?: string;
+  database?: import("@superfunctions/db").Adapter;
+  indexedDB?: IDBFactory;
   enabled: boolean;
   ttl?: number;
   defaultTTL?: number;

@@ -57,7 +57,9 @@
   "dependencies": {
     "@superfunctions/http": "0.3.0",
     "@superfunctions/middleware": "0.3.0",
-    "cheerio": "^1.0.0-rc.12"
+    "cheerio": "^1.0.0-rc.12",
+    "@superfunctions/db": "0.3.0",
+    "@superfunctions/storage-local": "0.2.0"
   },
   "peerDependencies": {
     "puppeteer": ">=21.0.0",
@@ -75,6 +77,10 @@
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "fake-indexeddb": "6.2.4",
+    "better-sqlite3": "^12.5.0",
+    "drizzle-orm": "^0.35.0",
+    "@types/better-sqlite3": "^7.6.13"
   }
 }

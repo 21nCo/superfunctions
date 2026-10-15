@@ -50,6 +50,11 @@ class RateLimitConfig(BaseModel):
     window: int  # milliseconds
 
 class CacheConfig(BaseModel):
+    name: str = "browsefn"
+    directory: Optional[str] = None
+    database: Any = None
+    backend: Any = None
+    key_generator: Any = Field(None, alias="keyGenerator")
     enabled: bool
     ttl: Optional[int] = None
     storage: Optional[str] = None

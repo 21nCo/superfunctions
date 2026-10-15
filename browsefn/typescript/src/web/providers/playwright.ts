@@ -4,19 +4,20 @@
 
 import type {
   GetPageOptions,
-  ProviderCapabilities,
   WebProvider,
 } from '../../core/types.js';
 import { sanitizeUrl } from '../../utils/validation.js';
 import {
-  BROWSER_PROVIDER_CAPABILITIES,
-  buildBrowserPageResult,
+  BrowserProviderBase,
   isProviderModuleAvailable,
+  useBrowser,
+  parseBrowserProxy,
 } from './browser-provider-utils.js';
 
 type PlaywrightPage = {
   goto(url: string, options: { waitUntil: string; timeout: number }): Promise<unknown>;
   content(): Promise<string>;
+  url(): string;
   screenshot(options: {
     fullPage?: boolean;
     type?: 'png' | 'jpeg';
@@ -41,15 +42,13 @@ type PlaywrightBrowser = {
 };
 
 type PlaywrightBrowserType = {
-  launch(options: { headless: boolean }): Promise<PlaywrightBrowser>;
+  launch(options: { headless: boolean; proxy?: { server: string; username?: string; password?: string } }): Promise<PlaywrightBrowser>;
 };
 
 type PlaywrightModule = Record<'chromium' | 'firefox' | 'webkit', PlaywrightBrowserType>;
 
-export class PlaywrightProvider implements WebProvider {
+export class PlaywrightProvider extends BrowserProviderBase<PlaywrightPage> implements WebProvider {
   name = 'playwright';
-
-  capabilities: ProviderCapabilities = BROWSER_PROVIDER_CAPABILITIES;
 
   private playwright?: PlaywrightModule;
 
@@ -59,32 +58,13 @@ export class PlaywrightProvider implements WebProvider {
       headless?: boolean;
       timeout?: number;
     } = {}
-  ) {}
-
-  async getPage(url: string, options: GetPageOptions = {}) {
-    return this.withPage(url, options, (page, sanitizedUrl, startedAt) =>
-      buildBrowserPageResult({
-        page,
-        options,
-        sanitizedUrl,
-        provider: this.name,
-        startedAt,
-      })
-    );
-  }
-
-  async scrape<T>(
-    url: string,
-    options: GetPageOptions & { script: (page: unknown) => Promise<T> | T }
-  ): Promise<T> {
-    return this.withPage(url, options, async (page) => options.script(page));
-  }
+  ) { super(); }
 
   async isAvailable(): Promise<boolean> {
     return isProviderModuleAvailable(() => this.loadPlaywright());
   }
 
-  private async withPage<T>(
+  protected async withPage<T>(
     url: string,
     options: GetPageOptions,
     callback: (page: PlaywrightPage, sanitizedUrl: string, startedAt: number) => Promise<T>
@@ -94,11 +74,13 @@ export class PlaywrightProvider implements WebProvider {
     const sanitizedUrl = sanitizeUrl(url);
 
     const browserType = this.config.browser || 'chromium';
+    const proxy = parseBrowserProxy(options.proxy);
     const browser = await playwright[browserType].launch({
       headless: this.config.headless ?? true,
+      proxy,
     });
 
-    try {
+    return useBrowser(browser, async () => {
       const context = await browser.newContext({
         extraHTTPHeaders: options.headers,
         javaScriptEnabled: options.javascript,
@@ -127,10 +109,8 @@ export class PlaywrightProvider implements WebProvider {
         timeout: options.timeout || this.config.timeout || 30_000,
       });
 
-      return callback(page, sanitizedUrl, startedAt);
-    } finally {
-      await browser.close();
-    }
+      return await callback(page, page.url(), startedAt);
+    });
   }
   private async loadPlaywright(): Promise<PlaywrightModule> {
     if (!this.playwright) {

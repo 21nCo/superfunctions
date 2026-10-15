@@ -7,7 +7,7 @@ name = "browsefn"
 version = "0.1.0"
 description = "Comprehensive self-hosted web browsing and data extraction platform for developers"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
     { name = "21n" }
@@ -18,7 +18,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -39,7 +38,8 @@ test = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
-    "mypy>=1.0.0"
+    "mypy>=1.0.0",
+    "superfunctions-sqlalchemy>=0.1.1,<0.2.0"
 ]
 fastapi = [
     "fastapi>=0.100.0",
