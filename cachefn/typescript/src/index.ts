@@ -22,6 +22,10 @@ export type {
 } from "./core/types.js";
 
 // Storage exports
+export { LocalStorage } from './storage/local-storage.js';
+export { AutoStorage } from './storage/auto-storage.js';
+export type { LocalStorageConfig } from './storage/local-storage.js';
+export type { AutoStorageConfig, FallbackStorageType } from './storage/auto-storage.js';
 export { MemoryStorage } from "./storage/memory-storage.js";
 export { IndexedDBStorage } from "./storage/indexeddb-storage.js";
 export type {

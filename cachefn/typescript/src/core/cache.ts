@@ -11,6 +11,8 @@ import type {
 } from "./types.js";
 import type { StorageBackend } from "../storage/storage-interface.js";
 import { MemoryStorage } from "../storage/memory-storage.js";
+import { AutoStorage } from "../storage/auto-storage.js";
+import { LocalStorage } from "../storage/local-storage.js";
 import { IndexedDBStorage } from "../storage/indexeddb-storage.js";
 import { EventEmitter } from "./events.js";
 import { StatsTracker } from "../analytics/stats.js";
@@ -329,6 +331,7 @@ export class CacheFn<T = any> {
         return new MemoryStorage<T>({
           maxSize: config.maxSize,
           onEviction: (key, reason) => {
+            if (!this.ownsKey(key)) return;
             this.stats.recordEviction();
             this.events.emit("eviction", { key: this.eventKey(key.slice(this.keyPrefix().length)), reason });
           },
@@ -337,6 +340,23 @@ export class CacheFn<T = any> {
       case "indexeddb":
         return new IndexedDBStorage<T>({
           name: config.name,
+        });
+
+      case "localstorage":
+        return new LocalStorage<T>({ name: config.name, maxSize: config.maxSize, maxBytes: config.localStorageMaxBytes,
+          onEviction: (key, reason) => {
+            if (!this.ownsKey(key)) return;
+            this.stats.recordEviction();
+            this.events.emit('eviction', { key: this.eventKey(key.slice(this.keyPrefix().length)), reason });
+          },
+        });
+      case "auto":
+        return new AutoStorage<T>({ ...config,
+          onEviction: (key, reason) => {
+            if (!this.ownsKey(key)) return;
+            this.stats.recordEviction();
+            this.events.emit('eviction', { key: this.eventKey(key.slice(this.keyPrefix().length)), reason });
+          },
         });
 
       default:

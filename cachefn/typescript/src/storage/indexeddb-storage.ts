@@ -17,6 +17,9 @@ export class IndexedDBStorage<T = any> implements StorageBackend<T> {
     this.version = config.version ?? 1;
   }
 
+  /** Release this connection; a subsequent operation opens it again. */
+  close(): void { this.db?.close(); this.db = null; }
+
   private async init(): Promise<void> {
     if (this.db) return;
     if (!this.initPromise) {

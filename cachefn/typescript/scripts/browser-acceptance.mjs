@@ -103,6 +103,44 @@ try {
           }
           assert(rejected, "abort after request success rejects");
           assert(await storage.has("key"), "aborted delete rollback");
+          const persistentName = `local-${crypto.randomUUID()}`;
+          const local = new CacheFn({ name: persistentName, storage: 'localstorage', namespace: 'one' });
+          await local.set('key', { value: 1n }, { tags: ['tag'] });
+          const reopened = new CacheFn({ name: persistentName, storage: 'localstorage', namespace: 'one' });
+          assert((await reopened.get('key')).value === 1n, 'localStorage typed persistence');
+          const neighbor = new CacheFn({ name: persistentName, storage: 'localstorage', namespace: 'one:two' });
+          await neighbor.set('key', 2, { tags: ['tag'] });
+          await local.invalidateByTag('tag');
+          assert(await neighbor.get('key') === 2, 'localStorage namespace isolation');
+          const open = indexedDB.open.bind(indexedDB);
+          indexedDB.open = () => { throw new DOMException('Disabled by browser policy', 'SecurityError'); };
+          try {
+            const automaticName = `automatic-${crypto.randomUUID()}`;
+            const automatic = new CacheFn({ name: automaticName, storage: 'auto' });
+            await automatic.set('key', 3);
+            assert(await new CacheFn({ name: automaticName, storage: 'localstorage' }).get('key') === 3, 'disabled IndexedDB falls to localStorage');
+            const descriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+            Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new DOMException('Disabled storage', 'SecurityError'); } });
+            try {
+              const memory = new CacheFn({ name: crypto.randomUUID(), storage: 'auto' });
+              await memory.set('key', 4);
+              assert(await memory.get('key') === 4, 'all persistent storage denied falls to memory');
+            } finally {
+              if (descriptor) Object.defineProperty(window, 'localStorage', descriptor);
+              else delete window.localStorage;
+            }
+          } finally { indexedDB.open = open; }
+          const quota = new CacheFn({ name: crypto.randomUUID(), storage: 'auto', fallbackOrder: ['localstorage'], localStorageMaxBytes: 40 * 1024 * 1024 });
+          // Exceeds Chromium's origin localStorage quota, but not our configured
+          // cap: this exercises a native QuotaExceededError and runtime failover.
+          const large = 'x'.repeat(10 * 1024 * 1024);
+          await quota.set('large', large);
+          assert((await quota.get('large')).length === large.length, 'native browser quota falls to memory');
+          assert(!Object.keys(localStorage).some(key => key.includes(':probe:')), 'localStorage probes cleaned');
+          const autoIdb = new CacheFn({ name: `auto-idb-${crypto.randomUUID()}`, storage: 'auto' });
+          await autoIdb.set('key', 5);
+          assert(await autoIdb.get('key') === 5, 'automatic IndexedDB works');
+          assert(!(await indexedDB.databases()).some(db => db.name?.includes(':probe:')), 'IndexedDB probe databases removed');
           return { assertions, userAgent: navigator.userAgent };
         })(),
       ]);

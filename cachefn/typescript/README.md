@@ -135,7 +135,7 @@ await cache.set("user:profile", userData);
 ```typescript
 const cache = cacheFn({
   name: string;           // Cache instance name
-  storage?: 'memory' | 'indexeddb';  // Storage backend (default: 'memory')
+  storage?: 'memory' | 'indexeddb' | 'localstorage' | 'auto';  // Storage backend (default: 'memory')
   maxSize?: number;       // Max entries (memory only, default: 1000)
   defaultTTL?: number;    // Default TTL in ms
   namespace?: string;     // Key namespace prefix
@@ -188,7 +188,7 @@ memoize<T extends (...args: any[]) => any>(
     keyGenerator?: (...args) => string;
     ttl?: number;
     maxSize?: number;
-    storage?: 'memory' | 'indexeddb';
+    storage?: 'memory' | 'indexeddb' | 'localstorage' | 'auto';
     tags?: string[];
   }
 ): ((...args: Parameters<T>) => Promise<Awaited<ReturnType<T>>>) & {
@@ -304,13 +304,55 @@ factories use a typed view of the same cache implementation. Existing
 value type; `cacheFn(config)` without a schema remains untyped. Schema types require
 TypeScript 5.4 or newer.
 
+## Automatic browser storage
+
+```typescript
+const cache = cacheFn({
+  name: 'browser-cache',
+  storage: 'auto',
+  fallbackOrder: ['indexeddb', 'localstorage', 'memory'],
+  localStorageMaxBytes: 4 * 1024 * 1024,
+  storageProbeTimeoutMs: 1500,
+  maxSize: 1000,
+});
+```
+
+Automatic mode probes each persistent tier by writing, reading, and cleaning up
+an isolated temporary cache. The default order is IndexedDB, localStorage, memory.
+`fallbackOrder` can reorder or omit persistent tiers; memory always terminates the
+sequence, including when explicitly placed earlier. Memory is also the default
+backend when `storage` is omitted. Explicit backend modes never silently switch.
+
+Security restrictions, quota exhaustion, and storage availability errors cause
+an automatic instance to advance and retry the operation on the next tier.
+Unsupported values and programming errors propagate. Selection and operations
+are serialized within the instance; it never returns to a failed tier. Probe
+timeouts allow selection to continue, with cleanup when the pending probe settles.
+
+Failover does not migrate existing data: entries in the previous tier become cold
+misses. Each new instance probes independently and may reuse older persistent data
+until its TTL expires. Invalidation/clear affects the currently selected tier only;
+it cannot remove inaccessible old-tier data. Use versioned cache names when an
+application must prevent reuse after such an invalidation. This is a cache, not a
+durable write queue or a synchronization mechanism.
+
+localStorage uses an atomic snapshot per cache name, preserving typed serialized
+values, expiration, tags, and metadata. Its default cap is 4 MiB measured as UTF-16
+key plus payload bytes, with a default 1,000-entry LRU cap; browsers can impose a
+smaller origin quota. Oversized individual values reject in explicit mode and
+trigger failover in automatic mode. Caps apply to the entire named snapshot,
+including all its namespaces. Namespace reads, clears, and tag invalidation remain
+isolated, but capacity eviction can remove entries in another namespace. Use
+separate names for independent quotas. Cross-tab updates use last-write-wins
+snapshots rather than cross-tab transactions. localStorage is synchronous and
+whole-snapshot work is proportional to cache size.
+
 ## Runtime and performance requirements
 
 The build targets ES2021. Use a modern browser with native IndexedDB (for that
 backend), Promise, Map/Set, BigInt and `performance.now`, or Node.js 18+ for memory
-caching. Native IndexedDB must be available when selecting `indexeddb`; automatic
-localStorage/memory fallback is not part of the current SDK. Historical browser
-version floors from the original design are not a supported compatibility matrix.
+caching. Explicit `indexeddb` and `localstorage` modes reject unavailable storage;
+`auto` probes and falls back as described below. Historical browser version floors from the original design are not a supported compatibility matrix.
 See the readiness evidence for the runtimes actually exercised.
 
 Memory lookups and LRU bookkeeping use maps and a linked list. Expiration cleanup,

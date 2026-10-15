@@ -5,7 +5,7 @@
 /**
  * Storage backend type
  */
-export type StorageType = "memory" | "indexeddb";
+export type StorageType = "memory" | "indexeddb" | "localstorage" | "auto";
 
 /**
  * Configuration options for CacheFn instance
@@ -15,6 +15,12 @@ export interface CacheFnConfig {
   name: string;
   /** Storage backend to use */
   storage?: StorageType;
+  /** Automatic storage preference order; memory is always the final fallback. */
+  fallbackOrder?: Array<'indexeddb' | 'localstorage' | 'memory'>;
+  /** UTF-16 snapshot bytes permitted in localStorage (default 4 MiB). */
+  localStorageMaxBytes?: number;
+  /** Automatic availability probe deadline (default 1500 ms). */
+  storageProbeTimeoutMs?: number;
   /** Maximum number of entries (for memory storage) */
   maxSize?: number;
   /** Default TTL in milliseconds */
