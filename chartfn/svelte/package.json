@@ -27,13 +27,13 @@
     "chartfn": "0.0.3"
   },
   "peerDependencies": {
-    "svelte": ">=5.0.0"
+    "svelte": ">=5.57.2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.1.1",
     "@testing-library/svelte": "^5.3.1",
     "jsdom": "^27.0.1",
-    "svelte": "^5.46.1",
+    "svelte": "^5.57.2",
     "vite": "^6.0.0",
     "typescript": "^5.0.0",
     "vitest": "4.1.11",

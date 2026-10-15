@@ -29,3 +29,22 @@ it('uses mixed combo series and separates multiple pie series', () => {
   const pie = _private.buildOption({ ...spec, type: 'pie', data: { series: [{values:[1]}, {values:[2]}] } }) as any;
   expect(pie.series[0].center).not.toEqual(pie.series[1].center);
 });
+it('recovers after a failed theme replacement on a later update', () => {
+  const old = { setOption: vi.fn(), dispose: vi.fn() };
+  const failed = { setOption: vi.fn(() => { throw Error('replacement failed'); }), dispose: vi.fn() };
+  const recovered = { setOption: vi.fn(), dispose: vi.fn() };
+  mocks.init.mockReturnValueOnce(old).mockReturnValueOnce(failed).mockReturnValueOnce(recovered);
+  const handle = echartsAdapter.mount({} as HTMLElement, spec);
+  expect(() => handle.update({ ...spec, options: { theme: 'dark' } })).toThrow('replacement failed');
+  handle.update(spec);
+  expect(mocks.init).toHaveBeenCalledTimes(3);
+  expect(recovered.setOption).toHaveBeenCalledOnce();
+  expect(old.setOption).toHaveBeenCalledOnce();
+  expect(failed.dispose).toHaveBeenCalledOnce();
+  handle.dispose();
+  expect(recovered.dispose).toHaveBeenCalledOnce();
+});
+it('creates a legend for explicitly enabled default positioning', () => {
+  expect(_private.buildOption({ ...spec, options: { legend: { show: true } } }).legend).toEqual({});
+  expect(_private.buildOption(spec).legend).toBeUndefined();
+});

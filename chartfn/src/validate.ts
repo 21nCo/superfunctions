@@ -93,6 +93,10 @@ export const validateChartSpec = (spec: unknown): ChartfnEnvelope<null> => {
     const entry = series[index];
     if (isObject(entry) && entry.name !== undefined && typeof entry.name !== 'string') return fail('Series name must be a string', `data.series[${index}].name`);
     if (isObject(entry) && entry.type !== undefined && !['bar', 'line', 'area'].includes(entry.type as string)) return fail('Series type must be bar, line or area', `data.series[${index}].type`);
+    const rawValues = isObject(entry) ? entry.values : undefined;
+    if (Array.isArray(rawValues) && rawValues.length > MAX_POINTS_PER_SERIES) {
+      return fail(`ChartSpec.data.series values exceed max points (${MAX_POINTS_PER_SERIES})`, `data.series[${index}].values`);
+    }
     const values = getValuesArray(series[index]);
     if (!values) {
       return fail(

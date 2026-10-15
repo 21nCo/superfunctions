@@ -106,7 +106,7 @@ const buildLegend = (spec: ChartSpec): Record<string, unknown> | undefined => {
     }
   }
 
-  return Object.keys(config).length > 0 ? config : undefined;
+  return config;
 };
 
 const buildAxes = (spec: ChartSpec, cartesian: boolean) => {
@@ -208,7 +208,7 @@ export const echartsAdapter: ChartAdapter = {
       catch (error) { try { mounted.dispose(); } catch {} throw error; }
       return mounted;
     };
-    let instance = create(spec);
+    let instance: ReturnType<typeof echarts.init> | undefined = create(spec);
 
     let disposed = false;
 
@@ -218,8 +218,10 @@ export const echartsAdapter: ChartAdapter = {
           return;
         }
         assertChartSpec(nextSpec);
-        if (nextSpec.options?.theme !== theme) {
-          instance.dispose();
+        if (!instance || nextSpec.options?.theme !== theme) {
+          const previous = instance;
+          instance = undefined;
+          previous?.dispose();
           instance = create(nextSpec);
           theme = nextSpec.options?.theme;
         } else {
@@ -232,12 +234,13 @@ export const echartsAdapter: ChartAdapter = {
           return;
         }
         disposed = true;
-        instance.dispose();
+        instance?.dispose();
       },
       async toImage(options) {
         if (disposed) {
           return Promise.resolve("");
         }
+        if (!instance) throw new Error("Chart has no active renderer; call update with a valid specification to recover");
         for (const value of [options?.width, options?.height]) {
           if (value !== undefined && (!Number.isFinite(value) || value <= 0)) throw new RangeError('Image dimensions must be positive finite numbers');
         }

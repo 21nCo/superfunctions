@@ -1,6 +1,6 @@
 # @chartfn/svelte
 
-Svelte 5 bindings for `chartfn`. Spec changes update the mounted chart; changing the API or adapter replaces it, and unmount disposes it.
+Svelte 5.57.2 or newer bindings for `chartfn`. Spec changes update the mounted chart; changing the API or adapter replaces it, and unmount disposes it.
 
 ## Usage
 

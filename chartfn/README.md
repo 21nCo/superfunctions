@@ -124,7 +124,7 @@ export function Dashboard() {
 
 ## Compatibility / Versioning
 
-- ChartSpec v1 is stable. Breaking changes must introduce a new version field.
+- ChartSpec v1 is stable. Breaking changes must introduce a new version field and a documented deprecation period before removing the previous version.
 - ChartAdapter interface is additive-only for optional methods.
 - Packages follow SemVer.
 

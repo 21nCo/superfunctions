@@ -48,3 +48,13 @@ it("updates in place and replaces handles when the adapter or API changes", asyn
   view.unmount();
   expect(dispose).toHaveBeenCalledTimes(3);
 });
+it('updates when Svelte invalidates a spec after nested mutation', async () => {
+  const update = vi.fn();
+  const api = chartFn({ defaultAdapter: 'mock', adapters: { mock: { name: 'mock', mount: () => ({ update, dispose: vi.fn() }) } } });
+  const mutable: ChartSpec = { type: 'bar', data: { series: [{ values: [1] }] } };
+  const view = render(Chart, { spec: mutable, api });
+  mutable.data.series[0].values = [9, 7];
+  await view.rerender({ spec: mutable });
+  expect(update).toHaveBeenCalledWith(mutable);
+  view.unmount();
+});

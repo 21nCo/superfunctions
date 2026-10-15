@@ -24,10 +24,8 @@
     }
     if (!nextApi || !element) return;
     if (binding) {
-      if (binding.spec !== nextSpec) {
-        binding.handle.update(nextSpec);
-        binding.spec = nextSpec;
-      }
+      binding.handle.update(nextSpec);
+      binding.spec = nextSpec;
       return;
     }
     const result = nextApi.render(element, nextSpec, nextAdapter ? { adapter: nextAdapter } : undefined);
