@@ -220,3 +220,19 @@ not reverse handler success or claim a final task status. Output validation stil
 runs for each attempted result before persistence.
 
 Lifecycle evidence retains only recognized framework error codes; application-defined codes become `MCPFN_TOOL_ERROR`. Protocol error responses preserve the original application code and details.
+
+## Supported Node runtimes
+
+Core supports Node 18.18 and later. The SDK's web-standard HTTP transport requires
+`globalThis.crypto.randomUUID`; on Node 18 enable global WebCrypto before starting
+HTTP handlers, for example `NODE_OPTIONS=--experimental-global-webcrypto node app.mjs`.
+Node 20 provides this global by default. This prerequisite also applies to the
+previous SDK version; schema validation and in-memory transport do not require it.
+`@superfunctions/admin` requires Node 20 or later.
+
+After building core and shared admin, run
+`node mcpfn/core/scripts/packed-runtime-acceptance.mjs` from the repository root to
+pack both packages, install them in a disposable consumer, audit production
+dependencies, and exercise ESM/CJS validation and MCP transport. Set `NODE18` and
+`NODE20` to additional runtime executables. Set the WebCrypto `NODE_OPTIONS` flag
+when testing Node 18 HTTP. The consumer directory is removed afterward.
