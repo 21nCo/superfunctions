@@ -2,16 +2,16 @@
  * Image browsing and search interface.
  */
 
-import { Buffer } from 'node:buffer';
 import { basename, extname, resolve, sep } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { fetchImageBytes, writeImage } from './download.js';
+import { transformImage } from './transform.js';
+import { ImageSelection } from './selection.js';
 
 import { BrowseFnError } from '../core/errors.js';
 import type {
   DownloadResult,
   ImageDownloadOptions,
-  ImageMetadata,
   ImageProvider,
   ImageResult,
   ImageSearchOptions,
@@ -32,6 +32,7 @@ interface ServiceHooks {
 
 
 export class ImageBrowser {
+  private selection = new ImageSelection();
   private providerManager: ProviderManager<ImageProvider>;
 
   constructor(
@@ -58,6 +59,7 @@ export class ImageBrowser {
     if (options.cache && this.cache) {
       const cached = await this.cache.get<ImageSearchResult>('imageSearch', query, options);
       if (cached) {
+        this.selection.remember(cached.results);
         return cached;
       }
     }
@@ -87,15 +89,19 @@ export class ImageBrowser {
       });
     }
 
+    this.selection.remember(result.results);
     return result;
   }
 
   async download(
-    url: string,
+    input: string | ImageResult,
     options: ImageDownloadOptions = {}
   ): Promise<DownloadResult> {
     validateImageDownloadOptions(options);
-    const sanitizedUrl = sanitizeUrl(url);
+    const providerOptions = options;
+    const selection = this.selection.resolve(input, options);
+    options = selection.options;
+    const sanitizedUrl = sanitizeUrl(selection.url);
     const destinationPath = options.destination
       ? await this.resolveDestinationPath(sanitizedUrl, options)
       : undefined;
@@ -103,7 +109,7 @@ export class ImageBrowser {
     const provider = this.providerManager.getDefault();
     if (provider?.download) {
       await this.rateLimiter?.waitForLimit(provider.name);
-      const result = await provider.download(sanitizedUrl, options);
+      const result = await provider.download(sanitizedUrl, providerOptions);
       if (result.success && options.destination && !result.path) {
         throw new BrowseFnError({
           code: 'INTERNAL_ERROR',
@@ -202,22 +208,8 @@ export class ImageBrowser {
     destinationPath?: string
   ): Promise<DownloadResult> {
     const startTime = Date.now();
-    const hasTransformOptions =
-      options.format !== undefined ||
-      options.quality !== undefined ||
-      options.maxWidth !== undefined ||
-      options.maxHeight !== undefined ||
-      options.crop !== undefined ||
-      options.watermark !== undefined;
-    if (hasTransformOptions) {
-      throw new BrowseFnError({
-        code: 'INVALID_ARGUMENT',
-        message: 'Image transforms are not supported in the TypeScript runtime yet.',
-      });
-    }
-
-    const bytes = await fetchImageBytes(url, options);
-    const metadata = this.extractMetadata(bytes, options.format ?? this.detectFormat(url, bytes));
+    const input = await fetchImageBytes(url, options);
+    const { bytes, metadata } = await transformImage(input, options);
 
     const result: DownloadResult = {
       success: true,
@@ -242,7 +234,8 @@ export class ImageBrowser {
     options: ImageDownloadOptions
   ): Promise<string> {
     const destinationRoot = resolve(options.destination!);
-    const requestedName = options.filename || basename(new URL(url).pathname) || 'download';
+    let requestedName = options.filename || basename(new URL(url).pathname) || 'download';
+    if (!options.filename && options.format) requestedName = requestedName.slice(0, requestedName.length - extname(requestedName).length) + '.' + options.format;
 
     if (
       requestedName.includes('..') ||
@@ -283,148 +276,4 @@ export class ImageBrowser {
     return candidatePath;
   }
 
-  private extractMetadata(bytes: Uint8Array, formatHint?: string): ImageMetadata {
-    const format = this.detectFormat(undefined, bytes, formatHint);
-    if (format === 'png') {
-      return this.extractPngMetadata(bytes);
-    }
-    if (format === 'jpeg') {
-      return this.extractJpegMetadata(bytes);
-    }
-    if (format === 'webp') {
-      return this.extractWebpMetadata(bytes);
-    }
-
-    throw new BrowseFnError({
-      code: 'INVALID_ARGUMENT',
-      message: 'Unsupported image format.',
-    });
-  }
-
-  private detectFormat(
-    url?: string,
-    bytes?: Uint8Array,
-    preferredFormat?: string
-  ): 'jpeg' | 'png' | 'webp' {
-    if (preferredFormat === 'jpeg' || preferredFormat === 'png' || preferredFormat === 'webp') {
-      return preferredFormat;
-    }
-
-    if (bytes && bytes.length >= 12) {
-      if (
-        bytes[0] === 0x89 &&
-        bytes[1] === 0x50 &&
-        bytes[2] === 0x4e &&
-        bytes[3] === 0x47
-      ) {
-        return 'png';
-      }
-      if (bytes[0] === 0xff && bytes[1] === 0xd8) {
-        return 'jpeg';
-      }
-      if (
-        bytes[0] === 0x52 &&
-        bytes[1] === 0x49 &&
-        bytes[2] === 0x46 &&
-        bytes[3] === 0x46 &&
-        bytes[8] === 0x57 &&
-        bytes[9] === 0x45 &&
-        bytes[10] === 0x42 &&
-        bytes[11] === 0x50
-      ) {
-        return 'webp';
-      }
-    }
-
-    const extension = url ? extname(url).toLowerCase() : '';
-    if (extension === '.jpg' || extension === '.jpeg') {
-      return 'jpeg';
-    }
-    if (extension === '.png') {
-      return 'png';
-    }
-    if (extension === '.webp') {
-      return 'webp';
-    }
-
-    throw new BrowseFnError({
-      code: 'INVALID_ARGUMENT',
-      message: 'Unable to determine image format.',
-    });
-  }
-
-  private extractPngMetadata(bytes: Uint8Array): ImageMetadata {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    return {
-      format: 'png',
-      width: view.getUint32(16),
-      height: view.getUint32(20),
-      size: bytes.length,
-      hasAlpha: true,
-    };
-  }
-
-  private extractJpegMetadata(bytes: Uint8Array): ImageMetadata {
-    let offset = 2;
-    while (offset < bytes.length) {
-      if (bytes[offset] !== 0xff) {
-        offset += 1;
-        continue;
-      }
-
-      const marker = bytes[offset + 1];
-      const blockLength = (bytes[offset + 2] << 8) + bytes[offset + 3];
-      if (marker >= 0xc0 && marker <= 0xc3) {
-        const height = (bytes[offset + 5] << 8) + bytes[offset + 6];
-        const width = (bytes[offset + 7] << 8) + bytes[offset + 8];
-        return {
-          format: 'jpeg',
-          width,
-          height,
-          size: bytes.length,
-          hasAlpha: false,
-        };
-      }
-      offset += 2 + blockLength;
-    }
-
-    throw new BrowseFnError({
-      code: 'INVALID_ARGUMENT',
-      message: 'Unable to read JPEG metadata.',
-    });
-  }
-
-  private extractWebpMetadata(bytes: Uint8Array): ImageMetadata {
-    const kind = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
-    if (kind === 'VP8 ') {
-      const width = bytes[26] | (bytes[27] << 8);
-      const height = bytes[28] | (bytes[29] << 8);
-      return {
-        format: 'webp',
-        width,
-        height,
-        size: bytes.length,
-      };
-    }
-
-    if (kind === 'VP8L') {
-      const bits =
-        bytes[21] |
-        (bytes[22] << 8) |
-        (bytes[23] << 16) |
-        (bytes[24] << 24);
-      return {
-        format: 'webp',
-        width: (bits & 0x3fff) + 1,
-        height: ((bits >> 14) & 0x3fff) + 1,
-        size: bytes.length,
-        hasAlpha: true,
-      };
-    }
-
-    throw new BrowseFnError({
-      code: 'INVALID_ARGUMENT',
-      message: 'Unable to read WebP metadata.',
-    });
-  }
 }

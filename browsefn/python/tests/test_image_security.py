@@ -13,7 +13,11 @@ from browsefn.core.types import ImageDownloadOptions
 from browsefn.images.browser import ImageBrowser
 from browsefn.images.providers.unsplash import UnsplashProvider
 
-JPEG = bytes.fromhex("ffd8ffe000104a46494600010100000100010000ffc00011080001000103012200021101031101ffda0008010100003f00ffd9")
+from io import BytesIO
+from PIL import Image
+_buffer = BytesIO()
+Image.new("RGB", (1, 1), "red").save(_buffer, format="JPEG")
+JPEG = _buffer.getvalue()
 
 
 @pytest.fixture
@@ -104,3 +108,16 @@ def test_address_policy_and_option_validation():
     for options in [{"maxPayloadBytes": 0}, {"maxRedirects": -1}, {"maxRedirects": 1.5}]:
         with pytest.raises(ValidationError):
             ImageDownloadOptions(**options)
+
+
+@pytest.mark.asyncio
+async def test_explicit_provider_size_url_uses_real_selected_endpoint(server, tmp_path):
+    from browsefn.core.browse_fn import BrowseFn
+    from browsefn.core.types import ImageResult, ImageSource, ImageDownloads
+    base, calls = server
+    image = ImageResult(id="1", url=base + "/default", thumbnail="", width=1, height=1,
+                        source=ImageSource(provider="test", url=base + "/page"),
+                        downloads=ImageDownloads(small=base + "/small.jpg"))
+    result = await BrowseFn().images.download(image, ImageDownloadOptions(destination=str(tmp_path), size="small", allowPrivateHosts=True))
+    assert result.success and Path(result.path).name == "small.jpg"
+    assert [path for path, _ in calls] == ["/small.jpg"]

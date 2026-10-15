@@ -10,47 +10,17 @@ from urllib.parse import urlparse
 from browsefn.core.errors import BrowseFnError
 from browsefn.core.provider_manager import ProviderManager
 from browsefn.core.provider_registry import normalize_image_provider_id, sort_provider_ids
-from browsefn.core.types import ImageConfig, ImageDownloadOptions, ImageMetadata, ImageProvider, ImageSearchOptions, ImageSearchResult
+from browsefn.core.types import ImageConfig, ImageDownloadOptions, ImageResult, ImageProvider, ImageSearchOptions, ImageSearchResult
 from browsefn.core.types import DownloadResult
+from browsefn.images._transform import transform_image
+from browsefn.images._selection import ImageSelection
 from browsefn.images._download_utils import resolve_download_path, fetch_image_bytes, write_image
 from browsefn.utils.validation import validate_download_options, validate_image_search_options, validate_url
 
 
-def _detect_image_metadata(content: bytes) -> ImageMetadata:
-    if content.startswith(b"\x89PNG\r\n\x1a\n") and len(content) >= 24:
-        width = int.from_bytes(content[16:20], "big")
-        height = int.from_bytes(content[20:24], "big")
-        return ImageMetadata(format="png", width=width, height=height, size=len(content))
-
-    if content.startswith(b"\xff\xd8"):
-        index = 2
-        while index + 9 < len(content):
-            if content[index] != 0xFF:
-                index += 1
-                continue
-            marker = content[index + 1]
-            if marker in {0xC0, 0xC2}:
-                height = int.from_bytes(content[index + 5 : index + 7], "big")
-                width = int.from_bytes(content[index + 7 : index + 9], "big")
-                return ImageMetadata(format="jpeg", width=width, height=height, size=len(content))
-            if index + 4 >= len(content):
-                break
-            segment_length = int.from_bytes(content[index + 2 : index + 4], "big")
-            index += segment_length + 2
-        return ImageMetadata(format="jpeg", width=0, height=0, size=len(content))
-
-    if content.startswith(b"RIFF") and content[8:12] == b"WEBP":
-        if content[12:16] == b"VP8X" and len(content) >= 30:
-            width = 1 + int.from_bytes(content[24:27], "little")
-            height = 1 + int.from_bytes(content[27:30], "little")
-            return ImageMetadata(format="webp", width=width, height=height, size=len(content))
-        return ImageMetadata(format="webp", width=0, height=0, size=len(content))
-
-    return ImageMetadata(format="unknown", width=0, height=0, size=len(content))
-
-
 class ImageBrowser:
     def __init__(self, config: Optional[ImageConfig] = None):
+        self.selection = ImageSelection()
         self.config = config or ImageConfig()
         self.providers: Dict[str, ImageProvider] = {}
         self.provider_manager = ProviderManager(
@@ -76,11 +46,14 @@ class ImageBrowser:
                 item.source.provider = provider_name
             return result
 
-        return await self.provider_manager.execute_with_fallback(requested_provider, executor)
+        result = await self.provider_manager.execute_with_fallback(requested_provider, executor)
+        self.selection.remember(result.results)
+        return result
 
-    async def download(self, url: str, options: Optional[ImageDownloadOptions] = None) -> DownloadResult:
-        validate_url(url)
+    async def download(self, url: str | ImageResult, options: Optional[ImageDownloadOptions] = None) -> DownloadResult:
         options = options or ImageDownloadOptions()
+        url, options = self.selection.resolve(url, options)
+        validate_url(url)
         validate_download_options(options)
         provider_name = normalize_image_provider_id(options.provider) or self.provider_manager.default_provider
         if provider_name:
@@ -96,17 +69,17 @@ class ImageBrowser:
 
         start = datetime.now()
         content = await fetch_image_bytes(url, options)
+        content, metadata = await transform_image(content, options)
         write_image(path, content, options.overwrite)
-        metadata = _detect_image_metadata(content) if options.metadata else None
         duration = (datetime.now() - start).total_seconds() * 1000
         return DownloadResult(
             success=True,
             path=str(path),
             size=len(content),
-            format=metadata.format if metadata else path.suffix.lstrip(".") or None,
-            width=metadata.width if metadata else None,
-            height=metadata.height if metadata else None,
-            metadata=metadata,
+            format=metadata.format,
+            width=metadata.width,
+            height=metadata.height,
+            metadata=metadata if options.metadata else None,
             duration=duration,
         )
 

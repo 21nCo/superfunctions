@@ -14,6 +14,8 @@ def resolve_download_path(url: str, options: ImageDownloadOptions, *, default_na
     requested_name = options.filename or Path(urlparse(url).path).name or default_name
     if requested_name in {".", ".."} or "/" in requested_name or "\\" in requested_name:
         raise BrowseFnError("SECURITY_POLICY_BLOCKED", "Destination filename must stay within the destination directory.")
+    if not options.filename and options.format:
+        requested_name = str(Path(requested_name).with_suffix("." + options.format))
     path = destination_root / requested_name
 
     try:

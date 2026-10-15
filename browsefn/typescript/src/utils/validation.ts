@@ -77,10 +77,6 @@ export function validateImageSearchOptions(options: ImageSearchOptions): void {
 }
 
 export function validateImageDownloadOptions(options: ImageDownloadOptions): void {
-  if (!options.destination) {
-    return;
-  }
-
   if (options.format && !['jpeg', 'png', 'webp'].includes(options.format)) {
     throw new BrowseFnError({
       code: 'INVALID_ARGUMENT',
@@ -134,7 +130,13 @@ export function validateImageDownloadOptions(options: ImageDownloadOptions): voi
     }
   }
 
+  if (options.size && !['small', 'medium', 'large', 'original'].includes(options.size)) {
+    throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Invalid image size.' });
+  }
   if (options.watermark) {
+    if ((options.watermark.text?.length ?? 0) > 4096 || (options.watermark.position && !['top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'].includes(options.watermark.position))) {
+      throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Invalid watermark text length or position.' });
+    }
     if (!options.watermark.text && !options.watermark.image) {
       throw new BrowseFnError({
         code: 'INVALID_ARGUMENT',

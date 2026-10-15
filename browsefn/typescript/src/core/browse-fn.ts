@@ -318,7 +318,7 @@ export class BrowseFn {
       this.images.download.bind(this.images),
       (url) => ({
         operation: 'images.download',
-        url,
+        url: typeof url === 'string' ? url : url.url,
       })
     );
 

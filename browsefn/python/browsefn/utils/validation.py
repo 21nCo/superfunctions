@@ -77,11 +77,18 @@ def validate_download_options(options: ImageDownloadOptions) -> None:
     if options.max_height is not None and options.max_height <= 0:
         raise BrowseFnError("INVALID_ARGUMENT", "maxHeight must be positive.")
 
-    if options.crop or options.watermark or options.max_width or options.max_height or options.format:
-        raise BrowseFnError(
-            "INVALID_ARGUMENT",
-            "Image transforms are not supported in the Python SDK.",
-        )
+    if options.crop:
+        crop = options.crop
+        if crop.x < 0 or crop.y < 0 or crop.width <= 0 or crop.height <= 0:
+            raise BrowseFnError("INVALID_ARGUMENT", "Crop coordinates must be non-negative and dimensions positive.")
+    if options.watermark:
+        watermark = options.watermark
+        if not watermark.text and not watermark.image:
+            raise BrowseFnError("INVALID_ARGUMENT", "Watermark requires text or image input.")
+        if watermark.text and len(watermark.text) > 4096:
+            raise BrowseFnError("INVALID_ARGUMENT", "Watermark text must not exceed 4096 characters.")
+        if watermark.opacity is not None and not 0 <= watermark.opacity <= 1:
+            raise BrowseFnError("INVALID_ARGUMENT", "Watermark opacity must be between 0 and 1.")
 
 
 def validate_url(url: str) -> None:

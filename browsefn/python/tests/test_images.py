@@ -11,9 +11,11 @@ from browsefn.images.browser import ImageBrowser
 from browsefn.images.providers.unsplash import UnsplashProvider
 
 
-JPEG_BYTES = bytes.fromhex(
-    "ffd8ffe000104a46494600010100000100010000ffc00011080001000103012200021101031101ffda0008010100003f00ffd9"
-)
+from io import BytesIO
+from PIL import Image
+_buffer = BytesIO()
+Image.new("RGB", (1, 1), "red").save(_buffer, format="JPEG")
+JPEG_BYTES = _buffer.getvalue()
 
 
 class FakeImageProvider:

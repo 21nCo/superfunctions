@@ -16,7 +16,7 @@ Custom TypeScript `ImageProvider.download` implementations remain a trusted exte
 
 Python's built-in providers all use the shared protected helper. Provider errors remain unsuccessful `DownloadResult`s; browser download errors raise as before. New Python options accept both camelCase and snake_case and reject invalid size/redirect limits.
 
-Image transformation and provider-size selection promises in SPEC.md remain separate readiness gaps: TypeScript rejects transforms, Python rejects most transforms, and neither built-in downloader implements image resizing/quality conversion or provider size resolution. This change does not establish that those advertised features are complete. Live third-party image-service credentials and public HTTPS integration were not exercised; local HTTP acceptance verifies the transport and file policy. TLS verification remains enabled in both SDKs.
+The subsequent image-transformation checkpoint implements resizing, cropping, quality/format conversion, text/image watermarks, and provider size selection; see image-transformations.md for the exact contract and decoded-image evidence. Live third-party image-service credentials and public HTTPS integration were not exercised; local HTTP acceptance verifies transport and file policy. TLS verification remains enabled in both SDKs.
 
 ## Evidence
 

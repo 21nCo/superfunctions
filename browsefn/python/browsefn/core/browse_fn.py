@@ -17,6 +17,7 @@ from browsefn.core.types import (
     GeoSearchOptions,
     GetPageOptions,
     ImageDownloadOptions,
+    ImageResult,
     ImageSearchOptions,
     Metrics,
     MetadataOptions,
@@ -129,7 +130,7 @@ class _ImagesProxy(_ServiceProxy):
             fn=lambda: self._get_service().search(query, options_model),
         )
 
-    async def download(self, url: str, options: Optional[Any] = None) -> Any:
+    async def download(self, url: str | ImageResult, options: Optional[Any] = None) -> Any:
         options_model = _coerce_model(ImageDownloadOptions, options)
         provider = self._resolve_operation_provider(options_model.provider, "images")
         return await self._owner._execute_operation(
@@ -137,7 +138,7 @@ class _ImagesProxy(_ServiceProxy):
             provider=provider,
             cache_enabled=False,
             cache_method="GET",
-            cache_url=url,
+            cache_url=url if isinstance(url, str) else url.url,
             cache_options={"provider": provider, "filename": options_model.filename},
             fn=lambda: self._get_service().download(url, options_model),
         )

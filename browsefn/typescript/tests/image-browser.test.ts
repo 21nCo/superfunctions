@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { Buffer } from 'node:buffer';
 import { mkdtemp, readFile, rm, writeFile, readdir, symlink, link } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,16 +10,10 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { isPublicAddress } from '../src/images/download.js';
 
+import { BrowseFn } from '../src/core/browse-fn.js';
 import { ImageBrowser } from '../src/images/browser.js';
 
-const JPEG_BYTES = Uint8Array.from([
-  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46,
-  0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48,
-  0x00, 0x48, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11,
-  0x08, 0x00, 0x02, 0x00, 0x03, 0x03, 0x01, 0x11,
-  0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff,
-  0xd9,
-]);
+const JPEG_BYTES = await sharp({ create: { width: 3, height: 2, channels: 3, background: '#ff0000' } }).jpeg().toBuffer();
 
 describe('ImageBrowser', () => {
   let tempRoot: string;
@@ -68,6 +63,16 @@ describe('ImageBrowser', () => {
     for (const route of ['loop', 'scheme']) await expect(browser.download(`${base}/${route}`, options)).rejects.toMatchObject({ code: 'SECURITY_POLICY_BLOCKED' });
     await expect(browser.download(`${base}/redirect`, { ...options, maxRedirects: 0 })).rejects.toMatchObject({ code: 'SECURITY_POLICY_BLOCKED' });
   });
+  it('downloads the selected provider URL from a remembered search result', async () => {
+    const image = { id: '1', url: `${base}/missing`, thumbnail: '', width: 3, height: 2, source: { provider: 'test', url: `${base}/page` }, downloads: { small: `${base}/a.jpg` } };
+    const browser = new BrowseFn().images;
+    browser.registerProvider({ name: 'test', isAvailable: async () => true, search: async () => ({ query: '', total: 1, page: 1, perPage: 1, provider: 'test', results: [image] }) });
+    await browser.search('test');
+    const result = await browser.download(image.source.url, { ...options, size: 'small', destination: tempRoot });
+    expect(result.success).toBe(true);
+    expect(result.path).toBe(join(tempRoot, 'a.jpg'));
+    expect(hits).toBe(1);
+  });
   it('bounds declared and chunked bodies before writing', async () => {
     for (const route of ['large', 'declared']) await expect(new ImageBrowser().download(`${base}/${route}`, { ...options, maxPayloadBytes: 50, destination: tempRoot })).rejects.toMatchObject({ code: 'DOWNLOAD_TOO_LARGE' });
     expect(await readdir(tempRoot)).toEqual([]);
@@ -82,9 +87,9 @@ describe('ImageBrowser', () => {
     for (const host of ['0.0.0.0', '100.64.0.1', '169.254.169.254', '192.168.1.1', '224.0.0.1', 'fc00::1', '2001:db8::1', '2002:7f00:1::']) expect(isPublicAddress(host)).toBe(false);
     for (const host of ['8.8.8.8', '2606:4700:4700::1111']) expect(isPublicAddress(host)).toBe(true);
   });
-  it('rejects traversal and transforms', async () => {
+  it('rejects traversal and out-of-bounds crops', async () => {
     await expect(new ImageBrowser().download(`${base}/a.jpg`, { ...options, destination: tempRoot, filename: '../escape' })).rejects.toMatchObject({ code: 'SECURITY_POLICY_BLOCKED' });
-    await expect(new ImageBrowser().download(`${base}/a.jpg`, { ...options, maxWidth: 100 })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    await expect(new ImageBrowser().download(`${base}/a.jpg`, { ...options, crop: { x: 0, y: 0, width: 100, height: 100 } })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
   });
   it('atomically enforces overwrite=false for concurrent downloads', async () => {
     const results = await Promise.allSettled([1, 2].map(() => new ImageBrowser().download(`${base}/a.jpg`, { ...options, destination: tempRoot, overwrite: false })));
