@@ -3,8 +3,9 @@
  */
 
 import { Buffer } from 'node:buffer';
-import { basename, extname, isAbsolute, resolve, sep } from 'node:path';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { basename, extname, resolve, sep } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { fetchImageBytes, writeImage } from './download.js';
 
 import { BrowseFnError } from '../core/errors.js';
 import type {
@@ -29,8 +30,6 @@ interface ServiceHooks {
   onProviderFallback?: (input: { from: string; to: string; error: Error }) => void;
 }
 
-const DEFAULT_MAX_REDIRECTS = 5;
-const DEFAULT_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
 
 export class ImageBrowser {
   private providerManager: ProviderManager<ImageProvider>;
@@ -203,9 +202,6 @@ export class ImageBrowser {
     destinationPath?: string
   ): Promise<DownloadResult> {
     const startTime = Date.now();
-    const bytes = await this.fetchImageBytes(url, options);
-    const metadata = this.extractMetadata(bytes, options.format ?? this.detectFormat(url, bytes));
-
     const hasTransformOptions =
       options.format !== undefined ||
       options.quality !== undefined ||
@@ -220,6 +216,9 @@ export class ImageBrowser {
       });
     }
 
+    const bytes = await fetchImageBytes(url, options);
+    const metadata = this.extractMetadata(bytes, options.format ?? this.detectFormat(url, bytes));
+
     const result: DownloadResult = {
       success: true,
       size: bytes.length,
@@ -231,99 +230,11 @@ export class ImageBrowser {
     };
 
     if (options.destination && destinationPath) {
-      await mkdir(resolve(options.destination), { recursive: true });
-      await writeFile(destinationPath, bytes);
+      await writeImage(destinationPath, bytes, options.overwrite);
       result.path = destinationPath;
     }
 
     return result;
-  }
-
-  private async fetchImageBytes(
-    inputUrl: string,
-    options: ImageDownloadOptions
-  ): Promise<Uint8Array> {
-    let currentUrl = inputUrl;
-    let redirectsRemaining = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-    const maxPayloadBytes = options.maxPayloadBytes ?? DEFAULT_MAX_PAYLOAD_BYTES;
-
-    for (;;) {
-      this.ensureAllowedTarget(currentUrl, options);
-      const response = await fetch(currentUrl, { redirect: 'manual' });
-
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        if (redirectsRemaining <= 0) {
-          throw new BrowseFnError({
-            code: 'SECURITY_POLICY_BLOCKED',
-            message: 'Redirect limit exceeded for image download.',
-          });
-        }
-
-        const location = response.headers.get('location');
-        if (!location) {
-          throw new BrowseFnError({
-            code: 'PROVIDER_ERROR',
-            message: 'Redirect response did not include a location header.',
-          });
-        }
-
-        currentUrl = new URL(location, currentUrl).toString();
-        redirectsRemaining -= 1;
-        continue;
-      }
-
-      if (!response.ok) {
-        throw new BrowseFnError({
-          code: response.status === 404 ? 'UPSTREAM_NOT_FOUND' : 'PROVIDER_ERROR',
-          message: `HTTP ${response.status}: ${response.statusText}`,
-        });
-      }
-
-      const contentLength = response.headers.get('content-length');
-      if (contentLength && Number(contentLength) > maxPayloadBytes) {
-        throw new BrowseFnError({
-          code: 'DOWNLOAD_TOO_LARGE',
-          message: 'Image payload exceeds the configured maximum size.',
-        });
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      if (bytes.length > maxPayloadBytes) {
-        throw new BrowseFnError({
-          code: 'DOWNLOAD_TOO_LARGE',
-          message: 'Image payload exceeds the configured maximum size.',
-        });
-      }
-
-      options.onProgress?.(bytes.length, bytes.length);
-      return bytes;
-    }
-  }
-
-  private ensureAllowedTarget(url: string, options: ImageDownloadOptions): void {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    if (options.allowPrivateHosts) {
-      return;
-    }
-
-    const isLoopback =
-      host === 'localhost' ||
-      host === '::1' ||
-      host === '[::1]' ||
-      host.startsWith('127.');
-    const isPrivateIpv4 =
-      host.startsWith('10.') ||
-      host.startsWith('192.168.') ||
-      /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
-
-    if (isLoopback || isPrivateIpv4) {
-      throw new BrowseFnError({
-        code: 'SECURITY_POLICY_BLOCKED',
-        message: 'Target host is not allowed by the active security policy.',
-      });
-    }
   }
 
   private async resolveDestinationPath(

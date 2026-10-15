@@ -6,14 +6,13 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
-import httpx
 
 from browsefn.core.errors import BrowseFnError
 from browsefn.core.provider_manager import ProviderManager
 from browsefn.core.provider_registry import normalize_image_provider_id, sort_provider_ids
 from browsefn.core.types import ImageConfig, ImageDownloadOptions, ImageMetadata, ImageProvider, ImageSearchOptions, ImageSearchResult
 from browsefn.core.types import DownloadResult
-from browsefn.images._download_utils import resolve_download_path
+from browsefn.images._download_utils import resolve_download_path, fetch_image_bytes, write_image
 from browsefn.utils.validation import validate_download_options, validate_image_search_options, validate_url
 
 
@@ -96,12 +95,8 @@ class ImageBrowser:
             )
 
         start = datetime.now()
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            content = response.content
-
-        path.write_bytes(content)
+        content = await fetch_image_bytes(url, options)
+        write_image(path, content, options.overwrite)
         metadata = _detect_image_metadata(content) if options.metadata else None
         duration = (datetime.now() - start).total_seconds() * 1000
         return DownloadResult(
