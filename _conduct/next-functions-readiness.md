@@ -47,7 +47,7 @@ Ported source into an isolated worktree based on origin/dev. No differences betw
 - TS/Python memoization now handles TTL/LRU, undefined/None values, statistics, shared pending computations and stale-fill prevention. Async TS return types have compiler-checked consumer fixtures.
 - Typed default memoization keys avoid JSON aliases and short-hash collisions. Serialization and event delivery corrected with dedicated tests.
 - HTTP middleware preserves status/headers/body and respects Vary, authentication/private-response bypass and errors. Actual Express 4.21.2, Hono 4.11.9 and Fastify 5.6.1 tests pass.
-- Latest integrated validation: 140 TS core tests, 5 admin tests, 55 Python 3.12 tests (52 pass/3 eager-factory skips on Python 3.10); TypeScript source/type-consumer checks and both core/admin builds pass; Python mypy (16 source files) and Ruff pass.
+- Latest integrated validation: 140 TS core tests, 8 admin tests, 55 Python 3.12 tests (52 pass/3 eager-factory skips on Python 3.10); TypeScript source/type-consumer checks and both core/admin builds pass; Python mypy (16 source files) and Ruff pass.
 - Chrome 154 acceptance: 13 assertions pass. Reproducible script: `cachefn/typescript/scripts/browser-acceptance.mjs`; supports PLAYWRIGHT_MODULE_PATH and BROWSER_EXECUTABLE_PATH overrides.
 - Python wheel/sdist rebuilt with py.typed and consistent 0.0.1 metadata; installed-wheel consumers pass on Python 3.10/3.12 and strict mypy consumes the package types. Final TS ESM/CJS tarball consumers pass on Node 20.20.0 and 22.22.1.
 - Root workspace and lockfile integrated; scoped npm install passed. Admin targets current dev @superfunctions/admin 0.1.4, tests and build pass. CI discovery includes both TS packages and Python.
@@ -73,3 +73,23 @@ The full goal remains active. Nothing has been published, deployed, or declared 
 - BrowseFn port checkpoint: accb1d6aaa2afadba062364d19f7ac41b8cf15f3 in /Volumes/Dev/n/worktrees/superfunctions/browsefn-readiness. 55 TS, 49 Python and 7 admin tests pass. Full gate fails duplication 5.427% versus 5%; cache storage options and other runtime gaps remain documented in that worktree's _conduct/browsefn-readiness.md.
 
 - Exact regenerated lock verified with real scoped `npm ci --ignore-scripts` (469 packages), then 140 core tests, 5 admin tests and core source/type-fixture checking passed.
+
+### Schema contracts and shared runtime dependencies
+
+- Schema-aware factory now preserves key/value correlation in single writes,
+  fetchers and batch operations; compiler fixtures reject unknown keys and
+  mismatched values. Direct generic CacheFn and untyped factory remain supported.
+- CacheFn admin tests now exercise the real shared dispatcher authorization,
+  input validation, confirmation, required audit and redaction boundaries.
+  Current checks: 140 core, 8 CacheFn admin, 109 shared admin tests; source and
+  consumer fixture typechecks and builds pass.
+- Shared MCP SDK updated to 1.32.1 and fast-uri to 3.1.8, with Ajv minimum 8.18.
+  Patched URI parsing required a JSON Pointer fragment adapter for encoded slash
+  references. Authority parsing stays with fast-uri; 259 MCP tests pass,
+  including encoded separator, literal percent, Unicode and authority cases.
+- A clean scoped npm ci installed 496 packages from the regenerated npm 10
+  lockfile. Existing lock changes are limited to MCP SDK and fast-uri versions
+  plus MCP's Ajv minimum. Packed runtime graph audit is still pending.
+- Public examples and runtime/version statements corrected; original V0 automatic
+  fallback and adaptive memory remain explicitly unimplemented design items.
+  See cachefn-contract-audit.md for current package behavior and limitations.

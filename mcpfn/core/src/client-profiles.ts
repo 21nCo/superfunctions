@@ -1,3 +1,4 @@
+import { schemaUriResolver } from "./schema-uri.js";
 import Ajv from "ajv";
 import Ajv2019 from "ajv/dist/2019.js";
 import Ajv2020 from "ajv/dist/2020.js";
@@ -414,7 +415,7 @@ function assertValidProfileSchema(schema: Record<string, unknown>): void {
       return;
     }
     const Validator = dialect.includes("draft-07") ? Ajv : dialect.includes("2019-09") ? Ajv2019 : Ajv2020;
-    const ajv = new Validator({ strict: false, allowUnionTypes: true, validateFormats: false, logger: false,
+    const ajv = new Validator({ uriResolver: schemaUriResolver, strict: false, allowUnionTypes: true, validateFormats: false, logger: false,
       ...(dialect.includes("draft-07") ? { ignoreKeywordsWithRef: true } : {}),
     });
     validateDefinitionContainers(schema, ajv);
