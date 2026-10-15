@@ -1,0 +1,69 @@
+{
+  "name": "@chartfn/svelte",
+  "version": "0.0.3",
+  "description": "Svelte bindings for chartfn",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "dist/index.d.ts",
+  "svelte": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "browser": "./dist/index.js",
+      "node": "./dist/index.node.js",
+      "svelte": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "svelte-package -i src -o dist --tsconfig ./tsconfig.json && vite build --config vite.ssr.config.ts && node scripts/fix-declarations.mjs",
+    "dev": "svelte-package -i src -o dist --tsconfig ./tsconfig.json --watch",
+    "test": "vitest run --config vitest.config.mts",
+    "lint": "npm run typecheck",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "chartfn": "0.0.3"
+  },
+  "peerDependencies": {
+    "svelte": ">=5.0.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "@testing-library/svelte": "^5.3.1",
+    "jsdom": "^27.0.1",
+    "svelte": "^5.46.1",
+    "vite": "^6.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "4.1.11",
+    "@sveltejs/package": "^2.5.8",
+    "svelte-check": "^4.7.3"
+  },
+  "keywords": [
+    "svelte",
+    "chart",
+    "chartfn"
+  ],
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "chartfn/svelte"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "sideEffects": [
+    "**/*.svelte"
+  ]
+}

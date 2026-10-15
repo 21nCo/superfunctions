@@ -5,6 +5,9 @@
   "description": "Building blocks for software development",
   "workspaces": [
     "searchfn/*",
+    "chartfn",
+    "chartfn/react",
+    "chartfn/svelte",
     "*fn/admin",
     "botfn/*",
     "hostfn/*",
