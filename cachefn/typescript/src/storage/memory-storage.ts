@@ -75,6 +75,7 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
     const entry: CacheEntry<T> = {
       key,
       value,
+      priority: metadata.priority,
       createdAt: metadata.createdAt,
       expiresAt: metadata.expiresAt,
       tags: metadata.tags ? [...metadata.tags] : undefined,
@@ -234,12 +235,24 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
     }
 
     return {
+      priority: entry.priority,
       createdAt: entry.createdAt,
       expiresAt: entry.expiresAt,
       tags: entry.tags ? [...entry.tags] : undefined,
       hits: entry.hits,
       lastAccess: entry.lastAccess,
     };
+  }
+
+  /** Remove one priority group atomically before notifying reentrant observers. */
+  evictUnderPressure(owns: (key: string) => boolean): void {
+    const candidates = [...this.cache.values()].filter(entry => owns(entry.key));
+    for (const entry of candidates) if (isExpired(entry)) void this.delete(entry.key);
+    const live = candidates.filter(entry => !isExpired(entry));
+    const priority = (['low', 'normal', 'high'] as const).find(level => live.some(entry => (entry.priority ?? 'normal') === level));
+    const removed = live.filter(entry => (entry.priority ?? 'normal') === priority);
+    for (const entry of removed) void this.delete(entry.key);
+    for (const entry of removed) this.onEviction?.(entry.key, 'memory-pressure');
   }
 
   /**

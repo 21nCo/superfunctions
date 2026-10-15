@@ -8,6 +8,9 @@ export { CacheFn } from "./core/cache.js";
 export { EventEmitter } from "./core/events.js";
 export type {
   CacheFnConfig,
+  CachePriority,
+  ClearOptions,
+  MemoryMonitoringOptions,
   SetOptions,
   CacheEntry,
   CacheStats,

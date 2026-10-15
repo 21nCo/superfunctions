@@ -10,7 +10,19 @@ export type StorageType = "memory" | "indexeddb" | "localstorage" | "auto";
 /**
  * Configuration options for CacheFn instance
  */
+export type CachePriority = 'low' | 'normal' | 'high';
+export interface MemoryMonitoringOptions {
+  enabled?: boolean;
+  /** Heap usage ratio, strictly greater than zero and at most one. Default 0.8. */
+  threshold?: number;
+  /** Sampling interval in milliseconds. Default 10000. */
+  checkInterval?: number;
+}
+export interface ClearOptions { priority?: CachePriority }
+
 export interface CacheFnConfig {
+  eviction?: 'lru' | 'adaptive';
+  memoryMonitoring?: MemoryMonitoringOptions;
   /** Unique name for the cache instance */
   name: string;
   /** Storage backend to use */
@@ -33,6 +45,7 @@ export interface CacheFnConfig {
  * Options for setting cache entries
  */
 export interface SetOptions {
+  priority?: CachePriority;
   /** Time-to-live in milliseconds */
   ttl?: number;
   /** Tags for invalidation */
@@ -43,6 +56,7 @@ export interface SetOptions {
  * Internal cache entry structure
  */
 export interface CacheEntry<T> {
+  priority?: CachePriority;
   /** Cache key */
   key: string;
   /** Cached value */

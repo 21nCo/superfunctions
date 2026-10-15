@@ -96,6 +96,14 @@ export class AutoStorage<T = any> implements StorageBackend<T> {
     this.tail = task.catch(() => {});
     return task;
   }
+  /** Never initializes a persistent tier merely to sample heap pressure. */
+  async evictUnderPressure(owns: (key: string) => boolean): Promise<void> {
+    const task = this.tail.then(() => {
+      if (this.backend instanceof MemoryStorage) this.backend.evictUnderPressure(owns);
+    });
+    this.tail = task.catch(() => {});
+    return task;
+  }
   get(key: string): Promise<T | undefined> { return this.run(storage => storage.get(key)); }
   set(key: string, value: T, metadata: EntryMetadata): Promise<void> { return this.run(storage => storage.set(key, value, metadata)); }
   has(key: string): Promise<boolean> { return this.run(storage => storage.has(key)); }

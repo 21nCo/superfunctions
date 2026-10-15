@@ -4,6 +4,7 @@
 
 import type {
   CacheFnConfig,
+  ClearOptions,
   SetOptions,
   CacheStats,
   StorageType,
@@ -28,6 +29,9 @@ export class CacheFn<T = any> {
   private stats: StatsTracker;
   private defaultTTL?: number;
   private namespace?: string;
+  private memoryTimer?: ReturnType<typeof setInterval>;
+  private monitoring = false;
+  private disposed = false;
   private pending = new Map<string, Promise<T>>();
 
   constructor(config: CacheFnConfig) {
@@ -39,6 +43,39 @@ export class CacheFn<T = any> {
     // Initialize storage backend
     const storageType = config.storage ?? "memory";
     this.storage = this.createStorage(storageType, config);
+    this.startMemoryMonitoring(config);
+  }
+
+  /** Stop adaptive monitoring. Cached data remains available; safe to call repeatedly. */
+  dispose(): void {
+    this.disposed = true;
+    clearInterval(this.memoryTimer);
+    this.memoryTimer = undefined;
+  }
+
+  private heapUsage(): number | undefined {
+    try {
+      const memory = (globalThis.performance as Performance & { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } })?.memory;
+      if (!memory || !Number.isFinite(memory.usedJSHeapSize) || !Number.isFinite(memory.jsHeapSizeLimit) || memory.usedJSHeapSize < 0 || memory.jsHeapSizeLimit <= 0) return;
+      return memory.usedJSHeapSize / memory.jsHeapSizeLimit;
+    } catch { return; }
+  }
+
+  private startMemoryMonitoring(config: CacheFnConfig): void {
+    if (config.eviction !== undefined && !['lru', 'adaptive'].includes(config.eviction)) throw new TypeError('Unknown eviction strategy');
+    const { enabled = true, threshold = 0.8, checkInterval = 10000 } = config.memoryMonitoring ?? {};
+    if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1) throw new RangeError('memoryMonitoring.threshold must be in (0, 1]');
+    if (!Number.isSafeInteger(checkInterval) || checkInterval <= 0 || checkInterval > 2147483647) throw new RangeError('memoryMonitoring.checkInterval must be a positive timer interval');
+    if (config.eviction !== 'adaptive' || !enabled || this.heapUsage() === undefined || !(this.storage instanceof MemoryStorage || this.storage instanceof AutoStorage)) return;
+    this.memoryTimer = setInterval(() => {
+      if (this.disposed || this.monitoring || (this.heapUsage() ?? 0) <= threshold) return;
+      this.monitoring = true;
+      const owns = (key: string) => !this.disposed && this.ownsKey(key);
+      const storage = this.storage as MemoryStorage<T> | AutoStorage<T>;
+      // Monitoring is best-effort and cannot turn observer errors into unhandled rejections.
+      void Promise.resolve().then(() => storage.evictUnderPressure(owns)).catch(() => {}).finally(() => { this.monitoring = false; });
+    }, checkInterval);
+    (this.memoryTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   /**
@@ -66,6 +103,7 @@ export class CacheFn<T = any> {
    * Set a value in cache
    */
   async set(key: string, value: T, options?: SetOptions): Promise<void> {
+    if (options?.priority !== undefined && !['low', 'normal', 'high'].includes(options.priority)) throw new TypeError('Unknown cache priority');
     const fullKey = this.getFullKey(key);
     this.pending.delete(fullKey);
     const ttl = options?.ttl ?? this.defaultTTL;
@@ -74,6 +112,7 @@ export class CacheFn<T = any> {
       createdAt: Date.now(),
       expiresAt: calculateExpiration(ttl),
       tags: options?.tags,
+      priority: options?.priority,
       hits: 0,
       lastAccess: Date.now(),
     };
@@ -111,7 +150,18 @@ export class CacheFn<T = any> {
   /**
    * Clear all values from cache
    */
-  async clear(): Promise<void> {
+  async clear(options?: ClearOptions): Promise<void> {
+    if (options?.priority !== undefined) {
+      if (!['low', 'normal', 'high'].includes(options.priority)) throw new TypeError('Unknown cache priority');
+      for (const key of (await this.storage.keys()).filter(key => this.ownsKey(key))) {
+        const metadata = await this.storage.getMetadata(key);
+        if (metadata && (metadata.priority ?? 'normal') === options.priority) {
+          this.pending.delete(key);
+          if (await this.storage.delete(key)) this.stats.recordDelete();
+        }
+      }
+      return;
+    }
     this.pending.clear();
     const keys = (await this.storage.keys()).filter((key) => this.ownsKey(key));
     await Promise.all(keys.map((key) => this.storage.delete(key)));

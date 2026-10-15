@@ -141,6 +141,23 @@ try {
           await autoIdb.set('key', 5);
           assert(await autoIdb.get('key') === 5, 'automatic IndexedDB works');
           assert(!(await indexedDB.databases()).some(db => db.name?.includes(':probe:')), 'IndexedDB probe databases removed');
+          const heapDescriptor = Object.getOwnPropertyDescriptor(performance, 'memory');
+          const heap = { usedJSHeapSize: 90, jsHeapSizeLimit: 100 };
+          Object.defineProperty(performance, 'memory', { configurable: true, value: heap });
+          const adaptive = new CacheFn({ name: crypto.randomUUID(), storage: 'memory', eviction: 'adaptive', memoryMonitoring: { checkInterval: 10 } });
+          try {
+            await adaptive.set('low', 1, { priority: 'low' });
+            await adaptive.set('high', 2, { priority: 'high' });
+            await new Promise(resolve => adaptive.on('eviction', () => { heap.usedJSHeapSize = 10; resolve(); }));
+            assert(!await adaptive.has('low') && await adaptive.has('high'), 'adaptive browser timer evicts low priority first');
+            adaptive.dispose(); heap.usedJSHeapSize = 99;
+            await new Promise(resolve => setTimeout(resolve, 30));
+            assert(await adaptive.has('high'), 'disposed adaptive monitor preserves entries under pressure');
+          } finally {
+            adaptive.dispose();
+            if (heapDescriptor) Object.defineProperty(performance, 'memory', heapDescriptor);
+            else delete performance.memory;
+          }
           return { assertions, userAgent: navigator.userAgent };
         })(),
       ]);

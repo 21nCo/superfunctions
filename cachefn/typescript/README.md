@@ -347,6 +347,45 @@ separate names for independent quotas. Cross-tab updates use last-write-wins
 snapshots rather than cross-tab transactions. localStorage is synchronous and
 whole-snapshot work is proportional to cache size.
 
+## Adaptive browser memory eviction
+
+```typescript
+const cache = cacheFn({
+  name: 'adaptive-cache',
+  storage: 'memory',
+  eviction: 'adaptive',
+  memoryMonitoring: { enabled: true, threshold: 0.8, checkInterval: 10000 },
+});
+await cache.set('prefetch', data, { priority: 'low' });
+await cache.set('important', importantData, { priority: 'high' });
+await cache.clear({ priority: 'low' }); // optional manual priority clearing
+cache.dispose(); // stop monitoring when its owning component/service is released
+```
+
+When the browser exposes valid `performance.memory` data at construction, adaptive
+mode samples `usedJSHeapSize / jsHeapSizeLimit` every `checkInterval` milliseconds.
+A sample strictly above `threshold` removes the lowest remaining priority group:
+`low`, then `normal` (the default for entries), then `high`. Each interval removes
+at most one group; sustained pressure can eventually remove all groups. Removing
+references permits collection but cannot force garbage collection or guarantee
+that total browser heap usage falls. Evictions emit `reason: 'memory-pressure'`
+and maintain tag indexes and eviction statistics.
+
+Monitoring defaults to enabled with threshold 0.8 and interval 10000 ms when
+`eviction: 'adaptive'` is selected. Default `lru` mode retains existing capacity
+behavior. Both modes retain LRU eviction at `maxSize`; priorities apply to memory
+pressure and explicit filtered clearing. Unsupported browsers, disabled monitors,
+and explicit persistent backends allocate no monitoring timer. Automatic storage
+monitors only its selected memory tier, never clearing persistent data to address
+heap pressure. The heap API is browser-specific and may be unavailable or coarse.
+
+`clear({ priority })` removes only matching entries in the current namespace and
+backend, preserving other entries and accumulated statistics. An unfiltered
+`clear()` retains its original behavior. `dispose()` is idempotent, stops future
+samples, and preserves cached data; call it to release the monitoring timer.
+Timers do not keep Node.js processes alive. Monitoring does not implement the
+separate offline queue or synchronization requirements.
+
 ## Runtime and performance requirements
 
 The build targets ES2021. Use a modern browser with native IndexedDB (for that
@@ -359,7 +398,7 @@ Memory lookups and LRU bookkeeping use maps and a linked list. Expiration cleanu
 key enumeration, patterns and tag scans may traverse entries. Latency depends on
 cache size, values, browser storage and runtime; original sub-millisecond targets
 are design goals, not measured guarantees. `memoryUsage` is an estimate, not a
-memory quota or adaptive eviction mechanism.
+memory quota. Adaptive eviction uses the browser heap sample described above.
 
 ## License
 
