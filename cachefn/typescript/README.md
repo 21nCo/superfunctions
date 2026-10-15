@@ -21,6 +21,11 @@ CacheFn is a developer-first caching library that provides memory and IndexedDB 
 npm install @cachefn/core
 ```
 
+The existing published package remains `@cachefn/core` as a compatibility exception
+to the repository's plain-name convention. The npm name `cachefn` belongs to the
+unrelated Darkhogg/node-cachefn project; renaming would select a different library
+and break existing consumers.
+
 ## Quick Start
 
 ### Basic Usage
@@ -566,3 +571,28 @@ application. Historical `tags` object stores from older versions are ignored.
 Default memoization keys distinguish primitive types, dates, arrays and plain objects. Cyclic values, functions, symbols and custom objects require a `keyGenerator`. Canonical keys replace short hashes to avoid returning another argument set's result after a hash collision.
 
 `undefined` is a supported cached value. Since `get` also returns it for a miss, use `has` to distinguish presence. Statistics, `entries`, and `getOrFetch` perform that check internally; separate reads are not atomic against concurrent mutation.
+
+## Ecosystem integration examples
+
+[examples/ecosystem.ts](examples/ecosystem.ts) demonstrates current package APIs:
+
+- SearchFn's `@searchfn/adapter-memory` with option-aware cached queries and
+  resource-tag invalidation after indexing/removal. Requests with caller-owned
+  abort signals bypass shared fills to preserve cancellation ownership.
+- AuthFn's `AuthFnServer.provider.authenticate` on every request, caching only
+  non-authoritative per-user profile data. Revoking a session still rejects the
+  next request even while profile data remains cached.
+- BotFn's `@superfunctions/botfn-slack-core` signature verification before
+  concurrent event deduplication. This is process-local retry protection, not
+  distributed exactly-once delivery. Failed processing is not cached.
+
+From this monorepo, run `npm --prefix cachefn/typescript run test:ecosystem`.
+The script typechecks and bundles the current workspace source packages, then runs
+actual indexing, issued/revoked AuthFn sessions, and signed Slack requests without
+external services. It tests source integration, not registry publication or live
+provider delivery. No runtime dependencies are added to CacheFn itself. TestFn's
+integration remains pending its package being present on this development branch.
+
+Run `npm --prefix cachefn/typescript run test:coverage` for the four V8 coverage
+metrics; the V0 specification's general 95% claim does not identify a metric.
+See the current evidence in `cachefn/.conduct/coverage-integration-acceptance.md`.

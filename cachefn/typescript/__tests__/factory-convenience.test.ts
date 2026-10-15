@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it, vi } from 'vitest';
-import { CacheFn, cacheFn, expressMiddleware, honoMiddleware, fastifyPlugin } from '../src/index.js';
+import { CacheFn, cacheFn, memoize, expressMiddleware, honoMiddleware, fastifyPlugin } from '../src/index.js';
 describe('V0 factory convenience', () => {
   it('preserves recursive sync return types and exposes attached clearing', async () => {
     const fibonacci: ((n: number) => number) = cacheFn.memoize((n: number): number => n < 2 ? n : fibonacci(n - 1) + fibonacci(n - 2));
@@ -51,6 +51,21 @@ describe('V0 factory convenience', () => {
     await cached.cache.set('key', 7); resolve(1);
     expect(await pending).toBe(1); expect(await cached()).toBe(7);
     await cached.cache.clear(); expect((await cached.stats()).size).toBe(0);
+  });
+  it.each(['factory', 'standalone'] as const)('invalidates %s cache-view tags/patterns without retaining stale results', async mode => {
+    const source = vi.fn((n: number) => n + 1);
+    const options = { keyGenerator: (n: number) => `key:${n}`, tags: ['group'] };
+    const cached = mode === 'factory' ? cacheFn.memoize(source, options) : memoize(source, options);
+    expect(await cached(1)).toBe(2);
+    await cached.cache.invalidateByTag('group'); expect(await cached(1)).toBe(2);
+    await cached.cache.invalidateByPattern('key:*'); expect(await cached(1)).toBe(2);
+    expect(source).toHaveBeenCalledTimes(3);
+    await cached.delete(1); expect((await cached.stats()).size).toBe(0);
+  });
+  it('propagates synchronous failures and retries subsequent calls', () => {
+    let fail = true;
+    const cached = cacheFn.memoize(() => { if (fail) throw new Error('retry'); return 1; });
+    expect(() => cached()).toThrow('retry'); fail = false; expect(cached()).toBe(1);
   });
   it('keeps middleware factories identical to standalone exports', () => {
     expect(cacheFn.middleware).toBe(expressMiddleware);

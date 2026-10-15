@@ -29,7 +29,9 @@
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.type-tests.json",
-    "test:package": "npm run build && node scripts/packed-consumer.mjs"
+    "test:package": "npm run build && node scripts/packed-consumer.mjs",
+    "test:coverage": "vitest run --coverage",
+    "test:ecosystem": "node scripts/ecosystem-acceptance.mjs --typecheck"
   },
   "keywords": [
     "cache",
@@ -59,6 +61,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "4.1.11",
     "@vitest/ui": "4.1.11",
     "compression": "1.8.2",
     "express": "4.22.3",

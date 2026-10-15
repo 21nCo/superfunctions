@@ -92,6 +92,25 @@ describe('offline update delivery', () => {
     expect((await restored.queuedUpdates())[0]).toMatchObject({ id, status: 'pending', attempts: 1 });
     gate.resolve(); await active;
   });
+  it('preserves durable jobs when persistence or cancellation is denied by the browser', async () => {
+    const values = new Map<string, string>(); let denied = false;
+    const check = () => { if (denied) throw new DOMException('Storage unavailable', 'SecurityError'); };
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { check(); values.set(key, value); },
+      removeItem: (key: string) => { check(); values.delete(key); },
+    });
+    const name = `denied-${++seq}`; const config = { name, offlineQueue: { storage: 'localstorage', sync: async () => {} } };
+    const cache = create(config); const id = await cache.queueUpdate('saved', 1);
+    denied = true;
+    await expect(cache.queueUpdate('rejected', 2)).rejects.toMatchObject({ name: 'SecurityError' });
+    expect(await cache.has('rejected')).toBe(false);
+    await expect(cache.cancelQueuedUpdate(id)).rejects.toMatchObject({ name: 'SecurityError' });
+    expect((await cache.queuedUpdates())[0]).toMatchObject({ id, status: 'failed' });
+    denied = false;
+    expect((await create(config).queuedUpdates()).map(job => job.id)).toEqual([id]);
+    expect(await cache.cancelQueuedUpdate(id)).toBe(true);
+  });
   it('bounds durable queues without evicting jobs and cancellation persists', async () => {
     const name = `bounded-${++seq}`; const config = { name, storage: 'indexeddb', offlineQueue: { sync: async () => {}, maxSize: 1 } };
     const cache = create(config); const id = await cache.queueUpdate('first', 1);

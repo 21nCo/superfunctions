@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-15",
+  "provider": "@vitest/coverage-v8@4.1.11",
+  "tests": 217,
+  "files": 17,
+  "summary": {
+    "lines": {
+      "total": 1059,
+      "covered": 1048,
+      "skipped": 0,
+      "pct": 98.96
+    },
+    "statements": {
+      "total": 1402,
+      "covered": 1343,
+      "skipped": 0,
+      "pct": 95.79
+    },
+    "functions": {
+      "total": 352,
+      "covered": 335,
+      "skipped": 0,
+      "pct": 95.17
+    },
+    "branches": {
+      "total": 900,
+      "covered": 814,
+      "skipped": 0,
+      "pct": 90.44
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": "Unknown"
+    }
+  }
+}
