@@ -288,6 +288,10 @@ class CacheFn:
         if task is None:
 
             async def compute() -> Any:
+                # An eager task factory may run this coroutine inside create_task.
+                # Suspend until the caller registers its task and tags so fills,
+                # failures and invalidation all observe the same pending owner.
+                await asyncio.sleep(0)
                 try:
                     value = fetcher() if callable(fetcher) else fetcher
                     if inspect.isawaitable(value):

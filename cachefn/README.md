@@ -6,13 +6,13 @@ CacheFn is a developer-first caching solution that combines multi-tier caching, 
 
 ## Status
 
-- **Version**: 0.1.0 (V0)
-- **TypeScript SDK**: ✅ Complete
-- **Python SDK**: ✅ Complete
+- TypeScript: `@cachefn/core` 0.0.2 (memory and IndexedDB), `@cachefn/admin` 0.1.0.
+- Python: `cachefn` 0.0.1 (memory storage).
+- Production-readiness validation is in progress. `SPEC.md` describes the broader roadmap; `V0_SPEC.md` is the original design, and the SDK READMEs describe the implemented APIs.
 
 ## Features
 
-✅ **Zero Dependencies** - No Redis, Memcached, or external services required\
+✅ **No external cache service** - No Redis, Memcached, or external services required\
 ✅ **Multi-tier Storage** - Memory and IndexedDB backends\
 ✅ **Type-Safe** - Full TypeScript support with type inference\
 ✅ **Function Memoization** - Cache expensive function results\
@@ -26,14 +26,14 @@ CacheFn is a developer-first caching solution that combines multi-tier caching, 
 ### Installation
 
 ```bash
-cd cachefn/ts-sdk
+cd cachefn/typescript
 npm install
 ```
 
 ### Basic Usage
 
 ```typescript
-import { cacheFn } from "cachefn";
+import { cacheFn } from "@cachefn/core";
 
 // Create a cache instance
 const cache = cacheFn({
@@ -50,7 +50,7 @@ await cache.set("user:123", { name: "Alice", age: 30 });
 const user = await cache.get("user:123");
 
 // Invalidate by tag
-await cache.set("session:abc", sessionData, {
+await cache.set("session:abc", { userId: "123" }, {
   ttl: 3600000,
   tags: ["sessions", "user:123"],
 });
@@ -60,9 +60,9 @@ await cache.invalidateByTag("sessions");
 ### Function Memoization
 
 ```typescript
-import { memoize } from "cachefn";
+import { memoizeSync } from "@cachefn/core";
 
-const fibonacci = memoize(
+const fibonacci = memoizeSync(
   (n: number): number => {
     if (n <= 1) return n;
     return fibonacci(n - 1) + fibonacci(n - 2);
@@ -76,13 +76,13 @@ console.log(fibonacci(40)); // Cached!
 
 ## Documentation
 
-- **TypeScript SDK**: See [ts-sdk/README.md](ts-sdk/README.md) for complete API documentation
+- **TypeScript SDK**: See [typescript/README.md](typescript/README.md) for complete API documentation
 - **Full Specification**: See [SPEC.md](SPEC.md) for the complete feature roadmap
-- **V0 Specification**: See [V0_SPEC.md](V0_SPEC.md) for current implementation details
+- **V0 Specification**: See [V0_SPEC.md](V0_SPEC.md) for the original design
 
 ## Examples
 
-See the `ts-sdk/examples/` directory:
+See the `typescript/examples/` directory:
 
 - `basic-usage.ts` - Basic cache operations
 - `memoization.ts` - Function memoization examples
@@ -93,11 +93,11 @@ See the `ts-sdk/examples/` directory:
 
 ```
 cachefn/
-├── ts-sdk/          # TypeScript SDK (v0.1.0)
+├── typescript/          # TypeScript SDK
 │   ├── src/         # Source code
-│   ├── __tests__/   # Tests (37 passing)
+│   ├── __tests__/   # Tests
 │   └── examples/    # Usage examples
-├── python/          # Python SDK (planned)
+├── python/          # Python SDK
 ├── SPEC.md          # Full specification
 └── V0_SPEC.md       # V0 specification
 ```
@@ -107,7 +107,7 @@ cachefn/
 ### Build
 
 ```bash
-cd ts-sdk
+cd typescript
 npm run build
 ```
 
@@ -136,7 +136,7 @@ See the [V0_SPEC.md](V0_SPEC.md) for integration examples.
 
 ## License
 
-MIT
+TypeScript: MIT. Python: Apache-2.0 (see `python/LICENSE`).
 
 ## Contributing
 

@@ -14,7 +14,7 @@ export function headers(input: any): HeaderMap {
   return result;
 }
 export function eligible(method: string, h: HeaderMap): boolean {
-  return method === 'GET' && !['authorization', 'cookie', 'range', 'if-range', 'if-none-match', 'if-modified-since'].some(k => k in h)
+  return method === 'GET' && !['authorization', 'cookie', 'range', 'if-range', 'if-none-match', 'if-modified-since', 'if-match', 'if-unmodified-since'].some(k => k in h)
     && !/(?:^|,)\s*(?:no-cache|no-store|max-age\s*=\s*0)(?:\s|,|$)/i.test(h['cache-control'] ?? '') && !/no-cache/i.test(h.pragma ?? '');
 }
 export function key(base: string, h: HeaderMap, vary: string[] = []): string {

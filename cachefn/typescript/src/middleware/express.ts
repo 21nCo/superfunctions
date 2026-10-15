@@ -26,10 +26,17 @@ export function middleware(options: ExpressMiddlewareOptions = {}) {
       const send = res.send;
       let wire: unknown;
       if (typeof send === 'function') res.send = function(body: unknown) { wire = body; return send.call(this, body); };
+      const originalEncoding = headers(res.getHeaders())['content-encoding'];
       let result: any;
       try { result = originalJson(data); } finally { if (typeof send === 'function') res.send = send; }
       const body = typeof wire === 'string' ? wire : data;
-      const response = body === undefined ? undefined : snapshot(res.statusCode, res.getHeaders(), body, typeof wire === 'string' ? 'text' : 'json', options.vary);
+      // Capture is before send() transforms. Let the current response pipeline
+      // apply compression again instead of replaying its output encoding header.
+      const responseHeaders = headers(res.getHeaders());
+      const preEncoded = (originalEncoding ?? '').split(',')
+        .some(encoding => encoding.trim() && encoding.trim().toLowerCase() !== 'identity');
+      delete responseHeaders['content-encoding'];
+      const response = body === undefined || preEncoded ? undefined : snapshot(res.statusCode, responseHeaders, body, typeof wire === 'string' ? 'text' : 'json', options.vary);
       if (response) {
         try {
           const tags = typeof options.tags === 'function' ? options.tags(req) : options.tags;

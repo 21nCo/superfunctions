@@ -18,7 +18,7 @@ CacheFn is a developer-first caching library that provides memory and IndexedDB 
 ## Installation
 
 ```bash
-npm install cachefn
+npm install @cachefn/core
 ```
 
 ## Quick Start
@@ -43,7 +43,7 @@ await cache.set("user:123", { name: "Alice", age: 30 });
 const user = await cache.get("user:123");
 
 // Set with TTL and tags
-await cache.set("session:abc", sessionData, {
+await cache.set("session:abc", { userId: "123" }, {
   ttl: 3600000, // 1 hour
   tags: ["sessions", "user:123"],
 });

@@ -12,7 +12,7 @@ Local next is 124 commits behind upstream. Check upstream changes for each selec
 
 | Function | Status |
 | --- | --- |
-| browsefn | Pending readiness assessment and port |
+| browsefn | Ported in codex/browsefn-readiness-20261015; release gate and implementation gaps remain |
 | cachefn | In progress in codex/next-functions-readiness-20261015 |
 | catchfn | Pending readiness assessment and port |
 | chartfn | Pending readiness assessment and port |
@@ -47,9 +47,9 @@ Ported source into an isolated worktree based on origin/dev. No differences betw
 - TS/Python memoization now handles TTL/LRU, undefined/None values, statistics, shared pending computations and stale-fill prevention. Async TS return types have compiler-checked consumer fixtures.
 - Typed default memoization keys avoid JSON aliases and short-hash collisions. Serialization and event delivery corrected with dedicated tests.
 - HTTP middleware preserves status/headers/body and respects Vary, authentication/private-response bypass and errors. Actual Express 4.21.2, Hono 4.11.9 and Fastify 5.6.1 tests pass.
-- Latest integrated validation: 136 TS core tests, 5 admin tests, 52 Python tests; TypeScript source/type-consumer checks and both core/admin builds pass; Python mypy (16 source files) and Ruff pass.
+- Latest integrated validation: 140 TS core tests, 5 admin tests, 55 Python 3.12 tests (52 pass/3 eager-factory skips on Python 3.10); TypeScript source/type-consumer checks and both core/admin builds pass; Python mypy (16 source files) and Ruff pass.
 - Chrome 154 acceptance: 13 assertions pass. Reproducible script: `cachefn/typescript/scripts/browser-acceptance.mjs`; supports PLAYWRIGHT_MODULE_PATH and BROWSER_EXECUTABLE_PATH overrides.
-- Python wheel/sdist built and fresh-wheel consumer checked. TS ESM/CJS packaged consumers passed before the final serializer/middleware additions; rerun final tarball consumers before readiness.
+- Python wheel/sdist rebuilt with py.typed and consistent 0.0.1 metadata; installed-wheel consumers pass on Python 3.10/3.12 and strict mypy consumes the package types. Final TS ESM/CJS tarball consumers pass on Node 20.20.0 and 22.22.1.
 - Root workspace and lockfile integrated; scoped npm install passed. Admin targets current dev @superfunctions/admin 0.1.4, tests and build pass. CI discovery includes both TS packages and Python.
 
 ### Remaining CacheFn gates
@@ -61,3 +61,15 @@ Ported source into an isolated worktree based on origin/dev. No differences betw
 5. Verify CI selection/execution and prepare a scoped CacheFn PR after readiness gates pass. Continue remaining functions in `_conduct/remaining-functions-assessment.md`; newly created PRs do not exclude this goal's unfinished work.
 
 The full goal remains active. Nothing has been published, deployed, or declared production-ready.
+
+### Additional verified work
+
+- Python eager-task-factory fetch success, failure retry and invalidation fixed; guarded tests cover Python 3.12 while 3.10 skips that unavailable API.
+- Express compression caching retains plaintext internally and reapplies the pipeline on hits; actual gzip regression confirms origin executes once. Failed If-Match/If-Unmodified-Since preconditions reach origin and retain 412 responses.
+- Memoization key errors reject through the promised asynchronous API.
+- Framework dev dependencies updated to Express 4.22.3, Fastify 5.12.7, Hono 4.13.13 and compression 1.8.2. Both CacheFn packages use Vitest/UI 4.1.11. npm 10's installed-tree resolution crashed; a clean manifests-only npm 10 calculation resolved the upgrade with only five version changes, all inside CacheFn. npm 11's broad lock rewrite was discarded.
+- Baseline origin/dev full audit reports 119 advisories. Patched scoped audit still reports inherited/shared advisories, including root fast-uri 3.1.5 override and admin MCP SDK dependencies. These are unresolved dependency gates, not proven new regressions or a clean audit.
+- CI planner selects @cachefn/core, @cachefn/admin and Python cachefn; root lockfile/workspace changes select full JS CI. Hosted CI has not run.
+- BrowseFn port checkpoint: accb1d6aaa2afadba062364d19f7ac41b8cf15f3 in /Volumes/Dev/n/worktrees/superfunctions/browsefn-readiness. 55 TS, 49 Python and 7 admin tests pass. Full gate fails duplication 5.427% versus 5%; cache storage options and other runtime gaps remain documented in that worktree's _conduct/browsefn-readiness.md.
+
+- Exact regenerated lock verified with real scoped `npm ci --ignore-scripts` (469 packages), then 140 core tests, 5 admin tests and core source/type-fixture checking passed.

@@ -35,7 +35,7 @@ export function memoize<T extends (...args: any[]) => any>(
   const pending = new Map<string, object>();
   const flights = new Map<string, Promise<Awaited<ReturnType<T>>>>();
 
-  const memoized = function (this: ThisParameterType<T>, ...args: Parameters<T>) {
+  const memoized = async function (this: ThisParameterType<T>, ...args: Parameters<T>): Promise<Awaited<ReturnType<T>>> {
     const key = keyGenerator(...args);
     const existing = flights.get(key);
     if (existing) return existing;

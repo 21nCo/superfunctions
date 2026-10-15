@@ -17,7 +17,7 @@ Example usage:
     ...     return await fetch_data(id)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.0.1"
 __author__ = "SuperFunctions"
 __license__ = "Apache-2.0"
 

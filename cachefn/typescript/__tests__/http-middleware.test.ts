@@ -58,6 +58,20 @@ describe('HTTP response cache safety', () => {
     expect(await (await request('fr')).text()).toBe('fr'); expect(calls).toBe(2);
     await request('en', { authorization: 'Bearer secret' }); expect(calls).toBe(3);
   });
+  it.each(['if-match', 'if-unmodified-since'])('preserves failed %s preconditions after warming the cache', async header => {
+    const cache = store(); const app = new Hono(); let calls = 0;
+    app.use('*', hono({ cache }));
+    app.get('/conditional', c => {
+      calls++;
+      if (c.req.header(header)) return c.text('precondition failed', 412);
+      return c.text('current');
+    });
+    expect((await app.request('/conditional')).status).toBe(200);
+    const conditional = await app.request('/conditional', { headers: { [header]: header === 'if-match' ? '"stale"' : 'Wed, 01 Jan 2020 00:00:00 GMT' } });
+    expect(conditional.status).toBe(412);
+    expect(await conditional.text()).toBe('precondition failed');
+    expect(calls).toBe(2);
+  });
   it('runs through actual Express HTTP requests preserving status, serialized JSON and vary headers', async () => {
     const express = require('express'); const app = express(); const cache = store(); let calls = 0;
     app.set('json replacer', (key: string, value: unknown) => key === 'count' ? Number(value) + 1 : value);
@@ -72,6 +86,30 @@ describe('HTTP response cache safety', () => {
       await fetch(url, { headers: { 'accept-language': 'fr' } }); expect(calls).toBe(2);
       await fetch(url, { headers: { cookie: 'session=secret', 'accept-language': 'en' } }); expect(calls).toBe(3);
     } finally { await new Promise<void>((resolve, reject) => server.close((err: Error) => err ? reject(err) : resolve())); }
+  });
+  it('Express reapplies compression to cached plaintext without encoding header mismatch', async () => {
+    const express = require('express');
+    const compression = require('compression');
+    const app = express(); const cache = store(); let calls = 0;
+    app.use(compression({ threshold: 0 }));
+    app.use(middleware({ cache, vary: ['accept-encoding'] }));
+    app.get('/compressed', (_req: any, res: any) => {
+      calls++; res.json({ message: 'compress this response'.repeat(100) });
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    const url = `http://127.0.0.1:${server.address().port}/compressed`;
+    try {
+      for (let i = 0; i < 2; i++) {
+        const response = await fetch(url, { headers: { 'accept-encoding': 'gzip' } });
+        expect(response.headers.get('content-encoding')).toBe('gzip');
+        expect(await response.json()).toEqual({ message: 'compress this response'.repeat(100) });
+      }
+      expect(calls).toBe(1);
+      expect(cache.set).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err: Error) => err ? reject(err) : resolve()));
+    }
   });
   it('runs through actual Fastify injection preserving serialized bytes, status and Vary', async () => {
     const app = require('fastify')(); const cache = store(); let calls = 0;

@@ -80,3 +80,10 @@ describe("asynchronous memoization", () => {
     await first.clear(); await second.clear();
   });
 });
+
+it("reports invalid memoization arguments through Promise rejection", async () => {
+  const cached = memoize((value: unknown) => value);
+  let result: Promise<unknown> | undefined;
+  expect(() => { result = cached(Symbol("unsupported")); }).not.toThrow();
+  await expect(result).rejects.toThrow(/keyGenerator/);
+});

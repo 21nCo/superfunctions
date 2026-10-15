@@ -53,12 +53,14 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "express": "4.21.2",
+    "@vitest/ui": "4.1.11",
+    "compression": "1.8.2",
+    "express": "4.22.3",
     "fake-indexeddb": "^6.2.4",
-    "fastify": "5.6.1",
-    "hono": "4.11.9",
+    "fastify": "5.12.7",
+    "hono": "4.13.13",
     "tsup": "^8.5.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "4.1.11"
   }
 }
