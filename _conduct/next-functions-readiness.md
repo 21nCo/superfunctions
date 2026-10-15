@@ -15,7 +15,7 @@ Local next is 124 commits behind upstream. Check upstream changes for each selec
 | browsefn | Ported in codex/browsefn-readiness-20261015; release gate and implementation gaps remain |
 | cachefn | In progress in codex/next-functions-readiness-20261015 |
 | catchfn | Pending readiness assessment and port |
-| chartfn | Pending readiness assessment and port |
+| chartfn | Ported in codex/chartfn-readiness-20261015; integrated vendor checks pass, framework runtime matrix in progress |
 | cifn | Pending readiness assessment and port |
 | cmsfn | Pending readiness assessment and port |
 | compfn | Pending readiness assessment and port |
@@ -93,3 +93,24 @@ The full goal remains active. Nothing has been published, deployed, or declared 
 - Public examples and runtime/version statements corrected; original V0 automatic
   fallback and adaptive memory remain explicitly unimplemented design items.
   See cachefn-contract-audit.md for current package behavior and limitations.
+
+
+### Current scope correction and further checkpoints
+
+Current-contract documentation is not a waiver of original V0 in-scope promises.
+CacheFn automatic storage fallback, adaptive memory eviction and offline-first
+fallback/queue/sync/refresh remain implementation requirements; automatic fallback
+is underway. Firefox/Safari, quota and performance evidence remain open.
+Memory tag consistency and eviction callback reentrancy defects fixed in44c5edad4;
+144 core tests and typechecks pass. Packed declarations fixed in27d60b25f with
+TS5.4/5.9 Node16/NodeNext acceptance and runtime audit zero advisories.
+
+BrowseFn persistent caches/browser/geocoder checkpoint committed3d7ff011f;
+92 TS and69 Python tests, native Chrome and real SQLite persistence passed.
+Image-download security work continues.
+
+ChartFn isolated branch codex/chartfn-readiness-20261015 ports all3 packages.
+Core51/React3/Svelte2 tests, builds/types and149 native Chrome vendor assertions
+pass after runtime ECharts upgrade6.1.0. Packed imports/declarations/SSR pass and
+isolated runtime audit reports zero advisories. Real framework version matrix
+remains active. No PR, publication or deployment claimed for these checkpoints.
