@@ -1,0 +1,189 @@
+_conduct/remaining-functions-assessment.md
+  s_e1c5fc1a65c0cf::t_d1923724026439 1-34
+cachefn/README.md
+  s_e1c5fc1a65c0cf::t_37c6ca92662e8b 1-143
+cachefn/SPEC.md
+  s_e1c5fc1a65c0cf::t_24714c9a263495 1-1314
+cachefn/V0_SPEC.md
+  s_e1c5fc1a65c0cf::t_89576b0d3d8eee 1-1020
+cachefn/admin/package.json
+  s_e1c5fc1a65c0cf::t_6748177fef1437 1-43
+cachefn/admin/src/__tests__/admin.test.ts
+  s_e1c5fc1a65c0cf::t_b5f559adcbbb9f 1-61
+cachefn/admin/src/index.ts
+  s_e1c5fc1a65c0cf::t_9efc19e82b3fb0 1-240
+cachefn/admin/tsconfig.json
+  s_e1c5fc1a65c0cf::t_eb62c2fd37ff08 1-33
+cachefn/admin/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_029f9747df0956 1-8
+cachefn/python/.gitignore
+  s_e1c5fc1a65c0cf::t_99b4a9d9424c2d 1-54
+cachefn/python/LICENSE
+  s_e1c5fc1a65c0cf::t_49892bfed284c2 1-17
+cachefn/python/Makefile
+  s_e1c5fc1a65c0cf::t_abf682aa245c0c 1-35
+cachefn/python/README.md
+  s_e1c5fc1a65c0cf::t_e41b45ae0a9789 1-362
+cachefn/python/cachefn/__init__.py
+  s_e1c5fc1a65c0cf::t_1bb0e970616b3a 1-60
+cachefn/python/cachefn/analytics/__init__.py
+  s_e1c5fc1a65c0cf::t_f376a0408ecf1e 1
+cachefn/python/cachefn/analytics/stats.py
+  s_e1c5fc1a65c0cf::t_dc73007c34e8f9 1-70
+cachefn/python/cachefn/core/__init__.py
+  s_e1c5fc1a65c0cf::t_d64375bc16f48d 1
+cachefn/python/cachefn/core/cache.py
+  s_e1c5fc1a65c0cf::t_a9f4ae7bd31a7b 1-482
+cachefn/python/cachefn/core/events.py
+  s_e1c5fc1a65c0cf::t_51874d952e6f10 1-59
+cachefn/python/cachefn/core/types.py
+  s_e1c5fc1a65c0cf::t_3e6c6df17eac95 1-179
+cachefn/python/cachefn/memoization/__init__.py
+  s_e1c5fc1a65c0cf::t_c19554b67d7c69 1
+cachefn/python/cachefn/memoization/memoize.py
+  s_e1c5fc1a65c0cf::t_cad3e1d510c04c 1-266
+cachefn/python/cachefn/storage/__init__.py
+  s_e1c5fc1a65c0cf::t_e35502a700c705 1
+cachefn/python/cachefn/storage/memory_storage.py
+  s_e1c5fc1a65c0cf::t_acc1d2f25c54bb 1-225
+cachefn/python/cachefn/utils/__init__.py
+  s_e1c5fc1a65c0cf::t_127ea195f160bc 1
+cachefn/python/cachefn/utils/hash.py
+  s_e1c5fc1a65c0cf::t_89904a2cc54539 1-83
+cachefn/python/cachefn/utils/pattern.py
+  s_e1c5fc1a65c0cf::t_cf00d55d15460e 1-61
+cachefn/python/cachefn/utils/serialize.py
+  s_e1c5fc1a65c0cf::t_33df2051ce33a7 1-51
+cachefn/python/cachefn/utils/ttl.py
+  s_e1c5fc1a65c0cf::t_032e339a4ca430 1-55
+cachefn/python/examples/__init__.py
+  s_e1c5fc1a65c0cf::t_72ba01a324304e 1
+cachefn/python/examples/basic_usage.py
+  s_e1c5fc1a65c0cf::t_c618d77f48e81a 1-145
+cachefn/python/examples/memoization.py
+  s_e1c5fc1a65c0cf::t_a01c0bc961207c 1-137
+cachefn/python/examples/patterns.py
+  s_e1c5fc1a65c0cf::t_dd9b120ed2ee7c 1-233
+cachefn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_5528b7f89cc8de 1-89
+cachefn/python/pytest.ini
+  s_e1c5fc1a65c0cf::t_2138780bb79282 1-6
+cachefn/python/tests/__init__.py
+  s_e1c5fc1a65c0cf::t_de01b29fc0671a 1
+cachefn/python/tests/test_cache.py
+  s_e1c5fc1a65c0cf::t_fadbf08c2e537c 1-286
+cachefn/python/tests/test_memoize.py
+  s_e1c5fc1a65c0cf::t_155c459b402868 1-240
+cachefn/python/tests/test_readiness.py
+  s_e1c5fc1a65c0cf::t_ecda34f9008402 1-204
+cachefn/python/tests/test_utils.py
+  s_e1c5fc1a65c0cf::t_352949e23de2dd 1-156
+cachefn/typescript/HTTP_CACHING.md
+  s_e1c5fc1a65c0cf::t_b8210670e3b231 1-17
+cachefn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_3f8ef29929a015 1-348
+cachefn/typescript/SERIALIZATION.md
+  s_e1c5fc1a65c0cf::t_ae5c7c80fb90a1 1-31
+cachefn/typescript/__tests__/cache-access.test.ts
+  s_e1c5fc1a65c0cf::t_cdf7eadda3c6c6 1-80
+cachefn/typescript/__tests__/cache-fetch.test.ts
+  s_e1c5fc1a65c0cf::t_c189178cd41a12 1-40
+cachefn/typescript/__tests__/cache.test.ts
+  s_e1c5fc1a65c0cf::t_bcd53ad4906066 1-275
+cachefn/typescript/__tests__/http-middleware.test.ts
+  s_e1c5fc1a65c0cf::t_3423f3793ece86 1-115
+cachefn/typescript/__tests__/indexeddb-storage.test.ts
+  s_e1c5fc1a65c0cf::t_54480d403f1d6f 1-122
+cachefn/typescript/__tests__/key-contract.test.ts
+  s_e1c5fc1a65c0cf::t_d7a873add90adc 1-26
+cachefn/typescript/__tests__/memoize.test.ts
+  s_e1c5fc1a65c0cf::t_bf33d4e0ed1d0d 1-82
+cachefn/typescript/__tests__/memory-concurrency.test.ts
+  s_e1c5fc1a65c0cf::t_3fd097667ac661 1-48
+cachefn/typescript/__tests__/memory-storage.test.ts
+  s_e1c5fc1a65c0cf::t_ea9d29d065391e 1-271
+cachefn/typescript/__tests__/namespace.test.ts
+  s_e1c5fc1a65c0cf::t_0fefa426e124d8 1-70
+cachefn/typescript/__tests__/serialization.test.ts
+  s_e1c5fc1a65c0cf::t_224c1acc25827e 1-78
+cachefn/typescript/examples/basic-usage.ts
+  s_e1c5fc1a65c0cf::t_9d3cc361cd3398 1-208
+cachefn/typescript/examples/browser-app.html
+  s_e1c5fc1a65c0cf::t_7c535dbe72453c 1-155
+cachefn/typescript/examples/express-api.ts
+  s_e1c5fc1a65c0cf::t_ac0696409743a1 1-161
+cachefn/typescript/examples/memoization.ts
+  s_e1c5fc1a65c0cf::t_140bb22252aa12 1-196
+cachefn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_abb16a1d896a69 1-64
+cachefn/typescript/scripts/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_5fa87ba695362c 1-121
+cachefn/typescript/src/analytics/stats.ts
+  s_e1c5fc1a65c0cf::t_9822d040932c6f 1-81
+cachefn/typescript/src/core/cache.ts
+  s_e1c5fc1a65c0cf::t_fd4ef74b431540 1-346
+cachefn/typescript/src/core/events.ts
+  s_e1c5fc1a65c0cf::t_f76737239eed79 1-59
+cachefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_5f17061dd06baa 1-142
+cachefn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_e1655f966ca175 1-74
+cachefn/typescript/src/memoization/memoize.ts
+  s_e1c5fc1a65c0cf::t_c9379c8a83237d 1-128
+cachefn/typescript/src/middleware/express.ts
+  s_e1c5fc1a65c0cf::t_5ad2e047357b48 1-43
+cachefn/typescript/src/middleware/fastify.ts
+  s_e1c5fc1a65c0cf::t_aa27df20b64364 1-42
+cachefn/typescript/src/middleware/hono.ts
+  s_e1c5fc1a65c0cf::t_5121396a342b26 1-50
+cachefn/typescript/src/middleware/http-cache.ts
+  s_e1c5fc1a65c0cf::t_8640aaf3d51bc0 1-36
+cachefn/typescript/src/storage/indexeddb-storage.ts
+  s_e1c5fc1a65c0cf::t_d07805c497fae7 1-174
+cachefn/typescript/src/storage/memory-storage.ts
+  s_e1c5fc1a65c0cf::t_cc07be9b4d548d 1-273
+cachefn/typescript/src/storage/storage-interface.ts
+  s_e1c5fc1a65c0cf::t_24c85c2e64e7b3 1-81
+cachefn/typescript/src/strategies/lru-eviction.ts
+  s_e1c5fc1a65c0cf::t_0c9a2d96563b96 1-121
+cachefn/typescript/src/strategies/ttl-manager.ts
+  s_e1c5fc1a65c0cf::t_dc3a23d4bd4571 1-36
+cachefn/typescript/src/utils/hash.ts
+  s_e1c5fc1a65c0cf::t_a4d7c6de954703 1-65
+cachefn/typescript/src/utils/pattern.ts
+  s_e1c5fc1a65c0cf::t_ba54abe7552037 1-45
+cachefn/typescript/src/utils/serialize.ts
+  s_e1c5fc1a65c0cf::t_fee2d372b2421a 1-133
+cachefn/typescript/tsconfig.json
+  s_e1c5fc1a65c0cf::t_da8d9e990dfa88 1-20
+cachefn/typescript/tsconfig.type-tests.json
+  s_e1c5fc1a65c0cf::t_c7a915f9ad8849 1-6
+cachefn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_ce6fd52bec68e5 1-10
+cachefn/typescript/type-tests/memoize.ts
+  s_e1c5fc1a65c0cf::t_6479d53431b2b4 1-11
+cachefn/typescript/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_048fb1e4bb8809 1-13
+package-lock.json
+  s_e1c5fc1a65c0cf::t_389723e49bb2b0 53-54,7434-7787,23250-23257
+package.json
+  s_e1c5fc1a65c0cf::t_a7cc76c4d4190e 48-49
+_conduct/next-functions-readiness.md
+  s_e1c5fc1a65c0cf::t_88de3903beb16c 1-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d97daa8a2008ad11ec1350e07568d6649e13009d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
