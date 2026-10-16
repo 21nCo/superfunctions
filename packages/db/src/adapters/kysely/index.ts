@@ -163,7 +163,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
           }
           return data as T;
         } else {
-          qb = applySelect(qb.returning(select && select.length > 0 ? select : ['*' as any]), undefined);
+          qb = select && select.length > 0 ? qb.returning(select) : qb.returningAll();
           const result = await qb.executeTakeFirst();
           return result as T;
         }
@@ -243,7 +243,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
         const table = resolveTable(model);
         let qb = db.updateTable(table).set(data);
         qb = applyWhere(qb, where ?? []);
-        const result = await qb.execute();
+        const result = await qb.executeTakeFirst();
         return Number((result as any).numUpdatedRows ?? (result as any).numAffectedRows ?? 0);
       },
 
@@ -251,7 +251,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
         const table = resolveTable(model);
         let qb = db.deleteFrom(table);
         qb = applyWhere(qb, where ?? []);
-        const result = await qb.execute();
+        const result = await qb.executeTakeFirst();
         return Number((result as any).numDeletedRows ?? (result as any).numAffectedRows ?? 0);
       },
 
