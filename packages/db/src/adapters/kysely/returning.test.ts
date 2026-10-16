@@ -17,6 +17,7 @@ describe('insert returning projections', () => {
       expect(await adapter.updateMany({ model: 'records', where: [{ field: 'id', operator: 'eq', value: 'a' }], data: { label: 'updated' } })).toBe(1);
       expect(await adapter.updateMany({ model: 'records', where: [{ field: 'id', operator: 'eq', value: 'missing' }], data: { label: 'updated' } })).toBe(0);
       expect(await adapter.deleteMany({ model: 'records', where: [{ field: 'id', operator: 'in', value: ['b', 'c'] }] })).toBe(2);
+      expect((await adapter.isHealthy()).healthy).toBe(true);
     } finally { await adapter.close(); }
   });
   it('compiles the PostgreSQL returning path without select-builder methods', async () => {
@@ -50,6 +51,10 @@ it('roundtrips explicit JSON text through native SQLite without double encoding'
       expect(database.prepare('SELECT payload FROM records WHERE id = ?').get(id)).toEqual({ payload: payload === null ? null : JSON.stringify(payload) });
       expect(await adapter.findOne({ model: 'records', where: [{ field: 'id', operator: 'eq', value: id }], select: ['id'] })).toEqual({ id });
     }
+    expect(await adapter.findOne({ model: 'records', where: [{ field: 'payload', operator: 'eq', value: { nested: [1, false, null] } }] })).toEqual({ id: '0', payload: { nested: [1, false, null] } });
+    expect(await adapter.count({ model: 'records', where: [{ field: 'payload', operator: 'in', value: ['null', false] }] })).toBe(2);
+    expect(await adapter.updateMany({ model: 'records', where: [{ field: 'payload', operator: 'eq', value: 'null' }], data: { payload: ['updated'] } })).toBe(1);
+    expect(await adapter.deleteMany({ model: 'records', where: [{ field: 'payload', operator: 'in', value: [0, false] }] })).toBe(2);
     database.prepare('UPDATE records SET payload = ? WHERE id = ?').run('broken secret JSON', '0');
     await expect(adapter.findOne({ model: 'records', where: [{ field: 'id', operator: 'eq', value: '0' }] })).rejects.toThrow('records.payload contains invalid JSON text');
   } finally { await adapter.close(); }

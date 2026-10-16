@@ -336,3 +336,5 @@ JSON raises a TypeError identifying the field without including its contents.
 The optional Vitest peer is required only by the `@superfunctions/db/testing`
 contract suites; Vitest 3.2.4+ and 4.x are supported. Production adapters do not
 require Vitest.
+
+JSON-text predicates use the same JSON serialization as writes (including each value in `in`/`not_in`). Equality compares the serialized representation, so object key order remains significant; this is not a database-native JSON structural comparison.
