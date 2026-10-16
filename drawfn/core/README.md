@@ -157,3 +157,5 @@ Image URLs embedded in SVG remain external references. PNG waits for image loadi
 Canvas `width`/`height` attribute changes repaint the current scene without history or scene-change events. CSS dimensions may differ from the backing bitmap: pointer coordinates, pan deltas, wheel anchors, and text overlays account for that scaling. The core does not change backing dimensions automatically.
 
 Canceled pointer gestures restore their pre-gesture content and selection without adding undo steps. Undo/redo applies to content and preserves the current camera. Pen taps produce dots; supplied pressure and taper settings apply consistently to canvas and SVG strokes.
+
+Packed acceptance scripts require `NPM_CLI` set to the absolute path of your trusted `npm/bin/npm-cli.js`. They invoke it through the current Node executable rather than searching `PATH`.

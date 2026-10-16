@@ -1,4 +1,5 @@
 /** Packed, isolated React 18/19 and Svelte 5 browser consumers. Build packages first. */
+import {npmCli} from './npm-cli.mjs';
 import {createRequire} from 'node:module';
 import {createServer} from 'node:http';
 import {execFileSync} from 'node:child_process';
@@ -11,7 +12,7 @@ const require=createRequire(join(root,'core/package.json'));
 const {build}=require('esbuild');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH||'playwright');
 const evidence=mkdtempSync(join(tmpdir(),'drawfn-framework-matrix-'));
-const run=(args,cwd)=>execFileSync('npm',args,{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']});
+const run=(args,cwd)=>execFileSync(process.execPath,[npmCli,...args],{cwd,encoding:'utf8',stdio:['ignore','pipe','pipe']});
 const packs={};
 for(const part of ['core','drawfn-react','drawfn-svelte']){const[p]=JSON.parse(run(['pack','--json','--ignore-scripts','--pack-destination',evidence],resolve(root,part)));packs[part]=join(evidence,p.filename)}
 const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html');res.end('<!doctype html><style>body{margin:0}</style><div id="root"></div>')});

@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2021",
-    "lib": ["ES2021", "DOM"],
+    "lib": [
+      "ES2021",
+      "DOM"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
@@ -16,6 +19,12 @@
     "forceConsistentCasingInFileNames": true,
     "jsx": "react"
   },
-  "include": ["src"],
-  "exclude": ["dist", "node_modules"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "src/__tests__"
+  ]
 }

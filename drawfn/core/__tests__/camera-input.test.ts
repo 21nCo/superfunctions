@@ -2,23 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SceneChangeReason } from "../src/types";
 import { Drawfn } from "../src/drawfn";
 
-function createCanvas(): HTMLCanvasElement {
-  const canvas = document.createElement("canvas");
-  canvas.width = 800;
-  canvas.height = 600;
-  canvas.getBoundingClientRect = vi.fn(() => ({
-    x: 0,
-    y: 0,
-    left: 0,
-    top: 0,
-    right: 800,
-    bottom: 600,
-    width: 800,
-    height: 600,
-    toJSON: () => ({}),
-  })) as any;
-  return canvas;
-}
+import { createCanvas } from "../../testing/create-canvas";
 
 describe("camera and input safety", () => {
   let canvas: HTMLCanvasElement;

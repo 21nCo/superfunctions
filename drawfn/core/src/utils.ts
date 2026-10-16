@@ -13,7 +13,8 @@ export const MAX_SCENE_ELEMENTS = 2000;
 export const MAX_FREEDRAW_POINTS = 16384;
 
 export function generateId(): string {
-  return `e_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  return `e_${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 export function deepClone<T>(value: T): T {

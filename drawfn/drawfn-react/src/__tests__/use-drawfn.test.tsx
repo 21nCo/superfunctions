@@ -4,45 +4,7 @@ import { Drawfn, type Scene } from "drawfn";
 import { describe, expect, it, vi } from "vitest";
 import { useDrawfn, type UseDrawfnResult, type UseDrawfnOptions } from "../use-drawfn";
 
-function createScene(): Scene {
-  return {
-    version: 1,
-    id: "scene-1",
-    camera: { x: 0, y: 0, zoom: 1 },
-    background: { color: "#ffffff" },
-    elements: [
-      {
-        id: "rect-1",
-        type: "rectangle",
-        x: 10,
-        y: 20,
-        w: 80,
-        h: 40,
-        rotation: 0,
-        stroke: "#000000",
-        fill: "transparent",
-        strokeWidth: 2,
-        opacity: 1,
-      },
-    ],
-  };
-}
-
-function rectangle(id: string) {
-  return {
-    id,
-    type: "rectangle" as const,
-    x: 10,
-    y: 20,
-    w: 80,
-    h: 40,
-    rotation: 0,
-    stroke: "#000000",
-    fill: "transparent" as const,
-    strokeWidth: 2,
-    opacity: 1,
-  };
-}
+import { createScene, rectangle } from "../../../testing/scene";
 
 function HookHarness(props: UseDrawfnOptions & {
   scene?: Scene;
