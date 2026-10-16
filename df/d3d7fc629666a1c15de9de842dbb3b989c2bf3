@@ -1,0 +1,35 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_9c4c709aaaf758 116-125
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_cee37b71eb35a9 5,49-56,64-71
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_387b10855a39c1 5-6,21-22,132-151,166-181,186-204,218-225
+flowfn/python/flowfn/adapters/memory_stream.py
+  s_e1c5fc1a65c0cf::t_f041b325a8ee72 1-110
+flowfn/python/flowfn/queue/queue.py
+  s_e1c5fc1a65c0cf::t_845571a6ab57fa 69,72,79
+flowfn/python/flowfn/stream/stream.py
+  s_e1c5fc1a65c0cf::t_47fb54c031d505 30,47,49,51,97-101,110,116-118,132-136,145,147,152-153,188-189,191,193-194,199-200,205-206
+flowfn/python/flowfn/stream/types.py
+  s_e1c5fc1a65c0cf::t_6b6b6759c10a84 4,30-31,34-35,39-40,52,55-56,70-71
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_00b9a2dc52db6c 175-178
+flowfn/python/tests/test_consumer_groups.py
+  s_e1c5fc1a65c0cf::t_18c26f1f30158c 1-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dfd3d7fc629666a1c15de9de842dbb3b989c2bf3",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
