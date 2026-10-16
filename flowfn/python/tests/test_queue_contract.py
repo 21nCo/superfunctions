@@ -35,6 +35,11 @@ async def test_dependencies_override_priority_and_failure_propagates():
     await queue._process_job(parent, fail)
     assert await flow._adapter.dequeue(queue.name) is None
     assert child.state == grandchild.state == JobStatus.FAILED
+    assert {record.id for record in await flow.dlq().get_all()} == {
+        parent.id,
+        child.id,
+        grandchild.id,
+    }
     await flow.close()
 
 
@@ -65,4 +70,53 @@ async def test_default_job_options_merge_explicit_values():
     assert first.opts.attempts == 7
     assert override.opts.attempts == 1
     assert override.opts.priority == 9
+    await flow.close()
+
+
+@pytest.mark.asyncio
+async def test_removal_retains_only_needed_dependency_outcomes():
+    flow = create_flow()
+    queue = flow.queue("retention")
+    parent = await queue.add("parent", {}, JobOptions(remove_on_complete=True))
+    child = await queue.add("child", {}, JobOptions(wait_for=[parent.id], remove_on_complete=True))
+
+    async def succeed(job):
+        return "ok"
+
+    assert await flow._adapter.dequeue(queue.name) is parent
+    await queue._process_job(parent, succeed)
+    assert await queue.get_job(parent.id) is None
+    assert await flow._adapter.dequeue(queue.name) is child
+    await queue._process_job(child, succeed)
+    assert await queue.get_job(child.id) is None
+    assert flow._adapter._dependency_results == {}
+    await flow.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_retention_count_and_failed_dead_letter_survives_removal():
+    flow = create_flow()
+    queue = flow.queue("bounded")
+
+    async def succeed(job):
+        return None
+
+    retained_ids = []
+    for i in range(4):
+        job = await queue.add("success", {}, JobOptions(remove_on_complete=2))
+        await flow._adapter.dequeue(queue.name)
+        await queue._process_job(job, succeed)
+        retained_ids.append(job.id)
+    assert [job.id for job in await queue.get_jobs(JobStatus.COMPLETED)] == retained_ids[-2:]
+    failed = await queue.add("failure", {}, JobOptions(attempts=1, remove_on_fail=True))
+
+    async def fail(job):
+        raise ValueError("expected")
+
+    await flow._adapter.dequeue(queue.name)
+    await queue._process_job(failed, fail)
+    assert await queue.get_job(failed.id) is None
+    assert (await flow.dlq().get_all())[0].id == failed.id
+    retried = await flow.dlq().retry(failed.id)
+    assert await queue.get_job(failed.id) is retried
     await flow.close()

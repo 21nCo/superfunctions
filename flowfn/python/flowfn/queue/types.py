@@ -1,7 +1,7 @@
 """Queue type definitions."""
 
 from typing import Any, Literal, Optional, Callable, Awaitable
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
 
@@ -47,6 +47,13 @@ class JobOptions(BaseModel):
     prevent_duplicates: bool = False
     deduplication_key: Optional[str] = None
     wait_for: Optional[list[str]] = None
+
+    @field_validator("remove_on_complete", "remove_on_fail")
+    @classmethod
+    def validate_retention(cls, value: bool | int) -> bool | int:
+        if isinstance(value, int) and value < 0:
+            raise ValueError("Retention count must be nonnegative")
+        return value
 
 
 class Job(BaseModel):

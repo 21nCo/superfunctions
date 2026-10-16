@@ -123,3 +123,11 @@ The memory adapter retains a separate pending queue for each consumer group. Eac
 `await stream.get_message_count()`, replay and trimming read the adapter's retained stream state, including messages published by another instance. A zero `max_length` removes all retained history; pending group deliveries remain available for acknowledgement.
 
 Custom Python adapters must implement `update_job`, `get_stream_messages`, `trim_stream`, and consumer options in `consume`. Consumer subscriptions provide `pause`, `resume`, and `unsubscribe`. Custom backoff callbacks are process-local configuration; hosts restoring serialized jobs must restore their strategy callable.
+
+## Failed jobs and retention
+
+Terminal failures are recorded in the adapter's dead-letter store. `await flow.dlq().retry(job_id, original_queue='emails')` atomically restores the job to its queue with its original options and resets its attempt state. Specify the queue when job IDs occur in multiple queues. `retry_all(queue_name)` requeues each record; a storage error propagates and leaves unsuccessful records available for recovery.
+
+`remove_on_complete` and `remove_on_fail` accept `True` for immediate removal, `False` to retain jobs, or a nonnegative integer to keep that many newest terminal jobs of the corresponding status. Failed-job removal does not erase its dead letter. Dependency outcomes remain available while existing nonterminal jobs need them, then are released. A newly added dependency on a previously removed job cannot recover its old outcome.
+
+Custom adapters must implement dead-letter save/list/delete and atomic `retry_dead_letter` operations in addition to normal job transitions. The memory adapter keeps all state only for the lifetime of the adapter.

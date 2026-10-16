@@ -8,6 +8,7 @@ import asyncio
 import time
 import hashlib
 import json
+from copy import deepcopy
 from collections import defaultdict
 
 
@@ -16,6 +17,8 @@ class MemoryAdapter:
 
     def __init__(self) -> None:
         self._queues: dict[str, list[Job]] = defaultdict(list)
+        self._dead_letters: dict[tuple[str, str], Any] = {}
+        self._dependency_results: dict[tuple[str, str], JobStatus] = {}
         self._active_jobs: dict[tuple[str, str], Job] = {}
         self._streams: dict[str, list[Message]] = defaultdict(list)
         self._stream_subscribers: dict[str, list[MessageHandler]] = defaultdict(list)
@@ -66,8 +69,40 @@ class MemoryAdapter:
                 self._queues[queue][index] = job
                 if job.state != JobStatus.ACTIVE:
                     self._active_jobs.pop((queue, job.id), None)
+                self._apply_retention(queue, job)
                 return
         raise ValueError(f"Job not found: {job.id}")
+
+    def _apply_retention(self, queue: str, changed: Job) -> None:
+        jobs = self._queues[queue]
+        status = changed.state
+        policy = (
+            changed.opts.remove_on_complete
+            if status == JobStatus.COMPLETED
+            else changed.opts.remove_on_fail
+            if status == JobStatus.FAILED
+            else False
+        )
+        removed: list[Job] = []
+        if policy is True:
+            removed = [changed]
+        elif type(policy) is int:
+            terminal = [job for job in jobs if job.state == status]
+            positions = {id(job): index for index, job in enumerate(jobs)}
+            terminal.sort(key=lambda job: (job.finished_on or 0, positions[id(job)]), reverse=True)
+            removed = terminal[max(0, policy) :]
+        for job in removed:
+            self._dependency_results[(queue, job.id)] = job.state
+            jobs.remove(job)
+        referenced = {
+            identity
+            for job in jobs
+            if job.state not in (JobStatus.COMPLETED, JobStatus.FAILED)
+            for identity in job.opts.wait_for or []
+        }
+        for key in list(self._dependency_results):
+            if key[0] == queue and key[1] not in referenced:
+                del self._dependency_results[key]
 
     def _now(self) -> int:
         return int(time.time() * 1000)
@@ -87,7 +122,16 @@ class MemoryAdapter:
                 candidate.state = JobStatus.WAITING
 
         indexed = {job.id: job for job in jobs}
+
+        def dependency_status(identity: str) -> Optional[JobStatus]:
+            return (
+                indexed[identity].state
+                if identity in indexed
+                else self._dependency_results.get((queue, identity))
+            )
+
         # Propagate terminal dependency failure before choosing runnable work.
+        dependency_failures: list[Job] = []
         changed = True
         while changed:
             changed = False
@@ -98,7 +142,7 @@ class MemoryAdapter:
                     (
                         identity
                         for identity in candidate.opts.wait_for or []
-                        if identity in indexed and indexed[identity].state == JobStatus.FAILED
+                        if dependency_status(identity) == JobStatus.FAILED
                     ),
                     None,
                 )
@@ -106,7 +150,18 @@ class MemoryAdapter:
                     candidate.state = JobStatus.FAILED
                     candidate.failed_reason = f"Dependency failed: {failed}"
                     candidate.finished_on = now
+                    dependency_failures.append(candidate)
                     changed = True
+
+        if dependency_failures:
+            from flowfn.queue.dlq import DLQManager
+
+            for failed_job in dependency_failures:
+                await DLQManager(adapter=self).move_to_dlq(
+                    failed_job, failed_job.failed_reason or "Dependency failed", queue
+                )
+                if failed_job in jobs:
+                    await self.update_job(queue, failed_job)
 
         # Get highest priority waiting job
         waiting_jobs = [
@@ -115,7 +170,7 @@ class MemoryAdapter:
             if j.state == JobStatus.WAITING
             and (j.available_at if j.available_at is not None else j.timestamp + j.delay) <= now
             and all(
-                identity in indexed and indexed[identity].state == JobStatus.COMPLETED
+                dependency_status(identity) == JobStatus.COMPLETED
                 for identity in j.opts.wait_for or []
             )
         ]
@@ -181,6 +236,39 @@ class MemoryAdapter:
             jobs.remove(job)
 
         return len(to_remove)
+
+    async def save_dead_letter(self, record: Any) -> None:
+        self._dead_letters[(record.original_queue, record.id)] = deepcopy(record)
+
+    async def get_dead_letters(self) -> list[Any]:
+        return deepcopy(list(self._dead_letters.values()))
+
+    async def delete_dead_letter(self, queue: str, job_id: str) -> None:
+        self._dead_letters.pop((queue, job_id), None)
+
+    async def retry_dead_letter(self, queue: str, job_id: str) -> Job:
+        key = (queue, job_id)
+        record = self._dead_letters.get(key)
+        if record is None:
+            raise ValueError("Dead letter no longer exists")
+        jobs = self._queues[queue]
+        existing = next((job for job in jobs if job.id == job_id), None)
+        if existing is not None and existing.state not in (JobStatus.FAILED, JobStatus.COMPLETED):
+            raise ValueError("Job is already queued or active")
+        job = Job(
+            id=record.id,
+            name=record.name,
+            data=deepcopy(record.data),
+            opts=record.options.model_copy(deep=True),
+            timestamp=self._now(),
+            available_at=self._now(),
+        )
+        if existing is None:
+            jobs.append(job)
+        else:
+            jobs[jobs.index(existing)] = job
+        del self._dead_letters[key]
+        return job
 
     # Stream operations
     async def publish(self, stream: str, message: Message) -> str:
@@ -283,6 +371,8 @@ class MemoryAdapter:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._deliveries.clear()
+        self._dependency_results.clear()
+        self._dead_letters.clear()
         self._queues.clear()
         self._active_jobs.clear()
         self._streams.clear()

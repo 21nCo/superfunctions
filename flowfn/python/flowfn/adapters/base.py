@@ -37,6 +37,16 @@ class FlowAdapter(Protocol):
         """Clean old jobs."""
         ...
 
+    async def save_dead_letter(self, record: Any) -> None: ...
+
+    async def get_dead_letters(self) -> list[Any]: ...
+
+    async def delete_dead_letter(self, queue: str, job_id: str) -> None: ...
+
+    async def retry_dead_letter(self, queue: str, job_id: str) -> Job:
+        """Atomically restore a job and delete its dead letter."""
+        ...
+
     # Stream operations
     async def publish(self, stream: str, message: Message) -> str:
         """Publish message to stream."""

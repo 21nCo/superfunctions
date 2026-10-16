@@ -98,6 +98,12 @@ class FlowFn:
         """List all workflows."""
         return list(self._workflows)
 
+    def dlq(self) -> Any:
+        """Inspect and retry failed jobs through the same adapter."""
+        from flowfn.queue.dlq import DLQManager
+
+        return DLQManager(adapter=self._adapter)
+
     def scheduler(self) -> Any:
         """Get scheduler instance."""
         return self._scheduler

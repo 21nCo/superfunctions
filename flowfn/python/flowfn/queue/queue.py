@@ -181,6 +181,12 @@ class Queue:
                 job.finished_on = self._now()
         finally:
             await self._adapter.update_job(self.name, job)
+            if job.state == JobStatus.FAILED:
+                from flowfn.queue.dlq import DLQManager
+
+                await DLQManager(adapter=self._adapter).move_to_dlq(
+                    job, job.failed_reason or "Job failed", self.name
+                )
 
     async def get_job(self, job_id: str) -> Optional[Job]:
         """Get a specific job."""
