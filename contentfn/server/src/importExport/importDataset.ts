@@ -8,7 +8,7 @@ import { datasetCreate } from "../storage/datasets.js";
 import { schemaHash } from "../hash/schemaHash.js";
 import { nowISO } from "../time/clock.js";
 import { validateArtifact, type ContentfnExportArtifact } from "./format.js";
-import { documentStorageId } from "../storage/documentIdentity.js";
+import { documentStorageId, revisionStorageId } from "../storage/documentIdentity.js";
 
 export interface ImportConfig {
   db: Adapter;
@@ -167,6 +167,7 @@ export async function importDataset(
       await config.db.create({
         model: CONTENTFN_TABLE_NAMES.assets,
         data: {
+          id: documentStorageId(input.dataset, asset.assetId),
           dataset: input.dataset,
           assetId: asset.assetId,
           contentType: asset.contentType,
@@ -187,6 +188,7 @@ export async function importDataset(
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
         { field: "docId", operator: "eq" as const, value: rev.docId },
+        { field: "perspective", operator: "eq" as const, value: rev.perspective },
         { field: "rev", operator: "eq" as const, value: rev.rev },
       ],
     });
@@ -194,6 +196,7 @@ export async function importDataset(
       await config.db.create({
         model: CONTENTFN_TABLE_NAMES.revisions,
         data: {
+          id: revisionStorageId(input.dataset, rev.docId, rev.perspective, rev.rev),
           dataset: input.dataset,
           docId: rev.docId,
           perspective: rev.perspective,

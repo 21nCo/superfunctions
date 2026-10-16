@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { validateOptionalInput } from "./http/validateInput.js";
 import { webhookDeliveries } from "./storage/webhooks.js";
 import { eventStream } from "./realtime/sse.js";
@@ -33,6 +34,8 @@ import { getContentfnSchema } from "./storage/schema.js";
 
 export interface ContentfnServerConfig {
   db: Adapter;
+  /** Use native for database drivers that encode/decode JSON columns (PostgreSQL/MySQL). */
+  jsonStorage?: "native" | "json-text";
   storage?: import("./storage/storageBackend.js").AssetStorageBackend;
   maxPayloadBytes?: number;
   authorize?: AuthorizeFn;
@@ -142,7 +145,7 @@ export interface ContentfnServer {
 export function createContentfnServer(config: ContentfnServerConfig): ContentfnServer {
   const limits = resolveLimits(config.limits);
   const logger = createLogger(config.logSink);
-  const db = wrapWithSchema(config.db, getContentfnSchema());
+  const db = wrapWithSchema(config.db, getContentfnSchema({ jsonStorage: config.jsonStorage }));
 
   const storage = {
     db,
@@ -186,6 +189,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
       const result = idempotencyKey !== undefined && mutating ? await executeIdempotent(db, idempotencyKey, action, record, call, () => { replayed = true; }) : await call(db);
       if (result.ok && !replayed) {
         try {
+        if (action === "datasets.delete") realtimeServer.broadcast({ eventId: randomUUID(), dataset: String(record.dataset), type: "dataset.deleted", timestamp: new Date().toISOString() });
         if (/^(docs\.(create|patch|delete|publish|unpublish|restore)|schema\.upsert)$/.test(action)) {
           logger.logMutation({ action, dataset: record.dataset as string, docId: record.id as string, actor: subject });
           const document = result.result as Record<string, unknown>;
@@ -215,7 +219,7 @@ export function createContentfnServer(config: ContentfnServerConfig): ContentfnS
     api.docs.list = api.docs.query;
     return api as unknown as ContentfnServer["api"];
   }
-  const router = createContentRouter(routerConfig, async (action, input, request) => invoke(action, input, config.context && request instanceof Request ? await config.context(request) : request, request instanceof Request ? request.headers.get("Idempotency-Key") ?? undefined : undefined), request => eventStream(request, { realtime: realtimeServer, authorize: config.authorize, context: config.context, logger }));
+  const router = createContentRouter(routerConfig, async (action, input, request) => invoke(action, input, config.context && request instanceof Request ? await config.context(request) : request, request instanceof Request ? request.headers.get("Idempotency-Key") ?? undefined : undefined), request => eventStream(request, { realtime: realtimeServer, authorize: config.authorize, context: config.context, logger, query: (query, context) => invoke("query", query, context) }));
   return {
     api: forContext(), forContext, router,
     processScheduledPublishes: () => processScheduledPublishes({ db, onPublished: async (dataset, document) => {

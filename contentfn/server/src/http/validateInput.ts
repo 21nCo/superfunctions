@@ -19,7 +19,7 @@ export function validateOptionalInput(action: string, input: Record<string, unkn
     if (input[field] !== undefined && !(field === 'cursor' && input[field] === null) && typeof input[field] !== type) return err('VALIDATION_FAILED', `${field} must be a ${type}`, { path: field });
   }
   if (action === 'docs.get' && input.perspective !== undefined && !['published', 'draft', 'raw'].includes(input.perspective as string)) return err('VALIDATION_FAILED', 'Invalid document perspective', { path: 'perspective' });
-  if (action.startsWith('docs.') && input.id !== undefined && (typeof input.id !== 'string' || !input.id.replace(/^drafts\./, '') || input.id.length > 500 || /[\u0000-\u001f]/.test(input.id))) return err('VALIDATION_FAILED', 'Invalid document ID', { path: 'id' });
+  if (action.startsWith('docs.') && input.id !== undefined && (typeof input.id !== 'string' || !input.id.replace(/^drafts\./, '') || /[\u0000-\u001f]/.test(input.id))) return err('VALIDATION_FAILED', 'Invalid document ID', { path: 'id' });
   if (action === 'assets.list') {
     for (const field of ['limit', 'offset']) if (input[field] !== undefined && (!Number.isSafeInteger(input[field]) || (input[field] as number) < (field === 'limit' ? 1 : 0))) return err('VALIDATION_FAILED', `${field} must be a valid integer`, { path: field });
   }

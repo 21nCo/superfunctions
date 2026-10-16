@@ -41,4 +41,4 @@ export { parseClientMessage } from "./realtime/protocol.js";
 
 export { createAssetStorageBackend, InMemoryStorageBackend } from "./storage/storageBackend.js";
 export type { AssetStorageBackend } from "./storage/storageBackend.js";
-export { contentfnSchedules, getContentfnSchema } from "./storage/schema.js";
+export { contentfnSchedules, getContentfnSchema, getSchema } from "./storage/schema.js";

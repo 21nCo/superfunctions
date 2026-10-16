@@ -31,8 +31,16 @@ if (created.ok) await content.api.docs.publish({
 ```
 
 Use a persistent shared database adapter in production. ContentFn applies its own
-schema internally; consumers do not supply `adapterSchema`. SQLite JSON fields use
-DB 0.4.0's explicit text codec. The incoming adapter must support transactions.
+schema internally; consumers do not supply `adapterSchema`. JSON fields use TEXT
+columns and DB 0.4.0's explicit text codec by default (including SQLite). For a PostgreSQL/MySQL adapter that
+encodes native JSON, set `jsonStorage: 'native'` on the server and pass the same
+option to `getSchema` when generating tables. MySQL deployments should use native
+JSON columns for documents larger than the TEXT column limit. Use LONGTEXT for
+unindexed arbitrary strings (such as public document IDs) in application-owned
+MySQL migrations; the shared CLI currently emits TEXT templates for unbounded
+strings, which must be widened when supporting values over 65,535 bytes. The schema and runtime
+codec must agree; existing data needs a migration when switching storage modes.
+The incoming adapter must support transactions.
 Use the shared HTTP framework adapter with `content.router`, or use
 `content.handler` with Node's HTTP server. There are no re-exported framework adapters.
 The router's `/contentfn` prefix must remain reachable under the client's base URL.
@@ -105,7 +113,15 @@ by eventId because delivery is at least once. Signing uses X-ContentFn-Signature
 GET `/contentfn/events?dataset=production` opens an authenticated SSE stream;
 `docId` optionally filters it. `client.realtime.subscribe` exposes an async iterable.
 Connections receive live content changes and presence join/leave events when the
-context supplies a subject. Disconnect/abort releases subscriptions. The live stream
+context supplies a subject. Subscribe to a query with
+`client.realtime.subscribe({ dataset, query: { dataset, types: ['post'] } })`.
+Query streams emit `query.snapshot` followed by `query.updated`, carrying the
+canonical CFQL page in `queryResult` whenever that page changes. They requery after
+dataset changes, including removals and changes to expanded references, and recheck
+query authorization each time. `query` and `docId` are mutually exclusive. Query JSON
+is capped at 16 KiB, each event frame at 1 MiB, and buffering at 64 frames. Refreshes
+are serialized and coalesced; intermediate states may be skipped. These query
+subscriptions use the public SSE/client transport. Disconnect/abort releases subscriptions. The live stream
 has bounded buffering and heartbeat comments; reconnect and query current content
 after interruption. It does not provide a persisted replay cursor.
 
@@ -141,7 +157,15 @@ here are local release preparation, not evidence those prerequisites are publish
 
 Existing deployments must apply schema changes before starting 0.2: add the new
 `contentfn_schedules` and `contentfn_idempotency` tables from `ALL_TABLES`, and ensure
-existing dataset/schema tables include their declared IDs. `runContentfnMigrations`
+every table includes its declared physical `id`. Document, schedule and asset IDs
+are SHA-256 hashes of the dataset/public-ID tuple; revision IDs additionally include
+perspective and revision. Webhook/event IDs remain their generated identifiers, and
+queue IDs hash the event/webhook tuple. This keeps physical keys within SQL index
+limits without restricting public document IDs. Existing rows must have these keys
+backfilled before upgrading; export and import into a newly generated schema is an
+alternative for content snapshots. Operational queue/schedule state needs its own
+migration. Public IDs and export artifact identities do not change.
+`runContentfnMigrations`
 creates missing tables through the application's migration adapter; it does not alter
 existing tables. Use your database migration tooling for existing-table changes.
 

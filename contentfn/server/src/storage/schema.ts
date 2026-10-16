@@ -86,10 +86,11 @@ export const contentfnDocsDrafts: TableDef = {
 export const contentfnRevisions: TableDef = {
   name: CONTENTFN_TABLE_NAMES.revisions,
   columns: {
-    dataset: { type: "string", primaryKey: true },
-    docId: { type: "string", primaryKey: true },
-    perspective: { type: "string", primaryKey: true },
-    rev: { type: "string", primaryKey: true },
+    id: { type: "string", primaryKey: true },
+    dataset: { type: "string", nullable: false },
+    docId: { type: "string", nullable: false },
+    perspective: { type: "string", nullable: false },
+    rev: { type: "string", nullable: false },
     timestamp: { type: "datetime", nullable: false },
     docJson: { type: "json", nullable: false },
   },
@@ -98,8 +99,9 @@ export const contentfnRevisions: TableDef = {
 export const contentfnAssets: TableDef = {
   name: CONTENTFN_TABLE_NAMES.assets,
   columns: {
-    dataset: { type: "string", primaryKey: true },
-    assetId: { type: "string", primaryKey: true },
+    id: { type: "string", primaryKey: true },
+    dataset: { type: "string", nullable: false },
+    assetId: { type: "string", nullable: false },
     contentType: { type: "string", nullable: false },
     filename: { type: "string", nullable: false },
     size: { type: "number", nullable: false },
@@ -113,7 +115,8 @@ export const contentfnAssets: TableDef = {
 export const contentfnWebhooks: TableDef = {
   name: CONTENTFN_TABLE_NAMES.webhooks,
   columns: {
-    webhookId: { type: "string", primaryKey: true },
+    id: { type: "string", primaryKey: true },
+    webhookId: { type: "string", nullable: false },
     dataset: { type: "string", nullable: false },
     url: { type: "string", nullable: false },
     secret: { type: "string", nullable: true },
@@ -125,8 +128,9 @@ export const contentfnWebhooks: TableDef = {
 export const contentfnWebhookQueue: TableDef = {
   name: CONTENTFN_TABLE_NAMES.webhookQueue,
   columns: {
-    eventId: { type: "string", primaryKey: true },
-    webhookId: { type: "string", primaryKey: true },
+    id: { type: "string", primaryKey: true },
+    eventId: { type: "string", nullable: false },
+    webhookId: { type: "string", nullable: false },
     attempt: { type: "number", nullable: false },
     nextRunAt: { type: "datetime", nullable: false },
     status: { type: "string", nullable: false },
@@ -137,7 +141,8 @@ export const contentfnWebhookQueue: TableDef = {
 export const contentfnEvents: TableDef = {
   name: CONTENTFN_TABLE_NAMES.events,
   columns: {
-    eventId: { type: "string", primaryKey: true },
+    id: { type: "string", primaryKey: true },
+    eventId: { type: "string", nullable: false },
     dataset: { type: "string", nullable: false },
     type: { type: "string", nullable: false },
     timestamp: { type: "datetime", nullable: false },
@@ -151,7 +156,8 @@ export const contentfnEvents: TableDef = {
 export const contentfnRtSessions: TableDef = {
   name: CONTENTFN_TABLE_NAMES.rtSessions,
   columns: {
-    connectionId: { type: "string", primaryKey: true },
+    id: { type: "string", primaryKey: true },
+    connectionId: { type: "string", nullable: false },
     subject: { type: "string", nullable: true },
     datasetScopes: { type: "json", nullable: true },
   },
@@ -186,7 +192,8 @@ export const ALL_TABLES: TableDef[] = [
 ];
 
 /** Runtime schema used to normalize values before they reach an app-supplied adapter. */
-export function getContentfnSchema(): TableSchemaMap {
+export function getContentfnSchema(options: { jsonStorage?: "native" | "json-text" } = {}): TableSchemaMap {
+  if (options.jsonStorage !== undefined && !["native", "json-text"].includes(options.jsonStorage)) throw new TypeError("jsonStorage must be native or json-text");
   return Object.fromEntries(
     ALL_TABLES.map((table) => [
       table.name,
@@ -198,7 +205,7 @@ export function getContentfnSchema(): TableSchemaMap {
             {
               type: column.type === "datetime" ? "datetime" : column.type,
               required: column.nullable !== true,
-              ...(column.type === "json" ? { jsonStorageType: "json-text" as const } : {}),
+              ...(column.type === "json" ? { jsonStorageType: options.jsonStorage ?? "json-text" as const } : {}),
               ...(column.type === "datetime"
                 ? { dateValueType: "iso-string" as const, dateStorageType: "iso-text" as const }
                 : {}),
@@ -208,4 +215,19 @@ export function getContentfnSchema(): TableSchemaMap {
       },
     ])
   );
+}
+
+/** Physical schema contract consumed by the shared Superfunctions schema CLI. */
+export function getSchema(config: { jsonStorage?: "native" | "json-text" } = {}): { version: number; schemas: import("@superfunctions/db").TableSchema[] } {
+  const runtime = getContentfnSchema(config);
+  return {
+    version: 2,
+    schemas: ALL_TABLES.map(table => ({
+      ...runtime[table.name],
+      fields: Object.fromEntries(Object.entries(runtime[table.name].fields).map(([name, field]) => [name,
+        field.type === "json" && field.jsonStorageType === "json-text" ? { type: "string" as const, required: field.required } : { ...field, ...(field.type === "string" && (table.columns[name].primaryKey || name === "id") ? { maxLength: 64 } : {}) },
+      ])),
+      indexes: [{ name: `${table.name}_identity`, fields: Object.entries(table.columns).filter(([, column]) => column.primaryKey).map(([name]) => name), unique: true }].filter(index => index.fields.length > 0),
+    })),
+  };
 }

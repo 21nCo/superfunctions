@@ -50,6 +50,7 @@ export async function webhookRegister(
   await config.db.create({
     model: CONTENTFN_TABLE_NAMES.webhooks,
     data: {
+      id: webhookId,
       webhookId,
       dataset: input.dataset,
       url: input.url,

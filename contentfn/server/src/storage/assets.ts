@@ -1,3 +1,4 @@
+import { documentStorageId } from "./documentIdentity.js";
 /**
  * Asset storage: upload and get with metadata persistence.
  * Implements ASSET-001.
@@ -100,6 +101,7 @@ export async function assetUpload(
   await config.db.create({
     model: CONTENTFN_TABLE_NAMES.assets,
     data: {
+      id: documentStorageId(input.dataset, assetId),
       dataset: input.dataset,
       assetId,
       contentType: input.contentType,

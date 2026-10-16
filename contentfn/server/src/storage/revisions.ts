@@ -15,7 +15,7 @@ import { ok, err } from "@contentfn/core";
 import { nowISO } from "../time/clock.js";
 import { generateRev } from "../rev/rev.js";
 import { CONTENTFN_TABLE_NAMES } from "./schema.js";
-import { documentStorageId } from "./documentIdentity.js";
+import { documentStorageId, revisionStorageId } from "./documentIdentity.js";
 
 export interface RevisionsStorageConfig {
   db: Adapter;
@@ -44,6 +44,7 @@ export async function appendRevision(
   await config.db.create({
     model: CONTENTFN_TABLE_NAMES.revisions,
     data: {
+      id: revisionStorageId(input.dataset, input.docId, input.perspective, input.rev),
       dataset: input.dataset,
       docId: input.docId,
       perspective: input.perspective,

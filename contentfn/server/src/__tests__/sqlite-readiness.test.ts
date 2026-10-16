@@ -38,6 +38,11 @@ it("runs transactional CRUD, revisions, publication and rollback with native SQL
     const restarted = createContentfnServer({ db });
     expect(await (await restarted.router.handle(request())).json()).toEqual(first);
     expect(await server.api.docs.query({ dataset: "prod" })).toMatchObject({ ok: true, result: { data: expect.arrayContaining([expect.objectContaining({ title: "Once" })]) } });
+    const longId = '文'.repeat(1000);
+    expect(await server.api.docs.create({ dataset: "prod", id: longId, type: "post", doc: { title: "Long public ID" } })).toMatchObject({ ok: true });
+    expect(await server.api.docs.get({ dataset: "prod", id: longId })).toMatchObject({ ok: true, result: { _id: longId } });
+    const physical = sqlite.prepare('SELECT id FROM contentfn_docs_published WHERE documentId = ?').get(longId) as { id: string };
+    expect(physical.id).toMatch(/^[a-f0-9]{64}$/);
     expect(await server.api.datasets.delete({ dataset: "prod" })).toMatchObject({ ok: true });
   } finally { await db.close(); }
 });

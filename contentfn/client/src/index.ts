@@ -61,7 +61,7 @@ export function createContentfnClient(options: ContentfnClientOptions) {
   }
   const query = (input: CfqlQuery) => request<CfqlResultPage>("query", input);
   return {
-    realtime: { subscribe: (input: { dataset: string; docId?: string; signal?: AbortSignal }) => streamContentfnEvents(options, input) },
+    realtime: { subscribe: (input: { dataset: string; docId?: string; query?: import("@contentfn/core").CfqlQuery; signal?: AbortSignal }) => streamContentfnEvents(options, input) },
     datasets: {
       create: (input: { dataset: string }) => request<{ dataset: string }>("datasets/create", input),
       list: () => request<{ datasets: string[] }>("datasets/list"),

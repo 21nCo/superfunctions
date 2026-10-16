@@ -1,3 +1,4 @@
+import { documentStorageId } from "./documentIdentity.js";
 import type { ContentfnDatabase as Adapter } from "./database.js";
 import { nowISO } from "../time/clock.js";
 import { CONTENTFN_TABLE_NAMES } from "./schema.js";
@@ -28,6 +29,7 @@ export async function enqueueWebhookDelivery(
   await config.db.create({
     model: CONTENTFN_TABLE_NAMES.webhookQueue,
     data: {
+      id: documentStorageId(input.eventId, input.webhookId),
       eventId: input.eventId,
       webhookId: input.webhookId,
       attempt: 0,

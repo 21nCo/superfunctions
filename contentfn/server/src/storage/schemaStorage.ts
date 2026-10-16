@@ -109,9 +109,9 @@ export async function schemaUpsert(
       }
     }
   }
-  await config.db.update({
+  const changed = await config.db.updateMany({
     model: CONTENTFN_TABLE_NAMES.schema,
-    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }, { field: "version", operator: "eq" as const, value: cur.version }, { field: "schemaHash", operator: "eq" as const, value: cur.schemaHash }],
     data: {
       version: schema.version,
       schemaJson: schema,
@@ -119,5 +119,6 @@ export async function schemaUpsert(
       updatedAt: now,
     },
   });
+  if (changed !== 1) return err("SCHEMA_VERSION_CONFLICT", "Schema changed concurrently; reload before applying the update", { dataset: input.dataset });
   return ok({ schemaHash: hash });
 }

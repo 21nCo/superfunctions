@@ -52,6 +52,7 @@ export async function appendEvent(
   await config.db.create({
     model: CONTENTFN_TABLE_NAMES.events,
     data: {
+      id: eventId,
       eventId,
       dataset: input.dataset,
       type: input.type,

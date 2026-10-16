@@ -31,11 +31,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "superfunctions": {
-    "initFunction": "contentFn",
-    "schemaVersion": 1,
-    "namespace": "contentfn"
-  },
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",

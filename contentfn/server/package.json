@@ -32,8 +32,8 @@
     "access": "public"
   },
   "superfunctions": {
-    "initFunction": "contentFn",
-    "schemaVersion": 1,
+    "initFunction": "createContentfnServer",
+    "schemaVersion": 2,
     "namespace": "contentfn"
   },
   "scripts": {
