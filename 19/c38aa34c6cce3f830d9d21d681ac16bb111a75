@@ -1,0 +1,21 @@
+.github/workflows/ci.yml
+  s_e1c5fc1a65c0cf::t_c1b27f7a471025 179-180
+scripts/gate-mcpfn-release.mjs
+  s_e1c5fc1a65c0cf::t_4dee384fe53c2a 67-76,78,81,91,109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "19c38aa34c6cce3f830d9d21d681ac16bb111a75",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
