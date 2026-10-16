@@ -1,0 +1,19 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_17fc4bb0c4b3fa 4568-4596,4639-4666,54113,54133,54557-54585,58495-58523,58570-58598
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f3592bd2bba9e87b5fe19807b4e53aed9247906",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
