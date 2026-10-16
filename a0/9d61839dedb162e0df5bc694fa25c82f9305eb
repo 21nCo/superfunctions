@@ -1,0 +1,79 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_c8acb87d06e499 1-115
+flowfn/python/flowfn/__init__.py
+  s_e1c5fc1a65c0cf::t_a3862abc35fc41 1-8
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_e8e9d1b8b331eb 1-69
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_41ff5ee0e8fcfd 1-169
+flowfn/python/flowfn/core/flow.py
+  s_e1c5fc1a65c0cf::t_fb0c01494f305d 1-136
+flowfn/python/flowfn/core/metrics.py
+  s_e1c5fc1a65c0cf::t_d0a9d7910d19c9 1-131
+flowfn/python/flowfn/monitoring/health.py
+  s_e1c5fc1a65c0cf::t_ea1c02af3b4c81 1-213
+flowfn/python/flowfn/patterns/batching.py
+  s_e1c5fc1a65c0cf::t_ffb0cfb68a4ff9 1-125
+flowfn/python/flowfn/patterns/priority.py
+  s_e1c5fc1a65c0cf::t_ae241263d11d39 1-66
+flowfn/python/flowfn/patterns/rate_limit.py
+  s_e1c5fc1a65c0cf::t_bf4cf4d4b4aba1 1-118
+flowfn/python/flowfn/queue/dlq.py
+  s_e1c5fc1a65c0cf::t_dee222f4057f54 1-139
+flowfn/python/flowfn/queue/queue.py
+  s_e1c5fc1a65c0cf::t_5c60df04d8e0c3 1-237
+flowfn/python/flowfn/queue/types.py
+  s_e1c5fc1a65c0cf::t_94f9f1e69f9dec 1-101
+flowfn/python/flowfn/storage/event_log.py
+  s_e1c5fc1a65c0cf::t_2f34b6d6b73e82 1-149
+flowfn/python/flowfn/storage/job_storage.py
+  s_e1c5fc1a65c0cf::t_b1ba67b9e72220 1-103
+flowfn/python/flowfn/storage/workflow_storage.py
+  s_e1c5fc1a65c0cf::t_eeb02a4168084e 1-96
+flowfn/python/flowfn/stream/stream.py
+  s_e1c5fc1a65c0cf::t_3d4092dc6e3779 1-227
+flowfn/python/flowfn/stream/types.py
+  s_e1c5fc1a65c0cf::t_d8a5480d2815c8 1-71
+flowfn/python/flowfn/utils/hashing.py
+  s_e1c5fc1a65c0cf::t_e3263899849e54 1-25
+flowfn/python/flowfn/utils/ids.py
+  s_e1c5fc1a65c0cf::t_21a886a2f3af4a 1-52
+flowfn/python/flowfn/utils/time.py
+  s_e1c5fc1a65c0cf::t_b7dfddd0dd76a8 1-130
+flowfn/python/flowfn/workflow/builder.py
+  s_e1c5fc1a65c0cf::t_ddc2e0493cb5a9 1-60
+flowfn/python/flowfn/workflow/types.py
+  s_e1c5fc1a65c0cf::t_2e9ddf188483c3 1-86
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_85c7de60a74968 1-350
+flowfn/python/pyproject.toml
+  s_e1c5fc1a65c0cf::t_472082a62db151 1-81
+flowfn/python/tests/test_basic.py
+  s_e1c5fc1a65c0cf::t_1c80c9376c8f64 1-123
+flowfn/python/tests/test_integration.py
+  s_e1c5fc1a65c0cf::t_7b349b99edd393 1-182
+flowfn/python/tests/test_queue_lifecycle.py
+  s_e1c5fc1a65c0cf::t_bc4bc38e477407 1-131
+flowfn/python/tests/test_stream_lifecycle.py
+  s_e1c5fc1a65c0cf::t_80cd7e8f725753 1-37
+flowfn/python/tests/test_workflow.py
+  s_e1c5fc1a65c0cf::t_ee36d56c6683a7 1-149
+flowfn/python/tests/test_workflow_lifecycle.py
+  s_e1c5fc1a65c0cf::t_15f9de5bce5a68 1-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a09d61839dedb162e0df5bc694fa25c82f9305eb",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
