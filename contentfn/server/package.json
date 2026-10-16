@@ -1,0 +1,75 @@
+{
+  "name": "@contentfn/server",
+  "version": "0.2.0",
+  "description": "ContentFn server - HTTP endpoints and storage",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "contentfn/server"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "contentFn",
+    "schemaVersion": 1,
+    "namespace": "contentfn"
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest watch"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "keywords": [
+    "contentfn",
+    "server",
+    "storage"
+  ],
+  "sideEffects": false,
+  "dependencies": {
+    "@contentfn/core": "0.2.0",
+    "@mdfn/markdown": "0.1.0",
+    "@mdfn/extensions": "0.1.0",
+    "@mdfn/contentfn": "0.1.0",
+    "@superfunctions/db": "0.4.0",
+    "@superfunctions/http": "0.3.1",
+    "@superfunctions/storage": "0.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "better-sqlite3": "^12.5.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "kysely": "^0.28.0",
+    "@superfunctions/storage-local": "0.2.0"
+  }
+}
