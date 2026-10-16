@@ -1,0 +1,33 @@
+packages/db/README.md
+  s_e1c5fc1a65c0cf::t_35d96d49773f10 321-338
+packages/db/package.json
+  s_e1c5fc1a65c0cf::t_42dacd566e910f 3,68
+packages/db/src/adapter/__tests__/json-codecs.test.ts
+  s_e1c5fc1a65c0cf::t_8f091cf9ac4534 1-32
+packages/db/src/adapter/factory.ts
+  s_e1c5fc1a65c0cf::t_0bef90b8f4b504 17,40
+packages/db/src/adapter/schema-codecs.ts
+  s_e1c5fc1a65c0cf::t_fadaa533f8aa16 24-51,130-131,133,262,284,286-287,391,413-431
+packages/db/src/adapter/types.ts
+  s_e1c5fc1a65c0cf::t_ce6b93c5535b7f 219-220
+packages/db/src/adapters/kysely/index.ts
+  s_e1c5fc1a65c0cf::t_8b7e5ba86e900b 166,246,254
+packages/db/src/adapters/kysely/returning.test.ts
+  s_e1c5fc1a65c0cf::t_1a58facd33e115 1-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1b05e33eb55e27c07f7ebefdd01b7175d6d81ae7",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
