@@ -3,6 +3,7 @@
 from datetime import datetime
 import json
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -13,7 +14,7 @@ from browsefn.core.types import (
     PageResult,
     ProviderCapabilities,
 )
-from browsefn.utils.html_utils import extract_images, extract_links, extract_metadata, extract_text, html_to_markdown
+from browsefn.utils.html_utils import extract_images, extract_links, extract_metadata, extract_text, html_to_markdown, apply_selectors
 
 
 class BeautifulSoupProvider:
@@ -26,7 +27,7 @@ class BeautifulSoupProvider:
         screenshots=False,
         cookies=True,
         headers=True,
-        selectors=False,
+        selectors=True,
         proxy=True,
     )
 
@@ -34,21 +35,21 @@ class BeautifulSoupProvider:
         start_time = datetime.now()
         timeout = (options.timeout or 30000) / 1000
         headers = options.headers or {}
-        cookies = {
-            cookie.name: cookie.value
-            for cookie in (options.cookies or [])
-        } or None
+        cookies = httpx.Cookies()
+        for cookie in options.cookies or []:
+            cookies.set(cookie.name, cookie.value, domain=cookie.domain or urlparse(url).hostname or "", path="/")
 
         client_config: Dict[str, object] = {
             "timeout": timeout,
             "headers": headers,
+            "cookies": cookies,
             "follow_redirects": True,
         }
         if options.proxy:
             client_config["proxy"] = options.proxy
 
         async with httpx.AsyncClient(**client_config) as client:
-            response = await client.get(url, cookies=cookies)
+            response = await client.get(url)
             response.raise_for_status()
             html_content = response.text
             resolved_url = str(response.url)
@@ -64,6 +65,9 @@ class BeautifulSoupProvider:
             openGraph=metadata_dict.get("openGraph"),
             twitter=metadata_dict.get("twitter"),
         )
+
+        if options.selectors:
+            html_content = apply_selectors(html_content, options.selectors)
 
         content_format = options.format or "html"
         if content_format == "html":

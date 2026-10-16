@@ -2,6 +2,9 @@
  * Cache manager for storing and retrieving responses.
  */
 
+import { Logger } from '../middleware/logging.js';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex } from '@noble/hashes/utils';
 import { BrowseFnError } from './errors.js';
 import { createPersistentStore, CACHE_DATABASE_SCHEMA, type CacheStore, type Entries } from './cache-storage.js';
 import type { CacheConfig } from './types.js';
@@ -89,7 +92,7 @@ export class CacheManager {
     return [
       method.trim().toLowerCase(),
       CacheManager.normalizeUrl(url),
-      CacheManager.stableStringify(CacheManager.normalizeOptions(options)),
+      bytesToHex(sha256(CacheManager.stableStringify(CacheManager.normalizeOptions(options)))),
     ].join(':');
   }
 
@@ -140,7 +143,7 @@ export class CacheManager {
   }
 
   async get<T>(method: string, url: string, options: unknown = {}): Promise<T | null> {
-    if (!this.config.enabled) return null;
+    if (!this.config.enabled || Logger.hasUrlCredentials(url)) return null;
     const result = await this.run(entries => {
       this.prune(entries);
       const key = this.generateKey(method, url, options); const entry = entries.get(key);
@@ -153,7 +156,7 @@ export class CacheManager {
   }
 
   async set<T>(method: string, url: string, data: T, options: unknown = {}): Promise<void> {
-    if (!this.config.enabled) return;
+    if (!this.config.enabled || Logger.hasUrlCredentials(url)) return;
     const key = this.generateKey(method, url, options); const ttl = this.resolveTtl(options);
     const storedData = structuredClone(data);
     if (!Number.isFinite(ttl) || ttl <= 0) throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Cache ttl must be greater than 0.' });

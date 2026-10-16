@@ -50,3 +50,25 @@ contract evidence is in browsefn/.conduct/browser-geo-acceptance.md.
 Still open: image-download security, packaged consumers, provider contract sweep,
 dependency audit, reproducible scanner pinning, CI and remaining specification
 requirements. Passing this gate does not close these wider requirements.
+
+## 0.2 requirement and installed-consumer checkpoint (2026-10-15)
+
+Completed the previously open image-security/transform and runtime-contract work. Image transfer validates DNS in the connecting lookup, rejects private/reserved addresses and redirects, bounds bytes/deadlines, and publishes files without accidental overwrite. Both SDKs perform decoded resize/crop/format/quality/watermarks and provider-size URL selection; prior detailed evidence remains in image-download-security.md and image-transformations.md.
+
+This checkpoint fixes aggregate cross-provider quotas, status-aware retries, per-call retry overrides, configured fallbackOnErrors, Python request identity/TTL, structured Markdown, all matching selectors, and scope-aware Python cookies. Firecrawl and Jina now use their documented JSON protocols, preserve target authentication separately, return actual HTML and securely downloaded screenshots, and reject vendor-inexpressible lifecycle/proxy combinations. Cheerio's advertised proxy transport now works through a real CONNECT proxy. Deterministic web.userAgents rotation is implemented and tested through target HTTP requests in both SDKs.
+
+Credential tests scan actual persistent cache files and SDK logs. Default option keys are SHA-256 fingerprints; credential-bearing URLs bypass caching. Known API/header/cookie credentials are redacted even when a provider echoes them in an error. Request-specific redaction secrets are released after completion, including cache-hit/error paths; provider config remains in process memory. Cached response contents remain plaintext and may themselves be sensitive. BrowseFn is not a credential vault; documented SecFn composition uses the existing encrypted server/runtime capability. Clear legacy caches whose old keys could contain credentials.
+
+Version and publication requirements: TypeScript/Python/admin align at 0.2.0. Node >=20.19.0 and Python >=3.10 are explicit minimums. Shared @superfunctions/http 0.3.1 adds a router-only export and must be published first; middleware loads lazily so synchronous CJS router construction remains supported. Sharp ^0.35.5 removes the vulnerable image-library release. Turndown 7.2.4 supplies structural Markdown; Undici 6.29 supplies proxy transport; @noble/hashes 1.8 supplies synchronous SHA-256 in Node and browsers without breaking memory has(). The duplication scanner is now pinned to the measured jscpd5.4.1.
+
+Validation of current source:
+
+- Full source gate: build, typecheck, 130 TypeScript tests, 94 Python3.12 tests; duplicated lines527 / 4.738782% (unchanged maximum5%). Final log `/tmp/sf-browse-complete-gate.log`.
+- Python3.10:94 tests pass (`/tmp/sf-browse-complete-py310.log`). Shared-core emits18 existing Pydantic deprecation warnings; no new failures.
+- Admin typecheck/build and7 tests pass at0.2.0.
+- Native Chrome154.0.8037.58 IndexedDB:20 concurrent writes, reopen, binary, rollback and namespace isolation pass (`/tmp/sf-browse-security-browser.log`). Browser SHA-256 path is included.
+- Fresh production-only npm install from seven local tarballs (BrowseFn plus shared HTTP/middleware/db/storage/storage-local/observability), not workspace hoisting: ESM real HTTP+router and CJS synchronous Browse/shared router+lazy rate limiter pass on exact Node20.19.0. NodeNext declaration consumer passes. Fresh npm audit runtime graph has0 vulnerabilities (`/tmp/sf-browse-complete-pack.log`; consumer path in `/tmp/sf-browse-patched-consumer`). This does not claim the whole monorepo is vulnerability-free.
+- Fresh Python3.12 venv installed built BrowseFn0.2.0 and shared-core wheels plus declared dependencies; actual localhost Markdown scraping and router construction pass (`/tmp/sf-browse-complete-wheel.log`). No editable checkout imports.
+- Meaningful regressions include real HTTP503/404/retry counts, stalled remote timeout, actual CONNECT proxy, cross-credential persistent cache isolation/TTL, persisted-secret scans, upstream error redaction, concurrent aggregate quotas, native database/cache operations, decoded screenshots, and documented remote protocol fixtures.
+
+External gates remain publication of the shared prerequisite, hosted CI, deployment/router authorization, and optional paid-provider acceptance under actual account entitlement. No paid remote requests, package publication, push or deployment occurred. The original gate flag alone is not a claim that these external gates ran. Provider-specific limitations and source links are in provider-contracts.md; runtime migration and credential-storage notes are linked from package READMEs.

@@ -4,11 +4,8 @@
 
 import { Buffer } from 'node:buffer';
 
-import {
-  createRouter,
-  type RouteContext,
-  type Router,
-} from '@superfunctions/http';
+import { createRouter } from '@superfunctions/http/router';
+import type { RouteContext, Router } from '@superfunctions/http';
 
 import type { BrowseFn } from '../core/browse-fn.js';
 import type { ImageSearchOptions } from '../core/types.js';

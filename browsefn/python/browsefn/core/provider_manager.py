@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, Generic, List, Optional, Tuple, TypeVar
 
-from browsefn.core.errors import BrowseFnError
+from browsefn.core.errors import BrowseFnError, normalize_provider_error
 
 T = TypeVar("T")
 
@@ -43,10 +43,12 @@ class ProviderManager(Generic[T]):
         providers: Dict[str, T],
         default_provider: Optional[str] = None,
         fallback_chain: Optional[List[str]] = None,
+        fallback_on_errors: Optional[List[str]] = None,
     ):
         self.providers = providers
         self.default_provider = default_provider
         self.fallback_chain = fallback_chain or []
+        self.fallback_on_errors = fallback_on_errors
         self.availability_cache = AvailabilityCache(self.AVAILABILITY_CACHE_TTL)
 
     def get_provider(self, name: Optional[str] = None) -> T:
@@ -145,6 +147,7 @@ class ProviderManager(Generic[T]):
                     f"Provider {provider_name} is not available.",
                     provider=provider_name,
                 )
+                self._assert_fallback_allowed(error)
                 errors.append((provider_name, error))
                 if index < len(chain) - 1 and on_fallback:
                     on_fallback(provider_name, chain[index + 1], error)
@@ -153,11 +156,18 @@ class ProviderManager(Generic[T]):
             try:
                 return await executor(provider, provider_name)
             except Exception as error:
+                error = normalize_provider_error(error, provider_name)
+                self._assert_fallback_allowed(error)
                 errors.append((provider_name, error))
                 if index < len(chain) - 1 and on_fallback:
                     on_fallback(provider_name, chain[index + 1], error)
 
         raise self._summarize_errors(errors)
+
+    def _assert_fallback_allowed(self, error: BrowseFnError) -> None:
+        aliases = {"RATE_LIMIT": "RATE_LIMITED", "TIMEOUT": "UPSTREAM_TIMEOUT", "NOT_FOUND": "UPSTREAM_NOT_FOUND"}
+        if self.fallback_on_errors is not None and error.code not in [aliases.get(code, code) for code in self.fallback_on_errors]:
+            raise error
 
     def _summarize_errors(self, errors: List[Tuple[str, Exception]]) -> BrowseFnError:
         if not errors:

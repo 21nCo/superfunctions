@@ -112,11 +112,24 @@ def extract_metadata(html: str) -> Dict[str, Any]:
 
 
 def html_to_markdown(html: str) -> str:
-    text = extract_text(html)
-    return re.sub(r"\s+", " ", text).strip()
+    import html2text
+    converter = html2text.HTML2Text()
+    converter.body_width = 0
+    return converter.handle(html).strip()
 
 
 def clean_html(html: str) -> str:
     html = re.sub(r"<script.*?</script>", "", html, flags=re.IGNORECASE | re.DOTALL)
     html = re.sub(r"<style.*?</style>", "", html, flags=re.IGNORECASE | re.DOTALL)
     return unescape(html)
+
+
+def apply_selectors(html: str, selectors) -> str:
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    for selector in selectors.exclude or []:
+        for node in soup.select(selector):
+            node.decompose()
+    if selectors.include:
+        return "".join(str(node) for node in soup.select(",".join(selectors.include)))
+    return str(soup)

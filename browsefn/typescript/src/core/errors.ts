@@ -96,3 +96,14 @@ export function createErrorEnvelope(
     meta: { requestId },
   };
 }
+
+/** Preserve HTTP status across provider normalization and retry policy. */
+export function getUpstreamStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const value = error as { statusCode?: unknown; status?: unknown; code?: unknown; details?: Record<string, unknown>; message?: string };
+  for (const status of [value.statusCode, value.status, value.details?.statusCode, value.code]) {
+    if (typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599) return status;
+  }
+  const match = value.message?.match(/(?:HTTP|API error:)\s*(\d{3})\b/i);
+  return match ? Number(match[1]) : undefined;
+}

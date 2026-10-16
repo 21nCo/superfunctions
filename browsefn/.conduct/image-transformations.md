@@ -1,6 +1,6 @@
 # Image transformation and size-selection contract
 
-Both SDKs implement SPEC.md image downloads with sharp 0.34.5 (TypeScript) and Pillow 12.3.0 (Python; supported dependency range >=11.3,<13). These are package dependencies, not optional runtime promises. Python >=3.10 remains the declared minimum.
+Both SDKs implement SPEC.md image downloads with sharp 0.35.5 (TypeScript) and Pillow 12.3.0 (Python; supported dependency range >=11.3,<13). These are package dependencies, not optional runtime promises. Python >=3.10 remains the declared minimum.
 
 ## Processing order and output
 

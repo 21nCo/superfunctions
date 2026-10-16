@@ -1,6 +1,6 @@
 {
   "name": "@browsefn/admin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Function-owned Super Console administration capability for BrowseFn",
   "type": "module",
   "main": "./dist/index.js",
@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@superfunctions/admin": "0.1.4",
-    "browsefn": "0.1.0"
+    "browsefn": "0.2.0"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

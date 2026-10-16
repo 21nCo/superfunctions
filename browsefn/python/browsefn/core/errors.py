@@ -72,3 +72,19 @@ def create_error_envelope(error: BrowseFnError, request_id: str) -> Dict[str, An
         },
         "meta": {"requestId": request_id},
     }
+
+
+def upstream_status(error: Exception) -> Optional[int]:
+    values = [getattr(error, "status_code", None), getattr(error, "status", None),
+              getattr(getattr(error, "response", None), "status_code", None),
+              (getattr(error, "details", None) or {}).get("statusCode"), getattr(error, "code", None)]
+    return next((value for value in values if isinstance(value, int) and 100 <= value <= 599), None)
+
+
+def normalize_provider_error(error: Exception, provider: Optional[str] = None) -> BrowseFnError:
+    if isinstance(error, BrowseFnError):
+        return error
+    import httpx
+    status = upstream_status(error)
+    code = "UPSTREAM_TIMEOUT" if isinstance(error, httpx.TimeoutException) or status in {408, 504} else "RATE_LIMITED" if status == 429 else "UPSTREAM_NOT_FOUND" if status == 404 else "PROVIDER_ERROR"
+    return BrowseFnError(code, str(error), provider=provider, details={"statusCode": status} if status else None)

@@ -321,3 +321,16 @@ describe('WebScraper', () => {
     });
   });
 });
+
+it.each([
+  [undefined, true], [[], false], [['TIMEOUT'], true], [['RATE_LIMIT'], false],
+] as [string[] | undefined, boolean][])('honors fallback policy %j', async (policy, allowed) => {
+  const scraper = new WebScraper(undefined, undefined, 'a', ['b'], undefined, policy);
+  const capabilities = { formats: ['html'] as ['html'], javascript: false, screenshots: false, cookies: false, headers: true, selectors: false };
+  const second = vi.fn(async (url: string) => ({ url, content: 'ok', metadata: { url }, provider: 'b', duration: 0 }));
+  scraper.registerProvider(new MockWebProvider('a', capabilities, { getPage: async () => { throw new BrowseFnError({ code: 'UPSTREAM_TIMEOUT', message: 'timeout' }); } }));
+  scraper.registerProvider(new MockWebProvider('b', capabilities, { getPage: second }));
+  if (allowed) expect((await scraper.getPage('https://example.com')).content).toBe('ok');
+  else await expect(scraper.getPage('https://example.com')).rejects.toMatchObject({ code: 'UPSTREAM_TIMEOUT' });
+  expect(second).toHaveBeenCalledTimes(allowed ? 1 : 0);
+});

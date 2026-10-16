@@ -128,7 +128,7 @@ async def test_browsefn_records_cache_metrics_logs_and_events():
         provider="unsplash",
         cache_enabled=True,
         cache_method="GET",
-        cache_url="https://api.unsplash.com/search?client_id=SECRET",
+        cache_url="https://api.unsplash.com/search?q=landscape",
         cache_options={"provider": "unsplash"},
         fn=payload,
     )
@@ -137,7 +137,7 @@ async def test_browsefn_records_cache_metrics_logs_and_events():
         provider="unsplash",
         cache_enabled=True,
         cache_method="GET",
-        cache_url="https://api.unsplash.com/search?client_id=SECRET",
+        cache_url="https://api.unsplash.com/search?q=landscape",
         cache_options={"provider": "unsplash"},
         fn=payload,
     )
@@ -157,6 +157,9 @@ class FakeDefaultWebService:
         self.config = WebConfig()
         self.providers = {"cheerio": object()}
         self.provider_manager = SimpleNamespace(default_provider="cheerio")
+
+    def prepare_options(self, options):
+        return options
 
     async def get_page(self, url, options):
         return PageResult(

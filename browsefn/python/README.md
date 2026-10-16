@@ -2,6 +2,8 @@
 
 The Python package published from this directory is `browsefn`.
 
+Requires Python **>=3.10**. See [0.2 migration notes](../.conduct/migration-0.2.md) for retry, fallback and cache behavior changes.
+
 ## Install
 
 ```bash

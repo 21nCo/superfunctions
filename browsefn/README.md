@@ -127,6 +127,16 @@ python3 -m pytest browsefn/python/tests/test_web.py browsefn/python/tests/test_i
 
 - [TypeScript README](./typescript/README.md)
 - [Python README](./python/README.md)
-- [Quickstart](./.conduct/QUICKSTART.md)
-- [Implementation Notes](./.conduct/IMPLEMENTATION.md)
 - [Python Testing Guide](./python/TESTING.md)
+
+## Runtime and migration requirements
+
+BrowseFn 0.2.0 requires Node.js **20.19.0 or newer** for the TypeScript package and Python **3.10 or newer** for the Python package. The Node floor is a compatibility change from the earlier source package: synchronous CommonJS loading of the shared ESM router requires Node 20.19, and patched image processing uses Sharp 0.35.5 (which itself requires Node 20.9). ESM and CommonJS remain supported; `createBrowseFnRouter` remains synchronous.
+
+Publish/install `@superfunctions/http@0.3.1` before BrowseFn 0.2.0: it adds the independent `@superfunctions/http/router` export. Other shared dependency versions are unchanged. This branch does not publish packages.
+
+Per-call `retry.count` now means retries **after** the initial attempt and overrides global retry settings; `count: 0` disables retries for that call. `fallbackOnErrors: []` disables fallback, while an omitted policy retains fallback for all provider errors. Configured global quotas now apply across providers. Cache entries now fingerprint full request options, including credentials and TTL; previous cache entries are not reused under the new fingerprints.
+
+See [provider protocol limits](./.conduct/provider-contracts.md) and [0.2 migration notes](./.conduct/migration-0.2.md) for remote-provider and cache details.
+
+Configure `web.userAgents` for deterministic target User-Agent rotation. Explicit per-call User-Agent headers take precedence. See [credential storage](./.conduct/credential-storage.md) for credential URL cache bypass, legacy-cache cleanup, log redaction and SecFn integration.

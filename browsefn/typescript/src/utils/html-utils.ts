@@ -3,6 +3,7 @@
  */
 
 import * as cheerio from 'cheerio';
+import TurndownService from 'turndown';
 import type { PageMetadata } from '../core/types.js';
 
 /**
@@ -18,43 +19,13 @@ export function htmlToText(html: string): string {
   return $('body').text().trim().replace(/\s+/g, ' ');
 }
 
-/**
- * Convert HTML to markdown (basic implementation)
- */
+/** Preserve document order, nested lists, links, emphasis and fenced code. */
 export function htmlToMarkdown(html: string): string {
-  const $ = cheerio.load(html);
-  
-  // Remove script and style tags
-  $('script, style, noscript').remove();
-  
-  let markdown = '';
-  
-  // Process headings
-  for (let i = 1; i <= 6; i++) {
-    $(`h${i}`).each((_, el) => {
-      const text = $(el).text().trim();
-      markdown += `${'#'.repeat(i)} ${text}\n\n`;
-    });
-  }
-  
-  // Process paragraphs
-  $('p').each((_, el) => {
-    const text = $(el).text().trim();
-    if (text) {
-      markdown += `${text}\n\n`;
-    }
-  });
-  
-  // Process links
-  $('a').each((_, el) => {
-    const href = $(el).attr('href');
-    const text = $(el).text().trim();
-    if (href && text) {
-      markdown += `[${text}](${href}) `;
-    }
-  });
-  
-  return markdown.trim();
+  const converter = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
+  converter.remove(['script', 'style', 'noscript']);
+  // Preserve tables as HTML rather than silently discarding their structure.
+  converter.keep(['table']);
+  return converter.turndown(html);
 }
 
 /**
@@ -199,7 +170,7 @@ export function applySelectors(
   // Apply include selectors
   if (selectors.include && selectors.include.length > 0) {
     const includedHtml = selectors.include
-      .map(selector => $(selector).html())
+      .flatMap(selector => $(selector).toArray().map(element => $.html(element)))
       .filter(Boolean)
       .join('\n');
     return includedHtml;

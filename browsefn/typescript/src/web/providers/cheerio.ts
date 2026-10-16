@@ -3,6 +3,7 @@
  */
 
 import * as cheerio from 'cheerio';
+import { ProxyAgent, fetch as proxyFetch } from 'undici';
 import type { WebProvider, GetPageOptions, PageResult, ProviderCapabilities } from '../../core/types.js';
 import { extractMetadata, extractLinks, extractImages, applySelectors, htmlToText, htmlToMarkdown } from '../../utils/html-utils.js';
 import { sanitizeUrl } from '../../utils/validation.js';
@@ -17,6 +18,7 @@ export class CheerioProvider implements WebProvider {
     cookies: false,
     headers: true,
     selectors: true,
+    proxy: true,
     scriptExecution: false
   };
 
@@ -26,19 +28,18 @@ export class CheerioProvider implements WebProvider {
     const startTime = Date.now();
     const sanitizedUrl = sanitizeUrl(url);
     
-    // Fetch HTML
-    const response = await fetch(sanitizedUrl, {
-      headers: options.headers,
-      signal: AbortSignal.timeout(options.timeout || this.config.timeout || 10000)
-    });
+    const agent = options.proxy ? new ProxyAgent(options.proxy) : undefined;
+    let html: string, resolvedUrl: string;
+    try {
+      const requestOptions = { headers: options.headers, signal: AbortSignal.timeout(options.timeout || this.config.timeout || 10000) };
+      const response = agent
+        ? await proxyFetch(sanitizedUrl, { ...requestOptions, dispatcher: agent })
+        : await fetch(sanitizedUrl, requestOptions);
+      if (!response.ok) { await response.body?.cancel(); throw new Error(`HTTP ${response.status}: ${response.statusText}`); }
+      resolvedUrl = response.url || sanitizedUrl;
+      html = await response.text();
+    } finally { await agent?.close(); }
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const resolvedUrl = response.url || sanitizedUrl;
-    let html = await response.text();
-    
     // Apply selectors
     if (options.selectors) {
       html = applySelectors(html, options.selectors);

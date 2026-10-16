@@ -3,7 +3,7 @@
 from importlib import import_module
 from typing import Any, Dict, Tuple
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 _EXPORTS: Dict[str, Tuple[str, str]] = {
     "browse_fn": ("browsefn.core.browse_fn", "browse_fn"),

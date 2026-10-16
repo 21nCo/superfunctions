@@ -124,6 +124,8 @@ export interface RateLimitStatus {
 // ===== Web Scraping Types =====
 
 export interface WebConfig {
+  /** Round-robin target User-Agent values; explicit request headers take precedence. */
+  userAgents?: string[];
   defaultProvider?: string;
   providers?: Record<string, ProviderConfig>;
   fallbackChain?: string[];

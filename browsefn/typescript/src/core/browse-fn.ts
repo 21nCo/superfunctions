@@ -106,6 +106,9 @@ export class BrowseFn {
     }
 
     this.logger = new Logger();
+    this.logger.registerSecrets(config.web?.providers);
+    this.logger.registerSecrets(config.images?.providers);
+    this.logger.registerSecrets(config.geo?.providers);
     this.metricsCollector = new MetricsCollector();
 
     this.rateLimiter?.onRateLimited((status) => {
@@ -139,7 +142,9 @@ export class BrowseFn {
       this.rateLimiter,
       config.web?.defaultProvider,
       config.web?.fallbackChain,
-      operationHooks
+      operationHooks,
+      config.web?.fallbackOnErrors,
+      config.web?.userAgents
     );
 
     if (config.web?.providers) {
@@ -371,6 +376,7 @@ export class BrowseFn {
     buildContext: (input: any, options?: TOptions) => OperationContext
   ): (input: any, options?: TOptions) => Promise<TResult> {
     return async (input: any, options?: TOptions): Promise<TResult> => {
+      const releaseSecrets = this.logger.registerSecrets(options);
       const context = buildContext(input, options);
       const requestId = this.createRequestId();
       const startedAt = Date.now();
@@ -386,10 +392,11 @@ export class BrowseFn {
       });
 
       try {
-        const result = await this.executeWithRetry(
-          () => fn(input, options),
-          context,
-          requestId
+        // The web service implements per-call retry, including count=0. It
+        // replaces global policy instead of multiplying nested attempt counts.
+        const perCallRetry = operation === 'web.getPage' && (options as GetPageOptions | undefined)?.retry !== undefined;
+        const result = perCallRetry ? await fn(input, options) : await this.executeWithRetry(
+          () => fn(input, options), context, requestId
         );
 
         const meta = this.attachMeta(result, {
@@ -450,7 +457,7 @@ export class BrowseFn {
         });
 
         throw normalizedError;
-      }
+      } finally { releaseSecrets(); }
     };
   }
 

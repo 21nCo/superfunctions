@@ -87,11 +87,11 @@ class ProviderConfig(BaseModel):
 
 class RetryConfig(BaseModel):
     enabled: bool
-    max_attempts: int = Field(alias="maxAttempts")
-    delay: int
+    max_attempts: int = Field(alias="maxAttempts", ge=1, strict=True)
+    delay: int = Field(ge=0, strict=True)
     backoff: Literal['linear', 'exponential']
     retry_on: Optional[List[int]] = Field(None, alias="retryOn")
-    # on_retry omitted as it's a function
+    on_retry: Any = Field(None, alias="onRetry", exclude=True)
 
 # ===== Events =====
 
@@ -138,6 +138,7 @@ class RateLimitStatus(BaseModel):
 # ===== Web Scraping Types =====
 
 class WebConfig(BaseModel):
+    user_agents: Optional[List[str]] = Field(None, alias="userAgents")
     default_provider: Optional[str] = Field(None, alias="defaultProvider")
     providers: Optional[Dict[str, ProviderConfig]] = None
     fallback_chain: Optional[List[str]] = Field(None, alias="fallbackChain")
@@ -159,8 +160,8 @@ class CacheOptions(BaseModel):
     key: Optional[str] = None
 
 class RetryOptions(BaseModel):
-    count: int
-    delay: int
+    count: int = Field(ge=0, strict=True)
+    delay: int = Field(ge=0, strict=True)
 
 class Cookie(BaseModel):
     name: str

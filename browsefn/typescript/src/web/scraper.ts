@@ -2,7 +2,7 @@
  * Web scraper interface.
  */
 
-import { BrowseFnError, isBrowseFnError } from '../core/errors.js';
+import { BrowseFnError, isBrowseFnError, getUpstreamStatus } from '../core/errors.js';
 import type {
   GetPageOptions,
   MetadataOptions,
@@ -11,6 +11,7 @@ import type {
   PageResult,
   WebProvider,
 } from '../core/types.js';
+import { RetryMiddleware } from '../middleware/retry.js';
 import { CacheManager } from '../core/cache-manager.js';
 import { ProviderManager } from '../core/provider-manager.js';
 import { RateLimiter } from '../core/rate-limiter.js';
@@ -23,6 +24,7 @@ interface ServiceHooks {
 const DEFAULT_METADATA_BATCH_LIMIT = 50;
 
 export class WebScraper {
+  private userAgentIndex = 0;
   private providerManager: ProviderManager<WebProvider>;
 
   constructor(
@@ -30,8 +32,11 @@ export class WebScraper {
     private rateLimiter?: RateLimiter,
     defaultProvider?: string,
     fallbackChain?: string[],
-    private hooks?: ServiceHooks
+    private hooks?: ServiceHooks,
+    private fallbackOnErrors?: string[],
+    private userAgents: string[] = []
   ) {
+    if (userAgents.some(value => !value.trim() || /[\r\n]/.test(value))) throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'userAgents must contain non-empty valid header values.' });
     this.providerManager = new ProviderManager(defaultProvider, fallbackChain);
   }
 
@@ -39,7 +44,14 @@ export class WebScraper {
     this.providerManager.register(provider.name, provider);
   }
 
+  private withUserAgent(options: GetPageOptions): GetPageOptions {
+    if (!this.userAgents.length || Object.keys(options.headers ?? {}).some(key => key.toLowerCase() === 'user-agent')) return options;
+    const value = this.userAgents[this.userAgentIndex++ % this.userAgents.length];
+    return { ...options, headers: { ...options.headers, 'User-Agent': value } };
+  }
+
   async getPage(url: string, options: GetPageOptions = {}): Promise<PageResult> {
+    options = this.withUserAgent(options);
     const sanitizedUrl = sanitizeUrl(url);
     validateGetPageOptions(options);
 
@@ -51,11 +63,15 @@ export class WebScraper {
       }
     }
 
-    const result = await this.executeWithProviderFallback(
+    const execute = () => this.executeWithProviderFallback(
       sanitizedUrl,
       options,
       async (provider) => provider.getPage(sanitizedUrl, options)
     );
+
+    const result = options.retry
+      ? await new RetryMiddleware({ enabled: true, maxAttempts: options.retry.count + 1, delay: options.retry.delay, backoff: 'linear' }).execute(execute)
+      : await execute();
 
     if (cacheEnabled && this.cache) {
       await this.cache.set('getPage', sanitizedUrl, result, options);
@@ -130,6 +146,7 @@ export class WebScraper {
     url: string,
     options: GetPageOptions & { script?: (page: unknown) => Promise<T> | T }
   ): Promise<T> {
+    options = { ...options, ...this.withUserAgent(options) };
     const sanitizedUrl = sanitizeUrl(url);
     const script = options.script;
     if (!script) {
@@ -258,6 +275,8 @@ export class WebScraper {
     index: number,
     error: Error
   ): void {
+    const aliases: Record<string, string> = { RATE_LIMIT: 'RATE_LIMITED', TIMEOUT: 'UPSTREAM_TIMEOUT', NOT_FOUND: 'UPSTREAM_NOT_FOUND' };
+    if (this.fallbackOnErrors && !this.fallbackOnErrors.some(code => (aliases[code] ?? code) === (error as BrowseFnError).code)) throw error;
     if (index < chain.length - 1) {
       this.hooks?.onProviderFallback?.({
         from: chain[index],
@@ -416,9 +435,11 @@ export class WebScraper {
 
     const err = error instanceof Error ? error : new Error(String(error));
 
-    if (/HTTP 504|timed out|timeout/i.test(err.message)) {
+    const statusCode = getUpstreamStatus(err);
+    if (/timed out|timeout/i.test(err.message) || statusCode === 408 || statusCode === 504) {
       return new BrowseFnError({
         code: 'UPSTREAM_TIMEOUT',
+        details: statusCode ? { statusCode } : undefined,
         message: providerName
           ? `Provider ${providerName} timed out after configured retries.`
           : err.message,
@@ -427,7 +448,8 @@ export class WebScraper {
     }
 
     return new BrowseFnError({
-      code: providerName ? 'PROVIDER_ERROR' : 'INTERNAL_ERROR',
+      code: statusCode === 429 ? 'RATE_LIMITED' : statusCode === 404 ? 'UPSTREAM_NOT_FOUND' : providerName ? 'PROVIDER_ERROR' : 'INTERNAL_ERROR',
+      details: statusCode ? { statusCode } : undefined,
       message: err.message,
       provider: providerName,
     });

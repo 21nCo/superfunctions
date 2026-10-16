@@ -2,6 +2,8 @@
 
 The TypeScript package published from this directory is `browsefn`.
 
+Requires Node.js **>=20.19.0**. Version 0.2.0 changes the runtime floor; see [migration notes](../.conduct/migration-0.2.md). Both ESM and CommonJS are supported. `@superfunctions/http@0.3.1` must be available before publishing/installing this release.
+
 ## Install
 
 ```bash

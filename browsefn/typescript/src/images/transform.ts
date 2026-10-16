@@ -52,7 +52,7 @@ export async function transformImage(input: Uint8Array, options: ImageDownloadOp
     pipeline = decode(base.data);
     const watermark = options.watermark;
     if (watermark) {
-      const layers: sharp.OverlayOptions[] = [];
+      const layers: Parameters<ReturnType<typeof sharp>['composite']>[0] = [];
       const inputs: Uint8Array[] = [];
       if (watermark.image) inputs.push(await watermarkBytes(watermark.image, options));
       if (watermark.text) {

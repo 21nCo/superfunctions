@@ -14,6 +14,10 @@ import type {
  * Validate GetPageOptions
  */
 export function validateGetPageOptions(options: GetPageOptions): void {
+  if (options.retry && (!Number.isInteger(options.retry.count) || options.retry.count < 0 || !Number.isFinite(options.retry.delay) || options.retry.delay < 0)) {
+    throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Per-call retry requires a non-negative integer count and non-negative finite delay.' });
+  }
+
   if (options.format && !['html', 'markdown', 'text', 'json'].includes(options.format)) {
     throw new Error(`Invalid format: ${options.format}`);
   }

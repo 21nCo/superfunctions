@@ -1,6 +1,9 @@
 """Cache manager for storing and retrieving responses."""
 
+from browsefn.middleware.logging import Logger
+
 import json
+import hashlib
 import math
 import copy
 from collections import OrderedDict
@@ -95,7 +98,7 @@ class CacheManager:
         normalized_url = normalize_url(url)
         normalized_options = self._normalize_options(options)
         options_str = json.dumps(normalized_options, sort_keys=True, default=str) if options else ""
-        return f"{method}:{normalized_url}:{options_str}"
+        return f"{method}:{normalized_url}:{hashlib.sha256(options_str.encode()).hexdigest()}"
 
     async def _run(self, operation):
         if self._store is not None:
@@ -109,7 +112,7 @@ class CacheManager:
                 del entries[key]
 
     async def get(self, method: str, url: str, options: Any = None) -> Optional[Any]:
-        if not self.config.enabled:
+        if not self.config.enabled or Logger.has_url_credentials(url):
             return None
         key = self._generate_key(method, url, options)
         def operation(entries):
@@ -126,7 +129,7 @@ class CacheManager:
         return copy.deepcopy(entry.data)
 
     async def set(self, method: str, url: str, data: Any, options: Any = None) -> None:
-        if not self.config.enabled:
+        if not self.config.enabled or Logger.has_url_credentials(url):
             return
         key = self._generate_key(method, url, options)
         data = copy.deepcopy(data)

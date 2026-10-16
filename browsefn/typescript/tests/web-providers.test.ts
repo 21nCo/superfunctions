@@ -43,7 +43,6 @@ describe('Web providers', () => {
             markdown: '# Example',
             links: ['https://example.com/docs'],
             images: ['https://example.com/image.png'],
-            screenshot: Buffer.from('img').toString('base64'),
             metadata: {
               title: 'Example',
               description: 'Alpha',
@@ -57,7 +56,6 @@ describe('Web providers', () => {
       format: 'markdown',
       includeLinks: true,
       includeImages: true,
-      screenshot: true,
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -66,13 +64,13 @@ describe('Web providers', () => {
     expect(result.metadata.title).toBe('Example');
     expect(result.links).toEqual(['https://example.com/docs']);
     expect(result.images).toEqual(['https://example.com/image.png']);
-    expect(result.screenshot).toBeInstanceOf(Uint8Array);
+    expect(result.screenshot).toBeUndefined();
   });
 
   it('returns markdown content through the Jina provider contract', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
-      text: async () => '# Example Product\n\nPrice: $10.00',
+      json: async () => ({ code: 200, data: { html: '<h1>Example Product</h1><p>Price: $10.00</p>' } }),
     } as Response);
 
     const provider = new JinaProvider({ apiKey: 'test-key' });

@@ -40,5 +40,5 @@ def test_release_gate_document_matches_the_operator_command_list():
     assert "npm --prefix browsefn/typescript run test -- --run" in release_gate
     assert "python3 -m compileall browsefn/python/browsefn browsefn/python/tests" in release_gate
     assert "python3 -m pytest browsefn/python/tests -q" in release_gate
-    assert "npx jscpd browsefn/typescript/src browsefn/python/browsefn --min-lines 5 --min-tokens 50 --reporters console" in release_gate
+    assert "npx --yes jscpd@5.4.1 browsefn/typescript/src browsefn/python/browsefn --min-lines 5 --min-tokens 50 --reporters console" in release_gate
     assert "node browsefn/scripts/verify-release.mjs" in release_gate

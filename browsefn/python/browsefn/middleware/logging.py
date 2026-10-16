@@ -2,6 +2,7 @@
 
 from typing import List, Dict, Any, Optional, Literal
 from datetime import datetime
+import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from pydantic import BaseModel
@@ -30,10 +31,42 @@ class Logger:
         "client_id",
         "token",
         "signature",
+        "access_token", "password", "secret", "key",
     }
 
     def __init__(self):
         self.logs: List[LogEntry] = []
+        self.secrets: Dict[str, int] = {}
+
+    def register_secrets(self, value: Any):
+        found: set[str] = set()
+        seen: set[int] = set()
+        def visit(item):
+            if not isinstance(item, (dict, list)) or id(item) in seen:
+                return
+            seen.add(id(item))
+            if isinstance(item, list):
+                for child in item: visit(child)
+                return
+            for key, child in item.items():
+                if key.lower() in self.SENSITIVE_KEYS and isinstance(child, str) and child:
+                    found.add(child)
+                if key == "cookies" and isinstance(child, list):
+                    found.update(cookie["value"] for cookie in child if isinstance(cookie, dict) and cookie.get("value"))
+                visit(child)
+        visit(value)
+        for secret in found:
+            self.secrets[secret] = self.secrets.get(secret, 0) + 1
+        def release():
+            for secret in found:
+                self.secrets[secret] -= 1
+                if not self.secrets[secret]: del self.secrets[secret]
+        return release
+
+    @classmethod
+    def has_url_credentials(cls, value: str) -> bool:
+        parsed = urlparse(value)
+        return bool(parsed.username or parsed.password) or any(key.lower() in cls.SENSITIVE_KEYS for key, _ in parse_qsl(parsed.query))
 
     def _sanitize_url(self, value: str) -> str:
         parsed = urlparse(value)
@@ -43,7 +76,8 @@ class Logger:
                 query.append((key, "[REDACTED]"))
             else:
                 query.append((key, item))
-        return urlunparse(parsed._replace(query=urlencode(query)))
+        netloc = parsed.netloc.rsplit("@", 1)[-1] if parsed.username or parsed.password else parsed.netloc
+        return urlunparse(parsed._replace(netloc=netloc, query=urlencode(query)))
 
     def _sanitize(self, value: Any) -> Any:
         if isinstance(value, dict):
@@ -61,8 +95,13 @@ class Logger:
         if isinstance(value, list):
             return [self._sanitize(item) for item in value]
 
-        if isinstance(value, str) and value.startswith(("http://", "https://")):
-            return self._sanitize_url(value)
+        if isinstance(value, str):
+            if value.startswith(("http://", "https://")):
+                value = self._sanitize_url(value)
+            value = re.sub(r"https?://[^\s\"'<>]+", lambda match: self._sanitize_url(match.group(0)), value)
+            for secret in self.secrets:
+                value = value.replace(secret, "[REDACTED]")
+            return value
 
         return value
 
