@@ -172,7 +172,10 @@ class Workflow:
         await self._log_event(execution.id, "parallel.started", {"count": len(handlers)})
 
         # Run all in parallel
-        tasks = [asyncio.create_task(handler(context)) for handler in handlers]
+        async def invoke(handler: Any) -> None:
+            await handler(context)
+
+        tasks = [asyncio.create_task(invoke(handler)) for handler in handlers]
         try:
             await asyncio.gather(*tasks)
         except BaseException:

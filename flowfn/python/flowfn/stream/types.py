@@ -1,7 +1,7 @@
 """Stream type definitions."""
 
 from typing import Any, Optional, Callable, Awaitable
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 class PublishOptions(BaseModel):
@@ -27,13 +27,17 @@ class Message(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
+    _acknowledge: Optional[Callable[[bool], Awaitable[None]]] = PrivateAttr(default=None)
+
     async def ack(self) -> None:
         """Acknowledge message."""
-        pass
+        if self._acknowledge is not None:
+            await self._acknowledge(False)
 
     async def nack(self, requeue: bool = False) -> None:
         """Negative acknowledge."""
-        pass
+        if self._acknowledge is not None:
+            await self._acknowledge(requeue)
 
 
 class SubscribeOptions(BaseModel):
@@ -45,11 +49,11 @@ class SubscribeOptions(BaseModel):
 class ConsumerOptions(BaseModel):
     """Consumer group options."""
 
-    group_id: str
+    group_id: str = Field(min_length=1)
     from_beginning: bool = False
     auto_commit: bool = False
-    commit_interval: int = 1000
-    max_in_flight: int = 100
+    commit_interval: int = Field(default=1000, gt=0)
+    max_in_flight: int = Field(default=100, ge=1, le=10000)
 
 
 class StreamInfo(BaseModel):
@@ -63,8 +67,8 @@ class StreamInfo(BaseModel):
 class TrimStrategy(BaseModel):
     """Stream trim strategy."""
 
-    max_length: Optional[int] = None
-    max_age_seconds: Optional[int] = None
+    max_length: Optional[int] = Field(default=None, ge=0)
+    max_age_seconds: Optional[int] = Field(default=None, ge=0)
 
 
 # Type aliases

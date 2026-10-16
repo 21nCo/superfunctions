@@ -2,7 +2,7 @@
 
 from typing import Any, Protocol, Optional
 from flowfn.queue.types import Job, JobStatus, QueueStats
-from flowfn.stream.types import Message, StreamInfo
+from flowfn.stream.types import Message, StreamInfo, ConsumerOptions, TrimStrategy
 
 
 class FlowAdapter(Protocol):
@@ -46,12 +46,27 @@ class FlowAdapter(Protocol):
         """Subscribe to stream."""
         ...
 
-    async def consume(self, stream: str, group: str, consumer: str, handler: Any) -> Any:
+    async def consume(
+        self,
+        stream: str,
+        group: str,
+        consumer: str,
+        handler: Any,
+        options: Optional[ConsumerOptions] = None,
+    ) -> Any:
         """Consume from stream with consumer group."""
         ...
 
     async def get_stream_info(self, stream: str) -> StreamInfo:
         """Get stream information."""
+        ...
+
+    async def get_stream_messages(self, stream: str) -> list[Message]:
+        """Read retained stream messages in publication order."""
+        ...
+
+    async def trim_stream(self, stream: str, strategy: TrimStrategy) -> int:
+        """Remove retained messages according to the supplied limits."""
         ...
 
     # Workflow operations

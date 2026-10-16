@@ -27,6 +27,7 @@ class Stream:
         self._registrations: list[asyncio.Task[Any]] = []
         self._subscriptions: list[Any] = []
         self._closed = False
+        self._consumers: list[Consumer] = []
 
     async def publish(self, data: Any, opts: Optional[PublishOptions] = None) -> str:
         """Publish a message."""
@@ -43,16 +44,11 @@ class Stream:
             key=options.key,
         )
 
-        # Store locally
-        self._messages[message.id] = message
-
-        # Auto-trim if needed
+        message_id = await self._adapter.publish(self.name, message)
         max_length = self._options.get("max_length")
-        if max_length and len(self._messages) > max_length:
+        if max_length is not None:
             await self.trim(TrimStrategy(max_length=max_length))
-
-        # Publish to adapter
-        return await self._adapter.publish(self.name, message)
+        return message_id
 
     async def publish_batch(self, messages: list[dict[str, Any]]) -> list[str]:
         """Publish multiple messages."""
@@ -98,45 +94,28 @@ class Stream:
 
     def create_consumer(self, consumer_id: str, opts: ConsumerOptions) -> "Consumer":
         """Create a consumer."""
-        return Consumer(self.name, consumer_id, opts, self._adapter, self._messages)
+        if self._closed:
+            raise RuntimeError("Stream is closed")
+        consumer = Consumer(self.name, consumer_id, opts, self._adapter, self._messages)
+        self._consumers.append(consumer)
+        return consumer
 
     async def get_info(self) -> StreamInfo:
         """Get stream info."""
         info = await self._adapter.get_stream_info(self.name)
-        info.length = len(self._messages)
         return info
 
     async def trim(self, strategy: TrimStrategy) -> int:
         """Trim old messages."""
-        now = self._now()
-        to_delete: list[str] = []
-
-        if strategy.max_length:
-            # Sort by timestamp and keep newest
-            sorted_msgs = sorted(self._messages.items(), key=lambda x: x[1].timestamp, reverse=True)
-
-            if len(sorted_msgs) > strategy.max_length:
-                to_remove = sorted_msgs[strategy.max_length :]
-                to_delete.extend([msg_id for msg_id, _ in to_remove])
-
-        if strategy.max_age_seconds:
-            max_age = strategy.max_age_seconds * 1000
-            for msg_id, msg in self._messages.items():
-                if now - msg.timestamp > max_age:
-                    to_delete.append(msg_id)
-
-        # Remove duplicates
-        unique_to_delete = set(to_delete)
-        for msg_id in unique_to_delete:
-            self._messages.pop(msg_id, None)
-
-        return len(unique_to_delete)
+        return await self._adapter.trim_stream(self.name, strategy)
 
     async def get_messages(
         self, start: str, end: str, count: Optional[int] = None
     ) -> list[Message]:
         """Get messages by ID range."""
-        all_messages = sorted(self._messages.values(), key=lambda m: m.timestamp)
+        all_messages = sorted(
+            await self._adapter.get_stream_messages(self.name), key=lambda m: m.timestamp
+        )
 
         # Filter by range
         filtered = [m for m in all_messages if start <= m.id <= end]
@@ -150,7 +129,11 @@ class Stream:
     async def replay(self, from_timestamp: int, handler: MessageHandler) -> int:
         """Replay messages from timestamp."""
         messages = sorted(
-            [m for m in self._messages.values() if m.timestamp >= from_timestamp],
+            [
+                m
+                for m in await self._adapter.get_stream_messages(self.name)
+                if m.timestamp >= from_timestamp
+            ],
             key=lambda m: m.timestamp,
         )
 
@@ -159,13 +142,15 @@ class Stream:
 
         return len(messages)
 
-    def get_message_count(self) -> int:
+    async def get_message_count(self) -> int:
         """Get message count."""
-        return len(self._messages)
+        return (await self.get_info()).length
 
     async def close(self) -> None:
         """Finish registration and unsubscribe before adapter cleanup."""
         self._closed = True
+        for consumer in self._consumers:
+            await consumer.close()
         if self._registrations:
             await asyncio.gather(*self._registrations, return_exceptions=True)
             self._registrations.clear()
@@ -200,26 +185,25 @@ class Consumer:
 
     async def subscribe(self, handler: MessageHandler) -> None:
         """Subscribe with handler."""
-        # Replay from beginning if requested
-        if self.opts.from_beginning and self._messages:
-            sorted_messages = sorted(self._messages.values(), key=lambda m: m.timestamp)
-
-            for msg in sorted_messages:
-                if not self._paused:
-                    await handler(msg)
-
-        # Subscribe to new messages
+        if self._subscription is not None:
+            raise RuntimeError("Consumer is already subscribed")
         self._subscription = await self._adapter.consume(
-            self.stream, self.opts.group_id, self.consumer_id, handler
+            self.stream, self.opts.group_id, self.consumer_id, handler, self.opts
         )
+        if self._paused:
+            await self._subscription.pause()
 
     async def pause(self) -> None:
         """Pause consumer."""
         self._paused = True
+        if self._subscription is not None:
+            await self._subscription.pause()
 
     async def resume(self) -> None:
         """Resume consumer."""
         self._paused = False
+        if self._subscription is not None:
+            await self._subscription.resume()
 
     async def close(self) -> None:
         """Close consumer."""

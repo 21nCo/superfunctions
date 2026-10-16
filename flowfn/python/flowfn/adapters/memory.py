@@ -2,7 +2,8 @@
 
 from typing import Any, Optional
 from flowfn.queue.types import Job, JobStatus, QueueStats
-from flowfn.stream.types import Message, StreamInfo, MessageHandler
+from flowfn.stream.types import Message, StreamInfo, MessageHandler, ConsumerOptions, TrimStrategy
+from flowfn.adapters.memory_stream import MemoryConsumerGroup
 import asyncio
 import time
 from collections import defaultdict
@@ -17,6 +18,8 @@ class MemoryAdapter:
         self._streams: dict[str, list[Message]] = defaultdict(list)
         self._stream_subscribers: dict[str, list[MessageHandler]] = defaultdict(list)
         self._workflow_states: dict[str, Any] = {}
+        self._groups: dict[tuple[str, str], MemoryConsumerGroup] = {}
+        self._deliveries: set[asyncio.Task[None]] = set()
 
     # Queue operations
     async def enqueue(self, queue: str, job: Job) -> None:
@@ -126,7 +129,26 @@ class MemoryAdapter:
 
         # Notify subscribers
         for handler in self._stream_subscribers.get(stream, []):
-            asyncio.create_task(handler(message))
+
+            async def deliver(
+                callback: MessageHandler = handler, payload: Message = message.model_copy(deep=True)
+            ) -> None:
+                await callback(payload)
+
+            task = asyncio.create_task(deliver())
+            self._deliveries.add(task)
+
+            def finished(done: asyncio.Task[None]) -> None:
+                self._deliveries.discard(done)
+                if not done.cancelled() and done.exception() is not None:
+                    done.get_loop().call_exception_handler(
+                        {"message": "Stream subscriber failed", "exception": done.exception()}
+                    )
+
+            task.add_done_callback(finished)
+        for (name, _), group in self._groups.items():
+            if name == stream:
+                group.publish(message)
 
         return message.id
 
@@ -141,14 +163,45 @@ class MemoryAdapter:
 
         return Subscription()
 
-    async def consume(self, stream: str, group: str, consumer: str, handler: MessageHandler) -> Any:
-        """Consume from stream with consumer group."""
-        return await self.subscribe(stream, handler)
+    async def consume(
+        self,
+        stream: str,
+        group: str,
+        consumer: str,
+        handler: MessageHandler,
+        options: Optional[ConsumerOptions] = None,
+    ) -> Any:
+        """Deliver each message to one member of each consumer group."""
+        opts = options or ConsumerOptions(group_id=group)
+        key = (stream, group)
+        if key not in self._groups:
+            self._groups[key] = MemoryConsumerGroup(
+                self._streams[stream] if opts.from_beginning else []
+            )
+        return self._groups[key].subscribe(consumer, handler, opts)
 
     async def get_stream_info(self, stream: str) -> StreamInfo:
         """Get stream information."""
         messages = self._streams.get(stream, [])
-        return StreamInfo(name=stream, length=len(messages), groups=0)
+        return StreamInfo(
+            name=stream,
+            length=len(messages),
+            groups=sum(name == stream for name, _ in self._groups),
+        )
+
+    async def get_stream_messages(self, stream: str) -> list[Message]:
+        return [message.model_copy(deep=True) for message in self._streams.get(stream, [])]
+
+    async def trim_stream(self, stream: str, strategy: TrimStrategy) -> int:
+        messages = self._streams.get(stream, [])
+        retained = messages
+        if strategy.max_age_seconds is not None:
+            cutoff = self._now() - strategy.max_age_seconds * 1000
+            retained = [message for message in retained if message.timestamp >= cutoff]
+        if strategy.max_length is not None:
+            retained = retained[-strategy.max_length :] if strategy.max_length else []
+        self._streams[stream] = retained
+        return len(messages) - len(retained)
 
     # Workflow operations
     async def save_workflow_state(self, execution_id: str, execution: Any) -> None:
@@ -162,6 +215,14 @@ class MemoryAdapter:
     # Lifecycle
     async def cleanup(self) -> None:
         """Cleanup resources."""
+        await asyncio.gather(*(group.close() for group in self._groups.values()))
+        self._groups.clear()
+        tasks = list(self._deliveries)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._deliveries.clear()
         self._queues.clear()
         self._active_jobs.clear()
         self._streams.clear()

@@ -66,17 +66,17 @@ class Queue:
 
     def process(
         self, handler: Optional[JobHandler] = None, concurrency: int = 1
-    ) -> Callable[[JobHandler], None]:
+    ) -> Callable[[JobHandler], JobHandler]:
         """Start processing jobs."""
 
-        def decorator(func: JobHandler) -> None:
+        def decorator(func: JobHandler) -> JobHandler:
             actual_handler = handler or func
             self._start_processing(actual_handler, concurrency)
             return func
 
         if handler:
             self._start_processing(handler, concurrency)
-            return lambda f: None
+            return lambda f: f
 
         return decorator
 
