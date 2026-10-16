@@ -103,12 +103,14 @@ export function transformWhereForStorage(
 
   return where.map((clause) => {
     const field = table.fields[clause.field];
-    if (!isDateField(field)) {
+    const jsonText = field?.type === "json" && field.jsonStorageType === "json-text";
+    if (!isDateField(field) && !jsonText) {
       return clause;
     }
 
-    const convert = (value: unknown) =>
-      convertDateForStorage(value, field, `${model}.${clause.field}`);
+    const convert = (value: unknown) => jsonText
+      ? transformRecordForStorage(schema, model, { [clause.field]: value })[clause.field]
+      : convertDateForStorage(value, field, `${model}.${clause.field}`);
     const value =
       clause.operator === "in" || clause.operator === "not_in"
         ? readWhereArrayValue(clause.value, `${model}.${clause.field}`).map(

@@ -335,7 +335,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
 
       async count({ model, where }: CountParams): Promise<number> {
         const table = resolveTable(model);
-        let qb = db.selectFrom(table).select(db.fn.count('*').as('count'));
+        let qb = db.selectFrom(table).select(db.fn.countAll().as('count'));
         qb = applyWhere(qb, where ?? []);
         const result = await qb.executeTakeFirst();
         return Number((result as any)?.count ?? 0);
@@ -355,7 +355,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
       async isHealthy() {
         try {
           // Simple health check: select 1
-          const result = await db.selectFrom(resolveTable(Object.keys(schema)[0])).select(db.fn.count('*').as('count')).executeTakeFirst();
+          const result = await db.selectFrom(resolveTable(Object.keys(schema)[0])).select(db.fn.countAll().as('count')).executeTakeFirst();
           void result; // ignore result
           return { healthy: true, uptime: 0 };
         } catch {
