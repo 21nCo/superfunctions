@@ -1,0 +1,75 @@
+{
+  "name": "@cachefn/core",
+  "version": "0.0.3",
+  "description": "Self-hosted caching solution with multi-tier storage and function memoization",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "rm -rf dist",
+    "lint": "npm run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest --watch",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.type-tests.json",
+    "test:package": "npm run build && node scripts/packed-consumer.mjs",
+    "test:coverage": "vitest run --coverage",
+    "test:ecosystem": "node scripts/ecosystem-acceptance.mjs --typecheck"
+  },
+  "keywords": [
+    "cache",
+    "caching",
+    "memoization",
+    "indexeddb",
+    "lru",
+    "superfunctions"
+  ],
+  "author": "21n",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/21nCo/super-functions/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21nCo/super-functions.git",
+    "directory": "cachefn/typescript"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "superfunctions": {
+    "initFunction": "cacheFn",
+    "schemaVersion": 1,
+    "namespace": "cachefn"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/ui": "4.1.11",
+    "compression": "1.8.2",
+    "express": "4.22.3",
+    "fake-indexeddb": "^6.2.4",
+    "fastify": "5.12.7",
+    "hono": "4.13.13",
+    "tsup": "^8.5.0",
+    "typescript": "^5.6.0",
+    "vitest": "4.1.11"
+  }
+}
