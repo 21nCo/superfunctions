@@ -1,0 +1,35 @@
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_a2f1807003b0bd 12
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_2e65233df2c0c4 9-10,27-61,89-110,117-120
+flowfn/python/flowfn/core/flow.py
+  s_e1c5fc1a65c0cf::t_409f25c73ba77d 64-68
+flowfn/python/flowfn/patterns/priority.py
+  s_e1c5fc1a65c0cf::t_a894c0bb42f835 1,4-6,11-16,19-22,24-25,29-39,43,46,52
+flowfn/python/flowfn/queue/queue.py
+  s_e1c5fc1a65c0cf::t_6f3cebf595f6a2 37-41,60
+flowfn/python/flowfn/storage/event_log.py
+  s_e1c5fc1a65c0cf::t_d491c578ea5f8b 65,70-71,89,91,114,118-120,122,126,128
+flowfn/python/flowfn/storage/job_storage.py
+  s_e1c5fc1a65c0cf::t_b923204ddb9d40 57,61-62,67-68,82
+flowfn/python/tests/test_queue_contract.py
+  s_e1c5fc1a65c0cf::t_b74a3a4bb8cc05 1-68
+flowfn/python/tests/test_storage_contract.py
+  s_e1c5fc1a65c0cf::t_3c62087c4212ef 1-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c0b997afb120f15a9f9a0e6bcbfc671bb1d0d69e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
