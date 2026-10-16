@@ -11,7 +11,7 @@ export class ConsoleReporter implements Reporter {
   onTestStart(): void {
     if (this.startTime === 0) {
       this.startTime = Date.now();
-      console.log(chalk.bold("\nTestFn v0.1.0\n"));
+      console.log(chalk.bold("\nTestFn\n"));
     }
   }
 
@@ -35,7 +35,7 @@ export class ConsoleReporter implements Reporter {
   }
 
   onRunComplete(summary: TestRunSummary): void {
-    const duration = ((Date.now() - this.startTime) / 1000).toFixed(2);
+    const duration = (summary.duration / 1000).toFixed(2);
 
     console.log("\n" + chalk.gray("─".repeat(60)));
     console.log(chalk.bold("Test Summary:"));
@@ -47,8 +47,12 @@ export class ConsoleReporter implements Reporter {
 
     if (summary.failed > 0) {
       console.log(chalk.red("\n✗ Tests failed"));
-    } else {
+    } else if (summary.passed === summary.total && summary.total > 0) {
       console.log(chalk.green("\n✓ All tests passed"));
+    } else {
+      console.log(
+        chalk.yellow("\nNo test failures; some or all tests were skipped"),
+      );
     }
   }
 }

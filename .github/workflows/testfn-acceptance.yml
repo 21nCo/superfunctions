@@ -24,6 +24,8 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund -w @testfn/core -w @testfn/admin
       - run: npm rebuild better-sqlite3
       - run: npx --yes turbo@2.6.1 run build test typecheck --filter=@testfn/core... --filter=@testfn/admin...
+      - run: npm run test:coverage -w @testfn/core
+      - run: node testfn/scripts/storage-performance-acceptance.mjs
       - run: node node_modules/playwright/cli.js install --with-deps chromium firefox webkit
       - name: Use installed Chromium for Puppeteer and browser acceptance
         run: echo "BROWSER_EXECUTABLE_PATH=$(node -e "console.log(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
