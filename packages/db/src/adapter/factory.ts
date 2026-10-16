@@ -14,6 +14,7 @@ import type {
 } from './types.js';
 import {  NamespaceManager } from '../utils/namespace.js';
 import {
+  registerAdapterCodecs,
   transformRecordForRuntime,
   transformRecordForStorage,
   transformWhereForStorage,
@@ -36,7 +37,7 @@ export function createAdapterFactory(
     const implementation = createAdapter(context);
 
     // Wrap with factory enhancements
-    return wrapAdapter(implementation, context, config);
+    return registerAdapterCodecs(wrapAdapter(implementation, context, config), context.schema);
   };
 }
 

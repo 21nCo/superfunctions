@@ -318,3 +318,21 @@ Contributions welcome! See [Contributing Guide](../../CONTRIBUTING.md) for detai
 ## Related Packages
 
 - `@superfunctions/cli` - Schema management and migrations
+
+### JSON stored in text columns (0.4.0)
+
+Function authors can declare `{ type: "json", jsonStorageType: "json-text" }`
+on a field in their internal `wrapWithSchema` schema when the physical column
+stores JSON as text (for example SQLite `TEXT`). Native JSON storage remains the
+default. The wrapper serializes values on writes and parses them on reads,
+including transactions; repeated wrappers with the same codec do not encode twice.
+Selected-field projections remain selected-field projections.
+
+Runtime `null` is stored as SQL NULL. Both SQL NULL and JSON text `null` read as
+runtime `null`; use a tagged application value if that distinction matters.
+Strings are JSON strings, even if they contain valid JSON text. Malformed stored
+JSON raises a TypeError identifying the field without including its contents.
+
+The optional Vitest peer is required only by the `@superfunctions/db/testing`
+contract suites; Vitest 3.2.4+ and 4.x are supported. Production adapters do not
+require Vitest.
