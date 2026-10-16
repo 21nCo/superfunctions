@@ -1,0 +1,34 @@
+name: TestFn acceptance
+on:
+  pull_request:
+    paths:
+      - 'testfn/**'
+      - 'packages/db/**'
+      - 'packages/admin/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/testfn-acceptance.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  frameworks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund -w @testfn/core -w @testfn/admin
+      - run: npm rebuild better-sqlite3
+      - run: npx --yes turbo@2.6.1 run build test typecheck --filter=@testfn/core... --filter=@testfn/admin...
+      - run: node node_modules/playwright/cli.js install --with-deps chromium firefox webkit
+      - name: Use installed Chromium for Puppeteer and browser acceptance
+        run: echo "BROWSER_EXECUTABLE_PATH=$(node -e "console.log(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - run: node testfn/scripts/framework-acceptance.mjs
+      - run: node testfn/scripts/indexeddb-browser-acceptance.mjs
+      - run: node testfn/scripts/dashboard-profiles-acceptance.mjs
+      - run: node testfn/scripts/sqlite-acceptance.mjs
+      - run: node testfn/scripts/packed-consumer.mjs
