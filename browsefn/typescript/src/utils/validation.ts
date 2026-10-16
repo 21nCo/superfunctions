@@ -21,15 +21,15 @@ export function validateGetPageOptions(options: GetPageOptions): void {
   if (options.format && !['html', 'markdown', 'text', 'json'].includes(options.format)) {
     throw new Error(`Invalid format: ${options.format}`);
   }
-  
+
   if (options.waitFor && !['load', 'domcontentloaded', 'networkidle'].includes(options.waitFor)) {
     throw new Error(`Invalid waitFor: ${options.waitFor}`);
   }
-  
+
   if (options.timeout && (options.timeout < 0 || options.timeout > 300000)) {
     throw new Error('Timeout must be between 0 and 300000ms');
   }
-  
+
   if (options.screenshot && typeof options.screenshot === 'object') {
     if (options.screenshot.format && !['png', 'jpeg'].includes(options.screenshot.format)) {
       throw new Error(`Invalid screenshot format: ${options.screenshot.format}`);
@@ -50,28 +50,28 @@ export function validateImageSearchOptions(options: ImageSearchOptions): void {
       message: `Invalid orientation: ${options.orientation}.`,
     });
   }
-  
+
   if (options.orderBy && !['relevant', 'latest', 'popular'].includes(options.orderBy)) {
     throw new BrowseFnError({
       code: 'INVALID_ARGUMENT',
       message: `Invalid orderBy: ${options.orderBy}.`,
     });
   }
-  
+
   if (options.page !== undefined && options.page < 1) {
     throw new BrowseFnError({
       code: 'INVALID_ARGUMENT',
       message: 'Page must be greater than or equal to 1.',
     });
   }
-  
+
   if (options.perPage !== undefined && (options.perPage < 1 || options.perPage > 100)) {
     throw new BrowseFnError({
       code: 'INVALID_ARGUMENT',
       message: 'perPage must be between 1 and 100.',
     });
   }
-  
+
   if (options.filters?.license && !['free', 'premium', 'editorial'].includes(options.filters.license)) {
     throw new BrowseFnError({
       code: 'INVALID_ARGUMENT',
@@ -191,7 +191,7 @@ export function validateGeoLocation(location: GeoLocation): void {
       message: 'Latitude must be between -90 and 90.',
     });
   }
-  
+
   if (location.lng < -180 || location.lng > 180) {
     throw new BrowseFnError({
       code: 'INVALID_ARGUMENT',

@@ -378,13 +378,13 @@ class DownloadResult(BaseModel):
 @runtime_checkable
 class ImageProvider(Protocol):
     name: str
-    
+
     async def search(self, query: str, options: ImageSearchOptions) -> ImageSearchResult:
         ...
-    
+
     async def download(self, url: str, options: ImageDownloadOptions) -> DownloadResult:
         ...
-    
+
     async def is_available(self) -> bool:
         ...
 
@@ -484,10 +484,10 @@ class GeoProvider(Protocol):
 
     async def geocode(self, address: str, options: GeocodeOptions) -> List[ReverseGeocodeResult]:
         ...
-        
+
     async def search(self, options: GeoSearchOptions) -> List[GeoPlace]:
         ...
-        
+
     async def get_place_details(self, place_id: str, fields: Optional[List[str]] = None) -> GeoPlace:
         ...
 

@@ -21,9 +21,9 @@ def normalize_url(url: str) -> str:
     # Add protocol if missing
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
-    
+
     parsed = urlparse(url)
-    
+
     # Remove fragment
     normalized = urlunparse((
         parsed.scheme,
@@ -33,7 +33,7 @@ def normalize_url(url: str) -> str:
         parsed.query,
         ''  # Remove fragment
     ))
-    
+
     return normalized
 
 
@@ -47,16 +47,16 @@ def build_url(base: str, params: Optional[Dict[str, Any]] = None) -> str:
     """Build URL with query parameters"""
     if not params:
         return base
-    
+
     parsed = urlparse(base)
-    
+
     # Merge existing query params with new ones
     existing_params = parse_qs(parsed.query)
     merged_params = {**existing_params, **params}
-    
+
     # Build query string
     query = urlencode(merged_params, doseq=True)
-    
+
     built = urlunparse((
         parsed.scheme,
         parsed.netloc,
@@ -65,7 +65,7 @@ def build_url(base: str, params: Optional[Dict[str, Any]] = None) -> str:
         query,
         parsed.fragment
     ))
-    
+
     return built
 
 

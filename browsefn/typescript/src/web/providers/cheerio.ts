@@ -10,7 +10,7 @@ import { sanitizeUrl } from '../../utils/validation.js';
 
 export class CheerioProvider implements WebProvider {
   name = 'cheerio';
-  
+
   capabilities: ProviderCapabilities = {
     formats: ['html', 'markdown', 'text', 'json'],
     javascript: false,
@@ -27,7 +27,7 @@ export class CheerioProvider implements WebProvider {
   async getPage(url: string, options: GetPageOptions = {}): Promise<PageResult> {
     const startTime = Date.now();
     const sanitizedUrl = sanitizeUrl(url);
-    
+
     const agent = options.proxy ? new ProxyAgent(options.proxy) : undefined;
     let html: string, resolvedUrl: string;
     try {
@@ -44,14 +44,14 @@ export class CheerioProvider implements WebProvider {
     if (options.selectors) {
       html = applySelectors(html, options.selectors);
     }
-    
+
     // Extract metadata
     const metadata = extractMetadata(html, resolvedUrl);
-    
+
     // Convert to requested format
     let content = html;
     const format = options.format || 'html';
-    
+
     if (format === 'markdown') {
       content = htmlToMarkdown(html);
     } else if (format === 'text') {
@@ -66,11 +66,11 @@ export class CheerioProvider implements WebProvider {
       };
       content = JSON.stringify(jsonData, null, 2);
     }
-    
+
     // Extract links and images if needed
     const links = options.includeLinks ? extractLinks(html, resolvedUrl) : undefined;
     const images = options.includeImages ? extractImages(html, resolvedUrl) : undefined;
-    
+
     return {
       url: resolvedUrl,
       content,

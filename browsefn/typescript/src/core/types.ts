@@ -59,7 +59,7 @@ export interface RetryConfig {
 
 // ===== Events =====
 
-export type BrowseFnEvent = 
+export type BrowseFnEvent =
   | 'request'
   | 'response'
   | 'error'

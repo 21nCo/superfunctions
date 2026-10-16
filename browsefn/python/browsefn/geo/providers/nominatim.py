@@ -38,14 +38,14 @@ def radius_viewboxes(lat: float, lng: float, radius: float) -> list[tuple[float,
 
 class NominatimProvider:
     """OpenStreetMap Nominatim geocoding provider"""
-    
+
     name = "nominatim"
-    
+
     def __init__(self, config: Optional[ProviderConfig] = None):
         self.config = config or ProviderConfig()
         self.endpoint = self.config.endpoint or "https://nominatim.openstreetmap.org"
         self.user_agent = self.config.extra.get('user_agent', 'browsefn/1.0')
-    
+
     async def reverse_geocode(self, location: GeoLocation) -> ReverseGeocodeResult:
         """Convert coordinates to address"""
         params = {
@@ -54,9 +54,9 @@ class NominatimProvider:
             'format': 'json',
             'addressdetails': 1
         }
-        
+
         headers = {'User-Agent': self.user_agent}
-        
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 f'{self.endpoint}/reverse',
@@ -65,18 +65,18 @@ class NominatimProvider:
             )
             response.raise_for_status()
             data = response.json()
-        
+
         address_data = data.get('address', {})
-        
+
         address = self._address(data, city=address_data.get('city') or address_data.get('town') or address_data.get('village'), streetNumber=address_data.get('house_number'), neighborhood=address_data.get('neighbourhood'), district=address_data.get('suburb'), region=address_data.get('region'))
-        
+
         return ReverseGeocodeResult(
             location=location,
             address=address,
             placeId=str(data['place_id']) if data.get('place_id') is not None else None,
             provider=self.name
         )
-    
+
     async def geocode(self, address: str, options: GeocodeOptions) -> List[ReverseGeocodeResult]:
         """Convert address to coordinates"""
         params = {
@@ -85,7 +85,7 @@ class NominatimProvider:
             'addressdetails': 1,
             'limit': options.limit or 5
         }
-        
+
         boxes = [None]
         if options.bounds:
             sw, ne = options.bounds.sw, options.bounds.ne
@@ -114,19 +114,19 @@ class NominatimProvider:
                 lat=float(item.get('lat', 0)),
                 lng=float(item.get('lon', 0))
             )
-            
+
             address_data = item.get('address', {})
             address = self._address(item, city=address_data.get('city') or address_data.get('town'), streetNumber=address_data.get('house_number'))
-            
+
             results.append(ReverseGeocodeResult(
                 location=location,
                 address=address,
                 placeId=str(item['place_id']) if item.get('place_id') is not None else None,
                 provider=self.name
             ))
-        
+
         return results
-    
+
     async def search(self, options: GeoSearchOptions) -> List[GeoPlace]:
         """Search for places"""
         params = {
@@ -135,7 +135,7 @@ class NominatimProvider:
             'addressdetails': 1,
             'limit': options.limit or 20
         }
-        
+
         boxes = [None]
         if options.center is not None and options.radius is not None:
             boxes = radius_viewboxes(options.center.lat, options.center.lng, options.radius)
@@ -147,10 +147,10 @@ class NominatimProvider:
                 lat=float(item.get('lat', 0)),
                 lng=float(item.get('lon', 0))
             )
-            
+
             address_data = item.get('address', {})
             address = self._address(item, city=address_data.get('city'))
-            
+
             place = GeoPlace(
                 id=str(item.get('place_id', '')),
                 name=item.get('name', ''),
@@ -160,9 +160,9 @@ class NominatimProvider:
                 provider=self.name
             )
             results.append(place)
-        
+
         return results
-    
+
     @staticmethod
     def _address(item: dict, **fields) -> GeoAddress:
         data = item.get('address', {})
@@ -199,7 +199,7 @@ class NominatimProvider:
             "Provider nominatim does not support full place-details retrieval.",
             provider=self.name,
         )
-    
+
     async def is_available(self) -> bool:
         """Check if Nominatim endpoint is available"""
         try:

@@ -17,39 +17,39 @@ from ._shared import build_search_result, download_image, passes_dimension_filte
 
 class UnsplashProvider:
     """Unsplash API image provider"""
-    
+
     name = "unsplash"
-    
+
     def __init__(self, config: Optional[ProviderConfig] = None):
         self.config = config or ProviderConfig()
         self.api_key = self.config.api_key
         self.base_url = "https://api.unsplash.com"
-    
+
     async def search(self, query: str, options: ImageSearchOptions) -> ImageSearchResult:
         """Search for images on Unsplash"""
         if not self.api_key:
             raise BrowseFnError("PROVIDER_UNAVAILABLE", "Unsplash API key is required", provider=self.name)
-        
+
         # Build request params
         params = {
             'query': query,
             'page': options.page or 1,
             'per_page': options.per_page or 20,
         }
-        
+
         if options.orientation:
             params['orientation'] = options.orientation
-        
+
         if options.color:
             params['color'] = options.color
-        
+
         if options.order_by:
             order_map = {'relevant': 'relevant', 'latest': 'latest', 'popular': 'popular'}
             params['order_by'] = order_map.get(options.order_by, 'relevant')
-        
+
         # Make API request
         headers = {'Authorization': f'Client-ID {self.api_key}'}
-        
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 f'{self.base_url}/search/photos',
@@ -58,7 +58,7 @@ class UnsplashProvider:
             )
             response.raise_for_status()
             data = response.json()
-        
+
         results = []
         for item in data.get('results', []):
             if not passes_dimension_filters(
@@ -67,10 +67,10 @@ class UnsplashProvider:
                 height=item.get('height', 0),
             ):
                 continue
-            
+
             user = item.get('user', {})
             urls = item.get('urls', {})
-            
+
             result = ImageResult(
                 id=item.get('id'),
                 url=urls.get('regular', ''),
@@ -97,7 +97,7 @@ class UnsplashProvider:
                 )
             )
             results.append(result)
-        
+
         return build_search_result(
             query=query,
             total=data.get('total', 0),
@@ -106,10 +106,10 @@ class UnsplashProvider:
             results=results,
             provider=self.name,
         )
-    
+
     async def download(self, url: str, options: ImageDownloadOptions) -> DownloadResult:
         return await download_image(url, options)
-    
+
     async def is_available(self) -> bool:
         """Check if Unsplash API is available"""
         return bool(self.api_key)

@@ -47,8 +47,9 @@ console.log('${kind} ESM HTTP/router${kind === 'admin' ? '/scoped admin' : ''} p
 } finally {server.closeAllConnections();await new Promise(resolve=>server.close(()=>resolve()));}
 `);
     writeFileSync(join(cwd, 'types.mts'), `import {browseFn,createBrowseFnRouter} from 'browsefn';import {createRouter} from '@superfunctions/http/router';createBrowseFnRouter(browseFn());createRouter({routes:[]});${kind === 'admin' ? "import {createBrowseFnAdminAdapter} from '@browsefn/admin';void createBrowseFnAdminAdapter;" : ''}`);
+    writeFileSync(join(cwd, 'types.cts'), `import {browseFn,createBrowseFnRouter} from 'browsefn';createBrowseFnRouter(browseFn());`);
     console.log(node('smoke.cjs', cwd).trim()); console.log(node('smoke.mjs', cwd).trim());
-    run(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--noEmit', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--target', 'es2022', '--skipLibCheck', 'types.mts'], cwd);
+    run(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--noEmit', '--module', 'nodenext', '--moduleResolution', 'nodenext', '--target', 'es2022', '--skipLibCheck', 'types.mts', 'types.cts'], cwd);
   }
   console.log(JSON.stringify({ ok: true, nodeMinimum: '20.19.0', isolatedCoreAndAdmin: true }));
 } finally { rmSync(temporary, { recursive: true, force: true }); }

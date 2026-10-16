@@ -11,10 +11,10 @@ import type { PageMetadata } from '../core/types.js';
  */
 export function htmlToText(html: string): string {
   const $ = cheerio.load(html);
-  
+
   // Remove script and style tags
   $('script, style, noscript').remove();
-  
+
   // Get text content
   return $('body').text().trim().replace(/\s+/g, ' ');
 }
@@ -33,9 +33,9 @@ export function htmlToMarkdown(html: string): string {
  */
 export function extractMetadata(html: string, url: string): PageMetadata {
   const $ = cheerio.load(html);
-  
+
   const metadata: PageMetadata = { url };
-  
+
   // Basic metadata
   metadata.title = $('title').text().trim() || $('meta[property="og:title"]').attr('content');
   metadata.description = $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content');
@@ -46,20 +46,20 @@ export function extractMetadata(html: string, url: string): PageMetadata {
   metadata.siteName = $('meta[property="og:site_name"]').attr('content');
   metadata.locale = $('meta[property="og:locale"]').attr('content') || $('html').attr('lang');
   metadata.type = $('meta[property="og:type"]').attr('content');
-  
+
   // Published date
   const publishedStr = $('meta[property="article:published_time"]').attr('content');
   if (publishedStr) {
     metadata.published = new Date(publishedStr);
   }
-  
+
   // Open Graph
   const ogTitle = $('meta[property="og:title"]').attr('content');
   const ogDescription = $('meta[property="og:description"]').attr('content');
   const ogImage = $('meta[property="og:image"]').attr('content');
   const ogType = $('meta[property="og:type"]').attr('content');
   const ogUrl = $('meta[property="og:url"]').attr('content');
-  
+
   if (ogTitle || ogDescription || ogImage || ogType || ogUrl) {
     metadata.openGraph = {
       title: ogTitle,
@@ -69,14 +69,14 @@ export function extractMetadata(html: string, url: string): PageMetadata {
       url: ogUrl
     };
   }
-  
+
   // Twitter Card
   const twitterCard = $('meta[name="twitter:card"]').attr('content');
   const twitterSite = $('meta[name="twitter:site"]').attr('content');
   const twitterTitle = $('meta[name="twitter:title"]').attr('content');
   const twitterDescription = $('meta[name="twitter:description"]').attr('content');
   const twitterImage = $('meta[name="twitter:image"]').attr('content');
-  
+
   if (twitterCard || twitterSite || twitterTitle || twitterDescription || twitterImage) {
     metadata.twitter = {
       card: twitterCard,
@@ -86,7 +86,7 @@ export function extractMetadata(html: string, url: string): PageMetadata {
       image: twitterImage
     };
   }
-  
+
   // JSON-LD
   const jsonLdScripts = $('script[type="application/ld+json"]');
   const jsonLd: any[] = [];
@@ -101,7 +101,7 @@ export function extractMetadata(html: string, url: string): PageMetadata {
   if (jsonLd.length > 0) {
     metadata.jsonLd = jsonLd;
   }
-  
+
   return metadata;
 }
 
@@ -111,7 +111,7 @@ export function extractMetadata(html: string, url: string): PageMetadata {
 export function extractLinks(html: string, baseUrl: string): string[] {
   const $ = cheerio.load(html);
   const links: string[] = [];
-  
+
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
     if (href) {
@@ -123,7 +123,7 @@ export function extractLinks(html: string, baseUrl: string): string[] {
       }
     }
   });
-  
+
   return Array.from(new Set(links));
 }
 
@@ -133,7 +133,7 @@ export function extractLinks(html: string, baseUrl: string): string[] {
 export function extractImages(html: string, baseUrl: string): string[] {
   const $ = cheerio.load(html);
   const images: string[] = [];
-  
+
   $('img[src]').each((_, el) => {
     const src = $(el).attr('src');
     if (src) {
@@ -145,7 +145,7 @@ export function extractImages(html: string, baseUrl: string): string[] {
       }
     }
   });
-  
+
   return Array.from(new Set(images));
 }
 
@@ -157,16 +157,16 @@ export function applySelectors(
   selectors?: { include?: string[]; exclude?: string[] }
 ): string {
   if (!selectors) return html;
-  
+
   const $ = cheerio.load(html);
-  
+
   // Apply exclude selectors
   if (selectors.exclude) {
     selectors.exclude.forEach(selector => {
       $(selector).remove();
     });
   }
-  
+
   // Apply include selectors
   if (selectors.include && selectors.include.length > 0) {
     const includedHtml = selectors.include
@@ -175,6 +175,6 @@ export function applySelectors(
       .join('\n');
     return includedHtml;
   }
-  
+
   return $.html();
 }

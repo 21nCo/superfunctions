@@ -123,19 +123,19 @@ class Logger:
     def debug(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
         """Log debug message"""
         self.log('debug', message, context)
-    
+
     def info(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
         """Log info message"""
         self.log('info', message, context)
-    
+
     def warn(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
         """Log warning message"""
         self.log('warn', message, context)
-    
+
     def error(self, message: str, context: Optional[Dict[str, Any]] = None) -> None:
         """Log error message"""
         self.log('error', message, context)
-    
+
     def get_logs(
         self,
         filter_opts: Optional[Dict[str, Any]] = None
@@ -143,9 +143,9 @@ class Logger:
         """Get logs with optional filtering"""
         if not filter_opts:
             return self.logs.copy()
-        
+
         filtered_logs = self.logs.copy()
-        
+
         # Filter by provider
         if 'provider' in filter_opts:
             provider = filter_opts['provider']
@@ -153,7 +153,7 @@ class Logger:
                 log for log in filtered_logs
                 if log.context.get('provider') == provider
             ]
-        
+
         # Filter by timestamp (since)
         if 'since' in filter_opts:
             since = filter_opts['since']
@@ -161,9 +161,9 @@ class Logger:
                 log for log in filtered_logs
                 if log.timestamp >= since
             ]
-        
+
         return filtered_logs
-    
+
     def clear(self) -> None:
         """Clear all logs"""
         self.logs.clear()

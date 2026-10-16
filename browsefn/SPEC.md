@@ -6,8 +6,8 @@
 
 BrowseFn is a developer-first browsing solution that combines web scraping, batch metadata extraction, image browsing/downloading, and geolocation services into a single self-hosted platform. It provides a unified interface with multiple provider support, enabling developers to switch between providers without changing code.
 
-**Version**: 1.0.0  
-**Target Release**: Q2 2026  
+**Version**: 1.0.0
+**Target Release**: Q2 2026
 **Status**: Specification
 
 ## Core Philosophy
@@ -213,15 +213,15 @@ const customResult = await browse.web.scrape('https://example.com', {
   provider: 'puppeteer',
   script: async (page) => {
     const title = await page.$eval('h1', el => el.textContent);
-    const prices = await page.$$eval('.price', els => 
+    const prices = await page.$$eval('.price', els =>
       els.map(el => el.textContent)
     );
-    
+
     await page.click('#load-more');
     await page.waitForSelector('.additional-content');
-    
+
     const moreData = await page.$eval('.additional-content', el => el.innerHTML);
-    
+
     return {
       title,
       prices,
@@ -712,14 +712,14 @@ class CustomWebProvider implements WebProvider {
     cookies: true,
     headers: true
   };
-  
+
   async getPage(url: string, options: GetPageOptions): Promise<PageResult> {
     const response = await customScrapeAPI.fetch(url, {
       format: options.format || 'html',
       javascript: options.javascript,
       headers: options.headers
     });
-    
+
     return {
       url,
       content: response.content,
@@ -730,7 +730,7 @@ class CustomWebProvider implements WebProvider {
       provider: this.name
     };
   }
-  
+
   async isAvailable(): Promise<boolean> {
     return true;
   }
@@ -906,7 +906,7 @@ const search = new SearchFn({ name: 'articles', fields: ['title', 'content'] });
 async function indexWebPages(urls: string[]) {
   for (const url of urls) {
     const page = await browse.web.getPage(url, { format: 'markdown' });
-    
+
     await search.add({
       id: url,
       fields: {

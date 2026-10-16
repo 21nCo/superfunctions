@@ -31,11 +31,11 @@ def mount_browsefn(
     """
     # Create generic routes
     routes = create_browsefn_router(browse)
-    
+
     # Create FastAPI router from generic routes
     router = create_router(routes, prefix=prefix, tags=["browsefn"])
-    
+
     # Mount to app
     app.include_router(router)
-    
+
     return router
