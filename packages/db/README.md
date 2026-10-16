@@ -338,3 +338,5 @@ contract suites; Vitest 3.2.4+ and 4.x are supported. Production adapters do not
 require Vitest.
 
 JSON-text predicates use the same JSON serialization as writes (including each value in `in`/`not_in`). Equality compares the serialized representation, so object key order remains significant; this is not a database-native JSON structural comparison.
+
+Import `wrapWithSchema` from `@superfunctions/db/schema` when only schema wrapping is needed. This narrow ESM entry does not initialize database drivers or observability; it also supports synchronous `require()` on Node versions that support requiring synchronous ESM (validated on Node 20.19).

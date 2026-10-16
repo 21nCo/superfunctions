@@ -48,6 +48,10 @@
     },
     "./types": {
       "types": "./dist/adapter/types.d.ts"
+    },
+    "./schema": {
+      "types": "./dist/adapter/schema-codecs.d.ts",
+      "default": "./dist/adapter/schema-codecs.js"
     }
   },
   "files": [
@@ -59,7 +63,8 @@
     "test:watch": "vitest --watch",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test:schema-entry": "node scripts/verify-schema-entry.cjs"
   },
   "peerDependencies": {
     "@prisma/client": ">=6.0.0",
