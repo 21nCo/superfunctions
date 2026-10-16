@@ -1,0 +1,55 @@
+browsefn/SPEC.md
+  s_e1c5fc1a65c0cf::t_5ce51dbab35b9d 9-10,216,219,222,224,715,722,733,909
+browsefn/admin/package.json
+  s_e1c5fc1a65c0cf::t_2cc942471fa6a8 22-23
+browsefn/python/browsefn/adapters/fastapi.py
+  s_e1c5fc1a65c0cf::t_242d15bfb3c4b0 34,37,40
+browsefn/python/browsefn/core/types.py
+  s_e1c5fc1a65c0cf::t_d4797dc97c812e 381,384,387,487,490
+browsefn/python/browsefn/geo/providers/google_maps.py
+  s_e1c5fc1a65c0cf::t_694fe0a8d86635 23,25,30,35,40,48,51,54,59,68,75,80,85,95,99,107,110,118,130,137,139,144,149,155,168,176,179,187,191,202,204,209,212,218,226,229,236,240,248,263
+browsefn/python/browsefn/geo/providers/mapbox.py
+  s_e1c5fc1a65c0cf::t_51c59b44959eca 22,24,29,34,36,44,47,49,55,64,71,76,81,86,90,98,106,112,121,128,130,135,140,144,157,165,173,179,186,197,199,204,208,216,219,226,232,239,249
+browsefn/python/browsefn/geo/providers/nominatim.py
+  s_e1c5fc1a65c0cf::t_8cba3152a86a66 41,43,48,57,59,68,70,72,79,88,117,120,127,129,138,150,153,163,165,202
+browsefn/python/browsefn/images/providers/pexels.py
+  s_e1c5fc1a65c0cf::t_7367b71698cabc 20,22,27,32,39,42,45,48,57,66,69,96,105,108
+browsefn/python/browsefn/images/providers/pixabay.py
+  s_e1c5fc1a65c0cf::t_b78479017f13b0 20,22,27,32,42,45,48,52,58,67,69,96,105,108
+browsefn/python/browsefn/images/providers/unsplash.py
+  s_e1c5fc1a65c0cf::t_1c4ce54bcf8b55 20,22,27,32,39,42,45,49,52,61,70,73,100,109,112
+browsefn/python/browsefn/middleware/logging.py
+  s_e1c5fc1a65c0cf::t_74f2d9d41763c0 126,130,134,138,146,148,156,164,166
+browsefn/python/browsefn/middleware/metrics.py
+  s_e1c5fc1a65c0cf::t_6d5f0784d9bedd 40,61,81,103,133,135
+browsefn/python/browsefn/utils/url_utils.py
+  s_e1c5fc1a65c0cf::t_538ea797282256 24,26,36,50,52,56,59,68
+browsefn/scripts/packed-runtime-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_d282f54abbad03 50,52
+browsefn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_e885972430f8b9 11-18,28
+browsefn/typescript/src/core/types.ts
+  s_e1c5fc1a65c0cf::t_bd2a6968599129 62
+browsefn/typescript/src/utils/html-utils.ts
+  s_e1c5fc1a65c0cf::t_f1fb0406e3b245 14,17,36,38,49,55,62,72,79,89,104,114,126,136,148,160,162,169,178
+browsefn/typescript/src/utils/validation.ts
+  s_e1c5fc1a65c0cf::t_dd44261156dde7 24,28,32,53,60,67,74,194
+browsefn/typescript/src/web/providers/cheerio.ts
+  s_e1c5fc1a65c0cf::t_fe91eafe764638 13,30,47,50,54,69,73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64185926c1c9e2762c8efddf15559a9c11728ad7",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
