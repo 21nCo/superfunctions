@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>drawfn Example</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+      overflow: hidden;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      background: white;
+      border-bottom: 1px solid #e5e7eb;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .toolbar-group {
+      display: flex;
+      gap: 4px;
+      padding-right: 12px;
+      border-right: 1px solid #e5e7eb;
+    }
+
+    .toolbar-group:last-child {
+      border-right: none;
+    }
+
+    button {
+      padding: 8px 16px;
+      border: 1px solid #d1d5db;
+      background: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.15s;
+    }
+
+    button:hover {
+      background: #f9fafb;
+      border-color: #9ca3af;
+    }
+
+    button.active {
+      background: #3b82f6;
+      color: white;
+      border-color: #3b82f6;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .canvas-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      overflow: auto;
+    }
+
+    canvas {
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      background: white;
+      cursor: crosshair;
+      touch-action: none;
+    }
+
+    .status {
+      padding: 8px 12px;
+      background: #1f2937;
+      color: white;
+      font-size: 12px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="toolbar">
+      <div class="toolbar-group">
+        <button id="select" class="tool active">Select</button>
+        <button id="pan" class="tool">Pan</button>
+        <button id="pen" class="tool">Pen</button>
+        <button id="rectangle" class="tool">Rectangle</button>
+        <button id="ellipse" class="tool">Ellipse</button>
+        <button id="arrow" class="tool">Arrow</button>
+        <button id="text" class="tool">Text</button>
+      </div>
+      <div class="toolbar-group">
+        <button id="undo">Undo</button>
+        <button id="redo">Redo</button>
+        <button id="clear">Clear</button>
+      </div>
+      <div class="toolbar-group">
+        <button id="export-png">Export PNG</button>
+        <button id="export-svg">Export SVG</button>
+      </div>
+    </div>
+
+    <div class="canvas-container">
+      <canvas id="canvas" width="1200" height="800"></canvas>
+    </div>
+
+    <div class="status">
+      Tool: <span id="current-tool">select</span> |
+      Elements: <span id="element-count">0</span> |
+      Zoom: <span id="zoom">100%</span>
+    </div>
+  </div>
+
+  <script type="importmap">
+    { "imports": { "perfect-freehand": "../../node_modules/perfect-freehand/dist/esm/index.mjs" } }
+  </script>
+  <script type="module">
+    import { Drawfn } from './dist/index.js';
+
+    const canvas = document.getElementById('canvas');
+    const drawfn = new Drawfn({ canvas });
+
+    let currentTool = 'select';
+
+    // Update status
+    function updateStatus() {
+      document.getElementById('current-tool').textContent = currentTool;
+      document.getElementById('element-count').textContent = drawfn.getElements().length;
+      const zoom = Math.round(drawfn.getCamera().zoom * 100);
+      document.getElementById('zoom').textContent = zoom + '%';
+    }
+
+    // Tool buttons
+    document.querySelectorAll('.tool').forEach(button => {
+      button.addEventListener('click', () => {
+        const tool = button.id;
+        drawfn.setTool(tool);
+        currentTool = tool;
+
+        document.querySelectorAll('.tool').forEach(b => b.classList.remove('active'));
+        button.classList.add('active');
+
+        updateStatus();
+      });
+    });
+
+    // Undo/Redo
+    document.getElementById('undo').addEventListener('click', () => {
+      drawfn.undo();
+      updateStatus();
+    });
+
+    document.getElementById('redo').addEventListener('click', () => {
+      drawfn.redo();
+      updateStatus();
+    });
+
+    // Clear
+    document.getElementById('clear').addEventListener('click', () => {
+      if (confirm('Clear the entire canvas?')) {
+        drawfn.clear();
+        updateStatus();
+      }
+    });
+
+    // Export PNG
+    document.getElementById('export-png').addEventListener('click', async () => {
+      try {
+        const blob = await drawfn.exportPNG({ scale: 2 });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'drawing.png';
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Export failed: ' + err.message);
+      }
+    });
+
+    // Export SVG
+    document.getElementById('export-svg').addEventListener('click', async () => {
+      try {
+        const svg = await drawfn.exportSVG();
+        const blob = new Blob([svg], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'drawing.svg';
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Export failed: ' + err.message);
+      }
+    });
+
+    // Keep the status line synced with all committed scene changes.
+    drawfn.on('sceneChanged', () => updateStatus());
+
+    // Initial status
+    updateStatus();
+
+    console.log('Drawfn ready!', drawfn);
+  </script>
+</body>
+</html>
