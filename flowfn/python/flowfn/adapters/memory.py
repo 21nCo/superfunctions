@@ -6,6 +6,8 @@ from flowfn.stream.types import Message, StreamInfo, MessageHandler, ConsumerOpt
 from flowfn.adapters.memory_stream import MemoryConsumerGroup
 import asyncio
 import time
+import hashlib
+import json
 from collections import defaultdict
 
 
@@ -22,9 +24,41 @@ class MemoryAdapter:
         self._deliveries: set[asyncio.Task[None]] = set()
 
     # Queue operations
-    async def enqueue(self, queue: str, job: Job) -> None:
-        """Add job to queue."""
-        self._queues[queue].append(job)
+    async def enqueue(self, queue: str, job: Job) -> Job:
+        """Atomically deduplicate and validate the dependency graph."""
+        jobs = self._queues[queue]
+        if job.opts.prevent_duplicates and job.opts.deduplication_key is None:
+            payload = json.dumps(
+                [job.name, job.data], sort_keys=True, separators=(",", ":"), allow_nan=False
+            )
+            job.opts.deduplication_key = hashlib.sha256(payload.encode()).hexdigest()
+        for existing in jobs:
+            if existing.id == job.id:
+                return existing
+            if (
+                job.opts.prevent_duplicates
+                and existing.opts.deduplication_key == job.opts.deduplication_key
+                and existing.state not in (JobStatus.COMPLETED, JobStatus.FAILED)
+            ):
+                return existing
+        graph = {entry.id: entry.opts.wait_for or [] for entry in [*jobs, job]}
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(identity: str) -> None:
+            if identity in visiting:
+                raise ValueError("Job dependencies contain a cycle")
+            if identity in visited:
+                return
+            visiting.add(identity)
+            for dependency in graph.get(identity, []):
+                visit(dependency)
+            visiting.remove(identity)
+            visited.add(identity)
+
+        visit(job.id)
+        jobs.append(job)
+        return job
 
     async def update_job(self, queue: str, job: Job) -> None:
         for index, stored in enumerate(self._queues.get(queue, [])):
@@ -52,12 +86,38 @@ class MemoryAdapter:
             if candidate.state == JobStatus.DELAYED and due <= now:
                 candidate.state = JobStatus.WAITING
 
+        indexed = {job.id: job for job in jobs}
+        # Propagate terminal dependency failure before choosing runnable work.
+        changed = True
+        while changed:
+            changed = False
+            for candidate in jobs:
+                if candidate.state not in (JobStatus.WAITING, JobStatus.DELAYED):
+                    continue
+                failed = next(
+                    (
+                        identity
+                        for identity in candidate.opts.wait_for or []
+                        if identity in indexed and indexed[identity].state == JobStatus.FAILED
+                    ),
+                    None,
+                )
+                if failed is not None:
+                    candidate.state = JobStatus.FAILED
+                    candidate.failed_reason = f"Dependency failed: {failed}"
+                    candidate.finished_on = now
+                    changed = True
+
         # Get highest priority waiting job
         waiting_jobs = [
             j
             for j in jobs
             if j.state == JobStatus.WAITING
             and (j.available_at if j.available_at is not None else j.timestamp + j.delay) <= now
+            and all(
+                identity in indexed and indexed[identity].state == JobStatus.COMPLETED
+                for identity in j.opts.wait_for or []
+            )
         ]
         if not waiting_jobs:
             return None

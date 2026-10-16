@@ -61,7 +61,11 @@ class FlowFn:
         if name not in self._queues:
             from flowfn.queue.queue import Queue
 
-            queue_options = {**(self.config.default_queue_options or {}), **(options or {})}
+            queue_options = {
+                "default_job_options": self.config.default_job_options or {},
+                **(self.config.default_queue_options or {}),
+                **(options or {}),
+            }
             self._queues[name] = Queue(name, self._adapter, queue_options)
 
         return self._queues[name]

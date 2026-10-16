@@ -54,15 +54,18 @@ class MemoryJobStorage:
 
     async def save(self, job: Job) -> None:
         """Save a job."""
-        self._jobs[job.id] = job
+        self._jobs[job.id] = job.model_copy(deep=True)
 
     async def get(self, job_id: str) -> Optional[Job]:
         """Get a job by ID."""
-        return self._jobs.get(job_id)
+        job = self._jobs.get(job_id)
+        return job.model_copy(deep=True) if job is not None else None
 
     async def list(self, opts: Optional[ListOptions] = None) -> list[Job]:
         """List jobs with filtering."""
         options = opts or ListOptions()
+        if options.limit < 0 or options.offset < 0:
+            raise ValueError("Pagination must be nonnegative")
 
         jobs = list(self._jobs.values())
 
@@ -76,7 +79,7 @@ class MemoryJobStorage:
         # Apply pagination
         start = options.offset
         end = start + options.limit
-        return jobs[start:end]
+        return [job.model_copy(deep=True) for job in jobs[start:end]]
 
     async def delete(self, job_id: str) -> None:
         """Delete a job."""

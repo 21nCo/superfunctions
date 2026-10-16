@@ -9,7 +9,7 @@ class FlowAdapter(Protocol):
     """Base protocol for FlowFn adapters."""
 
     # Queue operations
-    async def enqueue(self, queue: str, job: Job) -> None:
+    async def enqueue(self, queue: str, job: Job) -> Job:
         """Add a job to the queue."""
         ...
 

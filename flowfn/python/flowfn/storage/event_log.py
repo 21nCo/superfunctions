@@ -62,12 +62,13 @@ class MemoryEventLog:
         self._events: list[Event] = []
         self._by_aggregate: dict[str, list[Event]] = {}
         self._subscribers: list[EventHandler] = []
-        self._version_map: dict[str, int] = {}
+        self._version_map: dict[tuple[str, str], int] = {}
 
     async def append(self, event: Event) -> None:
         """Append an event."""
         # Set version
-        aggregate_key = f"{event.aggregate_type}:{event.aggregate_id}"
+        event = event.model_copy(deep=True)
+        aggregate_key = (event.aggregate_type, event.aggregate_id)
         version = self._version_map.get(aggregate_key, 0) + 1
         event.version = version
         self._version_map[aggregate_key] = version
@@ -85,9 +86,9 @@ class MemoryEventLog:
         self._by_aggregate[event.aggregate_id].append(event)
 
         # Notify subscribers
-        for handler in self._subscribers:
+        for handler in list(self._subscribers):
             try:
-                await handler(event)
+                await handler(event.model_copy(deep=True))
             except Exception:
                 pass
 
@@ -110,20 +111,21 @@ class MemoryEventLog:
             events = [e for e in events if e.type == options.event_type]
 
         # Filter by timestamp
-        if options.since:
+        if options.since is not None:
             events = [e for e in events if e.timestamp >= options.since]
 
         # Apply limit
-        if options.limit:
-            events = events[-options.limit :]
+        if options.limit < 0:
+            raise ValueError("Limit must be nonnegative")
+        events = events[-options.limit :] if options.limit else []
 
-        return events
+        return [event.model_copy(deep=True) for event in events]
 
     async def get_aggregate_events(self, aggregate_id: str) -> list[Event]:
         """Get all events for an aggregate."""
-        return self._by_aggregate.get(aggregate_id, []).copy()
+        return [event.model_copy(deep=True) for event in self._by_aggregate.get(aggregate_id, [])]
 
-    async def subscribe(self, handler: EventHandler) -> "Subscription":
+    async def subscribe(self, handler: EventHandler) -> Any:
         """Subscribe to new events."""
         self._subscribers.append(handler)
 

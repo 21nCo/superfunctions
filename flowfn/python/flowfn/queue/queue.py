@@ -34,7 +34,11 @@ class Queue:
         """Add a job to the queue."""
         if self._closed:
             raise RuntimeError("Queue is closed")
-        job_options = opts or JobOptions()
+        defaults = self._options.get("default_job_options", {})
+        provided = opts.model_dump(exclude_unset=True) if opts is not None else {}
+        if opts is not None and opts.backoff is not None:
+            provided["backoff"] = opts.backoff
+        job_options = JobOptions.model_validate({**defaults, **provided})
         if (
             job_options.backoff
             and job_options.backoff.type == BackoffType.CUSTOM
@@ -53,8 +57,7 @@ class Queue:
             state=JobStatus.DELAYED if job_options.delay else JobStatus.WAITING,
         )
 
-        await self._adapter.enqueue(self.name, job)
-        return job
+        return await self._adapter.enqueue(self.name, job)
 
     async def add_bulk(self, jobs: list[dict[str, Any]]) -> list[Job]:
         """Add multiple jobs."""
