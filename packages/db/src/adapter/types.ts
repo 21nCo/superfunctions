@@ -216,6 +216,8 @@ export interface FieldSchema {
    * Defaults are derived from `dateValueType`.
    */
   dateStorageType?: DateFieldStorageType;
+  /** Explicit JSON representation. Native preserves driver behavior; json-text serializes JSON into TEXT columns. */
+  jsonStorageType?: "native" | "json-text";
   references?: {
     model: string;
     field: string;
