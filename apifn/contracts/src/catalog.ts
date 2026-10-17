@@ -260,12 +260,21 @@ const SCHEMA_KEYWORD_TYPES = new Map<string, MemberType<unknown>>([
   ["enum", LIST],
   ["multipleOf", { name: "a number greater than 0", accepts: (value): value is number => typeof value === "number" && value > 0 }],
   ...["maximum", "minimum"].map((key): [string, MemberType<unknown>] => [key, NUMBER]),
-  // The OpenAPI 3.0 boolean form is converted where the keyword is copied.
-  ...["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, MemberType<unknown>] => [key, { name: "a number or a boolean", accepts: (value): value is unknown => typeof value === "number" || typeof value === "boolean" }]),
+  // OPENAPI_30_KEYWORD_TYPES replaces these for an OpenAPI 3.0 source.
+  ...["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, MemberType<unknown>] => [key, { name: "a number (OpenAPI 3.1 form; boolean exclusive bounds are OpenAPI 3.0)", accepts: NUMBER.accepts }]),
   ...["maxLength", "minLength", "maxItems", "minItems", "maxProperties", "minProperties", "maxContains", "minContains"].map((key): [string, MemberType<unknown>] => [key, NON_NEGATIVE_INTEGER]),
   ...["pattern", "format", "title", "description", "$comment", "contentMediaType", "contentEncoding"].map((key): [string, MemberType<unknown>] => [key, STRING]),
   ...["uniqueItems", "readOnly", "writeOnly", "deprecated", "nullable"].map((key): [string, MemberType<unknown>] => [key, BOOLEAN]),
 ]);
+
+/**
+ * OpenAPI 3.0 (JSON Schema draft 4 style) exclusive bounds are booleans that
+ * qualify `minimum`/`maximum`; they are converted where the keyword is copied.
+ * 3.1 bounds are the 2020-12 numbers, so each form is invalid in the other dialect.
+ */
+const OPENAPI_30_KEYWORD_TYPES = new Map<string, MemberType<unknown>>(
+  ["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, MemberType<unknown>] => [key, { name: "a boolean (OpenAPI 3.0 form; numeric exclusive bounds need OpenAPI 3.1)", accepts: BOOLEAN.accepts }])
+);
 
 function describeValue(value: unknown): string {
   return value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
@@ -552,8 +561,11 @@ class CatalogBuilder {
   constructor(
     private readonly doc: Doc,
     private readonly manifest: ApiManifest,
-    /** OpenAPI 3.1 lets a Reference Object's description override its target's; 3.0 ignores fields beside `$ref`. */
-    private readonly referenceOverrides: boolean
+    /**
+     * The source document is OpenAPI 3.0, read before upconversion: 3.0 ignores fields beside `$ref` (3.1 lets a
+     * Reference Object's description override its target's) and writes exclusive bounds as booleans.
+     */
+    private readonly openapi30: boolean
   ) {
     this.mediaTypes = new Set((manifest.serialization?.mediaTypes ?? ["application/json"]).map(normalizeMediaType));
     const components = this.member(doc, "components", "", OBJECT) ?? {};
@@ -795,7 +807,7 @@ class CatalogBuilder {
     for (let hops = 0; hops < 32; hops += 1) {
       if (!Object.hasOwn(current, "$ref")) return { value: current, pointer: currentPointer, override };
       if (pathItem) this.pathItemRefFields(current, currentPointer);
-      else if (this.referenceOverrides && override === null && Object.hasOwn(current, "description")) {
+      else if (!this.openapi30 && override === null && Object.hasOwn(current, "description")) {
         override = { value: current.description, pointer: `${currentPointer}/description` };
       }
       const problem = this.refProblem(current.$ref, "object");
@@ -879,7 +891,7 @@ class CatalogBuilder {
     for (const [key, child] of Object.entries(value)) {
       const childPointer = `${pointer}/${pointerSegment(key)}`;
       if (key === "example" || key === "examples" || key.startsWith("x-")) continue;
-      const expected = SCHEMA_KEYWORD_TYPES.get(key);
+      const expected = (this.openapi30 && OPENAPI_30_KEYWORD_TYPES.get(key)) || SCHEMA_KEYWORD_TYPES.get(key);
       if (expected && !expected.accepts(child)) {
         this.report("INVALID_SPEC", childPointer, `Expected ${expected.name} at ${childPointer}, found ${describeValue(child)}.`);
       } else if (isCredentialMember(key)) {
@@ -938,11 +950,13 @@ class CatalogBuilder {
           this.report("INVALID_SPEC", childPointer, `Expected an object of property-name arrays at ${childPointer}.`);
         }
       } else if ((key === "exclusiveMinimum" || key === "exclusiveMaximum") && typeof child === "boolean") {
-        // The OpenAPI 3.0 (JSON Schema draft 4) form qualifies `minimum`/`maximum`; in the catalog's 2020-12 the bound itself
-        // is exclusive. `false`, or `true` without a numeric bound, says nothing and is dropped.
-        const bound = own(value, key === "exclusiveMinimum" ? "minimum" : "maximum");
+        // Only OpenAPI 3.0 reaches here. Its boolean qualifies `minimum`/`maximum`; in the catalog's 2020-12 the bound
+        // itself is exclusive. `false` keeps the inclusive bound; `true` with no bound to qualify is a broken constraint.
+        const boundKey = key === "exclusiveMinimum" ? "minimum" : "maximum";
+        const bound = own(value, boundKey);
         if (child && typeof bound === "number") setOwn(output, key, bound);
-      } else if ((key === "minimum" || key === "maximum") && own(value, `exclusive${key[0].toUpperCase()}${key.slice(1)}`) === true && typeof child === "number") {
+        else if (child && bound === undefined) this.report("INVALID_SPEC", childPointer, `${quote(key)}: true at ${childPointer} has no ${quote(boundKey)} to make exclusive.`);
+      } else if (this.openapi30 && (key === "minimum" || key === "maximum") && own(value, `exclusive${key[0].toUpperCase()}${key.slice(1)}`) === true && typeof child === "number") {
         continue; // Emitted as the exclusive bound.
       } else if (secret && !CREDENTIAL_FIELD_KEYWORDS.has(key)) {
         drop(key, childPointer, "it is literal or unrecognized data inside a credential field");
@@ -2015,13 +2029,13 @@ export function buildOperationCatalog(spec: string | Record<string, unknown>, ma
     return snapshot.problems.length > 0 ? null : snapshot.value;
   };
   let doc: Doc | null = null;
-  let referenceOverrides = true;
+  let openapi30 = false;
   let specDigest = "";
   try {
     const input = plain(typeof spec === "string" ? readOpenApiText(spec) : spec, "INVALID_SPEC", "spec");
     if (input !== null) {
       const version = (input as Doc).openapi;
-      referenceOverrides = !(typeof version === "string" && version.startsWith("3.0."));
+      openapi30 = typeof version === "string" && version.startsWith("3.0.");
       doc = parseDocument(input as Record<string, unknown>) as Doc;
       if (!isRecord(doc.paths) || !isRecord(doc.info)) throw new Error("document requires info and paths objects");
       specDigest = canonicalDigest(doc);
@@ -2046,7 +2060,7 @@ export function buildOperationCatalog(spec: string | Record<string, unknown>, ma
     return { catalog: null, digest: null, diagnostics: sortDiagnostics(diagnostics) };
   }
 
-  const builder = new CatalogBuilder(doc, validated.manifest, referenceOverrides);
+  const builder = new CatalogBuilder(doc, validated.manifest, openapi30);
   const { provenance, ...built } = builder.build();
   diagnostics.push(...builder.diagnostics);
   const sorted = sortDiagnostics(diagnostics);

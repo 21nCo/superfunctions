@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
+import { stringify } from "yaml";
 import {
   buildOperationCatalog,
   canonicalJson,
@@ -1477,17 +1478,34 @@ describe("positional credential pairs in literals", () => {
   });
 });
 
-// OpenAPI 3.0 boolean exclusive bounds become 2020-12 numeric bounds; 3.1 numeric bounds are copied verbatim.
+// Exclusive bounds are read in the source dialect: OpenAPI 3.0 booleans qualify minimum/maximum and become 2020-12
+// numeric bounds; OpenAPI 3.1 numbers are copied verbatim. Either form in the other dialect is INVALID_SPEC.
 describe("exclusive bounds", () => {
   const ajv = new Ajv2020({ strict: false });
-  const bounded = (version: string, schema: Record<string, unknown>) => {
-    const result = build((nextSpec) => {
-      nextSpec.openapi = version;
-      inputSchema(nextSpec).properties.count = schema;
-    });
-    expect(result.diagnostics).toEqual([]);
-    return (result.catalog!.schemas.ProjectInput as any).properties.count;
+  const BOUND_MARK = "bound-probe";
+  type Format = "object" | "json" | "yaml";
+  /** Builds the fixture as `version`, places `schema` (marked by title) with `place`, and reads the input in `format`. */
+  const bounded = (version: string, schema: Record<string, unknown>, place = (nextSpec: any, s: unknown) => (inputSchema(nextSpec).properties.count = s), format: Format = "object") => {
+    const nextSpec = clone(spec);
+    nextSpec.openapi = version;
+    place(nextSpec, { ...schema, title: BOUND_MARK });
+    const input = format === "object" ? nextSpec : format === "json" ? JSON.stringify(nextSpec) : stringify(nextSpec);
+    const result = buildOperationCatalog(input, clone(manifest));
+    if (result.catalog) expect(validateCatalog(result.catalog), JSON.stringify(validateCatalog.errors)).toBe(true);
+    const found: Array<Record<string, unknown>> = [];
+    const walk = (value: unknown): void => {
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (value && typeof value === "object") {
+        if ((value as Record<string, unknown>).title === BOUND_MARK) found.push(value as Record<string, unknown>);
+        Object.values(value).forEach(walk);
+      }
+    };
+    walk(result.catalog);
+    return { result, emitted: found.map(({ title: _title, ...rest }) => rest) };
   };
+  const invalid = (result: ReturnType<typeof buildOperationCatalog>, pointer: string) =>
+    expect(result).toEqual({ catalog: null, digest: null, diagnostics: [expect.objectContaining({ code: "INVALID_SPEC", severity: "error", pointer })] });
+  const COUNT = "/components/schemas/ProjectInput/properties/count";
 
   it.each<[string, Record<string, unknown>, Record<string, unknown>]>([
     ["exclusiveMinimum: true", { type: "integer", minimum: 0, exclusiveMinimum: true }, { type: "integer", exclusiveMinimum: 0 }],
@@ -1495,18 +1513,82 @@ describe("exclusive bounds", () => {
     ["exclusiveMaximum: true", { type: "integer", maximum: 10, exclusiveMaximum: true }, { type: "integer", exclusiveMaximum: 10 }],
     ["exclusiveMaximum: false", { type: "integer", maximum: 10, exclusiveMaximum: false }, { type: "integer", maximum: 10 }],
     ["both bounds", { type: "integer", minimum: 0, exclusiveMinimum: true, maximum: 10, exclusiveMaximum: false }, { type: "integer", exclusiveMinimum: 0, maximum: 10 }],
-    ["a boolean without its bound", { type: "integer", exclusiveMinimum: true, exclusiveMaximum: true }, { type: "integer" }],
+    ["false without its bound", { type: "integer", exclusiveMinimum: false, exclusiveMaximum: false }, { type: "integer" }],
   ])("3.0 %s", (_name, schema, expected) => {
-    const emitted = bounded("3.0.3", schema);
-    expect(emitted).toEqual(expected);
-    const validate = ajv.compile(emitted);
-    expect(validate(0)).toBe(emitted.exclusiveMinimum === undefined);
+    const { result, emitted } = bounded("3.0.3", schema);
+    expect(result.diagnostics).toEqual([]);
+    expect(emitted).toEqual([expected]);
+    const validate = ajv.compile(emitted[0]);
+    expect(validate(0)).toBe(emitted[0].exclusiveMinimum === undefined);
+    expect(validate(10)).toBe(emitted[0].exclusiveMaximum === undefined);
     expect(validate(1)).toBe(true);
+  });
+
+  it.each<[string, string, Record<string, unknown>, string]>([
+    ["3.0 numeric exclusiveMinimum", "3.0.3", { type: "number", exclusiveMinimum: 5 }, "exclusiveMinimum"],
+    ["3.0 numeric exclusiveMaximum beside maximum", "3.0.3", { type: "number", maximum: 10, exclusiveMaximum: 10 }, "exclusiveMaximum"],
+    ["3.0 exclusiveMinimum: true without minimum", "3.0.3", { type: "number", exclusiveMinimum: true }, "exclusiveMinimum"],
+    ["3.0 exclusiveMaximum: true without maximum", "3.0.3", { type: "number", exclusiveMaximum: true }, "exclusiveMaximum"],
+    ["3.0 exclusiveMinimum: true beside a mistyped minimum", "3.0.3", { type: "number", minimum: "0", exclusiveMinimum: true }, "minimum"],
+    ["3.1 exclusiveMinimum: true", "3.1.0", { type: "number", minimum: 0, exclusiveMinimum: true }, "exclusiveMinimum"],
+    ["3.1 exclusiveMaximum: false", "3.1.0", { type: "number", maximum: 10, exclusiveMaximum: false }, "exclusiveMaximum"],
+    ["3.1 exclusiveMinimum: true without minimum", "3.1.0", { type: "number", exclusiveMinimum: true }, "exclusiveMinimum"],
+  ])("INVALID_SPEC: %s", (_name, version, schema, keyword) => {
+    invalid(bounded(version, schema).result, `${COUNT}/${keyword}`);
   });
 
   it("copies 3.1 numeric bounds verbatim", () => {
     const schema = { type: "integer", minimum: 0, exclusiveMinimum: 0, maximum: 10, exclusiveMaximum: 11 };
-    expect(bounded("3.1.0", schema)).toEqual(schema);
+    const { result, emitted } = bounded("3.1.0", schema);
+    expect(result.diagnostics).toEqual([]);
+    expect(emitted).toEqual([schema]);
+  });
+
+  // Every Schema Object position goes through the same reader, so each takes the document's dialect.
+  const LIST = "/paths/~1workspaces~1{workspaceId}~1projects";
+  const POSITIONS: Array<[name: string, place: (nextSpec: any, schema: unknown) => void, pointer: string]> = [
+    ["inline parameter", (s, schema) => (s.paths[LIST_ROUTE].get.parameters[0].schema = schema), `${LIST}/get/parameters/0/schema`],
+    ["request body", (s, schema) => (s.paths[LIST_ROUTE].post.requestBody.content["application/json"].schema = schema), `${LIST}/post/requestBody/content/application~1json/schema`],
+    ["response", (s, schema) => (s.components.responses.NotFound.content["application/problem+json"].schema = schema), "/components/responses/NotFound/content/application~1problem+json/schema"],
+    ["items/allOf", (s, schema) => (inputSchema(s).properties.counts = { type: "array", items: { allOf: [schema] } }), "/components/schemas/ProjectInput/properties/counts/items/allOf/0"],
+    [
+      "component $ref chain",
+      (s, schema) => {
+        s.components.schemas.Bound = { $ref: "#/components/schemas/BoundTarget" };
+        s.components.schemas.BoundTarget = schema;
+        inputSchema(s).properties.count = { $ref: "#/components/schemas/Bound" };
+      },
+      "/components/schemas/BoundTarget",
+    ],
+  ];
+  const POSITION_ROWS = POSITIONS.flatMap(([name, place, pointer]) => [
+    [name, "3.0 boolean", "3.0.3", { type: "number", maximum: 10, exclusiveMaximum: true }, place, { type: "number", exclusiveMaximum: 10 }],
+    [name, "3.1 numeric", "3.1.0", { type: "number", exclusiveMaximum: 10 }, place, { type: "number", exclusiveMaximum: 10 }],
+    [name, "3.0 numeric", "3.0.3", { type: "number", exclusiveMinimum: 5 }, place, `${pointer}/exclusiveMinimum`],
+    [name, "3.1 boolean", "3.1.0", { type: "number", minimum: 0, exclusiveMinimum: true }, place, `${pointer}/exclusiveMinimum`],
+  ] as Array<[string, string, string, Record<string, unknown>, (nextSpec: any, schema: unknown) => void, Record<string, unknown> | string]>);
+
+  it.each(POSITION_ROWS)("%s: %s", (_name, _form, version, schema, place, expected) => {
+    const { result, emitted } = bounded(version, schema, place);
+    if (typeof expected === "string") return invalid(result, expected);
+    expect(result.diagnostics).toEqual([]);
+    // A shared response is inlined into each operation that uses it.
+    expect(emitted.length).toBeGreaterThan(0);
+    for (const copy of emitted) expect(copy).toEqual(expected);
+    expect(() => ajv.compile(emitted[0])).not.toThrow();
+  });
+
+  it.each<[Format, string, Record<string, unknown>, Record<string, unknown> | string]>(
+    (["json", "yaml"] as const).flatMap((format) => [
+      [format, "3.0.3", { type: "number", minimum: 0, exclusiveMinimum: true }, { type: "number", exclusiveMinimum: 0 }],
+      [format, "3.0.3", { type: "number", exclusiveMinimum: 5 }, `${COUNT}/exclusiveMinimum`],
+      [format, "3.1.0", { type: "number", maximum: 10, exclusiveMaximum: true }, `${COUNT}/exclusiveMaximum`],
+    ])
+  )("%s text %s %j", (format, version, schema, expected) => {
+    const { result, emitted } = bounded(version, schema, undefined, format);
+    if (typeof expected === "string") return invalid(result, expected);
+    expect(result.diagnostics).toEqual([]);
+    expect(emitted).toEqual([expected]);
   });
 });
 
