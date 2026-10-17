@@ -1,8 +1,7 @@
 import { stringify } from "yaml";
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "../src/canonical.js";
-import { buildOperationCatalog } from "../src/index.js";
-import { clone, fixture } from "./helpers.js";
+import { buildOperationCatalog, clone, fixture } from "./helpers.js";
 import { describeUpconvertParity } from "./upconvert-rows.js";
 
 describeUpconvertParity("with the workspace @apifn/core");

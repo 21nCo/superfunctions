@@ -387,7 +387,7 @@
       }
     },
     {
-      "name": "a $ref beside an empty $id or an empty-fragment $id",
+      "name": "a $ref beside an empty $id",
       "path": [
         "components",
         "schemas",
@@ -400,7 +400,21 @@
         "properties": {
           "status": {
             "$ref": "#/components/schemas/ProjectStatus"
-          },
+          }
+        }
+      }
+    },
+    {
+      "name": "a $ref beside an empty-fragment $id",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "properties": {
           "tag": {
             "$id": "#",
             "$ref": "#/components/schemas/ProjectStatus"
@@ -2818,6 +2832,42 @@
           "string",
           "null"
         ]
+      }
+    },
+    {
+      "name": "an empty $id beside an empty-fragment $id, which both name the document",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/components/schemas/ProjectInput/properties/meta/properties/tag/$id"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "",
+        "properties": {
+          "tag": {
+            "$id": "#",
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "openapi31": {
+        "$id": "",
+        "properties": {
+          "tag": {
+            "$id": "#",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       }
     }
   ]

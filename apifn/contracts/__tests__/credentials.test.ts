@@ -2,7 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { redactCredentialValues, sanitizeReport, stripUrlCredentials } from "../src/credentials.js";
 import {
-  buildOperationCatalog,
+  buildOperationCatalog as buildUnchecked,
   canonicalJson,
   containsCredentialIdentifier,
   containsCredentialValue,
@@ -10,7 +10,7 @@ import {
   validateClientFailureEvent,
   validateManifest,
 } from "../src/index.js";
-import { clone, fixture, LINEAR_RATIO, SCALING_TIMEOUT, scalingRatio } from "./helpers.js";
+import { buildOperationCatalog, clone, fixture, LINEAR_RATIO, SCALING_TIMEOUT, scalingRatio } from "./helpers.js";
 
 const PROJECT_ROUTE = "/workspaces/{workspaceId}/projects/{projectId}";
 
@@ -1289,7 +1289,7 @@ describe("credential rules run in linear time", () => {
         return [size, nextSpec];
       })
     );
-    const ratio = scalingRatio((size) => expect(buildOperationCatalog(specs.get(size)!, clone(manifest)).catalog).not.toBeNull(), MEGABYTE / 4, 2);
+    const ratio = scalingRatio((size) => expect(buildUnchecked(specs.get(size)!, clone(manifest)).catalog).not.toBeNull(), MEGABYTE / 4, 2);
     expect(ratio).toBeLessThan(LINEAR_RATIO);
   }, SCALING_TIMEOUT);
 });

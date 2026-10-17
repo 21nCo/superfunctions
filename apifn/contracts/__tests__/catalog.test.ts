@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import {
-  buildOperationCatalog,
+  buildOperationCatalog as buildUnchecked,
   canonicalJson,
   createReleaseDescriptor,
   type Diagnostic,
@@ -12,7 +13,8 @@ import {
   validateClientFailureEvent,
   validateManifest,
 } from "../src/index.js";
-import { clone, fixture, LINEAR_RATIO, matchFixture, readJson, reverseKeys, SCALING_TIMEOUT, scalingRatio, SCHEMAS } from "./helpers.js";
+import { SCHEMA_KEYWORD_RULES } from "../src/catalog.js";
+import { buildOperationCatalog, clone, fixture, LINEAR_RATIO, matchFixture, readJson, reverseKeys, SCALING_TIMEOUT, scalingRatio, SCHEMAS, unpublishableSchemas } from "./helpers.js";
 
 const validateCatalog = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(
   readJson(path.join(SCHEMAS, "operation-catalog.v1.schema.json"))
@@ -62,15 +64,17 @@ function closureViolations(catalog: OperationCatalog): string[] {
   return violations;
 }
 
-function build(mutate?: (spec: any, manifest: any) => void) {
+/** `compile: false` skips compiling the catalog's schemas (meta-schema checks still run), for chains deeper than Ajv's recursive compile reaches. */
+function build(mutate?: (spec: any, manifest: any) => void, { compile = true } = {}) {
   const nextSpec = clone(spec);
   const nextManifest = clone(manifest);
   mutate?.(nextSpec, nextManifest);
-  const result = buildOperationCatalog(nextSpec, nextManifest);
-  // Every successful catalog must satisfy the published schema and be closed.
+  const result = buildUnchecked(nextSpec, nextManifest);
+  // Every successful catalog must satisfy the published schema, be closed and publish only valid JSON Schema 2020-12.
   if (result.catalog) {
     expect(validateCatalog(result.catalog), JSON.stringify(validateCatalog.errors)).toBe(true);
     expect(closureViolations(result.catalog)).toEqual([]);
+    expect(unpublishableSchemas(result.catalog, { compile })).toEqual([]);
   }
   return result;
 }
@@ -1351,7 +1355,7 @@ describe("literals of allOf groups holding credential fields", () => {
         })
       );
       const ratio = scalingRatio((length) => {
-        const result = buildOperationCatalog(specs.get(length)!, clone(manifest));
+        const result = buildUnchecked(specs.get(length)!, clone(manifest));
         expect(result.catalog).not.toBeNull();
         expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBe(last === PASSWORD ? length : 0);
       }, 1_000, 2);
@@ -1670,6 +1674,205 @@ describe("schema enum values", () => {
   });
 });
 
+// Every published schema is valid JSON Schema 2020-12 that compiles (the build helpers assert it for every successful
+// catalog): each keyword is checked against its complete constraint in both dialects, at the keyword, before any
+// credential rule, and messages name positions only.
+describe("JSON Schema 2020-12 keyword constraints", () => {
+  const SEED = "kw-literal-5e2b";
+  const INVALID_SHAPES: Array<[keyword: string, schema: Record<string, unknown>]> = [
+    ["required", { type: "object", required: [SEED, SEED] }],
+    ["dependentRequired", { type: "object", dependentRequired: { a: ["b", SEED, SEED] } }],
+    ["allOf", { allOf: [] }],
+    ["anyOf", { anyOf: [] }],
+    ["oneOf", { oneOf: [] }],
+    ["prefixItems", { type: "array", prefixItems: [] }],
+    ["$anchor", { type: "string", $anchor: "1 bad" }],
+    ["$dynamicAnchor", { type: "string", $dynamicAnchor: "1 bad" }],
+    ["$id", { type: "string", $id: 5 }],
+    ["$schema", { type: "string", $schema: 5 }],
+    ["$schema", { type: "string", $schema: "https://spec.openapis.org/oas/3.1/dialect/base" }],
+    ["$vocabulary", { type: "string", $vocabulary: 5 }],
+    ["$vocabulary", { type: "string", $vocabulary: { "https://json-schema.org/draft/2020-12/vocab/core": "yes" } }],
+    ["pattern", { type: "string", pattern: `(${SEED}` }],
+    // Valid without the "u" flag only.
+    ["pattern", { type: "string", pattern: "a\\-b" }],
+    ["patternProperties", { type: "object", patternProperties: { [`(${SEED}`]: { type: "string" } } }],
+    ["dependencies", { type: "object", dependencies: { a: ["b"] } }],
+    ["$recursiveAnchor", { type: "string", $recursiveAnchor: true }],
+    ["nullable", { nullable: false }],
+    ["nullable", { type: ["string", "null"], nullable: false }],
+    ["xml", { type: "string", xml: "name" }],
+  ];
+  const VALID_SHAPES: Array<Record<string, unknown>> = [
+    { type: "object", required: ["id", "name"], dependentRequired: { a: ["b", "c"] } },
+    { type: "object", required: [] },
+    { allOf: [{ type: "string" }], anyOf: [{ minLength: 1 }], oneOf: [{ maxLength: 9 }] },
+    { type: "array", prefixItems: [{ type: "string" }] },
+    { type: "string", $anchor: "probe_1", $dynamicAnchor: "probe.x-2" },
+    { type: "string", $id: "https://example.test/probe", $schema: "https://json-schema.org/draft/2020-12/schema" },
+    { type: "string", $vocabulary: { "https://json-schema.org/draft/2020-12/vocab/core": true } },
+    { type: "object", pattern: "^[a-z]+\\d*$", patternProperties: { "^x-[a-z]+$": { type: "string" } } },
+    { type: "string", nullable: false },
+  ];
+  const VERSIONS = ["3.0.3", "3.1.0"] as const;
+
+  it.each(VERSIONS.flatMap((version) => INVALID_SHAPES.map(([keyword, schema]) => [version, keyword, schema] as const)))("%s INVALID_SPEC: %s in %j", (version, keyword, schema) => {
+    const { result } = placed(version, schema);
+    invalid(result, `${COUNT}/${keyword}`);
+    expect(JSON.stringify(result)).not.toContain(SEED);
+  });
+
+  it.each(VERSIONS.flatMap((version) => VALID_SHAPES.map((schema) => [version, schema] as const)))("%s publishes %j unchanged", (version, schema) => {
+    const { result, emitted } = placed(version, schema);
+    expect(result.diagnostics).toEqual([]);
+    expect(emitted).toEqual([schema]);
+  });
+
+  const POSITION_ROWS = POSITIONS.flatMap(([name, place, pointer]) =>
+    VERSIONS.flatMap((version) => [
+      ...INVALID_SHAPES.map(([keyword, schema]) => [name, version, schema, place, `${pointer}/${keyword}`] as const),
+      ...VALID_SHAPES.map((schema) => [name, version, schema, place, null] as const),
+    ])
+  );
+
+  it.each(POSITION_ROWS)("%s %s: %j", (_name, version, schema, place, pointer) => {
+    const { result, emitted } = placed(version, schema, place);
+    if (pointer !== null) return invalid(result, pointer);
+    expect(result.diagnostics).toEqual([]);
+    // A shared response is inlined into each operation that uses it.
+    expect(emitted.length).toBeGreaterThan(0);
+    for (const copy of emitted) expect(copy).toEqual(schema);
+  });
+
+  it.each((["json", "yaml"] as const).flatMap((format) => VERSIONS.flatMap((version) => INVALID_SHAPES.map(([keyword, schema]) => [format, version, keyword, schema] as const))))(
+    "%s text %s INVALID_SPEC: %s in %j",
+    (format, version, keyword, schema) => invalid(placed(version, schema, undefined, format).result, `${COUNT}/${keyword}`)
+  );
+
+  it("checks a keyword inside a credential field before the credential rule drops it", () => {
+    for (const schema of [{ type: "string", format: "password", pattern: `(${SEED}` }, { type: "string", format: "password", $anchor: "1 bad" }]) {
+      const { result } = placed("3.1.0", schema);
+      invalid(result, `${COUNT}/${Object.keys(schema)[2]}`);
+      expect(JSON.stringify(result)).not.toContain(SEED);
+    }
+  });
+
+  // JSON Schema 2020-12 allows each resource URI once per document and each anchor once per resource; a 2020-12
+  // compiler rejects a repeat. Every declaration is reported, so the diagnostics do not depend on key order.
+  const PROPS = "/components/schemas/ProjectInput/properties";
+  it.each<[string, Record<string, unknown>, string[]]>([
+    ["an $anchor repeated as a $dynamicAnchor", { a: { $anchor: "dup" }, b: { $dynamicAnchor: "dup" } }, [`${PROPS}/a/$anchor`, `${PROPS}/b/$dynamicAnchor`]],
+    ["an absolute $id repeated with an empty fragment", { a: { $id: "https://example.test/r" }, b: { $id: "https://example.test/r#" } }, [`${PROPS}/a/$id`, `${PROPS}/b/$id`]],
+    ["an empty $id beside an empty-fragment $id", { a: { $id: "" }, b: { items: { $id: "#" } } }, [`${PROPS}/a/$id`, `${PROPS}/b/items/$id`]],
+    ["an empty $id inside the resource it names again", { a: { $id: "https://example.test/r", properties: { b: { $id: "" } } } }, [`${PROPS}/a/$id`, `${PROPS}/a/properties/b/$id`]],
+    ["a relative $id repeated", { a: { $id: "probe" }, b: { $id: "probe" } }, [`${PROPS}/a/$id`, `${PROPS}/b/$id`]],
+  ])("INVALID_SPEC: %s", (_name, properties, pointers) => {
+    for (const version of VERSIONS) {
+      for (const order of [(value: any) => value, reverseKeys]) {
+        const result = build((nextSpec) => {
+          nextSpec.openapi = version;
+          inputSchema(nextSpec).properties = order({ ...inputSchema(nextSpec).properties, ...properties });
+        });
+        expect(result.catalog).toBeNull();
+        expect(result.diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`)).toEqual(pointers.map((pointer) => `INVALID_SPEC ${pointer}`));
+      }
+    }
+  });
+
+  it("keeps one anchor name in different resources and one empty $id", () => {
+    const properties = { a: { $id: "https://example.test/a", $anchor: "x" }, b: { $id: "https://example.test/b", $anchor: "x" }, c: { $id: "", type: "string" } };
+    const result = build((nextSpec) => Object.assign(inputSchema(nextSpec).properties, properties));
+    expect(result.diagnostics).toEqual([]);
+    expect((result.catalog!.schemas.ProjectInput as any).properties).toMatchObject(properties);
+  });
+
+  it("has a rule for every keyword of Ajv's bundled JSON Schema 2020-12 meta-schemas", () => {
+    const refs = path.join(path.dirname(createRequire(import.meta.url).resolve("ajv/package.json")), "dist/refs/json-schema-2020-12");
+    const files = [path.join(refs, "schema.json"), ...readdirSync(path.join(refs, "meta")).map((file) => path.join(refs, "meta", file))];
+    const keywords = files.flatMap((file) => Object.keys(readJson(file).properties ?? {}));
+    expect(keywords.length).toBeGreaterThan(50);
+    // `examples` is never copied (OpenAPI `example` neither).
+    expect(keywords.filter((keyword) => keyword !== "examples" && !SCHEMA_KEYWORD_RULES.has(keyword))).toEqual([]);
+  });
+
+  // Every rule that a JSON number or string breaks rejects it at the keyword (references are UNRESOLVED_REF instead).
+  // `title` marks the probe, so it is covered by the keyword-type rows below instead.
+  const TYPED_RULES = Array.from(SCHEMA_KEYWORD_RULES).filter(([keyword]) => keyword !== "title").flatMap(([keyword, rule]) => {
+    const wrong = [7, "7"].find((value) => !rule.type.accepts(value));
+    return wrong !== undefined ? [[keyword, wrong] as const] : rule.check ? [[keyword, 7] as const] : [];
+  });
+  it.each(VERSIONS.flatMap((version) => TYPED_RULES.map(([keyword, value]) => [version, keyword, value] as const)))("%s INVALID_SPEC: %s = %j", (version, keyword, value) => {
+    invalid(placed(version, { [keyword]: value }).result, `${COUNT}/${keyword.replace(/~/g, "~0")}`);
+  });
+});
+
+// OpenAPI marks these members REQUIRED: request body content, response description, a parameter's or header's schema
+// or content, and a discriminator's propertyName. A missing one is INVALID_SPEC at <resolved object>/<member> with a null
+// catalog in both dialects, inline and through $ref chains, whatever the operation's sdk/agent settings.
+describe("required OpenAPI members", () => {
+  const POST = `${LIST}/post`;
+  const FORM = "multipart/form-data";
+  const CASES: Array<[name: string, mutate: (nextSpec: any, nextManifest: any) => void, pointer: string | null]> = [
+    ["request body without content", (s) => delete s.paths[LIST_ROUTE].post.requestBody.content, `${POST}/requestBody/content`],
+    [
+      "request body without content behind a $ref chain",
+      (s) => {
+        const { content: _content, ...body } = s.paths[LIST_ROUTE].post.requestBody;
+        s.components.requestBodies = { Input: { $ref: "#/x-body" } };
+        s["x-body"] = body;
+        s.paths[LIST_ROUTE].post.requestBody = { $ref: "#/components/requestBodies/Input" };
+      },
+      "/x-body/content",
+    ],
+    ["response without description", (s) => delete s.paths[LIST_ROUTE].get.responses["200"].description, `${LIST}/get/responses/200/description`],
+    ["shared response without description", (s) => delete s.components.responses.NotFound.description, "/components/responses/NotFound/description"],
+    ["SDK-excluded operation's response without description", (s) => delete s.paths["/health"].get.responses["200"].description, "/paths/~1health/get/responses/200/description"],
+    ["parameter with neither schema nor content", (s) => delete s.paths[LIST_ROUTE].get.parameters[0].schema, `${LIST}/get/parameters/0/schema`],
+    ["shared path-level parameter with neither", (s) => delete s.components.parameters.WorkspaceId.schema, "/components/parameters/WorkspaceId/schema"],
+    ["response header with neither", (s) => (s.paths[LIST_ROUTE].get.responses["200"].headers = { "X-Rate": { description: "Rate" } }), `${LIST}/get/responses/200/headers/X-Rate/schema`],
+    [
+      "response header behind a $ref with neither",
+      (s) => {
+        s.components.headers = { Rate: { description: "Rate" } };
+        s.paths[LIST_ROUTE].get.responses["200"].headers = { "X-Rate": { $ref: "#/components/headers/Rate" } };
+      },
+      "/components/headers/Rate/schema",
+    ],
+    [
+      "form part header with neither",
+      (s, m) => {
+        m.serialization.mediaTypes.push(FORM);
+        s.paths[LIST_ROUTE].post.requestBody.content[FORM] = { schema: { $ref: "#/components/schemas/ProjectInput" }, encoding: { name: { headers: { "X-Part": { description: "Part" } } } } };
+      },
+      `${POST}/requestBody/content/multipart~1form-data/encoding/name/headers/X-Part/schema`,
+    ],
+    ["discriminator without propertyName", (s) => (s.components.schemas.Project.discriminator = { mapping: {} }), "/components/schemas/Project/discriminator/propertyName"],
+    // Controls: optional members stay optional, and an empty content map is valid OpenAPI (published as no media types).
+    ["absent request body", (s) => delete s.paths[LIST_ROUTE].post.requestBody, null],
+    ["request body with an empty content map", (s) => (s.paths[LIST_ROUTE].post.requestBody.content = {}), null],
+    ["response without content", (s) => delete s.paths[LIST_ROUTE].get.responses["200"].content, null],
+    ["Content-Type response header without schema (ignored by OpenAPI)", (s) => (s.paths[LIST_ROUTE].get.responses["200"].headers = { "Content-Type": { description: "Type" } }), null],
+    ["header with content", (s) => (s.paths[LIST_ROUTE].get.responses["200"].headers = { "X-Rate": { content: { "text/plain": { schema: { type: "string" } } } } }), null],
+    ["discriminator with propertyName", (s) => (s.components.schemas.Project.discriminator = { propertyName: "status" }), null],
+  ];
+
+  it.each(CASES.flatMap(([name, mutate, pointer]) => (["3.0.3", "3.1.0"] as const).flatMap((version) => (["object", "json", "yaml"] as const).map((format) => [name, version, format, mutate, pointer] as const))))(
+    "%s, %s %s",
+    (_name, version, format, mutate, pointer) => {
+      const nextSpec = clone(spec);
+      const nextManifest = clone(manifest);
+      nextSpec.openapi = version;
+      mutate(nextSpec, nextManifest);
+      const result = buildOperationCatalog(format === "object" ? nextSpec : format === "json" ? JSON.stringify(nextSpec) : stringify(nextSpec), nextManifest);
+      const errors = result.diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+      if (pointer === null) return expect(errors).toEqual([]);
+      // Header rows also warn that headers are not described; a shared object is reported once per operation reading it.
+      expect(result.catalog).toBeNull();
+      expect(new Set(errors.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`))).toEqual(new Set([`INVALID_SPEC ${pointer}`]));
+    }
+  );
+});
+
 // OpenAPI 3.0 requires responses on every operation; 3.1 makes the member optional. In both, a Responses Object holds
 // at least one HTTP status, 1XX-5XX range or "default" response; extensions do not count.
 describe("operation responses", () => {
@@ -1754,7 +1957,7 @@ describe("literals of schemas at the head of long component chains", () => {
     const result = build((nextSpec) => {
       chain(nextSpec, link, 5000, { type: "string" });
       inputSchema(nextSpec).properties.probe = { $ref: "#/components/schemas/C0", [keyword]: literal };
-    });
+    }, { compile: false });
     expect(result.catalog).not.toBeNull();
     expect((result.catalog!.schemas.ProjectInput as any).properties.probe[keyword]).toEqual(literal);
     expect(only(result.diagnostics, "CREDENTIAL_REDACTED")).toEqual([]);
@@ -1764,7 +1967,7 @@ describe("literals of schemas at the head of long component chains", () => {
     const result = build((nextSpec) => {
       chain(nextSpec, link, 5000, { type: "string", format: "password" });
       inputSchema(nextSpec).properties.probe = { $ref: "#/components/schemas/C0", [keyword]: keyword === "enum" ? [LITERAL_SEED] : LITERAL_SEED };
-    });
+    }, { compile: false });
     expect(result.catalog).not.toBeNull();
     expect(canonicalJson(result)).not.toContain(LITERAL_SEED);
     expect(only(result.diagnostics, "CREDENTIAL_REDACTED").map((diagnostic) => diagnostic.pointer)).toContain(`/components/schemas/ProjectInput/properties/probe/${keyword}`);
@@ -1781,7 +1984,7 @@ describe("literals of schemas at the head of long component chains", () => {
         })
       );
       const ratio = scalingRatio((length) => {
-        const result = buildOperationCatalog(specs.get(length)!, clone(manifest));
+        const result = buildUnchecked(specs.get(length)!, clone(manifest));
         expect(result.catalog).not.toBeNull();
         expect(only(result.diagnostics, "CREDENTIAL_REDACTED").length).toBe(last.format ? length : 0);
       }, 1_000, 2);
@@ -1882,6 +2085,36 @@ describe("security requirements", () => {
     });
     const get = result.catalog!.operations.find((operation) => operation.id === "projects.get")!;
     expect(get.security.alternatives).toEqual([[], [{ scheme: "oauth", scopes: ["projects:read"] }]]);
+  });
+
+  // OpenAPI 3.0 lists scopes for oauth2 and openIdConnect schemes only; 3.1 lets the other schemes list role names,
+  // which the catalog keeps. Root and operation requirements share one reader.
+  const SCHEMES: Array<[scheme: string, type: string]> = [["apiKeyAuth", "apiKey"], ["bearerAuth", "http"], ["mtls", "mutualTLS"], ["oauth", "oauth2"], ["oidc", "openIdConnect"]];
+  const SCOPE_ROWS = (["3.0.3", "3.1.0"] as const).flatMap((version) =>
+    SCHEMES.filter(([, type]) => version === "3.1.0" || type !== "mutualTLS").flatMap(([scheme, type]) =>
+      [[], ["read", "admin"]].flatMap((list) =>
+        (["root", "operation"] as const).flatMap((level) => (["object", "json", "yaml"] as const).map((format) => [version, scheme, type, list, level, format] as const))
+      )
+    )
+  );
+  it.each(SCOPE_ROWS)("%s %s (%s) %j at %s level, %s input", (version, scheme, type, list, level, format) => {
+    const nextSpec = clone(spec);
+    nextSpec.openapi = version;
+    nextSpec.components.securitySchemes.oidc = { type: "openIdConnect", openIdConnectUrl: "https://id.example.test/.well-known/openid-configuration" };
+    if (version === "3.1.0") nextSpec.components.securitySchemes.mtls = { type: "mutualTLS" };
+    if (level === "root") nextSpec.security = [{ [scheme]: list }];
+    else nextSpec.paths[PROJECT_ROUTE].get.security = [{ [scheme]: list }];
+    const result = buildOperationCatalog(format === "object" ? nextSpec : format === "json" ? JSON.stringify(nextSpec) : stringify(nextSpec), clone(manifest));
+    const pointer = `${level === "root" ? "" : `/paths/${escape(PROJECT_ROUTE)}/get`}/security/0/${scheme}`;
+    if (version === "3.0.3" && list.length > 0 && type !== "oauth2" && type !== "openIdConnect") {
+      // A root requirement is reported once per operation that inherits it.
+      expect(result.catalog).toBeNull();
+      expect(new Set(result.diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`))).toEqual(new Set([`INVALID_SPEC ${pointer}`]));
+      return;
+    }
+    expect(result.diagnostics).toEqual([]);
+    const get = result.catalog!.operations.find((operation) => operation.id === "projects.get")!;
+    expect(get.security.alternatives).toEqual([[{ scheme, scopes: [...list].sort() }]]);
   });
 });
 
@@ -2171,7 +2404,7 @@ describe("header parameter names", () => {
 
   it("INVALID_SPEC: the same header twice at one level, in any case", () => {
     const result = build((nextSpec) => {
-      nextSpec.paths[LIST_ROUTE].get.parameters.push({ name: "X-A", in: "header" }, { name: "x-a", in: "header" });
+      nextSpec.paths[LIST_ROUTE].get.parameters.push({ name: "X-A", in: "header", schema: { type: "string" } }, { name: "x-a", in: "header", schema: { type: "string" } });
     });
     expect(result.catalog).toBeNull();
     expect(result.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_SPEC", message: expect.stringMatching(/"x-a" in header is declared twice/) })]);
@@ -2458,7 +2691,7 @@ describe("path and server URL templates", () => {
         return [size, nextSpec];
       })
     );
-    const ratio = scalingRatio((size) => buildOperationCatalog(specs.get(size)!, clone(manifest)), BACKTRACK);
+    const ratio = scalingRatio((size) => buildUnchecked(specs.get(size)!, clone(manifest)), BACKTRACK);
     expect(ratio).toBeLessThan(LINEAR_RATIO);
   }, SCALING_TIMEOUT);
 
@@ -2487,7 +2720,7 @@ describe("path and server URL templates", () => {
       })
     );
     const ratio = scalingRatio((n) => {
-      const result = buildOperationCatalog(specs.get(n)!, clone(manifest));
+      const result = buildUnchecked(specs.get(n)!, clone(manifest));
       expect(result.catalog !== null).toBe(publishes);
       if (!publishes) expect(only(result.diagnostics, "INVALID_SPEC").map((diagnostic) => diagnostic.pointer)).toEqual([`${pointer}/url`]);
     }, size, 2);

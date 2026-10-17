@@ -1,9 +1,9 @@
 import { fromRouter } from "@apifn/core";
 import { generateOpenApiDocument } from "@superfunctions/http-openapi";
 import { describe, expect, it } from "vitest";
-import { buildOperationCatalog, canonicalJson } from "../src/index.js";
+import { canonicalJson } from "../src/index.js";
 import { createParityRouter, PARITY_TITLE, PARITY_VERSION } from "./parity-routes.js";
-import { fixture, jsonDiff, matchFixture } from "./helpers.js";
+import { buildOperationCatalog, fixture, jsonDiff, matchFixture } from "./helpers.js";
 
 const manifest = fixture("parity/manifest.json");
 

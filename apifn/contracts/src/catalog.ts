@@ -243,28 +243,143 @@ const STRING_LIST: MemberType<string[]> = {
 const JSON_TYPES = new Set(["string", "number", "integer", "boolean", "object", "array", "null"]);
 const NUMBER: MemberType<number> = { name: "a number", accepts: (value): value is number => typeof value === "number" };
 const NON_NEGATIVE_INTEGER: MemberType<number> = { name: "a non-negative integer", accepts: (value): value is number => Number.isInteger(value) && (value as number) >= 0 };
+const ANY: MemberType<unknown> = { name: "a JSON value", accepts: (value): value is unknown => value !== undefined };
+const SCHEMA: MemberType<unknown> = { name: "a Schema Object or boolean", accepts: (value): value is unknown => isRecord(value) || typeof value === "boolean" };
+const SCHEMA_MAP: MemberType<Record<string, unknown>> = { name: "an object of schemas", accepts: isRecord };
+const SCHEMA_LIST: MemberType<unknown[]> = { name: "an array of schemas", accepts: Array.isArray };
+/** The `$anchor`/`$dynamicAnchor` grammar of the JSON Schema 2020-12 core meta-schema. */
+const ANCHOR = /^[A-Za-z_][-A-Za-z0-9._]*$/;
+const JSON_SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema";
+
 /**
- * The JSON type of every schema keyword the catalog emits with a fixed type.
- * A wrong type is INVALID_SPEC: copying it would publish a schema that
- * generated clients misread, and literal data must never pass under another type.
+ * One keyword of the catalog's dialect: its JSON type, then any constraint
+ * the 2020-12 meta-schema or a 2020-12 compiler adds, as a message naming
+ * positions only (values are literals a credential rule may withhold).
  */
-const SCHEMA_KEYWORD_TYPES = new Map<string, MemberType<unknown>>([
+interface KeywordRule {
+  type: MemberType<unknown>;
+  check?: (value: unknown, pointer: string, schema: Record<string, unknown>) => string | undefined;
+}
+
+function keyword<T>(type: MemberType<T>, check?: (value: T, pointer: string, schema: Record<string, unknown>) => string | undefined): KeywordRule {
+  return { type, check: check as KeywordRule["check"] };
+}
+
+/** True when `pattern` compiles as an ECMA-262 regular expression in Unicode mode, as 2020-12 validators compile `pattern`. */
+function isUnicodeRegex(pattern: string): boolean {
+  try {
+    new RegExp(pattern, "u");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The first entry of `values` that repeats an earlier one (as canonical JSON, whatever its key order), or undefined. */
+function firstRepeat(values: unknown[]): { first: number; index: number } | undefined {
+  const seen = new Map<string, number>();
+  for (const [index, value] of values.entries()) {
+    const key = canonicalJson(value);
+    const first = seen.get(key);
+    if (first !== undefined) return { first, index };
+    seen.set(key, index);
+  }
+  return undefined;
+}
+
+/** Property names (`required`, each `dependentRequired` list): a 2020-12 string array holds each name once. */
+function nameListProblem(names: string[], pointer: string): string | undefined {
+  const repeat = firstRepeat(names);
+  return repeat && `Property names at ${pointer} repeat entry ${repeat.first} as entry ${repeat.index}; JSON Schema 2020-12 requires each name once.`;
+}
+
+const PROPERTY_NAMES: MemberType<string[]> = { name: "an array of property names", accepts: STRING_LIST.accepts };
+const ANCHOR_RULE = keyword(STRING, (anchor, pointer) => (ANCHOR.test(anchor) ? undefined : `Anchor at ${pointer} is not a JSON Schema 2020-12 anchor name (a letter or "_", then letters, digits, "-", "." or "_").`));
+const SUBSCHEMAS = keyword(SCHEMA_LIST, (list, pointer) => (list.length === 0 ? `${pointer} is an empty array; JSON Schema 2020-12 requires at least one schema there.` : undefined));
+
+/**
+ * Every keyword of the JSON Schema 2020-12 vocabularies (core, applicator,
+ * unevaluated, validation, meta-data, format-annotation, content and the
+ * deprecated members of the 2020-12 meta-schema) and the OpenAPI ones the
+ * catalog copies, with its complete constraint. A schema that breaks one is
+ * INVALID_SPEC at the keyword, checked on the declared value before any
+ * credential rule withholds or redacts it, so every published schema is valid
+ * 2020-12 that compiles. Members outside this table are not keywords: they
+ * are copied as literal data (or dropped beside credential fields).
+ */
+export const SCHEMA_KEYWORD_RULES = new Map<string, KeywordRule>([
+  // Core. References are checked where they are resolved (UNRESOLVED_REF), never copied unchecked.
+  ["$id", keyword(STRING, (id, pointer) => (/#./s.test(id) ? `The $id at ${pointer} has a non-empty fragment, which JSON Schema 2020-12 forbids; name the schema with $anchor instead.` : undefined))],
+  ["$schema", keyword(STRING, (uri, pointer) => (uri === JSON_SCHEMA_2020_12 || uri === `${JSON_SCHEMA_2020_12}#` ? undefined : `The $schema at ${pointer} names a dialect other than JSON Schema 2020-12 (${JSON_SCHEMA_2020_12}), the only one the catalog publishes; remove it.`))],
+  ...["$ref", "$dynamicRef", "$recursiveRef"].map((key): [string, KeywordRule] => [key, keyword(ANY)]),
+  ["$anchor", ANCHOR_RULE],
+  ["$dynamicAnchor", ANCHOR_RULE],
+  ["$vocabulary", keyword({ name: "an object of booleans", accepts: (value): value is Record<string, boolean> => isRecord(value) && Object.values(value).every((flag) => typeof flag === "boolean") })],
+  ["$comment", keyword(STRING)],
+  ...["$defs", "definitions", "properties", "dependentSchemas"].map((key): [string, KeywordRule] => [key, keyword(SCHEMA_MAP)]),
+  // Applicator, unevaluated and content.
+  ...["allOf", "anyOf", "oneOf", "prefixItems"].map((key): [string, KeywordRule] => [key, SUBSCHEMAS]),
+  ...["items", "contains", "additionalProperties", "propertyNames", "if", "then", "else", "not", "unevaluatedItems", "unevaluatedProperties", "contentSchema"].map((key): [string, KeywordRule] => [key, keyword(SCHEMA)]),
+  [
+    "patternProperties",
+    keyword(SCHEMA_MAP, (map, pointer) => (Object.keys(map).every(isUnicodeRegex) ? undefined : `A property pattern at ${pointer} is not a valid ECMA-262 regular expression in Unicode mode, as JSON Schema 2020-12 validators compile it.`)),
+  ],
+  // Validation.
   [
     "type",
-    {
+    keyword({
       name: "a JSON type name or a non-empty array of distinct type names",
       accepts: (value): value is unknown =>
         typeof value === "string" ? JSON_TYPES.has(value) : Array.isArray(value) && value.length > 0 && new Set(value).size === value.length && value.every((item) => typeof item === "string" && JSON_TYPES.has(item)),
-    },
+    }),
   ],
-  ["enum", LIST],
-  ["multipleOf", { name: "a number greater than 0", accepts: (value): value is number => typeof value === "number" && value > 0 }],
-  ...["maximum", "minimum"].map((key): [string, MemberType<unknown>] => [key, NUMBER]),
-  // OPENAPI_30_KEYWORD_TYPES replaces these for an OpenAPI 3.0 source.
-  ...["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, MemberType<unknown>] => [key, { name: "a number (OpenAPI 3.1 form; boolean exclusive bounds are OpenAPI 3.0)", accepts: NUMBER.accepts }]),
-  ...["maxLength", "minLength", "maxItems", "minItems", "maxProperties", "minProperties", "maxContains", "minContains"].map((key): [string, MemberType<unknown>] => [key, NON_NEGATIVE_INTEGER]),
-  ...["pattern", "format", "title", "description", "$comment", "contentMediaType", "contentEncoding"].map((key): [string, MemberType<unknown>] => [key, STRING]),
-  ...["uniqueItems", "readOnly", "writeOnly", "deprecated", "nullable"].map((key): [string, MemberType<unknown>] => [key, BOOLEAN]),
+  ["const", keyword(ANY)],
+  // 2020-12 only recommends a non-empty enum of distinct values; draft 4 (OpenAPI 3.0) requires both and 2020-12 compilers reject an empty one, so the catalog requires both in either dialect.
+  [
+    "enum",
+    keyword(LIST, (values, pointer) => {
+      if (values.length === 0) return `Schema enum at ${pointer} is empty; the catalog requires at least one value (OpenAPI 3.0 requires it and JSON Schema 2020-12 compilers reject an empty enum).`;
+      const repeat = firstRepeat(values);
+      return repeat && `Schema enum at ${pointer} repeats value ${repeat.first} as value ${repeat.index}; the catalog requires each value once (OpenAPI 3.0 requires distinct values and JSON Schema 2020-12 recommends them).`;
+    }),
+  ],
+  ["multipleOf", keyword({ name: "a number greater than 0", accepts: (value): value is number => typeof value === "number" && value > 0 })],
+  ...["maximum", "minimum"].map((key): [string, KeywordRule] => [key, keyword(NUMBER)]),
+  // OPENAPI_30_KEYWORD_RULES replaces these for an OpenAPI 3.0 source.
+  ...["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, KeywordRule] => [key, keyword({ name: "a number (OpenAPI 3.1 form; boolean exclusive bounds are OpenAPI 3.0)", accepts: NUMBER.accepts })]),
+  ...["maxLength", "minLength", "maxItems", "minItems", "maxProperties", "minProperties", "maxContains", "minContains"].map((key): [string, KeywordRule] => [key, keyword(NON_NEGATIVE_INTEGER)]),
+  ["pattern", keyword(STRING, (pattern, pointer) => (isUnicodeRegex(pattern) ? undefined : `Pattern at ${pointer} is not a valid ECMA-262 regular expression in Unicode mode, as JSON Schema 2020-12 validators compile it.`))],
+  ["required", keyword(PROPERTY_NAMES, nameListProblem)],
+  [
+    "dependentRequired",
+    keyword({ name: "an object of property-name arrays", accepts: (value): value is Record<string, string[]> => isRecord(value) && Object.values(value).every(STRING_LIST.accepts) }, (map, pointer) =>
+      Object.keys(map)
+        .sort(compareCodeUnits)
+        .map((name) => nameListProblem(map[name], `${pointer}/${pointerSegment(name)}`))
+        .find((problem) => problem !== undefined)
+    ),
+  ],
+  // Meta-data, format-annotation and content. `examples` (and OpenAPI `example`) are never copied.
+  ...["title", "description", "format", "contentMediaType", "contentEncoding"].map((key): [string, KeywordRule] => [key, keyword(STRING)]),
+  ["default", keyword(ANY)],
+  ...["uniqueItems", "readOnly", "writeOnly", "deprecated"].map((key): [string, KeywordRule] => [key, keyword(BOOLEAN)]),
+  // Deprecated members of the 2020-12 meta-schema that 2020-12 compilers do not read as it does.
+  ...[
+    ["dependencies", "split into dependentRequired and dependentSchemas"],
+    ["$recursiveAnchor", "replaced by $dynamicAnchor"],
+  ].map(([key, replacement]): [string, KeywordRule] => [key, keyword(ANY, (_value, pointer) => `${pointer} is not a JSON Schema 2020-12 keyword (${replacement}); rewrite it.`)]),
+  // OpenAPI. `nullable` (3.0) qualifies a sibling type, as OpenAPI 3.0.3 and 2020-12 compilers that read it require.
+  [
+    "nullable",
+    keyword(BOOLEAN, (nullable, pointer, schema) => {
+      const type = own(schema, "type");
+      const types = typeof type === "string" ? [type] : Array.isArray(type) ? type : [];
+      if (types.length === 0) return `nullable at ${pointer} has no sibling type to qualify; give the schema a type or remove nullable.`;
+      return !nullable && types.includes("null") ? `nullable: false at ${pointer} contradicts a type that includes "null".` : undefined;
+    }),
+  ],
+  ["discriminator", keyword({ name: "a Discriminator Object", accepts: isRecord })],
+  ...["xml", "externalDocs"].map((key): [string, KeywordRule] => [key, keyword(OBJECT)]),
 ]);
 
 /**
@@ -272,27 +387,25 @@ const SCHEMA_KEYWORD_TYPES = new Map<string, MemberType<unknown>>([
  * qualify `minimum`/`maximum`; they are converted where the keyword is copied.
  * 3.1 bounds are the 2020-12 numbers, so each form is invalid in the other dialect.
  */
-const OPENAPI_30_KEYWORD_TYPES = new Map<string, MemberType<unknown>>(
-  ["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, MemberType<unknown>] => [key, { name: "a boolean (OpenAPI 3.0 form; numeric exclusive bounds need OpenAPI 3.1)", accepts: BOOLEAN.accepts }])
+const OPENAPI_30_KEYWORD_RULES = new Map<string, KeywordRule>(
+  ["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, KeywordRule] => [key, keyword({ name: "a boolean (OpenAPI 3.0 form; numeric exclusive bounds need OpenAPI 3.1)", accepts: BOOLEAN.accepts })])
 );
 
-/**
- * Why a schema `enum` array is invalid, or undefined. JSON Schema requires at
- * least one value; OpenAPI 3.0 (draft 4) requires distinct values and 2020-12
- * recommends them, so a repeat, compared as canonical JSON whatever its key
- * order, is reported in either dialect. The message names positions, never
- * values: they are literals a credential rule may withhold.
- */
-function enumProblem(values: unknown[], pointer: string): string | undefined {
-  if (values.length === 0) return `Schema enum at ${pointer} is empty; JSON Schema requires at least one value.`;
-  const seen = new Map<string, number>();
-  for (const [index, value] of values.entries()) {
-    const key = canonicalJson(value);
-    const first = seen.get(key);
-    if (first !== undefined) return `Schema enum at ${pointer} repeats value ${first} as value ${index}; list each value once (OpenAPI 3.0 requires distinct values).`;
-    seen.set(key, index);
+/** Why a schema keyword's declared value breaks its rule, or undefined. */
+function keywordProblem(rule: KeywordRule, value: unknown, pointer: string, schema: Record<string, unknown>): string | undefined {
+  if (!rule.type.accepts(value)) return `Expected ${rule.type.name} at ${pointer}, found ${describeValue(value)}.`;
+  return rule.check?.(value, pointer, schema);
+}
+
+/** A schema `$id` resolved against its enclosing resource's URI (the document's when none), without an empty fragment. */
+function resolveUri(id: string, base = "document:/"): string {
+  try {
+    const url = new URL(id, base);
+    url.hash = "";
+    return url.href;
+  } catch {
+    return `${base} ${id}`;
   }
-  return undefined;
 }
 
 function describeValue(value: unknown): string {
@@ -570,10 +683,14 @@ class CatalogBuilder {
   /** What is left of {@link SERVER_SCAN_BUDGET} for this build; servers are judged in a fixed order (paths sorted), so key order cannot change it. */
   private readonly serverScanBudget = { characters: SERVER_SCAN_BUDGET };
   /** The innermost schema being copied that declares a resource `$id`, against which JSON Schema resolves the references inside it. */
-  private resource: { pointer: string } | null = null;
+  private resource: { pointer: string; uri: string } | null = null;
+  /** Every pointer declaring each resource URI or anchor (keyed by kind and name), so a repeat is found in one pass. */
+  private readonly declarations = new Map<string, Set<string>>();
   private readonly mediaTypes: Set<string>;
   /** `<in>:<name>` of every parameter that a declared apiKey security scheme carries. */
   private readonly apiKeyParameters = new Set<string>();
+  /** The declared `type` of each security scheme, for reading the lists security requirements give it. */
+  private readonly schemeTypes = new Map<string, unknown>();
   private readonly schemaComponents: Record<string, unknown>;
   private readonly declaredSchemes: Record<string, unknown>;
 
@@ -592,6 +709,7 @@ class CatalogBuilder {
     this.declaredSchemes = this.member(components, "securitySchemes", "/components", OBJECT) ?? {};
     for (const [name, value] of Object.entries(this.declaredSchemes)) {
       const scheme = this.deref(value, `/components/securitySchemes/${pointerSegment(name)}`)?.value;
+      this.schemeTypes.set(name, scheme?.type);
       if (scheme?.type === "apiKey" && typeof scheme.in === "string" && typeof scheme.name === "string") {
         this.apiKeyParameters.add(parameterKey(scheme.in, scheme.name));
       }
@@ -634,6 +752,30 @@ class CatalogBuilder {
     const at = `${pointer}/${pointerSegment(key)}`;
     this.report("INVALID_SPEC", at, `Expected ${type.name} at ${at}, found ${describeValue(value)}.`, { operation });
     return undefined;
+  }
+
+  /**
+   * Reports a member OpenAPI marks REQUIRED that `owner` lacks (any one of
+   * `keys` satisfies it), at `<pointer>/<first key>`, the resolved object's
+   * pointer at any link of a reference chain.
+   */
+  requireMember(owner: Record<string, unknown>, keys: string[], pointer: string, what: string, operation?: string): void {
+    if (keys.every((key) => own(owner, key) === undefined)) {
+      this.report("INVALID_SPEC", `${pointer}/${keys[0]}`, `${what} at ${pointer} lacks ${keys.map(quote).join(" or ")}, which OpenAPI requires.`, { operation });
+    }
+  }
+
+  /**
+   * Checks the Header Objects of a response or encoding; true when any is
+   * declared besides Content-Type, which OpenAPI ignores there.
+   */
+  headerObjects(headers: Record<string, unknown>, pointer: string, operation: string): boolean {
+    const names = Object.keys(headers).filter((name) => name.toLowerCase() !== "content-type").sort(compareCodeUnits);
+    for (const name of names) {
+      const resolved = this.deref(headers[name], `${pointer}/${pointerSegment(name)}`);
+      if (resolved) this.requireMember(resolved.value, ["schema", "content"], resolved.pointer, `Header ${quote(name)} of operation ${quote(operation)}`, operation);
+    }
+    return names.length > 0;
   }
 
   /**
@@ -879,11 +1021,12 @@ class CatalogBuilder {
   schema(value: unknown, pointer: string, credential = false, sameInstance = false): JsonValue | null {
     const outer = this.resource;
     const id = isRecord(value) ? value.$id : undefined;
-    if (typeof id === "string" && /#./s.test(id)) {
-      this.report("INVALID_SPEC", `${pointer}/$id`, `The $id at ${pointer}/$id has a non-empty fragment, which JSON Schema 2020-12 forbids; name the schema with $anchor instead.`);
-    } else if (typeof id === "string" && id !== "" && id !== "#") {
-      // "" and "#" (an empty fragment) resolve to the document itself, so they start no resource.
-      this.resource = { pointer };
+    // schemaObject reports a non-empty fragment. "" and "#" (an empty fragment) name the enclosing resource (the
+    // document's when none) again, so they declare its URI but start no resource.
+    if (typeof id === "string" && !/#./s.test(id)) {
+      const uri = resolveUri(id, outer?.uri);
+      this.declareOnce("$id", uri, `${pointer}/$id`);
+      if (id !== "" && id !== "#") this.resource = { pointer, uri };
     }
     try {
       return this.schemaObject(value, pointer, credential, sameInstance);
@@ -910,17 +1053,15 @@ class CatalogBuilder {
     for (const [key, child] of Object.entries(value)) {
       const childPointer = `${pointer}/${pointerSegment(key)}`;
       if (key === "example" || key === "examples" || key.startsWith("x-")) continue;
-      const expected = (this.openapi30 && OPENAPI_30_KEYWORD_TYPES.get(key)) || SCHEMA_KEYWORD_TYPES.get(key);
+      const rule = (this.openapi30 && OPENAPI_30_KEYWORD_RULES.get(key)) || SCHEMA_KEYWORD_RULES.get(key);
       // Checked on the declared value, before any credential rule withholds or redacts it.
-      const problem =
-        expected && !expected.accepts(child)
-          ? `Expected ${expected.name} at ${childPointer}, found ${describeValue(child)}.`
-          : key === "enum"
-            ? enumProblem(child as unknown[], childPointer)
-            : undefined;
+      const problem = rule && keywordProblem(rule, child, childPointer, value);
       if (problem) {
         this.report("INVALID_SPEC", childPointer, problem);
-      } else if (isCredentialMember(key)) {
+        continue;
+      }
+      if (key === "$anchor" || key === "$dynamicAnchor") this.declareOnce("anchor", `${this.resource?.uri ?? ""}#${child as string}`, childPointer);
+      if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
       } else if (REFERENCE_KEYWORDS.has(key) && this.resource) {
         // The catalog resolves every reference against the document; inside a resource JSON Schema would not.
@@ -930,13 +1071,9 @@ class CatalogBuilder {
         const ref = this.schemaRef(child, childPointer, taint());
         if (ref !== null) setOwn(output, key, ref);
       } else if (SCHEMA_MAP_KEYWORDS.has(key)) {
-        if (!isRecord(child)) {
-          this.report("INVALID_SPEC", childPointer, `Expected an object of schemas at ${childPointer}, found ${describeValue(child)}.`);
-          continue;
-        }
         const entries: Record<string, JsonValue> = {};
         const named = key === "properties" || key === "patternProperties";
-        for (const [name, entry] of Object.entries(child)) {
+        for (const [name, entry] of Object.entries(child as Record<string, unknown>)) {
           this.identifier(name, `${childPointer}/${pointerSegment(name)}`, "Schema member name");
           const nested = this.schema(entry, `${childPointer}/${pointerSegment(name)}`, secret || (named && isCredentialKey(name)), SAME_INSTANCE_KEYWORDS.has(key) && instanceReaches());
           if (nested !== null) setOwn(entries, name, nested);
@@ -946,14 +1083,10 @@ class CatalogBuilder {
         const nested = this.schema(child, childPointer, secret, SAME_INSTANCE_KEYWORDS.has(key) && instanceReaches());
         if (nested !== null) setOwn(output, key, nested);
       } else if (SCHEMA_LIST_KEYWORDS.has(key)) {
-        if (Array.isArray(child)) {
-          const same = SAME_INSTANCE_KEYWORDS.has(key) && instanceReaches();
-          setOwn(output, key, child.map((entry, index) => this.schema(entry, `${childPointer}/${index}`, secret, same) ?? {}));
-        }
-        else this.report("INVALID_SPEC", childPointer, `Expected an array of schemas at ${childPointer}, found ${describeValue(child)}.`);
+        const same = SAME_INSTANCE_KEYWORDS.has(key) && instanceReaches();
+        setOwn(output, key, (child as unknown[]).map((entry, index) => this.schema(entry, `${childPointer}/${index}`, secret, same) ?? {}));
       } else if (key === "discriminator") {
-        if (isRecord(child)) setOwn(output, key, this.discriminator(child, childPointer, taint()));
-        else this.report("INVALID_SPEC", childPointer, `Expected a Discriminator Object at ${childPointer}, found ${describeValue(child)}.`);
+        setOwn(output, key, this.discriminator(child as Record<string, unknown>, childPointer, taint()));
       } else if (key === "pattern" && secret) {
         // A pattern can spell the credential in any regex syntax (`^(x)$`, `^x{1}$`, `^x|x$`), so a credential field carries none.
         drop(key, childPointer, "a credential field carries no pattern; any pattern there can spell the credential");
@@ -962,19 +1095,14 @@ class CatalogBuilder {
         if (containsCredentialValue(patternLiterals(child))) drop(key, childPointer, "the pattern holds a credential-like value");
         else setOwn(output, key, child);
       } else if (key === "required") {
-        if (STRING_LIST.accepts(child)) setOwn(output, key, this.names(child, childPointer));
-        else this.report("INVALID_SPEC", childPointer, `Expected an array of property names at ${childPointer}, found ${describeValue(child)}.`);
+        setOwn(output, key, this.names(child as string[], childPointer));
       } else if (NAME_KEYWORDS.has(key)) {
-        if (isRecord(child) && Object.values(child).every((names) => STRING_LIST.accepts(names))) {
-          const entries: Record<string, JsonValue> = {};
-          for (const [name, names] of Object.entries(child)) {
-            const namePointer = `${childPointer}/${pointerSegment(name)}`;
-            setOwn(entries, this.identifier(name, namePointer, "Property name"), this.names(names as string[], namePointer));
-          }
-          setOwn(output, key, entries);
-        } else {
-          this.report("INVALID_SPEC", childPointer, `Expected an object of property-name arrays at ${childPointer}.`);
+        const entries: Record<string, JsonValue> = {};
+        for (const [name, names] of Object.entries(child as Record<string, string[]>)) {
+          const namePointer = `${childPointer}/${pointerSegment(name)}`;
+          setOwn(entries, this.identifier(name, namePointer, "Property name"), this.names(names, namePointer));
         }
+        setOwn(output, key, entries);
       } else if ((key === "exclusiveMinimum" || key === "exclusiveMaximum") && typeof child === "boolean") {
         // Only OpenAPI 3.0 reaches here. Its boolean qualifies `minimum`/`maximum`; in the catalog's 2020-12 the bound
         // itself is exclusive. `false` keeps the inclusive bound; `true` with no bound to qualify is a broken constraint.
@@ -1058,6 +1186,32 @@ class CatalogBuilder {
     return reaching.has(schema);
   }
 
+  /**
+   * Records a declaration JSON Schema 2020-12 allows once: a resource URI per
+   * document, an anchor name per resource (a 2020-12 compiler rejects a
+   * repeat). Repeats are reported once every schema is read, see {@link reportRepeatedDeclarations}.
+   */
+  private declareOnce(kind: "anchor" | "$id", name: string, pointer: string): void {
+    const key = `${kind} ${name}`;
+    this.declarations.set(key, (this.declarations.get(key) ?? new Set<string>()).add(pointer));
+  }
+
+  /** Reports a repeated resource URI or anchor at every declaration, so the diagnostics never depend on reading order. */
+  private reportRepeatedDeclarations(): void {
+    for (const [key, pointers] of this.declarations) {
+      if (pointers.size < 2) continue;
+      for (const at of pointers) {
+        this.report(
+          "INVALID_SPEC",
+          at,
+          key.startsWith("anchor ")
+            ? `Anchor at ${at} is also declared by another schema in the same schema resource; JSON Schema 2020-12 requires each anchor name once per resource.`
+            : `The $id at ${at} resolves to a URI that another schema in the document also declares; JSON Schema 2020-12 requires each schema resource URI once.`
+        );
+      }
+    }
+  }
+
   /** Property names (`required`, `dependentRequired`): checked like property names and copied verbatim, never rewritten. */
   private names(values: string[], pointer: string): string[] {
     return values.map((name, index) => this.identifier(name, `${pointer}/${index}`, "Property name"));
@@ -1103,6 +1257,7 @@ class CatalogBuilder {
    */
   private discriminator(value: Record<string, unknown>, pointer: string, taint: Taint): JsonValue {
     const output: Record<string, JsonValue> = {};
+    this.requireMember(value, ["propertyName"], pointer, "Discriminator Object");
     const propertyName = this.member(value, "propertyName", pointer, STRING);
     if (propertyName !== undefined) output.propertyName = this.identifier(propertyName, `${pointer}/propertyName`, "Discriminator property name");
     const mapping = this.member(value, "mapping", pointer, OBJECT);
@@ -1157,7 +1312,8 @@ class CatalogBuilder {
         this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/style`, `Property ${quote(name)} of ${mediaType} in operation ${quote(operation)} uses style ${quote(style)}; supported styles are ${ENCODING_STYLES.join(", ")}.`, { operation });
         continue;
       }
-      if (encoding.headers !== undefined) {
+      const headers = this.member(encoding, "headers", encodingPointer, OBJECT, operation);
+      if (headers && this.headerObjects(headers, `${encodingPointer}/headers`, operation)) {
         this.report("UNSUPPORTED_SERIALIZATION", `${encodingPointer}/headers`, `Part headers of property ${quote(name)} in operation ${quote(operation)} are not described in the catalog; generated clients will not send them.`, { severity: "warning", operation });
       }
       setOwn(output, name, {
@@ -1270,6 +1426,8 @@ class CatalogBuilder {
         continue;
       }
       if (location === "header" && IGNORED_HEADERS.has(name.toLowerCase())) continue;
+      // Still declared when it lacks both, so the path template check does not report it again.
+      this.requireMember(value, ["schema", "content"], pointer, `Parameter ${quote(name)} of operation ${quote(id)}`, id);
       const style = this.member(value, "style", pointer, STRING, id) ?? (location === "query" || location === "cookie" ? "form" : "simple");
       if (value.content !== undefined || !isOneOf(PARAMETER_STYLES[location], style)) {
         this.report(
@@ -1331,9 +1489,10 @@ class CatalogBuilder {
         const resolved = this.deref(responses[status], `${entry.pointer}/responses/${pointerSegment(status)}`);
         if (!resolved) return [];
         const kind: CatalogResponse["kind"] = status === "default" ? "default" : /^[45]/.test(status) ? "error" : "success";
+        this.requireMember(resolved.value, ["description"], resolved.pointer, `Response ${status} of operation ${quote(id)}`, id);
         const headers = this.member(resolved.value, "headers", resolved.pointer, OBJECT, id);
         // Header names are not extensions (`x-ratelimit-remaining` is a header); OpenAPI ignores Content-Type here.
-        if (headers && Object.keys(headers).some((name) => name.toLowerCase() !== "content-type")) {
+        if (headers && this.headerObjects(headers, `${resolved.pointer}/headers`, id)) {
           this.report("UNSUPPORTED_SERIALIZATION", `${resolved.pointer}/headers`, `Response ${status} headers of operation ${quote(id)} are not described in the catalog; generated clients will not expose them.`, { severity: "warning", operation: id });
         }
         return [
@@ -1381,6 +1540,12 @@ class CatalogBuilder {
           invalid(schemePointer, `Scopes of security scheme ${quote(scheme)} in operation ${quote(id)} must be an array of strings; use [] for none.`);
           continue;
         }
+        // OpenAPI 3.0 lists scopes for oauth2 and openIdConnect only; 3.1 lets other schemes list role names.
+        const type = this.schemeTypes.get(scheme);
+        if (this.openapi30 && scopes.length > 0 && (type === "apiKey" || type === "http" || type === "mutualTLS")) {
+          invalid(schemePointer, `Security scheme ${quote(scheme)} in operation ${quote(id)} is of type ${type}, which takes no scopes in OpenAPI 3.0; use [].`);
+          continue;
+        }
         terms.push({ scheme, scopes: sortStrings(scopes.map((scope: string, scopeIndex) => this.identifier(scope, `${schemePointer}/${scopeIndex}`, "Scope name", id))) });
       }
       alternatives.set(canonicalJson(terms), terms);
@@ -1395,6 +1560,8 @@ class CatalogBuilder {
     const op = entry.operation;
     const deprecated = (this.member(op, "deprecated", entry.pointer, BOOLEAN, binding.id) ?? false) || binding.deprecation !== undefined;
     const requestBody = this.deref(op.requestBody, `${entry.pointer}/requestBody`);
+    // An empty content map is valid OpenAPI and is published as no media types; only a missing one is an error.
+    if (requestBody) this.requireMember(requestBody.value, ["content"], requestBody.pointer, `Request body of operation ${quote(binding.id)}`, binding.id);
     const bindingPointer = `/operations/${this.manifest.operations.indexOf(binding)}`;
     const name = binding.name ?? toIdentifier(entry.operationId ?? binding.id);
     if (name.length > NAME_MAX_LENGTH) {
@@ -1837,6 +2004,8 @@ class CatalogBuilder {
 
     const info = this.doc.info as Record<string, unknown>;
     const provenance = this.manifest.provenance ?? {};
+    const schemas = this.componentSchemas();
+    this.reportRepeatedDeclarations();
     return {
       catalogVersion: CATALOG_VERSION,
       api: { id: this.manifest.api.id, version: this.manifest.api.version, title: this.text(own(info, "title"), "/info/title") ?? "" },
@@ -1849,7 +2018,7 @@ class CatalogBuilder {
       servers: this.servers(this.member(this.doc, "servers", "", LIST) ?? [], "/servers"),
       securitySchemes: this.securitySchemes(),
       operations,
-      schemas: this.componentSchemas(),
+      schemas,
     };
   }
 }

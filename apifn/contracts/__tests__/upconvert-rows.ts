@@ -2,8 +2,7 @@ import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
 import { describe, expect, it } from "vitest";
 import { canonicalJson } from "../src/canonical.js";
-import { buildOperationCatalog } from "../src/index.js";
-import { clone, fixture, readJson } from "./helpers.js";
+import { buildOperationCatalog, clone, fixture, readJson } from "./helpers.js";
 
 interface UpconvertEdit {
   path: string[];

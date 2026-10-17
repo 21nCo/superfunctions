@@ -123,6 +123,7 @@ export interface CatalogResponse {
 
 export interface SecurityRequirementTerm {
   scheme: string;
+  /** OAuth scopes for `oauth2` and `openIdConnect` schemes; role names for other schemes (OpenAPI 3.1 only). */
   scopes: string[];
 }
 

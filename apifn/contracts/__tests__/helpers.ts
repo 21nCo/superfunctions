@@ -1,6 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import Ajv2020 from "ajv/dist/2020.js";
+import { expect } from "vitest";
+import { buildOperationCatalog as buildUnchecked, type OperationCatalog } from "../src/index.js";
 
 export const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../fixtures");
 export const SCHEMAS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../schemas");
@@ -84,4 +87,44 @@ export function scalingRatio(work: (size: number) => void, size: number, runs = 
     lowest = Math.min(lowest, time(size * 4) / Math.max(small, 1));
   }
   return lowest;
+}
+
+const oracle = new Ajv2020({ strict: false, logger: false });
+
+/**
+ * Every schema a catalog publishes (component and inline) that is not valid
+ * JSON Schema 2020-12, as "<catalog pointer>: <reason>": each must pass the
+ * 2020-12 meta-schema and (unless `compile` is false) compile in Ajv2020 as
+ * one document without a base URI, so `#/components/schemas/*` references
+ * resolve against the catalog's own schemas.
+ */
+export function unpublishableSchemas(catalog: OperationCatalog, { compile = true } = {}): string[] {
+  const placed: Array<[string, unknown]> = Object.entries(catalog.schemas).map(([name, schema]) => [`/schemas/${name}`, schema]);
+  catalog.operations.forEach((operation, i) => {
+    operation.parameters.forEach((parameter, j) => placed.push([`/operations/${i}/parameters/${j}/schema`, parameter.schema]));
+    operation.requestBody?.contents.forEach((content, j) => placed.push([`/operations/${i}/requestBody/contents/${j}/schema`, content.schema]));
+    operation.responses.forEach((response, j) => response.contents.forEach((content, k) => placed.push([`/operations/${i}/responses/${j}/contents/${k}/schema`, content.schema])));
+  });
+  const schemas = placed.filter(([, schema]) => schema !== null);
+  const problems = schemas.flatMap(([at, schema]) => (oracle.validateSchema(schema as object) ? [] : [`${at}: ${oracle.errorsText(oracle.errors)}`]));
+  if (!compile) return problems;
+  try {
+    oracle.compile({
+      components: { schemas: catalog.schemas },
+      published: schemas.map(([, schema]) => schema),
+      allOf: schemas.map((_, index) => ({ $ref: `#/published/${index}` })),
+    });
+  } catch (error) {
+    problems.push(`compile: ${(error as Error).message}`);
+  } finally {
+    oracle.removeSchema();
+  }
+  return problems;
+}
+
+/** buildOperationCatalog, asserting that every schema a successful catalog publishes is valid JSON Schema 2020-12 that compiles. */
+export function buildOperationCatalog(...args: Parameters<typeof buildUnchecked>): ReturnType<typeof buildUnchecked> {
+  const result = buildUnchecked(...args);
+  if (result.catalog) expect(unpublishableSchemas(result.catalog)).toEqual([]);
+  return result;
 }
