@@ -1,0 +1,62 @@
+{
+  "description": "At most 32 attributes are accepted.",
+  "expectedIssues": [
+    {
+      "path": "/attributes",
+      "code": "TOO_MANY"
+    }
+  ],
+  "event": {
+    "schemaVersion": "apifn.client-failure/v1",
+    "eventId": "evt_01HZX3KA00B1",
+    "occurredAt": "2026-10-11T09:31:00Z",
+    "api": {
+      "id": "example.projects",
+      "version": "2026-10-01"
+    },
+    "operation": {
+      "id": "projects.list"
+    },
+    "release": {
+      "releaseId": "rel_2c4f0d8e1a9b7c3d5e6f7a8b"
+    },
+    "failure": {
+      "kind": "network"
+    },
+    "attributes": {
+      "k00": 0,
+      "k01": 1,
+      "k02": 2,
+      "k03": 3,
+      "k04": 4,
+      "k05": 5,
+      "k06": 6,
+      "k07": 7,
+      "k08": 8,
+      "k09": 9,
+      "k10": 10,
+      "k11": 11,
+      "k12": 12,
+      "k13": 13,
+      "k14": 14,
+      "k15": 15,
+      "k16": 16,
+      "k17": 17,
+      "k18": 18,
+      "k19": 19,
+      "k20": 20,
+      "k21": 21,
+      "k22": 22,
+      "k23": 23,
+      "k24": 24,
+      "k25": 25,
+      "k26": 26,
+      "k27": 27,
+      "k28": 28,
+      "k29": 29,
+      "k30": 30,
+      "k31": 31,
+      "k32": 32
+    }
+  }
+}

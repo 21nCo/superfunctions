@@ -1,0 +1,2874 @@
+{
+  "literals": [
+    {
+      "name": "a default object",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "default": {
+          "nullable": true,
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "a const object",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "const": {
+          "type": "string",
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "an enum object item",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "enum": [
+          {
+            "nullable": true,
+            "b": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "an example object",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "example": {
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "an allOf member default",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "allOf": [
+          {
+            "type": "object",
+            "default": {
+              "nullable": true,
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "a property named nullable with schema true",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "properties": {
+          "nullable": true,
+          "a": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "a patternProperties key nullable",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "patternProperties": {
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "a $defs key nullable",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "$defs": {
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "an x-* schema literal",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "string",
+        "x-meta": {
+          "type": "string",
+          "nullable": true
+        }
+      }
+    },
+    {
+      "name": "an x-* operation literal",
+      "path": [
+        "paths",
+        "/workspaces/{workspaceId}/projects",
+        "post",
+        "x-meta"
+      ],
+      "openapi30": {
+        "type": "string",
+        "nullable": true
+      }
+    },
+    {
+      "name": "a parameter example",
+      "path": [
+        "paths",
+        "/workspaces/{workspaceId}/projects",
+        "post",
+        "parameters",
+        "0",
+        "example"
+      ],
+      "openapi30": {
+        "type": "string",
+        "nullable": true
+      }
+    },
+    {
+      "name": "a __proto__ literal",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "default": {
+          "__proto__": "x",
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "a __proto__ object literal holding nullable",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "default": {
+          "__proto__": {
+            "nullable": true
+          },
+          "a": 1
+        }
+      }
+    },
+    {
+      "name": "a __proto__ property name",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "properties": {
+          "__proto__": {
+            "type": "string"
+          },
+          "a": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "an unreferenced Paths x-* member",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "x-meta"
+          ],
+          "openapi30": {
+            "get": {
+              "parameters": [
+                {
+                  "name": "a",
+                  "in": "query",
+                  "schema": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                }
+              ]
+            },
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an unreferenced Responses x-* member",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "x-meta"
+          ],
+          "openapi30": {
+            "get": {
+              "parameters": [
+                {
+                  "name": "a",
+                  "in": "query",
+                  "schema": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                }
+              ]
+            },
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an unreferenced Callback x-* member",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "callbacks"
+          ],
+          "openapi30": {
+            "cb": {
+              "{$request.query.url}": {
+                "post": {
+                  "responses": {
+                    "200": {
+                      "description": "ok"
+                    }
+                  }
+                }
+              },
+              "x-meta": {
+                "get": {
+                  "parameters": [
+                    {
+                      "name": "a",
+                      "in": "query",
+                      "schema": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    }
+                  ]
+                },
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a schema $id with no reference inside",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "https://schemas.example.test/meta",
+        "type": "object"
+      }
+    },
+    {
+      "name": "a $ref beside an empty $id",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          }
+        }
+      }
+    },
+    {
+      "name": "a $ref beside an empty-fragment $id",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "properties": {
+          "tag": {
+            "$id": "#",
+            "$ref": "#/components/schemas/ProjectStatus"
+          }
+        }
+      }
+    }
+  ],
+  "schemas": [
+    {
+      "name": "a property schema",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "string",
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    {
+      "name": "a property with a type list",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": [
+          "string",
+          "integer"
+        ],
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "integer",
+          "null"
+        ]
+      }
+    },
+    {
+      "name": "items",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "nullable": true
+        }
+      },
+      "openapi31": {
+        "type": "array",
+        "items": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "name": "an allOf member",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "allOf": [
+          {
+            "type": "string",
+            "nullable": true
+          }
+        ]
+      },
+      "openapi31": {
+        "allOf": [
+          {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a __proto__ property schema",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "properties": {
+          "__proto__": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "openapi31": {
+        "type": "object",
+        "properties": {
+          "__proto__": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a component",
+      "path": [
+        "components",
+        "schemas",
+        "ProjectStatus"
+      ],
+      "openapi30": {
+        "type": "string",
+        "enum": [
+          "active",
+          "archived"
+        ],
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "active",
+          "archived"
+        ]
+      }
+    },
+    {
+      "name": "a component parameter schema",
+      "path": [
+        "components",
+        "parameters",
+        "WorkspaceId",
+        "schema"
+      ],
+      "openapi30": {
+        "type": "string",
+        "format": "uuid",
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "format": "uuid"
+      }
+    },
+    {
+      "name": "an operation parameter schema",
+      "path": [
+        "paths",
+        "/workspaces/{workspaceId}/projects",
+        "post",
+        "parameters",
+        "0",
+        "schema"
+      ],
+      "openapi30": {
+        "type": "string",
+        "maxLength": 64,
+        "nullable": true
+      },
+      "openapi31": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "maxLength": 64
+      }
+    }
+  ],
+  "references": [
+    {
+      "name": "a parameter at the root x-*",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "parameters"
+          ],
+          "openapi30": [
+            {
+              "$ref": "#/x-target"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a parameter at a Paths x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "x-target"
+          ],
+          "openapi30": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "parameters"
+          ],
+          "openapi30": [
+            {
+              "$ref": "#/paths/x-target"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a parameter at a Components x-*",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "parameters"
+          ],
+          "openapi30": [
+            {
+              "$ref": "#/components/x-target"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a parameter at another operation's x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "get",
+            "x-target"
+          ],
+          "openapi30": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "parameters"
+          ],
+          "openapi30": [
+            {
+              "$ref": "#/paths/~1workspaces~1{workspaceId}~1projects/get/x-target"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a parameter through a $ref chain",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "name": "probe",
+            "in": "query",
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "x-chain"
+          ],
+          "openapi30": {
+            "$ref": "#/components/x-target"
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "parameters"
+          ],
+          "openapi30": [
+            {
+              "$ref": "#/x-chain"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a header at the root x-*",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "200",
+            "headers"
+          ],
+          "openapi30": {
+            "X-Probe": {
+              "$ref": "#/x-target"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a header at a Paths x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "x-target"
+          ],
+          "openapi30": {
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "200",
+            "headers"
+          ],
+          "openapi30": {
+            "X-Probe": {
+              "$ref": "#/paths/x-target"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a header at a Components x-*",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "200",
+            "headers"
+          ],
+          "openapi30": {
+            "X-Probe": {
+              "$ref": "#/components/x-target"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a header at another operation's x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "get",
+            "x-target"
+          ],
+          "openapi30": {
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "200",
+            "headers"
+          ],
+          "openapi30": {
+            "X-Probe": {
+              "$ref": "#/paths/~1workspaces~1{workspaceId}~1projects/get/x-target"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a header through a $ref chain",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          },
+          "openapi31": {
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "path": [
+            "x-chain"
+          ],
+          "openapi30": {
+            "$ref": "#/components/x-target"
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "200",
+            "headers"
+          ],
+          "openapi30": {
+            "X-Probe": {
+              "$ref": "#/x-chain"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a requestBody at the root x-*",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "post",
+            "requestBody"
+          ],
+          "openapi30": {
+            "$ref": "#/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a requestBody at a Paths x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "x-target"
+          ],
+          "openapi30": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "post",
+            "requestBody"
+          ],
+          "openapi30": {
+            "$ref": "#/paths/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a requestBody at a Components x-*",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "post",
+            "requestBody"
+          ],
+          "openapi30": {
+            "$ref": "#/components/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a requestBody at another operation's x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "get",
+            "x-target"
+          ],
+          "openapi30": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "post",
+            "requestBody"
+          ],
+          "openapi30": {
+            "$ref": "#/paths/~1workspaces~1{workspaceId}~1projects/get/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a requestBody through a $ref chain",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "x-chain"
+          ],
+          "openapi30": {
+            "$ref": "#/components/x-target"
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "post",
+            "requestBody"
+          ],
+          "openapi30": {
+            "$ref": "#/x-chain"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a response at the root x-*",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "299"
+          ],
+          "openapi30": {
+            "$ref": "#/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a response at a Paths x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "x-target"
+          ],
+          "openapi30": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "299"
+          ],
+          "openapi30": {
+            "$ref": "#/paths/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a response at a Components x-*",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "299"
+          ],
+          "openapi30": {
+            "$ref": "#/components/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a response at another operation's x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "get",
+            "x-target"
+          ],
+          "openapi30": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "299"
+          ],
+          "openapi30": {
+            "$ref": "#/paths/~1workspaces~1{workspaceId}~1projects/get/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a response through a $ref chain",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "description": "Probe",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "x-chain"
+          ],
+          "openapi30": {
+            "$ref": "#/components/x-target"
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "responses",
+            "299"
+          ],
+          "openapi30": {
+            "$ref": "#/x-chain"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a path item at the root x-*",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a path item at a Paths x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "x-target"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/paths/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a path item at a Components x-*",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/components/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a path item at another operation's x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "get",
+            "x-target"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/paths/~1workspaces~1{workspaceId}~1projects/get/x-target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a path item through a $ref chain",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "path": [
+            "x-chain"
+          ],
+          "openapi30": {
+            "$ref": "#/components/x-target"
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/x-chain"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a callback at the root x-*",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "callbacks"
+          ],
+          "openapi30": {
+            "probe": {
+              "$ref": "#/x-target"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a callback at a Paths x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "x-target"
+          ],
+          "openapi30": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "callbacks"
+          ],
+          "openapi30": {
+            "probe": {
+              "$ref": "#/paths/x-target"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a callback at a Components x-*",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "callbacks"
+          ],
+          "openapi30": {
+            "probe": {
+              "$ref": "#/components/x-target"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a callback at another operation's x-*",
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/workspaces/{workspaceId}/projects",
+            "get",
+            "x-target"
+          ],
+          "openapi30": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "callbacks"
+          ],
+          "openapi30": {
+            "probe": {
+              "$ref": "#/paths/~1workspaces~1{workspaceId}~1projects/get/x-target"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "a callback through a $ref chain",
+      "edits": [
+        {
+          "path": [
+            "components",
+            "x-target"
+          ],
+          "openapi30": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "{$request.query.url}": {
+              "post": {
+                "requestBody": {
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "200": {
+                    "description": "ok"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "x-chain"
+          ],
+          "openapi30": {
+            "$ref": "#/components/x-target"
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "callbacks"
+          ],
+          "openapi30": {
+            "probe": {
+              "$ref": "#/x-chain"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "an operation beside a callback path item $ref",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "get": {
+              "responses": {
+                "200": {
+                  "description": "ok"
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health",
+            "get",
+            "callbacks"
+          ],
+          "openapi30": {
+            "probe": {
+              "{$request.query.url}": {
+                "$ref": "#/x-target",
+                "post": {
+                  "requestBody": {
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  },
+                  "responses": {
+                    "200": {
+                      "description": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "openapi31": {
+            "probe": {
+              "{$request.query.url}": {
+                "$ref": "#/x-target",
+                "post": {
+                  "requestBody": {
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "responses": {
+                    "200": {
+                      "description": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "x-* beside a path item $ref",
+      "edits": [
+        {
+          "path": [
+            "x-target"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/x-target",
+            "summary": "Health",
+            "description": "Liveness",
+            "x-meta": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "rejected": [
+    {
+      "name": "a nullable parameter beside a path item $ref to #/x-pi",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/paths/~1health"
+      },
+      "edits": [
+        {
+          "path": [
+            "x-pi"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/x-pi",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "$ref": "#/x-pi",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a nullable parameter beside a path item $ref to #/paths/~1other",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/paths/~1health"
+      },
+      "edits": [
+        {
+          "path": [
+            "paths",
+            "/other"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/paths/~1other",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "$ref": "#/paths/~1other",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a nullable parameter beside a path item $ref in the middle of a chain",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/x-a"
+      },
+      "edits": [
+        {
+          "path": [
+            "x-pi"
+          ],
+          "openapi30": {
+            "get": {
+              "operationId": "getHealth",
+              "security": [],
+              "responses": {
+                "200": {
+                  "description": "Healthy",
+                  "content": {
+                    "text/plain": {
+                      "schema": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "path": [
+            "x-a"
+          ],
+          "openapi30": {
+            "$ref": "#/x-pi",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            ]
+          },
+          "openapi31": {
+            "$ref": "#/x-pi",
+            "parameters": [
+              {
+                "name": "probe",
+                "in": "query",
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "path": [
+            "paths",
+            "/health"
+          ],
+          "openapi30": {
+            "$ref": "#/x-a"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a $ref inside a component schema with an absolute $id",
+      "error": {
+        "code": "UNRESOLVED_REF",
+        "pointer": "/components/schemas/Project/properties/status/$ref"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "Project"
+      ],
+      "openapi30": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "owner": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "example": {
+          "id": "proj_1",
+          "name": "Docs",
+          "status": "active",
+          "owner": null
+        },
+        "$id": "https://schemas.example.test/project"
+      },
+      "openapi31": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          },
+          "owner": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "example": {
+          "id": "proj_1",
+          "name": "Docs",
+          "status": "active",
+          "owner": null
+        },
+        "$id": "https://schemas.example.test/project"
+      }
+    },
+    {
+      "name": "a $ref inside a nullable property schema with a relative $id",
+      "error": {
+        "code": "UNRESOLVED_REF",
+        "pointer": "/components/schemas/ProjectInput/properties/meta/properties/status/$ref"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "meta.json",
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          }
+        }
+      },
+      "openapi31": {
+        "$id": "meta.json",
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ProjectStatus"
+          }
+        }
+      }
+    },
+    {
+      "name": "a fragment-only $id",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/components/schemas/ProjectInput/properties/meta/properties/tag/$id"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "tag": {
+            "$id": "#tag",
+            "type": "string"
+          }
+        }
+      },
+      "openapi31": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "tag": {
+            "$id": "#tag",
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "an absolute $id with a fragment",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/components/schemas/ProjectInput/properties/meta/$id"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "https://schemas.example.test/meta#tag",
+        "type": "string",
+        "nullable": true
+      },
+      "openapi31": {
+        "$id": "https://schemas.example.test/meta#tag",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    {
+      "name": "an empty $id beside an empty-fragment $id, which both name the document",
+      "error": {
+        "code": "INVALID_SPEC",
+        "pointer": "/components/schemas/ProjectInput/properties/meta/properties/tag/$id"
+      },
+      "path": [
+        "components",
+        "schemas",
+        "ProjectInput",
+        "properties",
+        "meta"
+      ],
+      "openapi30": {
+        "$id": "",
+        "properties": {
+          "tag": {
+            "$id": "#",
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "openapi31": {
+        "$id": "",
+        "properties": {
+          "tag": {
+            "$id": "#",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

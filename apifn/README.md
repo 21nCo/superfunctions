@@ -16,6 +16,7 @@ Your router is the source of truth: introspect it into OpenAPI 3.1, then drive v
 | [`@apifn/react`](./react) | React components — interactive API explorer, Try-It console, schema viewer, diff, performance overlays. |
 | [`@apifn/svelte`](./svelte) | The same UI surface for Svelte, shipped as `.svelte` source. |
 | [`@apifn/docsfn`](./docsfn) | docsfn plugin — render an OpenAPI spec as an interactive API reference. |
+| [`@apifn/contracts`](./contracts) | Versioned operation catalog, release descriptor and client-failure event contracts, with JSON Schemas and shared fixtures for SDK generators, agent tools and failure reporting. |
 
 ### npm release dependency order
 
@@ -25,6 +26,8 @@ React, Svelte, and `@apifn/admin` **0.1.0** require that exact core version.
 Publish DocsFn after both renderers: it pins core, React, and Svelte to 0.0.3.
 The admin wrapper also requires the published `@superfunctions/admin` **^0.1.4**
 peer so consumers share the same `AdminClient` type.
+`@apifn/contracts` **0.1.0** also pins core to exactly 0.0.3 and publishes after
+core; it is not in the current publication batch.
 
 All ApiFn workspace callers use the new exact core pin. CLI, collections, mock,
 and snippets retain their current package versions and are not included in this

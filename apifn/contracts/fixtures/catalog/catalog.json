@@ -1,0 +1,775 @@
+{
+  "api": {
+    "id": "example.projects",
+    "title": "Projects API",
+    "version": "2026-10-01"
+  },
+  "catalogVersion": "apifn.operation-catalog/v1",
+  "operations": [
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "projects.archive",
+      "method": "post",
+      "name": "archiveProject",
+      "openapiOperationId": "archiveProject",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/workspaces/{workspaceId}/projects/{projectId}/archive",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/Project"
+              }
+            }
+          ],
+          "description": "Archived",
+          "kind": "success",
+          "status": "200"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Not found",
+          "kind": "error",
+          "status": "404"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [
+          "python"
+        ],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyAuth",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Archive a project",
+      "tags": [
+        "projects"
+      ]
+    },
+    {
+      "agent": {
+        "expose": true
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": "policy.requires-idempotency-key",
+      "id": "projects.create",
+      "method": "post",
+      "name": "createProject",
+      "openapiOperationId": "createProject",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "header",
+          "name": "Idempotency-Key",
+          "required": false,
+          "schema": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/workspaces/{workspaceId}/projects",
+      "requestBody": {
+        "contents": [
+          {
+            "encoding": {},
+            "mediaType": "application/json",
+            "schema": {
+              "$ref": "#/components/schemas/ProjectInput"
+            }
+          }
+        ],
+        "required": true
+      },
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/Project"
+              }
+            }
+          ],
+          "description": "Created",
+          "kind": "success",
+          "status": "201"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "A project with this slug exists",
+          "kind": "error",
+          "status": "409"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Unexpected error",
+          "kind": "default",
+          "status": "default"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyAuth",
+              "scopes": []
+            },
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "oauth",
+              "scopes": [
+                "projects:write"
+              ]
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Create a project",
+      "tags": [
+        "projects"
+      ]
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": true,
+        "message": "Archive projects instead of deleting them.",
+        "replacement": "projects.archive",
+        "since": "2026-09-01"
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "projects.delete",
+      "method": "delete",
+      "name": "deleteProject",
+      "openapiOperationId": "removeProject",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/workspaces/{workspaceId}/projects/{projectId}",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [],
+          "description": "Deleted",
+          "kind": "success",
+          "status": "204"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Not found",
+          "kind": "error",
+          "status": "404"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyAuth",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Delete a project (deprecated)",
+      "tags": [
+        "projects"
+      ]
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "projects.get",
+      "method": "get",
+      "name": "getProject",
+      "openapiOperationId": "getProject",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": "Project slug or ID",
+          "explode": false,
+          "in": "path",
+          "name": "projectId",
+          "required": true,
+          "schema": {
+            "pattern": "^[a-z0-9-]+$",
+            "type": "string"
+          },
+          "style": "simple"
+        }
+      ],
+      "path": "/workspaces/{workspaceId}/projects/{projectId}",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/Project"
+              }
+            }
+          ],
+          "description": "The project",
+          "kind": "success",
+          "status": "200"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Not found",
+          "kind": "error",
+          "status": "404"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyAuth",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "Get a project",
+      "tags": [
+        "projects"
+      ]
+    },
+    {
+      "agent": {
+        "expose": true
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": "policy.read-only",
+      "id": "projects.list",
+      "method": "get",
+      "name": "listProjects",
+      "openapiOperationId": "listProjects",
+      "parameters": [
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": false,
+          "in": "path",
+          "name": "workspaceId",
+          "required": true,
+          "schema": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "style": "simple"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "filter",
+          "required": false,
+          "schema": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "style": "deepObject"
+        },
+        {
+          "allowReserved": false,
+          "deprecated": false,
+          "description": null,
+          "explode": true,
+          "in": "query",
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "style": "form"
+        }
+      ],
+      "path": "/workspaces/{workspaceId}/projects",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/json",
+              "schema": {
+                "$ref": "#/components/schemas/ProjectPage"
+              }
+            }
+          ],
+          "description": "A page of projects",
+          "kind": "success",
+          "status": "200"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Not found",
+          "kind": "error",
+          "status": "404"
+        },
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "application/problem+json",
+              "schema": {
+                "$ref": "#/components/schemas/Problem"
+              }
+            }
+          ],
+          "description": "Unexpected error",
+          "kind": "default",
+          "status": "default"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": true
+      },
+      "security": {
+        "alternatives": [
+          [
+            {
+              "scheme": "apiKeyAuth",
+              "scopes": []
+            }
+          ],
+          [
+            {
+              "scheme": "bearerAuth",
+              "scopes": []
+            }
+          ]
+        ]
+      },
+      "servers": null,
+      "summary": "List projects",
+      "tags": [
+        "projects"
+      ]
+    },
+    {
+      "agent": {
+        "expose": false
+      },
+      "deprecation": {
+        "deprecated": false,
+        "message": null,
+        "replacement": null,
+        "since": null
+      },
+      "description": null,
+      "executionPolicyRef": null,
+      "id": "system.health",
+      "method": "get",
+      "name": "getHealth",
+      "openapiOperationId": "getHealth",
+      "parameters": [],
+      "path": "/health",
+      "requestBody": null,
+      "responses": [
+        {
+          "contents": [
+            {
+              "encoding": {},
+              "mediaType": "text/plain",
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "Healthy",
+          "kind": "success",
+          "status": "200"
+        }
+      ],
+      "sdk": {
+        "excludedTargets": [],
+        "include": false
+      },
+      "security": {
+        "alternatives": [
+          []
+        ]
+      },
+      "servers": null,
+      "summary": null,
+      "tags": []
+    }
+  ],
+  "schemas": {
+    "Problem": {
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "status": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "title",
+        "status"
+      ],
+      "type": "object"
+    },
+    "Project": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/components/schemas/ProjectStatus"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ProjectInput": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "ProjectPage": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/components/schemas/Project"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "ProjectStatus": {
+      "enum": [
+        "active",
+        "archived"
+      ],
+      "type": "string"
+    }
+  },
+  "securitySchemes": {
+    "apiKeyAuth": {
+      "description": null,
+      "in": "header",
+      "name": "X-Api-Key",
+      "type": "apiKey"
+    },
+    "bearerAuth": {
+      "bearerFormat": "JWT",
+      "description": null,
+      "scheme": "bearer",
+      "type": "http"
+    },
+    "oauth": {
+      "description": null,
+      "flows": {
+        "clientCredentials": {
+          "scopes": [
+            "projects:read",
+            "projects:write"
+          ],
+          "tokenUrl": "https://auth.example.test/oauth/token"
+        }
+      },
+      "type": "oauth2"
+    }
+  },
+  "serialization": {
+    "mediaTypes": [
+      "application/json",
+      "application/problem+json",
+      "text/plain"
+    ]
+  },
+  "servers": [
+    {
+      "description": "Production",
+      "url": "https://api.example.test/v1",
+      "variables": {}
+    }
+  ],
+  "source": {
+    "manifestDigest": "sha256:398125844426680a3bb83d343356606be36edf9f08c195ed3b61f5797d5aa060",
+    "provenance": {
+      "exporter": "hand-authored",
+      "revision": null,
+      "source": "apifn/contracts/fixtures/catalog/openapi.json"
+    },
+    "specDigest": "sha256:9cb040e18030e798c1fcf6681d6b0b1cca8a24748c1738d78bbd45120569eaf5"
+  }
+}
