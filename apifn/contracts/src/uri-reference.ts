@@ -111,11 +111,14 @@ export class UriTable {
   private readonly parents: number[] = [-1];
   private readonly segments: string[] = [""];
   private readonly children = new Map<string, number>();
+  /** The path with one empty segment: the empty path, and the root that every absolute path ("/...") starts from. */
+  private readonly root: number;
   /** The base of a document without `$id`: an empty relative reference. */
   readonly document: UriKey;
 
   constructor() {
-    this.document = this.uri(-1, -1, this.child(0, ""), -1);
+    this.root = this.child(0, "");
+    this.document = this.uri(-1, -1, this.root, -1);
   }
 
   private intern(text: string | undefined): number {
@@ -137,18 +140,30 @@ export class UriTable {
     return node;
   }
 
-  /** The leading empty segment of an absolute path (or the empty path) is never removed by `..`. */
-  private isRoot(node: number): boolean {
-    return node === 0 || (this.parents[node] === 0 && this.segments[node] === "");
+  /**
+   * `node` without its last segment, as `..` removes it (section 5.2.4 step C).
+   * The leading empty segment of an absolute path (or the empty path) is never
+   * removed. Removing the first segment of a rootless path keeps the "/" that
+   * preceded the segment `..` stood for, so the path becomes absolute:
+   * "a/../b" is "/b", never "b".
+   */
+  private up(node: number): number {
+    if (node === 0 || node === this.root) return node;
+    const parent = this.parents[node];
+    return parent === 0 ? this.root : parent;
   }
 
-  /** Appends `path`'s segments to `node`, removing dot segments (section 5.2.4). */
+  /**
+   * Appends `path`'s segments to `node`, removing dot segments (section 5.2.4).
+   * The merge of section 5.2.3 is `node` = the base's path without its last
+   * segment, so a reference under a rootless or authority-less base follows the same rule.
+   */
   private walk(node: number, path: string): number {
     const parts = path.split("/");
     parts.forEach((raw, index) => {
       const segment = normalizeEscapes(raw);
       if (segment === "." || segment === "..") {
-        if (segment === ".." && !this.isRoot(node)) node = this.parents[node];
+        if (segment === "..") node = this.up(node);
         if (index === parts.length - 1) node = this.child(node, "");
       } else {
         node = this.child(node, segment);
@@ -179,7 +194,7 @@ export class UriTable {
     if (reference.path === "") return this.uri(base.scheme, base.authority, base.path, reference.query === undefined ? base.query : query);
     if (reference.path.startsWith("/")) return this.uri(base.scheme, base.authority, this.walk(0, reference.path), query);
     // Merge (section 5.2.3): an authority with an empty path merges as "/"; otherwise the base's last segment goes.
-    const directory = base.authority !== -1 && this.parents[base.path] === 0 && this.segments[base.path] === "" ? base.path : this.parents[base.path];
+    const directory = base.authority !== -1 && base.path === this.root ? base.path : this.parents[base.path];
     return this.uri(base.scheme, base.authority, this.walk(directory, reference.path), query);
   }
 }

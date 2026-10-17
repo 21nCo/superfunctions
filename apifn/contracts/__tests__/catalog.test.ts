@@ -1887,6 +1887,48 @@ describe("JSON Schema 2020-12 keyword constraints", () => {
   });
 });
 
+// RFC 3986 section 5.2.4 removes dot segments from rootless paths too, and a ".." that removes the first segment keeps
+// the "/" before the next one: schema:a/../b is schema:/b, a different resource from schema:b. The same rule applies to a
+// relative $id merged under a rootless base (section 5.2.3). Each row runs in both dialects, as an object, JSON and YAML,
+// with its declarations in either order.
+describe("schema resource identity across dot segments", () => {
+  const PROPS = "/components/schemas/ProjectInput/properties";
+  const pair = (a: unknown, b: unknown) => ({ a, b });
+  const both = [`${PROPS}/a/$id`, `${PROPS}/b/$id`];
+  const ROWS: Array<[name: string, properties: Record<string, unknown>, collisions: string[] | null]> = [
+    ["schema:a/../b beside schema:b", pair({ $id: "schema:a/../b" }, { $id: "schema:b" }), null],
+    ["schema:a/../b beside schema:/b", pair({ $id: "schema:a/../b" }, { $id: "schema:/b" }), both],
+    ["urn:a/../r beside urn:r", pair({ $id: "urn:a/../r" }, { $id: "urn:r" }), null],
+    ["urn:a/../r beside urn:/r", pair({ $id: "urn:a/../r" }, { $id: "urn:/r" }), both],
+    ["schema:a/b/../.. beside schema:", pair({ $id: "schema:a/b/../.." }, { $id: "schema:" }), null],
+    ["schema:a/b/../.. beside schema:/", pair({ $id: "schema:a/b/../.." }, { $id: "schema:/" }), both],
+    ["../../c under schema:x/a/ beside schema:c", pair({ $id: "schema:x/a/", properties: { c: { $id: "../../c" } } }, { $id: "schema:c" }), null],
+    ["../../c under schema:x/a/ beside schema:/c", pair({ $id: "schema:x/a/", properties: { c: { $id: "../../c" } } }, { $id: "schema:/c" }), [`${PROPS}/a/properties/c/$id`, `${PROPS}/b/$id`]],
+    // Controls that resolve the same at every head.
+    ["../c under schema:x/a/ beside schema:x/c", pair({ $id: "schema:x/a/", properties: { c: { $id: "../c" } } }, { $id: "schema:x/c" }), [`${PROPS}/a/properties/c/$id`, `${PROPS}/b/$id`]],
+    ["schema:a/./b beside schema:a/b", pair({ $id: "schema:a/./b" }, { $id: "schema:a/b" }), both],
+    ["schema:a/b/.. beside schema:a/", pair({ $id: "schema:a/b/.." }, { $id: "schema:a/" }), both],
+    ["schema:/a/../b beside schema:b", pair({ $id: "schema:/a/../b" }, { $id: "schema:b" }), null],
+  ];
+  const CELLS = ROWS.flatMap((row) =>
+    (["3.0.3", "3.1.0"] as const).flatMap((version) => (["object", "json", "yaml"] as const).flatMap((format) => (["declared", "reversed"] as const).map((order) => [...row, version, format, order] as const)))
+  );
+
+  it.each(CELLS)("%s (%s, %s, %s order)", (_name, properties, collisions, version, format, order) => {
+    const nextSpec = clone(spec);
+    nextSpec.openapi = version;
+    inputSchema(nextSpec).properties = { ...inputSchema(nextSpec).properties, ...(order === "declared" ? properties : reverseKeys(properties)) };
+    const result = buildOperationCatalog(format === "object" ? nextSpec : format === "json" ? JSON.stringify(nextSpec) : stringify(nextSpec), clone(manifest));
+    if (collisions === null) {
+      expect(result.diagnostics).toEqual([]);
+      expect((result.catalog!.schemas.ProjectInput as any).properties).toMatchObject(properties);
+      return;
+    }
+    expect(result.catalog).toBeNull();
+    expect(result.diagnostics.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`)).toEqual(collisions.map((pointer) => `INVALID_SPEC ${pointer}`));
+  });
+});
+
 // OpenAPI 3.0.3: nullable: true adds "null" to the sibling type; false, or either without a type, has no effect. The 3.0
 // upconversion consumes every boolean nullable at every Schema Object position, so none reaches the 2020-12 output.
 describe("OpenAPI 3.0 nullable", () => {
@@ -2027,6 +2069,100 @@ describe("required OpenAPI members", () => {
       expect(new Set(errors.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`))).toEqual(new Set([pointer].flat().map((at) => `INVALID_SPEC ${at}`)));
     }
   );
+});
+
+// A Parameter or Header Object's content entry is a Media Type Object, and its schema (or the object's own) follows every
+// schema keyword rule, checked before the parameter or header is dropped as unsupported. Well-formed content keeps its
+// outcome: an UNSUPPORTED_SERIALIZATION error for a parameter, a warning for a header.
+describe("Parameter and Header Object content entries", () => {
+  const SEED = "media-literal-4d7a";
+  const POST = `${LIST}/post`;
+  const FORM = "multipart/form-data";
+  const TEXT = "text~1plain";
+  // [name, kind, place the object, its resolved pointer]
+  const POSITIONS: Array<[name: string, kind: "parameter" | "header", place: (s: any, m: any, value: Record<string, unknown>) => void, pointer: string]> = [
+    ["inline query parameter", "parameter", (s, _m, value) => s.paths[LIST_ROUTE].get.parameters.push({ name: "q", in: "query", ...value }), `${LIST}/get/parameters/2`],
+    ["path-item query parameter", "parameter", (s, _m, value) => s.paths[LIST_ROUTE].parameters.push({ name: "q", in: "query", ...value }), `${LIST}/parameters/1`],
+    [
+      "component parameter by $ref",
+      "parameter",
+      (s, _m, value) => {
+        s.components.parameters.Q = { name: "q", in: "query", ...value };
+        s.paths[LIST_ROUTE].get.parameters.push({ $ref: "#/components/parameters/Q" });
+      },
+      "/components/parameters/Q",
+    ],
+    ["response header", "header", (s, _m, value) => (s.paths[LIST_ROUTE].get.responses["200"].headers = { "X-Rate": value }), `${LIST}/get/responses/200/headers/X-Rate`],
+    [
+      "component header by $ref",
+      "header",
+      (s, _m, value) => {
+        s.components.headers = { Rate: value };
+        s.paths[LIST_ROUTE].get.responses["200"].headers = { "X-Rate": { $ref: "#/components/headers/Rate" } };
+      },
+      "/components/headers/Rate",
+    ],
+    [
+      "form-part encoding header",
+      "header",
+      (s, m, value) => {
+        m.serialization.mediaTypes.push(FORM);
+        s.paths[LIST_ROUTE].post.requestBody.content[FORM] = { schema: { $ref: "#/components/schemas/ProjectInput" }, encoding: { name: { headers: { "X-Part": value } } } };
+      },
+      `${POST}/requestBody/content/multipart~1form-data/encoding/name/headers/X-Part`,
+    ],
+  ];
+  // [object members, pointer below the object of the one INVALID_SPEC, or null for well-formed content]
+  const VALUES: Array<[members: Record<string, unknown>, at: string | null]> = [
+    [{ content: { "text/plain": 5 } }, `/content/${TEXT}`],
+    [{ content: { "text/plain": null } }, `/content/${TEXT}`],
+    [{ content: { "text/plain": SEED } }, `/content/${TEXT}`],
+    [{ content: { "text/plain": [SEED] } }, `/content/${TEXT}`],
+    [{ content: { "text/plain": { schema: 5 } } }, `/content/${TEXT}/schema`],
+    [{ content: { "text/plain": { schema: { enum: [] } } } }, `/content/${TEXT}/schema/enum`],
+    [{ content: { "text/plain": { schema: { type: "object", properties: { a: { allOf: [] } } } } } }, `/content/${TEXT}/schema/properties/a/allOf`],
+    // The object's own schema, which the catalog does not publish for a header.
+    [{ schema: { enum: [] } }, "/schema/enum"],
+    [{ schema: { type: "array", items: { type: "string", pattern: `(${SEED}` } } }, "/schema/items/pattern"],
+    [{ content: { "text/plain": { schema: { type: "string" } } } }, null],
+    [{ content: { "text/plain": {} } }, null],
+  ];
+  // A query parameter's own schema is published and covered with the other Schema Object positions.
+  const CELLS = POSITIONS.flatMap((position) =>
+    VALUES.filter(([members]) => position[1] === "header" || !("schema" in members)).flatMap((value) =>
+      (["3.0.3", "3.1.0"] as const).flatMap((version) => (["object", "json", "yaml"] as const).map((format) => [position[0], JSON.stringify(value[0]), version, format, position, value] as const))
+    )
+  );
+
+  it.each(CELLS)("%s with %s (%s, %s)", (_name, _shown, version, format, [, kind, place, pointer], [members, at]) => {
+    const nextSpec = clone(spec);
+    const nextManifest = clone(manifest);
+    nextSpec.openapi = version;
+    place(nextSpec, nextManifest, members);
+    const result = buildOperationCatalog(format === "object" ? nextSpec : format === "json" ? JSON.stringify(nextSpec) : stringify(nextSpec), nextManifest);
+    const shown = (code: Diagnostic["code"], severity: Diagnostic["severity"]) =>
+      new Set(result.diagnostics.filter((diagnostic) => diagnostic.code === code && diagnostic.severity === severity).map((diagnostic) => diagnostic.pointer));
+    expect(shown("INVALID_SPEC", "error")).toEqual(new Set(at === null ? [] : [`${pointer}${at}`]));
+    // The unsupported-serialization outcome is unchanged; a header is dropped with a warning at its headers map.
+    if (kind === "parameter") expect(shown("UNSUPPORTED_SERIALIZATION", "error")).toEqual(new Set([pointer]));
+    else expect(shown("UNSUPPORTED_SERIALIZATION", "warning").size).toBe(1);
+    expect(result.catalog === null).toBe(at !== null || kind === "parameter");
+    expect(JSON.stringify(result)).not.toContain(SEED);
+  });
+
+  it("publishes no component that only an unpublished header schema references", () => {
+    const result = build((nextSpec) => {
+      nextSpec.components.schemas.HeaderOnly = { type: "string", enum: ["a"] };
+      nextSpec.paths[LIST_ROUTE].get.responses["200"].headers = { "X-Rate": { schema: { $ref: "#/components/schemas/HeaderOnly" } } };
+    });
+    expect(only(result.diagnostics, "INVALID_SPEC")).toEqual([]);
+    expect(Object.keys(result.catalog!.schemas)).not.toContain("HeaderOnly");
+  });
+
+  it("reports a published parameter schema's problem once", () => {
+    const result = build((nextSpec) => (nextSpec.paths[LIST_ROUTE].get.parameters[0].schema = { type: "integer", enum: [] }));
+    expect(result.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_SPEC", pointer: `${LIST}/get/parameters/0/schema/enum` })]);
+  });
 });
 
 // OpenAPI 3.0 requires responses on every operation; 3.1 makes the member optional. In both, a Responses Object holds

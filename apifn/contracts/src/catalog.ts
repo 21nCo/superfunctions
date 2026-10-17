@@ -401,9 +401,18 @@ export const SCHEMA_KEYWORD_RULES = new Map<string, KeywordRule>([
  * OpenAPI 3.0 (JSON Schema draft 4 style) exclusive bounds are booleans that
  * qualify `minimum`/`maximum`; they are converted where the keyword is copied.
  * 3.1 bounds are the 2020-12 numbers, so each form is invalid in the other dialect.
+ * `true` with no bound to qualify is a broken constraint.
  */
 const OPENAPI_30_KEYWORD_RULES = new Map<string, KeywordRule>(
-  ["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, KeywordRule] => [key, keyword({ name: "a boolean (OpenAPI 3.0 form; numeric exclusive bounds need OpenAPI 3.1)", accepts: BOOLEAN.accepts })])
+  [
+    ["exclusiveMaximum", "maximum"],
+    ["exclusiveMinimum", "minimum"],
+  ].map(([key, boundKey]): [string, KeywordRule] => [
+    key,
+    keyword({ name: "a boolean (OpenAPI 3.0 form; numeric exclusive bounds need OpenAPI 3.1)", accepts: BOOLEAN.accepts }, (exclusive, pointer, schema) =>
+      exclusive && own(schema, boundKey) === undefined ? `${quote(key)}: true at ${pointer} has no ${quote(boundKey)} to make exclusive.` : undefined
+    ),
+  ])
 );
 
 /** Why a schema keyword's declared value breaks its rule, or undefined. */
@@ -786,16 +795,30 @@ class CatalogBuilder {
 
   /**
    * The REQUIRED shape OpenAPI gives Parameter and Header Objects: exactly one
-   * of `schema` and `content`, a `content` map naming one media type. Present
-   * members are type-checked here, whether or not the catalog publishes them.
+   * of `schema` and `content`, a `content` map naming one media type, which
+   * maps to a Media Type Object. Present members are checked here, schemas
+   * at every depth, before the caller decides whether the catalog supports
+   * the object, so a parameter or header that is dropped is checked too.
    */
   schemaOrContent(value: Record<string, unknown>, pointer: string, what: string, operation: string): void {
     this.requireMember(value, ["schema", "content"], pointer, what, operation);
-    this.member(value, "schema", pointer, SCHEMA, operation);
+    this.checkSchema(own(value, "schema"), `${pointer}/schema`);
     const content = this.member(value, "content", pointer, OBJECT, operation);
     if (content === undefined) return;
     if (own(value, "schema") !== undefined) this.report("INVALID_SPEC", `${pointer}/content`, `${what} at ${pointer} has both "schema" and "content"; OpenAPI allows only one.`, { operation });
     else if (Object.keys(content).length !== 1) this.report("INVALID_SPEC", `${pointer}/content`, `${what} at ${pointer} must map exactly one media type in "content", as OpenAPI requires.`, { operation });
+    for (const rawType of Object.keys(content).sort(compareCodeUnits)) {
+      const mediaPointer = `${pointer}/content/${pointerSegment(rawType)}`;
+      const media = this.mediaTypeObject(content[rawType], mediaPointer, what, rawType, operation);
+      if (media) this.checkSchema(own(media, "schema"), `${mediaPointer}/schema`);
+    }
+  }
+
+  /** The Media Type Object a `content` entry maps `rawType` to, or null after reporting the value that is not one (by type, never its value). */
+  mediaTypeObject(media: unknown, pointer: string, owner: string, rawType: string, operation: string): Record<string, unknown> | null {
+    if (isRecord(media)) return media;
+    this.report("INVALID_SPEC", pointer, `${owner} describes ${redactWhole(rawType)} with ${describeValue(media)} instead of a Media Type Object.`, { operation });
+    return null;
   }
 
   /**
@@ -1074,13 +1097,8 @@ class CatalogBuilder {
     for (const [key, child] of Object.entries(value)) {
       const childPointer = `${pointer}/${pointerSegment(key)}`;
       if (key === "example" || key === "examples" || key.startsWith("x-")) continue;
-      const rule = (this.openapi30 && OPENAPI_30_KEYWORD_RULES.get(key)) || SCHEMA_KEYWORD_RULES.get(key);
       // Checked on the declared value, before any credential rule withholds or redacts it.
-      const problem = rule && keywordProblem(rule, child, childPointer, value);
-      if (problem) {
-        this.report("INVALID_SPEC", childPointer, problem);
-        continue;
-      }
+      if (this.keywordInvalid(key, child, childPointer, value)) continue;
       if (key === "$anchor" || key === "$dynamicAnchor") this.declareOnce(`anchor ${(this.resource?.uri ?? this.uris.document).key}#${child as string}`, pointer, childPointer);
       if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
@@ -1126,11 +1144,9 @@ class CatalogBuilder {
         setOwn(output, key, entries);
       } else if ((key === "exclusiveMinimum" || key === "exclusiveMaximum") && typeof child === "boolean") {
         // Only OpenAPI 3.0 reaches here. Its boolean qualifies `minimum`/`maximum`; in the catalog's 2020-12 the bound
-        // itself is exclusive. `false` keeps the inclusive bound; `true` with no bound to qualify is a broken constraint.
-        const boundKey = key === "exclusiveMinimum" ? "minimum" : "maximum";
-        const bound = own(value, boundKey);
+        // itself is exclusive. `false` keeps the inclusive bound (the rule rejected `true` without one).
+        const bound = own(value, key === "exclusiveMinimum" ? "minimum" : "maximum");
         if (child && typeof bound === "number") setOwn(output, key, bound);
-        else if (child && bound === undefined) this.report("INVALID_SPEC", childPointer, `${quote(key)}: true at ${childPointer} has no ${quote(boundKey)} to make exclusive.`);
       } else if (this.openapi30 && (key === "minimum" || key === "maximum") && own(value, `exclusive${key[0].toUpperCase()}${key.slice(1)}`) === true && typeof child === "number") {
         continue; // Emitted as the exclusive bound.
       } else if (secret && !CREDENTIAL_FIELD_KEYWORDS.has(key)) {
@@ -1146,6 +1162,42 @@ class CatalogBuilder {
       }
     }
     return output;
+  }
+
+  /** Reports `key`'s declared value when it breaks its keyword rule (in the source dialect); true when it does. */
+  private keywordInvalid(key: string, value: unknown, pointer: string, schema: Record<string, unknown>): boolean {
+    const rule = (this.openapi30 && OPENAPI_30_KEYWORD_RULES.get(key)) || SCHEMA_KEYWORD_RULES.get(key);
+    const problem = rule && keywordProblem(rule, value, pointer, schema);
+    if (problem) this.report("INVALID_SPEC", pointer, problem);
+    return Boolean(problem);
+  }
+
+  /**
+   * Checks a schema the catalog reads but may not publish (a parameter's or a
+   * Header Object's) against the keyword rules {@link schemaObject} applies,
+   * at every depth, with the same diagnostics. It publishes nothing, so it
+   * applies no publication rule: no component joins the catalog, no resource
+   * is declared, and no reference, name or literal is judged as emitted output.
+   */
+  checkSchema(value: unknown, pointer: string): void {
+    if (value === undefined || typeof value === "boolean") return;
+    if (!isRecord(value)) {
+      this.report("INVALID_SPEC", pointer, `Expected a Schema Object or boolean at ${pointer}, found ${describeValue(value)}.`);
+      return;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      const childPointer = `${pointer}/${pointerSegment(key)}`;
+      if (key === "example" || key === "examples" || key.startsWith("x-") || this.keywordInvalid(key, child, childPointer, value)) continue;
+      if (SCHEMA_MAP_KEYWORDS.has(key)) {
+        for (const [name, entry] of Object.entries(child as Record<string, unknown>)) this.checkSchema(entry, `${childPointer}/${pointerSegment(name)}`);
+      } else if (SCHEMA_KEYWORDS.has(key)) {
+        this.checkSchema(child, childPointer);
+      } else if (SCHEMA_LIST_KEYWORDS.has(key)) {
+        (child as unknown[]).forEach((entry, index) => this.checkSchema(entry, `${childPointer}/${index}`));
+      } else if (key === "discriminator") {
+        this.discriminatorShape(child as Record<string, unknown>, childPointer);
+      }
+    }
   }
 
   /**
@@ -1274,6 +1326,12 @@ class CatalogBuilder {
     this.pendingComponents.push(name);
   }
 
+  /** The members of a Discriminator Object, after reporting a missing propertyName or a wrong-typed member. */
+  private discriminatorShape(value: Record<string, unknown>, pointer: string): { propertyName?: string; mapping?: Record<string, unknown> } {
+    this.requireMember(value, ["propertyName"], pointer, "Discriminator Object");
+    return { propertyName: this.member(value, "propertyName", pointer, STRING), mapping: this.member(value, "mapping", pointer, OBJECT) };
+  }
+
   /**
    * Copies a Discriminator Object. Every mapping target must be a component
    * schema (by name or `#/components/schemas/<name>`); targets are emitted as
@@ -1281,10 +1339,8 @@ class CatalogBuilder {
    */
   private discriminator(value: Record<string, unknown>, pointer: string, taint: Taint): JsonValue {
     const output: Record<string, JsonValue> = {};
-    this.requireMember(value, ["propertyName"], pointer, "Discriminator Object");
-    const propertyName = this.member(value, "propertyName", pointer, STRING);
+    const { propertyName, mapping } = this.discriminatorShape(value, pointer);
     if (propertyName !== undefined) output.propertyName = this.identifier(propertyName, `${pointer}/propertyName`, "Discriminator property name");
-    const mapping = this.member(value, "mapping", pointer, OBJECT);
     if (mapping === undefined) return output;
     const targets: Record<string, JsonValue> = {};
     for (const key of Object.keys(mapping).sort(compareCodeUnits)) {
@@ -1365,12 +1421,9 @@ class CatalogBuilder {
         unsupported.push(rawType);
         continue;
       }
-      const media = content[rawType];
       const mediaPointer = `${pointer}/${pointerSegment(rawType)}`;
-      if (!isRecord(media)) {
-        this.report("INVALID_SPEC", mediaPointer, `${what} of operation ${quote(operation)} describes ${redactWhole(rawType)} with ${describeValue(media)} instead of a Media Type Object.`, { operation });
-        continue;
-      }
+      const media = this.mediaTypeObject(content[rawType], mediaPointer, `${what} of operation ${quote(operation)}`, rawType, operation);
+      if (!media) continue;
       const entry: CatalogContent = { mediaType, schema: this.schema(own(media, "schema"), `${mediaPointer}/schema`), encoding: this.encoding(media, mediaPointer, mediaType, operation) };
       const existing = byType.get(mediaType);
       if (!existing) {
