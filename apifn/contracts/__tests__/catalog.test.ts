@@ -1679,7 +1679,8 @@ describe("schema enum values", () => {
 // credential rule, and messages name positions only.
 describe("JSON Schema 2020-12 keyword constraints", () => {
   const SEED = "kw-literal-5e2b";
-  const INVALID_SHAPES: Array<[keyword: string, schema: Record<string, unknown>]> = [
+  // A third member limits a shape to one dialect.
+  const INVALID_SHAPES: Array<[keyword: string, schema: Record<string, unknown>, version?: string]> = [
     ["required", { type: "object", required: [SEED, SEED] }],
     ["dependentRequired", { type: "object", dependentRequired: { a: ["b", SEED, SEED] } }],
     ["allOf", { allOf: [] }],
@@ -1689,40 +1690,55 @@ describe("JSON Schema 2020-12 keyword constraints", () => {
     ["$anchor", { type: "string", $anchor: "1 bad" }],
     ["$dynamicAnchor", { type: "string", $dynamicAnchor: "1 bad" }],
     ["$id", { type: "string", $id: 5 }],
+    // An identifier holding URL user info is never redacted into "[REDACTED]", which two such $ids would share.
+    ["$id", { type: "string", $id: `https://svc:${SEED}@example.test/r` }],
+    // Not RFC 3986 URI-references.
+    ...["http://[invalid", "a b", "%", "%zz", "http://example.test:8a/", "http://[::1::2]/", "1a:b", `https://example.test/${SEED}^`].map((id): [string, Record<string, unknown>] => ["$id", { type: "string", $id: id }]),
     ["$schema", { type: "string", $schema: 5 }],
     ["$schema", { type: "string", $schema: "https://spec.openapis.org/oas/3.1/dialect/base" }],
     ["$vocabulary", { type: "string", $vocabulary: 5 }],
     ["$vocabulary", { type: "string", $vocabulary: { "https://json-schema.org/draft/2020-12/vocab/core": "yes" } }],
+    // Vocabularies are named by URIs: a scheme is required.
+    ["$vocabulary", { type: "string", $vocabulary: { "a b": true } }],
+    ["$vocabulary", { type: "string", $vocabulary: { [`vocab/${SEED}`]: true } }],
     ["pattern", { type: "string", pattern: `(${SEED}` }],
     // Valid without the "u" flag only.
     ["pattern", { type: "string", pattern: "a\\-b" }],
     ["patternProperties", { type: "object", patternProperties: { [`(${SEED}`]: { type: "string" } } }],
     ["dependencies", { type: "object", dependencies: { a: ["b"] } }],
     ["$recursiveAnchor", { type: "string", $recursiveAnchor: true }],
-    ["nullable", { nullable: false }],
-    ["nullable", { type: ["string", "null"], nullable: false }],
+    // OpenAPI 3.1 sources only: the 3.0 upconversion consumes every boolean nullable (see "OpenAPI 3.0 nullable").
+    ["nullable", { nullable: false }, "3.1.0"],
+    ["nullable", { allOf: [{ $ref: "#/components/schemas/Project" }], nullable: true }, "3.1.0"],
+    ["nullable", { type: ["string", "null"], nullable: false }, "3.1.0"],
     ["xml", { type: "string", xml: "name" }],
   ];
-  const VALID_SHAPES: Array<Record<string, unknown>> = [
+  const VALID_SHAPES: Array<Record<string, unknown> | [Record<string, unknown>, string]> = [
     { type: "object", required: ["id", "name"], dependentRequired: { a: ["b", "c"] } },
     { type: "object", required: [] },
     { allOf: [{ type: "string" }], anyOf: [{ minLength: 1 }], oneOf: [{ maxLength: 9 }] },
     { type: "array", prefixItems: [{ type: "string" }] },
     { type: "string", $anchor: "probe_1", $dynamicAnchor: "probe.x-2" },
     { type: "string", $id: "https://example.test/probe", $schema: "https://json-schema.org/draft/2020-12/schema" },
+    { type: "string", $id: "urn:example:probe" },
+    { type: "string", $id: "http://[::1]:8080/p%20q?r=s" },
+    { type: "string", $id: "probe/x#" },
+    { type: "string", $vocabulary: { "urn:example:vocab": false } },
     { type: "string", $vocabulary: { "https://json-schema.org/draft/2020-12/vocab/core": true } },
     { type: "object", pattern: "^[a-z]+\\d*$", patternProperties: { "^x-[a-z]+$": { type: "string" } } },
-    { type: "string", nullable: false },
+    [{ type: "string", nullable: false }, "3.1.0"],
   ];
   const VERSIONS = ["3.0.3", "3.1.0"] as const;
+  const invalidIn = (version: string) => INVALID_SHAPES.filter(([, , only]) => (only ?? version) === version);
+  const validIn = (version: string) => VALID_SHAPES.flatMap((row) => (!Array.isArray(row) ? [row] : row[1] === version ? [row[0]] : []));
 
-  it.each(VERSIONS.flatMap((version) => INVALID_SHAPES.map(([keyword, schema]) => [version, keyword, schema] as const)))("%s INVALID_SPEC: %s in %j", (version, keyword, schema) => {
+  it.each(VERSIONS.flatMap((version) => invalidIn(version).map(([keyword, schema]) => [version, keyword, schema] as const)))("%s INVALID_SPEC: %s in %j", (version, keyword, schema) => {
     const { result } = placed(version, schema);
     invalid(result, `${COUNT}/${keyword}`);
     expect(JSON.stringify(result)).not.toContain(SEED);
   });
 
-  it.each(VERSIONS.flatMap((version) => VALID_SHAPES.map((schema) => [version, schema] as const)))("%s publishes %j unchanged", (version, schema) => {
+  it.each(VERSIONS.flatMap((version) => validIn(version).map((schema) => [version, schema] as const)))("%s publishes %j unchanged", (version, schema) => {
     const { result, emitted } = placed(version, schema);
     expect(result.diagnostics).toEqual([]);
     expect(emitted).toEqual([schema]);
@@ -1730,8 +1746,8 @@ describe("JSON Schema 2020-12 keyword constraints", () => {
 
   const POSITION_ROWS = POSITIONS.flatMap(([name, place, pointer]) =>
     VERSIONS.flatMap((version) => [
-      ...INVALID_SHAPES.map(([keyword, schema]) => [name, version, schema, place, `${pointer}/${keyword}`] as const),
-      ...VALID_SHAPES.map((schema) => [name, version, schema, place, null] as const),
+      ...invalidIn(version).map(([keyword, schema]) => [name, version, schema, place, `${pointer}/${keyword}`] as const),
+      ...validIn(version).map((schema) => [name, version, schema, place, null] as const),
     ])
   );
 
@@ -1744,7 +1760,7 @@ describe("JSON Schema 2020-12 keyword constraints", () => {
     for (const copy of emitted) expect(copy).toEqual(schema);
   });
 
-  it.each((["json", "yaml"] as const).flatMap((format) => VERSIONS.flatMap((version) => INVALID_SHAPES.map(([keyword, schema]) => [format, version, keyword, schema] as const))))(
+  it.each((["json", "yaml"] as const).flatMap((format) => VERSIONS.flatMap((version) => invalidIn(version).map(([keyword, schema]) => [format, version, keyword, schema] as const))))(
     "%s text %s INVALID_SPEC: %s in %j",
     (format, version, keyword, schema) => invalid(placed(version, schema, undefined, format).result, `${COUNT}/${keyword}`)
   );
@@ -1766,6 +1782,14 @@ describe("JSON Schema 2020-12 keyword constraints", () => {
     ["an empty $id beside an empty-fragment $id", { a: { $id: "" }, b: { items: { $id: "#" } } }, [`${PROPS}/a/$id`, `${PROPS}/b/items/$id`]],
     ["an empty $id inside the resource it names again", { a: { $id: "https://example.test/r", properties: { b: { $id: "" } } } }, [`${PROPS}/a/$id`, `${PROPS}/a/properties/b/$id`]],
     ["a relative $id repeated", { a: { $id: "probe" }, b: { $id: "probe" } }, [`${PROPS}/a/$id`, `${PROPS}/b/$id`]],
+    // RFC 3986 resolution (section 5.2) and syntax-based normalization (section 6.2.2).
+    ["a relative $id resolving to another's absolute one", { a: { $id: "https://example.test/d/", properties: { c: { $id: "../d/./c" } } }, b: { $id: "https://example.test/d/c" } }, [`${PROPS}/a/properties/c/$id`, `${PROPS}/b/$id`]],
+    ["an $id differing in scheme and host case", { a: { $id: "HTTPS://Example.TEST/r" }, b: { $id: "https://example.test/r" } }, [`${PROPS}/a/$id`, `${PROPS}/b/$id`]],
+    ["an $id differing in dot segments and escapes", { a: { $id: "https://example.test/x/../%7er%2f" }, b: { $id: "https://example.test/~r%2F" } }, [`${PROPS}/a/$id`, `${PROPS}/b/$id`]],
+    ["an anchor repeated in a resource named by a relative $id", { a: { $id: "https://example.test/d/", properties: { b: { $id: "r", $anchor: "x" } } }, c: { $id: "https://example.test/d/r", properties: { d: { $anchor: "x" } } } }, [`${PROPS}/a/properties/b/$anchor`, `${PROPS}/a/properties/b/$id`, `${PROPS}/c/$id`, `${PROPS}/c/properties/d/$anchor`]],
+    // JSON Schema 2020-12 leaves a fragment name declared twice in a resource undefined "using any combination of
+    // $anchor and/or $dynamicAnchor", and Ajv2020 rejects it on any schema but a compiled document's root.
+    ["one schema declaring a name as both $anchor and $dynamicAnchor", { a: { $anchor: "node", $dynamicAnchor: "node" } }, [`${PROPS}/a/$anchor`, `${PROPS}/a/$dynamicAnchor`]],
   ])("INVALID_SPEC: %s", (_name, properties, pointers) => {
     for (const version of VERSIONS) {
       for (const order of [(value: any) => value, reverseKeys]) {
@@ -1785,6 +1809,63 @@ describe("JSON Schema 2020-12 keyword constraints", () => {
     expect(result.diagnostics).toEqual([]);
     expect((result.catalog!.schemas.ProjectInput as any).properties).toMatchObject(properties);
   });
+
+  it("has an oracle that checks URI formats, not only the meta-schema's types", () => {
+    const { catalog } = build();
+    for (const member of [{ $id: "a b" }, { $id: "http://[invalid" }, { $vocabulary: { "a b": true } }, { properties: { a: { $ref: "#/components/schemas/é" } } }]) {
+      const broken = clone(catalog!);
+      Object.assign(broken.schemas.ProjectInput as object, member);
+      expect(unpublishableSchemas(broken).length, JSON.stringify(member)).toBeGreaterThan(0);
+    }
+    expect(unpublishableSchemas(catalog!)).toEqual([]);
+  });
+
+  it("names the repeat a same-schema anchor pair makes", () => {
+    const messages = (properties: Record<string, unknown>) =>
+      build((nextSpec) => Object.assign(inputSchema(nextSpec).properties, properties)).diagnostics.map((diagnostic) => diagnostic.message);
+    expect(messages({ a: { $anchor: "node", $dynamicAnchor: "node" } })).toEqual([expect.stringContaining("also declares it as the other of $anchor and $dynamicAnchor"), expect.stringContaining("also declares it")]);
+    expect(messages({ a: { $anchor: "node" }, b: { $dynamicAnchor: "node" } })).toEqual(Array(2).fill(expect.stringContaining("also declared by another schema")));
+  });
+
+  it("publishes $ids that are different RFC 3986 URIs, never read as WHATWG URLs", () => {
+    for (const version of VERSIONS) {
+      const properties = {
+        // WHATWG host parsing reads both as 127.0.0.1; RFC 3986 reads two names.
+        a: { $id: "http://0x7f.1/", type: "string" },
+        b: { $id: "http://127.0.0.1/", type: "string" },
+        // Scheme-based normalization (default ports, an empty path as "/") is not applied.
+        c: { $id: "http://example.test:80/r", type: "string" },
+        d: { $id: "http://example.test/r", type: "string" },
+        e: { $id: "http://example.test", type: "string" },
+        f: { $id: "http://example.test/", type: "string" },
+        i: { $id: "https://example.test/d/", properties: { j: { $id: "c", $anchor: "x" }, k: { $id: "../c", $anchor: "x" } } },
+      };
+      const result = build((nextSpec) => {
+        nextSpec.openapi = version;
+        Object.assign(inputSchema(nextSpec).properties, properties);
+      });
+      expect(result.diagnostics).toEqual([]);
+      expect((result.catalog!.schemas.ProjectInput as any).properties).toMatchObject(properties);
+    }
+  });
+
+  // A child $id resolves at the cost of its own length, never its base's: a long base with many relative children,
+  // or many anchors under one long base, stays linear (the declaration keys are interned, not expanded URIs).
+  it.each<[string, (index: number) => Record<string, unknown>]>([
+    ["relative child $ids", (index) => ({ $id: `c${index}/../c${index}`, type: "string" })],
+    ["anchors", (index) => ({ $anchor: `a${index}`, type: "string" })],
+  ])("resolves %s under a long base $id in linear time", (_name, child) => {
+    const size = 500;
+    const specs = new Map(
+      [size, size * 4].map((n) => {
+        const nextSpec = clone(spec);
+        inputSchema(nextSpec).properties.tree = { $id: `https://example.test/${"b".repeat(20 * n)}/`, properties: Object.fromEntries(Array.from({ length: n }, (_, index) => [`p${index}`, child(index)])) };
+        return [n, nextSpec];
+      })
+    );
+    const ratio = scalingRatio((n) => expect(buildUnchecked(specs.get(n)!, clone(manifest)).diagnostics).toEqual([]), size, 2);
+    expect(ratio).toBeLessThan(LINEAR_RATIO);
+  }, SCALING_TIMEOUT);
 
   it("has a rule for every keyword of Ajv's bundled JSON Schema 2020-12 meta-schemas", () => {
     const refs = path.join(path.dirname(createRequire(import.meta.url).resolve("ajv/package.json")), "dist/refs/json-schema-2020-12");
@@ -1806,13 +1887,85 @@ describe("JSON Schema 2020-12 keyword constraints", () => {
   });
 });
 
+// OpenAPI 3.0.3: nullable: true adds "null" to the sibling type; false, or either without a type, has no effect. The 3.0
+// upconversion consumes every boolean nullable at every Schema Object position, so none reaches the 2020-12 output.
+describe("OpenAPI 3.0 nullable", () => {
+  const CASES: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+    [{ nullable: false }, {}],
+    [{ nullable: true }, {}],
+    [{ allOf: [{ $ref: "#/components/schemas/Project" }], nullable: false }, { allOf: [{ $ref: "#/components/schemas/Project" }] }],
+    [{ allOf: [{ $ref: "#/components/schemas/Project" }], nullable: true }, { allOf: [{ $ref: "#/components/schemas/Project" }] }],
+    [{ description: "d", nullable: false }, { description: "d" }],
+    [{ type: "string", nullable: false }, { type: "string" }],
+    [{ type: "string", nullable: true }, { type: ["string", "null"] }],
+  ];
+
+  it.each(POSITIONS.flatMap(([name, place]) => CASES.map(([schema, expected]) => [name, schema, place, expected] as const)))("%s: %j", (_name, schema, place, expected) => {
+    const { result, emitted } = placed("3.0.3", schema, place);
+    expect(result.diagnostics).toEqual([]);
+    // A shared response is inlined into each operation that uses it.
+    expect(emitted.length).toBeGreaterThan(0);
+    for (const copy of emitted) expect(copy).toEqual(expected);
+  });
+
+  it.each((["json", "yaml"] as const).flatMap((format) => CASES.map(([schema, expected]) => [format, schema, expected] as const)))("%s text: %j", (format, schema, expected) => {
+    const { result, emitted } = placed("3.0.3", schema, undefined, format);
+    expect(result.diagnostics).toEqual([]);
+    expect(emitted).toEqual([expected]);
+  });
+
+  it("still rejects a non-boolean nullable", () => invalid(placed("3.0.3", { type: "string", nullable: "yes" }).result, `${COUNT}/nullable`));
+});
+
 // OpenAPI marks these members REQUIRED: request body content, response description, a parameter's or header's schema
 // or content, and a discriminator's propertyName. A missing one is INVALID_SPEC at <resolved object>/<member> with a null
 // catalog in both dialects, inline and through $ref chains, whatever the operation's sdk/agent settings.
 describe("required OpenAPI members", () => {
   const POST = `${LIST}/post`;
   const FORM = "multipart/form-data";
-  const CASES: Array<[name: string, mutate: (nextSpec: any, nextManifest: any) => void, pointer: string | null]> = [
+  const HEADER = `${LIST}/get/responses/200/headers/X-Rate`;
+  const header = (value: unknown) => (s: any) => (s.paths[LIST_ROUTE].get.responses["200"].headers = { "X-Rate": value });
+  const CASES: Array<[name: string, mutate: (nextSpec: any, nextManifest: any) => void, pointer: string | string[] | null]> = [
+    // Info: title and version are REQUIRED; info.version is checked, while the catalog's API version is the manifest's.
+    ["info without title or version", (s) => (s.info = {}), ["/info/title", "/info/version"]],
+    ["info without version", (s) => delete s.info.version, "/info/version"],
+    ["info with a non-string version", (s) => (s.info.version = 5), "/info/version"],
+    // A path parameter's required is REQUIRED and must be true.
+    ["shared path parameter without required", (s) => delete s.components.parameters.WorkspaceId.required, "/components/parameters/WorkspaceId/required"],
+    ["shared path parameter with required: false", (s) => (s.components.parameters.WorkspaceId.required = false), "/components/parameters/WorkspaceId/required"],
+    [
+      "inline path parameter without required",
+      (s) => (s.paths[LIST_ROUTE].parameters = [{ name: "workspaceId", in: "path", schema: { type: "string" } }]),
+      `${LIST}/parameters/0/required`,
+    ],
+    [
+      "path parameter behind a $ref chain with required: false",
+      (s) => {
+        s["x-param"] = { ...s.components.parameters.WorkspaceId, required: false };
+        s.components.parameters.WorkspaceId = { $ref: "#/x-param" };
+      },
+      "/x-param/required",
+    ],
+    // Checked before the template check skips the parameter, so each problem is reported.
+    [
+      "path parameter outside the template without schema or required",
+      (s) => s.paths[LIST_ROUTE].get.parameters.push({ name: "ghost", in: "path" }),
+      [`${LIST}/get/parameters/2`, `${LIST}/get/parameters/2/schema`, `${LIST}/get/parameters/2/required`],
+    ],
+    // A Header Object's present schema or content is type-checked though headers are not published.
+    ["response header with a non-schema schema", header({ schema: 5 }), `${HEADER}/schema`],
+    ["response header with a non-object content", header({ content: "x" }), `${HEADER}/content`],
+    ["response header with two media types", header({ content: { "text/plain": {}, "application/json": {} } }), `${HEADER}/content`],
+    ["response header with an empty content map", header({ content: {} }), `${HEADER}/content`],
+    ["response header with schema and content", header({ schema: { type: "string" }, content: { "text/plain": {} } }), `${HEADER}/content`],
+    [
+      "response header behind a $ref with a non-schema schema",
+      (s) => {
+        s.components.headers = { Rate: { schema: "string" } };
+        header({ $ref: "#/components/headers/Rate" })(s);
+      },
+      "/components/headers/Rate/schema",
+    ],
     ["request body without content", (s) => delete s.paths[LIST_ROUTE].post.requestBody.content, `${POST}/requestBody/content`],
     [
       "request body without content behind a $ref chain",
@@ -1853,6 +2006,9 @@ describe("required OpenAPI members", () => {
     ["response without content", (s) => delete s.paths[LIST_ROUTE].get.responses["200"].content, null],
     ["Content-Type response header without schema (ignored by OpenAPI)", (s) => (s.paths[LIST_ROUTE].get.responses["200"].headers = { "Content-Type": { description: "Type" } }), null],
     ["header with content", (s) => (s.paths[LIST_ROUTE].get.responses["200"].headers = { "X-Rate": { content: { "text/plain": { schema: { type: "string" } } } } }), null],
+    ["header with a boolean schema", header({ schema: true }), null],
+    ["path parameter with required: true behind a $ref chain", (s) => ((s["x-param"] = s.components.parameters.WorkspaceId), (s.components.parameters.WorkspaceId = { $ref: "#/x-param" })), null],
+    ["query parameter without required", (s) => delete s.paths[LIST_ROUTE].get.parameters[0].required, null],
     ["discriminator with propertyName", (s) => (s.components.schemas.Project.discriminator = { propertyName: "status" }), null],
   ];
 
@@ -1868,7 +2024,7 @@ describe("required OpenAPI members", () => {
       if (pointer === null) return expect(errors).toEqual([]);
       // Header rows also warn that headers are not described; a shared object is reported once per operation reading it.
       expect(result.catalog).toBeNull();
-      expect(new Set(errors.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`))).toEqual(new Set([`INVALID_SPEC ${pointer}`]));
+      expect(new Set(errors.map((diagnostic) => `${diagnostic.code} ${diagnostic.pointer}`))).toEqual(new Set([pointer].flat().map((at) => `INVALID_SPEC ${at}`)));
     }
   );
 });
@@ -2770,8 +2926,8 @@ describe("documented schema reference reading", () => {
     const names = NAMES.map(([name]) => name);
     expect(emitted.map(documentedName)).toEqual([...names, ...names, ...names, ...names]);
     for (const name of names) expect(Object.hasOwn(catalog.schemas, name)).toBe(true);
-    // The emitted form itself is unchanged: ~ as ~0, / as ~1 and % as %25.
-    expect(emitted.slice(0, NAMES.length)).toEqual(["a%25b", "a%2525b", "a~1b", "a~0b", "é", "%25"].map((segment) => `#/components/schemas/${segment}`));
+    // The emitted form: ~ as ~0, / as ~1, and what a URI fragment cannot hold (% and non-ASCII) percent-encoded as UTF-8.
+    expect(emitted.slice(0, NAMES.length)).toEqual(["a%25b", "a%2525b", "a~1b", "a~0b", "%C3%A9", "%25"].map((segment) => `#/components/schemas/${segment}`));
   });
 
   it("states that reading once in the README and in each schema description", () => {

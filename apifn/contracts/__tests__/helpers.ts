@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
+import { fullFormats } from "ajv-formats/dist/formats.js";
 import { expect } from "vitest";
 import { buildOperationCatalog as buildUnchecked, type OperationCatalog } from "../src/index.js";
 
@@ -90,11 +91,32 @@ export function scalingRatio(work: (size: number) => void, size: number, runs = 
 }
 
 const oracle = new Ajv2020({ strict: false, logger: false });
+const isUriReference = (value: string) => (fullFormats["uri-reference"] as RegExp).test(value);
+const isUri = fullFormats.uri as (value: string) => boolean;
+const LITERAL_KEYWORDS = new Set(["default", "const", "enum", "examples"]);
+
+/**
+ * The URI keywords of `schema` that break the meta-schema's `format: uri-reference` ($id, $ref, $dynamicRef) or
+ * `format: uri` ($schema, $vocabulary keys). Ajv compiles its meta-schemas without formats, so these are checked with
+ * ajv-formats' RFC 3986 grammar directly, independently of the catalog's own parser.
+ */
+function uriProblems(schema: unknown, at: string): string[] {
+  if (Array.isArray(schema)) return schema.flatMap((entry, index) => uriProblems(entry, `${at}/${index}`));
+  if (!schema || typeof schema !== "object") return [];
+  return Object.entries(schema).flatMap(([key, value]) => {
+    const here = `${at}/${key}`;
+    if (LITERAL_KEYWORDS.has(key)) return [];
+    if (["$id", "$ref", "$dynamicRef"].includes(key) && typeof value === "string") return isUriReference(value) ? [] : [`${here}: not a uri-reference`];
+    if (key === "$schema" && typeof value === "string") return isUri(value) ? [] : [`${here}: not a uri`];
+    if (key === "$vocabulary" && value && typeof value === "object") return Object.keys(value).every(isUri) ? [] : [`${here}: a key is not a uri`];
+    return uriProblems(value, here);
+  });
+}
 
 /**
  * Every schema a catalog publishes (component and inline) that is not valid
  * JSON Schema 2020-12, as "<catalog pointer>: <reason>": each must pass the
- * 2020-12 meta-schema and (unless `compile` is false) compile in Ajv2020 as
+ * 2020-12 meta-schema (with its URI formats, see {@link uriProblems}) and (unless `compile` is false) compile in Ajv2020 as
  * one document without a base URI, so `#/components/schemas/*` references
  * resolve against the catalog's own schemas.
  */
@@ -106,7 +128,7 @@ export function unpublishableSchemas(catalog: OperationCatalog, { compile = true
     operation.responses.forEach((response, j) => response.contents.forEach((content, k) => placed.push([`/operations/${i}/responses/${j}/contents/${k}/schema`, content.schema])));
   });
   const schemas = placed.filter(([, schema]) => schema !== null);
-  const problems = schemas.flatMap(([at, schema]) => (oracle.validateSchema(schema as object) ? [] : [`${at}: ${oracle.errorsText(oracle.errors)}`]));
+  const problems = schemas.flatMap(([at, schema]) => [...(oracle.validateSchema(schema as object) ? [] : [`${at}: ${oracle.errorsText(oracle.errors)}`]), ...uriProblems(schema, at)]);
   if (!compile) return problems;
   try {
     oracle.compile({

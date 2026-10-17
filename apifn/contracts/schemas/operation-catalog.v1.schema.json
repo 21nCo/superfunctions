@@ -119,7 +119,7 @@
     "schemas": {
       "type": "object",
       "additionalProperties": {
-        "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>, where the name has ~ written as ~0, / as ~1 and % as %25; read the name by percent-decoding the fragment, splitting it on /, then unescaping ~1 to / and ~0 to ~ (RFC 6901 section 6) and resolve it against the catalog's schemas map.",
+        "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>, where the name has ~ written as ~0, / as ~1, and every character a URI fragment cannot hold (% included) percent-encoded as UTF-8; read the name by percent-decoding the fragment, splitting it on /, then unescaping ~1 to / and ~0 to ~ (RFC 6901 section 6) and resolve it against the catalog's schemas map.",
         "anyOf": [{"type": "object"}, {"type": "boolean"}]
       }
     }
@@ -178,7 +178,7 @@
               "allowReserved": {"type": "boolean"},
               "description": {"anyOf": [{"type": "string"}, {"type": "null"}]},
               "schema": {
-                "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>, where the name has ~ written as ~0, / as ~1 and % as %25; read the name by percent-decoding the fragment, splitting it on /, then unescaping ~1 to / and ~0 to ~ (RFC 6901 section 6) and resolve it against the catalog's schemas map.",
+                "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>, where the name has ~ written as ~0, / as ~1, and every character a URI fragment cannot hold (% included) percent-encoded as UTF-8; read the name by percent-decoding the fragment, splitting it on /, then unescaping ~1 to / and ~0 to ~ (RFC 6901 section 6) and resolve it against the catalog's schemas map.",
                 "anyOf": [{"type": "object"}, {"type": "boolean"}, {"type": "null"}]
               }
             },
@@ -316,7 +316,7 @@
       "properties": {
         "mediaType": {"description": "Bare media type: no parameters.", "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^;\\s]+$"},
         "schema": {
-          "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>, where the name has ~ written as ~0, / as ~1 and % as %25; read the name by percent-decoding the fragment, splitting it on /, then unescaping ~1 to / and ~0 to ~ (RFC 6901 section 6) and resolve it against the catalog's schemas map.",
+          "description": "JSON Schema (2020-12) with $ref values and discriminator mapping targets pointing at #/components/schemas/<name>, where the name has ~ written as ~0, / as ~1, and every character a URI fragment cannot hold (% included) percent-encoded as UTF-8; read the name by percent-decoding the fragment, splitting it on /, then unescaping ~1 to / and ~0 to ~ (RFC 6901 section 6) and resolve it against the catalog's schemas map.",
           "anyOf": [{"type": "object"}, {"type": "boolean"}, {"type": "null"}]
         },
         "encoding": {

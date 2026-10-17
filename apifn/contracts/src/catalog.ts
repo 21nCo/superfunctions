@@ -18,6 +18,7 @@ import {
   stripUrlCredentials,
 } from "./credentials.js";
 import { isSupportedMediaType, mediaTypeParameters, normalizeMediaType, validateManifest } from "./manifest.js";
+import { parseUriReference, UriTable, type UriKey } from "./uri-reference.js";
 import {
   CATALOG_VERSION,
   type ApiManifest,
@@ -309,12 +310,25 @@ const SUBSCHEMAS = keyword(SCHEMA_LIST, (list, pointer) => (list.length === 0 ? 
  */
 export const SCHEMA_KEYWORD_RULES = new Map<string, KeywordRule>([
   // Core. References are checked where they are resolved (UNRESOLVED_REF), never copied unchecked.
-  ["$id", keyword(STRING, (id, pointer) => (/#./s.test(id) ? `The $id at ${pointer} has a non-empty fragment, which JSON Schema 2020-12 forbids; name the schema with $anchor instead.` : undefined))],
+  [
+    "$id",
+    keyword(STRING, (id, pointer) => {
+      if (parseUriReference(id) === null) return `The $id at ${pointer} is not an RFC 3986 URI-reference.`;
+      // An identifier: redacting it would publish another URI, and two redacted ones would collide.
+      if (containsCredentialValue(id)) return `The $id at ${pointer} holds a credential-like value (such as URL user info); schema resource URIs are identifiers and are never redacted.`;
+      return /#./s.test(id) ? `The $id at ${pointer} has a non-empty fragment, which JSON Schema 2020-12 forbids; name the schema with $anchor instead.` : undefined;
+    }),
+  ],
   ["$schema", keyword(STRING, (uri, pointer) => (uri === JSON_SCHEMA_2020_12 || uri === `${JSON_SCHEMA_2020_12}#` ? undefined : `The $schema at ${pointer} names a dialect other than JSON Schema 2020-12 (${JSON_SCHEMA_2020_12}), the only one the catalog publishes; remove it.`))],
   ...["$ref", "$dynamicRef", "$recursiveRef"].map((key): [string, KeywordRule] => [key, keyword(ANY)]),
   ["$anchor", ANCHOR_RULE],
   ["$dynamicAnchor", ANCHOR_RULE],
-  ["$vocabulary", keyword({ name: "an object of booleans", accepts: (value): value is Record<string, boolean> => isRecord(value) && Object.values(value).every((flag) => typeof flag === "boolean") })],
+  [
+    "$vocabulary",
+    keyword({ name: "an object of booleans", accepts: (value): value is Record<string, boolean> => isRecord(value) && Object.values(value).every((flag) => typeof flag === "boolean") }, (map, pointer) =>
+      Object.keys(map).every((uri) => parseUriReference(uri, true) !== null) ? undefined : `A vocabulary at ${pointer} is not named by an RFC 3986 URI.`
+    ),
+  ],
   ["$comment", keyword(STRING)],
   ...["$defs", "definitions", "properties", "dependentSchemas"].map((key): [string, KeywordRule] => [key, keyword(SCHEMA_MAP)]),
   // Applicator, unevaluated and content.
@@ -368,7 +382,8 @@ export const SCHEMA_KEYWORD_RULES = new Map<string, KeywordRule>([
     ["dependencies", "split into dependentRequired and dependentSchemas"],
     ["$recursiveAnchor", "replaced by $dynamicAnchor"],
   ].map(([key, replacement]): [string, KeywordRule] => [key, keyword(ANY, (_value, pointer) => `${pointer} is not a JSON Schema 2020-12 keyword (${replacement}); rewrite it.`)]),
-  // OpenAPI. `nullable` (3.0) qualifies a sibling type, as OpenAPI 3.0.3 and 2020-12 compilers that read it require.
+  // OpenAPI. The 3.0 upconversion consumes every boolean `nullable`, so this reads 3.1 sources, where 2020-12
+  // compilers that read `nullable` (Ajv) require it to qualify a sibling type.
   [
     "nullable",
     keyword(BOOLEAN, (nullable, pointer, schema) => {
@@ -395,17 +410,6 @@ const OPENAPI_30_KEYWORD_RULES = new Map<string, KeywordRule>(
 function keywordProblem(rule: KeywordRule, value: unknown, pointer: string, schema: Record<string, unknown>): string | undefined {
   if (!rule.type.accepts(value)) return `Expected ${rule.type.name} at ${pointer}, found ${describeValue(value)}.`;
   return rule.check?.(value, pointer, schema);
-}
-
-/** A schema `$id` resolved against its enclosing resource's URI (the document's when none), without an empty fragment. */
-function resolveUri(id: string, base = "document:/"): string {
-  try {
-    const url = new URL(id, base);
-    url.hash = "";
-    return url.href;
-  } catch {
-    return `${base} ${id}`;
-  }
 }
 
 function describeValue(value: unknown): string {
@@ -552,12 +556,13 @@ function hideJointServerValues(
 
 /**
  * Escapes a component name for a `$ref` emitted into the catalog: `~` as
- * `~0`, `/` as `~1` and `%` as `%25`, so the documented reading
- * ({@link parseLocalRef}: percent-decode, split on `/`, unescape `~1` and
- * `~0`) returns that name. Diagnostic pointers use pointerSegment.
+ * `~0`, `/` as `~1`, then every character an RFC 3986 fragment cannot hold
+ * (`%` included) percent-encoded as UTF-8, so the reference is a URI-reference
+ * and the documented reading ({@link parseLocalRef}: percent-decode, split on
+ * `/`, unescape `~1` and `~0`) returns that name. Diagnostic pointers use pointerSegment.
  */
 function refSegment(name: string): string {
-  return name.replace(/~/g, "~0").replace(/\//g, "~1").replace(/%/g, "%25");
+  return name.replace(/~/g, "~0").replace(/\//g, "~1").replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@]/gu, encodeURIComponent);
 }
 
 /** A reference for a message: a local one is a pointer, judged segment by segment so `~1~1` cannot hide URL user info. */
@@ -683,9 +688,10 @@ class CatalogBuilder {
   /** What is left of {@link SERVER_SCAN_BUDGET} for this build; servers are judged in a fixed order (paths sorted), so key order cannot change it. */
   private readonly serverScanBudget = { characters: SERVER_SCAN_BUDGET };
   /** The innermost schema being copied that declares a resource `$id`, against which JSON Schema resolves the references inside it. */
-  private resource: { pointer: string; uri: string } | null = null;
-  /** Every pointer declaring each resource URI or anchor (keyed by kind and name), so a repeat is found in one pass. */
-  private readonly declarations = new Map<string, Set<string>>();
+  private resource: { pointer: string; uri: UriKey } | null = null;
+  private readonly uris = new UriTable();
+  /** For each resource URI or anchor (keyed by kind and interned name), the schemas declaring it and the keyword pointers of each. */
+  private readonly declarations = new Map<string, Map<string, Set<string>>>();
   private readonly mediaTypes: Set<string>;
   /** `<in>:<name>` of every parameter that a declared apiKey security scheme carries. */
   private readonly apiKeyParameters = new Set<string>();
@@ -773,9 +779,23 @@ class CatalogBuilder {
     const names = Object.keys(headers).filter((name) => name.toLowerCase() !== "content-type").sort(compareCodeUnits);
     for (const name of names) {
       const resolved = this.deref(headers[name], `${pointer}/${pointerSegment(name)}`);
-      if (resolved) this.requireMember(resolved.value, ["schema", "content"], resolved.pointer, `Header ${quote(name)} of operation ${quote(operation)}`, operation);
+      if (resolved) this.schemaOrContent(resolved.value, resolved.pointer, `Header ${quote(name)} of operation ${quote(operation)}`, operation);
     }
     return names.length > 0;
+  }
+
+  /**
+   * The REQUIRED shape OpenAPI gives Parameter and Header Objects: exactly one
+   * of `schema` and `content`, a `content` map naming one media type. Present
+   * members are type-checked here, whether or not the catalog publishes them.
+   */
+  schemaOrContent(value: Record<string, unknown>, pointer: string, what: string, operation: string): void {
+    this.requireMember(value, ["schema", "content"], pointer, what, operation);
+    this.member(value, "schema", pointer, SCHEMA, operation);
+    const content = this.member(value, "content", pointer, OBJECT, operation);
+    if (content === undefined) return;
+    if (own(value, "schema") !== undefined) this.report("INVALID_SPEC", `${pointer}/content`, `${what} at ${pointer} has both "schema" and "content"; OpenAPI allows only one.`, { operation });
+    else if (Object.keys(content).length !== 1) this.report("INVALID_SPEC", `${pointer}/content`, `${what} at ${pointer} must map exactly one media type in "content", as OpenAPI requires.`, { operation });
   }
 
   /**
@@ -1021,11 +1041,12 @@ class CatalogBuilder {
   schema(value: unknown, pointer: string, credential = false, sameInstance = false): JsonValue | null {
     const outer = this.resource;
     const id = isRecord(value) ? value.$id : undefined;
-    // schemaObject reports a non-empty fragment. "" and "#" (an empty fragment) name the enclosing resource (the
-    // document's when none) again, so they declare its URI but start no resource.
-    if (typeof id === "string" && !/#./s.test(id)) {
-      const uri = resolveUri(id, outer?.uri);
-      this.declareOnce("$id", uri, `${pointer}/$id`);
+    // schemaObject reports a malformed $id or a non-empty fragment. "" and "#" (an empty fragment) name the
+    // enclosing resource (the document's when none) again, so they declare its URI but start no resource.
+    const reference = typeof id === "string" && !/#./s.test(id) ? parseUriReference(id) : null;
+    if (reference) {
+      const uri = this.uris.resolve(outer?.uri ?? this.uris.document, reference);
+      this.declareOnce(`$id ${uri.key}`, pointer, `${pointer}/$id`);
       if (id !== "" && id !== "#") this.resource = { pointer, uri };
     }
     try {
@@ -1060,7 +1081,7 @@ class CatalogBuilder {
         this.report("INVALID_SPEC", childPointer, problem);
         continue;
       }
-      if (key === "$anchor" || key === "$dynamicAnchor") this.declareOnce("anchor", `${this.resource?.uri ?? ""}#${child as string}`, childPointer);
+      if (key === "$anchor" || key === "$dynamicAnchor") this.declareOnce(`anchor ${(this.resource?.uri ?? this.uris.document).key}#${child as string}`, pointer, childPointer);
       if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
       } else if (REFERENCE_KEYWORDS.has(key) && this.resource) {
@@ -1187,26 +1208,29 @@ class CatalogBuilder {
   }
 
   /**
-   * Records a declaration JSON Schema 2020-12 allows once: a resource URI per
-   * document, an anchor name per resource (a 2020-12 compiler rejects a
-   * repeat). Repeats are reported once every schema is read, see {@link reportRepeatedDeclarations}.
+   * Records, by the schema at `owner`, a declaration JSON Schema 2020-12
+   * allows once: a resource URI per document, an anchor name per resource.
+   * Repeats are reported once every schema is read, see {@link reportRepeatedDeclarations}.
    */
-  private declareOnce(kind: "anchor" | "$id", name: string, pointer: string): void {
-    const key = `${kind} ${name}`;
-    this.declarations.set(key, (this.declarations.get(key) ?? new Set<string>()).add(pointer));
+  private declareOnce(key: string, owner: string, pointer: string): void {
+    const owners = this.declarations.get(key) ?? new Map<string, Set<string>>();
+    this.declarations.set(key, owners.set(owner, (owners.get(owner) ?? new Set<string>()).add(pointer)));
   }
 
   /** Reports a repeated resource URI or anchor at every declaration, so the diagnostics never depend on reading order. */
   private reportRepeatedDeclarations(): void {
-    for (const [key, pointers] of this.declarations) {
-      if (pointers.size < 2) continue;
+    for (const [key, owners] of this.declarations) {
+      const pointers = Array.from(owners.values(), (set) => Array.from(set)).flat();
+      if (pointers.length < 2) continue;
       for (const at of pointers) {
         this.report(
           "INVALID_SPEC",
           at,
-          key.startsWith("anchor ")
-            ? `Anchor at ${at} is also declared by another schema in the same schema resource; JSON Schema 2020-12 requires each anchor name once per resource.`
-            : `The $id at ${at} resolves to a URI that another schema in the document also declares; JSON Schema 2020-12 requires each schema resource URI once.`
+          !key.startsWith("anchor ")
+            ? `The $id at ${at} resolves to a URI that another schema in the document also declares; JSON Schema 2020-12 requires each schema resource URI once.`
+            : owners.size > 1
+              ? `Anchor at ${at} is also declared by another schema in the same schema resource; JSON Schema 2020-12 requires each anchor name once per resource.`
+              : `Anchor at ${at} names the schema that also declares it as the other of $anchor and $dynamicAnchor; JSON Schema 2020-12 leaves a repeated fragment name undefined and 2020-12 compilers reject it, so declare it once.`
         );
       }
     }
@@ -1421,13 +1445,19 @@ class CatalogBuilder {
       const { value, pointer } = resolved;
       const location = value.in as CatalogParameter["in"];
       const name = value.name as string;
+      if (location === "header" && IGNORED_HEADERS.has(name.toLowerCase())) continue;
+      // Every REQUIRED member and value first, so a parameter skipped below still reports each problem. A parameter
+      // lacking schema and content is still declared, so the path template check does not report it again.
+      this.schemaOrContent(value, pointer, `Parameter ${quote(name)} of operation ${quote(id)}`, id);
+      const required = this.member(value, "required", pointer, BOOLEAN, id);
+      // Absent or false; member reported a wrong type.
+      if (location === "path" && required !== true && own(value, "required") === required) {
+        this.report("INVALID_SPEC", `${pointer}/required`, `Path parameter ${quote(name)} of operation ${quote(id)} must declare "required": true, as OpenAPI requires.`, { operation: id });
+      }
       if (location === "path" && !template.includes(name)) {
         this.report("INVALID_SPEC", pointer, `Path parameter ${quote(name)} of operation ${quote(id)} is declared but does not appear in the path template ${redactWhole(entry.path)}.`, { operation: id });
         continue;
       }
-      if (location === "header" && IGNORED_HEADERS.has(name.toLowerCase())) continue;
-      // Still declared when it lacks both, so the path template check does not report it again.
-      this.requireMember(value, ["schema", "content"], pointer, `Parameter ${quote(name)} of operation ${quote(id)}`, id);
       const style = this.member(value, "style", pointer, STRING, id) ?? (location === "query" || location === "cookie" ? "form" : "simple");
       if (value.content !== undefined || !isOneOf(PARAMETER_STYLES[location], style)) {
         this.report(
@@ -1440,11 +1470,10 @@ class CatalogBuilder {
         );
         continue;
       }
-      const required = this.member(value, "required", pointer, BOOLEAN, id) ?? false;
       parameters.push({
         name,
         in: location,
-        required: location === "path" ? true : required,
+        required: location === "path" || required === true,
         deprecated: this.member(value, "deprecated", pointer, BOOLEAN, id) ?? false,
         style,
         explode: this.member(value, "explode", pointer, BOOLEAN, id) ?? style === "form",
@@ -2003,6 +2032,9 @@ class CatalogBuilder {
     }
 
     const info = this.doc.info as Record<string, unknown>;
+    // info.version is the document's version, checked but not published: the catalog's API version is the manifest's.
+    for (const key of ["title", "version"]) this.requireMember(info, [key], "/info", "Info Object");
+    this.member(info, "version", "/info", STRING);
     const provenance = this.manifest.provenance ?? {};
     const schemas = this.componentSchemas();
     this.reportRepeatedDeclarations();
@@ -2056,8 +2088,12 @@ function parseDocument(doc: Record<string, unknown>): unknown {
   if (typeof doc.openapi !== "string" || !doc.openapi.startsWith("3.0.")) return parseOpenAPI(doc);
   // Every Schema Object is found before any is changed, so references resolve in the source document.
   for (const schema of schemaObjects(doc)) {
-    if (own(schema, "nullable") !== true) continue;
+    // OpenAPI 3.0.3: `nullable: true` adds null to the sibling `type`; `false`, or either without a type, has no effect.
+    // A non-boolean stays for the keyword rule to report.
+    const nullable = own(schema, "nullable");
+    if (typeof nullable !== "boolean") continue;
     delete schema.nullable;
+    if (!nullable) continue;
     const type = own(schema, "type");
     if (typeof type === "string") schema.type = [type, "null"];
     else if (Array.isArray(type)) schema.type = Array.from(new Set([...type, "null"]));
