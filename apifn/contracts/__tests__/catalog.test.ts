@@ -1478,35 +1478,56 @@ describe("positional credential pairs in literals", () => {
   });
 });
 
+// Places a schema at a Schema Object position of the fixture (marked by title) and reads back every emitted copy.
+const ajv = new Ajv2020({ strict: false });
+const PROBE_MARK = "schema-probe";
+type Format = "object" | "json" | "yaml";
+/** Builds the fixture as `version`, places `schema` (marked by title) with `place`, and reads the input in `format`. */
+const placed = (version: string, schema: Record<string, unknown>, place = (nextSpec: any, s: unknown) => (inputSchema(nextSpec).properties.count = s), format: Format = "object") => {
+  const nextSpec = clone(spec);
+  nextSpec.openapi = version;
+  place(nextSpec, { ...schema, title: PROBE_MARK });
+  const input = format === "object" ? nextSpec : format === "json" ? JSON.stringify(nextSpec) : stringify(nextSpec);
+  const result = buildOperationCatalog(input, clone(manifest));
+  if (result.catalog) expect(validateCatalog(result.catalog), JSON.stringify(validateCatalog.errors)).toBe(true);
+  const found: Array<Record<string, unknown>> = [];
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") {
+      if ((value as Record<string, unknown>).title === PROBE_MARK) found.push(value as Record<string, unknown>);
+      Object.values(value).forEach(walk);
+    }
+  };
+  walk(result.catalog);
+  return { result, emitted: found.map(({ title: _title, ...rest }) => rest) };
+};
+const invalid = (result: ReturnType<typeof buildOperationCatalog>, pointer: string) =>
+  expect(result).toEqual({ catalog: null, digest: null, diagnostics: [expect.objectContaining({ code: "INVALID_SPEC", severity: "error", pointer })] });
+const COUNT = "/components/schemas/ProjectInput/properties/count";
+
+// Every Schema Object position the catalog publishes goes through the same reader (schemaObject).
+const LIST = "/paths/~1workspaces~1{workspaceId}~1projects";
+const POSITIONS: Array<[name: string, place: (nextSpec: any, schema: unknown) => void, pointer: string]> = [
+  ["inline parameter", (s, schema) => (s.paths[LIST_ROUTE].get.parameters[0].schema = schema), `${LIST}/get/parameters/0/schema`],
+  ["header parameter", (s, schema) => (s.paths[LIST_ROUTE].post.parameters[0].schema = schema), `${LIST}/post/parameters/0/schema`],
+  ["request body", (s, schema) => (s.paths[LIST_ROUTE].post.requestBody.content["application/json"].schema = schema), `${LIST}/post/requestBody/content/application~1json/schema`],
+  ["response", (s, schema) => (s.components.responses.NotFound.content["application/problem+json"].schema = schema), "/components/responses/NotFound/content/application~1problem+json/schema"],
+  ["items/allOf", (s, schema) => (inputSchema(s).properties.counts = { type: "array", items: { allOf: [schema] } }), "/components/schemas/ProjectInput/properties/counts/items/allOf/0"],
+  ["anyOf", (s, schema) => (inputSchema(s).properties.choice = { anyOf: [{ type: "null" }, schema] }), "/components/schemas/ProjectInput/properties/choice/anyOf/1"],
+  [
+    "component $ref chain",
+    (s, schema) => {
+      s.components.schemas.Bound = { $ref: "#/components/schemas/BoundTarget" };
+      s.components.schemas.BoundTarget = schema;
+      inputSchema(s).properties.count = { $ref: "#/components/schemas/Bound" };
+    },
+    "/components/schemas/BoundTarget",
+  ],
+];
+
 // Exclusive bounds are read in the source dialect: OpenAPI 3.0 booleans qualify minimum/maximum and become 2020-12
 // numeric bounds; OpenAPI 3.1 numbers are copied verbatim. Either form in the other dialect is INVALID_SPEC.
 describe("exclusive bounds", () => {
-  const ajv = new Ajv2020({ strict: false });
-  const BOUND_MARK = "bound-probe";
-  type Format = "object" | "json" | "yaml";
-  /** Builds the fixture as `version`, places `schema` (marked by title) with `place`, and reads the input in `format`. */
-  const bounded = (version: string, schema: Record<string, unknown>, place = (nextSpec: any, s: unknown) => (inputSchema(nextSpec).properties.count = s), format: Format = "object") => {
-    const nextSpec = clone(spec);
-    nextSpec.openapi = version;
-    place(nextSpec, { ...schema, title: BOUND_MARK });
-    const input = format === "object" ? nextSpec : format === "json" ? JSON.stringify(nextSpec) : stringify(nextSpec);
-    const result = buildOperationCatalog(input, clone(manifest));
-    if (result.catalog) expect(validateCatalog(result.catalog), JSON.stringify(validateCatalog.errors)).toBe(true);
-    const found: Array<Record<string, unknown>> = [];
-    const walk = (value: unknown): void => {
-      if (Array.isArray(value)) value.forEach(walk);
-      else if (value && typeof value === "object") {
-        if ((value as Record<string, unknown>).title === BOUND_MARK) found.push(value as Record<string, unknown>);
-        Object.values(value).forEach(walk);
-      }
-    };
-    walk(result.catalog);
-    return { result, emitted: found.map(({ title: _title, ...rest }) => rest) };
-  };
-  const invalid = (result: ReturnType<typeof buildOperationCatalog>, pointer: string) =>
-    expect(result).toEqual({ catalog: null, digest: null, diagnostics: [expect.objectContaining({ code: "INVALID_SPEC", severity: "error", pointer })] });
-  const COUNT = "/components/schemas/ProjectInput/properties/count";
-
   it.each<[string, Record<string, unknown>, Record<string, unknown>]>([
     ["exclusiveMinimum: true", { type: "integer", minimum: 0, exclusiveMinimum: true }, { type: "integer", exclusiveMinimum: 0 }],
     ["exclusiveMinimum: false", { type: "integer", minimum: 0, exclusiveMinimum: false }, { type: "integer", minimum: 0 }],
@@ -1515,7 +1536,7 @@ describe("exclusive bounds", () => {
     ["both bounds", { type: "integer", minimum: 0, exclusiveMinimum: true, maximum: 10, exclusiveMaximum: false }, { type: "integer", exclusiveMinimum: 0, maximum: 10 }],
     ["false without its bound", { type: "integer", exclusiveMinimum: false, exclusiveMaximum: false }, { type: "integer" }],
   ])("3.0 %s", (_name, schema, expected) => {
-    const { result, emitted } = bounded("3.0.3", schema);
+    const { result, emitted } = placed("3.0.3", schema);
     expect(result.diagnostics).toEqual([]);
     expect(emitted).toEqual([expected]);
     const validate = ajv.compile(emitted[0]);
@@ -1534,33 +1555,16 @@ describe("exclusive bounds", () => {
     ["3.1 exclusiveMaximum: false", "3.1.0", { type: "number", maximum: 10, exclusiveMaximum: false }, "exclusiveMaximum"],
     ["3.1 exclusiveMinimum: true without minimum", "3.1.0", { type: "number", exclusiveMinimum: true }, "exclusiveMinimum"],
   ])("INVALID_SPEC: %s", (_name, version, schema, keyword) => {
-    invalid(bounded(version, schema).result, `${COUNT}/${keyword}`);
+    invalid(placed(version, schema).result, `${COUNT}/${keyword}`);
   });
 
   it("copies 3.1 numeric bounds verbatim", () => {
     const schema = { type: "integer", minimum: 0, exclusiveMinimum: 0, maximum: 10, exclusiveMaximum: 11 };
-    const { result, emitted } = bounded("3.1.0", schema);
+    const { result, emitted } = placed("3.1.0", schema);
     expect(result.diagnostics).toEqual([]);
     expect(emitted).toEqual([schema]);
   });
 
-  // Every Schema Object position goes through the same reader, so each takes the document's dialect.
-  const LIST = "/paths/~1workspaces~1{workspaceId}~1projects";
-  const POSITIONS: Array<[name: string, place: (nextSpec: any, schema: unknown) => void, pointer: string]> = [
-    ["inline parameter", (s, schema) => (s.paths[LIST_ROUTE].get.parameters[0].schema = schema), `${LIST}/get/parameters/0/schema`],
-    ["request body", (s, schema) => (s.paths[LIST_ROUTE].post.requestBody.content["application/json"].schema = schema), `${LIST}/post/requestBody/content/application~1json/schema`],
-    ["response", (s, schema) => (s.components.responses.NotFound.content["application/problem+json"].schema = schema), "/components/responses/NotFound/content/application~1problem+json/schema"],
-    ["items/allOf", (s, schema) => (inputSchema(s).properties.counts = { type: "array", items: { allOf: [schema] } }), "/components/schemas/ProjectInput/properties/counts/items/allOf/0"],
-    [
-      "component $ref chain",
-      (s, schema) => {
-        s.components.schemas.Bound = { $ref: "#/components/schemas/BoundTarget" };
-        s.components.schemas.BoundTarget = schema;
-        inputSchema(s).properties.count = { $ref: "#/components/schemas/Bound" };
-      },
-      "/components/schemas/BoundTarget",
-    ],
-  ];
   const POSITION_ROWS = POSITIONS.flatMap(([name, place, pointer]) => [
     [name, "3.0 boolean", "3.0.3", { type: "number", maximum: 10, exclusiveMaximum: true }, place, { type: "number", exclusiveMaximum: 10 }],
     [name, "3.1 numeric", "3.1.0", { type: "number", exclusiveMaximum: 10 }, place, { type: "number", exclusiveMaximum: 10 }],
@@ -1569,7 +1573,7 @@ describe("exclusive bounds", () => {
   ] as Array<[string, string, string, Record<string, unknown>, (nextSpec: any, schema: unknown) => void, Record<string, unknown> | string]>);
 
   it.each(POSITION_ROWS)("%s: %s", (_name, _form, version, schema, place, expected) => {
-    const { result, emitted } = bounded(version, schema, place);
+    const { result, emitted } = placed(version, schema, place);
     if (typeof expected === "string") return invalid(result, expected);
     expect(result.diagnostics).toEqual([]);
     // A shared response is inlined into each operation that uses it.
@@ -1585,10 +1589,151 @@ describe("exclusive bounds", () => {
       [format, "3.1.0", { type: "number", maximum: 10, exclusiveMaximum: true }, `${COUNT}/exclusiveMaximum`],
     ])
   )("%s text %s %j", (format, version, schema, expected) => {
-    const { result, emitted } = bounded(version, schema, undefined, format);
+    const { result, emitted } = placed(version, schema, undefined, format);
     if (typeof expected === "string") return invalid(result, expected);
     expect(result.diagnostics).toEqual([]);
     expect(emitted).toEqual([expected]);
+  });
+});
+
+// JSON Schema requires a non-empty enum; OpenAPI 3.0 (draft 4) also requires distinct values, which 2020-12
+// recommends. Either break is INVALID_SPEC in both dialects, checked before any credential rule and named by position only.
+describe("schema enum values", () => {
+  const SEED = "enum-literal-7f3a";
+  const ENUM_CASES: Array<[name: string, values: unknown[], valid: boolean]> = [
+    ["empty", [], false],
+    ["repeated string", ["active", SEED, SEED], false],
+    ["repeated object in another key order", [{ a: 1, b: SEED }, { b: SEED, a: 1 }], false],
+    ["repeated array", [[1, SEED], [1, SEED]], false],
+    ["repeated null", [null, "active", null], false],
+    ["distinct strings", ["active", "archived"], true],
+    ["values equal only as text", [1, "1", true, "true", null, "null"], true],
+    ["arrays in another order", [[1, 2], [2, 1]], true],
+    ["objects differing in one member", [{ a: 1 }, { a: 2 }], true],
+  ];
+  const DIALECT_ROWS = (["3.0.3", "3.1.0"] as const).flatMap((version) => ENUM_CASES.map(([name, values, valid]) => [version, name, values, valid] as const));
+
+  it.each(DIALECT_ROWS)("%s %s", (version, _name, values, valid) => {
+    const { result, emitted } = placed(version, { enum: values });
+    if (!valid) {
+      invalid(result, `${COUNT}/enum`);
+      expect(JSON.stringify(result)).not.toContain(SEED);
+      return;
+    }
+    expect(result.diagnostics).toEqual([]);
+    expect(emitted).toEqual([{ enum: values }]);
+    expect(() => ajv.compile(emitted[0])).not.toThrow();
+  });
+
+  const POSITION_ROWS = POSITIONS.flatMap(([name, place, pointer]) =>
+    (["3.0.3", "3.1.0"] as const).flatMap((version) => [
+      [name, version, "empty", [], place, `${pointer}/enum`],
+      [name, version, "repeated", [{ a: 1, b: 2 }, { b: 2, a: 1 }], place, `${pointer}/enum`],
+      [name, version, "distinct", ["active", "archived"], place, null],
+    ])
+  ) as Array<[string, string, string, unknown[], (nextSpec: any, schema: unknown) => void, string | null]>;
+
+  it.each(POSITION_ROWS)("%s %s: %s", (_name, version, _case, values, place, pointer) => {
+    const { result, emitted } = placed(version, { type: ["string", "object"], enum: values }, place);
+    if (pointer !== null) return invalid(result, pointer);
+    expect(result.diagnostics).toEqual([]);
+    // A shared response is inlined into each operation that uses it.
+    expect(emitted.length).toBeGreaterThan(0);
+    for (const copy of emitted) expect(copy).toEqual({ type: ["string", "object"], enum: values });
+    expect(() => ajv.compile(emitted[0])).not.toThrow();
+  });
+
+  it.each(
+    (["json", "yaml"] as const).flatMap((format) =>
+      (["3.0.3", "3.1.0"] as const).flatMap((version) => [
+        [format, version, [], `${COUNT}/enum`],
+        [format, version, [{ a: 1, b: 2 }, { b: 2, a: 1 }], `${COUNT}/enum`],
+        [format, version, ["active", "archived"], null],
+      ])
+    ) as Array<[Format, string, unknown[], string | null]>
+  )("%s text %s %j", (format, version, values, pointer) => {
+    const { result, emitted } = placed(version, { enum: values }, undefined, format);
+    if (pointer !== null) return invalid(result, pointer);
+    expect(result.diagnostics).toEqual([]);
+    expect(emitted).toEqual([{ enum: values }]);
+  });
+
+  it("checks an enum inside a credential field before the credential rule drops it", () => {
+    const repeated = placed("3.1.0", { type: "string", format: "password", enum: [SEED, SEED] });
+    invalid(repeated.result, `${COUNT}/enum`);
+    expect(JSON.stringify(repeated.result)).not.toContain(SEED);
+    // A valid enum there is still dropped, as before.
+    const distinct = placed("3.1.0", { type: "string", format: "password", enum: [SEED, "other"] });
+    expect(distinct.emitted).toEqual([{ type: "string", format: "password" }]);
+    expect(distinct.result.diagnostics).toEqual([expect.objectContaining({ code: "CREDENTIAL_REDACTED", pointer: `${COUNT}/enum` })]);
+    expect(JSON.stringify(distinct.result)).not.toContain(SEED);
+  });
+});
+
+// OpenAPI 3.0 requires responses on every operation; 3.1 makes the member optional. In both, a Responses Object holds
+// at least one HTTP status, 1XX-5XX range or "default" response; extensions do not count.
+describe("operation responses", () => {
+  const HEALTH = "/paths/~1health";
+  const responsesOf = (result: ReturnType<typeof buildOperationCatalog>, id: string) => result.catalog?.operations.find((operation) => operation.id === id)?.responses;
+  const FORMS: Array<[name: string, set: (operation: any) => void, invalid30: boolean, invalid31: boolean]> = [
+    ["missing", (operation) => delete operation.responses, true, false],
+    ["empty", (operation) => (operation.responses = {}), true, true],
+    ["extension-only", (operation) => (operation.responses = { "x-note": 1 }), true, true],
+    ["default-only", (operation) => (operation.responses = { default: { description: "Any" } }), false, false],
+    ["a range", (operation) => (operation.responses = { "2XX": { description: "Ok" }, "x-note": 1 }), false, false],
+  ];
+  // The list operation is exposed to agents; the health operation is excluded from SDKs and not exposed. Neither choice changes validation.
+  const TARGETS: Array<[name: string, id: string, place: (nextSpec: any) => any, pointer: string]> = [
+    ["path operation", "projects.list", (s) => s.paths[LIST_ROUTE].get, `${LIST}/get/responses`],
+    ["SDK-excluded operation", "system.health", (s) => s.paths["/health"].get, `${HEALTH}/get/responses`],
+    [
+      "operation in a $ref path item",
+      "projects.list",
+      (s) => {
+        s["x-paths"] = { Projects: s.paths[LIST_ROUTE] };
+        s.paths[LIST_ROUTE] = { $ref: "#/x-paths/Projects" };
+        return s["x-paths"].Projects.get;
+      },
+      "/x-paths/Projects/get/responses",
+    ],
+  ];
+  const ROWS = TARGETS.flatMap(([target, id, place, pointer]) =>
+    FORMS.flatMap(([form, set, invalid30, invalid31]) =>
+      (["3.0.3", "3.1.0"] as const).map((version) => [target, form, version, id, place, set, (version === "3.0.3" ? invalid30 : invalid31) ? pointer : null] as const)
+    )
+  );
+
+  it.each(ROWS)("%s, %s responses, %s", (_target, form, version, id, place, set, pointer) => {
+    const result = build((nextSpec) => {
+      nextSpec.openapi = version;
+      set(place(nextSpec));
+    });
+    if (pointer !== null) return invalid(result, pointer);
+    expect(result.diagnostics).toEqual([]);
+    expect(responsesOf(result, id)?.map((response) => response.status)).toEqual(form === "missing" ? [] : form === "a range" ? ["2XX"] : ["default"]);
+  });
+
+  it("keeps a valid Responses Object unchanged in both dialects", () => {
+    for (const version of ["3.0.3", "3.1.0"]) {
+      const result = build((nextSpec) => (nextSpec.openapi = version));
+      expect(result.diagnostics).toEqual([]);
+      expect(responsesOf(result, "projects.list")?.map((response) => response.status)).toEqual(["200", "404", "default"]);
+    }
+  });
+
+  it.each(
+    (["json", "yaml"] as const).flatMap((format) => [
+      [format, "3.0.3", `${LIST}/get/responses`],
+      [format, "3.1.0", null],
+    ]) as Array<["json" | "yaml", string, string | null]>
+  )("%s text %s without responses", (format, version, pointer) => {
+    const nextSpec = clone(spec);
+    nextSpec.openapi = version;
+    delete nextSpec.paths[LIST_ROUTE].get.responses;
+    const result = buildOperationCatalog(format === "json" ? JSON.stringify(nextSpec) : stringify(nextSpec), clone(manifest));
+    if (pointer !== null) return invalid(result, pointer);
+    expect(result.diagnostics).toEqual([]);
+    expect(responsesOf(result, "projects.list")).toEqual([]);
   });
 });
 

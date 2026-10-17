@@ -276,6 +276,25 @@ const OPENAPI_30_KEYWORD_TYPES = new Map<string, MemberType<unknown>>(
   ["exclusiveMaximum", "exclusiveMinimum"].map((key): [string, MemberType<unknown>] => [key, { name: "a boolean (OpenAPI 3.0 form; numeric exclusive bounds need OpenAPI 3.1)", accepts: BOOLEAN.accepts }])
 );
 
+/**
+ * Why a schema `enum` array is invalid, or undefined. JSON Schema requires at
+ * least one value; OpenAPI 3.0 (draft 4) requires distinct values and 2020-12
+ * recommends them, so a repeat, compared as canonical JSON whatever its key
+ * order, is reported in either dialect. The message names positions, never
+ * values: they are literals a credential rule may withhold.
+ */
+function enumProblem(values: unknown[], pointer: string): string | undefined {
+  if (values.length === 0) return `Schema enum at ${pointer} is empty; JSON Schema requires at least one value.`;
+  const seen = new Map<string, number>();
+  for (const [index, value] of values.entries()) {
+    const key = canonicalJson(value);
+    const first = seen.get(key);
+    if (first !== undefined) return `Schema enum at ${pointer} repeats value ${first} as value ${index}; list each value once (OpenAPI 3.0 requires distinct values).`;
+    seen.set(key, index);
+  }
+  return undefined;
+}
+
 function describeValue(value: unknown): string {
   return value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
 }
@@ -892,8 +911,15 @@ class CatalogBuilder {
       const childPointer = `${pointer}/${pointerSegment(key)}`;
       if (key === "example" || key === "examples" || key.startsWith("x-")) continue;
       const expected = (this.openapi30 && OPENAPI_30_KEYWORD_TYPES.get(key)) || SCHEMA_KEYWORD_TYPES.get(key);
-      if (expected && !expected.accepts(child)) {
-        this.report("INVALID_SPEC", childPointer, `Expected ${expected.name} at ${childPointer}, found ${describeValue(child)}.`);
+      // Checked on the declared value, before any credential rule withholds or redacts it.
+      const problem =
+        expected && !expected.accepts(child)
+          ? `Expected ${expected.name} at ${childPointer}, found ${describeValue(child)}.`
+          : key === "enum"
+            ? enumProblem(child as unknown[], childPointer)
+            : undefined;
+      if (problem) {
+        this.report("INVALID_SPEC", childPointer, problem);
       } else if (isCredentialMember(key)) {
         drop(key, childPointer, "its name is or holds a credential");
       } else if (REFERENCE_KEYWORDS.has(key) && this.resource) {
@@ -1282,7 +1308,18 @@ class CatalogBuilder {
 
   responses(entry: SpecOperation, id: string): CatalogResponse[] {
     const responses = this.member(entry.operation, "responses", entry.pointer, OBJECT, id);
-    if (responses === undefined) return [];
+    const pointer = `${entry.pointer}/responses`;
+    if (responses === undefined) {
+      // OpenAPI 3.0 requires responses on every operation; 3.1 makes the member optional.
+      if (this.openapi30 && own(entry.operation, "responses") === undefined) {
+        this.report("INVALID_SPEC", pointer, `Operation ${quote(id)} has no responses; OpenAPI 3.0 requires a Responses Object.`, { operation: id });
+      }
+      return [];
+    }
+    // A Responses Object holds at least one response (extensions do not count), in 3.0 and 3.1 alike.
+    if (!Object.keys(responses).some((status) => RESPONSE_STATUS.test(status))) {
+      this.report("INVALID_SPEC", pointer, `Responses of operation ${quote(id)} at ${pointer} hold no HTTP status, 1XX-5XX range or "default" response.`, { operation: id });
+    }
     return Object.keys(responses)
       .sort(compareCodeUnits)
       .flatMap((status) => {
