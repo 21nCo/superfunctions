@@ -7,6 +7,7 @@ import { defaultExtensions } from "@mdfn/extensions";
 import type { MdfnDiagnostic, MdfnDocument, MdfnNode } from "@mdfn/core";
 import { transformFumadocsV15 } from "./compat/fumadocs";
 import { createDiagnostic, createDocsError, type DocsError } from "./diagnostics";
+import { matchFenceLine, scanFenceLines, type FenceLineRole } from "./markdown-fences";
 import { assertSafeSource } from "./sanitize";
 import type {
   CompiledContentArtifact,
@@ -30,10 +31,6 @@ export interface CompileMarkdownInput {
 }
 
 const HEADING_REGEX = /^(#{1,6})\s+(.*)$/;
-// GFM fences use three or more backticks or tildes. Backtick info strings
-// cannot contain backticks, and only a matching run at least as long closes.
-const CODE_FENCE_OPEN_REGEX = /^(`{3,}|~{3,})(.*)$/;
-const CODE_FENCE_CLOSE_REGEX = /^(`{3,}|~{3,})$/;
 const TABS_START_REGEX = /^<\s*(DocsTabs|Tabs)\b([^>]*)>/;
 const TABS_END_REGEX = /^<\s*\/\s*(DocsTabs|Tabs)\s*>/;
 const TAB_START_REGEX = /^<\s*(DocsTab|Tab)\b([^>]*)>/;
@@ -204,15 +201,64 @@ function createSlugger(): (text: string) => string {
   };
 }
 
-function matchCodeFenceOpen(trimmed: string): { marker: string; length: number; info: string } | null {
-  const match = CODE_FENCE_OPEN_REGEX.exec(trimmed);
-  if (!match || (match[1][0] === "`" && match[2].includes("`"))) return null;
+// MDX ignores indentation inside JSX, so island fences open at any indentation.
+function matchIslandFence(trimmed: string): { marker: string; length: number; info: string } | undefined {
+  const match = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
+  if (!match || (match[1][0] === "`" && match[2].includes("`"))) return undefined;
   return { marker: match[1][0], length: match[1].length, info: match[2].trim() };
 }
 
-function isCodeFenceClose(trimmed: string, open: { marker: string; length: number }): boolean {
-  const match = CODE_FENCE_CLOSE_REGEX.exec(trimmed);
-  return Boolean(match && match[1][0] === open.marker && match[1].length >= open.length);
+// Island fences follow MDX indentation rules, but every line the unsafe-HTML
+// scan (scanFenceLines) treats as code must also render as code. An island
+// fence therefore closes only on a line that scan reads as prose (a matching
+// marker or a JSX closing tag), and a fence the scan opens stays code until
+// the scan closes it or its container ends.
+function classifyFenceLines(lines: string[]): Array<FenceLineRole | undefined> {
+  const scanned: Array<FenceLineRole | undefined> = [];
+  scanFenceLines(lines, (_line, _inFence, _isFenceLine, role) => {
+    scanned.push(role);
+  });
+  const roles: Array<FenceLineRole | undefined> = [];
+  let open = false;
+  let scannerOpen = false;
+  let island: { marker: string; length: number } | undefined;
+  lines.forEach((line, index) => {
+    const role = scanned[index];
+    if (open && scannerOpen) {
+      if (role === "code" || role === "close") {
+        roles.push(role);
+        open = role === "code";
+        return;
+      }
+      open = false;
+    } else if (open) {
+      const trimmed = line.trim();
+      // A JSX closing tag ends its container, and an island fence with it.
+      if (role === undefined && /^<\s*\/\s*[A-Z][\w.]*\s*>$/.test(trimmed)) {
+        open = false;
+      } else {
+        const closes =
+          role === undefined &&
+          island !== undefined &&
+          new RegExp(`^\\${island.marker}{${island.length},}$`).test(trimmed);
+        scannerOpen = role === "open";
+        roles.push(closes ? "close" : "code");
+        open = !closes;
+        return;
+      }
+    }
+    island = matchIslandFence(line.trim());
+    scannerOpen = role === "open";
+    open = scannerOpen || island !== undefined;
+    roles.push(open ? "open" : undefined);
+  });
+  return roles;
+}
+
+// Island bodies keep their original indentation so fence rules match the
+// whole-document scan; only surrounding blank lines are dropped.
+function islandSnippet(value: string): string {
+  return value.replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
 }
 
 function isListStart(line: string): boolean {
@@ -229,7 +275,6 @@ function isBlockStart(line: string): boolean {
   return (
     trimmed.length === 0 ||
     HEADING_REGEX.test(trimmed) ||
-    matchCodeFenceOpen(trimmed) !== null ||
     TABS_START_REGEX.test(trimmed) ||
     CALLOUT_REGEX.test(trimmed) ||
     COMPONENT_SELF_CLOSING_REGEX.test(trimmed) ||
@@ -343,6 +388,7 @@ function parseTabsItems(rawAttributes: string): string[] {
 
 function parseTabsBlock(input: {
   lines: string[];
+  fenceRoles: Array<FenceLineRole | undefined>;
   startIndex: number;
   sourcePath?: string;
   resolvedComponents?: Set<string>;
@@ -418,7 +464,7 @@ function parseTabsBlock(input: {
     let foundTabClose = false;
     while (index < input.lines.length) {
       const tabLine = input.lines[index];
-      if (TAB_END_REGEX.test(tabLine.trim())) {
+      if (input.fenceRoles[index] === undefined && TAB_END_REGEX.test(tabLine.trim())) {
         foundTabClose = true;
         index += 1;
         break;
@@ -441,7 +487,7 @@ function parseTabsBlock(input: {
       source,
       content: source,
       nodes: parseBlocks({
-        source,
+        source: islandSnippet(contentLines.join("\n")),
         sourcePath: input.sourcePath,
         resolvedComponents: input.resolvedComponents,
         createHeadingSlug: input.createHeadingSlug,
@@ -478,6 +524,7 @@ function parseTabsBlock(input: {
 
 function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
   const lines = input.source.split(/\r?\n/);
+  const fenceRoles = classifyFenceLines(lines);
   const blocks: CompiledContentBlock[] = [];
   const createHeadingSlug = input.createHeadingSlug ?? createSlugger();
   let mermaidCount = 0;
@@ -494,27 +541,19 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
       continue;
     }
 
-    const fence = matchCodeFenceOpen(trimmed);
-    if (fence) {
-      const lang = fence.info || undefined;
+    if (fenceRoles[index] === "open") {
+      const lang = (matchIslandFence(trimmed)?.info ?? matchFenceLine(rawLine)?.info.trim()) || undefined;
       index += 1;
       const codeLines: string[] = [];
-      let foundFenceClose = false;
-      while (index < lines.length) {
-        const codeLine = lines[index];
-        if (isCodeFenceClose(codeLine.trim(), fence)) {
-          foundFenceClose = true;
+      // parseBlocks only receives container content (component islands and
+      // block quotes); as in CommonMark, an unclosed fence ends with it.
+      while (index < lines.length && fenceRoles[index] !== undefined && fenceRoles[index] !== "open") {
+        if (fenceRoles[index] === "close") {
           index += 1;
           break;
         }
-        codeLines.push(codeLine);
+        codeLines.push(lines[index]);
         index += 1;
-      }
-      if (!foundFenceClose) {
-        throw createMdxCompileError({
-          message: "code fence is missing a closing delimiter",
-          sourcePath: input.sourcePath,
-        });
       }
       const code = codeLines.join("\n");
       if (lang?.toLowerCase() === "mermaid") {
@@ -560,6 +599,7 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
       tabsBlockCount += 1;
       const parsedTabs = parseTabsBlock({
         lines,
+        fenceRoles,
         startIndex: index,
         sourcePath: input.sourcePath,
         resolvedComponents: input.resolvedComponents,
@@ -662,7 +702,7 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
       const componentClosePattern = new RegExp(`^<\\s*\\/\\s*${componentName}\\s*>\\s*$`);
       while (index < lines.length) {
         const current = lines[index];
-        if (componentClosePattern.test(current.trim())) {
+        if (fenceRoles[index] === undefined && componentClosePattern.test(current.trim())) {
           foundComponentClose = true;
           index += 1;
           break;
@@ -677,6 +717,7 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
         });
       }
       const source = normalizeSourceSnippet(bodyLines.join("\n"));
+      const childSource = islandSnippet(bodyLines.join("\n"));
       blocks.push({
         type: "component",
         name: componentName,
@@ -687,7 +728,7 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
         body: source,
         selfClosing: false,
         children: parseBlocks({
-          source,
+          source: childSource,
           sourcePath: input.sourcePath,
           resolvedComponents: input.resolvedComponents,
           createHeadingSlug,
@@ -705,7 +746,7 @@ function parseBlocks(input: ParseBlocksOptions): CompiledContentBlock[] {
     }
 
     const paragraphLines: string[] = [];
-    while (index < lines.length && !isBlockStart(lines[index])) {
+    while (index < lines.length && fenceRoles[index] !== "open" && !isBlockStart(lines[index])) {
       paragraphLines.push(lines[index].trim());
       index += 1;
     }

@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
 import { isLocalRoute } from "@docsfn/core";
+import { defaultExtensions } from "@mdfn/extensions";
+import { parseMarkdown } from "@mdfn/markdown";
 import fsSync from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -1088,11 +1090,11 @@ function rewriteColocatedAssets(source: string, record: ContentRecord, assets: S
     path.dirname(record.sourcePath),
     path.relative(path.dirname(record.relativePath), ".")
   );
-  const rewrite = (href: string): string => {
-    if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || /^[/#?\\]/.test(href)) return href;
+  const resolveAsset = (href: string): { target: string; href: string } | undefined => {
+    if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || /^[/#?\\]/.test(href)) return undefined;
     const [, pathname, suffix] = href.match(/^([^?#]*)(.*)$/s)!;
     let decoded: string;
-    try { decoded = decodeURIComponent(pathname); } catch { return href; }
+    try { decoded = decodeURIComponent(pathname); } catch { return undefined; }
     const target = path.resolve(path.dirname(record.sourcePath), decoded);
     const relative = path.relative(docsRoot, target);
     if (
@@ -1100,71 +1102,66 @@ function rewriteColocatedAssets(source: string, record: ContentRecord, assets: S
       path.isAbsolute(relative) ||
       !DOC_ASSET_EXTENSIONS.has(path.extname(target).toLowerCase())
     )
-      return href;
+      return undefined;
     try {
-      if (!fsSync.lstatSync(target).isFile()) return href;
+      if (!fsSync.lstatSync(target).isFile()) return undefined;
       let parent = path.dirname(target);
       while (parent !== docsRoot) {
-        if (fsSync.lstatSync(parent).isSymbolicLink()) return href;
+        if (fsSync.lstatSync(parent).isSymbolicLink()) return undefined;
         parent = path.dirname(parent);
       }
     } catch {
-      return href;
+      return undefined;
     }
-    assets.add(target);
-    return `/docs-assets/${normalizePath(relative).split("/").map(encodeURIComponent).join("/")}${suffix}`;
+    return {
+      target,
+      href: `/docs-assets/${normalizePath(relative).split("/").map(encodeURIComponent).join("/")}${suffix}`,
+    };
   };
-  return mapMarkdownProse(source, (prose) => prose
-    .replace(
-      /(!?\[[^\]]*\]\()([^\s)]+)((?:\s+"[^"\n]*"|\s+'[^'\n]*')?\))/g,
-      (_match, prefix, href, close) => `${prefix}${rewrite(href)}${close}`
-    )
-    .replace(
-      /(\b(?:src|href)=["'])([^"']+)(["'])/g,
-      (_match, prefix, href, close) => `${prefix}${rewrite(href)}${close}`
-    )
-    // Reference definitions such as `[diagram]: ./diagram.png` back `![Diagram][diagram]`.
-    .replace(
-      /^( {0,3}\[[^\]\n]+\]:[ \t]*)(?:<([^>\n]*)>|(\S+))/gm,
-      (_match, prefix, bracketed, bare) =>
-        bracketed === undefined ? `${prefix}${rewrite(bare)}` : `${prefix}<${rewrite(bracketed)}>`
-    ));
+
+  // Parse with the renderer's Markdown parser so code, escapes and container
+  // boundaries follow the same rules as the published page. Only destinations
+  // the parser reports as live links, images, definitions or HTML are edited.
+  const edits: Array<{ from: number; to: number; text: string }> = [];
+  const editDestination = (from: number, raw: string, url: unknown, after: string) => {
+    if (typeof url !== "string" || !url) return;
+    const anchor = raw.indexOf(after);
+    const offset = anchor < 0 ? -1 : raw.indexOf(url, anchor + after.length);
+    const asset = offset < 0 ? undefined : resolveAsset(url);
+    if (!asset) return;
+    assets.add(asset.target);
+    edits.push({ from: from + offset, to: from + offset + url.length, text: asset.href });
+  };
+  const visit = (node: MarkdownNode): void => {
+    if (node.type === "codeBlock" || node.type === "inlineCode") return;
+    const { from, raw } = node.source ?? {};
+    if (typeof from === "number" && typeof raw === "string") {
+      if (node.type === "image" || node.type === "link") editDestination(from, raw, node.attrs?.url, "](");
+      else if (node.type === "definition") editDestination(from, raw, node.attrs?.url, "]:");
+      else if (node.type === "opaque" && node.attrs?.syntax === "html") {
+        for (const match of raw.matchAll(/(\b(?:src|href)=["'])([^"']+)["']/g)) {
+          const asset = resolveAsset(match[2]);
+          if (!asset) continue;
+          assets.add(asset.target);
+          const start = from + match.index! + match[1].length;
+          edits.push({ from: start, to: start + match[2].length, text: asset.href });
+        }
+      }
+    }
+    for (const child of node.content ?? []) visit(child);
+  };
+  visit(parseMarkdown(source, { dialect: "gfm", allowRawHtml: true, extensions: defaultExtensions }).document as MarkdownNode);
+  let output = source;
+  for (const edit of edits.sort((left, right) => right.from - left.from))
+    output = `${output.slice(0, edit.from)}${edit.text}${output.slice(edit.to)}`;
+  return output;
 }
 
-// Code is literal text in CommonMark, so asset rewriting only touches prose.
-// Fence openers are matched at any indentation: treating an ambiguous line as
-// code can only leave a link unpublished, never publish an unreferenced file.
-function mapMarkdownProse(source: string, transform: (prose: string) => string): string {
-  const output: string[] = [];
-  let prose: string[] = [];
-  let fence: { marker: string; length: number } | undefined;
-  const flush = () => {
-    if (prose.length) output.push(transformOutsideInlineCode(prose.join(""), transform));
-    prose = [];
-  };
-  for (const line of source.split(/(?<=\n)/)) {
-    const content = line
-      .replace(/\r?\n$/, "")
-      .replace(/^(?:[ \t]*(?:>[ \t]?|(?:[-+*]|\d{1,9}[.)])[ \t]+))*[ \t]*/, "");
-    const run = /^(`{3,}|~{3,})(.*)$/.exec(content);
-    if (fence) {
-      output.push(line);
-      if (run && run[1][0] === fence.marker && run[1].length >= fence.length && !run[2].trim()) fence = undefined;
-    } else if (run && !(run[1][0] === "`" && run[2].includes("`"))) {
-      flush();
-      fence = { marker: run[1][0], length: run[1].length };
-      output.push(line);
-    } else prose.push(line);
-  }
-  flush();
-  return output.join("");
-}
-
-function transformOutsideInlineCode(prose: string, transform: (prose: string) => string): string {
-  const spans: string[] = [];
-  // Private-use delimiters keep line anchors intact while code spans are hidden.
-  const masked = prose.replace(/(`+)(?!`)[\s\S]*?[^`]\1(?!`)/g, (span) => `\uE000${spans.push(span) - 1}\uE001`);
-  return transform(masked).replace(/\uE000(\d+)\uE001/g, (_match, index) => spans[Number(index)]);
+interface MarkdownNode {
+  type: string;
+  source?: { from?: number; raw?: string };
+  attrs?: { url?: unknown; syntax?: unknown };
+  content?: MarkdownNode[];
 }
 
 async function copyContentRecords(input: {

@@ -553,3 +553,61 @@ it("parses tilde and longer backtick fences inside component islands", () => {
     { type: "mermaid", lang: undefined, code: "graph TD; A-->B;" },
   ]);
 });
+
+function collectCodeBlocks(value: unknown, blocks: Array<Record<string, unknown>> = []): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) value.forEach((item) => collectCodeBlocks(item, blocks));
+  else if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (record.type === "code" || record.type === "mermaid") blocks.push(record);
+    Object.values(record).forEach((item) => collectCodeBlocks(item, blocks));
+  }
+  return blocks;
+}
+
+const tab = (...body: string[]) =>
+  ['<DocsTabs items={["One"]}>', '<DocsTab value="One">', "", ...body, "", "</DocsTab>", "</DocsTabs>"].join("\n");
+
+it("keeps island code open across indented fence-like lines, as the unsafe-HTML scan does", () => {
+  const compiled = compileMarkdown({
+    source: tab("```txt", "    ```", "<script>alert(1)</script>", "```"),
+    sourcePath: "indented-close.mdx",
+  });
+  expect(collectCodeBlocks(compiled.blocks).map(({ lang, code }) => ({ lang, code }))).toEqual([
+    { lang: "txt", code: "    ```\n<script>alert(1)</script>" },
+  ]);
+});
+
+it("ends an unclosed indented island fence with the island instead of failing the page", () => {
+  const compiled = compileMarkdown({ source: tab("Example:", "", "    ~~~", "    literal"), sourcePath: "indented-open.mdx" });
+  expect(collectCodeBlocks(compiled.blocks).map(({ code }) => code)).toEqual(["    literal"]);
+});
+
+it("keeps MDX-indented island fences as code", () => {
+  const compiled = compileMarkdown({
+    source: tab("    ```python", "    print('indented')", "    ```", "", "    After."),
+    sourcePath: "mdx-indented.mdx",
+  });
+  expect(collectCodeBlocks(compiled.blocks).map(({ lang, code }) => ({ lang, code }))).toEqual([
+    { lang: "python", code: "    print('indented')" },
+  ]);
+  expect(JSON.stringify(compiled.blocks)).toContain("After.");
+});
+
+it("keeps code that the unsafe-HTML scan opens inside an indented island fence", () => {
+  const compiled = compileMarkdown({
+    source: tab("    ```txt", "```", "<script>alert(1)</script>", "```"),
+    sourcePath: "mixed-indent.mdx",
+  });
+  expect(collectCodeBlocks(compiled.blocks).map(({ code }) => code)).toEqual([
+    "```\n<script>alert(1)</script>",
+  ]);
+});
+
+it("does not end an island at a closing tag inside its code example", () => {
+  const compiled = compileMarkdown({
+    source: tab("```mdx", "</DocsTab>", "```", "", "After the example."),
+    sourcePath: "tag-in-code.mdx",
+  });
+  expect(collectCodeBlocks(compiled.blocks).map(({ code }) => code)).toEqual(["</DocsTab>"]);
+  expect(JSON.stringify(compiled.blocks)).toContain("After the example.");
+});

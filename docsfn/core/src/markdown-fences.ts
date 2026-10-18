@@ -104,9 +104,11 @@ export function isClosingFence(open: FenceState, candidate: FenceLineMatch): boo
   );
 }
 
+export type FenceLineRole = "open" | "code" | "close";
+
 export function scanFenceLines(
   lines: string[],
-  onLine: (line: string, inFence: boolean, isFenceLine: boolean) => void
+  onLine: (line: string, inFence: boolean, isFenceLine: boolean, role?: FenceLineRole) => void
 ): void {
   let fence: FenceState | null = null;
   let containers: Array<number | "quote"> = [];
@@ -139,7 +141,7 @@ export function scanFenceLines(
             match[1][0] === fence.marker &&
             match[1].length >= fence.length
         );
-        onLine(rawLine, true, closing);
+        onLine(rawLine, true, closing, closing ? "close" : "code");
         if (closing) fence = null;
         continue;
       }
@@ -163,7 +165,7 @@ export function scanFenceLines(
         ...fenceMatch,
         containerIndent: splitMarkdownContainerPrefix(line).containerIndent,
       };
-      onLine(rawLine, true, true);
+      onLine(rawLine, true, true, "open");
     } else onLine(rawLine, false, false);
   }
 }

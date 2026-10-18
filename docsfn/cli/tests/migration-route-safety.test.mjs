@@ -208,3 +208,53 @@ test("migration leaves asset references in code examples literal and unpublished
       await assert.rejects(access(join(target, "static/docs-assets", file)));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("migration follows Markdown block and escape rules when publishing referenced media", async () => {
+  const root = await mkdtemp(join(tmpdir(), "docsfn-migration-markdown-rules-"));
+  try {
+    const source = join(root, "source"), target = join(root, "target");
+    await mkdir(join(source, "docs"), { recursive: true });
+    const live = ["escaped.png", "unpaired.png", "after-quote.png", "after-indented.png", "after-list.png"];
+    const literal = ["in-list-fence.pdf", "in-indented.png"];
+    for (const file of [...live, ...literal]) await writeFile(join(source, "docs", file), file);
+    await writeFile(
+      join(source, "docs/index.md"),
+      [
+        "# Rules",
+        "",
+        "\\`![Escaped](./escaped.png)\\`",
+        "",
+        "An unpaired ` backtick.",
+        "",
+        "![Unpaired](./unpaired.png) and a later ` backtick.",
+        "",
+        "> ```md",
+        "> unterminated quoted example",
+        "",
+        "![After quote](./after-quote.png)",
+        "",
+        "    ```",
+        "    ![Indented](./in-indented.png)",
+        "",
+        "![After indented](./after-indented.png)",
+        "",
+        "```md",
+        "- ```",
+        "[pdf]: ./in-list-fence.pdf",
+        "```",
+        "",
+        "![After list](./after-list.png)",
+        "",
+      ].join("\n")
+    );
+    await execute(process.execPath, [cli, "migrate", "docusaurus", source, "--out-dir", target]);
+    const migrated = await readFile(join(target, "content/docs/index.md"), "utf8");
+    for (const file of live) {
+      assert.match(migrated, new RegExp(`\\(/docs-assets/${file.replace(".", "\\.")}\\)`));
+      assert.equal(await readFile(join(target, "static/docs-assets", file), "utf8"), file);
+    }
+    assert.match(migrated, /\[pdf\]: \.\/in-list-fence\.pdf/);
+    assert.match(migrated, /\(\.\/in-indented\.png\)/);
+    for (const file of literal) await assert.rejects(access(join(target, "static/docs-assets", file)));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
