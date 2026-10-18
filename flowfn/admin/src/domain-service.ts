@@ -1,4 +1,4 @@
-import type { DLQJob, Job } from "@flowfn/core";
+import type { DLQJob, Job, WorkflowExecution } from "@flowfn/core";
 import { AdminError, type AdminOperationContext } from "@superfunctions/admin";
 import type {
   FlowFnAdminDeadLetter,
@@ -7,6 +7,8 @@ import type {
   FlowFnAdminService,
   FlowFnAdminWorker,
   FlowFnDomainAdminServiceOptions,
+  FlowFnAdminExecution,
+  FlowFnAdminSchedule,
 } from "./types.js";
 
 function toJson(value: unknown): unknown {
@@ -43,6 +45,11 @@ function page<T>(
 function adminJob(queue: string, job: Job): FlowFnAdminJob {
   const { lease, deduplicationId, ...publicJob } = job;
   return { ...(toJson(publicJob) as Omit<FlowFnAdminJob, "queue">), queue };
+}
+function adminExecution(value: WorkflowExecution): FlowFnAdminExecution {
+  const fields = new Set(['id', 'workflowId', 'status', 'input', 'output', 'state', 'error', 'waiting', 'waitingFor', 'compensationErrors', 'startedAt', 'completedAt', 'createdAt', 'updatedAt']);
+  const record = Object.fromEntries(Object.entries(value).filter(([key]) => fields.has(key)));
+  return toJson(record) as FlowFnAdminExecution;
 }
 
 function adminDeadLetter(job: DLQJob): FlowFnAdminDeadLetter {
@@ -154,7 +161,42 @@ export function createFlowFnDomainAdminService(
     return value;
   };
 
+  const workflow = async (id: string) => {
+    const value = (await options.flow.listWorkflows()).find(item => item.id === id);
+    if (!value) throw new AdminError('not_found', 'The workflow was not found in the active environment.');
+    return value;
+  };
+  const stream = async (id: string) => {
+    if (!(await options.flow.listStreams()).includes(id)) throw new AdminError('not_found', 'The stream was not found in the active environment.');
+    return options.flow.stream(id);
+  };
+  const schedule = async (id: string) => {
+    const value = (await options.flow.scheduler().list()).find(item => item.name === id);
+    if (!value) throw new AdminError('not_found', 'The schedule was not found in the active environment.');
+    return value;
+  };
   return {
+    async listWorkflows(input, context) {
+      assertScope(context);
+      return page((await options.flow.listWorkflows()).map(({ id, name }) => ({ id, name })).sort((a, b) => a.id.localeCompare(b.id)), input.limit, input.offset, input.cursor);
+    },
+    async listExecutions(input, context) {
+      assertScope(context);
+      const values = await (await workflow(input.workflowId)).listExecutions({ status: input.status });
+      return page(values.map(adminExecution), input.limit, input.offset, input.cursor);
+    },
+    async getExecution(input, context) { assertScope(context); return { item: adminExecution(await (await workflow(input.workflowId)).getExecution(input.id)) }; },
+    async cancelExecution(input, context) { assertScope(context); requireIdempotency(context); await (await workflow(input.workflowId)).cancelExecution(input.id); return { accepted: true }; },
+    async retryExecution(input, context) { assertScope(context); requireIdempotency(context); return { item: adminExecution(await (await workflow(input.workflowId)).retryExecution(input.id)) }; },
+    async signalExecution(input, context) { assertScope(context); requireIdempotency(context); await (await workflow(input.workflowId)).signalEvent(input.id, input.event, input.data); return { accepted: true }; },
+    async approveExecution(input, context) { assertScope(context); requireIdempotency(context); await (await workflow(input.workflowId)).approveExecution(input.id, { ...input.decision, reviewedBy: context.actor.id }); return { accepted: true }; },
+    async recoverWorkflow(input, context) { assertScope(context); requireIdempotency(context); return { recovered: await (await workflow(input.id)).recoverExecutions() }; },
+    async listStreams(input, context) { assertScope(context); const items = await Promise.all((await options.flow.listStreams()).sort().map(async id => ({ id, ...await options.flow.stream(id).getInfo() }))); return page(items, input.limit, input.offset, input.cursor); },
+    async getStream(input, context) { assertScope(context); return { item: { id: input.id, ...await (await stream(input.id)).getInfo() } }; },
+    async listSchedules(input, context) { assertScope(context); return page((await options.flow.scheduler().list()).sort((a, b) => a.name.localeCompare(b.name)).map(item => toJson({ ...item, id: item.name }) as FlowFnAdminSchedule), input.limit, input.offset, input.cursor); },
+    async pauseSchedule(input, context) { assertScope(context); requireIdempotency(context); await schedule(input.id); await options.flow.scheduler().pause(input.id); return { accepted: true }; },
+    async resumeSchedule(input, context) { assertScope(context); requireIdempotency(context); await schedule(input.id); await options.flow.scheduler().resume(input.id); return { accepted: true }; },
+    async cancelSchedule(input, context) { assertScope(context); requireIdempotency(context); await schedule(input.id); await options.flow.scheduler().cancel(input.id); return { accepted: true }; },
     async listQueues(input, context) {
       assertScope(context);
       const items = await Promise.all(

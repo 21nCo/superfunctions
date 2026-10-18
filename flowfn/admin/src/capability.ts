@@ -5,6 +5,7 @@ import {
   type AdminOperationDefinition,
   type AdminResourceDefinition,
 } from "@superfunctions/admin";
+import { runtimeAdminOperations, runtimeAdminResources } from './runtime-capability.js';
 import type {
   FlowFnAcceptedOutput,
   FlowFnCleanDeadLettersInput,
@@ -230,6 +231,7 @@ const acceptedOutputSchema: AdminObjectSchema = {
 };
 
 export const flowFnAdminResources = [
+  ...runtimeAdminResources,
   {
     id: "queues",
     label: "Queues",
@@ -837,6 +839,7 @@ const listEvents = {
 >;
 
 export const flowFnAdminOperations = [
+  ...runtimeAdminOperations,
   listQueues,
   getQueue,
   queueAction("pause", "Pause queue"),
@@ -865,7 +868,7 @@ export const flowFnAdminCapability = defineAdminCapability({
   displayName: "FlowFn",
   version: "1.0.0",
   description:
-    "Environment-scoped operations backed by FlowFn's public queue, worker, job-storage, DLQ, and event-log APIs.",
+    "Environment-scoped queue, worker, workflow, stream, schedule, DLQ and event-log operations backed by FlowFn's public APIs.",
   category: "orchestration",
   availability: "required-product",
   scopeLevels: ["installation", "workspace", "project", "environment"],

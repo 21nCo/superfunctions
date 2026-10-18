@@ -20,7 +20,11 @@ import type {
   FlowFnQueueActionInput,
   FlowFnRedriveDeadLetterInput,
   FlowFnWorkerActionInput,
+  FlowFnPageInput,
+  FlowFnExecutionInput,
+  FlowFnExecutionListInput,
 } from "./types.js";
+import type { ApprovalDecision } from '@flowfn/core';
 
 export function createFlowFnAdminClient(adminClient: AdminClient) {
   const client = createCapabilityAdminClient(
@@ -28,6 +32,28 @@ export function createFlowFnAdminClient(adminClient: AdminClient) {
     adminClient,
   );
   return Object.assign(client, {
+    workflows: {
+      list: (input: FlowFnPageInput = {}, options?: AdminClientRequestOptions) => client.invoke('flowfn.workflows.list', input, options),
+      recover: (input: { id: string }, options?: AdminClientRequestOptions) => client.invoke('flowfn.workflows.recover', input, options),
+    },
+    executions: {
+      list: (input: FlowFnExecutionListInput, options?: AdminClientRequestOptions) => client.invoke('flowfn.workflow-executions.list', input, options),
+      get: (input: FlowFnExecutionInput, options?: AdminClientRequestOptions) => client.invoke('flowfn.workflow-executions.get', input, options),
+      cancel: (input: FlowFnExecutionInput, options?: AdminClientRequestOptions) => client.invoke('flowfn.workflow-executions.cancel', input, options),
+      retry: (input: FlowFnExecutionInput, options?: AdminClientRequestOptions) => client.invoke('flowfn.workflow-executions.retry', input, options),
+      signal: (input: FlowFnExecutionInput & { event: string; data?: unknown }, options?: AdminClientRequestOptions) => client.invoke('flowfn.workflow-executions.signal', input, options),
+      approve: (input: FlowFnExecutionInput & { decision: Omit<ApprovalDecision, 'reviewedBy'> }, options?: AdminClientRequestOptions) => client.invoke('flowfn.workflow-executions.approve', input, options),
+    },
+    streams: {
+      list: (input: FlowFnPageInput = {}, options?: AdminClientRequestOptions) => client.invoke('flowfn.streams.list', input, options),
+      get: (input: { id: string }, options?: AdminClientRequestOptions) => client.invoke('flowfn.streams.get', input, options),
+    },
+    schedules: {
+      list: (input: FlowFnPageInput = {}, options?: AdminClientRequestOptions) => client.invoke('flowfn.schedules.list', input, options),
+      pause: (input: { id: string }, options?: AdminClientRequestOptions) => client.invoke('flowfn.schedules.pause', input, options),
+      resume: (input: { id: string }, options?: AdminClientRequestOptions) => client.invoke('flowfn.schedules.resume', input, options),
+      cancel: (input: { id: string }, options?: AdminClientRequestOptions) => client.invoke('flowfn.schedules.cancel', input, options),
+    },
     queues: {
       list: (
         input: FlowFnListQueuesInput = {},

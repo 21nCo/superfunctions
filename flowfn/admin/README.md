@@ -15,8 +15,9 @@ Job reads use the queue's live adapter state, including worker results. The
 provided `jobs` storage receives enqueue/redrive snapshots for compatibility;
 it is not the source of live status. Payloads, results, errors and logs are
 redacted by the dispatcher capability. Direct domain-service calls return raw
-trusted data. List APIs currently use numeric `offset`/`limit` pagination;
-`nextCursor` is always null and does not indicate that an offset page is last.
+trusted data. List APIs accept `offset`/`limit` or the returned `nextCursor` as
+`cursor`. A null cursor marks the final page. These are offset cursors; concurrent
+collection changes can shift subsequent pages.
 
 Dead-letter redrive requires confirmation and idempotency, retries an existing
 failed job or inserts a missing one, and deletes the DLQ record only after enqueue
@@ -27,5 +28,11 @@ redrive refuses to silently enqueue the same live job again.
 
 Workers must have handlers registered by the host before admin starts them.
 Worker close is terminal; create and bind a new worker to restart processing.
-Workflow, stream, schedule, and consumer administration are not exposed by this
-package's current capability manifest.
+The capability also lists registered workflows, lists/reads their durable
+executions, signals and approves waits, retries/cancels executions, and requests
+abandoned-execution recovery. Approval identity comes from the authenticated
+admin actor. Stream inspection reports retained counts and consumer-group lag.
+Schedule operations list, pause, resume and cancel persisted definitions. Runtime
+mutations require confirmation and idempotency; execution data is redacted.
+Callbacks and workflow definitions must be registered by the deployment host.
+Consumer-instance controls and callback registration are not exposed remotely.

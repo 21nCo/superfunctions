@@ -8,6 +8,9 @@ import type {
   JobStorage,
   QueueStats,
   Worker,
+  WorkflowExecution,
+  ApprovalDecision,
+  StreamInfo,
 } from "@flowfn/core";
 import type { AdminOperationContext } from "@superfunctions/admin";
 
@@ -179,6 +182,20 @@ export interface FlowFnAcceptedOutput {
 }
 
 export interface FlowFnAdminService {
+  listWorkflows(input: FlowFnPageInput, context: AdminOperationContext): Promise<FlowFnPageOutput<{ id: string; name: string }>>;
+  listExecutions(input: FlowFnExecutionListInput, context: AdminOperationContext): Promise<FlowFnPageOutput<FlowFnAdminExecution>>;
+  getExecution(input: FlowFnExecutionInput, context: AdminOperationContext): Promise<{ item: FlowFnAdminExecution }>;
+  cancelExecution(input: FlowFnExecutionInput, context: AdminOperationContext): Promise<FlowFnAcceptedOutput>;
+  retryExecution(input: FlowFnExecutionInput, context: AdminOperationContext): Promise<{ item: FlowFnAdminExecution }>;
+  signalExecution(input: FlowFnExecutionInput & { event: string; data?: unknown }, context: AdminOperationContext): Promise<FlowFnAcceptedOutput>;
+  approveExecution(input: FlowFnExecutionInput & { decision: Omit<ApprovalDecision, 'reviewedBy'> }, context: AdminOperationContext): Promise<FlowFnAcceptedOutput>;
+  recoverWorkflow(input: { id: string }, context: AdminOperationContext): Promise<{ recovered: number }>;
+  listStreams(input: FlowFnPageInput, context: AdminOperationContext): Promise<FlowFnPageOutput<StreamInfo & { id: string }>>;
+  getStream(input: { id: string }, context: AdminOperationContext): Promise<{ item: StreamInfo & { id: string } }>;
+  listSchedules(input: FlowFnPageInput, context: AdminOperationContext): Promise<FlowFnPageOutput<FlowFnAdminSchedule>>;
+  pauseSchedule(input: { id: string }, context: AdminOperationContext): Promise<FlowFnAcceptedOutput>;
+  resumeSchedule(input: { id: string }, context: AdminOperationContext): Promise<FlowFnAcceptedOutput>;
+  cancelSchedule(input: { id: string }, context: AdminOperationContext): Promise<FlowFnAcceptedOutput>;
   listQueues(
     input: FlowFnListQueuesInput,
     context: AdminOperationContext,
@@ -248,6 +265,13 @@ export interface FlowFnAdminService {
     context: AdminOperationContext,
   ): Promise<FlowFnEventListOutput>;
 }
+
+export interface FlowFnPageInput { limit?: number; offset?: number; cursor?: string }
+export interface FlowFnPageOutput<T> { items: T[]; nextCursor: string | null }
+export interface FlowFnExecutionInput { workflowId: string; id: string }
+export interface FlowFnExecutionListInput extends FlowFnPageInput { workflowId: string; status?: WorkflowExecution['status'] }
+export type FlowFnAdminExecution = FlowFnAdminJson<Omit<WorkflowExecution, 'lease' | 'revision'>>;
+export interface FlowFnAdminSchedule { id: string; name: string; nextRun: string; count: number; paused: boolean; lastError?: string }
 
 export interface FlowFnAdminWorkerBinding {
   /** Stable deployment identifier for this concrete Worker instance. */

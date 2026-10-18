@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryDLQManager,
   MemoryEventLog,
@@ -82,6 +82,27 @@ afterEach(async () => {
 });
 
 describe("@flowfn/admin", () => {
+  it('operates registered workflows, streams and durable schedules with scope and confirmation checks', async () => {
+    const { flow, dispatch } = deployment();
+    const workflow = flow.workflow('approval').waitForEvent('ready').waitForApproval('ops', { timeout: 5000 }).build();
+    const execution = await workflow.execute({ secret: 'hidden' });
+    await flow.stream('updates').publish({ secret: 'stream-data' });
+    await flow.scheduler().schedule('daily', { every: 100000 }, async () => {});
+    expect(await dispatch.dispatch({ operationId: 'flowfn.workflows.list', input: {}, context: context() })).toMatchObject({ ok: true, data: { items: [{ id: workflow.id, name: 'approval' }] } });
+    const fetched = await dispatch.dispatch<{ item: Record<string, unknown> }>({ operationId: 'flowfn.workflow-executions.get', input: { workflowId: workflow.id, id: execution.id }, context: context() });
+    expect(fetched.ok).toBe(true);
+    if (fetched.ok) { expect(fetched.data.item.input).toBe('[REDACTED]'); expect(fetched.data.item).not.toHaveProperty('lease'); }
+    expect(await dispatch.dispatch({ operationId: 'flowfn.streams.get', input: { id: 'updates' }, context: context() })).toMatchObject({ ok: true, data: { item: { id: 'updates', length: 1 } } });
+    const mutation = context({ idempotencyKey: 'signal', confirmationToken: 'confirmed' });
+    expect(await dispatch.dispatch({ operationId: 'flowfn.workflow-executions.signal', input: { workflowId: workflow.id, id: execution.id, event: 'ready', data: 'payload' }, context: mutation })).toMatchObject({ ok: true });
+    await vi.waitFor(async () => expect((await workflow.getExecution(execution.id)).waiting?.kind).toBe('approval'));
+    expect(await dispatch.dispatch({ operationId: 'flowfn.workflow-executions.approve', input: { workflowId: workflow.id, id: execution.id, decision: { approved: true, approver: 'ops' } }, context: context({ idempotencyKey: 'approve', confirmationToken: 'confirmed' }) })).toMatchObject({ ok: true });
+    expect(await workflow.waitForCompletion(execution.id)).toMatchObject({ status: 'completed', output: { reviewedBy: 'operator_1' } });
+    expect(await dispatch.dispatch({ operationId: 'flowfn.schedules.pause', input: { id: 'daily' }, context: context({ idempotencyKey: 'unconfirmed' }) })).toMatchObject({ ok: false });
+    expect(await dispatch.dispatch({ operationId: 'flowfn.schedules.pause', input: { id: 'daily' }, context: context({ idempotencyKey: 'pause', confirmationToken: 'confirmed' }) })).toMatchObject({ ok: true });
+    expect(await dispatch.dispatch({ operationId: 'flowfn.schedules.list', input: {}, context: context() })).toMatchObject({ ok: true, data: { items: [{ id: 'daily', paused: true }] } });
+    expect(await dispatch.dispatch({ operationId: 'flowfn.streams.get', input: { id: 'outside' }, context: context() })).toMatchObject({ ok: false });
+  });
   it('returns usable continuation cursors for collections and filtered events', async () => {
     const { flow, events, dispatch } = deployment();
     flow.queue('a'); flow.queue('b');
@@ -116,9 +137,10 @@ describe("@flowfn/admin", () => {
       }
     } finally { release(); await queue.drain(); }
   });
-  it("publishes only the real environment-backed FlowFn subset", () => {
+  it("publishes the environment-backed runtime capabilities", () => {
     expect(validateAdminCapabilityManifest(flowFnAdminCapability)).toEqual([]);
     expect(flowFnAdminResources.map((resource) => resource.id)).toEqual([
+      "workflows", "workflow-executions", "streams", "schedules",
       "queues",
       "jobs",
       "workers",
@@ -131,7 +153,7 @@ describe("@flowfn/admin", () => {
       "project",
       "environment",
     ]);
-    expect(flowFnAdminCapability.operations).toHaveLength(17);
+    expect(flowFnAdminCapability.operations).toHaveLength(31);
     expect(
       flowFnAdminCapability.operations.every(
         (operation) => operation.minimumScope === "environment",
@@ -141,12 +163,12 @@ describe("@flowfn/admin", () => {
       flowFnAdminCapability.operations.some((operation) =>
         operation.id.includes("workflows"),
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       flowFnAdminCapability.operations.some((operation) =>
         operation.id.includes("streams"),
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       flowFnAdminCapability.operations.some((operation) =>
         operation.id.includes("consumers"),
@@ -156,7 +178,7 @@ describe("@flowfn/admin", () => {
       flowFnAdminCapability.operations.some((operation) =>
         operation.id.includes("schedules"),
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       flowFnAdminCapability.operations.some(
         (operation) => operation.inputSchema?.properties?.payload,
