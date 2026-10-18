@@ -1,3 +1,4 @@
+import { workflowCancelContract } from '../storage/workflow-cancel-contract.js';
 import { streamFilterContract } from '../storage/stream-filter-contract.js';
 import { streamRenewalContract, streamLossContract, streamUnsubscribeContract } from '../storage/stream-lease-contract.js';
 import { shutdownContract } from '../storage/shutdown-contract.js';
@@ -21,6 +22,7 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
     let adapter: RedisAdapter;
     let redis: Redis;
     let prefix: string;
+    it.each([false, true])('delivers remote workflow cancellation across process ownership (restart=%s)', async restart => { await workflowCancelContract(adapter, 'redis', prefix, restart); });
     it('filters subscribers and group deliveries without losing history or retrying skipped messages', async () => { await streamFilterContract(adapter); });
     it('aborts active stream handlers on unsubscribe and requeues their receipt', async () => { await streamUnsubscribeContract(adapter); });
     it('renews active stream handlers across delivery expiry', async () => { await streamRenewalContract(adapter); });

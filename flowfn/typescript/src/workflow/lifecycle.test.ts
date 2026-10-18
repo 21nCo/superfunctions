@@ -378,3 +378,20 @@ it("surfaces checkpoint failures instead of reporting durable completion", async
     "checkpoint unavailable",
   );
 });
+
+it('delivers cancellation from another runtime to a running handler through the durable inbox', async () => {
+  const adapter = new MemoryAdapter();
+  const owner = createFlow({ adapter }), sender = createFlow({ adapter });
+  flows.push(owner, sender);
+  let aborted = false;
+  const workflow = owner.workflow('remote-cancel').ownership({ leaseDuration: 90 }).step('waiting', async ctx => {
+    await new Promise<void>(resolve => ctx.signal.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true }));
+  }).build();
+  const remote = sender.workflow('remote-cancel').build();
+  const execution = await workflow.execute({});
+  await flush();
+  await remote.cancelExecution(execution.id);
+  await vi.advanceTimersByTimeAsync(30);
+  expect(aborted).toBe(true);
+  expect((await workflow.waitForCompletion(execution.id)).status).toBe('cancelled');
+});

@@ -93,6 +93,17 @@ filtered records cannot block later messages. Retained history and other groups
 are unchanged. Predicate errors follow normal delivery retries and `onError`
 reporting. Consumers in one group should use the same predicate.
 
+### Remote workflow cancellation
+
+`workflow.cancelExecution(id)` accepts executions owned by another registered
+runtime. The request is persisted in the execution inbox and applied by the owner
+at a step boundary, while waiting, or after lease renewal. A queued request also
+survives owner failure and is applied when the execution resumes. The owning
+runtime aborts `context.signal` and runs recorded compensations under its lease.
+The admin cancellation operation uses the same path. Await `waitForCompletion`
+to observe final settlement; accepting a cancellation request does not mean a
+non-cooperative callback or external side effect has stopped.
+
 ### Errors and tracing
 
 `createFlow({ adapter, onError(error, context) { ... } })` reports failed adapter

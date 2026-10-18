@@ -379,7 +379,9 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         runtime.deadline = started + this.leaseDuration;
       });
       runtime.writes = renewal.catch(() => undefined);
-      void renewal.finally(() => { pending = false; }).catch(() => undefined);
+      void renewal.then(async () => {
+        if (!runtime.lost && !runtime.settling) await this.receiveSignals(runtime);
+      }).finally(() => { pending = false; }).catch(() => undefined);
     }, Math.min(2147483647, Math.max(1, Math.floor(this.leaseDuration / 3))));
   }
   private runtime(record: Checkpoint): Runtime {
@@ -574,10 +576,12 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         this.wait(runtime, "event", name, `context:${name}`, timeout),
     };
     try {
+      await this.receiveSignals(runtime);
       if (record.status === "failed")
         throw new Error(record.error?.message ?? "Recovered failed execution");
       if (record.status === "cancelled") runtime.controller.abort();
       const result = await this.executeSteps(this.steps, context, runtime);
+      await this.receiveSignals(runtime);
       this.check(runtime);
       record.output =
         result === undefined ? clone(record.state) : clone(result);
@@ -650,6 +654,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   ): Promise<any> {
     const record = runtime.record;
     for (const [index, step] of steps.entries()) {
+      await this.receiveSignals(runtime);
       this.check(runtime);
       const key = `${prefix}${index}`,
         saved = record.journal[key];
@@ -844,7 +849,8 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     for (;;) {
       const inbox = await this.adapter.loadWorkflowState(key);
       const messages: Array<typeof message> = inbox?.state?.messages ?? [];
-      if (messages.length + record.inbox.length >= 1024) throw new Error('Execution event inbox is full');
+      if (name === 'control:cancel' && messages.some(item => item.name === name)) return;
+      if (name !== 'control:cancel' && messages.length + record.inbox.length >= 1024) throw new Error('Execution event inbox is full');
       if (unique && messages.some(item => item.name === name)) throw new Error('Approval already supplied');
       const saved = await this.adapter.mutateWorkflowState(key, { expectedRevision: inbox ? inbox.revision ?? 0 : null, state: {
         id: key, workflowId: this.id, status: 'running', input: null, startedAt: record.startedAt, state: { messages: [...messages, message] },
@@ -853,7 +859,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     }
   }
   private receiveSignals(runtime: Runtime): Promise<void> {
-    runtime.signals = runtime.signals.then(() => this.receiveSignalsOwned(runtime));
+    runtime.signals = runtime.signals.catch(() => undefined).then(() => this.receiveSignalsOwned(runtime));
     return runtime.signals;
   }
   private async receiveSignalsOwned(runtime: Runtime): Promise<void> {
@@ -866,7 +872,12 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       record.receivedSignals ??= [];
       const incoming = messages.filter(item => !record.receivedSignals.includes(item.id));
       if (incoming.length) {
-        record.inbox.push(...incoming.map(({ name, data }) => ({ name, data: clone(data) })));
+        record.inbox.push(...incoming.filter(item => item.name !== 'control:cancel').map(({ name, data }) => ({ name, data: clone(data) })));
+        if (incoming.some(item => item.name === 'control:cancel')) {
+          record.status = 'cancelled';
+          this.event(record, 'execution.cancellation-requested');
+          runtime.controller.abort();
+        }
         record.receivedSignals.push(...incoming.map(item => item.id));
         // Checkpoint receipt before acknowledging the inbox so crashes cannot lose signals.
         await this.persist(runtime);
@@ -933,12 +944,17 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     for (const wake of [...runtime?.wakes ?? []]) wake();
   }
   async cancelExecution(executionId: string): Promise<void> {
+    this.ensureOpen();
+    const record = await this.load(executionId);
     const runtime = this.active.get(executionId);
-    if (!runtime || terminal(runtime.record.status) || runtime.settling)
-      throw new Error("Cannot cancel an inactive execution");
-    runtime.record.status = "cancelled";
-    runtime.controller.abort();
-    await this.persist(runtime);
+    if (terminal(record.status) || runtime?.settling) throw new Error("Cannot cancel an inactive execution");
+    if (runtime && !runtime.lost) {
+      runtime.record.status = "cancelled";
+      runtime.controller.abort();
+      await this.persist(runtime);
+    } else {
+      await this.sendSignal(record, 'control:cancel', null);
+    }
   }
   async retryExecution(executionId: string): Promise<WorkflowExecution> {
     const record = await this.load(executionId);
