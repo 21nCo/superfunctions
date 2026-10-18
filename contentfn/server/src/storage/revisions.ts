@@ -197,7 +197,7 @@ export async function restoreRevision(
     model: CONTENTFN_TABLE_NAMES.docsDrafts,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: draftId },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, draftId) },
     ],
   });
 
@@ -206,7 +206,7 @@ export async function restoreRevision(
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: draftId },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, draftId) },
       ],
       data: {
         docJson: draftDoc,

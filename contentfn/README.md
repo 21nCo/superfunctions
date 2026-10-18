@@ -34,12 +34,15 @@ Use a persistent shared database adapter in production. ContentFn applies its ow
 schema internally; consumers do not supply `adapterSchema`. JSON fields use TEXT
 columns and DB 0.4.0's explicit text codec by default (including SQLite). For a PostgreSQL/MySQL adapter that
 encodes native JSON, set `jsonStorage: 'native'` on the server and pass the same
-option to `getSchema` when generating tables. MySQL deployments should use native
-JSON columns for documents larger than the TEXT column limit. Use LONGTEXT for
+option to `getSchema` when generating tables. MySQL deployments must use native
+JSON columns or LONGTEXT with the default JSON text codec for documents larger than
+the TEXT column limit. Use LONGTEXT for
 unindexed arbitrary strings (such as public document IDs) in application-owned
 MySQL migrations; the shared CLI currently emits TEXT templates for unbounded
 strings, which must be widened when supporting values over 65,535 bytes. The schema and runtime
 codec must agree; existing data needs a migration when switching storage modes.
+Document equality uses the SHA-256 physical identity, preserving case, accents,
+and trailing spaces even when the database uses a case-insensitive collation.
 The incoming adapter must support transactions.
 Use the shared HTTP framework adapter with `content.router`, or use
 `content.handler` with Node's HTTP server. There are no re-exported framework adapters.

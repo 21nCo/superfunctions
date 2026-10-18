@@ -80,7 +80,7 @@ export async function importDataset(
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: doc._id },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, doc._id) },
       ],
     });
     if (existing) {
@@ -88,7 +88,7 @@ export async function importDataset(
         model: CONTENTFN_TABLE_NAMES.docsPublished,
         where: [
           { field: "dataset", operator: "eq" as const, value: input.dataset },
-          { field: "documentId", operator: "eq" as const, value: doc._id },
+          { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, doc._id) },
         ],
         data: {
           type: doc._type,
@@ -121,7 +121,7 @@ export async function importDataset(
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: doc._id },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, doc._id) },
       ],
     });
     if (existing) {
@@ -129,7 +129,7 @@ export async function importDataset(
         model: CONTENTFN_TABLE_NAMES.docsDrafts,
         where: [
           { field: "dataset", operator: "eq" as const, value: input.dataset },
-          { field: "documentId", operator: "eq" as const, value: doc._id },
+          { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, doc._id) },
         ],
         data: {
           type: doc._type,

@@ -93,7 +93,7 @@ export async function docCreate(
     model: table,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: docId },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, docId) },
     ],
   });
 
@@ -180,7 +180,7 @@ export async function docGet(
     model: table,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: perspective === "draft" && !input.id.startsWith("drafts.") ? `drafts.${input.id}` : input.id },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, perspective === "draft" && !input.id.startsWith("drafts.") ? `drafts.${input.id}` : input.id) },
     ],
   });
 
@@ -222,7 +222,7 @@ export async function docDelete(
     [CONTENTFN_TABLE_NAMES.docsPublished, publishedId],
     ...(purge ? [[CONTENTFN_TABLE_NAMES.docsDrafts, `drafts.${publishedId}`]] : []),
   ]) {
-    const row = await config.db.findOne({ model, where: [{ field: "dataset", operator: "eq", value: input.dataset }, { field: "documentId", operator: "eq", value: documentId }] });
+    const row = await config.db.findOne({ model, where: [{ field: "dataset", operator: "eq", value: input.dataset }, { field: "id", operator: "eq", value: documentStorageId(input.dataset, documentId) }] });
     if (row) removedRev = await appendRemovalRevision(config, input.dataset, row.docJson as ContentfnDocument);
   }
 
@@ -233,7 +233,7 @@ export async function docDelete(
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: publishedId },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, publishedId) },
       ],
     });
     // Draft doc uses "drafts." prefix
@@ -242,7 +242,7 @@ export async function docDelete(
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: draftId },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, draftId) },
       ],
     });
   } else {
@@ -251,7 +251,7 @@ export async function docDelete(
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: publishedId },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, publishedId) },
       ],
     });
   }
@@ -301,7 +301,7 @@ export async function docPatch(
     model: table,
     where: [
       { field: "dataset", operator: "eq" as const, value: input.dataset },
-      { field: "documentId", operator: "eq" as const, value: input.id },
+      { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, input.id) },
     ],
   });
 
@@ -353,7 +353,7 @@ export async function docPatch(
     model: table,
     where: [
       { field: "dataset", operator: "eq", value: input.dataset },
-      { field: "documentId", operator: "eq", value: input.id },
+      { field: "id", operator: "eq", value: documentStorageId(input.dataset, input.id) },
       { field: "rev", operator: "eq", value: currentRev },
     ],
     data: { docJson: persistedDoc, rev: newRev, updatedAt: now },

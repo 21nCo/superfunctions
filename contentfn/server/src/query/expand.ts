@@ -1,3 +1,4 @@
+import { documentStorageId } from "../storage/documentIdentity.js";
 import type { ContentfnDatabase as Adapter } from "../storage/database.js";
 import type {
   ContentfnDocument,
@@ -34,7 +35,7 @@ async function fetchDocument(
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
       { field: "dataset", operator: "eq" as const, value: dataset },
-      { field: "documentId", operator: "eq" as const, value: docId },
+      { field: "id", operator: "eq" as const, value: documentStorageId(dataset, docId) },
     ],
   });
 

@@ -1,3 +1,6 @@
+import { memoryAdapter } from '@superfunctions/db/adapters';
+import { wrapWithSchema } from '@superfunctions/db/schema';
+import { createContentfnServer } from '../server.js';
 import { expect, it } from 'vitest';
 import { ALL_TABLES, getSchema, getContentfnSchema } from '../storage/schema.js';
 it('exposes physical schemas with bounded identities and JSON text columns for shared CLI discovery', () => {
@@ -20,8 +23,6 @@ it('uses native JSON only when explicitly configured for both generation and run
 });
 
 it('roundtrips large native JSON documents and unrestricted public IDs with bounded physical keys', async () => {
-  const { memoryAdapter } = await import('@superfunctions/db/adapters');
-  const { createContentfnServer } = await import('../server.js');
   const db = memoryAdapter();
   const server = createContentfnServer({ db, jsonStorage: 'native' });
   await server.api.datasets.create({ dataset: 'prod' });
@@ -30,7 +31,6 @@ it('roundtrips large native JSON documents and unrestricted public IDs with boun
   const text = '文'.repeat(40000);
   expect(await server.api.docs.create({ dataset: 'prod', id, type: 'post', doc: { text } })).toMatchObject({ ok: true, result: { _id: id, text } });
   expect(await server.api.docs.get({ dataset: 'prod', id })).toMatchObject({ ok: true, result: { _id: id, text } });
-  const { wrapWithSchema } = await import('@superfunctions/db/schema');
   const row = await wrapWithSchema(db, getContentfnSchema({ jsonStorage: 'native' })).findOne({ model: 'contentfn_docs_published', where: [{ field: 'dataset', operator: 'eq', value: 'prod' }] });
   expect(row?.id).toMatch(/^[a-f0-9]{64}$/);
   expect(row?.docJson).toMatchObject({ _id: id, text });

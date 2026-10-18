@@ -1,3 +1,4 @@
+import { documentStorageId } from "./documentIdentity.js";
 import type { ContentfnEnvelope, ContentfnSchema, ContentfnField, ContentfnFieldType } from "@contentfn/core";
 import { ok, err } from "@contentfn/core";
 import { parseMarkdown } from "@mdfn/markdown";
@@ -240,7 +241,7 @@ export async function validateReferences(
         for (const model of tables) {
           const target = await db.findOne({ model, where: [
             { field: "dataset", operator: "eq", value: dataset },
-            { field: "documentId", operator: "eq", value: model === CONTENTFN_TABLE_NAMES.docsDrafts && !id.startsWith("drafts.") ? `drafts.${id}` : id },
+            { field: "id", operator: "eq", value: documentStorageId(dataset, model === CONTENTFN_TABLE_NAMES.docsDrafts && !id.startsWith("drafts.") ? `drafts.${id}` : id) },
           ] });
           if (target) { targetType = target.type as string; break; }
         }
