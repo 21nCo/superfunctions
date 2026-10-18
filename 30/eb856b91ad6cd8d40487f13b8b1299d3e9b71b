@@ -1,0 +1,27 @@
+flowfn/typescript/docs/retry-strategies.md
+  s_e1c5fc1a65c0cf::t_84076ef23f04dc 31-35
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_09d6c9c40b0755 31-47
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_21104ef758fcef 26-42
+flowfn/typescript/src/queue/batch.test.ts
+  s_e1c5fc1a65c0cf::t_3f46e4016ed5d1 26-67
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_b61e6583cb1450 285,432-458
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "30eb856b91ad6cd8d40487f13b8b1299d3e9b71b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
