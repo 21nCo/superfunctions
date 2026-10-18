@@ -3,6 +3,7 @@
  */
 
 import { DEFAULT_VERSION, MAX_EVENT_SIZE, type LogEvent } from "../types.js";
+import { createRouter, type Router } from "@superfunctions/http";
 import { isValidLogEvent } from "../validation.js";
 
 export interface WatchLogsHandlerOptions {
@@ -171,4 +172,21 @@ export function watchLogsHandler(options: WatchLogsHandlerOptions = {}) {
       headers: { "Content-Type": "application/json" },
     });
   };
+}
+
+
+/** Shared HTTP router; mount it using the consumer's framework adapter. */
+export function watchLogsRouter(
+  options: WatchLogsHandlerOptions & { path?: string; basePath?: string } = {}
+): Router {
+  const { path = "/watch/logs", basePath, ...handlerOptions } = options;
+  return createRouter({
+    basePath,
+    routes: [{
+      method: "POST",
+      path,
+      handler: watchLogsHandler(handlerOptions),
+      meta: { openapi: { operationId: "ingestLogs", summary: "Accept structured log events", tags: ["logs"] } },
+    }],
+  });
 }

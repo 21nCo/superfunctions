@@ -491,3 +491,24 @@ body capture sees the parsed body. Register identity hooks before this plugin
 when `captureUser` depends on their results.
 
 The WatchFn ingestion handler rejects unsupported event versions with HTTP 400 and events larger than 64 KiB of UTF-8 JSON with HTTP 413. Validation covers the entire batch before invoking the configured ingestion callback, so an invalid event cannot cause partial callback delivery.
+
+## Shared HTTP ingestion router
+
+Install `@superfunctions/http@^0.3.1` when using the ingestion subpath. Create `watchLogsRouter` and pass its router to your framework's `@superfunctions/http-*` adapter directly; LogFn does not re-export framework adapters. The existing `watchLogsHandler` remains available for direct Fetch handlers.
+
+```typescript
+import { watchLogsRouter } from "@logfn/core/http/watch";
+
+const router = watchLogsRouter({
+  basePath: "/api",
+  auth: { header: "authorization", value: "Bearer configured-token" },
+  ingest: async (events) => {
+    await persistEvents(events); // Application-owned durable storage
+  },
+});
+
+// Fetch-native runtime entrypoint: POST /api/watch/logs
+export default { fetch: router.handler };
+```
+
+`path` defaults to `/watch/logs`. Routing, method handling and route metadata use the shared HTTP router; LogFn retains event validation, authentication and awaited ingestion behavior.

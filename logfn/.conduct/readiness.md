@@ -111,3 +111,12 @@ Logger now sanitizes and bounds events before sink delivery, caps tags at20, pre
 Express, Fastify and Hono now use request children from a lazy shared console root when no application logger is configured. Automatic logging and attached request loggers therefore satisfy the original optional-logger contract. Watch ingestion checks the supported schema version and individual64KiB UTF-8 event limit before invoking ingestion; invalid batches cause no partial callback delivery. Existing missing-field errors retain precedence.
 
 229 core tests, typecheck and build pass. Tests exercise default logging in all three frameworks and mixed valid/invalid batches for version/size rejection. Shared HTTP abstractions, target shared dependency integration, admin and remaining full-spec runtime/Python/performance gates remain open.
+
+
+## Shared HTTP ingestion router
+
+Merged shared prerequisite745ea7b3c (merge8bc518abb) and regenerated the conflicted lock from merged manifests. watchLogsRouter now uses the shared HTTP router contract, configurable mounting, route metadata,404/405 dispatch, existing authentication and awaited persistence. Framework adapters remain consumer-owned. HTTP peer and dev dependencies both target0.3.1; the first test exposed a stale nested0.1.3 development package, now removed from the lock.
+
+Clean scoped npm10 ci installs329 packages; actual module resolution points to local packages/http/dist. Shared observability/HTTP builds and LogFn typecheck/build pass.231 core,66 shared HTTP and8 observability tests pass. Fresh tarball consumer verifies shared router delivery/method handling on exactNode18.18.0,20.19.0 and22.23.3; strictNode16/NodeNext declarations and runtime audit0 pass. Reproducible script logfn/scripts/packed-http-acceptance.mjs removes its temporary consumer.
+
+Shared request-logging middleware, admin dependency/runtime integration and other original Python/browser/performance gates remain open. No full-readiness or LogFn PR claim.
