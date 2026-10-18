@@ -14,6 +14,7 @@ import type {
 } from './types.js';
 import {  NamespaceManager } from '../utils/namespace.js';
 import {
+  registerAdapterCodecs,
   transformRecordForRuntime,
   transformRecordForStorage,
   transformWhereForStorage,
@@ -36,7 +37,7 @@ export function createAdapterFactory(
     const implementation = createAdapter(context);
 
     // Wrap with factory enhancements
-    return wrapAdapter(implementation, context, config);
+    return registerAdapterCodecs(wrapAdapter(implementation, context, config), context.schema);
   };
 }
 
@@ -79,7 +80,7 @@ function buildAdapterContext(
 
     // Field name helpers
     getFieldName: ({ model, field }) => {
-      const fieldSchema = schema[model]?.fields[field];
+      const fieldSchema = Object.prototype.hasOwnProperty.call(schema, model) ? schema[model]?.fields[field] : undefined;
       return fieldSchema?.fieldName ?? field;
     },
 
@@ -257,9 +258,12 @@ function wrapAdapter(
     },
 
     // Transaction support
-    async transaction(callback) {
+    async transaction(callback, options) {
       context.log.debug('transaction');
-      return implementation.transaction(callback);
+      if (options && (!capabilities.transactions.configurableIsolation || !capabilities.transactions.isolation?.includes(options.isolationLevel))) {
+        throw new Error(`Requested transaction isolation is unsupported: ${options.isolationLevel}`);
+      }
+      return implementation.transaction(callback, options);
     },
 
     // Lifecycle
