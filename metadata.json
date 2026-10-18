@@ -1,0 +1,40 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M583ZYBYTWJZHGDE2MAN8ABX",
+  "strategy": "manual-commit",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".github/workflows/superfunctions-docs-cloudflare-deploy.yml",
+    "extfn/docs/content/docs/cli.md",
+    "extfn/docs/content/docs/index.md",
+    "extfn/docs/content/docs/reference/cli.md",
+    "extfn/docs/content/docs/reference/multi-content-and-background-handlers.md",
+    "extfn/docs/content/docs/runtime.md",
+    "extfn/docs/src/routes/docs/llms-full.txt/+server.ts",
+    "extfn/docs/src/routes/docs/llms.txt/+server.ts",
+    "extfn/docs/static/llms-full.txt",
+    "extfn/docs/tsconfig.json",
+    "filefn/docs/content/docs/ai-resources/index.md",
+    "filefn/docs/content/docs/ai-resources/llms-txt.md",
+    "filefn/docs/content/docs/ai-resources/skills.md",
+    "filefn/docs/static/llms-full.txt",
+    "package-lock.json",
+    "scripts/cloudflare-docs/deploy.mjs",
+    "scripts/docs-site/README.md",
+    "scripts/docs-site/check-built-site.mjs",
+    "scripts/docs-site/dependency-owner.test.ts",
+    "scripts/docs-site/origin.test.mjs",
+    "scripts/docs-site/runtime.ts",
+    "scripts/docs-site/vite.test.mjs",
+    "turbo.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
