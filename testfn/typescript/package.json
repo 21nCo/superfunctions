@@ -32,13 +32,14 @@
     "./storage/indexeddb": {
       "types": "./dist/storage/indexeddb-manager.d.ts",
       "default": "./dist/storage/indexeddb-manager.js"
-    }
+    },
+    "./storage/indexeddb-browser": "./dist/browser/indexeddb.js"
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/build-browser.mjs",
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "lint": "npm run typecheck",
@@ -119,7 +120,12 @@
     "playwright": "1.64.1",
     "puppeteer": "24.43.1",
     "typescript": "^5.6.0",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "@babel/core": "7.29.0",
+    "@babel/preset-env": "7.29.7",
+    "core-js": "3.50.0",
+    "esbuild": "0.28.2",
+    "acorn": "8.15.0"
   },
   "engines": {
     "node": ">=18.18"

@@ -35,6 +35,7 @@ jobs:
         run: echo "BROWSER_EXECUTABLE_PATH=$(node -e "console.log(require('playwright').chromium.executablePath())")" >> "$GITHUB_ENV"
       - run: node testfn/scripts/framework-acceptance.mjs
       - run: node testfn/scripts/indexeddb-browser-acceptance.mjs
+      - run: TESTFN_BROWSER_ENGINE=webkit node testfn/scripts/indexeddb-browser-acceptance.mjs
       - run: node testfn/scripts/dashboard-profiles-acceptance.mjs
       - run: node testfn/scripts/sqlite-acceptance.mjs
       - run: node testfn/scripts/packed-consumer.mjs

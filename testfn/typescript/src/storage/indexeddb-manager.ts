@@ -270,46 +270,35 @@ export class IndexedDbManager {
     await this.withTransaction(
       [STORE_NAMES.runs, STORE_NAMES.results, STORE_NAMES.artifacts],
       "readwrite",
-      async (tx) => {
-        const runsStore = tx.objectStore(STORE_NAMES.runs);
-        const index = runsStore.index("timestamp");
-        const KeyRange = getIDBKeyRange();
-        const range = KeyRange.upperBound(cutoffTimestamp);
-        const request = index.openCursor(range);
-
+      (tx) => new Promise<void>((resolve, reject) => {
         const oldRunIds: string[] = [];
-
-        await new Promise<void>((resolve, reject) => {
-          request.onsuccess = async (event) => {
-            const cursor = (event.target as IDBRequest)
-              .result as IDBCursorWithValue;
-            if (cursor) {
-              const run = cursor.value as TestRun;
-              oldRunIds.push(run.id);
-              await this.requestToPromise(cursor.delete());
-              cursor.continue();
-            } else {
-              resolve();
-            }
-          };
+        const relatedStores = [STORE_NAMES.results, STORE_NAMES.artifacts];
+        // Queue each request directly from an IndexedDB event callback. Historical
+        // browsers may commit a transaction before a Promise polyfill's next task.
+        const cleanRelatedStore = (index: number): void => {
+          const name = relatedStores[index];
+          if (!name) { resolve(); return; }
+          const request = tx.objectStore(name).openCursor();
           request.onerror = () => reject(request.error);
-        });
-        for (const name of [STORE_NAMES.results, STORE_NAMES.artifacts]) {
-          const records = tx.objectStore(name).openCursor();
-          await new Promise<void>((resolve, reject) => {
-            records.onsuccess = () => {
-              const cursor = records.result;
-              if (!cursor) {
-                resolve();
-                return;
-              }
-              if (oldRunIds.includes(cursor.value.runId)) cursor.delete();
-              cursor.continue();
-            };
-            records.onerror = () => reject(records.error);
-          });
-        }
-      },
+          request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor) { cleanRelatedStore(index + 1); return; }
+            if (oldRunIds.includes(cursor.value.runId)) cursor.delete();
+            cursor.continue();
+          };
+        };
+        const KeyRange = getIDBKeyRange();
+        const request = tx.objectStore(STORE_NAMES.runs).index("timestamp")
+          .openCursor(KeyRange.upperBound(cutoffTimestamp));
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) { cleanRelatedStore(0); return; }
+          oldRunIds.push((cursor.value as TestRun).id);
+          cursor.delete();
+          cursor.continue();
+        };
+      }),
     );
   }
 }

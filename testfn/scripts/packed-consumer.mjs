@@ -55,6 +55,11 @@ try {
     "--no-audit",
     "--no-fund",
   ]);
+  const packedBrowser = readFileSync(join(directory, "node_modules/@testfn/core/dist/browser/indexeddb.js"), "utf8");
+  if (packedBrowser !== readFileSync(join(root, "testfn/typescript/dist/browser/indexeddb.js"), "utf8")) {
+    throw new Error("Packed native IndexedDB bundle differs from the validated build");
+  }
+  console.log("Packed native IndexedDB browser bundle matches the validated build");
   writeFileSync(
     join(directory, "consumer.mts"),
     `import {testFn,TestStorage,getTestFnSchema,VisualTester} from '@testfn/core';import {memoryAdapter} from '@superfunctions/db/adapters/memory';import {createTestFnDomainAdminService} from '@testfn/admin';const runner=testFn({framework:'vitest',signal:new AbortController().signal});const storage=new TestStorage({type:'db',adapter:memoryAdapter()});void getTestFnSchema();void createTestFnDomainAdminService({resolve:()=>({runner,storage,visual:new VisualTester({baselineDir:'b',diffDir:'d'}),environment:{platform:'test'}})});`,

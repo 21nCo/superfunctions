@@ -252,7 +252,7 @@ Every completed comparison writes a side-by-side PNG and a self-contained HTML v
 
 Artifact references use `getArtifactId(runId, testId, type, index)`; `run.artifacts` and admin result `artifactIds` expose these identifiers. Existing stored artifact IDs remain readable. New IDs encode the complete tuple without separator collisions. `saveArtifactStream(metadata, asyncBytes)` writes bounded 64 KiB chunks; logs and traces are gzip-compressed per chunk. `getArtifactStream(id)` yields decoded bytes incrementally, including path-only artifact files. `getArtifact(id)` assembles persisted chunks for callers needing a Buffer. Persisted run records contain artifact references rather than duplicate binary payloads. Replacing an artifact removes its previous chunks; retention removes its manifest and associated chunks.
 
-For browser IndexedDB use the browser-safe entry point `@testfn/core/storage/indexeddb`. This entry emits modern JavaScript; the historical browser floors in the original specification still require a legacy build/polyfill path and exact-version validation. Native Safari acceptance is also pending; Playwright WebKit tests do not establish Safari compatibility. The orchestration, file/database storage, reports and visual processing entries run in Node.js.
+For browser IndexedDB use the browser-safe entry point `@testfn/core/storage/indexeddb`. This module entry emits modern JavaScript. A standalone ES5 browser distribution is described below; the historical browser floors in the original specification still require exact-version validation. Native Safari acceptance is also pending; Playwright WebKit tests do not establish Safari compatibility. The orchestration, file/database storage, reports and visual processing entries run in Node.js.
 
 ## Analytics and offline dashboard
 
@@ -263,3 +263,9 @@ With storage open, `await generateDashboard(storage, './dashboard', {limit:100, 
 `deviceBrowser('chromium', deviceProfile)` converts a device profile into a browser configuration with viewport, user agent, scale, mobile and touch settings. `applyNetworkProfile(page, networkProfiles.offline)` works through the browser context; its returned async cleanup function restores online access. `fast3g`, `slow3g` and custom bandwidth/latency profiles use Chromium CDP and reject unsupported browsers explicitly. Throughput uses Mbps and latency uses milliseconds. Call these helpers in your framework's setup/beforeEach hook and clean up afterward.
 
 Storage automatically applies retention every 100 saved runs. Set `cleanupThreshold` to another nonnegative write count, or zero to disable automatic cleanup. `cleanup(days?)` can override the configured retention for an explicit cleanup.
+
+### Standalone IndexedDB browser distribution
+
+The package includes `@testfn/core/storage/indexeddb-browser`, a classic-script bundle exposing `TestFnBrowser.IndexedDbManager`. Serve the resolved file as a normal script, then create a manager with `{ dbName: "test-history" }`. It uses the browser's native IndexedDB (including prefixed factories), includes runtime polyfills, and contains no in-memory IndexedDB fallback. The build parses the complete bundle as ES5.
+
+The browser acceptance fixture checks the shipped bundle both normally and with native Promise, microtask helpers, array methods and unprefixed IndexedDB globals removed. Cleanup queues dependent requests directly from IndexedDB events so a task-based Promise polyfill does not prematurely commit its transaction. These checks reduce the compatibility gap; they do not substitute for exact Chrome 24, Firefox 16, Safari 10 and Edge 12 runtime validation, which remains outstanding.
