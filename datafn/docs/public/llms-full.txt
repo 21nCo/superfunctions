@@ -26858,7 +26858,7 @@ export const auditPlugin: DatafnPlugin = {
 | `beforeSync` | phase, payload | Inspect or replace the sync payload. |
 | `afterSync` | phase, payload, result | Observe a sync operation; return values do not replace the caller’s result. |
 
-Sync phases are `seed`, `clone`, `pull`, `push`, `cloneUp`, and `reconcile`. `cloneUp` is client-only; server sync hooks receive only `seed`, `clone`, `pull`, `push`, and `reconcile`. There are no `beforeTransact` or `afterTransact` members in the current plugin contract. The `/datafn/transact` route executes its query and mutation steps without invoking these plugin hooks; attach hooks to separate query or mutation operations when they are required.
+Sync phases are `seed`, `clone`, `pull`, `push`, `cloneUp`, and `reconcile`. `seed` and `cloneUp` run sync hooks on the client only; server sync hooks receive `clone`, `pull`, `push`, and `reconcile`. There are no `beforeTransact` or `afterTransact` members in the current plugin contract. The `/datafn/transact` route executes its query and mutation steps without invoking these plugin hooks; attach hooks to separate query or mutation operations when they are required.
 
 ## Ordering, return values, and failures
 
