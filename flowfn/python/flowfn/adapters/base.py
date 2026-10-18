@@ -1,5 +1,6 @@
 """Base adapter protocol."""
 
+import asyncio
 from typing import Any, Protocol, Optional, TYPE_CHECKING
 from flowfn.queue.types import Job, JobStatus, QueueStats
 from flowfn.stream.types import Message, StreamInfo, ConsumerOptions, TrimStrategy
@@ -14,6 +15,14 @@ class FlowAdapter(Protocol):
     """Base protocol for FlowFn adapters."""
 
     # Queue operations
+    def lease_loss_event(self, queue: str, job: Job) -> Optional[asyncio.Event]:
+        """Return a signal for cooperative cancellation, or None for unleased storage."""
+        ...
+
+    async def release_job_lease(self, queue: str, job: Job) -> None:
+        """Release local claim monitoring after a handler finishes."""
+        ...
+
     async def enqueue(self, queue: str, job: Job) -> Job:
         """Add a job to the queue."""
         ...

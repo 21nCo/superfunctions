@@ -27,6 +27,12 @@ class MemoryAdapter:
         self._deliveries: set[asyncio.Task[None]] = set()
 
     # Queue operations
+    def lease_loss_event(self, queue: str, job: Job) -> Optional[asyncio.Event]:
+        return None
+
+    async def release_job_lease(self, queue: str, job: Job) -> None:
+        pass
+
     async def enqueue(self, queue: str, job: Job) -> Job:
         """Atomically deduplicate and validate the dependency graph."""
         jobs = self._queues[queue]

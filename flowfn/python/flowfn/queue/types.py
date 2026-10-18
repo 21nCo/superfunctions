@@ -5,6 +5,10 @@ from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
 
+class JobLeaseError(ValueError):
+    """A queue claim expired or was replaced by another worker."""
+
+
 class JobStatus(str, Enum):
     """Job status enum."""
 

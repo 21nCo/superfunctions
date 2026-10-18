@@ -8,11 +8,7 @@ from dataclasses import asdict
 from typing import Any, Optional, Callable
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.queue.dlq import DLQJob, DLQManager
-from flowfn.queue.types import Job, JobOptions, JobStatus, QueueStats, BackoffType
-
-
-class JobLeaseError(ValueError):
-    """A queue claim expired or was replaced by another worker."""
+from flowfn.queue.types import Job, JobOptions, JobStatus, QueueStats, BackoffType, JobLeaseError
 
 
 class DurableQueues(ABC):
@@ -20,7 +16,8 @@ class DurableQueues(ABC):
         self.backoff_strategies = dict(strategies or {})
         self.reclaim_after_ms = reclaim_after_ms
         self._closed = False
-        self._job_heartbeats: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._job_events: dict[tuple[str, str, Optional[str]], asyncio.Event] = {}
+        self._job_heartbeats: dict[tuple[str, str, Optional[str]], asyncio.Task[None]] = {}
 
     @abstractmethod
     async def _read_queue_state(self) -> Optional[str]: ...
@@ -30,10 +27,13 @@ class DurableQueues(ABC):
 
     async def _close_queues(self) -> None:
         self._closed = True
+        for event in self._job_events.values():
+            event.set()
         for task in self._job_heartbeats.values():
             task.cancel()
         await asyncio.gather(*self._job_heartbeats.values(), return_exceptions=True)
         self._job_heartbeats.clear()
+        self._job_events.clear()
 
     @staticmethod
     def _decode(raw: Optional[str]) -> MemoryAdapter:
@@ -104,38 +104,82 @@ class DurableQueues(ABC):
         result: Job = await self._transition('enqueue', queue, job.model_copy(deep=True))
         return result
 
+    def lease_loss_event(self, queue: str, job: Job) -> Optional[asyncio.Event]:
+        return self._job_events.get((queue,job.id,job.lease_token))
+
+    async def release_job_lease(self, queue: str, job: Job) -> None:
+        key = (queue,job.id,job.lease_token)
+        task = self._job_heartbeats.pop(key,None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+        self._job_events.pop(key,None)
+
     async def update_job(self, queue: str, job: Job) -> None:
-        await self._transition('update_job', queue, job.model_copy(deep=True))
-        if job.state != JobStatus.ACTIVE:
-            heartbeat = self._job_heartbeats.pop((queue, job.id), None)
-            if heartbeat is not None:
-                heartbeat.cancel()
-                await asyncio.gather(heartbeat, return_exceptions=True)
+        key = (queue,job.id,job.lease_token)
+        try:
+            await self._transition('update_job', queue, job.model_copy(deep=True))
+        except JobLeaseError:
+            event = self._job_events.get(key)
+            if event is not None:
+                event.set()
+            raise
+        finally:
+            if job.state != JobStatus.ACTIVE:
+                heartbeat = self._job_heartbeats.pop(key,None)
+                if heartbeat is not None:
+                    heartbeat.cancel()
+                    await asyncio.gather(heartbeat,return_exceptions=True)
+                self._job_events.pop(key,None)
 
     async def dequeue(self, queue: str) -> Optional[Job]:
+        started = time.monotonic()
         result: Optional[Job] = await self._transition('dequeue', queue)
         if result is not None:
-            key = (queue, result.id)
-            previous = self._job_heartbeats.pop(key, None)
-            if previous is not None:
-                previous.cancel()
-                await asyncio.gather(previous, return_exceptions=True)
-            self._job_heartbeats[key] = asyncio.create_task(self._renew_job(queue, result.model_copy(deep=True)))
+            key = (queue,result.id,result.lease_token)
+            for previous,event in list(self._job_events.items()):
+                if previous[:2] == key[:2] and previous != key:
+                    event.set()
+            event = asyncio.Event()
+            self._job_events[key] = event
+            task = asyncio.create_task(self._renew_job(queue,result.model_copy(deep=True),event,started+self.reclaim_after_ms/1000))
+            self._job_heartbeats[key] = task
+            def finished(done: asyncio.Task[None]) -> None:
+                if self._job_heartbeats.get(key) is done:
+                    self._job_heartbeats.pop(key,None)
+            task.add_done_callback(finished)
         return result
 
-    async def _renew_job(self, queue: str, job: Job) -> None:
-        while not self._closed:
-            await asyncio.sleep(self.reclaim_after_ms / 3000)
+    async def _renew_job(self, queue: str, job: Job, lost: asyncio.Event, deadline: float) -> None:
+        try:
             while not self._closed:
-                try:
-                    await self._transition('_renew_job', queue, job)
-                    break
-                except JobLeaseError:
+                remaining = deadline-time.monotonic()
+                if remaining <= 0:
+                    lost.set()
                     return
-                except Exception:
-                    # Retry transient transport failures while the server may still
-                    # recognize this claim. Its expiry check remains authoritative.
-                    await asyncio.sleep(min(.05,self.reclaim_after_ms/6000))
+                await asyncio.sleep(min(self.reclaim_after_ms/3000,remaining))
+                retry_delay = min(.05,self.reclaim_after_ms/6000)
+                while not self._closed:
+                    remaining = deadline-time.monotonic()
+                    if remaining <= 0:
+                        lost.set()
+                        return
+                    started = time.monotonic()
+                    try:
+                        await asyncio.wait_for(self._transition('_renew_job',queue,job),remaining)
+                        # Starting the bound before the request is conservative:
+                        # its server-side lease cannot begin before this instant.
+                        deadline = started+self.reclaim_after_ms/1000
+                        break
+                    except JobLeaseError:
+                        lost.set()
+                        return
+                    except Exception:
+                        await asyncio.sleep(min(retry_delay,max(0,deadline-time.monotonic())))
+                        retry_delay = min(retry_delay*2,max(.05,self.reclaim_after_ms/3000))
+        finally:
+            if self._closed:
+                lost.set()
 
     async def get_queue_stats(self, queue: str) -> QueueStats:
         return await self._decode(await self._read_queue_state()).get_queue_stats(queue)

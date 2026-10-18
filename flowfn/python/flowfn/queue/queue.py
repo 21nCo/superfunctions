@@ -3,6 +3,7 @@
 from typing import Any, Optional, Callable, Awaitable
 from flowfn.queue.types import (
     Job,
+    JobLeaseError,
     JobOptions,
     JobStatus,
     JobHandler,
@@ -113,25 +114,51 @@ class Queue:
 
                 await self._process_job(job, handler)
 
+            except JobLeaseError:
+                continue
             except Exception as e:
                 print(f"Worker error: {e}")
                 await asyncio.sleep(1)
 
+    async def _invoke_handler(self, job: Job, handler: JobHandler, lost: Optional[asyncio.Event]) -> Any:
+        if lost is None:
+            return await handler(job)
+        if lost.is_set():
+            raise JobLeaseError('Job ownership lost before processing')
+        task = asyncio.ensure_future(handler(job))
+        guard = asyncio.create_task(lost.wait())
+        try:
+            await asyncio.wait({task,guard},return_when=asyncio.FIRST_COMPLETED)
+            if lost.is_set():
+                raise JobLeaseError('Job ownership lost while processing')
+            return task.result()
+        finally:
+            for pending in (task,guard):
+                if not pending.done():
+                    pending.cancel()
+            await asyncio.gather(task,guard,return_exceptions=True)
+
     async def _process_job(self, job: Job, handler: JobHandler) -> None:
         """Process a single job."""
         job.processed_on = self._now()
+        lost = self._adapter.lease_loss_event(self.name,job)
+        ownership_lost = False
 
         try:
             # Execute handler
             if job.opts.timeout is None:
-                result = await handler(job)
+                result = await self._invoke_handler(job,handler,lost)
             else:
-                result = await asyncio.wait_for(handler(job), job.opts.timeout / 1000)
+                result = await asyncio.wait_for(self._invoke_handler(job,handler,lost), job.opts.timeout / 1000)
 
             # Mark as completed
             job.state = JobStatus.COMPLETED
             job.returnvalue = result
             job.finished_on = self._now()
+
+        except JobLeaseError:
+            ownership_lost = True
+            raise
 
         except asyncio.CancelledError:
             job.state = JobStatus.WAITING
@@ -180,13 +207,14 @@ class Queue:
                 job.state = JobStatus.FAILED
                 job.finished_on = self._now()
         finally:
-            await self._adapter.update_job(self.name, job)
-            if job.state == JobStatus.FAILED:
-                from flowfn.queue.dlq import DLQManager
-
-                await DLQManager(adapter=self._adapter).move_to_dlq(
-                    job, job.failed_reason or "Job failed", self.name
-                )
+            try:
+                if not ownership_lost and not (lost is not None and lost.is_set()):
+                    await self._adapter.update_job(self.name, job)
+                    if job.state == JobStatus.FAILED:
+                        from flowfn.queue.dlq import DLQManager
+                        await DLQManager(adapter=self._adapter).move_to_dlq(job,job.failed_reason or "Job failed",self.name)
+            finally:
+                await self._adapter.release_job_lease(self.name,job)
 
     async def get_job(self, job_id: str) -> Optional[Job]:
         """Get a specific job."""
