@@ -1,0 +1,70 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57YP6JBXC94BP16AHXT0MRE",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-18T16:49:32.253881Z",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 7,
+  "files_touched": [
+    "flowfn/python/README.md",
+    "flowfn/python/benchmarks/native_queues.py",
+    "flowfn/python/flowfn/adapters/base.py",
+    "flowfn/python/flowfn/adapters/durable_queues.py",
+    "flowfn/python/flowfn/adapters/memory.py",
+    "flowfn/python/flowfn/adapters/native_queues.py",
+    "flowfn/python/flowfn/adapters/postgres.py",
+    "flowfn/python/flowfn/adapters/postgres_queue_functions.py",
+    "flowfn/python/flowfn/adapters/postgres_queues.py",
+    "flowfn/python/flowfn/adapters/redis.py",
+    "flowfn/python/flowfn/adapters/redis_queue_scripts.py",
+    "flowfn/python/flowfn/adapters/redis_queues.py",
+    "flowfn/python/flowfn/queue/queue.py",
+    "flowfn/python/tests/test_durable_adapters.py",
+    "flowfn/python/tests/test_native_queues.py",
+    "flowfn/python/tests/test_queue_lease_cancellation.py"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "ef71424e83cb",
+  "checkpoint_transcript_start": 8653,
+  "transcript_lines_at_start": 8653,
+  "compact_transcript_start": 1045,
+  "token_usage": {
+    "input_tokens": 116608,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 9752448,
+    "output_tokens": 26489,
+    "api_call_count": 119
+  },
+  "session_metrics": {
+    "turn_count": 36
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-18T16:49:31.71609Z",
+    "agent_lines": 2955,
+    "agent_removed": 137,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2955,
+    "total_lines_changed": 3092,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}

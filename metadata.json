@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57YP6JBXC94BP16AHXT0MRE",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 7,
+  "files_touched": [
+    "flowfn/python/README.md",
+    "flowfn/python/benchmarks/native_queues.py",
+    "flowfn/python/flowfn/adapters/base.py",
+    "flowfn/python/flowfn/adapters/durable_queues.py",
+    "flowfn/python/flowfn/adapters/memory.py",
+    "flowfn/python/flowfn/adapters/native_queues.py",
+    "flowfn/python/flowfn/adapters/postgres.py",
+    "flowfn/python/flowfn/adapters/postgres_queue_functions.py",
+    "flowfn/python/flowfn/adapters/postgres_queues.py",
+    "flowfn/python/flowfn/adapters/redis.py",
+    "flowfn/python/flowfn/adapters/redis_queue_scripts.py",
+    "flowfn/python/flowfn/adapters/redis_queues.py",
+    "flowfn/python/flowfn/queue/queue.py",
+    "flowfn/python/tests/test_durable_adapters.py",
+    "flowfn/python/tests/test_native_queues.py",
+    "flowfn/python/tests/test_queue_lease_cancellation.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 116608,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 9752448,
+    "output_tokens": 26489,
+    "api_call_count": 119
+  }
+}
