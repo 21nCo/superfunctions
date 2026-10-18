@@ -1,13 +1,13 @@
 .github/workflows/ci.yml
-  s_7d0a48f0aaecda::t_d2cda0a5d277ef 65-67
+  s_7d0a48f0aaecda::t_6872e3f0d5bba9 65-67
 authfn/docs/package.json
-  s_7d0a48f0aaecda::t_e3f4793c2867de 32-33
+  s_7d0a48f0aaecda::t_77100bbec09d3a 32-33
 package-lock.json
-  s_e1c5fc1a65c0cf::t_4599d89c941029 1698-1699
+  s_e1c5fc1a65c0cf::t_ada83ee21c49b8 1698-1699
 scripts/uifn-docs-cli-resolution.test.mjs
-  s_7d0a48f0aaecda::t_76bdc4a5c8b852 13-14,37,55
+  s_7d0a48f0aaecda::t_70174d4aed29ba 13-14,37,55
 scripts/verify-uifn-phase-17.mjs
-  s_e1c5fc1a65c0cf::t_cc5b23b5acc9c8 29
+  s_e1c5fc1a65c0cf::t_78af4d478950fa 29
 ---
 {
   "schema_version": "authorship/3.0.0",
