@@ -1,7 +1,7 @@
 """Redis-backed queues, workflow snapshots and streams.
 
-Queue transitions use optimistic transactions over a namespace snapshot. This
-preserves dependency and DLQ atomicity across independent Python processes.
+Queue transitions use optimistic transactions over indexed per-job records.
+Dependency and DLQ transitions remain atomic across independent processes.
 """
 
 import asyncio
@@ -43,28 +43,35 @@ class RedisAdapter(DurableQueues):
         if self._closed:
             raise RuntimeError("Redis adapter is closed")
 
+    async def migrate_legacy_queues(self) -> None:
+        """Migrate atomically after all old-layout workers have been stopped."""
+        from flowfn.adapters.redis_queues import ensure_native
+        await ensure_native(self,migrate=True)
+
     async def _read_queue_state(self) -> Optional[str]:
-        self._check_open()
-        value: Optional[str] = await self.client.get(self.state_key)
-        return value
+        from flowfn.adapters.redis_queues import read_snapshot
+        return await read_snapshot(self)
 
     async def _transition(self, method: str, *args: Any) -> Any:
-        if self._closed:
-            raise RuntimeError('Redis adapter is closed')
-        while True:
-            async with self.client.pipeline(transaction=True) as pipe:
-                try:
-                    await pipe.watch(self.state_key)
-                    adapter = self._decode(await pipe.get(self.state_key))
-                    seconds, micros = await pipe.time()
-                    result = await self._apply(adapter, method, args, seconds * 1000 + micros // 1000)
-                    payload = self._encode(adapter)
-                    pipe.multi()  # type: ignore[no-untyped-call]
-                    pipe.set(self.state_key, payload)
-                    await pipe.execute()
-                    return result
-                except WatchError:
-                    await asyncio.sleep(0)
+        from flowfn.adapters.redis_queues import transition
+        return await transition(self,method,args)
+
+    async def get_all_jobs(self, queue: str) -> list[Job]:
+        from flowfn.adapters.redis_queues import get_jobs
+        return await get_jobs(self,queue)
+
+    async def get_jobs(self, queue: str, status: JobStatus) -> list[Job]:
+        from flowfn.adapters.redis_queues import get_jobs
+        return await get_jobs(self,queue,status)
+
+    async def get_queue_stats(self, queue: str) -> QueueStats:
+        from flowfn.adapters.redis_queues import get_stats
+        result: QueueStats = await get_stats(self,queue)
+        return result
+
+    async def get_dead_letters(self) -> list[DLQJob]:
+        from flowfn.adapters.redis_queues import get_dead_letters
+        return await get_dead_letters(self)
 
     async def save_workflow_state(self, execution_id: str, execution: WorkflowExecution) -> None:
         self._check_open()

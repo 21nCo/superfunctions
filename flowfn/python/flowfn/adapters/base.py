@@ -28,7 +28,7 @@ class FlowAdapter(Protocol):
         ...
 
     async def update_job(self, queue: str, job: Job) -> None:
-        """Persist a job state transition after processing."""
+        """Persist a transition, atomically recording a dead letter for FAILED jobs."""
         ...
 
     async def dequeue(self, queue: str) -> Optional[Job]:

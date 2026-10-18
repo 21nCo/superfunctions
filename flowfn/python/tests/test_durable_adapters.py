@@ -40,7 +40,9 @@ async def adapters(request):
             pool = await client._database()
             async with pool.acquire() as connection:
                 async with connection.transaction():
-                    for table in ('pending','groups','events','workflows','state'):
+                    for table in ('job_edges','job_outcomes','dead_letters','jobs','queue_layout','pending','groups','events','workflows','state'):
+                        if not await connection.fetchval("SELECT to_regclass($1)",'flowfn_py_'+table):
+                            continue
                         await connection.execute('DELETE FROM flowfn_py_' + table + ' WHERE namespace=$1',namespace)
         await client.cleanup()
 

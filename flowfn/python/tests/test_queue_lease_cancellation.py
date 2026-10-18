@@ -39,22 +39,25 @@ async def test_lost_lease_cancels_handler_without_retry_or_stale_write(adapters,
         if failure == 'takeover':
             if hasattr(a, 'client'):
                 from redis.exceptions import WatchError
+                base = a.prefix+':queue:cancel'
                 while True:
                     async with a.client.pipeline(transaction=True) as pipe:
                         try:
-                            await pipe.watch(a.state_key)
-                            state = json.loads(await pipe.get(a.state_key))
-                            state['queues']['cancel'][0]['lease_expires_at'] = 0
+                            await pipe.watch(base+':version')
+                            state = json.loads(await pipe.hget(base+':jobs',job.id))
+                            state['lease_expires_at'] = 0
                             pipe.multi()
-                            pipe.set(a.state_key, json.dumps(state))
+                            pipe.hset(base+':jobs',job.id,json.dumps(state))
+                            pipe.zadd(base+':leases',{job.id:0})
+                            pipe.incr(base+':version')
                             await pipe.execute()
                             break
                         except WatchError:
                             continue
             else:
                 pool = await a._database()
-                await pool.execute("""UPDATE flowfn_py_state SET payload=jsonb_set(
-                    payload,'{queues,cancel,0,lease_expires_at}','0') WHERE namespace=$1""", a.namespace)
+                await pool.execute("""UPDATE flowfn_py_jobs SET lease=0,payload=jsonb_set(
+                    payload,'{lease_expires_at}','0') WHERE namespace=$1 AND queue='cancel'""", a.namespace)
         else:
             await asyncio.wait_for(stopped.wait(), 3)
         # Stop the old worker polling before the new owner is acquired.
@@ -82,3 +85,31 @@ async def test_lost_lease_cancels_handler_without_retry_or_stale_write(adapters,
         assert not a._job_events
     finally:
         await queue.close()
+
+
+async def test_claim_reply_after_local_lease_deadline_never_starts_handler(adapters):
+    from flowfn.queue.types import JobLeaseError
+    a,b=adapters
+    a.reclaim_after_ms=200
+    b.reclaim_after_ms=30000
+    queue=Queue('late-claim',a)
+    await queue.add('job',{})
+    original=a._transition
+    async def delayed_reply(method,*args):
+        result=await original(method,*args)
+        if method=='dequeue':
+            await asyncio.sleep(.25)
+        return result
+    a._transition=delayed_reply
+    claim=await a.dequeue(queue.name)
+    assert a.lease_loss_event(queue.name,claim).is_set()
+    effects=[]
+    async def handler(job):
+        effects.append(job.id)
+    with pytest.raises(JobLeaseError):
+        await queue._process_job(claim,handler)
+    assert effects==[]
+    replacement=await b.dequeue(queue.name)
+    assert replacement.id==claim.id
+    replacement.state=JobStatus.COMPLETED
+    await b.update_job(queue.name,replacement)

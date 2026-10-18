@@ -76,6 +76,9 @@ class MemoryAdapter:
                 if job.state != JobStatus.ACTIVE:
                     self._active_jobs.pop((queue, job.id), None)
                 self._apply_retention(queue, job)
+                if job.state == JobStatus.FAILED:
+                    from flowfn.queue.dlq import DLQManager
+                    await DLQManager(adapter=self).move_to_dlq(job, job.failed_reason or "Job failed", queue)
                 return
         raise ValueError(f"Job not found: {job.id}")
 

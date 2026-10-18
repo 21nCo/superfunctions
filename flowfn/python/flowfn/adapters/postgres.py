@@ -8,6 +8,8 @@ from typing import Any, Callable, Optional
 import asyncpg  # type: ignore[import-untyped]
 
 from flowfn.adapters.durable_queues import DurableQueues
+from flowfn.queue.types import Job, JobStatus, QueueStats
+from flowfn.queue.dlq import DLQJob
 from flowfn.stream.types import ConsumerOptions, Message, StreamInfo, TrimStrategy
 from flowfn.workflow.types import WorkflowExecution
 
@@ -59,22 +61,35 @@ class PostgresAdapter(DurableQueues):
                     raise
         return self._pool
 
+    async def migrate_legacy_queues(self) -> None:
+        """Migrate atomically after all old-layout workers have been stopped."""
+        from flowfn.adapters.postgres_queues import ensure_native
+        await ensure_native(self,migrate=True)
+
     async def _read_queue_state(self) -> Optional[str]:
-        pool = await self._database()
-        value: Optional[str] = await pool.fetchval('SELECT payload FROM flowfn_py_state WHERE namespace=$1', self.namespace)
-        return value
+        from flowfn.adapters.postgres_queues import read_snapshot
+        return await read_snapshot(self)
 
     async def _transition(self, method: str, *args: Any) -> Any:
-        pool = await self._database()
-        async with pool.acquire() as connection:
-            async with connection.transaction():
-                await connection.execute("INSERT INTO flowfn_py_state VALUES($1,'{}') ON CONFLICT DO NOTHING", self.namespace)
-                raw = await connection.fetchval('SELECT payload FROM flowfn_py_state WHERE namespace=$1 FOR UPDATE', self.namespace)
-                adapter = self._decode(raw)
-                now = await connection.fetchval("SELECT (EXTRACT(EPOCH FROM clock_timestamp())*1000)::bigint")
-                result = await self._apply(adapter, method, args, now)
-                await connection.execute('UPDATE flowfn_py_state SET payload=$2 WHERE namespace=$1', self.namespace, self._encode(adapter))
-                return result
+        from flowfn.adapters.postgres_queues import transition
+        return await transition(self,method,args)
+
+    async def get_all_jobs(self, queue: str) -> list[Job]:
+        from flowfn.adapters.postgres_queues import get_jobs
+        return await get_jobs(self,queue)
+
+    async def get_jobs(self, queue: str, status: JobStatus) -> list[Job]:
+        from flowfn.adapters.postgres_queues import get_jobs
+        return await get_jobs(self,queue,status)
+
+    async def get_queue_stats(self, queue: str) -> QueueStats:
+        from flowfn.adapters.postgres_queues import get_stats
+        result: QueueStats = await get_stats(self,queue)
+        return result
+
+    async def get_dead_letters(self) -> list[DLQJob]:
+        from flowfn.adapters.postgres_queues import get_dead_letters
+        return await get_dead_letters(self)
 
     async def save_workflow_state(self, execution_id: str, execution: WorkflowExecution) -> None:
         await self.transition_workflow_state(execution_id, "save", {"execution": execution})

@@ -65,6 +65,11 @@ class DurableQueues(ABC):
         }, allow_nan=False)
 
     async def _apply(self, adapter: MemoryAdapter, method: str, args: tuple[Any, ...], now: int) -> Any:
+        adapter._now = lambda: now  # type: ignore[method-assign]
+        if method == 'enqueue':
+            incoming = args[1]
+            if incoming.delay == 0 and (incoming.available_at is None or incoming.available_at <= incoming.timestamp):
+                incoming.available_at = now
         if method == 'dequeue':
             for candidate in adapter._queues[args[0]]:
                 if candidate.state == JobStatus.ACTIVE and (candidate.lease_expires_at or 0) <= now:
@@ -84,8 +89,6 @@ class DurableQueues(ABC):
             if method == 'update_job' and args[1].state == JobStatus.ACTIVE:
                 args[1].lease_expires_at = now + self.reclaim_after_ms
             result = await getattr(adapter, method)(*args)
-            if method == 'update_job' and args[1].state == JobStatus.FAILED:
-                await DLQManager(adapter=adapter).move_to_dlq(args[1], args[1].failed_reason or 'Job failed', args[0])
         if method == 'dequeue' and result is not None:
             self._restore_backoff(result)
             result.lease_token = uuid.uuid4().hex
@@ -101,6 +104,7 @@ class DurableQueues(ABC):
 
     async def enqueue(self, queue: str, job: Job) -> Job:
         self._restore_backoff(job)
+        json.dumps(job.model_dump(mode='json'),allow_nan=False)
         result: Job = await self._transition('enqueue', queue, job.model_copy(deep=True))
         return result
 
@@ -116,6 +120,7 @@ class DurableQueues(ABC):
         self._job_events.pop(key,None)
 
     async def update_job(self, queue: str, job: Job) -> None:
+        json.dumps(job.model_dump(mode='json'),allow_nan=False)
         key = (queue,job.id,job.lease_token)
         try:
             await self._transition('update_job', queue, job.model_copy(deep=True))
@@ -141,6 +146,8 @@ class DurableQueues(ABC):
                 if previous[:2] == key[:2] and previous != key:
                     event.set()
             event = asyncio.Event()
+            if time.monotonic() >= started+self.reclaim_after_ms/1000:
+                event.set()
             self._job_events[key] = event
             task = asyncio.create_task(self._renew_job(queue,result.model_copy(deep=True),event,started+self.reclaim_after_ms/1000))
             self._job_heartbeats[key] = task

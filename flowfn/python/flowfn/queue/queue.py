@@ -210,9 +210,6 @@ class Queue:
             try:
                 if not ownership_lost and not (lost is not None and lost.is_set()):
                     await self._adapter.update_job(self.name, job)
-                    if job.state == JobStatus.FAILED:
-                        from flowfn.queue.dlq import DLQManager
-                        await DLQManager(adapter=self._adapter).move_to_dlq(job,job.failed_reason or "Job failed",self.name)
             finally:
                 await self._adapter.release_job_lease(self.name,job)
 
