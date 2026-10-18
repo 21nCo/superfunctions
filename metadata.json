@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M580P6AFFD1SFGQ290GETKQH",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "flowfn/python/README.md",
+    "flowfn/python/flowfn/adapters/base.py",
+    "flowfn/python/flowfn/adapters/memory.py",
+    "flowfn/python/flowfn/adapters/postgres.py",
+    "flowfn/python/flowfn/adapters/redis.py",
+    "flowfn/python/flowfn/core/flow.py",
+    "flowfn/python/flowfn/monitoring/health.py",
+    "flowfn/python/flowfn/monitoring/runtime.py",
+    "flowfn/python/tests/test_health.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
