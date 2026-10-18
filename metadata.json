@@ -1,0 +1,44 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57YSPQTFXTMWNCPNNP8W8CA",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 7,
+  "files_touched": [
+    "flowfn/typescript/README.md",
+    "flowfn/typescript/scripts/provider-acceptance.mjs",
+    "flowfn/typescript/scripts/scheduler-crash-worker.mjs",
+    "flowfn/typescript/scripts/workflow-crash-worker.mjs",
+    "flowfn/typescript/src/adapters/postgres/postgres.test.ts",
+    "flowfn/typescript/src/adapters/redis.test.ts",
+    "flowfn/typescript/src/index.ts",
+    "flowfn/typescript/src/queue/queue.ts",
+    "flowfn/typescript/src/queue/types.ts",
+    "flowfn/typescript/src/queue/worker-pool.test.ts",
+    "flowfn/typescript/src/queue/worker-pool.ts",
+    "flowfn/typescript/src/queue/worker.test.ts",
+    "flowfn/typescript/src/queue/worker.ts",
+    "flowfn/typescript/src/storage/scheduler-contract.ts",
+    "flowfn/typescript/src/storage/worker-contract.ts",
+    "flowfn/typescript/src/storage/workflow-control-contract.ts",
+    "flowfn/typescript/src/storage/workflow-crash-contract.ts",
+    "flowfn/typescript/src/workflow/durable-wait.test.ts",
+    "flowfn/typescript/src/workflow/workflow.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 4943,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1204096,
+    "output_tokens": 1738,
+    "api_call_count": 10
+  }
+}

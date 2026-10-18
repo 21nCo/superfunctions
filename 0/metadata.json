@@ -1,0 +1,73 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57YSPQTFXTMWNCPNNP8W8CA",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-18T16:51:26.617655Z",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 7,
+  "files_touched": [
+    "flowfn/typescript/README.md",
+    "flowfn/typescript/scripts/provider-acceptance.mjs",
+    "flowfn/typescript/scripts/scheduler-crash-worker.mjs",
+    "flowfn/typescript/scripts/workflow-crash-worker.mjs",
+    "flowfn/typescript/src/adapters/postgres/postgres.test.ts",
+    "flowfn/typescript/src/adapters/redis.test.ts",
+    "flowfn/typescript/src/index.ts",
+    "flowfn/typescript/src/queue/queue.ts",
+    "flowfn/typescript/src/queue/types.ts",
+    "flowfn/typescript/src/queue/worker-pool.test.ts",
+    "flowfn/typescript/src/queue/worker-pool.ts",
+    "flowfn/typescript/src/queue/worker.test.ts",
+    "flowfn/typescript/src/queue/worker.ts",
+    "flowfn/typescript/src/storage/scheduler-contract.ts",
+    "flowfn/typescript/src/storage/worker-contract.ts",
+    "flowfn/typescript/src/storage/workflow-control-contract.ts",
+    "flowfn/typescript/src/storage/workflow-crash-contract.ts",
+    "flowfn/typescript/src/workflow/durable-wait.test.ts",
+    "flowfn/typescript/src/workflow/workflow.ts"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "ef71424e83cb",
+  "checkpoint_transcript_start": 9510,
+  "transcript_lines_at_start": 9510,
+  "compact_transcript_start": 1155,
+  "token_usage": {
+    "input_tokens": 4943,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1204096,
+    "output_tokens": 1738,
+    "api_call_count": 10
+  },
+  "session_metrics": {
+    "turn_count": 36
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-18T16:51:26.204197Z",
+    "agent_lines": 2715,
+    "agent_removed": 675,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2715,
+    "total_lines_changed": 3390,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
