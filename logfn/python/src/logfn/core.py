@@ -5,6 +5,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union, Callable, Set
 
+from .serialization import sanitize_value
+
 from .types import (
     DEFAULT_VERSION,
     LOG_LEVEL_VALUES,
@@ -114,7 +116,7 @@ class Logger:
             return
 
         # Sinks
-        batch = [current_event]
+        batch = [sanitize_value(current_event)]
         for sink in self.sinks:
             try:
                 res = sink(batch)

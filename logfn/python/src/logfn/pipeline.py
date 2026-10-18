@@ -4,6 +4,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Pattern, Union
 
 from .types import LogEvent, PipelineStage, LogLevel
+from .serialization import sanitize_value
 
 def redact(
     patterns: List[Union[str, Pattern[str]]],
@@ -22,19 +23,25 @@ def redact(
             msg = p.sub(replacement, msg)
         event["msg"] = msg
 
-        # Redact context values if they are strings
-        if "ctx" in event and event["ctx"]:
-            new_ctx = event["ctx"].copy()
-            for k, v in new_ctx.items():
-                if keys and k not in keys:
-                    continue
-                
-                if isinstance(v, str):
-                    for p in compiled_patterns:
-                        v = p.sub(replacement, v)
-                    new_ctx[k] = v
-            event["ctx"] = new_ctx
-            
+        # Sanitize before descent so cycles cannot skip secret redaction.
+        def visit(value: Any) -> Any:
+            if isinstance(value, str):
+                for pattern in compiled_patterns:
+                    value = pattern.sub(replacement, value)
+                return value
+            if isinstance(value, list):
+                return [visit(child) for child in value]
+            if isinstance(value, dict):
+                return {key: visit(child) for key, child in value.items()}
+            return value
+
+        if "ctx" in event:
+            cleaned = sanitize_value(event["ctx"])
+            event["ctx"] = {
+                key: visit(value) if not keys or key in keys else value
+                for key, value in cleaned.items()
+            }
+
         return event
 
     return stage

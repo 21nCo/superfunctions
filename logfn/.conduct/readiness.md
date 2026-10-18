@@ -90,3 +90,10 @@ Parsed body capture now uses the shared LogFn sanitizer before serialization, pr
 Hono now reads at most8192 bytes from a cloned request branch with a100ms default configurable deadline. It does not drain the remainder to compute a total size; prefix metadata distinguishes captured bytes from total bytes. Unavailable/timed-out capture yields an omission marker, and cancellation is not awaited because the original application branch must remain consumable. Runtime transport buffering and individual source chunk allocation remain outside this helper's bound.
 
 13 framework contract tests pass, including a large multibyte body consumed intact by the actual Hono route and a stalled body that still allows the route to respond. Typecheck/build pass. Prior full224 core tests predate this change; the focused suite validates this change. Shared HTTP integration, admin, Python parity and remaining original readiness gates are still open.
+
+
+## Python nested redaction and safe sink values
+
+Python redaction now traverses nested lists/dictionaries after cycle-safe sanitization. Selected keys retain top-level selection semantics with recursive processing beneath each selected root. Logger sanitizes final events after pipeline execution so custom stages cannot accidentally leave cycles, dates, non-finite floats or unsupported objects for HTTP serialization. Source input is preserved; deep structures use a64-level marker.
+
+27 tests pass on Python3.9 and3.12 and against a fresh installed Python3.12 wheel, including nested secret/cycle/nonmutation, selected roots, post-pipeline values and deep/shared structures. Full64KiB event bounds, middleware and remaining Python parity are still open. Initial typing command used3.12 dependencies with a3.9 target and stopped in AnyIO's pattern-matching syntax; strict mypy1.18.2 subsequently passes all three changed modules in an actual Python3.9 environment.

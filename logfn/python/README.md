@@ -70,3 +70,9 @@ are reported by the next flush, after the other sinks have finished flushing.
 Cancelling a flush waiter does not cancel these accepted sink calls. Custom
 async sinks require a running event loop when logging; `SinkHttp` itself can
 also enqueue synchronously and flush later.
+
+## Serialization and nested redaction
+
+Sink events are sanitized after pipeline processing: dates become ISO strings, non-finite floats become null, cycles and unsupported objects become explicit placeholders, and nesting is limited to 64 levels. Application context is not modified by this conversion.
+
+The `redact` stage applies its patterns recursively to strings inside dictionaries and lists. Its optional `keys` selects top-level context fields; all nested values within each selected field are processed. Message redaction remains active. Configure patterns for the secrets your application emits.
