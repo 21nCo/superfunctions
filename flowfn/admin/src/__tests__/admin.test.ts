@@ -82,6 +82,40 @@ afterEach(async () => {
 });
 
 describe("@flowfn/admin", () => {
+  it('returns usable continuation cursors for collections and filtered events', async () => {
+    const { flow, events, dispatch } = deployment();
+    flow.queue('a'); flow.queue('b');
+    const first = await dispatch.dispatch<{ items: Array<{ id: string }>; nextCursor: string | null }>({ operationId: 'flowfn.queues.list', input: { limit: 2 }, context: context() });
+    expect(first).toMatchObject({ ok: true, data: { items: [{ id: 'a' }, { id: 'b' }], nextCursor: '2' } });
+    const second = await dispatch.dispatch({ operationId: 'flowfn.queues.list', input: { limit: 2, cursor: '2' }, context: context() });
+    expect(second).toMatchObject({ ok: true, data: { items: [{ id: 'emails' }], nextCursor: null } });
+    for (let i = 0; i < 3; i++) await events.append({ type: 'sent', aggregateId: 'one', aggregateType: 'mail', data: { i } });
+    const eventPage = await dispatch.dispatch({ operationId: 'flowfn.events.list', input: { aggregateId: 'one', limit: 2 }, context: context() });
+    expect(eventPage).toMatchObject({ ok: true, data: { nextCursor: '2' } });
+    const finalEvents = await dispatch.dispatch<{ items: unknown[]; nextCursor: string | null }>({ operationId: 'flowfn.events.list', input: { aggregateId: 'one', limit: 2, cursor: '2' }, context: context() });
+    expect(finalEvents.ok).toBe(true);
+    if (finalEvents.ok) { expect(finalEvents.data.items).toHaveLength(1); expect(finalEvents.data.nextCursor).toBeNull(); }
+    expect(await dispatch.dispatch({ operationId: 'flowfn.queues.list', input: { cursor: '2', offset: 1 }, context: context() })).toMatchObject({ ok: false });
+  });
+  it('serializes active deduplicated jobs without exposing ownership tokens', async () => {
+    const { queue, dispatch } = deployment();
+    const job = await queue.add('active', { value: 1 }, { preventDuplicates: true });
+    let release!: () => void, started!: () => void;
+    const active = new Promise<void>(resolve => { started = resolve; });
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    queue.process(async () => { started(); await blocked; });
+    try {
+      await active;
+      expect((await queue.getJob(job.id))?.lease?.token).toBeTruthy();
+      const result = await dispatch.dispatch<{ item: Record<string, unknown> }>({ operationId: 'flowfn.jobs.get', input: { queue: 'emails', id: job.id }, context: context() });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.data.item.state).toBe('active');
+        expect(result.data.item).not.toHaveProperty('lease');
+        expect(result.data.item).not.toHaveProperty('deduplicationId');
+      }
+    } finally { release(); await queue.drain(); }
+  });
   it("publishes only the real environment-backed FlowFn subset", () => {
     expect(validateAdminCapabilityManifest(flowFnAdminCapability)).toEqual([]);
     expect(flowFnAdminResources.map((resource) => resource.id)).toEqual([

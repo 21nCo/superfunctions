@@ -89,6 +89,7 @@ const jobOptionsSchema: AdminObjectSchema = {
         type: { type: "string", enum: ["fixed", "exponential", "custom"] },
         delay: integerSchema,
         maxDelay: integerSchema,
+        strategy: stringSchema,
       },
       required: ["type", "delay"],
       additionalProperties: false,
@@ -118,6 +119,7 @@ const jobSchema: AdminObjectSchema = {
     logs: { type: "array", items: { type: "string" } },
     discarded: { type: "boolean" },
     attemptsMade: integerSchema,
+    stalledCount: integerSchema,
     failedReason: { type: "string" },
     stacktrace: { type: "array", items: { type: "string" } },
   },
@@ -193,7 +195,7 @@ function listSchema(item: AdminObjectSchema): AdminObjectSchema {
     type: "object",
     properties: {
       items: { type: "array", items: item },
-      nextCursor: { type: "null" },
+      nextCursor: { type: ["string", "null"] },
     },
     required: ["items", "nextCursor"],
     additionalProperties: false,
@@ -211,7 +213,7 @@ function itemSchema(item: AdminObjectSchema): AdminObjectSchema {
 
 const pageInputSchema: AdminObjectSchema = {
   type: "object",
-  properties: { limit: limitSchema, offset: offsetSchema },
+  properties: { limit: limitSchema, offset: offsetSchema, cursor: { type: "string", pattern: "^[0-9]+$", maxLength: 16 } },
   additionalProperties: false,
 };
 const idInputSchema: AdminObjectSchema = {
@@ -414,7 +416,7 @@ const listJobsInputSchema: AdminObjectSchema = {
       enum: ["waiting", "active", "completed", "failed", "delayed", "paused"],
     },
     limit: limitSchema,
-    offset: offsetSchema,
+    offset: offsetSchema, cursor: { type: "string", pattern: "^[0-9]+$", maxLength: 16 },
   },
   required: ["queue"],
   additionalProperties: false,
@@ -615,7 +617,7 @@ const closeWorker = {
 
 const listDeadLettersInputSchema: AdminObjectSchema = {
   type: "object",
-  properties: { queue: stringSchema, limit: limitSchema, offset: offsetSchema },
+  properties: { queue: stringSchema, limit: limitSchema, offset: offsetSchema, cursor: { type: "string", pattern: "^[0-9]+$", maxLength: 16 } },
   additionalProperties: false,
 };
 const reasonInputSchema: AdminObjectSchema = {
@@ -806,7 +808,7 @@ const listEventsInputSchema: AdminObjectSchema = {
     fromTimestamp: integerSchema,
     toTimestamp: integerSchema,
     limit: limitSchema,
-    offset: offsetSchema,
+    offset: offsetSchema, cursor: { type: "string", pattern: "^[0-9]+$", maxLength: 16 },
   },
   additionalProperties: false,
 };

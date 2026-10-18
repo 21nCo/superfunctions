@@ -29,7 +29,7 @@ export interface FlowFnAdminQueue {
   stats: QueueStats;
 }
 
-export type FlowFnAdminJob = FlowFnAdminJson<Job<unknown>> & { queue: string };
+export type FlowFnAdminJob = FlowFnAdminJson<Omit<Job<unknown>, 'lease' | 'deduplicationId'>> & { queue: string };
 
 export interface FlowFnAdminWorker {
   id: string;
@@ -55,6 +55,7 @@ export interface FlowFnAdminEvent {
 }
 
 export interface FlowFnListQueuesInput {
+  cursor?: string;
   limit?: number;
   offset?: number;
 }
@@ -63,7 +64,7 @@ export interface FlowFnGetQueueInput {
 }
 export interface FlowFnQueueListOutput {
   items: FlowFnAdminQueue[];
-  nextCursor: null;
+  nextCursor: string | null;
 }
 export interface FlowFnQueueOutput {
   item: FlowFnAdminQueue;
@@ -72,6 +73,7 @@ export interface FlowFnQueueOutput {
 export interface FlowFnListJobsInput {
   queue: string;
   status?: JobStatus;
+  cursor?: string;
   limit?: number;
   offset?: number;
 }
@@ -87,13 +89,14 @@ export interface FlowFnEnqueueJobInput {
 }
 export interface FlowFnJobListOutput {
   items: FlowFnAdminJob[];
-  nextCursor: null;
+  nextCursor: string | null;
 }
 export interface FlowFnJobOutput {
   item: FlowFnAdminJob;
 }
 
 export interface FlowFnListWorkersInput {
+  cursor?: string;
   limit?: number;
   offset?: number;
 }
@@ -105,7 +108,7 @@ export interface FlowFnWorkerActionInput {
 }
 export interface FlowFnWorkerListOutput {
   items: FlowFnAdminWorker[];
-  nextCursor: null;
+  nextCursor: string | null;
 }
 export interface FlowFnWorkerOutput {
   item: FlowFnAdminWorker;
@@ -113,6 +116,7 @@ export interface FlowFnWorkerOutput {
 
 export interface FlowFnListDeadLettersInput {
   queue?: string;
+  cursor?: string;
   limit?: number;
   offset?: number;
 }
@@ -132,7 +136,7 @@ export interface FlowFnCleanDeadLettersInput {
 }
 export interface FlowFnDeadLetterListOutput {
   items: FlowFnAdminDeadLetter[];
-  nextCursor: null;
+  nextCursor: string | null;
 }
 export interface FlowFnDeadLetterOutput {
   item: FlowFnAdminDeadLetter;
@@ -158,12 +162,13 @@ export interface FlowFnListEventsInput {
   toVersion?: number;
   fromTimestamp?: number;
   toTimestamp?: number;
+  cursor?: string;
   limit?: number;
   offset?: number;
 }
 export interface FlowFnEventListOutput {
   items: FlowFnAdminEvent[];
-  nextCursor: null;
+  nextCursor: string | null;
 }
 
 export interface FlowFnQueueActionInput {

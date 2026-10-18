@@ -22,21 +22,33 @@ function toJson(value: unknown): unknown {
   );
 }
 
+function pagination(limit = 50, offset = 0, cursor?: string) {
+  if (cursor !== undefined) {
+    if (!/^[0-9]+$/.test(cursor) || offset !== 0) throw new AdminError('invalid_argument', 'Use a valid cursor or offset, not both.');
+    offset = Number(cursor);
+  }
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 200) throw new AdminError('invalid_argument', 'Invalid pagination bounds.');
+  return { limit, offset };
+}
 function page<T>(
   items: T[],
   limit = 50,
   offset = 0,
-): { items: T[]; nextCursor: null } {
-  return { items: items.slice(offset, offset + limit), nextCursor: null };
+  cursor?: string,
+): { items: T[]; nextCursor: string | null } {
+  ({ limit, offset } = pagination(limit, offset, cursor));
+  return { items: items.slice(offset, offset + limit), nextCursor: offset + limit < items.length ? String(offset + limit) : null };
 }
 
 function adminJob(queue: string, job: Job): FlowFnAdminJob {
-  return { ...(toJson(job) as Omit<FlowFnAdminJob, "queue">), queue };
+  const { lease, deduplicationId, ...publicJob } = job;
+  return { ...(toJson(publicJob) as Omit<FlowFnAdminJob, "queue">), queue };
 }
 
 function adminDeadLetter(job: DLQJob): FlowFnAdminDeadLetter {
+  const { lease, deduplicationId, ...publicJob } = job;
   return {
-    ...(toJson(job) as Omit<FlowFnAdminDeadLetter, "queue">),
+    ...(toJson(publicJob) as Omit<FlowFnAdminDeadLetter, "queue">),
     queue: job.originalQueue,
   };
 }
@@ -152,7 +164,7 @@ export function createFlowFnDomainAdminService(
           stats: await options.flow.queue(name).getJobCounts(),
         })),
       );
-      return page(items, input.limit, input.offset);
+      return page(items, input.limit, input.offset, input.cursor);
     },
     async getQueue(input, context) {
       assertScope(context);
@@ -203,6 +215,7 @@ export function createFlowFnDomainAdminService(
         jobs.map((job) => adminJob(input.queue, job)),
         input.limit,
         input.offset,
+        input.cursor,
       );
     },
     async getJob(input, context) {
@@ -231,7 +244,7 @@ export function createFlowFnDomainAdminService(
       const items: FlowFnAdminWorker[] = [...workers.values()]
         .map(({ id, queues }) => ({ id, queues: [...queues] }))
         .sort((a, b) => a.id.localeCompare(b.id));
-      return page(items, input.limit, input.offset);
+      return page(items, input.limit, input.offset, input.cursor);
     },
     async getWorker(input, context) {
       assertScope(context);
@@ -255,7 +268,7 @@ export function createFlowFnDomainAdminService(
       const values = input.queue
         ? await options.dlq.getByQueue(input.queue)
         : await options.dlq.getAll();
-      return page(values.map(adminDeadLetter), input.limit, input.offset);
+      return page(values.map(adminDeadLetter), input.limit, input.offset, input.cursor);
     },
     async getDeadLetter(input, context) {
       assertScope(context);
@@ -305,8 +318,10 @@ export function createFlowFnDomainAdminService(
     },
     async listEvents(input, context) {
       assertScope(context);
-      const events = await options.events.getEvents(input);
-      return { items: toJson(events) as FlowFnAdminEvent[], nextCursor: null };
+      const { cursor, ...filters } = input;
+      const { limit, offset } = pagination(input.limit, input.offset, cursor);
+      const events = await options.events.getEvents({ ...filters, limit: limit + 1, offset });
+      return { items: toJson(events.slice(0, limit)) as FlowFnAdminEvent[], nextCursor: events.length > limit ? String(offset + limit) : null };
     },
   };
 }
