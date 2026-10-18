@@ -11,7 +11,7 @@ import type {
 } from "./types.js";
 import type { FlowAdapter } from "../adapters/base.js";
 import { JobImpl, snapshotJob } from "./job.js";
-import EventEmitter from "eventemitter3";
+import { EventEmitter } from "eventemitter3";
 import { calculateBackoff, validateBackoff } from "../patterns/backoff.js";
 import { MemoryDLQManager } from "./dlq.js";
 import { RateLimiter } from "../patterns/rate-limit.js";

@@ -11,7 +11,7 @@ import {
   TrimStrategy,
 } from "../stream/types.js";
 import { WorkflowExecution } from "../workflow/types.js";
-import Redis, { RedisOptions } from "ioredis";
+import { Redis, type RedisOptions } from "ioredis";
 
 export interface RedisAdapterOptions {
   connection?: Redis | RedisOptions;

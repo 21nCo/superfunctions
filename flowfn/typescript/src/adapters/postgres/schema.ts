@@ -1,5 +1,6 @@
 import {
   pgTable,
+  type PgTableFn,
   pgSchema,
   text,
   jsonb,
@@ -11,7 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 /** Current adapter tables. Legacy tables require PostgresAdapter.migrateLegacySchema(). */
 export function getPostgresSchema(namespace?: string) {
-  const table = namespace ? pgSchema(namespace).table : pgTable;
+  const table: PgTableFn<string | undefined> = namespace ? pgSchema(namespace).table : pgTable;
   const jobs = table(
     "flowfn_jobs",
     {

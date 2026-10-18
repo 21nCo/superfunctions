@@ -18,7 +18,7 @@ import {
   MemoryEventTracker,
   EventTracker,
 } from "../monitoring/health.js";
-import EventEmitter from "eventemitter3";
+import { EventEmitter } from "eventemitter3";
 
 export interface FlowFnConfig {
   adapter:

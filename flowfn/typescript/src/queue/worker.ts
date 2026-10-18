@@ -1,6 +1,6 @@
 import { FlowFn } from "../core/flow-fn.js";
 import { Queue, Job, QueueEvent } from "./types.js";
-import EventEmitter from "eventemitter3";
+import { EventEmitter } from "eventemitter3";
 
 export interface WorkerOptions {
   flow: FlowFn;

@@ -36,17 +36,17 @@
     "access": "public"
   },
   "superfunctions": {
-    "initFunction": "flowFn",
+    "initFunction": "createFlow",
     "schemaVersion": 1,
     "namespace": "flowfn"
   },
   "dependencies": {
     "@superfunctions/http": "0.3.0",
     "cron-parser": "^4.9.0",
-    "drizzle-orm": "^0.29.0",
+    "drizzle-orm": "^0.45.2",
     "eventemitter3": "^5.0.1",
     "ioredis": "^5.0.0",
-    "uuid": "^9.0.0",
+    "uuid": "^11.1.1",
     "zod": "^3.22.0"
   },
   "devDependencies": {
@@ -77,5 +77,53 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./adapters/memory": {
+      "import": {
+        "types": "./dist/adapters/memory.d.mts",
+        "default": "./dist/adapters/memory.mjs"
+      },
+      "require": {
+        "types": "./dist/adapters/memory.d.ts",
+        "default": "./dist/adapters/memory.js"
+      }
+    },
+    "./adapters/redis": {
+      "import": {
+        "types": "./dist/adapters/redis.d.mts",
+        "default": "./dist/adapters/redis.mjs"
+      },
+      "require": {
+        "types": "./dist/adapters/redis.d.ts",
+        "default": "./dist/adapters/redis.js"
+      }
+    },
+    "./adapters/postgres": {
+      "import": {
+        "types": "./dist/adapters/postgres.d.mts",
+        "default": "./dist/adapters/postgres.mjs"
+      },
+      "require": {
+        "types": "./dist/adapters/postgres.d.ts",
+        "default": "./dist/adapters/postgres.js"
+      }
+    },
+    "./package.json": "./package.json"
   }
 }
