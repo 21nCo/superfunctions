@@ -946,18 +946,30 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     if (record.completedAt !== undefined)
       throw new Error("Cannot resume terminal execution");
     const runtime = this.runtime(record);
-    try { await this.acquire(runtime, false); }
-    catch (error) { this.active.delete(record.id); this.known.delete(record.id); throw error; }
-    this.event(record, "execution.resumed");
-    await this.persist(runtime);
+    try {
+      await this.acquire(runtime, false);
+      this.event(record, "execution.resumed");
+      await this.persist(runtime);
+    } catch (error) {
+      this.loseOwnership(runtime);
+      if (runtime.timer) clearInterval(runtime.timer);
+      this.active.delete(record.id);
+      this.known.delete(record.id);
+      throw error;
+    }
     runtime.task = this.run(runtime);
     this.tasks.set(record.id, runtime.task);
     void runtime.task.catch(() => undefined);
     return this.publicRecord(record);
   }
   async waitForCompletion(executionId: string): Promise<WorkflowExecution> {
-    await this.tasks.get(executionId);
-    return this.getExecution(executionId);
+    for (;;) {
+      await this.tasks.get(executionId);
+      const execution = await this.getExecution(executionId);
+      if (execution.completedAt !== undefined) return execution;
+      this.ensureOpen();
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
   }
   async recoverExecutions(): Promise<number> {
     this.ensureOpen();

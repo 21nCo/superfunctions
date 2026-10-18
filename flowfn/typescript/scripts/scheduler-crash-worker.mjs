@@ -8,7 +8,7 @@ const adapter = config.kind === 'redis'
   ? new RedisAdapter({ connection: new Redis(process.env.FLOWFN_REDIS_URL), prefix: config.scope })
   : new PostgresAdapter({ db: drizzle(pool = new pg.Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL })), schema: config.scope });
 const flow = createFlow({ adapter });
-const scheduler = new DurableScheduler(adapter, config.name, 180);
+const scheduler = new DurableScheduler(adapter, config.name, 1000);
 await scheduler.schedule('work', { every: 20, limit: 1 }, async (_data, context) => {
   await flow.stream(config.name).publish({ occurrence: context.occurrence });
   if (!config.resume) { process.send({ started: true }); await new Promise(() => undefined); }

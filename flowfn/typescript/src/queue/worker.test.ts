@@ -52,3 +52,15 @@ describe("worker lifecycle", () => {
     await flow.close();
   });
 });
+
+it('removes signal listeners after startup failure and rejects timer overflow', async () => {
+  const flow = createFlow({ adapter: 'memory' });
+  const before = process.listenerCount('SIGUSR2');
+  const worker = createWorker({ flow, queues: ['work'], signals: ['SIGUSR2'], settings: { lockDuration: 10, lockRenewTime: 20 } });
+  worker.register('work', async () => undefined);
+  await expect(worker.run()).rejects.toThrow();
+  expect(process.listenerCount('SIGUSR2')).toBe(before);
+  expect(worker.getStats().running).toBe(false);
+  expect(() => createWorker({ flow, queues: ['work'], shutdownTimeout: 2147483648 })).toThrow('shutdown timeout');
+  await flow.close();
+});

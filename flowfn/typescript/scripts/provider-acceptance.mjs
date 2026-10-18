@@ -75,6 +75,7 @@ try {
     "30000",
     "src/adapters/redis.test.ts",
     "src/adapters/postgres/postgres.test.ts",
+    ...process.argv.slice(2),
   ];
   command(process.env.FLOWFN_BENCHMARK ? process.execPath : npm ? process.execPath : "npm", process.env.FLOWFN_BENCHMARK ? ["--expose-gc", "scripts/queue-benchmark.mjs"] : npm ? [npm, ...args] : args, {
     stdio: "inherit",

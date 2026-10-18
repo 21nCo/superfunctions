@@ -8,6 +8,7 @@ import type {
   BatchOptions,
   QueueStats,
   JobStatus,
+  QueueProcessor,
 } from "./types.js";
 import type { FlowAdapter } from "../adapters/base.js";
 import { JobImpl, snapshotJob } from "./job.js";
@@ -15,6 +16,7 @@ import { EventEmitter } from "eventemitter3";
 import { calculateBackoff, validateBackoff } from "../patterns/backoff.js";
 import { MemoryDLQManager } from "./dlq.js";
 import { RateLimiter } from "../patterns/rate-limit.js";
+interface ProcessorState<T> { stopped: boolean; jobs: Set<JobImpl<T>> }
 export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private paused = false;
   private closed = false;
@@ -27,7 +29,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private dlq?: MemoryDLQManager;
   private limiter?: RateLimiter;
   private cache = new Map<string, { value: any; expires: number }>();
-  private leases = new Map<string, { timer: ReturnType<typeof setInterval>; lost: boolean; controller?: AbortController }>();
+  private leases = new Map<string, { token: string; timer: ReturnType<typeof setInterval>; lost: boolean; controller?: AbortController }>();
   private recoveredAt = 0;
   constructor(
     public name: string,
@@ -56,25 +58,28 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     )
       throw new Error("Invalid cache ttl");
   }
-  configureLeaseSettings(settings: { leaseDuration?: number; stalledInterval?: number; maxStalledCount?: number }) {
-    if (this.workers.size) throw new Error("Cannot change lease settings while processing");
-    for (const key of ["leaseDuration", "stalledInterval", "maxStalledCount"] as const) {
+  configureLeaseSettings(settings: { leaseDuration?: number; leaseRenewInterval?: number; stalledInterval?: number; maxStalledCount?: number }) {
+    const defaults = { leaseDuration: 30_000, leaseRenewInterval: Math.max(1, Math.floor((settings.leaseDuration ?? this.options.leaseDuration ?? 30_000) / 3)), stalledInterval: 30_000, maxStalledCount: 1 };
+    for (const key of ['leaseDuration', 'leaseRenewInterval', 'stalledInterval', 'maxStalledCount'] as const) {
       const value = settings[key];
-      if (value !== undefined && (!Number.isInteger(value) || value < (key === "maxStalledCount" ? 0 : 1))) throw new Error(`Invalid ${key}`);
-      if (value !== undefined) this.options[key] = value;
+      if (value !== undefined && (!Number.isInteger(value) || value < (key === 'maxStalledCount' ? 0 : 1))) throw new Error(`Invalid ${key}`);
+      if (this.workers.size && value !== undefined && value !== (this.options[key] ?? defaults[key])) throw new Error('Cannot change lease settings while processing');
     }
+    const duration = settings.leaseDuration ?? this.options.leaseDuration ?? 30_000;
+    const renewal = settings.leaseRenewInterval ?? this.options.leaseRenewInterval ?? Math.max(1, Math.floor(duration / 3));
+    if (renewal >= duration) throw new Error('Renew interval must be shorter than lease duration');
+    for (const key of ['leaseDuration', 'leaseRenewInterval', 'stalledInterval', 'maxStalledCount'] as const) if (settings[key] !== undefined) this.options[key] = settings[key];
   }
   private releaseLease(job: Job) {
     const guard = this.leases.get(job.id);
-    if (guard) clearInterval(guard.timer);
-    this.leases.delete(job.id);
+    if (guard && guard.token === job.lease?.token) { clearInterval(guard.timer); this.leases.delete(job.id); }
   }
   private guardLease(job: Job, claimedAt: number) {
     if (!job.lease || !this.adapter.renewJobLease) throw new Error("Adapter must support job leases");
     const duration = this.options.leaseDuration ?? 30_000;
     let pending = false;
     let validUntil = claimedAt + duration;
-    const guard = { lost: false, controller: undefined as AbortController | undefined, timer: setInterval(async () => {
+    const guard = { token: job.lease.token, lost: false, controller: undefined as AbortController | undefined, timer: setInterval(async () => {
       if (guard.lost) return;
       if (performance.now() >= validUntil) { guard.lost = true; guard.controller?.abort(); return; }
       if (pending) return;
@@ -88,7 +93,9 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
         if (performance.now() >= validUntil) { guard.lost = true; guard.controller?.abort(); }
       }
       finally { pending = false; }
-    }, Math.max(1, Math.floor(duration / 3))) };
+    }, Math.min(2147483647, this.options.leaseRenewInterval ?? Math.max(1, Math.floor(duration / 3)))) };
+    const previous = this.leases.get(job.id);
+    if (previous) { previous.lost = true; previous.controller?.abort(); clearInterval(previous.timer); }
     this.leases.set(job.id, guard);
   }
   private open() {
@@ -217,7 +224,42 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
       throw new Error(
         "Processing requires a handler and positive integer concurrency",
       );
-    for (let i = 0; i < concurrency; i++) this.track(this.loop(name, handler));
+    this.createProcessor(concurrency, handler, name);
+  }
+  createProcessor(concurrency: number, handler: JobHandler<T>, name?: string): QueueProcessor {
+    this.open();
+    if (!Number.isInteger(concurrency) || concurrency < 1 || typeof handler !== 'function') throw new Error('Processing requires a handler and positive integer concurrency');
+    const group: ProcessorState<T> = { stopped: false, jobs: new Set() };
+    const tasks = Array.from({ length: concurrency }, () => this.loop(name, handler, group));
+    for (const task of tasks) this.track(task);
+    let closing: Promise<void> | undefined;
+    return {
+      get activeJobs() { return group.jobs.size; },
+      owns: id => [...group.jobs].some(job => job.id === id),
+      close: (options = {}) => {
+        if (options.timeout !== undefined && (!Number.isFinite(options.timeout) || options.timeout < 0 || options.timeout > 2147483647)) return Promise.reject(new Error('Invalid shutdown timeout'));
+        if (closing) return closing;
+        group.stopped = true;
+        for (const job of group.jobs) { const guard = this.leases.get(job.id); if (guard && guard.token === job.lease?.token) guard.controller?.abort(); }
+        this.wake();
+        const complete = Promise.all(tasks).then(() => undefined);
+        if (options.timeout === undefined) return closing = complete;
+        closing = new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            for (const job of group.jobs) {
+              const guard = this.leases.get(job.id);
+              if (guard && guard.token === job.lease?.token) { guard.lost = true; guard.controller?.abort(); this.releaseLease(job); }
+            }
+            this.inFlight -= group.jobs.size;
+            group.jobs.clear();
+            for (const task of tasks) this.workers.delete(task);
+            reject(new Error('Processor shutdown timed out; active leases were abandoned'));
+          }, options.timeout);
+          complete.then(resolve, reject).finally(() => clearTimeout(timer));
+        });
+        return closing;
+      },
+    };
   }
   private async take(name?: string): Promise<JobImpl<T> | null> {
     if (Date.now() - this.recoveredAt >= (this.options.stalledInterval ?? 30_000)) {
@@ -254,8 +296,9 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private async loop(
     name: string | undefined,
     handler: JobHandler<T>,
+    group: ProcessorState<T>,
   ): Promise<void> {
-    while (!this.closed) {
+    while (!this.closed && !group.stopped) {
       if (this.paused) {
         await this.sleep();
         continue;
@@ -265,11 +308,17 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
         await this.sleep();
         continue;
       }
+      if (group.stopped || this.closed) {
+        await this.adapter.nack(this.name, job.id, true, job.lease?.token);
+        this.releaseLease(job);
+        return;
+      }
+      group.jobs.add(job);
       this.inFlight++;
       try {
         await this.runJob(job, handler);
       } finally {
-        this.inFlight--;
+        if (group.jobs.delete(job)) this.inFlight--;
       }
     }
   }

@@ -4,6 +4,7 @@ import Redis from "ioredis";
 import { workflowControlContract } from '../storage/workflow-control-contract.js';
 import { workflowCrashContract } from '../storage/workflow-crash-contract.js';
 import { schedulerContract } from '../storage/scheduler-contract.js';
+import { workerOwnershipContract, workerPoolContract } from '../storage/worker-contract.js';
 import { RedisAdapter } from "./redis.js";
 import { JobImpl } from "../queue/job.js";
 import { QueueImpl } from "../queue/queue.js";
@@ -16,10 +17,12 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
     let adapter: RedisAdapter;
     let redis: Redis;
     let prefix: string;
+    it('bounds worker shutdown and fences abandoned callbacks', async () => { await workerOwnershipContract(adapter, 1000); });
+    it('scales independent worker groups without closing shared queues', async () => { await workerPoolContract(adapter); });
     it('recovers a schedule occurrence after SIGKILL with a stable idempotency identity', async () => { await workflowCrashContract(adapter, 'redis', prefix, true); });
-    it('shares durable schedule ownership and preserves attempts across restart', async () => { await schedulerContract(adapter); });
+    it('shares durable schedule ownership and preserves attempts across restart', async () => { await schedulerContract(adapter, 1000); });
     it('recovers a SIGKILL checkpoint in a new process without repeating effects', async () => { await workflowCrashContract(adapter, 'redis', prefix); });
-    it('enforces durable workflow ownership and concurrent catalogs', async () => { await workflowControlContract(adapter); });
+    it('enforces durable workflow ownership and concurrent catalogs', async () => { await workflowControlContract(adapter, 1000); });
     beforeEach(() => {
       redis = new Redis(process.env.FLOWFN_REDIS_URL!);
       prefix = `flowfn-test-${randomUUID()}:`;
@@ -100,10 +103,10 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
       await expect(adapter.saveJob("leases", stale)).rejects.toThrow("lease lost");
     });
     it("renews running jobs and terminally fails repeated stalled claims", async () => {
-      const queue = new QueueImpl("renewed", adapter, { leaseDuration: 180, stalledInterval: 20 });
+      const queue = new QueueImpl("renewed", adapter, { leaseDuration: 1000, stalledInterval: 20 });
       try {
         const job = await queue.add("long", {});
-        queue.process(async () => { await new Promise(resolve => setTimeout(resolve, 450)); return 42; });
+        queue.process(async () => { await new Promise(resolve => setTimeout(resolve, 2250)); return 42; });
         await queue.drain();
         expect((await queue.getJob(job.id))!.returnvalue).toBe(42);
         expect((await queue.getJob(job.id))!.stalledCount ?? 0).toBe(0);

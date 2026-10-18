@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { FlowAdapter } from '../adapters/base.js';
 import { WorkflowBuilderImpl } from '../workflow/workflow.js';
 
-export async function workflowControlContract(adapter: FlowAdapter) {
+export async function workflowControlContract(adapter: FlowAdapter, leaseDuration = 90) {
   const id = randomUUID();
   const state = { id, workflowId: 'ownership', status: 'running' as const, input: {}, startedAt: Date.now() };
   const mutate = adapter.mutateWorkflowState!.bind(adapter);
@@ -35,7 +35,7 @@ export async function workflowControlContract(adapter: FlowAdapter) {
   }
 
   let compensated = false, aborted = false;
-  const hanging = new WorkflowBuilderImpl(randomUUID(), adapter).ownership({ leaseDuration: 90 })
+  const hanging = new WorkflowBuilderImpl(randomUUID(), adapter).ownership({ leaseDuration })
     .saga('external', {
       execute: async ctx => { await new Promise<void>(resolve => ctx.signal.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true })); },
       compensate: async () => { compensated = true; },

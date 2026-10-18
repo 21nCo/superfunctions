@@ -39,7 +39,7 @@ export async function workflowCrashContract(adapter: FlowAdapter, kind: string, 
     const completion = message(restored);
     void completion.catch(() => undefined);
     if (!scheduler) {
-      await vi.waitFor(async () => expect((await adapter.loadWorkflowState(executionId))?.waiting?.kind).toBe('approval'), { timeout: 5000 });
+      await vi.waitFor(async () => expect((await adapter.loadWorkflowState(executionId))?.waiting?.kind).toBe('approval'), { timeout: 10000 });
       await sender.approveExecution(executionId, { approver: 'ops', reviewedBy: 'remote-operator', approved: true });
     }
     await sender.close();

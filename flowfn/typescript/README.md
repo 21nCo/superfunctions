@@ -24,6 +24,31 @@ See [queue ownership](docs/queue-ownership.md) for lease recovery, atomic
 deduplication and at-least-once delivery; [retry strategies](docs/retry-strategies.md)
 for custom backoff; and [usage](docs/USAGE.md) for the broader API.
 
-D1, SQS and Kafka adapters are not implemented. Workflow ownership, persistent
-scheduler coordination, stream partition assignment and the original performance
-targets remain incomplete. This package is not yet a production-readiness claim.
+D1, SQS and Kafka adapters are not implemented. Stream partition assignment,
+complete telemetry, global bounded shutdown and the original performance targets
+remain incomplete. Workflow ownership and scheduler coordination are durable on
+Redis and PostgreSQL. This package is not yet a production-readiness claim.
+
+### Workers and autoscaling
+
+`createWorker({ flow, queues, concurrency, shutdownTimeout, signals })` owns only
+its registered processors. `await worker.close()` aborts those jobs' signals and
+waits up to `shutdownTimeout` (30 seconds by default); producers and other workers
+on the queue remain usable. On timeout it rejects, stops renewing the abandoned
+leases and fences late results. JavaScript callbacks and external side effects
+cannot be forcibly stopped: handlers must observe `job.signal` and use idempotent
+external operations. Recovery remains at least once.
+
+`createWorkerPool({ flow, queues, minWorkers, maxWorkers, scaleUpThreshold,
+scaleDownDelay, pollInterval, workerOptions, signals })` creates in-process worker
+groups. Register queue handlers, then call `start()`. The pool adds one worker per
+poll while waiting jobs exceed the threshold, and removes idle workers after the
+configured delay, respecting the bounds. A zero-worker pool wakes when work
+arrives. `getStats()` reports workers and active jobs; `close()` stops scaling and
+closes its workers. This does not provision machines or operating-system processes.
+
+Worker settings accept `leaseDuration` (or `lockDuration`), `lockRenewTime`,
+`stalledInterval` and `maxStalledCount`. Workers sharing a queue must use compatible
+lease settings. Signal handlers are opt-in and are removed on close. Bounded
+shutdown here covers worker processors; non-cooperative workflow or scheduler
+callbacks still need separate lifecycle handling.

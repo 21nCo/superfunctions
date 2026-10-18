@@ -8,7 +8,7 @@ const adapter = config.kind === 'redis'
   ? new RedisAdapter({ connection: new Redis(process.env.FLOWFN_REDIS_URL), prefix: config.scope })
   : new PostgresAdapter({ db: drizzle(pool = new pg.Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL })), schema: config.scope });
 const flow = createFlow({ adapter });
-const workflow = flow.workflow(config.name).ownership({ leaseDuration: 180 })
+const workflow = flow.workflow(config.name).ownership({ leaseDuration: 1000 })
   .step('effect', async ctx => { await flow.stream(config.name).publish({ effect: true, empty: [] }); ctx.set('saved', 5); })
   .waitForEvent('go')
   .step('finish', async (ctx, value) => { ctx.set('total', ctx.get('saved') + value); })
@@ -16,7 +16,13 @@ const workflow = flow.workflow(config.name).ownership({ leaseDuration: 180 })
   .step('approved', async (ctx, decision) => { ctx.set('approved', decision.approved); return ctx.get('total'); }).build();
 if (!config.executionId) {
   const execution = await workflow.execute({ values: [], nested: { empty: [] } });
-  while ((await workflow.getExecution(execution.id)).waiting?.kind !== 'event') await new Promise(resolve => setTimeout(resolve, 5));
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const state = await workflow.getExecution(execution.id);
+    if (state.waiting?.kind === 'event') break;
+    if (Date.now() >= deadline || state.status === 'failed') throw new Error(`Checkpoint wait failed: ${JSON.stringify(state)}`);
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
   process.send({ executionId: execution.id });
 } else {
   await workflow.startRecovery({ interval: 20 });

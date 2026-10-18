@@ -5,6 +5,7 @@ export * from "./core/metrics.js";
 
 export * from "./queue/types.js";
 export * from "./queue/worker.js";
+export * from "./queue/worker-pool.js";
 export * from "./queue/dlq.js";
 export * from "./stream/types.js";
 export * from "./workflow/types.js";

@@ -1,12 +1,14 @@
 import { FlowFn } from "../core/flow-fn.js";
-import { Queue, Job, QueueEvent } from "./types.js";
+import { Queue, Job, QueueEvent, QueueProcessor } from "./types.js";
 import { EventEmitter } from "eventemitter3";
 
 export interface WorkerOptions {
   flow: FlowFn;
   queues: string[];
   concurrency?: number | Record<string, number>;
-  settings?: { leaseDuration?: number; stalledInterval?: number; maxStalledCount?: number };
+  settings?: { leaseDuration?: number; lockDuration?: number; lockRenewTime?: number; stalledInterval?: number; maxStalledCount?: number };
+  signals?: NodeJS.Signals[];
+  shutdownTimeout?: number;
 }
 
 /** Owns registered processors and forwards their queue lifecycle events. */
@@ -18,8 +20,13 @@ export class Worker extends EventEmitter {
   >();
   private started = false;
   private closed = false;
+  private processors = new Map<string, QueueProcessor>();
+  private closing?: Promise<void>;
+  private signalHandler = () => { void this.close().catch(error => this.emit('error', error)); };
   constructor(private readonly options: WorkerOptions) {
     super();
+    if (options.shutdownTimeout !== undefined && (!Number.isFinite(options.shutdownTimeout) || options.shutdownTimeout < 0 || options.shutdownTimeout > 2147483647)) throw new Error('Invalid shutdown timeout');
+    if (options.settings?.leaseDuration !== undefined && options.settings.lockDuration !== undefined && options.settings.leaseDuration !== options.settings.lockDuration) throw new Error('Conflicting lock duration settings');
     if (
       new Set(options.queues).size !== options.queues.length ||
       options.queues.some((name) => !name.trim())
@@ -38,25 +45,29 @@ export class Worker extends EventEmitter {
   }
   private startProcessor(name: string, handler: (job: Job) => Promise<any>) {
     const queue = this.options.flow.queue(name);
-    if (this.options.settings) queue.configureLeaseSettings(this.options.settings);
-    queue.process(this.concurrency(name), handler);
+    const settings = this.options.settings;
+    if (settings) queue.configureLeaseSettings({ leaseDuration: settings.leaseDuration ?? settings.lockDuration, leaseRenewInterval: settings.lockRenewTime, stalledInterval: settings.stalledInterval, maxStalledCount: settings.maxStalledCount });
+    this.processors.set(name, queue.createProcessor(this.concurrency(name), handler));
   }
   async run(): Promise<void> {
     if (this.closed) throw new Error("Worker is closed");
     if (this.started) return;
     this.started = true;
+    for (const signal of new Set(this.options.signals ?? [])) process.on(signal, this.signalHandler);
     this.options.flow.metrics.registerWorker(this);
+    try {
     for (const name of this.options.queues) {
       const queue = this.options.flow.queue(name);
       const listeners: Array<[QueueEvent, (...args: any[]) => void]> = (
         ["active", "completed", "failed", "progress", "stalled"] as QueueEvent[]
-      ).map((event) => [event, (...args: any[]) => this.emit(event, ...args)]);
+      ).map((event) => [event, (...args: any[]) => { if (event === 'stalled' || this.processors.get(name)?.owns(args[0]?.id)) this.emit(event, ...args); }]);
       for (const [event, listener] of listeners) queue.on(event, listener);
       this.subscriptions.set(queue, listeners);
       const handler = this.handlers.get(name);
       if (handler) this.startProcessor(name, handler);
     }
     this.emit("ready");
+    } catch (error) { await this.close().catch(() => undefined); throw error; }
   }
   register(queueName: string, handler: (job: Job) => Promise<any>): void {
     if (this.closed) throw new Error("Worker is closed");
@@ -66,19 +77,22 @@ export class Worker extends EventEmitter {
       throw new Error("A processor is already registered for this queue");
     if (typeof handler !== "function")
       throw new Error("A processor must be a function");
-    this.handlers.set(queueName, handler);
     if (this.started) this.startProcessor(queueName, handler);
+    this.handlers.set(queueName, handler);
   }
-  async close(): Promise<void> {
-    if (this.closed) return;
+  getStats() { return { activeJobs: [...this.processors.values()].reduce((sum, processor) => sum + processor.activeJobs, 0), running: this.started && !this.closed }; }
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
     this.closed = true;
+    for (const signal of new Set(this.options.signals ?? [])) process.off(signal, this.signalHandler);
     this.emit("closing");
+    return this.closing = this.closeProcessors();
+  }
+  private async closeProcessors(): Promise<void> {
     try {
-      await Promise.all(
-        [...this.handlers.keys()].map((name) =>
-          this.options.flow.queue(name).close(),
-        ),
-      );
+      const results = await Promise.allSettled([...this.processors.values()].map(processor => processor.close({ timeout: this.options.shutdownTimeout ?? 30_000 })));
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
     } finally {
       for (const [queue, listeners] of this.subscriptions)
         for (const [event, listener] of listeners) queue.off(event, listener);

@@ -7,9 +7,10 @@ export interface Queue<T = any> {
     jobs: Array<{ name: string; data: T; opts?: JobOptions }>,
   ): Promise<Job<T>[]>;
 
-  configureLeaseSettings(options: { leaseDuration?: number; stalledInterval?: number; maxStalledCount?: number }): void;
+  configureLeaseSettings(options: { leaseDuration?: number; leaseRenewInterval?: number; stalledInterval?: number; maxStalledCount?: number }): void;
 
   // Processing
+  createProcessor(concurrency: number, handler: JobHandler<T>, name?: string): QueueProcessor;
   process(handler: JobHandler<T>): void;
   process(name: string, handler: JobHandler<T>): void;
   process(concurrency: number, handler: JobHandler<T>): void;
@@ -43,6 +44,11 @@ export interface Queue<T = any> {
 
   // Lifecycle
   close(): Promise<void>;
+}
+export interface QueueProcessor {
+  readonly activeJobs: number;
+  owns(jobId: string): boolean;
+  close(options?: { timeout?: number }): Promise<void>;
 }
 
 export type QueueEvent =
@@ -131,6 +137,7 @@ export interface QueueOptions {
   backoffStrategies?: Record<string, BackoffStrategy>;
   stalledInterval?: number;
   leaseDuration?: number;
+  leaseRenewInterval?: number;
   maxStalledCount?: number;
   defaultJobOptions?: JobOptions;
   limiter?: RateLimiterOptions;
