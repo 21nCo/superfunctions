@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57VY6SBY72SME7N2YNFNT7K",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "flowfn/python/README.md",
+    "flowfn/python/flowfn/adapters/base.py",
+    "flowfn/python/flowfn/adapters/memory.py",
+    "flowfn/python/flowfn/adapters/postgres.py",
+    "flowfn/python/flowfn/adapters/redis.py",
+    "flowfn/python/flowfn/adapters/workflow_state.py",
+    "flowfn/python/flowfn/core/flow.py",
+    "flowfn/python/flowfn/scheduler/__init__.py",
+    "flowfn/python/flowfn/workflow/builder.py",
+    "flowfn/python/flowfn/workflow/types.py",
+    "flowfn/python/flowfn/workflow/workflow.py",
+    "flowfn/python/tests/test_scheduler_recovery.py",
+    "flowfn/python/tests/test_workflow_discovery.py",
+    "flowfn/python/tests/test_workflow_recovery.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 10977,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 2971008,
+    "output_tokens": 6044,
+    "api_call_count": 20
+  }
+}
