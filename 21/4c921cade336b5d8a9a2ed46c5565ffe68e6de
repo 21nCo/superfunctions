@@ -1,0 +1,27 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_80c85a75779ba7 209-210
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_eb25cd6305abcb 106
+flowfn/python/flowfn/adapters/workflow_state.py
+  s_e1c5fc1a65c0cf::t_2e472f81db6146 55,58-59
+flowfn/python/flowfn/workflow/workflow.py
+  s_e1c5fc1a65c0cf::t_a30eedc11ebe33 106,129,422-436,438,443,448-450
+flowfn/python/tests/test_workflow_close_ownership.py
+  s_e1c5fc1a65c0cf::t_f201f005bc5279 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "214c921cade336b5d8a9a2ed46c5565ffe68e6de",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
