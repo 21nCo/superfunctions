@@ -73,7 +73,7 @@ export function createDirectiveExtension(options: DirectiveExtensionOptions): Md
       const label = typeof node.attrs?.label === "string" && node.attrs.label !== name ? ` ${node.attrs.label}` : "";
       const body = node.text ?? "";
       let fenceLength = 3;
-      for (const match of body.matchAll(/^(:{3,})[ \\t]*(?:\\r)?$/gm)) fenceLength = Math.max(fenceLength, match[1].length + 1);
+      for (const match of body.matchAll(/^(:{3,})[ \t]*(?:\r)?$/gm)) fenceLength = Math.max(fenceLength, match[1].length + 1);
       const fence = ":".repeat(fenceLength);
       return `${fence}${name}${label}\n${body}\n${fence}`;
     },
