@@ -28,6 +28,32 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
       await pool.end();
     });
+    it("waits for an in-flight consumer transaction before cleanup returns", async () => {
+      const db = drizzle(pool);
+      let release!: () => void, began!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const started = new Promise<void>(resolve => { began = resolve; });
+      const slow = new PostgresAdapter({ schema, db: {
+        execute: db.execute.bind(db),
+        transaction: (callback: (tx: unknown) => Promise<unknown>) => db.transaction(async tx => {
+          began();
+          await gate;
+          return callback(tx);
+        }),
+      } });
+      let stopping: Promise<void> | undefined;
+      try {
+        await slow.consume("cleanup", "group", "worker", async () => {});
+        await started;
+        let stopped = false;
+        stopping = slow.cleanup().then(() => { stopped = true; });
+        await new Promise(resolve => setTimeout(resolve, 10));
+        expect(stopped).toBe(false);
+        release();
+        await stopping;
+        expect(stopped).toBe(true);
+      } finally { release(); await stopping; await slow.cleanup(); }
+    });
     it("persists batch results and enforces per-job timeout and retention", async () => {
       const queue = new QueueImpl("batch-runtime", adapter);
       try {

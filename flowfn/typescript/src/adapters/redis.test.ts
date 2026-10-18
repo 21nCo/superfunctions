@@ -23,6 +23,35 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
       if (keys.length) await redis.del(...keys);
       await adapter.cleanup();
     });
+    it("preserves FIFO ties and LIFO priority without scanning completed history", async () => {
+      const sameTime = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+      try {
+        for (let i = 0; i < 50; i++) await adapter.createJob("order", new JobImpl("work", i, { jobId: String(i) }));
+        await adapter.createJob("order", new JobImpl("work", "lifo-first", { lifo: true }));
+        await adapter.createJob("order", new JobImpl("work", "lifo-last", { lifo: true }));
+      } finally { sameTime.mockRestore(); }
+      expect((await adapter.dequeue("order"))?.data).toBe("lifo-last");
+      expect((await adapter.dequeue("order"))?.data).toBe("lifo-first");
+      for (let i = 0; i < 50; i++) {
+        const job = (await adapter.dequeue("order"))!;
+        expect(job.data).toBe(i);
+        await adapter.saveJob("order", { ...job, state: "completed" });
+      }
+      expect(await adapter.dequeue("order")).toBeNull();
+      for (let i = 0; i < 65; i++) await adapter.createJob("order", new JobImpl("blocked", i, { waitFor: ["missing"] }));
+      const runnable = await adapter.createJob("order", new JobImpl("ready", "ready"));
+      expect((await adapter.dequeue("order", "ready"))?.id).toBe(runnable.id);
+      expect(await adapter.dequeue("order")).toBeNull();
+    });
+    it("rebuilds the ready index for existing queues without losing delayed jobs", async () => {
+      const waiting = new JobImpl("work", "waiting", { priority: 1 });
+      const delayed = new JobImpl("work", "delayed", { delay: 20, priority: 10 });
+      delayed.state = "delayed";
+      await redis.hset(`${prefix}jobs:legacy-index`, waiting.id, JSON.stringify(waiting), delayed.id, JSON.stringify(delayed));
+      expect((await adapter.dequeue("legacy-index"))?.id).toBe(waiting.id);
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect((await adapter.dequeue("legacy-index"))?.id).toBe(delayed.id);
+    });
     it("persists batch results and enforces per-job timeout and retention", async () => {
       const queue = new QueueImpl("batch-runtime", adapter);
       try {

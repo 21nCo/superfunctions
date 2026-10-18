@@ -13,6 +13,31 @@ import {
 import { WorkflowExecution } from "../workflow/types.js";
 import { Redis, type RedisOptions } from "ioredis";
 
+// KEYS: jobs, delayed, ready, sequence, index-version. Migration runs once per queue.
+const QUEUE_INDEX_LUA = `
+  local function assignMember(job)
+    if not job.queueMember then
+      local sequence = redis.call('INCR', KEYS[4])
+      local order = job.opts.lifo and (9007199254740991 - sequence) or sequence
+      job.queueMember = (job.opts.lifo and '0:' or '1:') .. string.format('%020.0f',order) .. ':' .. job.id
+    end
+  end
+  local function indexJob(job)
+    assignMember(job)
+    redis.call('ZREM',KEYS[3],job.queueMember)
+    redis.call('ZREM',KEYS[2],job.id)
+    if job.state == 'waiting' then redis.call('ZADD',KEYS[3],-(job.opts.priority or 0),job.queueMember)
+    elseif job.state == 'delayed' then redis.call('ZADD',KEYS[2],job.timestamp + (job.delay or 0),job.id) end
+  end
+  if not redis.call('GET',KEYS[5]) then
+    local jobs = {}
+    for _,raw in ipairs(redis.call('HVALS',KEYS[1])) do table.insert(jobs,cjson.decode(raw)) end
+    table.sort(jobs,function(a,b) if a.timestamp == b.timestamp then return a.id < b.id else return a.timestamp < b.timestamp end end)
+    for _,job in ipairs(jobs) do indexJob(job); redis.call('HSET',KEYS[1],job.id,cjson.encode(job)) end
+    redis.call('SET',KEYS[5],'1')
+  end
+`;
+
 export interface RedisAdapterOptions {
   connection?: Redis | RedisOptions;
   prefix?: string;
@@ -37,9 +62,12 @@ export class RedisAdapter implements FlowAdapter {
     return `${this.prefix}${type}:${name}`;
   }
 
+  private queueKeys(queue: string): string[] {
+    return ["jobs", "delayed", "ready", "sequence", "queue-index"].map(kind => this.key(kind, queue));
+  }
   async createJob(queue: string, job: Job): Promise<Job> {
     const value = { ...job, timestamp: Date.now(), state: job.opts.delay ? "delayed" : "waiting", delay: job.opts.delay ?? 0 };
-    const result = await this.redis.eval(`
+    const result = await this.redis.eval(`${QUEUE_INDEX_LUA}
       local proposed = cjson.decode(ARGV[1])
       local existing = redis.call('HGET', KEYS[1], proposed.id)
       if existing then return existing end
@@ -50,10 +78,11 @@ export class RedisAdapter implements FlowAdapter {
           if job.deduplicationId == proposed.deduplicationId and job.state ~= 'completed' and job.state ~= 'failed' then return entry end
         end
       end
-      redis.call('HSET', KEYS[1], proposed.id, ARGV[1])
-      if proposed.delay > 0 then redis.call('ZADD', KEYS[2], proposed.timestamp + proposed.delay, proposed.id) end
-      return ARGV[1]
-    `, 2, this.key("jobs", queue), this.key("delayed", queue), JSON.stringify(value));
+      indexJob(proposed)
+      local encoded = cjson.encode(proposed)
+      redis.call('HSET', KEYS[1], proposed.id, encoded)
+      return encoded
+    `, 5, ...this.queueKeys(queue), JSON.stringify(value));
     return JSON.parse(String(result));
   }
   async enqueue(queue: string, job: Job): Promise<string> {
@@ -69,29 +98,47 @@ export class RedisAdapter implements FlowAdapter {
   async dequeue(queue: string, name?: string, leaseDuration = 30_000): Promise<Job | null> {
     const result = await this.redis.eval(
       `
-      local entries = redis.call('HGETALL', KEYS[1])
-      local chosen = nil
-      for i=1,#entries,2 do
-        local job = cjson.decode(entries[i+1])
-        local ready = job.state == 'waiting' or (job.state == 'delayed' and job.timestamp + (job.delay or 0) <= tonumber(ARGV[1]))
-        if ready and (ARGV[2] == '' or job.name == ARGV[2]) then
-          for _,id in ipairs(job.opts.waitFor or {}) do
-            local dependency = redis.call('HGET',KEYS[1],id)
-            if not dependency or cjson.decode(dependency).state ~= 'completed' then ready = false end
-          end
-          if ready and (not chosen or (job.opts.priority or 0) > (chosen.opts.priority or 0) or ((job.opts.priority or 0) == (chosen.opts.priority or 0) and ((job.opts.lifo and job.timestamp > chosen.timestamp) or (not job.opts.lifo and job.timestamp < chosen.timestamp)))) then chosen = job end
+      ${QUEUE_INDEX_LUA}
+      for _,id in ipairs(redis.call('ZRANGEBYSCORE',KEYS[2],'-inf',ARGV[1])) do
+        local raw = redis.call('HGET',KEYS[1],id)
+        if raw then
+          local job = cjson.decode(raw)
+          redis.call('ZADD',KEYS[3],-(job.opts.priority or 0),job.queueMember)
         end
+        redis.call('ZREM',KEYS[2],id)
+      end
+      local chosen = nil
+      local offset = 0
+      while not chosen do
+        local members = redis.call('ZRANGE',KEYS[3],offset,offset+31)
+        if #members == 0 then break end
+        local removed = 0
+        for _,member in ipairs(members) do
+          local raw = redis.call('HGET',KEYS[1],string.sub(member,24))
+          if raw then
+            local job = cjson.decode(raw)
+            local ready = job.state == 'waiting' or job.state == 'delayed'
+            if ready and (ARGV[2] == '' or job.name == ARGV[2]) then
+              for _,id in ipairs(job.opts.waitFor or {}) do
+                local dependency = redis.call('HGET',KEYS[1],id)
+                if not dependency or cjson.decode(dependency).state ~= 'completed' then ready = false end
+              end
+              if ready then chosen = job; break end
+            end
+          else redis.call('ZREM',KEYS[3],member); removed = removed + 1 end
+        end
+        offset = offset + #members - removed
       end
       if not chosen then return nil end
       chosen.state = 'active'; chosen.processedOn = tonumber(ARGV[1]); local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000); chosen.lease = {token=ARGV[3], expiresAt=now+tonumber(ARGV[4])}
       local encoded = cjson.encode(chosen)
       redis.call('HSET',KEYS[1],chosen.id,encoded)
       redis.call('ZREM',KEYS[2],chosen.id)
+      redis.call('ZREM',KEYS[3],chosen.queueMember)
       return encoded
     `,
-      2,
-      this.key("jobs", queue),
-      this.key("delayed", queue),
+      5,
+      ...this.queueKeys(queue),
       Date.now(),
       name ?? "",
       randomUUID(),
@@ -100,7 +147,7 @@ export class RedisAdapter implements FlowAdapter {
     return result ? JSON.parse(String(result)) : null;
   }
   private async writeJob(queue: string, job: Job, enqueue = false): Promise<void> {
-    const result = await this.redis.eval(`
+    const result = await this.redis.eval(`${QUEUE_INDEX_LUA}
       local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
       local value = cjson.decode(ARGV[1])
       local raw = redis.call('HGET', KEYS[1], value.id)
@@ -117,10 +164,12 @@ export class RedisAdapter implements FlowAdapter {
       end
       if ARGV[3] == '1' or value.state == 'completed' or value.state == 'failed' then value.lease = nil
       elseif old and old.lease then value.lease = old.lease end
+      if old and old.queueMember then redis.call('ZREM',KEYS[3],old.queueMember) end
+      if ARGV[3] == '1' then value.queueMember = nil elseif old then value.queueMember = old.queueMember end
+      indexJob(value)
       redis.call('HSET',KEYS[1],value.id,cjson.encode(value))
-      if value.state == 'delayed' then redis.call('ZADD',KEYS[2],value.timestamp + value.delay,value.id) else redis.call('ZREM',KEYS[2],value.id) end
       return 1
-    `, 2, this.key("jobs", queue), this.key("delayed", queue), JSON.stringify(job), Date.now(), enqueue ? "1" : "0");
+    `, 5, ...this.queueKeys(queue), JSON.stringify(job), Date.now(), enqueue ? "1" : "0");
     if (Number(result) === -1) throw new Error("Active job already owns deduplication key");
     if (Number(result) !== 1) throw new Error("Job lease lost");
   }
@@ -136,7 +185,7 @@ export class RedisAdapter implements FlowAdapter {
     `, 1, this.key("jobs", queue), id, token, Date.now(), duration)) === 1;
   }
   async recoverStalledJobs(queue: string, maxStalledCount: number): Promise<Job[]> {
-    const result = await this.redis.eval(`
+    const result = await this.redis.eval(`${QUEUE_INDEX_LUA}
       local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
       local recovered = {}
       for _,raw in ipairs(redis.call('HVALS',KEYS[1])) do
@@ -144,16 +193,20 @@ export class RedisAdapter implements FlowAdapter {
         if job.state == 'active' and job.lease and job.lease.expiresAt <= now then
           job.lease = nil; job.stalledCount = (job.stalledCount or 0) + 1; job.state = 'waiting'
           if job.stalledCount > tonumber(ARGV[2]) then job.state = 'failed'; job.failedReason = 'Job exceeded maximum stalled count'; job.finishedOn = tonumber(ARGV[1]) end
+          job.queueMember = nil; indexJob(job)
           redis.call('HSET',KEYS[1],job.id,cjson.encode(job)); table.insert(recovered,cjson.encode(job))
         end
       end
       return recovered
-    `, 1, this.key("jobs", queue), Date.now(), maxStalledCount) as string[];
+    `, 5, ...this.queueKeys(queue), Date.now(), maxStalledCount) as string[];
     return result.map(raw => JSON.parse(raw));
   }
   async removeJob(queue: string, id: string): Promise<void> {
-    await this.redis.hdel(this.key("jobs", queue), id);
-    await this.redis.zrem(this.key("delayed", queue), id);
+    await this.redis.eval(`
+      local raw = redis.call('HGET',KEYS[1],ARGV[1])
+      if raw then local job = cjson.decode(raw); if job.queueMember then redis.call('ZREM',KEYS[3],job.queueMember) end end
+      redis.call('HDEL',KEYS[1],ARGV[1]); redis.call('ZREM',KEYS[2],ARGV[1]); return 1
+    `, 3, this.key("jobs", queue), this.key("delayed", queue), this.key("ready", queue), id);
   }
   async ack(queue: string, id: string, token?: string): Promise<void> {
     const job = await this.getJob(queue, id);

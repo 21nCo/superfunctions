@@ -169,6 +169,17 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
     });
   }
   async createJob(queue: string, job: Job): Promise<Job> {
+    if (job.deduplicationId === undefined) {
+      // The primary key arbitrates IDs without serializing unrelated producers.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const value = { ...job, state: job.opts.delay ? "delayed" : "waiting", timestamp: Date.now(), delay: job.opts.delay ?? 0 };
+        const inserted = await this.rows(sql`INSERT INTO ${this.table("flowfn_jobs")} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) VALUES (${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},${value.timestamp + value.delay},${value.timestamp},NULL,${JSON.stringify(value)}::jsonb) ON CONFLICT(queue,id) DO NOTHING RETURNING data`);
+        if (inserted.length) return inserted[0].data as Job;
+        const existing = await this.getJob(queue, job.id);
+        if (existing) return existing;
+      }
+      throw new Error("Concurrent job removal prevented enqueue");
+    }
     return this.db.transaction(async (tx: any) => {
       // Serialize creation within a queue, including deduplication keys with different IDs.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([this.schema, queue])}, 0))`);
@@ -232,10 +243,12 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
     });
   }
   async saveJob(queue: string, job: Job): Promise<void> {
-    await this.withLease(queue, job, async (tx, current) => {
-      const value = { ...job, lease: ["completed", "failed"].includes(job.state) ? undefined : current?.lease };
-      await tx.execute(sql`UPDATE ${this.table("flowfn_jobs")} SET state=${job.state},finished_on=${job.finishedOn ?? null},data=${JSON.stringify(value)}::jsonb WHERE queue=${queue} AND id=${job.id}`);
-    });
+    const terminal = ["completed", "failed"].includes(job.state);
+    const payload = sql`${JSON.stringify(job)}::jsonb - 'lease'`;
+    const value = terminal ? payload : sql`(${payload}) || CASE WHEN data ? 'lease' THEN jsonb_build_object('lease',data->'lease') ELSE '{}'::jsonb END`;
+    const token = job.lease?.token ?? null;
+    const rows = await this.rows(sql`UPDATE ${this.table("flowfn_jobs")} SET state=${job.state},finished_on=${job.finishedOn ?? null},data=${value} WHERE queue=${queue} AND id=${job.id} AND ((NOT (data ? 'lease') AND ${token}::text IS NULL) OR (data->'lease'->>'token'=${token} AND (data->'lease'->>'expiresAt')::bigint>floor(extract(epoch from clock_timestamp())*1000)::bigint)) RETURNING id`);
+    if (!rows.length) throw new Error("Job lease lost");
   }
   async renewJobLease(queue: string, id: string, token: string, duration: number): Promise<boolean> {
     const now = sql`floor(extract(epoch from clock_timestamp()) * 1000)::bigint`;
@@ -463,11 +476,12 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
           ),
       active = true,
       timer: ReturnType<typeof setTimeout> | undefined;
+    let read: Promise<any[]> | undefined;
     const poll = async () => {
       try {
-        const rows = await this.rows(
+        const rows = await (read = this.rows(
           sql`SELECT * FROM ${this.table("flowfn_messages")} WHERE stream=${stream} AND position>${cursor} ORDER BY position LIMIT 100`,
-        );
+        ));
         for (const row of rows) {
           if (!active) return;
           await handler(this.message(row));
@@ -483,6 +497,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       unsubscribe: async () => {
         active = false;
         if (timer) clearTimeout(timer);
+        await read?.catch(() => undefined);
         this.subscriptions.delete(subscription);
       },
     };
@@ -517,6 +532,8 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
     let active = true,
       paused = false,
       timer: ReturnType<typeof setTimeout> | undefined;
+    let pollTask: Promise<void> | undefined;
+    const settlements = new Set<Promise<unknown>>();
     const pending = new Map<string, string>(),
       commits = new Set<ReturnType<typeof setTimeout>>();
     const deliveries = this.table("flowfn_deliveries"),
@@ -554,10 +571,12 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       pending.set(row.id, receipt);
       const settle = async (requeue: boolean) => {
         if (!active || pending.get(row.id) !== receipt) return;
-        await this.db.execute(
+        const task = this.db.execute(
           sql`UPDATE ${deliveries} SET state=${requeue ? "waiting" : "completed"} WHERE stream=${stream} AND group_id=${group} AND message_id=${row.id} AND receipt=${receipt}`,
         );
-        pending.delete(row.id);
+        settlements.add(task);
+        try { await task; pending.delete(row.id); }
+        finally { settlements.delete(task); }
       };
       const message = {
         ...this.message(row),
@@ -600,7 +619,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       } catch {
         /* Retain pending records for reconnect/recovery. */
       } finally {
-        if (active) timer = setTimeout(() => void poll(), this.interval);
+        if (active) timer = setTimeout(() => { pollTask = poll(); }, this.interval);
       }
     };
     const subscription: Subscription = {
@@ -614,6 +633,8 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
         active = false;
         if (timer) clearTimeout(timer);
         for (const commit of commits) clearTimeout(commit);
+        await pollTask;
+        await Promise.allSettled([...settlements]);
         for (const [id, receipt] of pending)
           await this.db.execute(
             sql`UPDATE ${deliveries} SET state='waiting' WHERE stream=${stream} AND group_id=${group} AND message_id=${id} AND receipt=${receipt}`,
@@ -623,7 +644,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       },
     };
     this.subscriptions.add(subscription);
-    void poll();
+    pollTask = poll();
     return subscription;
   }
   async saveWorkflowState(id: string, state: WorkflowExecution): Promise<void> {

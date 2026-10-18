@@ -19,6 +19,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private paused = false;
   private closed = false;
   private workers = new Set<Promise<void>>();
+  private producers = new Set<Promise<unknown>>();
   private inFlight = 0;
   private wakes = new Set<() => void>();
   private controllers = new Set<AbortController>();
@@ -28,7 +29,6 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private cache = new Map<string, { value: any; expires: number }>();
   private leases = new Map<string, { timer: ReturnType<typeof setInterval>; lost: boolean; controller?: AbortController }>();
   private recoveredAt = 0;
-  private additions: Promise<unknown> = Promise.resolve();
   constructor(
     public name: string,
     private adapter: FlowAdapter,
@@ -69,18 +69,24 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     if (guard) clearInterval(guard.timer);
     this.leases.delete(job.id);
   }
-  private guardLease(job: Job) {
+  private guardLease(job: Job, claimedAt: number) {
     if (!job.lease || !this.adapter.renewJobLease) throw new Error("Adapter must support job leases");
     const duration = this.options.leaseDuration ?? 30_000;
     let pending = false;
+    let validUntil = claimedAt + duration;
     const guard = { lost: false, controller: undefined as AbortController | undefined, timer: setInterval(async () => {
-      if (pending || guard.lost) return;
+      if (guard.lost) return;
+      if (performance.now() >= validUntil) { guard.lost = true; guard.controller?.abort(); return; }
+      if (pending) return;
       pending = true;
+      const started = performance.now();
       try {
         if (!await this.adapter.renewJobLease!(this.name, job.id, job.lease!.token, duration)) {
           guard.lost = true; guard.controller?.abort();
-        }
-      } catch { guard.lost = true; guard.controller?.abort(); }
+        } else validUntil = started + duration;
+      } catch {
+        if (performance.now() >= validUntil) { guard.lost = true; guard.controller?.abort(); }
+      }
       finally { pending = false; }
     }, Math.max(1, Math.floor(duration / 3))) };
     this.leases.set(job.id, guard);
@@ -156,7 +162,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     }
     if (options.priority !== undefined && !Number.isFinite(options.priority))
       throw new Error("Priority must be finite");
-    const operation = this.additions.then(async () => {
+    const operation = Promise.resolve().then(async () => {
       this.open();
       if (!this.adapter.createJob)
         throw new Error("Adapter must implement atomic createJob for enqueue");
@@ -170,7 +176,8 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
       this.wake();
       return job;
     });
-    this.additions = operation.catch(() => undefined);
+    this.producers.add(operation);
+    void operation.then(() => this.producers.delete(operation), () => this.producers.delete(operation));
     return operation;
   }
   async addBulk(jobs: Array<{ name: string; data: T; opts?: JobOptions }>) {
@@ -226,6 +233,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
         }
       }
     }
+    const claimedAt = performance.now();
     const raw = await this.adapter.dequeue(this.name, name, this.options.leaseDuration ?? 30_000);
     if (!raw) return null;
     if ((name && raw.name !== name) || this.paused || this.closed) {
@@ -240,7 +248,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
         return null;
       }
     }
-    this.guardLease(job);
+    this.guardLease(job, claimedAt);
     return job;
   }
   private async loop(
@@ -283,9 +291,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
           if (this.closed) throw new Error("Queue closed");
         }
       if (guard.lost) return;
-      job.state = "active";
-      job.processedOn = Date.now();
-      await this.adapter.saveJob?.(this.name, snapshotJob(job));
+      // dequeue already atomically persists active state and processing time.
       this.emitSafe("active", job);
       const key = this.options.cache?.enabled
         ? (this.options.cache.keyGenerator?.(job) ??
@@ -315,6 +321,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
           if (timer) clearTimeout(timer);
           await task.catch(() => undefined);
         }
+        if (guard.lost) return;
         if (key !== undefined)
           this.cache.set(key, {
             value: structuredClone(result),
@@ -507,7 +514,10 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     this.closed = true;
     for (const controller of this.controllers) controller.abort();
     this.wake();
-    try { await Promise.all([...this.workers]); }
+    try {
+      await Promise.allSettled([...this.producers]);
+      await Promise.all([...this.workers]);
+    }
     finally {
       for (const guard of this.leases.values()) clearInterval(guard.timer);
       this.leases.clear();

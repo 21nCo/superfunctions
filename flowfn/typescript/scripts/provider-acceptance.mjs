@@ -48,7 +48,7 @@ async function start(kind, image, port, extra = []) {
         name,
         ...(kind === "redis"
           ? ["redis-cli", "ping"]
-          : ["pg_isready", "-U", "postgres"]),
+          : ["pg_isready", "-h", "127.0.0.1", "-U", "postgres"]),
       ],
       { encoding: "utf8" },
     );
@@ -75,7 +75,7 @@ try {
     "src/adapters/redis.test.ts",
     "src/adapters/postgres/postgres.test.ts",
   ];
-  command(npm ? process.execPath : "npm", npm ? [npm, ...args] : args, {
+  command(process.env.FLOWFN_BENCHMARK ? process.execPath : npm ? process.execPath : "npm", process.env.FLOWFN_BENCHMARK ? ["--expose-gc", "scripts/queue-benchmark.mjs"] : npm ? [npm, ...args] : args, {
     stdio: "inherit",
     env: {
       ...process.env,

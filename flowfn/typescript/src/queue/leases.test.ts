@@ -53,6 +53,41 @@ describe('queue ownership', () => {
       expect((await queue.getJob(next.id))?.state).toBe('waiting');
     } finally { await queue.close(); }
   });
+  it('retries a transient renewal error within the confirmed lease deadline', async () => {
+    const adapter = new MemoryAdapter();
+    const renew = adapter.renewJobLease.bind(adapter);
+    let attempts = 0;
+    adapter.renewJobLease = async (...args) => {
+      if (attempts++ === 0) throw new Error('temporary transport failure');
+      return renew(...args);
+    };
+    const queue = new QueueImpl('transient-renewal', adapter, { leaseDuration: 180, stalledInterval: 20 });
+    try {
+      const job = await queue.add('work', {});
+      queue.process(async () => { await new Promise(resolve => setTimeout(resolve, 450)); return 'done'; });
+      await queue.drain();
+      expect(attempts).toBeGreaterThan(1);
+      expect((await queue.getJob(job.id))?.returnvalue).toBe('done');
+      expect((await queue.getJob(job.id))?.stalledCount ?? 0).toBe(0);
+    } finally { await queue.close(); }
+  });
+  it('aborts at the confirmed deadline even when renewal never settles', async () => {
+    const adapter = new MemoryAdapter();
+    adapter.renewJobLease = () => new Promise<boolean>(() => undefined);
+    const queue = new QueueImpl('hung-renewal', adapter, { leaseDuration: 60, stalledInterval: 10, maxStalledCount: 0 });
+    let aborted = false;
+    try {
+      const job = await queue.add('work', {});
+      queue.process(async active => {
+        await new Promise<void>(resolve => active.signal!.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true }));
+        return 'stale result';
+      });
+      await queue.drain();
+      expect(aborted).toBe(true);
+      expect((await queue.getJob(job.id))?.state).toBe('failed');
+      expect((await queue.getJob(job.id))?.returnvalue).toBeUndefined();
+    } finally { await queue.close(); }
+  });
   it('rejects invalid lease settings before processing', () => {
     expect(() => new QueueImpl('work', new MemoryAdapter(), { leaseDuration: 0 })).toThrow('leaseDuration');
     expect(() => new QueueImpl('work', new MemoryAdapter(), { maxStalledCount: -1 })).toThrow('maxStalledCount');
