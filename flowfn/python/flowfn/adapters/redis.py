@@ -15,59 +15,38 @@ from urllib.parse import quote
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError, WatchError
 
-from flowfn.adapters.memory import MemoryAdapter
+from flowfn.adapters.durable_queues import DurableQueues
 from flowfn.queue.dlq import DLQJob, DLQManager
 from flowfn.queue.types import Job, JobOptions, JobStatus, QueueStats, BackoffType
 from flowfn.stream.types import ConsumerOptions, Message, StreamInfo, TrimStrategy
 from flowfn.workflow.types import WorkflowExecution
 
 
-class RedisAdapter:
+class RedisAdapter(DurableQueues):
     def __init__(self, url: str = 'redis://localhost:6379', *, namespace: str = 'flowfn',
                  reclaim_after_ms: int = 30000,
                  backoff_strategies: Optional[dict[str, Callable[[int], int]]] = None) -> None:
         if not namespace or reclaim_after_ms < 100:
             raise ValueError('A namespace and reclaim_after_ms >= 100 are required')
         self.client: Redis = Redis.from_url(url, decode_responses=True)
+        self.namespace = namespace
         self.prefix = 'flowfn:' + quote(namespace, safe='')
         self.state_key = self.prefix + ':state'
-        self.backoff_strategies = dict(backoff_strategies or {})
-        self.reclaim_after_ms = reclaim_after_ms
+        self._setup_queues(reclaim_after_ms, backoff_strategies)
         self._subscriptions: set[RedisSubscription] = set()
-        self._closed = False
-        self._job_heartbeats: dict[tuple[str, str], asyncio.Task[None]] = {}
 
     def _stream(self, name: str) -> str:
+        self._check_open()
         return self.prefix + ':stream:' + quote(name, safe='')
 
-    @staticmethod
-    def _decode(raw: Optional[str]) -> MemoryAdapter:
-        adapter = MemoryAdapter()
-        state = json.loads(raw) if raw else {}
-        for name, jobs in state.get('queues', {}).items():
-            adapter._queues[name] = [Job.model_validate(job) for job in jobs]
-        for record in state.get('dead_letters', []):
-            record['options'] = JobOptions.model_validate(record['options'])
-            item = DLQJob(**record)
-            adapter._dead_letters[(item.original_queue, item.id)] = item
-        for queue, identity, status in state.get('dependencies', []):
-            adapter._dependency_results[(queue, identity)] = JobStatus(status)
-        return adapter
+    def _check_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("Redis adapter is closed")
 
-    @staticmethod
-    def _encode(adapter: MemoryAdapter) -> str:
-        dead_letters = []
-        for record in adapter._dead_letters.values():
-            value = asdict(record)
-            value['options'] = record.options.model_dump(mode='json')
-            dead_letters.append(value)
-        return json.dumps({
-            'queues': {name: [job.model_dump(mode='json') for job in jobs]
-                       for name, jobs in adapter._queues.items()},
-            'dead_letters': dead_letters,
-            'dependencies': [[queue, identity, status.value]
-                             for (queue, identity), status in adapter._dependency_results.items()],
-        }, allow_nan=False)
+    async def _read_queue_state(self) -> Optional[str]:
+        self._check_open()
+        value: Optional[str] = await self.client.get(self.state_key)
+        return value
 
     async def _transition(self, method: str, *args: Any) -> Any:
         if self._closed:
@@ -77,32 +56,8 @@ class RedisAdapter:
                 try:
                     await pipe.watch(self.state_key)
                     adapter = self._decode(await pipe.get(self.state_key))
-                    now = int(time.time() * 1000)
-                    if method == 'dequeue':
-                        for candidate in adapter._queues[args[0]]:
-                            if candidate.state == JobStatus.ACTIVE and (candidate.lease_expires_at or 0) <= now:
-                                candidate.state = JobStatus.WAITING
-                                candidate.lease_token = None
-                                candidate.lease_expires_at = None
-                    if method in ('update_job', '_renew_job'):
-                        queue, incoming = args
-                        stored = next((entry for entry in adapter._queues[queue] if entry.id == incoming.id), None)
-                        if stored is None or stored.state != JobStatus.ACTIVE or stored.lease_token != incoming.lease_token or (stored.lease_expires_at or 0) <= now:
-                            raise ValueError('Job lease has expired or ownership changed')
-                    if method == '_renew_job':
-                        assert stored is not None
-                        stored.lease_expires_at = now + self.reclaim_after_ms
-                        result = None
-                    else:
-                        if method == 'update_job' and args[1].state == JobStatus.ACTIVE:
-                            args[1].lease_expires_at = now + self.reclaim_after_ms
-                        result = await getattr(adapter, method)(*args)
-                        if method == 'update_job' and args[1].state == JobStatus.FAILED:
-                            await DLQManager(adapter=adapter).move_to_dlq(args[1], args[1].failed_reason or 'Job failed', args[0])
-                    if method == 'dequeue' and result is not None:
-                        self._restore_backoff(result)
-                        result.lease_token = uuid.uuid4().hex
-                        result.lease_expires_at = now + self.reclaim_after_ms
+                    seconds, micros = await pipe.time()
+                    result = await self._apply(adapter, method, args, seconds * 1000 + micros // 1000)
                     payload = self._encode(adapter)
                     pipe.multi()  # type: ignore[no-untyped-call]
                     pipe.set(self.state_key, payload)
@@ -111,76 +66,12 @@ class RedisAdapter:
                 except WatchError:
                     await asyncio.sleep(0)
 
-    def _restore_backoff(self, job: Job) -> None:
-        if job.opts.backoff and job.opts.backoff.type == BackoffType.CUSTOM:
-            strategy = self.backoff_strategies.get(job.name)
-            if strategy is None:
-                raise ValueError(f'Configure backoff_strategies for job name: {job.name}')
-            job.opts.backoff.strategy = strategy
-
-    async def enqueue(self, queue: str, job: Job) -> Job:
-        self._restore_backoff(job)
-        result: Job = await self._transition('enqueue', queue, job.model_copy(deep=True))
-        return result
-
-    async def update_job(self, queue: str, job: Job) -> None:
-        await self._transition('update_job', queue, job.model_copy(deep=True))
-        if job.state != JobStatus.ACTIVE:
-            heartbeat = self._job_heartbeats.pop((queue, job.id), None)
-            if heartbeat is not None:
-                heartbeat.cancel()
-                await asyncio.gather(heartbeat, return_exceptions=True)
-
-    async def dequeue(self, queue: str) -> Optional[Job]:
-        result: Optional[Job] = await self._transition('dequeue', queue)
-        if result is not None:
-            key = (queue, result.id)
-            previous = self._job_heartbeats.pop(key, None)
-            if previous is not None:
-                previous.cancel()
-                await asyncio.gather(previous, return_exceptions=True)
-            self._job_heartbeats[key] = asyncio.create_task(self._renew_job(queue, result.model_copy(deep=True)))
-        return result
-
-    async def _renew_job(self, queue: str, job: Job) -> None:
-        while not self._closed:
-            await asyncio.sleep(self.reclaim_after_ms / 3000)
-            try:
-                await self._transition('_renew_job', queue, job)
-            except Exception:
-                # Failure to renew allows takeover; stale completion is fenced.
-                return
-
-    async def get_queue_stats(self, queue: str) -> QueueStats:
-        return await self._decode(await self.client.get(self.state_key)).get_queue_stats(queue)
-
-    async def get_jobs(self, queue: str, status: JobStatus) -> list[Job]:
-        return await self._decode(await self.client.get(self.state_key)).get_jobs(queue, status)
-
-    async def get_all_jobs(self, queue: str) -> list[Job]:
-        return await self._decode(await self.client.get(self.state_key)).get_all_jobs(queue)
-
-    async def clean_jobs(self, queue: str, grace: int, status: JobStatus) -> int:
-        result: int = await self._transition('clean_jobs', queue, grace, status)
-        return result
-
-    async def save_dead_letter(self, record: DLQJob) -> None:
-        await self._transition('save_dead_letter', record)
-
-    async def get_dead_letters(self) -> list[DLQJob]:
-        return await self._decode(await self.client.get(self.state_key)).get_dead_letters()
-
-    async def delete_dead_letter(self, queue: str, job_id: str) -> None:
-        await self._transition('delete_dead_letter', queue, job_id)
-
-    async def retry_dead_letter(self, queue: str, job_id: str) -> Job:
-        result: Job = await self._transition('retry_dead_letter', queue, job_id)
-        return result
-
     async def save_workflow_state(self, execution_id: str, execution: WorkflowExecution) -> None:
+        self._check_open()
         await self.client.set(self.prefix + ':workflow:' + quote(execution_id, safe=''), execution.model_dump_json())
 
     async def load_workflow_state(self, execution_id: str) -> Optional[WorkflowExecution]:
+        self._check_open()
         value = await self.client.get(self.prefix + ':workflow:' + quote(execution_id, safe=''))
         return WorkflowExecution.model_validate_json(value) if value else None
 
@@ -271,10 +162,7 @@ class RedisAdapter:
     async def cleanup(self) -> None:
         self._closed = True
         await asyncio.gather(*(item.unsubscribe() for item in list(self._subscriptions)))
-        for task in self._job_heartbeats.values():
-            task.cancel()
-        await asyncio.gather(*self._job_heartbeats.values(), return_exceptions=True)
-        self._job_heartbeats.clear()
+        await self._close_queues()
         await self.client.aclose()
 
 
@@ -319,8 +207,10 @@ class RedisSubscription:
                     message = Message.model_validate_json(fields['payload'])
                     decision: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
 
-                    async def settle(requeue: bool, future: asyncio.Future[bool] = decision) -> None:
+                    async def settle(requeue: bool, future: asyncio.Future[bool] = decision, delivery_id: str = identity) -> None:
                         if not future.done():
+                            if self.group and not requeue and not await self._owned(delivery_id, acknowledge=True):
+                                raise RuntimeError('Stream delivery ownership changed')
                             future.set_result(requeue)
 
                     message._acknowledge = settle
@@ -336,8 +226,6 @@ class RedisSubscription:
                         except Exception as exc:
                             self.error = exc
                             requeue = True
-                        if self.group and not requeue:
-                            await self._owned(identity, acknowledge=True)
                     finally:
                         if heartbeat is not None:
                             heartbeat.cancel()

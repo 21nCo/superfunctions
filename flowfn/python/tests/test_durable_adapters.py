@@ -5,31 +5,43 @@ import uuid
 
 import pytest
 
-pytest.importorskip("redis")
-
-from flowfn.adapters.redis import RedisAdapter
 from flowfn.queue.types import Job, JobOptions, JobStatus
 from flowfn.queue.dlq import DLQManager
 from flowfn.stream.types import Message, ConsumerOptions, TrimStrategy
 
-URL = os.getenv('FLOWFN_REDIS_URL')
-pytestmark = pytest.mark.skipif(not URL, reason='Requires disposable Redis')
 
-
-@pytest.fixture
-async def adapters():
+@pytest.fixture(params=['redis', 'postgres'])
+async def adapters(request):
+    backend = request.param
+    url = os.getenv('FLOWFN_' + backend.upper() + '_URL')
+    if not url:
+        pytest.skip('Requires disposable ' + backend)
+    if backend == 'redis':
+        pytest.importorskip('redis')
+        from flowfn.adapters.redis import RedisAdapter as Adapter
+    else:
+        pytest.importorskip('asyncpg')
+        from flowfn.adapters.postgres import PostgresAdapter as Adapter
     namespace = 'test-' + uuid.uuid4().hex
-    a = RedisAdapter(URL, namespace=namespace, reclaim_after_ms=150)
-    b = RedisAdapter(URL, namespace=namespace, reclaim_after_ms=150)
+    a = Adapter(url, namespace=namespace, reclaim_after_ms=1000)
+    b = Adapter(url, namespace=namespace, reclaim_after_ms=1000)
+    a.test_url = b.test_url = url
     try:
         yield a, b
     finally:
         await a.cleanup()
         await b.cleanup()
-        client = RedisAdapter(URL, namespace=namespace)
-        keys = [key async for key in client.client.scan_iter(match=client.prefix + ':*')]
-        if keys:
-            await client.client.delete(*keys)
+        client = Adapter(url, namespace=namespace)
+        if backend == 'redis':
+            keys = [key async for key in client.client.scan_iter(match=client.prefix + ':*')]
+            if keys:
+                await client.client.delete(*keys)
+        else:
+            pool = await client._database()
+            async with pool.acquire() as connection:
+                async with connection.transaction():
+                    for table in ('pending','groups','events','workflows','state'):
+                        await connection.execute('DELETE FROM flowfn_py_' + table + ' WHERE namespace=$1',namespace)
         await client.cleanup()
 
 
@@ -77,11 +89,11 @@ async def test_groups_cross_instance_heartbeat_trim_and_recovery(adapters):
         received.set()
 
     await b.consume('events','g','second',accept,options)
-    await asyncio.sleep(.45)
+    await asyncio.sleep(2.5)
     assert deliveries == ['message']  # heartbeat protects slow live worker
     assert await b.trim_stream('events',TrimStrategy(max_length=0)) == 0
     await sub.unsubscribe()
-    await asyncio.wait_for(received.wait(),2)
+    await asyncio.wait_for(received.wait(),4)
     await asyncio.sleep(.05)
     assert deliveries == ['message','message']
     assert await b.trim_stream('events',TrimStrategy(max_length=0)) == 1
@@ -107,8 +119,8 @@ async def test_durable_snapshot_new_connection_and_namespaces(adapters):
                                   status=ExecutionStatus.RUNNING, started_at=1,created_at=1,updated_at=1)
     await a.save_workflow_state('exec',execution)
     await a.cleanup()
-    restored = RedisAdapter(URL, namespace=a.prefix.removeprefix('flowfn:'))
-    isolated = RedisAdapter(URL, namespace='isolated-' + uuid.uuid4().hex)
+    restored = type(a)(a.test_url, namespace=a.namespace)
+    isolated = type(a)(a.test_url, namespace='isolated-' + uuid.uuid4().hex)
     try:
         assert (await restored.load_workflow_state('exec')).id == 'exec'
         assert len(await restored.get_all_jobs('q')) == 2
@@ -122,10 +134,10 @@ async def test_job_lease_recovery_fences_old_completion(adapters):
     a, b = adapters
     await a.enqueue('jobs', Job(id='lease', name='work',data={},timestamp=0))
     old = await a.dequeue('jobs')
-    await asyncio.sleep(.4)
+    await asyncio.sleep(2.5)
     assert await b.dequeue('jobs') is None
     await a.cleanup()
-    await asyncio.sleep(.2)
+    await asyncio.sleep(1.2)
     current = await b.dequeue('jobs')
     assert current.id == old.id and current.lease_token != old.lease_token
     old.state = JobStatus.COMPLETED
@@ -150,3 +162,22 @@ async def test_custom_backoff_restored_before_claim(adapters):
     b.backoff_strategies['custom'] = strategy
     claimed = await b.dequeue('q')
     assert claimed.opts.backoff.strategy(3) == 21
+
+
+async def test_concurrent_publication_preserves_every_group_delivery(adapters):
+    a,b = adapters
+    seen = set()
+    done = asyncio.Event()
+
+    async def handle(message):
+        seen.add(message.id)
+        await message.ack()
+        if len(seen) == 30:
+            done.set()
+
+    await a.consume('parallel','all','consumer',handle,
+                    ConsumerOptions(group_id='all',from_beginning=True,max_in_flight=3))
+    await asyncio.gather(*(adapter.publish('parallel',Message(id=str(i),stream='parallel',data=i,timestamp=0))
+                           for i,adapter in enumerate([a,b]*15)))
+    await asyncio.wait_for(done.wait(),10)
+    assert seen == {str(i) for i in range(30)}
