@@ -1,0 +1,22 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M585VX6EQD1AHNHXGS33JT10",
+  "strategy": "manual-commit",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "extfn/docs/consumer-host-abstraction.md",
+    "extfn/docs/content/docs/reference/consumer-host-abstraction.md",
+    "extfn/docs/static/llms-full.txt",
+    "filefn/docs/turbo.json",
+    "scripts/docs-site/runtime.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
