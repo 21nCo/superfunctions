@@ -725,6 +725,119 @@ esac
     }
   });
 
+  it("counts a lease as serving its port only while its owner is verified running", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "devfn-serving-owner-"));
+    const dockerState = path.join(dir, "docker-state");
+    const originalPath = process.env.PATH;
+    const registry = new FilePortRegistry(path.join(dir, "registry.json"), undefined, async () => true);
+    try {
+      await writeFile(path.join(dir, "docker"), `#!/bin/sh
+case "$(cat "${dockerState}")" in
+  running) echo true;;
+  gone) echo "Error: No such object: $4" >&2; exit 1;;
+  *) echo "Cannot connect to the Docker daemon" >&2; exit 1;;
+esac
+`, { mode: 0o700 });
+      process.env.PATH = `${dir}${path.delimiter}${originalPath ?? ""}`;
+      const port = await allocateEphemeralPort();
+      await registry.reserve({ projectId: "app", instanceId: "one", invocationId: "ready", profile: "default", requests: [{ name: "api", spec: { preferred: port, exact: true } }] });
+      await registry.markActive("ready", { api: { container: { id: "fixture-container" } } });
+      // An unreachable Docker keeps the lifecycle for cleanup but is no evidence that it serves.
+      for (const [docker, serves, mayRun] of [["running", true, true], ["unreachable", false, true], ["gone", false, false]] as const) {
+        await writeFile(dockerState, docker);
+        expect(await registry.instanceServesPort("one", port), docker).toBe(serves);
+        expect(await registry.instanceMayRun("one"), docker).toBe(mayRun);
+      }
+      await writeFile(dockerState, "running");
+      expect(await registry.instanceServesPort("one", port + 1)).toBe(false);
+      expect(await registry.instanceServesPort("two", port)).toBe(false);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses malformed serving evidence of the queried instance and never rewrites it", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "devfn-serving-malformed-"));
+    const registry = new FilePortRegistry(path.join(dir, "registry.json"), undefined, async () => true);
+    const self = { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! };
+    try {
+      const ports = { one: await allocateEphemeralPort(), two: await allocateEphemeralPort() };
+      for (const instanceId of ["one", "two"] as const) {
+        await registry.reserve({ projectId: "app", instanceId, invocationId: instanceId, profile: "default", requests: [{ name: "api", spec: { preferred: ports[instanceId], exact: true } }] });
+        await registry.markActive(instanceId, { api: { process: self } });
+      }
+      expect(await registry.instanceServesPort("one", ports.one)).toBe(true);
+      const valid = JSON.parse(await readFile(registry.filePath, "utf8")) as { allocations: Array<Record<string, unknown>> };
+      const owners: Array<[string, Record<string, unknown>, boolean | "invalid"]> = [
+        ["pid zero", { process: { ...self, pid: 0 } }, "invalid"],
+        ["pid text", { process: { ...self, pid: String(self.pid) } }, "invalid"],
+        ["empty signature", { process: { ...self, birthSignature: "" } }, "invalid"],
+        ["no signature", { process: { pid: self.pid } }, false],
+        ["empty container", { container: { id: "" } }, "invalid"],
+        ["container environment", { container: { id: "fixture", dockerEnvironment: { DOCKER_HOST: 1 } } }, "invalid"],
+      ];
+      for (const [label, owner, outcome] of owners) {
+        const saved = structuredClone(valid);
+        const lease = saved.allocations.find((item) => item.instanceId === "one")!;
+        delete lease.process;
+        Object.assign(lease, owner);
+        const bytes = JSON.stringify(saved);
+        await writeFile(registry.filePath, bytes);
+        if (outcome === "invalid") await expect(registry.instanceServesPort("one", ports.one), label).rejects.toMatchObject({ code: "DEVFN_REGISTRY_INVALID" });
+        else expect(await registry.instanceServesPort("one", ports.one), label).toBe(outcome);
+        expect(await registry.instanceServesPort("two", ports.two), label).toBe(true);
+        expect(await readFile(registry.filePath, "utf8"), label).toBe(bytes);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts only a settled ready lifecycle's own lease whose process is verified running as serving", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "devfn-serving-lifecycle-"));
+    const registry = new FilePortRegistry(path.join(dir, "registry.json"), undefined, async () => true);
+    const birthSignature = (await processBirthSignature(process.pid))!;
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+    try {
+      const exited = { pid: child.pid!, birthSignature: (await processBirthSignature(child.pid!))! };
+      const childExit = new Promise((resolve) => child.once("exit", resolve));
+      child.kill("SIGKILL");
+      await childExit;
+      const port = await allocateEphemeralPort();
+      await registry.reserve({ projectId: "app", instanceId: "one", invocationId: "one", profile: "default", requests: [{ name: "api", spec: { preferred: port, exact: true } }] });
+      await registry.markActive("one", { api: { process: { pid: process.pid, birthSignature } } });
+      expect(await registry.instanceServesPort("one", port)).toBe(true);
+      type Saved = { invocations: Array<Record<string, unknown>>; allocations: Array<Record<string, unknown>> };
+      const valid = JSON.parse(await readFile(registry.filePath, "utf8")) as Saved;
+      const cases: Array<[string, (invocation: Record<string, unknown>, lease: Record<string, unknown>) => void, boolean | "invalid"]> = [
+        ["stopping lifecycle", (invocation) => { invocation.state = "stopping"; }, false],
+        ["legacy invocation without owner journal", (invocation) => { delete invocation.ownerJournal; }, false],
+        ["unresolved launch", (invocation) => { invocation.launching = ["api"]; }, false],
+        ["lease recorded for another lifecycle", (_, lease) => { lease.instanceId = "other"; }, false],
+        ["released lease", (_, lease) => { lease.state = "released"; }, false],
+        ["udp lease", (_, lease) => { lease.protocol = "udp"; }, false],
+        ["reused pid", (_, lease) => { lease.process = { pid: process.pid, birthSignature: `${birthSignature.split(":")[0]}:reused-pid` }; }, false],
+        ["unverifiable signature", (_, lease) => { lease.process = { pid: process.pid, birthSignature: "fixture-format:unverifiable" }; }, false],
+        ["exited owner", (_, lease) => { lease.process = exited; }, false],
+        ["malformed owner journal", (invocation) => { invocation.ownerJournal = "yes"; }, "invalid"],
+        ["malformed launching", (invocation) => { invocation.launching = [""]; }, "invalid"],
+      ];
+      for (const [label, mutate, outcome] of cases) {
+        const saved = structuredClone(valid);
+        mutate(saved.invocations[0]!, saved.allocations[0]!);
+        const bytes = JSON.stringify(saved);
+        await writeFile(registry.filePath, bytes);
+        if (outcome === "invalid") await expect(registry.instanceServesPort("one", port), label).rejects.toMatchObject({ code: "DEVFN_REGISTRY_INVALID" });
+        else expect(await registry.instanceServesPort("one", port), label).toBe(outcome);
+        expect(await readFile(registry.filePath, "utf8"), label).toBe(bytes);
+      }
+    } finally {
+      child.kill("SIGKILL");
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.skipIf(process.platform !== "darwin")("keeps a live recorded owner whose birth signature cannot be read as possibly running", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "devfn-unverified-owner-"));
     const originalPath = process.env.PATH;

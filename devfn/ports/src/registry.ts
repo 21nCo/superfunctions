@@ -5,7 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { processExists, processGroupStatus } from "@devfn/processes";
+import { processExists, processGroupStatus, processIdentityStatus } from "@devfn/processes";
 
 import { allocateEphemeralPort, bindProbe, connectionRefused, isPortAvailable, scanListenerState } from "./listeners.js";
 import { withFileLock, withRoutingLock } from "./lock.js";
@@ -280,6 +280,35 @@ async function journalMayRun(state: RegistryState, invocation: RegistryInvocatio
   if (!owners.length && !invocation.ownerJournal) return CLAIM_STATES.has(invocation.state);
   for (const owner of owners) if (await ownerMayRun(owner)) return true;
   return false;
+}
+
+const nonEmptyText = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+const malformedEvidence = (detail: string) => new PortRegistryError("DEVFN_REGISTRY_INVALID", `Registry owner evidence is malformed: ${detail}.`);
+
+/**
+ * Shape checks for the evidence instanceServesPort authorizes from. read()
+ * checks only the top-level arrays, so a malformed field must fail closed
+ * here rather than read as present or absent.
+ */
+function assertServingInvocation(invocation: RegistryInvocation): void {
+  if (invocation.ownerJournal !== undefined && invocation.ownerJournal !== true) throw malformedEvidence(`invocation ${String(invocation.id)} ownerJournal`);
+  if (invocation.launching !== undefined && (!Array.isArray(invocation.launching) || !invocation.launching.every(nonEmptyText))) {
+    throw malformedEvidence(`invocation ${String(invocation.id)} launching`);
+  }
+}
+
+function assertServingOwner(allocation: PortAllocation): void {
+  const { process: owner, container } = allocation;
+  if (owner !== undefined && (!owner || typeof owner !== "object" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 ||
+    (owner.birthSignature !== undefined && !nonEmptyText(owner.birthSignature)) || (owner.recordedAt !== undefined && typeof owner.recordedAt !== "string"))) {
+    throw malformedEvidence(`lease ${String(allocation.id)} process owner`);
+  }
+  if (container !== undefined && (!container || typeof container !== "object" || !nonEmptyText(container.id) ||
+    (container.name !== undefined && typeof container.name !== "string") ||
+    (container.dockerEnvironment !== undefined && (!container.dockerEnvironment || typeof container.dockerEnvironment !== "object" || Array.isArray(container.dockerEnvironment) ||
+      !Object.values(container.dockerEnvironment).every((value) => typeof value === "string"))))) {
+    throw malformedEvidence(`lease ${String(allocation.id)} container owner`);
+  }
 }
 
 function stableOffset(value: string, size: number): number {
@@ -746,6 +775,39 @@ export class FilePortRegistry {
     for (const invocation of state.invocations.filter((item) => item.instanceId === instanceId)) {
       if (CLAIM_STATES.has(invocation.state) && invocation.state !== "ready" && recentlyRefreshed(invocation)) return true;
       if (await journalMayRun(state, invocation)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Affirmative evidence that a ready lifecycle of this instance serves
+   * targetPort right now: its active TCP lease on that port names a process
+   * whose identity is verified running, or a container Docker reports
+   * running. Unlike instanceMayRun this is authorization evidence, so an
+   * unverifiable identity, an unresolved launch, an owner-less legacy
+   * invocation, a lease recorded for another lifecycle or any other
+   * uncertainty is false, and malformed evidence of this instance throws
+   * DEVFN_REGISTRY_INVALID. The registry is never rewritten. Callers hold the
+   * routing lock across this check and the action it permits.
+   */
+  public async instanceServesPort(instanceId: string, targetPort: number): Promise<boolean> {
+    const state = await withRoutingLock(path.dirname(this.filePath), async () => await this.read());
+    const invocations = state.invocations.filter((invocation) => invocation.instanceId === instanceId);
+    for (const invocation of invocations) assertServingInvocation(invocation);
+    for (const invocation of invocations) {
+      if (invocation.state !== "ready" || invocation.ownerJournal !== true || invocation.launching?.length) continue;
+      for (const allocation of state.allocations) {
+        if (allocation.invocationId !== invocation.id || allocation.state !== "active" || allocation.protocol !== "tcp" || allocation.port !== targetPort) continue;
+        assertServingOwner(allocation);
+        // A lease joined to this invocation by id alone, but recorded for another lifecycle, is no evidence for it.
+        if (allocation.instanceId !== invocation.instanceId || allocation.projectId !== invocation.projectId) continue;
+        if (!allocation.process && !allocation.container) continue;
+        // A process recorded without a birth signature cannot be verified as the same process.
+        if (allocation.process && allocation.process.birthSignature === undefined) continue;
+        if (allocation.process && await processIdentityStatus(allocation.process.pid, allocation.process.birthSignature, allocation.process.recordedAt) !== "running") continue;
+        if (allocation.container && await inspectContainerRunning(allocation.container) !== true) continue;
+        return true;
+      }
     }
     return false;
   }
