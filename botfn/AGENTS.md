@@ -24,7 +24,7 @@ botfn/
 └── admin/                # @superfunctions/botfn-admin
 ```
 
-Bots keep platform-agnostic handlers in `src/core.ts` (or `src/index.ts` for Slack) and a Cloudflare entrypoint (`src/index.cloudflare.ts` or Wrangler `main`). Deploy with `wrangler`; do not add `index.digitalocean.ts` / `index.vercel.ts`.
+The Discord bot keeps platform-agnostic handlers in `src/core.ts` and its Cloudflare entrypoint in `src/index.cloudflare.ts`. Slack currently combines its Worker entrypoint, Slack route and signature verification in `src/index.ts`. Deploy with `wrangler`; do not add `index.digitalocean.ts` / `index.vercel.ts`.
 
 ## Shared packages
 
