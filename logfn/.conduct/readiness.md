@@ -43,3 +43,7 @@ TypeScript sanitizer now handles cycles, deep nesting, throwing getters, invalid
 ## TypeScript async delivery and cyclic redaction
 
 TypeScript parent/child loggers share async sink tracking; flush joins delivery before hooks, awaits all hooks even when another fails synchronously, and reports a completed background rejection. Cyclic context is sanitized before redaction, preserving literal prototype keys without prototype mutation; cycles no longer cause a skipped redaction stage and raw secret delivery.175coretests, source typecheck and build pass. Includes three deterministic async ownership/failure regressions and a real logger-to-sink cyclic secret regression. Other spec gates above remain open.
+
+## Server preset and signal shutdown
+
+The server preset now installs its HTTP sink when url is supplied. Signal handlers no longer enqueue a success event after final flush, and failed delivery exits1 instead of0.179coretests/typecheck/build pass. New tests cover actualHTTPpresetdelivery, both signals, repeated-handler suppression, listenercleanup and failureexitstatus. Separate real Node subprocess probes send actual SIGTERM/SIGINT and verify both queued events reach a file before exit0. Other fullspec requirements remain open.

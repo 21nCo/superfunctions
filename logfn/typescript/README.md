@@ -417,3 +417,10 @@ and its children before invoking every sink's flush hook. It reports background
 delivery failures after all flush hooks settle; synchronous logging still does
 not throw sink failures. Redaction handles cyclic context before serialization,
 so cycles do not cause the redaction stage to be skipped.
+
+`serverLogger({ name, url })` sends to both the JSON console sink and the supplied
+HTTP endpoint. Call `await logger.flush()` before normal shutdown. The opt-in
+`registerProcessHandlers(logger)` helper owns SIGTERM/SIGINT termination: it
+logs the received signal, drains accepted events, then exits with status 0 on
+success or 1 on delivery failure. It does not enqueue another event after the
+final flush. Its returned cleanup function removes both signal listeners.

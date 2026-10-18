@@ -22,15 +22,15 @@ export function registerProcessHandlers(logger: Logger): () => void {
     }
 
     shuttingDown = true;
-    logger.info(`Received ${signal}, flushing logs...`);
-
+    let exitCode = 0;
     try {
+      logger.info(`Received ${signal}, flushing logs...`);
       await logger.flush();
-      logger.info("Logs flushed successfully");
     } catch (error) {
+      exitCode = 1;
       console.error("[logfn] Failed to flush on shutdown", error);
     } finally {
-      process.exit(0);
+      process.exit(exitCode);
     }
   };
 
