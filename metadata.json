@@ -2,7 +2,7 @@
   "cli_version": "0.11.3",
   "checkpoint_id": "01M585VX6EQD1AHNHXGS33JT10",
   "strategy": "manual-commit",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
     "extfn/docs/consumer-host-abstraction.md",
     "extfn/docs/content/docs/reference/consumer-host-abstraction.md",
@@ -17,6 +17,20 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 14,
+    "cache_creation_tokens": 5779,
+    "cache_read_tokens": 2168725,
+    "output_tokens": 2508,
+    "api_call_count": 7
+  }
 }
