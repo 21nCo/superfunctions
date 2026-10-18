@@ -44,3 +44,21 @@ logger = create_logger(
 
 logger.info("User logged in", user_id="123", email="user@example.com")
 ```
+
+## HTTP delivery and shutdown
+
+`SinkHttp` sends `{ "events": [...] }` batches compatible with the TypeScript
+ingestion handler. Synchronous logging enqueues; with a running event loop,
+`batch_size` and `flush_interval_ms` trigger background delivery. Without a running
+loop, explicitly run `await sink.flush()` before shutdown.
+
+`flush()` waits for any active delivery and rejects on failure, retaining unsent
+events for retry. `Logger.flush()` propagates sink failures. The sink retries
+network/timeouts and HTTP 408/429/5xx with bounded backoff; other unsuccessful
+statuses fail immediately. `max_queue` bounds waiting events by discarding oldest
+entries on overflow. Each request contains at most `batch_size` events.
+
+Use `await sink.close()` to flush and close its owned HTTP client. Failed close
+leaves the sink available for retry. An injected `client` remains owned by its
+caller. Requests can be duplicated after ambiguous network errors, so ingestion
+storage should use idempotent writes where duplicates matter.

@@ -11,7 +11,7 @@ Clean scoped npm10 ci against the target lock succeeded. Core158tests pass (incl
 ## Remaining requirements
 
 - HTTP sink durable browser offline buffering, lifecycle cleanup and overflow metrics remain incomplete.
-- Python HTTP sink sends an array rather than the ingest envelope, ignores non-success statuses, drops failed events, and does not implement its flush interval. Fix and validate existing Python promises despite future full-parity roadmap.
+- Python generic async sink task ownership/shutdown and full cross-language parity remain to be verified; HTTP delivery was repaired in the checkpoint below.
 - Core serialization lacks cycle safety and reliable UTF-8 per-event size enforcement; check pipeline redaction, correlation IDs, sampling, shutdown and concurrent sinks against spec.
 - Integrate ingestion/middleware with shared HTTP abstractions per original spec and repository instructions; retain function-specific behavior without duplicating shared adapters.
 - Admin dispatcher validation, framework actual-server acceptance, browser lifecycle/offline persistence, packed imports/declarations, version/runtime matrix, audit and informational benchmarks remain.
@@ -23,3 +23,9 @@ Clean scoped npm10 ci against the target lock succeeded. Core158tests pass (incl
 Concurrent explicit flush callers now wait for the active queue drain. Each request honors the configured batch bound; arrivals during a send are drained afterward. Network/timeout/408/429/5xx retries use fresh per-attempt abort controllers, bounded exponential backoff, and finite attempts. Other4xx terminate the current send immediately. Explicit failure rejects while retaining queued events; background failure reports internally. Queue overflow retains the existing newest-events policy.
 
 166core tests pass, source typecheck/build pass. Tests cover joining automatic sends, arrivals during delivery, retained failures, permanent/transient HTTP status differences, per-attempt timeout signals, batch bounds and actual HTTP sink-to-ingest-to-fsynced-file delivery. Browser IndexedDB persistence and lifecycle behavior are still open and are not proven by these Node checks.
+
+## Python HTTP delivery checkpoint
+
+The Python HTTP sink now sends the ingestion envelope, bounds batches and queued events, implements interval delivery, checks response statuses, retries transport/timeouts/408/429/5xx with bounded attempts, and retains failed or cancelled batches subject to the documented newest-events queue limit. Concurrent flush calls serialize delivery. Explicit flush and close propagate failure; a failed close remains retryable. Caller-owned HTTP clients remain open. Logger.flush no longer suppresses delivery errors.
+
+Source tests pass on Python3.9 and3.12 (18 each). A freshly built wheel installed into an isolated Python3.12 environment passes all18 tests. Strict mypy1.18.2 checks the changed sinks module on Python3.9. The HTTP cases use httpx MockTransport; these checks do not prove real-server integration, browser durability, full-package typing or generic async sink shutdown. No full readiness claim.

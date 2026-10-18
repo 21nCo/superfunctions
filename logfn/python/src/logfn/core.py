@@ -112,7 +112,8 @@ class Logger:
                     except RuntimeError:
                         # No running loop, can't schedule.
                         # This implies usage error: using async sink in sync context without loop.
-                        print(f"[logfn internal error] Async sink returned coroutine but no event loop running", file=sys.stderr)
+                        res.close()
+                        print("[logfn internal error] Async sink returned coroutine but no event loop running", file=sys.stderr)
             except Exception as e:
                 print(f"[logfn internal error] sink failed: {e}", file=sys.stderr)
 
@@ -163,7 +164,7 @@ class Logger:
                     tasks.append(res)
         
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*tasks)
 
 def create_logger(
     name: str,
