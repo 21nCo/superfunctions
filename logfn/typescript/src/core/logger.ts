@@ -23,6 +23,9 @@ export class Logger {
     baseTags?: string[];
   };
   private readonly errorHandler: ErrorHandler;
+  private delivery: { pending: Set<Promise<void>>; failure?: { reason: unknown } } = {
+    pending: new Set(),
+  };
 
   constructor(options: LoggerOptions) {
     // Set defaults
@@ -125,11 +128,16 @@ export class Logger {
     for (const sink of this.options.sinks) {
       try {
         const result = sink(batch);
-        if (result instanceof Promise) {
-          // Don't await - fire and forget
-          result.catch((error) => {
-            this.errorHandler(error, { sink: sink.name || "unknown" });
-          });
+        if (result && typeof result.then === "function") {
+          const task = Promise.resolve(result).then(
+            () => { this.delivery.pending.delete(task); },
+            (error: unknown) => {
+              this.delivery.pending.delete(task);
+              this.delivery.failure ??= { reason: error };
+              this.errorHandler(error as Error, { sink: sink.name || "unknown" });
+            }
+          );
+          this.delivery.pending.add(task);
         }
       } catch (error) {
         this.errorHandler(error as Error, { sink: sink.name || "unknown" });
@@ -196,28 +204,25 @@ export class Logger {
       baseTags: [...(this.options.baseTags ?? []), ...(overrides.tags ?? [])],
     };
 
-    return new Logger(childOptions);
+    const child = new Logger(childOptions);
+    child.delivery = this.delivery;
+    return child;
   }
 
   /**
    * Flush all sinks
    */
   async flush(): Promise<void> {
-    const flushPromises: Promise<void>[] = [];
-
-    for (const sink of this.options.sinks) {
-      if (sink.flush) {
-        try {
-          const result = sink.flush();
-          if (result instanceof Promise) {
-            flushPromises.push(result);
-          }
-        } catch (error) {
-          this.errorHandler(error as Error, { sink: sink.name || "unknown" });
-        }
-      }
+    while (this.delivery.pending.size) {
+      await Promise.all([...this.delivery.pending]);
     }
-
-    await Promise.all(flushPromises);
+    const results = await Promise.allSettled(
+      this.options.sinks.map(sink => Promise.resolve().then(() => sink.flush?.()))
+    );
+    const failure = this.delivery.failure;
+    this.delivery.failure = undefined;
+    if (failure) throw failure.reason;
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (rejected) throw rejected.reason;
   }
 }

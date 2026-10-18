@@ -39,3 +39,7 @@ Python3.9 and3.12 each pass23 tests; a fresh installed Python3.12 wheel also pas
 ## Serialization and UTF-8 event bounds
 
 TypeScript sanitizer now handles cycles, deep nesting, throwing getters, invalid dates and literal prototype keys without corrupting output. Additional event fields are sanitized as well as context. Size enforcement measures UTF-8 JSON bytes, preserves complete context entries that fit, and bounds oversized envelope metadata/messages with a truncation marker. Five regressions plus the existing suite pass (171core tests); source typecheck/build pass. Python serialization parity and pipeline security remain separate open gates.
+
+## TypeScript async delivery and cyclic redaction
+
+TypeScript parent/child loggers share async sink tracking; flush joins delivery before hooks, awaits all hooks even when another fails synchronously, and reports a completed background rejection. Cyclic context is sanitized before redaction, preserving literal prototype keys without prototype mutation; cycles no longer cause a skipped redaction stage and raw secret delivery.175coretests, source typecheck and build pass. Includes three deterministic async ownership/failure regressions and a real logger-to-sink cyclic secret regression. Other spec gates above remain open.

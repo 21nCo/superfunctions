@@ -411,3 +411,9 @@ The 64 KiB event limit is measured as UTF-8 JSON bytes. Oversized events receive
 envelope itself exceeds the limit, optional metadata is removed and required
 text fields are shortened at Unicode code-point boundaries. Inputs are not
 mutated. Keep unusually large payloads in external storage and log a reference.
+
+`await logger.flush()` joins outstanding asynchronous sink calls from the logger
+and its children before invoking every sink's flush hook. It reports background
+delivery failures after all flush hooks settle; synchronous logging still does
+not throw sink failures. Redaction handles cyclic context before serialization,
+so cycles do not cause the redaction stage to be skipped.
