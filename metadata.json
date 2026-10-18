@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M580HZ4SQMZYQZ3DWZNKNAA2",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "flowfn/python/README.md",
+    "flowfn/python/flowfn/core/flow.py",
+    "flowfn/python/flowfn/core/telemetry.py",
+    "flowfn/python/flowfn/queue/queue.py",
+    "flowfn/python/flowfn/stream/stream.py",
+    "flowfn/python/flowfn/workflow/workflow.py",
+    "flowfn/python/pyproject.toml",
+    "flowfn/python/tests/test_telemetry.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
