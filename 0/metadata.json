@@ -1,0 +1,64 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57V2NN2NR5AN4SB6R5M69NQ",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-18T15:46:25.599155Z",
+  "branch": "codex/contentfn-production-readiness-20261016",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "contentfn/.conduct/sql-service-acceptance.md",
+    "contentfn/README.md",
+    "contentfn/server/src/__tests__/schema-discovery.test.ts",
+    "contentfn/server/src/__tests__/sql-services.integration.test.ts",
+    "contentfn/server/src/importExport/importDataset.ts",
+    "contentfn/server/src/query/expand.ts",
+    "contentfn/server/src/storage/docs.ts",
+    "contentfn/server/src/storage/document-validation.ts",
+    "contentfn/server/src/storage/publish.ts",
+    "contentfn/server/src/storage/revisions.ts"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "ef71424e83cb",
+  "checkpoint_transcript_start": 6552,
+  "transcript_lines_at_start": 6552,
+  "compact_transcript_start": 784,
+  "token_usage": {
+    "input_tokens": 3717,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 490880,
+    "output_tokens": 645,
+    "api_call_count": 5
+  },
+  "session_metrics": {
+    "turn_count": 15
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-18T15:46:25.394029Z",
+    "agent_lines": 737,
+    "agent_removed": 238,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 737,
+    "total_lines_changed": 975,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}

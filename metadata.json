@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57V2NN2NR5AN4SB6R5M69NQ",
+  "strategy": "manual-commit",
+  "branch": "codex/contentfn-production-readiness-20261016",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "contentfn/.conduct/sql-service-acceptance.md",
+    "contentfn/README.md",
+    "contentfn/server/src/__tests__/schema-discovery.test.ts",
+    "contentfn/server/src/__tests__/sql-services.integration.test.ts",
+    "contentfn/server/src/importExport/importDataset.ts",
+    "contentfn/server/src/query/expand.ts",
+    "contentfn/server/src/storage/docs.ts",
+    "contentfn/server/src/storage/document-validation.ts",
+    "contentfn/server/src/storage/publish.ts",
+    "contentfn/server/src/storage/revisions.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 3717,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 490880,
+    "output_tokens": 645,
+    "api_call_count": 5
+  }
+}
