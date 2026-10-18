@@ -2,7 +2,7 @@
 
 import asyncio
 import math
-from typing import Any, Optional, TYPE_CHECKING, Union, cast
+from typing import Any, Optional, TYPE_CHECKING, Union, cast, Callable
 from pydantic import BaseModel, Field
 from flowfn.adapters.base import FlowAdapter
 from flowfn.scheduler import Scheduler
@@ -76,7 +76,7 @@ class FlowFn:
             "workers":sum(not task.done() for queue in self._queues.values() for task in queue._workers),
         })
         self._health_checker = HealthChecker()
-        self._event_tracker = EventTracker()
+        self._event_tracker = EventTracker(self._observer)
 
     def queue(self, name: str, options: Optional[dict[str, Any]] = None) -> "Queue":
         """Get or create a queue."""
@@ -89,7 +89,7 @@ class FlowFn:
                 **(self.config.default_queue_options or {}),
                 **(options or {}),
             }
-            self._queues[name] = Queue(name, self._adapter, queue_options, metrics=self._metrics, observer=self._observer)
+            self._queues[name] = Queue(name, self._adapter, queue_options, metrics=self._metrics, observer=self._observer, events=self._event_tracker)
 
         return self._queues[name]
 
@@ -104,7 +104,7 @@ class FlowFn:
             from flowfn.stream.stream import Stream
 
             stream_options = {**(self.config.default_stream_options or {}), **(options or {})}
-            self._streams[name] = Stream(name, self._adapter, stream_options, metrics=self._metrics, observer=self._observer)
+            self._streams[name] = Stream(name, self._adapter, stream_options, metrics=self._metrics, observer=self._observer, events=self._event_tracker)
 
         return self._streams[name]
 
@@ -146,6 +146,13 @@ class FlowFn:
         return await runtime_health(self._adapter, self._queues, self._streams, self._workflows,
                                     self._health_checker, self._closing, timeout)
 
+    def on(self, event_type: str, listener: Callable[[dict[str, Any]], Any]) -> Callable[[], None]:
+        self._require_open()
+        return self._event_tracker.on(event_type, listener)
+
+    def off(self, event_type: str, listener: Callable[[dict[str, Any]], Any]) -> None:
+        self._event_tracker.off(event_type, listener)
+
     def get_event_tracker(self) -> EventTracker:
         """Get event tracker."""
         return self._event_tracker
@@ -157,6 +164,7 @@ class FlowFn:
     def _register_workflow(self, workflow: "Workflow") -> None:
         self._require_open()
         workflow._observer = self._observer
+        workflow._events = self._event_tracker
         self._workflows.append(workflow)
 
     async def close(self, timeout: float = 30.0) -> None:

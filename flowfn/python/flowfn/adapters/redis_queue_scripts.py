@@ -50,7 +50,7 @@ ENQUEUE = _PATCH + r'''
 local raw=ARGV[1]
 local job=cjson.decode(raw)
 local existing=redis.call('HGET',base..':jobs',job.id)
-if existing then return existing end
+if existing then return {existing,0} end
 if job.opts.prevent_duplicates and ARGV[4]=='1' then
   local ids=redis.call('SMEMBERS',base..':dedup:'..ARGV[3])
   local first=nil
@@ -59,7 +59,7 @@ if job.opts.prevent_duplicates and ARGV[4]=='1' then
     local position=tonumber(redis.call('ZSCORE',base..':sequence',id))
     if position and (not score or position<score) then first=id;score=position end
   end
-  if first then return redis.call('HGET',base..':jobs',first) end
+  if first then return {redis.call('HGET',base..':jobs',first),0} end
 end
 local due=job.available_at
 if due==cjson.null then due=job.timestamp+job.delay end
@@ -84,7 +84,7 @@ if job.state~='completed' and job.state~='failed' and ARGV[4]=='1' then
 end
 redis.call('INCR',base..':version')
 redis.call('SADD',KEYS[2],ARGV[2])
-return raw
+return {raw,1}
 '''
 
 DEQUEUE = _PATCH + r'''

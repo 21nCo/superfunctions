@@ -117,3 +117,11 @@ BEGIN
   END LOOP;
 END $$;
 '''
+
+# Preserve v2 for existing clients; v3 adds an atomic receipt only to the reply.
+# The stored job payload and queue layout remain unchanged.
+_enqueue_receipt = SCHEMA[:SCHEMA.index('CREATE OR REPLACE FUNCTION flowfn_py_dequeue_v2')]
+_enqueue_receipt = _enqueue_receipt.replace('flowfn_py_enqueue_v2', 'flowfn_py_enqueue_v3')
+_enqueue_receipt = _enqueue_receipt.replace('RETURN existing;', "RETURN jsonb_build_object('job',existing,'created',false);")
+_enqueue_receipt = _enqueue_receipt.replace('RETURN p_payload;', "RETURN jsonb_build_object('job',p_payload,'created',true);")
+SCHEMA += _enqueue_receipt

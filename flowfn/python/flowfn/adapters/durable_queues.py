@@ -89,6 +89,8 @@ class DurableQueues(ABC):
             if method == 'update_job' and args[1].state == JobStatus.ACTIVE:
                 args[1].lease_expires_at = now + self.reclaim_after_ms
             result = await getattr(adapter, method)(*args)
+            if method == 'enqueue':
+                result._enqueue_created = args[1]._enqueue_created
         if method == 'dequeue' and result is not None:
             self._restore_backoff(result)
             result.lease_token = uuid.uuid4().hex
@@ -106,6 +108,7 @@ class DurableQueues(ABC):
         self._restore_backoff(job)
         json.dumps(job.model_dump(mode='json'),allow_nan=False)
         result: Job = await self._transition('enqueue', queue, job.model_copy(deep=True))
+        job._enqueue_created = result._enqueue_created
         return result
 
     def lease_loss_event(self, queue: str, job: Job) -> Optional[asyncio.Event]:

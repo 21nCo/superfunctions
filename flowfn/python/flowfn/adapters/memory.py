@@ -43,12 +43,14 @@ class MemoryAdapter:
             job.opts.deduplication_key = hashlib.sha256(payload.encode()).hexdigest()
         for existing in jobs:
             if existing.id == job.id:
+                job._enqueue_created = False
                 return existing
             if (
                 job.opts.prevent_duplicates
                 and existing.opts.deduplication_key == job.opts.deduplication_key
                 and existing.state not in (JobStatus.COMPLETED, JobStatus.FAILED)
             ):
+                job._enqueue_created = False
                 return existing
         graph = {entry.id: entry.opts.wait_for or [] for entry in [*jobs, job]}
         visiting: set[str] = set()
@@ -66,6 +68,7 @@ class MemoryAdapter:
             visited.add(identity)
 
         visit(job.id)
+        job._enqueue_created = True
         jobs.append(job)
         return job
 

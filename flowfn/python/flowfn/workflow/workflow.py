@@ -12,6 +12,7 @@ from flowfn.adapters.base import FlowAdapter
 import asyncio
 from flowfn.core.lifecycle import Admissions
 from flowfn.core.telemetry import OperationObserver
+from flowfn.monitoring.health import EventTracker
 import uuid
 import time
 import hashlib
@@ -27,6 +28,7 @@ class Workflow:
         if not version or lease_ms < 100:
             raise ValueError("Nonempty version and lease >= 100 milliseconds required")
         self._observer = OperationObserver()
+        self._events: Optional[EventTracker] = None
         self.name = name
         self._adapter = adapter
         def freeze(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -531,6 +533,11 @@ class Workflow:
         execution = await self.get_execution(execution_id)
         execution.state.setdefault("events", []).append(event.model_dump(mode="json"))
         await self._persist(execution)
+        if self._events is not None and event_type in ("execution.started", "execution.completed", "execution.failed"):
+            await self._events.emit("workflow:" + event_type.split(".")[1], {
+                "workflow_name": self.name, "execution_id": execution_id,
+                **{key: value for key, value in (data or {}).items() if key in ("duration", "error")},
+            })
 
     def _now(self) -> int:
         """Get current timestamp in ms."""

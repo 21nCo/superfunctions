@@ -4,6 +4,8 @@ from typing import Any, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
 from enum import Enum
 import time
+import inspect
+from copy import deepcopy
 
 
 class HealthStatus(str, Enum):
@@ -149,9 +151,46 @@ class TrackedEvent:
 class EventTracker:
     """Event tracking for monitoring."""
 
-    def __init__(self) -> None:
+    def __init__(self, observer: Any = None) -> None:
+        self._observer = observer
+        self._listeners: dict[str, list[Callable[..., Any]]] = {}
         self._events: list[TrackedEvent] = []
         self._max_events = 10000
+
+    def on(self, event_type: str, listener: Callable[..., Any]) -> Callable[[], None]:
+        """Register a local lifecycle listener and return its unsubscribe function."""
+        if not event_type or not callable(listener):
+            raise ValueError("An event name and callable listener are required")
+        self._listeners.setdefault(event_type, []).append(listener)
+        def unsubscribe() -> None:
+            self.off(event_type, listener)
+        return unsubscribe
+
+    def off(self, event_type: str, listener: Callable[..., Any]) -> None:
+        listeners = self._listeners.get(event_type, [])
+        if listener in listeners:
+            listeners.remove(listener)
+        if not listeners:
+            self._listeners.pop(event_type, None)
+
+    async def emit(self, event_type: str, metadata: dict[str, Any]) -> None:
+        category = "queue" if event_type.startswith("job:") else event_type.split(":", 1)[0]
+        severity = "error" if event_type.endswith(":failed") else "warn" if event_type.endswith(":stalled") else "info"
+        self.track({"type": event_type, "category": category, "severity": severity,
+                    "message": event_type, "metadata": metadata})
+        for listener in list(self._listeners.get(event_type, [])):
+            async def invoke() -> None:
+                result = listener(deepcopy(metadata))
+                if inspect.isawaitable(result):
+                    await result
+            try:
+                if self._observer is not None:
+                    await self._observer.run("flowfn.event." + event_type, {}, invoke)
+                else:
+                    await invoke()
+            except Exception:
+                # A notification failure cannot roll back committed work.
+                pass
 
     def track(self, event_data: dict[str, Any]) -> None:
         """Track an event."""
@@ -164,7 +203,7 @@ class EventTracker:
             severity=EventSeverity(event_data["severity"]),
             message=event_data["message"],
             timestamp=self._now(),
-            metadata=event_data.get("metadata"),
+            metadata=deepcopy(event_data.get("metadata")),
         )
 
         self._events.append(event)
@@ -175,7 +214,7 @@ class EventTracker:
 
     def get_events(self, filter: Optional[dict[str, Any]] = None) -> list[TrackedEvent]:
         """Get events with optional filtering."""
-        filtered = list(self._events)
+        filtered = deepcopy(self._events)
 
         if not filter:
             return filtered
@@ -193,7 +232,10 @@ class EventTracker:
             filtered = [e for e in filtered if e.type == filter["type"]]
 
         if "limit" in filter:
-            filtered = filtered[-filter["limit"] :]
+            limit = filter["limit"]
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+                raise ValueError("Event limit must be a nonnegative integer")
+            filtered = filtered[-limit:] if limit else []
 
         return filtered
 

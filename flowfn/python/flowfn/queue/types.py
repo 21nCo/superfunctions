@@ -1,7 +1,7 @@
 """Queue type definitions."""
 
 from typing import Any, Literal, Optional, Callable, Awaitable, Union
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 from enum import Enum
 
 
@@ -74,6 +74,9 @@ class Job(BaseModel):
     lease_token: Optional[str] = None
     lease_expires_at: Optional[int] = None
     returnvalue: Optional[Any] = None
+
+    # Transient receipt from the atomic enqueue operation; never persisted.
+    _enqueue_created: Optional[bool] = PrivateAttr(default=None)
 
     # Timing
     timestamp: int

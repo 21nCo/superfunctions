@@ -16,6 +16,7 @@ import asyncio
 from flowfn.core.lifecycle import Admissions
 from flowfn.core.metrics import MetricsManager
 from flowfn.core.telemetry import OperationObserver
+from flowfn.monitoring.health import EventTracker
 import uuid
 import time
 
@@ -23,8 +24,9 @@ import time
 class Stream:
     """Stream for pub/sub messaging."""
 
-    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None, observer: Optional[OperationObserver] = None):
+    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None, observer: Optional[OperationObserver] = None, events: Optional[EventTracker] = None):
         self.name = name
+        self._events = events
         self._metrics = metrics
         self._observer = observer or OperationObserver()
         self._adapter = adapter
@@ -62,6 +64,8 @@ class Stream:
             if self._metrics is not None:
                 self._metrics.increment('stream.throughput',{'stream':self.name})
                 self._metrics.record('stream.latency',(time.monotonic()-started)*1000,{'stream':self.name})
+            if self._events is not None:
+                await self._events.emit("stream:message", {"stream": self.name, "message_id": message_id})
             await self._apply_retention()
             return message_id
 

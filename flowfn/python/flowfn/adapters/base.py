@@ -28,7 +28,11 @@ class FlowAdapter(Protocol):
         ...
 
     async def enqueue(self, queue: str, job: Job) -> Job:
-        """Add a job to the queue."""
+        """Add a job and mark input._enqueue_created with its atomic insertion outcome.
+
+        Return the stored job (which may be an existing duplicate). The transient
+        input receipt lets local lifecycle events distinguish creation from dedup.
+        """
         ...
 
     async def update_job(self, queue: str, job: Job) -> None:

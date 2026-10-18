@@ -101,7 +101,7 @@ async def ensure_native(owner: Any, migrate: bool = False) -> None:
         return
     pool = await owner._database()
     async with pool.acquire() as connection:
-        if not await connection.fetchval("SELECT to_regprocedure('flowfn_py_apply_v2(text,text,jsonb)')"):
+        if not await connection.fetchval("SELECT to_regprocedure('flowfn_py_enqueue_v3(text,text,text,jsonb)')"):
             async with connection.transaction():
                 await connection.execute('SELECT pg_advisory_xact_lock(490182736)')
                 await connection.execute(_SCHEMA)
@@ -142,8 +142,10 @@ async def transition(owner: Any, method: str, args: tuple[Any,...]) -> Any:
         if job.opts.prevent_duplicates and job.opts.deduplication_key is None:
             raw=json.dumps([job.name,job.data],sort_keys=True,separators=(',',':'),allow_nan=False)
             job.opts.deduplication_key=hashlib.sha256(raw.encode()).hexdigest()
-        raw=await pool.fetchval('SELECT flowfn_py_enqueue_v2($1,$2,$3,$4)',owner.namespace,queue,lock,job.model_dump_json())
-        result=Job.model_validate_json(raw)
+        raw=await pool.fetchval('SELECT flowfn_py_enqueue_v3($1,$2,$3,$4)',owner.namespace,queue,lock,job.model_dump_json())
+        receipt=json.loads(raw)
+        result=Job.model_validate(receipt["job"])
+        result._enqueue_created = bool(receipt["created"])
         owner._restore_backoff(result)
         return result
     if method=='dequeue':

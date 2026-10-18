@@ -17,6 +17,7 @@ import asyncio
 from flowfn.core.lifecycle import Admissions
 from flowfn.core.metrics import MetricsManager
 from flowfn.core.telemetry import OperationObserver
+from flowfn.monitoring.health import EventTracker
 import uuid
 import time
 import math
@@ -25,8 +26,9 @@ import math
 class Queue:
     """Queue for background job processing."""
 
-    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None, observer: Optional[OperationObserver] = None):
+    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None, observer: Optional[OperationObserver] = None, events: Optional[EventTracker] = None):
         self.name = name
+        self._events = events
         self._metrics = metrics
         self._observer = observer or OperationObserver()
         self._adapter = adapter
@@ -65,7 +67,14 @@ class Queue:
                 state=JobStatus.DELAYED if job_options.delay else JobStatus.WAITING,
             )
 
-            return await self._adapter.enqueue(self.name, job)
+            result = await self._adapter.enqueue(self.name, job)
+            if job._enqueue_created is True:
+                await self._emit("job:created", {"job_id": result.id})
+            return result
+
+    async def _emit(self, event_type: str, metadata: dict[str, Any]) -> None:
+        if self._events is not None:
+            await self._events.emit(event_type, {"queue": self.name, **metadata})
 
     async def add_bulk(self, jobs: list[dict[str, Any]]) -> list[Job]:
         """Add multiple jobs."""
@@ -149,6 +158,7 @@ class Queue:
         """Process a single job."""
         original_handler = handler
         async def observed_handler(current: Job) -> Any:
+            await self._emit("job:active", {"job_id": current.id})
             return await self._observer.run("flowfn.job.execute", {"flowfn.queue.name": self.name, "flowfn.job.id": current.id}, lambda: original_handler(current))
         handler = observed_handler
         job.processed_on = self._now()
@@ -169,6 +179,7 @@ class Queue:
 
         except JobLeaseError:
             ownership_lost = True
+            await self._emit("job:stalled", {"job_id": job.id})
             raise
 
         except asyncio.CancelledError:
@@ -220,7 +231,13 @@ class Queue:
         finally:
             try:
                 if not ownership_lost and not (lost is not None and lost.is_set()):
-                    await self._adapter.update_job(self.name, job)
+                    try:
+                        await self._adapter.update_job(self.name, job)
+                    except JobLeaseError:
+                        await self._emit("job:stalled", {"job_id": job.id})
+                        raise
+                    if job.state in (JobStatus.COMPLETED, JobStatus.FAILED):
+                        await self._emit("job:" + job.state.value, {"job_id": job.id, "duration": max(0, (job.finished_on or 0) - (job.processed_on or 0)), "error": job.failed_reason if job.state == JobStatus.FAILED else None})
                     if self._metrics is not None and job.state in (JobStatus.COMPLETED,JobStatus.FAILED):
                         if job.state == JobStatus.COMPLETED:
                             self._metrics.increment('queue.throughput',{'queue':self.name})

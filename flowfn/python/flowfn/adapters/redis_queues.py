@@ -192,7 +192,8 @@ async def transition(owner: Any, method: str, args: tuple[Any,...]) -> Any:
             job.opts.deduplication_key=hashlib.sha256(raw.encode()).hexdigest()
         dedup=quote(job.opts.deduplication_key,safe='') if job.opts.deduplication_key is not None else ''
         raw=await owner._queue_scripts['enqueue'](keys=[base,owner.prefix+':queues'],args=[job.model_dump_json(),queue,dedup,'1' if job.opts.deduplication_key is not None else '0'])
-        result=Job.model_validate_json(raw)
+        result=Job.model_validate_json(raw[0])
+        result._enqueue_created = bool(raw[1])
         owner._restore_backoff(result)
         return result
     if method=='dequeue':
