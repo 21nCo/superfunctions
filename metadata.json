@@ -3,7 +3,7 @@
   "checkpoint_id": "01M580FZQEVF8TMZWHAS8C0V1X",
   "strategy": "manual-commit",
   "branch": "codex/docs-datafn-20260926",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "authfn/docs/package.json",
     "package-lock.json"
@@ -15,6 +15,20 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 2,
+    "cache_creation_tokens": 581,
+    "cache_read_tokens": 112682,
+    "output_tokens": 1037,
+    "api_call_count": 1
+  }
 }
