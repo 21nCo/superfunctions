@@ -11,6 +11,10 @@ from flowfn.queue.dlq import DLQJob, DLQManager
 from flowfn.queue.types import Job, JobOptions, JobStatus, QueueStats, BackoffType
 
 
+class JobLeaseError(ValueError):
+    """A queue claim expired or was replaced by another worker."""
+
+
 class DurableQueues(ABC):
     def _setup_queues(self, reclaim_after_ms: int, strategies: Optional[dict[str, Callable[[int], int]]]) -> None:
         self.backoff_strategies = dict(strategies or {})
@@ -71,7 +75,7 @@ class DurableQueues(ABC):
             queue, incoming = args
             stored = next((entry for entry in adapter._queues[queue] if entry.id == incoming.id), None)
             if stored is None or stored.state != JobStatus.ACTIVE or stored.lease_token != incoming.lease_token or (stored.lease_expires_at or 0) <= now:
-                raise ValueError('Job lease has expired or ownership changed')
+                raise JobLeaseError('Job lease has expired or ownership changed')
         if method == '_renew_job':
             assert stored is not None
             stored.lease_expires_at = now + self.reclaim_after_ms
@@ -122,11 +126,16 @@ class DurableQueues(ABC):
     async def _renew_job(self, queue: str, job: Job) -> None:
         while not self._closed:
             await asyncio.sleep(self.reclaim_after_ms / 3000)
-            try:
-                await self._transition('_renew_job', queue, job)
-            except Exception:
-                # Failure to renew allows takeover; stale completion is fenced.
-                return
+            while not self._closed:
+                try:
+                    await self._transition('_renew_job', queue, job)
+                    break
+                except JobLeaseError:
+                    return
+                except Exception:
+                    # Retry transient transport failures while the server may still
+                    # recognize this claim. Its expiry check remains authoritative.
+                    await asyncio.sleep(min(.05,self.reclaim_after_ms/6000))
 
     async def get_queue_stats(self, queue: str) -> QueueStats:
         return await self._decode(await self._read_queue_state()).get_queue_stats(queue)

@@ -187,3 +187,26 @@ async def test_concurrent_publication_preserves_every_group_delivery(adapters):
                            for i,adapter in enumerate([a,b]*15)))
     await asyncio.wait_for(done.wait(),10)
     assert seen == {str(i) for i in range(30)}
+
+
+async def test_job_heartbeat_retries_transient_transport_failure(adapters):
+    a,b=adapters
+    original=a._transition
+    failed=False
+    renewals=0
+    async def flaky(method,*args):
+        nonlocal failed,renewals
+        if method=='_renew_job':
+            if not failed:
+                failed=True
+                raise ConnectionError('transient transport failure')
+            renewals+=1
+        return await original(method,*args)
+    a._transition=flaky
+    await a.enqueue('retry-heartbeat',Job(id='heartbeat',name='work',data={},timestamp=0))
+    claimed=await a.dequeue('retry-heartbeat')
+    await asyncio.sleep(2.2)
+    assert failed and renewals>=2
+    assert await b.dequeue('retry-heartbeat') is None
+    claimed.state=JobStatus.COMPLETED
+    await a.update_job('retry-heartbeat',claimed)

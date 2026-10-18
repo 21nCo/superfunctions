@@ -12,12 +12,14 @@ from flowfn.stream.types import ConsumerOptions, Message, StreamInfo, TrimStrate
 from flowfn.workflow.types import WorkflowExecution
 
 _SCHEMA = '''
+CREATE TABLE IF NOT EXISTS flowfn_py_meta(version INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS flowfn_py_state(namespace TEXT PRIMARY KEY, payload JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS flowfn_py_workflows(namespace TEXT NOT NULL, id TEXT NOT NULL, payload JSONB NOT NULL, PRIMARY KEY(namespace,id));
 CREATE TABLE IF NOT EXISTS flowfn_py_events(id BIGSERIAL PRIMARY KEY, namespace TEXT NOT NULL, stream TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), payload JSONB NOT NULL);
 CREATE INDEX IF NOT EXISTS flowfn_py_events_stream ON flowfn_py_events(namespace,stream,id);
 CREATE TABLE IF NOT EXISTS flowfn_py_groups(namespace TEXT NOT NULL, stream TEXT NOT NULL, name TEXT NOT NULL, cursor BIGINT NOT NULL, PRIMARY KEY(namespace,stream,name));
 CREATE TABLE IF NOT EXISTS flowfn_py_pending(namespace TEXT NOT NULL, stream TEXT NOT NULL, group_name TEXT NOT NULL, event_id BIGINT NOT NULL REFERENCES flowfn_py_events(id), consumer TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(namespace,stream,group_name,event_id));
+INSERT INTO flowfn_py_meta(version) VALUES(1) ON CONFLICT DO NOTHING;
 '''
 
 
@@ -41,10 +43,16 @@ class PostgresAdapter(DurableQueues):
                 pool = await asyncpg.create_pool(self.url, min_size=1, max_size=10)
                 try:
                     async with pool.acquire() as connection:
-                        async with connection.transaction():
-                            # Serialize schema installation across independent processes.
-                            await connection.execute("SELECT pg_advisory_xact_lock(490182735)")
-                            await connection.execute(_SCHEMA)
+                        installed = await connection.fetchval("SELECT to_regclass('flowfn_py_meta')")
+                        version = await connection.fetchval('SELECT max(version) FROM flowfn_py_meta') if installed else None
+                        if version not in (None,1):
+                            raise RuntimeError("Unsupported FlowFn PostgreSQL schema version")
+                        if version is None:
+                            async with connection.transaction():
+                                # Only first installation takes schema locks; opening
+                                # a new worker must not run DDL against live workers.
+                                await connection.execute("SELECT pg_advisory_xact_lock(490182735)")
+                                await connection.execute(_SCHEMA)
                     self._pool = pool
                 except BaseException:
                     await pool.close()
