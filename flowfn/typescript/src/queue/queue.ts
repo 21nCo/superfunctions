@@ -282,6 +282,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
           await this.sleep(limit.retryAfter);
           if (this.closed) throw new Error("Queue closed");
         }
+      if (guard.lost) return;
       job.state = "active";
       job.processedOn = Date.now();
       await this.adapter.saveJob?.(this.name, snapshotJob(job));
@@ -428,16 +429,33 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
           }
           this.inFlight += batch.length;
           try {
-            const results = await handler(batch);
-            if (!Array.isArray(results) || results.length !== batch.length)
-              throw new Error("Batch handler must return one result per job");
-            for (let i = 0; i < batch.length; i++) {
-              if (this.leases.get(batch[i].id)?.lost) continue;
-              await batch[i].moveToCompleted(results[i]);
-              this.emitSafe("completed", batch[i], results[i]);
-            }
-          } catch (error) {
-            for (const job of batch) if (!this.leases.get(job.id)?.lost && job.state !== "completed" && !(error instanceof Error && error.message === "Job lease lost")) await this.fail(job, error as Error);
+            const arrivals: Array<{ job: Job<T>; resolve: (value: any) => void; reject: (error: unknown) => void }> = [];
+            let settledWithoutHandler = 0;
+            let launched = false;
+            const dispatch = () => {
+              if (launched || arrivals.length + settledWithoutHandler !== batch.length || !arrivals.length) return;
+              launched = true;
+              if (this.closed) { arrivals.forEach(entry => entry.reject(new Error("Queue closed"))); return; }
+              void Promise.resolve().then(() => handler(arrivals.map(entry => entry.job))).then(results => {
+                if (!Array.isArray(results) || results.length !== arrivals.length)
+                  throw new Error("Batch handler must return one result per job");
+                arrivals.forEach((entry, index) => entry.resolve(results[index]));
+              }).catch(error => arrivals.forEach(entry => entry.reject(error)));
+            };
+            const results = await Promise.allSettled(batch.map(async job => {
+              let arrived = false;
+              try {
+                await this.runJob(job, current => new Promise((resolve, reject) => {
+                  arrived = true;
+                  arrivals.push({ job: current, resolve, reject });
+                  dispatch();
+                }));
+              } finally {
+                if (!arrived) { settledWithoutHandler++; dispatch(); }
+              }
+            }));
+            const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+            if (rejected) throw rejected.reason;
           } finally {
             for (const job of batch) this.releaseLease(job);
             this.inFlight -= batch.length;

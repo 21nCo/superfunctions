@@ -23,6 +23,23 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
       if (keys.length) await redis.del(...keys);
       await adapter.cleanup();
     });
+    it("persists batch results and enforces per-job timeout and retention", async () => {
+      const queue = new QueueImpl("batch-runtime", adapter);
+      try {
+        const good = await queue.add("work", 2);
+        const removed = await queue.add("work", 3, { removeOnComplete: true });
+        const timed = await queue.add("work", 4, { timeout: 10 });
+        queue.processBatch("work", { batchSize: 3, maxWait: 50 }, async jobs => {
+          await new Promise(resolve => setTimeout(resolve, 40));
+          return jobs.map(job => job.data * 2);
+        });
+        await queue.drain();
+        expect((await queue.getJob(good.id))?.returnvalue).toBe(4);
+        expect(await queue.getJob(removed.id)).toBeNull();
+        expect((await queue.getJob(timed.id))?.state).toBe("failed");
+        expect((await queue.getJob(timed.id))?.failedReason).toBe("Job timed out");
+      } finally { await queue.close(); }
+    });
     it("reclaims expired queue leases and fences stale writes, retries and acknowledgments", async () => {
       const original = new JobImpl("work", { value: 1 });
       await adapter.createJob("leases", original);

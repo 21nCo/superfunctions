@@ -28,6 +28,8 @@ the job as active or silently use fixed backoff. The normal failed-job retention
 and configured dead-letter handling still apply.
 
 Named batch processors select only jobs with that name; other names require
-their own processor. Batch processing still has outstanding timeout, cache,
-limiter, and retention parity work. Distributed queue leases and atomic enqueue
-deduplication remain separate production gates.
+their own processor. Batch processing uses the same per-job timeout, cache, limiter, retry and retention
+path as single-job processing. Cache hits are omitted from the handler batch.
+Each returned result corresponds to the job at the same index in that batch.
+Timeouts signal cancellation and wait for the handler to settle; side effects
+therefore still require idempotency and cooperative cancellation.
