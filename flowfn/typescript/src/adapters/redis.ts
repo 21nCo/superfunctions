@@ -331,7 +331,8 @@ export class RedisAdapter implements FlowAdapter {
     )
       throw new Error("Invalid visibilityTimeout");
     const key = this.key("stream", stream),
-      retryKey = this.key("retry", JSON.stringify([stream, group]));
+      retryKey = this.key("retry", JSON.stringify([stream, group])),
+      tokenKey = this.key("delivery-tokens", JSON.stringify([stream, group]));
     try {
       await this.redis.xgroup(
         "CREATE",
@@ -347,26 +348,25 @@ export class RedisAdapter implements FlowAdapter {
       paused = false,
       timer: ReturnType<typeof setTimeout> | undefined,
       polling = false;
-    const pending = new Map<string, symbol>(),
+    const pending = new Map<string, string>(),
       commits = new Set<ReturnType<typeof setTimeout>>();
-    const deliver = (id: string, fields: string[]) => {
-      const token = Symbol();
+    const release = async (id: string, token: string, requeue: boolean) => {
+      await this.redis.eval(`
+if redis.call('EXISTS',KEYS[1])==0 then redis.call('HDEL',KEYS[2],ARGV[2]); return 0 end
+local p=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[2],ARGV[2],1)
+if #p==0 or p[1][2]~=ARGV[3] or redis.call('HGET',KEYS[2],ARGV[2])~=ARGV[4] then return 0 end
+if tonumber(p[1][3])>=tonumber(ARGV[6]) then return 0 end
+redis.call('HDEL',KEYS[2],ARGV[2])
+if ARGV[5]=='1' then redis.call('RPUSH',KEYS[3],ARGV[2]); return 1 end
+return redis.call('XACK',KEYS[1],ARGV[1],ARGV[2])
+`, 3, key, tokenKey, retryKey, group, id, consumer, token, requeue ? '1' : '0', options.visibilityTimeout ?? 30000);
+    };
+    const deliver = (id: string, fields: string[], token: string) => {
       pending.set(id, token);
       const settle = async (requeue: boolean) => {
         if (!active || pending.get(id) !== token) return;
-        if (requeue) {
-          await this.redis.rpush(retryKey, id);
-        } else {
-          await this.redis.eval(
-            `local p=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[2],ARGV[2],1);if #p>0 and p[1][2]==ARGV[3] then return redis.call('XACK',KEYS[1],ARGV[1],ARGV[2]) end;return 0`,
-            1,
-            key,
-            group,
-            id,
-            consumer,
-          );
-        }
-        pending.delete(id);
+        await release(id, token, requeue);
+        if (pending.get(id) === token) pending.delete(id);
       };
       const message = {
         ...this.message(stream, id, fields),
@@ -400,45 +400,38 @@ export class RedisAdapter implements FlowAdapter {
         if (!paused) {
           const room = (options.maxInFlight ?? 1) - pending.size;
           if (room > 0) {
-            const retry = await this.redis.lpop(retryKey);
-            if (retry) {
-              const claimed = (await this.redis.xclaim(
-                key,
-                group,
-                consumer,
-                0,
-                retry,
-              )) as Array<[string, string[]]>;
-              for (const [id, fields] of claimed) deliver(id, fields);
-            } else {
-              const rows = (await this.redis.xreadgroup(
-                "GROUP",
-                group,
-                consumer,
-                "COUNT",
-                room,
-                "STREAMS",
-                key,
-                ">",
-              )) as any;
-              for (const [, messages] of rows ?? [])
-                for (const [id, fields] of messages)
-                  if (active && !paused && !pending.has(id))
-                    deliver(id, fields);
-              if (!rows) {
-                const reclaimed = (await this.redis.xautoclaim(
-                  key,
-                  group,
-                  consumer,
-                  options.visibilityTimeout ?? 30000,
-                  "0-0",
-                  "COUNT",
-                  room,
-                )) as any;
-                for (const [id, fields] of reclaimed[1] ?? [])
-                  if (active && !paused && !pending.has(id))
-                    deliver(id, fields);
-              }
+            const attempt = randomUUID();
+            const messages = await this.redis.eval(`
+local messages={}
+-- A retry is claimable only after its previous token was released atomically.
+for i=1,tonumber(ARGV[3]) do
+  local id=redis.call('LPOP',KEYS[3]); if not id then break end
+  if not redis.call('HGET',KEYS[2],id) then
+    local p=redis.call('XPENDING',KEYS[1],ARGV[1],id,id,1)
+    if #p>0 then
+      local rows=redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[2],0,id)
+      for _,row in ipairs(rows) do table.insert(messages,row) end
+    end
+  end
+end
+local room=tonumber(ARGV[3])-#messages
+if room>0 then
+  local reclaimed=redis.call('XAUTOCLAIM',KEYS[1],ARGV[1],ARGV[2],ARGV[4],'0-0','COUNT',room)
+  for _,row in ipairs(reclaimed[2]) do table.insert(messages,row) end
+  for _,id in ipairs(reclaimed[3] or {}) do redis.call('HDEL',KEYS[2],id) end
+end
+room=tonumber(ARGV[3])-#messages
+if room>0 then
+  local rows=redis.call('XREADGROUP','GROUP',ARGV[1],ARGV[2],'COUNT',room,'STREAMS',KEYS[1],'>')
+  if rows then for _,row in ipairs(rows[1][2]) do table.insert(messages,row) end end
+end
+for _,row in ipairs(messages) do redis.call('HSET',KEYS[2],row[1],ARGV[5]..':'..row[1]) end
+return messages
+`, 3, key, tokenKey, retryKey, group, consumer, room, options.visibilityTimeout ?? 30000, attempt) as Array<[string, string[]]>;
+            for (const [id, fields] of messages) {
+              const token = `${attempt}:${id}`;
+              if (active && !paused) deliver(id, fields, token);
+              else await release(id, token, true);
             }
           }
         }
@@ -460,7 +453,7 @@ export class RedisAdapter implements FlowAdapter {
         active = false;
         if (timer) clearTimeout(timer);
         for (const commit of commits) clearTimeout(commit);
-        if (pending.size) await this.redis.rpush(retryKey, ...pending.keys());
+        await Promise.all([...pending].map(([id, token]) => release(id, token, true)));
         pending.clear();
         this.subscriptions.delete(subscription);
       },

@@ -246,11 +246,12 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
       await vi.waitFor(() => expect(seen).toHaveLength(2));
       // Simulate a dead owner by pausing delivery; another consumer reclaims the unacked record.
       await first.pause();
+      await redis.xclaim(`${prefix}stream:stream`, "group", "first", 0, seen[1].id, "IDLE", 2000);
       const recovered: Message<number>[] = [];
       const second = stream.createConsumer("second", {
         groupId: "group",
         autoCommit: false,
-        visibilityTimeout: 30,
+        visibilityTimeout: 1000,
       });
       await second.subscribe(async (message) => {
         recovered.push(message);
@@ -265,6 +266,38 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
         ((await redis.xpending(`${prefix}stream:stream`, "group")) as any)[0],
       ).toBe(0);
       await stream.close();
+    });
+    it.each(['ack', 'nack', 'unsubscribe'] as const)('fences stale %s after same-name takeover', async action => {
+      const seen: Message<number>[] = [], replacement: Message<number>[] = [];
+      const options = { groupId: 'tokens', autoCommit: false, visibilityTimeout: 1000 };
+      const first = await adapter.consume('tokens', 'tokens', 'shared-name', async message => { seen.push(message); }, options);
+      const id = await new StreamImpl<number>('tokens', adapter).publish(1);
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      await first.pause!();
+      await redis.xclaim(`${prefix}stream:tokens`, 'tokens', 'shared-name', 0, id, 'IDLE', 2000);
+      const second = await adapter.consume('tokens', 'tokens', 'shared-name', async message => { replacement.push(message); }, options);
+      await vi.waitFor(() => expect(replacement).toHaveLength(1));
+      if (action === 'ack') await seen[0].ack();
+      else if (action === 'nack') await seen[0].nack(true);
+      else await first.unsubscribe();
+      expect(((await redis.xpending(`${prefix}stream:tokens`, 'tokens')) as any)[0]).toBe(1);
+      expect(await redis.llen(`${prefix}retry:${JSON.stringify(['tokens', 'tokens'])}`)).toBe(0);
+      await replacement[0].ack();
+      expect(((await redis.xpending(`${prefix}stream:tokens`, 'tokens')) as any)[0]).toBe(0);
+      expect(await redis.hlen(`${prefix}delivery-tokens:${JSON.stringify(['tokens', 'tokens'])}`)).toBe(0);
+      await first.unsubscribe();
+      await second.unsubscribe();
+    });
+    it('refuses an expired delivery acknowledgment before takeover', async () => {
+      const seen: Message<number>[] = [];
+      const subscription = await adapter.consume('expired', 'group', 'owner', async message => { seen.push(message); }, { groupId: 'group', autoCommit: false, visibilityTimeout: 1000 });
+      const id = await new StreamImpl<number>('expired', adapter).publish(1);
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      await subscription.pause!();
+      await redis.xclaim(`${prefix}stream:expired`, 'group', 'owner', 0, id, 'IDLE', 2000);
+      await seen[0].ack();
+      expect(((await redis.xpending(`${prefix}stream:expired`, 'group')) as any)[0]).toBe(1);
+      await subscription.unsubscribe();
     });
     it("roundtrips full workflow checkpoints and trims retained stream data", async () => {
       const checkpoint: any = {
