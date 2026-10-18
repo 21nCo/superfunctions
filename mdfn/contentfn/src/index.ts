@@ -25,17 +25,31 @@ export const defaultMarkdownContentProfile: MarkdownContentProfile = Object.free
   schemaVersion: 1,
 });
 
+function freezeDetached<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value as Record<string, unknown>)) freezeDetached(nested);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 export function markdownContent(
   markdown: string,
   options: Partial<Omit<MarkdownContent, "type" | "version" | "markdown">> = {},
 ): MarkdownContent {
+  const selectedProfile = { ...defaultMarkdownContentProfile, ...(options.profile ?? {}) };
+  const profile = Object.freeze({
+    ...selectedProfile,
+    extensions: Object.freeze([...(selectedProfile.extensions ?? [])]),
+  });
+  const sidecar = freezeDetached(validateMdfnSidecar(options.sidecar, { markdownLength: markdown.length }));
   return Object.freeze({
     type: "text/markdown",
     version: 1,
     markdown,
-    profile: Object.freeze({ ...defaultMarkdownContentProfile, ...(options.profile ?? {}) }),
+    profile,
     schemaHash: options.schemaHash,
-    sidecar: options.sidecar,
+    sidecar,
   });
 }
 
@@ -107,7 +121,12 @@ interface RichTextProjection {
   readonly unsupported: number;
 }
 
-function textFromRichNode(value: unknown, ancestors = new WeakSet<object>(), depth = 0): RichTextProjection {
+function textFromRichNode(
+  value: unknown,
+  ancestors = new WeakSet<object>(),
+  depth = 0,
+  allowedMetadata = new Set<string>(),
+): RichTextProjection {
   if (typeof value === "string") return { text: value, opaque: [], unsupported: 0 };
   if (!value || typeof value !== "object") return { text: "", opaque: [opaqueMigrationComment(value)], unsupported: 1 };
   if (depth >= 64 || ancestors.has(value)) return { text: "", opaque: [opaqueMigrationComment(value)], unsupported: 1 };
@@ -117,16 +136,22 @@ function textFromRichNode(value: unknown, ancestors = new WeakSet<object>(), dep
   try {
     const ownText = typeof node.text === "string" ? node.text : "";
     if (node.children === undefined) {
+      const discardedMetadata = Object.keys(node).some((key) => key !== "text" && !allowedMetadata.has(key));
       return ownText
-        ? { text: ownText, opaque: [], unsupported: 0 }
+        ? {
+            text: ownText,
+            opaque: discardedMetadata ? [opaqueMigrationComment(value)] : [],
+            unsupported: discardedMetadata ? 1 : 0,
+          }
         : { text: "", opaque: [opaqueMigrationComment(value)], unsupported: 1 };
     }
     if (!Array.isArray(node.children)) return { text: ownText, opaque: [opaqueMigrationComment(node.children)], unsupported: 1 };
+    const discardedMetadata = Object.keys(node).some((key) => key !== "text" && key !== "children" && !allowedMetadata.has(key));
     const children = node.children.map((child) => textFromRichNode(child, ancestors, depth + 1));
     return {
       text: ownText + children.map((child) => child.text).join(""),
-      opaque: children.flatMap((child) => child.opaque),
-      unsupported: children.reduce((total, child) => total + child.unsupported, 0),
+      opaque: [...(discardedMetadata ? [opaqueMigrationComment(value)] : []), ...children.flatMap((child) => child.opaque)],
+      unsupported: (discardedMetadata ? 1 : 0) + children.reduce((total, child) => total + child.unsupported, 0),
     };
   } finally {
     ancestors.delete(value);
@@ -134,6 +159,23 @@ function textFromRichNode(value: unknown, ancestors = new WeakSet<object>(), dep
 }
 
 function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; unsupported: number } {
+  const escapeText = (text: string): string => text
+    .replace(/\\/g, "\\\\")
+    .replace(/([!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~])/g, "\\$1")
+    .replace(/\r/g, "&#13;")
+    .replace(/\n/g, "&#10;")
+    .replace(/\t/g, "&#9;")
+    .replace(/^ +/, (spaces) => "&#32;".repeat(spaces.length))
+    .replace(/ +$/, (spaces) => "&#32;".repeat(spaces.length));
+  const codeFence = (text: string): string => {
+    let longest = 0;
+    let current = 0;
+    for (const character of text) {
+      if (character === "`") { current += 1; longest = Math.max(longest, current); }
+      else current = 0;
+    }
+    return "`".repeat(Math.max(3, longest + 1));
+  };
   let unsupported = 0;
   const blocks = value.map((entry) => {
     if (!entry || typeof entry !== "object") { unsupported += 1; return opaqueMigrationComment(entry); }
@@ -143,15 +185,39 @@ function richBlocksToMarkdown(value: readonly unknown[]): { markdown: string; un
       unsupported += 1;
       return opaqueMigrationComment(entry);
     }
-    const projected = textFromRichNode(block);
+    const projected = textFromRichNode(
+      block,
+      new WeakSet<object>(),
+      0,
+      new Set(type === "code" ? ["type", "language"] : ["type"]),
+    );
     unsupported += projected.unsupported;
-    const retained = projected.opaque.join("\n\n");
-    const withOpaque = (markdown: string): string => retained ? `${markdown}\n\n${retained}` : markdown;
-    if (type === "paragraph") return withOpaque(projected.text);
-    if (/^h[1-6]$/.test(type)) return withOpaque(`${"#".repeat(Number(type[1]))} ${projected.text}`);
-    if (type === "blockquote") return withOpaque(projected.text.split("\n").map((line) => `> ${line}`).join("\n"));
-    if (type === "code") return withOpaque(`\`\`\`${typeof block.language === "string" ? block.language : ""}\n${projected.text}\n\`\`\``);
-    if (type === "list-item") return withOpaque(`- ${projected.text}`);
+    const retained = [...projected.opaque];
+    if (block.type !== undefined && typeof block.type !== "string") {
+      unsupported += 1;
+      retained.push(opaqueMigrationComment(entry));
+    }
+    const withOpaque = (markdown: string): string => retained.length > 0 ? `${markdown}\n\n${retained.join("\n\n")}` : markdown;
+    if (type === "paragraph") {
+      if (!projected.text && retained.length === 0) {
+        unsupported += 1;
+        return opaqueMigrationComment(entry);
+      }
+      return withOpaque(escapeText(projected.text));
+    }
+    if (/^h[1-6]$/.test(type)) return withOpaque(`${"#".repeat(Number(type[1]))} ${escapeText(projected.text)}`);
+    if (type === "blockquote") return withOpaque(escapeText(projected.text).split("\n").map((line) => `> ${line}`).join("\n"));
+    if (type === "code") {
+      const fence = codeFence(projected.text);
+      const rawLanguage = typeof block.language === "string" ? block.language : "";
+      const language = rawLanguage.replace(/[^A-Za-z0-9_+.-]/g, "");
+      if ((block.language !== undefined && typeof block.language !== "string") || language !== rawLanguage) {
+        unsupported += 1;
+        retained.push(opaqueMigrationComment(entry));
+      }
+      return withOpaque(`${fence}${language}\n${projected.text}\n${fence}`);
+    }
+    if (type === "list-item") return withOpaque(`- ${escapeText(projected.text)}`);
     return opaqueMigrationComment(entry);
   });
   return { markdown: blocks.join("\n\n"), unsupported };
@@ -162,7 +228,15 @@ export function migrateToMarkdownContent(
   profile: MarkdownContentProfile = defaultMarkdownContentProfile,
 ): ContentMigrationResult {
   if (isMarkdownContent(value)) {
-    return { content: value, diagnostics: [], lossy: false };
+    return {
+      content: markdownContent(value.markdown, {
+        profile: value.profile,
+        schemaHash: value.schemaHash,
+        sidecar: value.sidecar,
+      }),
+      diagnostics: [],
+      lossy: false,
+    };
   }
   if (typeof value === "string") {
     return {
@@ -178,8 +252,7 @@ export function migrateToMarkdownContent(
     let invalidMetadata = legacy.schemaHash !== undefined && schemaHash === undefined;
     if (legacy.sidecar !== undefined) {
       try {
-        validateMdfnSidecar(legacy.sidecar as MdfnSidecar, { markdownLength: legacy.markdown.length });
-        sidecar = legacy.sidecar as MdfnSidecar;
+        sidecar = validateMdfnSidecar(legacy.sidecar, { markdownLength: legacy.markdown.length });
       } catch {
         invalidMetadata = true;
       }

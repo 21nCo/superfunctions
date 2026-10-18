@@ -1,4 +1,6 @@
 import { hashString, hashValue } from "./hash";
+import { immutableDocument } from "./immutable";
+import { validateMdfnSelection } from "./selection";
 import { validateMdfnSidecar } from "./sidecar";
 import type { EditorProjector, EditorState, MdfnSelection, MdfnSidecar, MdfnSnapshot } from "./types";
 
@@ -16,10 +18,10 @@ export function createEditorState(input: CreateEditorStateInput): EditorState {
   return Object.freeze({
     version: input.version ?? 0,
     markdown: input.markdown,
-    document: parsed.document,
+    document: immutableDocument(parsed.document),
     schemaHash: input.schemaHash,
     sourceHash: parsed.sourceHash ?? hashString(input.markdown),
-    selection: input.selection ?? null,
+    selection: validateMdfnSelection(input.selection ?? null, input.markdown.length),
     diagnostics: Object.freeze([...parsed.diagnostics]),
     sidecar: validateMdfnSidecar(input.sidecar, { markdownLength: input.markdown.length }),
     dirty: false,
@@ -53,7 +55,7 @@ export function restoreSnapshot(snapshot: MdfnSnapshot, projector: EditorProject
     const expectedDocumentHash = hashValue({ sourceHash: state.sourceHash, schemaHash: expectedSchemaHash, document: state.document });
     const cachedDocumentHash = hashValue({ sourceHash: snapshot.sourceHash, schemaHash: snapshot.schemaHash, document: snapshot.document });
     if (snapshot.documentHash === expectedDocumentHash && cachedDocumentHash === expectedDocumentHash) {
-      return Object.freeze({ ...state, document: snapshot.document, diagnostics: snapshot.diagnostics });
+      return Object.freeze({ ...state, document: immutableDocument(snapshot.document) });
     }
   }
   return state;
