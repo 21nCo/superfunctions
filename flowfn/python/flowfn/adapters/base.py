@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 class FlowAdapter(Protocol):
     """Base protocol for FlowFn adapters."""
 
+    async def health_probe(self) -> dict[str, Any]:
+        """Return connected/type/server_time (epoch ms) from the storage clock."""
+        ...
+
     # Queue operations
     def lease_loss_event(self, queue: str, job: Job) -> Optional[asyncio.Event]:
         """Return a signal for cooperative cancellation, or None for unleased storage."""

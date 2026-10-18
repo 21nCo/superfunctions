@@ -2,7 +2,6 @@
 
 import asyncio
 import math
-from dataclasses import asdict
 from typing import Any, Optional, TYPE_CHECKING, Union, cast
 from pydantic import BaseModel, Field
 from flowfn.adapters.base import FlowAdapter
@@ -141,11 +140,11 @@ class FlowFn:
         """Get metrics manager."""
         return self._metrics
 
-    async def health_check(self) -> dict[str, Any]:
-        """Perform health check."""
-        if self._health_checker:
-            return asdict(await self._health_checker.check())
-        return {"healthy": True, "timestamp": 0, "checks": []}
+    async def health_check(self, timeout: float = 5.0) -> dict[str, Any]:
+        """Probe storage and registered resources within a cooperative timeout."""
+        from flowfn.monitoring.runtime import runtime_health
+        return await runtime_health(self._adapter, self._queues, self._streams, self._workflows,
+                                    self._health_checker, self._closing, timeout)
 
     def get_event_tracker(self) -> EventTracker:
         """Get event tracker."""

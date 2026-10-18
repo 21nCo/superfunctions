@@ -187,6 +187,11 @@ class PostgresAdapter(DurableQueues):
         subscription.start()
         return subscription
 
+    async def health_probe(self) -> dict[str, Any]:
+        pool = await self._database()
+        now = await pool.fetchval("SELECT (EXTRACT(EPOCH FROM clock_timestamp())*1000)::bigint")
+        return {"type": "postgres", "connected": True, "server_time": int(now)}
+
     async def cleanup(self) -> None:
         await asyncio.gather(*(sub.unsubscribe() for sub in list(self._subscriptions)))
         await self._close_queues()

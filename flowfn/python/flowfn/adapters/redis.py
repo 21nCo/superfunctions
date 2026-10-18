@@ -206,6 +206,11 @@ class RedisAdapter(DurableQueues):
         subscription.start()
         return subscription
 
+    async def health_probe(self) -> dict[str, Any]:
+        self._check_open()
+        seconds, micros = await self.client.time()
+        return {"type": "redis", "connected": True, "server_time": int(seconds * 1000 + micros // 1000)}
+
     async def cleanup(self) -> None:
         self._closed = True
         await asyncio.gather(*(item.unsubscribe() for item in list(self._subscriptions)))

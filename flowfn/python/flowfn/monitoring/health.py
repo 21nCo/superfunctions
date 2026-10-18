@@ -78,7 +78,7 @@ class HealthChecker:
                     },
                 )
             except ImportError:
-                return HealthCheck(name="memory", status=HealthStatus.PASS)
+                return HealthCheck(name="memory", status=HealthStatus.WARN, message="Install flowfn[monitoring] for memory measurements")
 
         self.add_check("memory", memory_check)
 

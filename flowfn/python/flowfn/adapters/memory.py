@@ -386,6 +386,9 @@ class MemoryAdapter:
         return [deepcopy(item) for item in self._workflow_states.values() if item.workflow_id == workflow_id]
 
     # Lifecycle
+    async def health_probe(self) -> dict[str, Any]:
+        return {"type": "memory", "connected": True, "server_time": int(time.time() * 1000)}
+
     async def cleanup(self) -> None:
         """Cleanup resources."""
         await asyncio.gather(*(group.close() for group in self._groups.values()))
