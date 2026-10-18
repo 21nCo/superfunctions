@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { docsProducts } from "../cloudflare-docs/config.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const consumerPackage = process.env.DOCS_SITE_DIR
@@ -65,7 +66,7 @@ it.skipIf(process.platform === "win32")("actual deploy CLI forwards public targe
     for (const product of ["extfn", "authfn", "filefn"]) for (const environment of ["dev", "live"]) {
       const capture = join(base, "capture.json");
       execute(base, ["scripts/cloudflare-docs/deploy.mjs", environment, `--products=${product}`, "--dry-run"], { PATH: `${join(base, "bin")}:${process.env.PATH}`, BUILD_CAPTURE: capture });
-      const host = `https://${environment === "dev" ? "dev." : ""}${product}.com`;
+      const host = `https://${docsProducts[product].hosts[environment]}`;
       expect(JSON.parse(readFileSync(capture, "utf8"))).toEqual({ public: host, assets: host });
       const config = JSON.parse(readFileSync(join(base, product, "docs/.cloudflare-docs-wrangler.jsonc"), "utf8"));
       expect(config.compatibility_flags).toContain("nodejs_compat");

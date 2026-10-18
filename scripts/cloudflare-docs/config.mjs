@@ -17,7 +17,7 @@ export const docsProducts = {
     kind: "sveltekit-cloudflare",
     zoneName: "extfn.com",
     hosts: {
-      dev: "dev.extfn.com",
+      dev: "extfn.21n.site",
       live: "extfn.com",
     },
   },

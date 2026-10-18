@@ -1,4 +1,3 @@
-import { basename, extname } from "node:path";
 import matter from "gray-matter";
 import {
   assertValidSourceEntries,
@@ -361,6 +360,17 @@ function collectEntriesForCollection(
       numeric: true,
     }),
   );
+}
+
+// POSIX helpers keep the runtime free of Node built-ins on edge targets.
+function basename(relativePath: string): string {
+  return relativePath.slice(relativePath.lastIndexOf("/") + 1);
+}
+
+function extname(relativePath: string): string {
+  const name = basename(relativePath);
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot) : "";
 }
 
 function createEntryForModule(

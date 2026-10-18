@@ -49,20 +49,6 @@ export async function buildLlmsSiteArtifacts(cwd, dependencies, options = {}) {
  * @param {string} product
  * @param {string | undefined} canonicalUrl
  */
-export function withSourceLinks(text, manifest, product, canonicalUrl) {
-  if (canonicalUrl) return text;
-  const sources = new Map(Object.values(manifest.pages)
-    .filter((page) => page.id.startsWith("docs:"))
-    .map((page) => [new URL(page.path, "https://docs.invalid").pathname, page.id.slice("docs:".length)]));
-  return text.replace(/\]\((\/docs[^\s)]*)\)/g, (match, href) => {
-    const url = new URL(href, "https://docs.invalid");
-    const source = sources.get(url.pathname);
-    if (!source) return match;
-    const path = source.split("/").map(encodeURIComponent).join("/");
-    return `](https://github.com/21nCo/super-functions/blob/dev/${product}/docs/content/docs/${path}${url.hash})`;
-  });
-}
-
 /**
  * Replace one regular artifact in a trusted output directory atomically.
  * This promises per-path visibility, not a two-file transaction or power-loss durability.
@@ -88,7 +74,6 @@ function replaceArtifact(target, body) {
     closeSync(descriptor);
     descriptor = undefined;
     renameSync(temporary, target);
-    owned = false;
   } catch (error) {
     const failures = [error];
     if (descriptor !== undefined) {
