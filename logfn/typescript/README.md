@@ -400,3 +400,14 @@ failures, timeouts, 408, 429 and 5xx retry within `retry.attempts`, with backoff
 at five seconds. Other 4xx responses end that send attempt immediately. Requests
 may be retried after ambiguous network failure, so destinations should tolerate
 duplicate events.
+
+### Event size and serialization
+
+Events are sanitized before delivery. Cycles become `[circular]`, unsupported
+values become `[unserializable]`, and nesting beyond 64 levels becomes
+`[depth_limit]`. Shared references that are not cycles retain their values.
+The 64 KiB event limit is measured as UTF-8 JSON bytes. Oversized events receive
+`ctx._truncated`; complete context entries are retained where they fit. If the
+envelope itself exceeds the limit, optional metadata is removed and required
+text fields are shortened at Unicode code-point boundaries. Inputs are not
+mutated. Keep unusually large payloads in external storage and log a reference.

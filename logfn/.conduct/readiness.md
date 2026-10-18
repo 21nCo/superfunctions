@@ -35,3 +35,7 @@ Source tests pass on Python3.9 and3.12 (18 each). A freshly built wheel installe
 Parent and child loggers now share tracked async sink calls, including returned Futures. Flush waits for accepted deliveries before sink flush hooks, runs all hooks even when one fails, and reports completed background failures. Cancellation of a flush waiter leaves accepted sink tasks running. No-event-loop coroutine creation is closed and reported instead of leaked.
 
 Python3.9 and3.12 each pass23 tests; a fresh installed Python3.12 wheel also passes23. Strict mypy1.18.2 validates the changed core module. Four deterministic concurrency regressions cover parent/child delivery ownership, completed failure reporting, flush-waiter cancellation and Future-returning sinks. A real local HTTP server verifies envelope/authentication,503 retry and owned-client close. This addresses the generic async delivery join gap; remaining fullspec/browser/sharedHTTP/serialization gates above still apply.
+
+## Serialization and UTF-8 event bounds
+
+TypeScript sanitizer now handles cycles, deep nesting, throwing getters, invalid dates and literal prototype keys without corrupting output. Additional event fields are sanitized as well as context. Size enforcement measures UTF-8 JSON bytes, preserves complete context entries that fit, and bounds oversized envelope metadata/messages with a truncation marker. Five regressions plus the existing suite pass (171core tests); source typecheck/build pass. Python serialization parity and pipeline security remain separate open gates.
