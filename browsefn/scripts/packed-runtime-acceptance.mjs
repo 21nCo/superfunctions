@@ -10,7 +10,9 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const temporary = mkdtempSync(join(tmpdir(), 'browsefn-packed-'));
 const packs = join(temporary, 'packs'); mkdirSync(packs);
-const run = (command, args, cwd) => execFileSync(command, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const npmCommand = process.env.NPM_CLI ? process.execPath : 'npm';
+const npmArgs = args => process.env.NPM_CLI ? [process.env.NPM_CLI, ...args] : args;
+const run = (command, args, cwd) => execFileSync(command === 'npm' ? npmCommand : command, command === 'npm' ? npmArgs(args) : args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const node = (file, cwd) => process.env.BROWSEFN_NODE
   ? run(process.env.BROWSEFN_NODE, [file], cwd)
   : run('npm', ['exec', '--yes', '--package=node@20.19.0', '--', 'node', file], cwd);
@@ -25,7 +27,7 @@ try {
     const cwd = join(temporary, kind); mkdirSync(cwd);
     writeFileSync(join(cwd, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
     run('npm', ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...corePackages, ...(kind === 'admin' ? adminPackages : [])], cwd);
-    const audit = spawnSync('npm', ['audit', '--omit=dev', '--json'], { cwd, encoding: 'utf8' });
+    const audit = spawnSync(npmCommand, npmArgs(['audit', '--omit=dev', '--json']), { cwd, encoding: 'utf8' });
     const report = JSON.parse(audit.stdout);
     assert.ok(report.metadata?.vulnerabilities, audit.stdout || audit.stderr);
     console.log(JSON.stringify({ kind, productionVulnerabilities: report.metadata.vulnerabilities }));
