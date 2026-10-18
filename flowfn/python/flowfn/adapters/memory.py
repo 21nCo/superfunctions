@@ -344,6 +344,8 @@ class MemoryAdapter:
             name=stream,
             length=len(messages),
             groups=sum(name == stream for name, _ in self._groups),
+            lag=sum(len(group.unacknowledged) for (name, _),group in self._groups.items() if name==stream),
+            consumers=sum(len(group.consumers) for (name, _),group in self._groups.items() if name==stream),
         )
 
     async def get_stream_messages(self, stream: str) -> list[Message]:

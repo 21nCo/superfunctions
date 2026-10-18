@@ -130,11 +130,13 @@ class RedisAdapter(DurableQueues):
         key = self._stream(stream)
         try:
             info = await self.client.xinfo_stream(key)
-            return StreamInfo(name=stream, length=info['length'], groups=info['groups'])
+            groups=await self.client.xinfo_groups(key)
+            lag=sum(group['lag']+group['pending'] for group in groups) if all(isinstance(group.get('lag'),int) for group in groups) else None
+            return StreamInfo(name=stream,length=info['length'],groups=info['groups'],lag=lag,consumers=sum(group['consumers'] for group in groups))
         except ResponseError as exc:
             if 'no such key' not in str(exc):
                 raise
-            return StreamInfo(name=stream, length=0)
+            return StreamInfo(name=stream,length=0,lag=0,consumers=0)
 
     async def trim_stream(self, stream: str, strategy: TrimStrategy) -> int:
         # Keep entries still unread or pending in any group. Redis XTRIM alone
@@ -276,10 +278,13 @@ class RedisSubscription:
 
                     async def settle(requeue: bool, future: asyncio.Future[bool] = decision,
                                      delivery_id: str = identity, token: str = delivery_owner) -> None:
+                        if future.cancelled():
+                            raise RuntimeError('Stream delivery ownership changed')
                         if not future.done():
                             if self.group and not requeue and not await self._owned(delivery_id,token,acknowledge=True):
                                 raise RuntimeError('Stream delivery ownership changed')
-                            future.set_result(requeue)
+                            if not future.done():
+                                future.set_result(requeue)
 
                     message._acknowledge = settle
                     async def process() -> None:

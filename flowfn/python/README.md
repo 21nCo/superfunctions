@@ -210,3 +210,12 @@ Redis stream attempts store a separate token alongside the pending entry. Deploy
 Workflow shutdown cancels persisted execution state only while the local attempt still owns an unexpired lease. A stale runtime stops its local task without cancelling a replacement worker's execution. Explicit `cancel_execution()` remains an administrative cancellation operation.
 
 Workflow renewals retry transient storage errors only within the existing conservative local lease deadline. Explicit ownership loss or a hung renewal cancels cooperative execution without writing stale terminal state; a claim reply arriving after its deadline never starts a handler. `resume_execution()` rejects a second active runtime for the same execution on one workflow object.
+
+
+### Metrics scope and units
+
+`await flow.metrics.get_queue_metrics(name)` combines persisted job counts with measurements from this FlowFn instance. `throughput` counts successfully committed completions in the current second and preceding 59 whole-second buckets (jobs/minute); failed or fenced completions do not count. Duration averages and p95 values use the most recent 1,000 terminal job durations in milliseconds and survive job removal for the lifetime of this instance.
+
+`get_stream_metrics(name)` reports retained messages and consumer-group lag (unread plus pending deliveries, summed across groups), alongside local publications in the current wall-clock second and average publish latency in milliseconds. Redis versions without group lag support return `None` for lag. Consumer counts are adapter-specific: memory reports active consumers, Redis reports registered consumer metadata, and PostgreSQL returns `None` because it has no durable consumer roster.
+
+`get_workflow_metrics(name)` reads persisted executions, including executions created by other instances; success rate is completed executions divided by all executions, expressed as a percentage. Terminal execution duration is reported in milliseconds. `get_system_metrics()` counts resources and live queue worker tasks registered on this instance. `memory_usage` is current process RSS in bytes when `psutil` is installed, otherwise `None`. Missing latency/duration measurements are `None`. Local counters and duration samples reset on restart and are not cross-process totals; persisted gauges and workflow counts survive restart with durable adapters.

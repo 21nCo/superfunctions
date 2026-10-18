@@ -15,6 +15,7 @@ from flowfn.queue.types import (
 from flowfn.adapters.base import FlowAdapter
 import asyncio
 from flowfn.core.lifecycle import Admissions
+from flowfn.core.metrics import MetricsManager
 import uuid
 import time
 import math
@@ -23,8 +24,9 @@ import math
 class Queue:
     """Queue for background job processing."""
 
-    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None):
+    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None):
         self.name = name
+        self._metrics = metrics
         self._adapter = adapter
         self._options = options or {}
         self._processing = False
@@ -213,6 +215,11 @@ class Queue:
             try:
                 if not ownership_lost and not (lost is not None and lost.is_set()):
                     await self._adapter.update_job(self.name, job)
+                    if self._metrics is not None and job.state in (JobStatus.COMPLETED,JobStatus.FAILED):
+                        if job.state == JobStatus.COMPLETED:
+                            self._metrics.increment('queue.throughput',{'queue':self.name})
+                        if job.processed_on is not None and job.finished_on is not None:
+                            self._metrics.record('queue.job.duration',max(0,job.finished_on-job.processed_on),{'queue':self.name})
             finally:
                 await self._adapter.release_job_lease(self.name,job)
 

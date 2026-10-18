@@ -136,8 +136,13 @@ class PostgresAdapter(DurableQueues):
 
     async def get_stream_info(self, stream: str) -> StreamInfo:
         pool = await self._database()
-        row = await pool.fetchrow('SELECT (SELECT count(*) FROM flowfn_py_events WHERE namespace=$1 AND stream=$2) AS length, (SELECT count(*) FROM flowfn_py_groups WHERE namespace=$1 AND stream=$2) AS groups', self.namespace, stream)
-        return StreamInfo(name=stream, length=row['length'], groups=row['groups'])
+        row = await pool.fetchrow('''SELECT
+            (SELECT count(*) FROM flowfn_py_events WHERE namespace=$1 AND stream=$2) AS length,
+            (SELECT count(*) FROM flowfn_py_groups WHERE namespace=$1 AND stream=$2) AS groups,
+            (SELECT COALESCE(sum((SELECT count(*) FROM flowfn_py_events e WHERE e.namespace=g.namespace AND e.stream=g.stream AND e.id>g.cursor)
+                +(SELECT count(*) FROM flowfn_py_pending p WHERE p.namespace=g.namespace AND p.stream=g.stream AND p.group_name=g.name)),0)
+                FROM flowfn_py_groups g WHERE g.namespace=$1 AND g.stream=$2) AS lag''',self.namespace,stream)
+        return StreamInfo(name=stream,length=row['length'],groups=row['groups'],lag=int(row['lag']))
 
     async def trim_stream(self, stream: str, strategy: TrimStrategy) -> int:
         pool = await self._database()
@@ -261,10 +266,13 @@ class PostgresSubscription:
                 decision: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
 
                 async def settle(requeue: bool, target: asyncio.Future[bool] = decision, delivery_id: int = row['id'], token: str = delivery_owner) -> None:
+                    if target.cancelled():
+                        raise RuntimeError('Stream delivery ownership changed')
                     if not target.done():
                         if self.group and not requeue and not await self._owned(delivery_id, token, acknowledge=True):
                             raise RuntimeError('Stream delivery ownership changed')
-                        target.set_result(requeue)
+                        if not target.done():
+                            target.set_result(requeue)
 
                 message._acknowledge = settle
                 async def process() -> None:

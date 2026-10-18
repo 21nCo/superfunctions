@@ -14,6 +14,7 @@ from flowfn.stream.types import (
 from flowfn.adapters.base import FlowAdapter
 import asyncio
 from flowfn.core.lifecycle import Admissions
+from flowfn.core.metrics import MetricsManager
 import uuid
 import time
 
@@ -21,8 +22,9 @@ import time
 class Stream:
     """Stream for pub/sub messaging."""
 
-    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None):
+    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None):
         self.name = name
+        self._metrics = metrics
         self._adapter = adapter
         self._options = options or {}
         retention = StreamOptions.model_validate(self._options)
@@ -53,7 +55,11 @@ class Stream:
                 key=options.key,
             )
 
+            started = time.monotonic()
             message_id = await self._adapter.publish(self.name, message)
+            if self._metrics is not None:
+                self._metrics.increment('stream.throughput',{'stream':self.name})
+                self._metrics.record('stream.latency',(time.monotonic()-started)*1000,{'stream':self.name})
             await self._apply_retention()
             return message_id
 

@@ -68,7 +68,10 @@ class FlowFn:
         from flowfn.core.metrics import MetricsManager
         from flowfn.monitoring.health import HealthChecker, EventTracker
 
-        self._metrics = MetricsManager(self._adapter)
+        self._metrics = MetricsManager(self._adapter,lambda: {
+            "queues":len(self._queues),"streams":len(self._streams),"workflows":len(self._workflows),
+            "workers":sum(not task.done() for queue in self._queues.values() for task in queue._workers),
+        })
         self._health_checker = HealthChecker()
         self._event_tracker = EventTracker()
 
@@ -83,7 +86,7 @@ class FlowFn:
                 **(self.config.default_queue_options or {}),
                 **(options or {}),
             }
-            self._queues[name] = Queue(name, self._adapter, queue_options)
+            self._queues[name] = Queue(name, self._adapter, queue_options, metrics=self._metrics)
 
         return self._queues[name]
 
@@ -98,7 +101,7 @@ class FlowFn:
             from flowfn.stream.stream import Stream
 
             stream_options = {**(self.config.default_stream_options or {}), **(options or {})}
-            self._streams[name] = Stream(name, self._adapter, stream_options)
+            self._streams[name] = Stream(name, self._adapter, stream_options, metrics=self._metrics)
 
         return self._streams[name]
 

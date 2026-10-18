@@ -114,3 +114,41 @@ async def test_redis_same_subscription_reclaim_fences_old_ack_and_renew(adapters
     assert await subscription._owned(second,'attempt-two')
     assert await subscription._owned(second,'attempt-two',acknowledge=True)
     assert await adapter.client.hlen(subscription._owners_key)==0
+
+
+async def test_ack_reply_after_local_cancellation_is_settled_safely(adapters, monkeypatch):
+    adapter, _ = adapters
+    adapter.reclaim_after_ms = 5000
+    if hasattr(adapter, '_database'):
+        from flowfn.adapters.postgres import PostgresSubscription as Subscription
+    else:
+        from flowfn.adapters.redis import RedisSubscription as Subscription
+    original = Subscription._owned
+    committed = asyncio.Event()
+    release = asyncio.Event()
+    async def delayed(self, identity, owner, acknowledge=False):
+        result = await original(self, identity, owner, acknowledge=acknowledge)
+        if acknowledge:
+            committed.set()
+            await release.wait()
+        return result
+    monkeypatch.setattr(Subscription, '_owned', delayed)
+    received = asyncio.Event()
+    messages = []
+    async def handler(message):
+        messages.append(message)
+        received.set()
+    subscription = await adapter.consume('ack-race', 'g', 'reader', handler, ConsumerOptions(group_id='g', max_in_flight=1))
+    await adapter.publish('ack-race', Message(id='one', stream='ack-race', data={}, timestamp=0))
+    try:
+        await asyncio.wait_for(received.wait(), 5)
+        ack = asyncio.create_task(messages[0].ack())
+        await asyncio.wait_for(committed.wait(), 5)
+        await subscription.unsubscribe()
+        release.set()
+        await ack
+        with pytest.raises(RuntimeError, match='ownership changed'):
+            await messages[0].ack()
+    finally:
+        release.set()
+        await subscription.unsubscribe()

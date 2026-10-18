@@ -69,6 +69,8 @@ class StreamInfo(BaseModel):
     name: str
     length: int
     groups: int = 0
+    lag: Optional[int] = None
+    consumers: Optional[int] = None
 
 
 class TrimStrategy(BaseModel):
