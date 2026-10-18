@@ -182,6 +182,7 @@ export class WorkflowBuilderImpl<T = any> implements WorkflowBuilder<T> {
 
 interface Checkpoint extends WorkflowExecution {
   definitionHash: string;
+  receivedSignals: string[];
   journal: Record<
     string,
     { output?: any; branch?: boolean; completed: boolean }
@@ -198,6 +199,7 @@ interface Runtime {
   controller: AbortController;
   task?: Promise<void>;
   writes: Promise<void>;
+  signals: Promise<void>;
   wakes: Set<() => void>;
   settling: boolean;
   token: string;
@@ -211,6 +213,9 @@ export class WorkflowCancelledError extends Error {
     super("Workflow cancelled");
     this.name = "WorkflowCancelledError";
   }
+}
+export class WorkflowOwnershipError extends Error {
+  constructor() { super('Workflow execution is owned or changed'); this.name = 'WorkflowOwnershipError'; }
 }
 export class WorkflowTimeoutError extends Error {
   constructor(name: string) {
@@ -256,6 +261,8 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   private closed = false;
   private catalogWrites: Promise<void> = Promise.resolve();
   private definitionHash: string;
+  private recoveryTimer?: ReturnType<typeof setTimeout>;
+  private recoveryTask?: Promise<number>;
   constructor(
     name: string,
     steps: StepDefinition[],
@@ -343,7 +350,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       expectedRevision: fresh ? null : runtime.record.revision ?? 0,
       state: runtime.record, token: runtime.token, acquire: this.leaseDuration,
     });
-    if (!saved) throw new Error('Workflow execution is owned or changed');
+    if (!saved) throw new WorkflowOwnershipError();
     runtime.record.revision = saved.revision;
     runtime.record.lease = saved.lease;
     runtime.deadline = started + this.leaseDuration;
@@ -373,6 +380,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       record,
       controller: new AbortController(),
       writes: Promise.resolve(),
+      signals: Promise.resolve(),
       settling: false,
       wakes: new Set(),
       token: uuidv4(), lost: false, deadline: 0, leaseLost: new AbortController(),
@@ -386,6 +394,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     const record: Checkpoint = {
       id: uuidv4(),
       definitionHash: this.definitionHash,
+      receivedSignals: [],
       workflowId: this.id,
       status: "running",
       input: clone(input),
@@ -426,6 +435,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       inbox,
       waits,
       waitResults,
+      receivedSignals,
       ...publicRecord
     } = record;
     return clone(publicRecord);
@@ -483,6 +493,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     await this.persist(runtime);
     for (;;) {
       this.check(runtime);
+      await this.receiveSignals(runtime);
       const deadline = record.waits[key].deadline;
       if (deadline !== undefined && Date.now() >= deadline) {
         delete record.waits[key];
@@ -522,11 +533,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         runtime.controller.signal.addEventListener("abort", abort, {
           once: true,
         });
-        if (deadline !== undefined)
-          timer = setTimeout(
-            wake,
-            Math.min(Math.max(0, deadline - Date.now()), 2147483647),
-          );
+        timer = setTimeout(wake, deadline === undefined ? 100 : Math.min(100, Math.max(0, deadline - Date.now())));
       });
     }
   }
@@ -818,27 +825,65 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       )
       .map((record) => this.publicRecord(record));
   }
+  private async sendSignal(record: Checkpoint, name: string, data: any, unique = false): Promise<void> {
+    if (!this.adapter.mutateWorkflowState) throw new Error('Adapter must support atomic workflow signals');
+    const key = `${record.id}:inbox`;
+    const message = { id: uuidv4(), name, data: clone(data) };
+    for (;;) {
+      const inbox = await this.adapter.loadWorkflowState(key);
+      const messages: Array<typeof message> = inbox?.state?.messages ?? [];
+      if (messages.length + record.inbox.length >= 1024) throw new Error('Execution event inbox is full');
+      if (unique && messages.some(item => item.name === name)) throw new Error('Approval already supplied');
+      const saved = await this.adapter.mutateWorkflowState(key, { expectedRevision: inbox ? inbox.revision ?? 0 : null, state: {
+        id: key, workflowId: this.id, status: 'running', input: null, startedAt: record.startedAt, state: { messages: [...messages, message] },
+      } });
+      if (saved) return;
+    }
+  }
+  private receiveSignals(runtime: Runtime): Promise<void> {
+    runtime.signals = runtime.signals.then(() => this.receiveSignalsOwned(runtime));
+    return runtime.signals;
+  }
+  private async receiveSignalsOwned(runtime: Runtime): Promise<void> {
+    const key = `${runtime.record.id}:inbox`;
+    for (;;) {
+      const inbox = await this.adapter.loadWorkflowState(key);
+      const messages: Array<{ id: string; name: string; data: any }> = inbox?.state?.messages ?? [];
+      if (!messages.length) return;
+      const record = runtime.record;
+      record.receivedSignals ??= [];
+      const incoming = messages.filter(item => !record.receivedSignals.includes(item.id));
+      if (incoming.length) {
+        record.inbox.push(...incoming.map(({ name, data }) => ({ name, data: clone(data) })));
+        record.receivedSignals.push(...incoming.map(item => item.id));
+        // Checkpoint receipt before acknowledging the inbox so crashes cannot lose signals.
+        await this.persist(runtime);
+      }
+      const saved = await this.adapter.mutateWorkflowState!(key, { expectedRevision: inbox!.revision!, state: { ...inbox!, state: { messages: [] } } });
+      if (saved) return;
+    }
+  }
   async signalEvent(
     executionId: string,
     event: string,
     data?: any,
   ): Promise<void> {
     if (!event) throw new Error("Event name is required");
+    const record = await this.load(executionId);
     const runtime = this.active.get(executionId);
-    if (!runtime || terminal(runtime.record.status) || runtime.settling)
+    if (terminal(record.status) || runtime?.settling)
       throw new Error("Execution is not active");
-    if (runtime.record.inbox.length >= 1024)
-      throw new Error("Execution event inbox is full");
-    runtime.record.inbox.push({ name: `event:${event}`, data: clone(data) });
-    await this.persist(runtime);
-    for (const wake of [...runtime.wakes]) wake();
+    await this.sendSignal(record, `event:${event}`, data);
+    if (runtime) await this.receiveSignals(runtime);
+    for (const wake of [...runtime?.wakes ?? []]) wake();
   }
   async approveExecution(
     executionId: string,
     decision: import("./types.js").ApprovalDecision,
   ): Promise<void> {
+    const record = await this.load(executionId);
     const runtime = this.active.get(executionId);
-    const pending = Object.values(runtime?.record.waits ?? {}).filter(
+    const pending = Object.values(record.waits ?? {}).filter(
       (wait) =>
         wait.kind === "approval" &&
         (decision.approver === undefined || wait.name === decision.approver),
@@ -846,10 +891,9 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     if (pending.length > 1) throw new Error("Approval role is ambiguous");
     const waiting = pending[0];
     if (
-      !runtime ||
-      runtime.settling ||
+      runtime?.settling ||
       waiting?.kind !== "approval" ||
-      terminal(runtime.record.status)
+      terminal(record.status)
     )
       throw new Error(
         "Execution is not waiting for approval or approval role does not match",
@@ -867,17 +911,14 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     if (waiting.deadline !== undefined && Date.now() >= waiting.deadline)
       throw new Error("Approval deadline has expired");
     if (
-      runtime.record.inbox.some(
+      record.inbox.some(
         (item) => item.name === `approval:${waiting.name}`,
       )
     )
       throw new Error("Approval already supplied");
-    runtime.record.inbox.push({
-      name: `approval:${waiting.name}`,
-      data: clone(decision),
-    });
-    await this.persist(runtime);
-    for (const wake of [...runtime.wakes]) wake();
+    await this.sendSignal(record, `approval:${waiting.name}`, decision, true);
+    if (runtime) await this.receiveSignals(runtime);
+    for (const wake of [...runtime?.wakes ?? []]) wake();
   }
   async cancelExecution(executionId: string): Promise<void> {
     const runtime = this.active.get(executionId);
@@ -896,8 +937,9 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   async resumeExecution(executionId: string): Promise<WorkflowExecution> {
     this.ensureOpen();
     if (this.active.has(executionId))
-      throw new Error("Execution is already active");
+      throw new WorkflowOwnershipError();
     const record = await this.load(executionId);
+    if (this.active.has(executionId)) throw new WorkflowOwnershipError();
     if (!record.journal || !record.waits || !record.waitResults)
       throw new Error("Execution predates recoverable workflow checkpoints");
     if (record.definitionHash !== this.definitionHash) throw new Error('Workflow definition differs from checkpoint');
@@ -916,6 +958,35 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   async waitForCompletion(executionId: string): Promise<WorkflowExecution> {
     await this.tasks.get(executionId);
     return this.getExecution(executionId);
+  }
+  async recoverExecutions(): Promise<number> {
+    this.ensureOpen();
+    await this.loadCatalog();
+    let recovered = 0;
+    for (const record of [...this.known.values()]) {
+      if (this.closed) break;
+      if (record.completedAt !== undefined || this.active.has(record.id)) continue;
+      try { await this.resumeExecution(record.id); recovered++; }
+      catch (error) { if (!(error instanceof WorkflowOwnershipError)) throw error; }
+    }
+    return recovered;
+  }
+  async startRecovery(options: { interval?: number } = {}): Promise<void> {
+    this.ensureOpen();
+    const interval = options.interval ?? 1000;
+    if (!Number.isSafeInteger(interval) || interval < 1 || interval > 2147483647) throw new Error('Invalid recovery interval');
+    if (this.recoveryTimer || this.recoveryTask) throw new Error('Recovery is already running');
+    const run = async () => {
+      this.recoveryTask = this.recoverExecutions();
+      try { await this.recoveryTask; }
+      finally {
+        this.recoveryTask = undefined;
+        if (!this.closed) this.recoveryTimer = setTimeout(() => { void run().catch(error => {
+          try { this.onEvent?.('workflow:recovery-error', { workflowId: this.id, message: String(error) }); } catch { /* Observers cannot interrupt recovery. */ }
+        }); }, interval);
+      }
+    };
+    await run();
   }
   async getExecutionHistory(executionId: string): Promise<WorkflowEvent[]> {
     return clone((await this.load(executionId)).history ?? []);
@@ -942,6 +1013,8 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   }
   async close(): Promise<void> {
     this.closed = true;
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    await this.recoveryTask?.catch(() => undefined);
     const runtimes = [...this.active.values()];
     for (const runtime of runtimes) runtime.controller.abort();
     await Promise.all(runtimes.map((runtime) => runtime.task));

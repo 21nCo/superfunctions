@@ -23,6 +23,8 @@ export interface Workflow<T = any> {
   cancelExecution(executionId: string): Promise<void>;
   retryExecution(executionId: string): Promise<WorkflowExecution>;
   resumeExecution(executionId: string): Promise<WorkflowExecution>;
+  recoverExecutions(): Promise<number>;
+  startRecovery(options?: { interval?: number }): Promise<void>;
   signalEvent(executionId: string, event: string, data?: any): Promise<void>;
   approveExecution(
     executionId: string,

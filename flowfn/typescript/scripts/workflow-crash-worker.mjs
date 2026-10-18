@@ -11,14 +11,15 @@ const flow = createFlow({ adapter });
 const workflow = flow.workflow(config.name).ownership({ leaseDuration: 180 })
   .step('effect', async ctx => { await flow.stream(config.name).publish({ effect: true, empty: [] }); ctx.set('saved', 5); })
   .waitForEvent('go')
-  .step('finish', async (ctx, value) => ctx.get('saved') + value).build();
+  .step('finish', async (ctx, value) => { ctx.set('total', ctx.get('saved') + value); })
+  .waitForApproval('ops', { timeout: 10_000 })
+  .step('approved', async (ctx, decision) => { ctx.set('approved', decision.approved); return ctx.get('total'); }).build();
 if (!config.executionId) {
   const execution = await workflow.execute({ values: [], nested: { empty: [] } });
   while ((await workflow.getExecution(execution.id)).waiting?.kind !== 'event') await new Promise(resolve => setTimeout(resolve, 5));
   process.send({ executionId: execution.id });
 } else {
-  await workflow.resumeExecution(config.executionId);
-  await workflow.signalEvent(config.executionId, 'go', 7);
+  await workflow.startRecovery({ interval: 20 });
   const result = await workflow.waitForCompletion(config.executionId);
   process.send({ result });
   await flow.close();

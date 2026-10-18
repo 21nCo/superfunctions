@@ -2,7 +2,8 @@ import { fork } from 'node:child_process';
 import { resolve } from 'node:path';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { expect } from 'vitest';
+import { expect, vi } from 'vitest';
+import { WorkflowBuilderImpl } from '../workflow/workflow.js';
 import type { FlowAdapter } from '../adapters/base.js';
 
 export async function workflowCrashContract(adapter: FlowAdapter, kind: string, scope: string, scheduler = false) {
@@ -30,13 +31,23 @@ export async function workflowCrashContract(adapter: FlowAdapter, kind: string, 
     const exited = once(original, 'exit');
     original.kill('SIGKILL');
     await exited;
+    const sender = new WorkflowBuilderImpl(name, adapter).build();
+    if (!scheduler) await sender.signalEvent(executionId, 'go', 7);
     await new Promise(resolve => setTimeout(resolve, 220));
     const restored = start(executionId);
     const finished = once(restored, 'exit');
-    const result = await message(restored);
+    const completion = message(restored);
+    void completion.catch(() => undefined);
+    if (!scheduler) {
+      await vi.waitFor(async () => expect((await adapter.loadWorkflowState(executionId))?.waiting?.kind).toBe('approval'), { timeout: 5000 });
+      await sender.approveExecution(executionId, { approver: 'ops', reviewedBy: 'remote-operator', approved: true });
+    }
+    await sender.close();
+    const result = await completion;
     if (scheduler) expect(result.completed).toBe(true);
     else {
       expect(result.result.output).toBe(12);
+      expect(result.result.state.approved).toBe(true);
       expect(result.result.input).toEqual({ values: [], nested: { empty: [] } });
     }
     await finished;

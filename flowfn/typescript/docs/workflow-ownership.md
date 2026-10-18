@@ -38,7 +38,20 @@ record. Custom adapters must implement atomic `mutateWorkflowState` to run
 workflows. The provider acceptance runner includes competing-owner, expired-owner,
 hung-renewal and separate-process SIGKILL recovery checks.
 
-Signals and approval calls currently require the owning runtime. Distributed
-signal delivery and automatic workflow discovery/recovery
-remain outstanding contracts. Functional checks do not establish workflow
-throughput, latency or concurrent-execution targets.
+Signals and approval calls can originate in another process with the same
+workflow name and namespace. A revision-checked inbox preserves them while the
+owner is unavailable. The owner checkpoints received message IDs before removing
+inbox entries, so recovery does not lose or duplicate buffered messages. Approval
+calls validate the pending role, deadline and reviewer identity and reject
+duplicate pending decisions.
+
+Call `await workflow.startRecovery({ interval: 1000 })` after registering the
+definition to discover and resume abandoned executions automatically. Live owners
+are skipped until their leases expire. `recoverExecutions()` performs one pass.
+Closing the workflow stops recovery polling. Background discovery errors emit
+`workflow:recovery-error`; incompatible definitions require an application
+migration. Recovery only runs for definitions registered in the current process.
+
+Native SIGKILL acceptance sends an event while the worker is dead, restarts via
+catalog discovery, and delivers an approval from a separate process. Functional
+checks do not establish throughput, latency or concurrent-execution targets.
