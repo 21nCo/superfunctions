@@ -45,6 +45,7 @@ async def test_atomic_dedup_claim_and_dlq_retry(adapters):
     job = next(job for job in claims if job is not None)
     job.state = JobStatus.FAILED
     await a.update_job('q', job)
+    assert len(await b.get_dead_letters()) == 1
     await DLQManager(adapter=a).move_to_dlq(job, 'failed', 'q')
     attempts = await asyncio.gather(a.retry_dead_letter('q', job.id),
                                     b.retry_dead_letter('q', job.id), return_exceptions=True)
@@ -133,3 +134,19 @@ async def test_job_lease_recovery_fences_old_completion(adapters):
     current.state = JobStatus.COMPLETED
     await b.update_job('jobs',current)
     assert (await b.get_queue_stats('jobs')).completed == 1
+
+
+async def test_custom_backoff_restored_before_claim(adapters):
+    from flowfn.queue.types import BackoffOptions, BackoffType
+    a,b = adapters
+    strategy = lambda attempt: attempt * 7
+    a.backoff_strategies['custom'] = strategy
+    job = Job(id='custom', name='custom', data={}, timestamp=0,
+              opts=JobOptions(backoff=BackoffOptions(type=BackoffType.CUSTOM,strategy=strategy)))
+    await a.enqueue('q',job)
+    with pytest.raises(ValueError,match='backoff_strategies'):
+        await b.dequeue('q')
+    assert (await a.get_queue_stats('q')).waiting == 1
+    b.backoff_strategies['custom'] = strategy
+    claimed = await b.dequeue('q')
+    assert claimed.opts.backoff.strategy(3) == 21

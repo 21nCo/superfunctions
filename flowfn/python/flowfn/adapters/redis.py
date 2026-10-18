@@ -9,7 +9,7 @@ import json
 import time
 import uuid
 from dataclasses import asdict
-from typing import Any, Optional, Awaitable, cast
+from typing import Any, Optional, Awaitable, cast, Callable
 from urllib.parse import quote
 
 from redis.asyncio import Redis
@@ -17,19 +17,21 @@ from redis.exceptions import ResponseError, WatchError
 
 from flowfn.adapters.memory import MemoryAdapter
 from flowfn.queue.dlq import DLQJob, DLQManager
-from flowfn.queue.types import Job, JobOptions, JobStatus, QueueStats
+from flowfn.queue.types import Job, JobOptions, JobStatus, QueueStats, BackoffType
 from flowfn.stream.types import ConsumerOptions, Message, StreamInfo, TrimStrategy
 from flowfn.workflow.types import WorkflowExecution
 
 
 class RedisAdapter:
     def __init__(self, url: str = 'redis://localhost:6379', *, namespace: str = 'flowfn',
-                 reclaim_after_ms: int = 30000) -> None:
+                 reclaim_after_ms: int = 30000,
+                 backoff_strategies: Optional[dict[str, Callable[[int], int]]] = None) -> None:
         if not namespace or reclaim_after_ms < 100:
             raise ValueError('A namespace and reclaim_after_ms >= 100 are required')
         self.client: Redis = Redis.from_url(url, decode_responses=True)
         self.prefix = 'flowfn:' + quote(namespace, safe='')
         self.state_key = self.prefix + ':state'
+        self.backoff_strategies = dict(backoff_strategies or {})
         self.reclaim_after_ms = reclaim_after_ms
         self._subscriptions: set[RedisSubscription] = set()
         self._closed = False
@@ -98,6 +100,7 @@ class RedisAdapter:
                         if method == 'update_job' and args[1].state == JobStatus.FAILED:
                             await DLQManager(adapter=adapter).move_to_dlq(args[1], args[1].failed_reason or 'Job failed', args[0])
                     if method == 'dequeue' and result is not None:
+                        self._restore_backoff(result)
                         result.lease_token = uuid.uuid4().hex
                         result.lease_expires_at = now + self.reclaim_after_ms
                     payload = self._encode(adapter)
@@ -108,7 +111,15 @@ class RedisAdapter:
                 except WatchError:
                     await asyncio.sleep(0)
 
+    def _restore_backoff(self, job: Job) -> None:
+        if job.opts.backoff and job.opts.backoff.type == BackoffType.CUSTOM:
+            strategy = self.backoff_strategies.get(job.name)
+            if strategy is None:
+                raise ValueError(f'Configure backoff_strategies for job name: {job.name}')
+            job.opts.backoff.strategy = strategy
+
     async def enqueue(self, queue: str, job: Job) -> Job:
+        self._restore_backoff(job)
         result: Job = await self._transition('enqueue', queue, job.model_copy(deep=True))
         return result
 
