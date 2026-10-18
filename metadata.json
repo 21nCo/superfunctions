@@ -3,7 +3,7 @@
   "checkpoint_id": "01M580VZ1E6J9306WSZF1P6ZB2",
   "strategy": "manual-commit",
   "branch": "codex/docs-uifn-20260926",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "scripts/generate-uifn-phase-17.mjs",
     "uifn/docs/generated/delivery.md",
@@ -18,6 +18,20 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 4,
+    "cache_creation_tokens": 2090,
+    "cache_read_tokens": 291110,
+    "output_tokens": 604,
+    "api_call_count": 2
+  }
 }
