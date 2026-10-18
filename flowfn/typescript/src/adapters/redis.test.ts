@@ -1,3 +1,4 @@
+import { streamRenewalContract, streamLossContract, streamUnsubscribeContract } from '../storage/stream-lease-contract.js';
 import { shutdownContract } from '../storage/shutdown-contract.js';
 import { telemetryContract } from '../storage/telemetry-contract.js';
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
@@ -19,6 +20,9 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
     let adapter: RedisAdapter;
     let redis: Redis;
     let prefix: string;
+    it('aborts active stream handlers on unsubscribe and requeues their receipt', async () => { await streamUnsubscribeContract(adapter); });
+    it('renews active stream handlers across delivery expiry', async () => { await streamRenewalContract(adapter); });
+    it('aborts stream handlers after delivery ownership expires and fences late acknowledgment', async () => { await streamLossContract(adapter, (stream, id) => redis.xclaim(`${prefix}stream:${stream}`, 'group', 'a', 0, id, 'IDLE', 2000)); });
     it('bounds global shutdown and fences late callback results', async () => { await shutdownContract(adapter); });
     it('exports native operation spans and reports callback failures', async () => { await telemetryContract(adapter); });
     it('bounds worker shutdown and fences abandoned callbacks', async () => { await workerOwnershipContract(adapter, 1000); });

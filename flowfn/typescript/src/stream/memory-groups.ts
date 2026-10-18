@@ -21,7 +21,7 @@ interface Member {
   handler: MessageHandler<any>;
   options: ConsumerOptions;
   paused: boolean;
-  busy: number;
+  busy: Map<symbol, AbortController>;
   active: boolean;
   commits: Set<ReturnType<typeof setTimeout>>;
 }
@@ -105,11 +105,7 @@ export class MemoryConsumerGroups {
           (member) =>
             member.active &&
             !member.paused &&
-            Math.max(
-              member.busy,
-              [...group.pending.values()].filter((p) => p.member === member)
-                .length,
-            ) < (member.options.maxInFlight ?? 1),
+            new Set([...member.busy.keys(), ...[...group.pending.values()].filter(p => p.member === member).map(p => p.token)]).size < (member.options.maxInFlight ?? 1),
         );
         if (!members.length) return;
         const message =
@@ -122,7 +118,8 @@ export class MemoryConsumerGroups {
         const member = members[group.round++ % members.length],
           token = Symbol();
         group.pending.set(message.id, { message, member, token });
-        member.busy++;
+        const controller = new AbortController();
+        member.busy.set(token, controller);
         const settle = async (requeue: boolean) => {
           if (group.pending.get(message.id)?.token !== token) return;
           group.pending.delete(message.id);
@@ -132,14 +129,15 @@ export class MemoryConsumerGroups {
         };
         const delivered = {
           ...copyMessage(message),
+          signal: controller.signal,
           ack: () => settle(false),
           nack: (requeue = true) => settle(requeue),
         };
         void Promise.resolve()
-          .then(() => member.handler(delivered))
+          .then(() => { if (controller.signal.aborted) return; return member.handler(delivered); })
           .then(
             async () => {
-              if (member.options.autoCommit !== false) {
+              if (member.active && member.options.autoCommit !== false) {
                 if ((member.options.commitInterval ?? 0) > 0) {
                   const timer = setTimeout(() => {
                     member.commits.delete(timer);
@@ -154,7 +152,8 @@ export class MemoryConsumerGroups {
             },
           )
           .finally(() => {
-            member.busy--;
+            member.busy.delete(token);
+            if (!member.active) return;
             if (group.retry.length) this.schedule(group);
             else this.dispatch(group);
           });
@@ -192,7 +191,7 @@ export class MemoryConsumerGroups {
       handler,
       options,
       paused: false,
-      busy: 0,
+      busy: new Map(),
       active: true,
       commits: new Set(),
     };
@@ -208,6 +207,7 @@ export class MemoryConsumerGroups {
       },
       unsubscribe: async () => {
         member.active = false;
+        for (const controller of member.busy.values()) controller.abort();
         for (const timer of member.commits) clearTimeout(timer);
         member.commits.clear();
         group.members.delete(id);
@@ -225,6 +225,7 @@ export class MemoryConsumerGroups {
       if (group.timer) clearTimeout(group.timer);
       for (const member of group.members.values()) {
         member.active = false;
+        for (const controller of member.busy.values()) controller.abort();
         for (const timer of member.commits) clearTimeout(timer);
       }
       group.members.clear();

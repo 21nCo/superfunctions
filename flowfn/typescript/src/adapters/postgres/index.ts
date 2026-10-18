@@ -1,3 +1,4 @@
+import { DeliveryLease } from '../../stream/delivery-lease.js';
 import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../../core/shutdown.js';
 import { randomUUID, createHash } from "node:crypto";
 import { mutateWorkflow, validateWorkflowMutation, type WorkflowMutation } from '../../storage/workflow-control.js';
@@ -536,14 +537,17 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       timer: ReturnType<typeof setTimeout> | undefined;
     let pollTask: Promise<void> | undefined;
     const settlements = new Set<Promise<unknown>>();
+    const leases = new Map<string, DeliveryLease>();
+    const callbacks = new Set<string>();
     const pending = new Map<string, string>(),
       commits = new Set<ReturnType<typeof setTimeout>>();
     const deliveries = this.table("flowfn_deliveries"),
       messages = this.table("flowfn_messages"),
       groups = this.table("flowfn_consumer_groups");
     const serverNow = sql`floor(extract(epoch from clock_timestamp()) * 1000)::bigint`;
-    const claim = async () =>
-      this.db.transaction(async (tx: any) => {
+    const claim = async () => {
+      const acquiredAt = performance.now();
+      return this.db.transaction(async (tx: any) => {
         await this.rows(
           sql`SELECT id FROM ${groups} WHERE id=${this.groupId(stream, group)} FOR UPDATE`,
           tx,
@@ -568,26 +572,36 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
         await tx.execute(
           sql`INSERT INTO ${deliveries} (stream,group_id,message_id,consumer_id,receipt,state,delivered_at) VALUES (${stream},${group},${row.id},${consumer},${receipt},'active',${serverNow}) ON CONFLICT(stream,group_id,message_id) DO UPDATE SET consumer_id=EXCLUDED.consumer_id,receipt=EXCLUDED.receipt,state='active',delivered_at=EXCLUDED.delivered_at`,
         );
-        return { row, receipt };
+        return { row, receipt, acquiredAt };
       });
-    const deliver = ({ row, receipt }: { row: any; receipt: string }) => {
+    };
+    const deliver = ({ row, receipt, acquiredAt }: { row: any; receipt: string; acquiredAt: number }) => {
       pending.set(row.id, receipt);
+      callbacks.add(receipt);
+      const guard = new DeliveryLease(lease, acquiredAt, async () => (await this.rows(
+        sql`UPDATE ${deliveries} SET delivered_at=${serverNow} WHERE stream=${stream} AND group_id=${group} AND message_id=${row.id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease} RETURNING receipt`,
+      )).length > 0, () => {
+        if (pending.get(row.id) === receipt) pending.delete(row.id);
+        leases.delete(receipt);
+      });
+      leases.set(receipt, guard);
       const settle = async (requeue: boolean) => {
         if (!active || pending.get(row.id) !== receipt) return;
-        const task = this.db.execute(
-          sql`UPDATE ${deliveries} SET state=${requeue ? "waiting" : "completed"} WHERE stream=${stream} AND group_id=${group} AND message_id=${row.id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease}`,
+        const task = this.rows(
+          sql`UPDATE ${deliveries} SET state=${requeue ? "waiting" : "completed"} WHERE stream=${stream} AND group_id=${group} AND message_id=${row.id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease} RETURNING receipt`,
         );
         settlements.add(task);
-        try { await task; pending.delete(row.id); }
+        try { const changed = await task; if (changed.length) guard.stop(); else guard.abort(); leases.delete(receipt); if (pending.get(row.id) === receipt) pending.delete(row.id); }
         finally { settlements.delete(task); }
       };
       const message = {
         ...this.message(row),
+        signal: guard.controller.signal,
         ack: () => settle(false),
         nack: (requeue = true) => settle(requeue),
       };
       void Promise.resolve()
-        .then(() => handler(message))
+        .then(() => { if (guard.controller.signal.aborted) throw new Error("Stream delivery lease lost"); return handler(message); })
         .then(
           async () => {
             if (active && options.autoCommit !== false) {
@@ -604,11 +618,12 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
             await settle(true);
           },
         )
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => { guard.stop(); leases.delete(receipt); callbacks.delete(receipt); });
     };
     const poll = async () => {
       try {
-        while (active && !paused && pending.size < max) {
+        while (active && !paused && new Set([...pending.values(), ...callbacks]).size < max) {
           const result = await claim();
           if (!result) break;
           if (!active || paused) {
@@ -636,6 +651,8 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
         active = false;
         if (timer) clearTimeout(timer);
         for (const commit of commits) clearTimeout(commit);
+        for (const guard of leases.values()) guard.abort();
+        leases.clear();
         await pollTask;
         await Promise.allSettled([...settlements]);
         for (const [id, receipt] of pending)

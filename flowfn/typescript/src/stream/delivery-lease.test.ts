@@ -1,0 +1,44 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { DeliveryLease } from './delivery-lease.js';
+afterEach(() => vi.useRealTimers());
+it('aborts at the last confirmed deadline when renewal hangs', async () => {
+  vi.useFakeTimers();
+  const lost = vi.fn();
+  const lease = new DeliveryLease(90, performance.now(), () => new Promise(() => {}), lost);
+  await vi.advanceTimersByTimeAsync(91);
+  expect(lease.controller.signal.aborted).toBe(true);
+  expect(lost).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it('retries transient renewal failure and stops every timer on completion', async () => {
+  vi.useFakeTimers();
+  const renew = vi.fn<() => Promise<boolean>>().mockRejectedValueOnce(new Error('transport')).mockResolvedValue(true);
+  const lost = vi.fn();
+  const lease = new DeliveryLease(90, performance.now(), renew, lost);
+  await vi.advanceTimersByTimeAsync(150);
+  expect(lost).not.toHaveBeenCalled();
+  expect(renew).toHaveBeenCalledTimes(5);
+  lease.stop();
+  expect(vi.getTimerCount()).toBe(0);
+});
+it('immediately aborts a rejected receipt', async () => {
+  vi.useFakeTimers();
+  const lost = vi.fn();
+  const lease = new DeliveryLease(90, performance.now(), async () => false, lost);
+  await vi.advanceTimersByTimeAsync(30);
+  expect(lease.controller.signal.aborted).toBe(true);
+  expect(lost).toHaveBeenCalledTimes(1);
+});
+
+it('cannot revive an expired receipt after a late successful renewal reply', async () => {
+  vi.useFakeTimers();
+  let reply!: (owned: boolean) => void;
+  const lost = vi.fn();
+  const lease = new DeliveryLease(90, performance.now(), () => new Promise(resolve => { reply = resolve; }), lost);
+  await vi.advanceTimersByTimeAsync(91);
+  reply(true);
+  await Promise.resolve();
+  expect(lease.controller.signal.aborted).toBe(true);
+  expect(lost).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});

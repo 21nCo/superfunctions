@@ -184,3 +184,36 @@ it('admits only one concurrent consumer subscription and releases late acquisiti
   expect(unsubscribe).toHaveBeenCalledTimes(1);
   await stream.close();
 });
+
+it('counts running acknowledged callbacks separately from finished unacknowledged deliveries', async () => {
+  const stream = new StreamImpl<number>('slots', adapter());
+  const seen: Message<number>[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const consumer = stream.createConsumer('one', { groupId: 'group', maxInFlight: 2, autoCommit: false });
+  await consumer.subscribe(async message => { seen.push(message); if (message.data === 1) { await message.ack(); await gate; } });
+  await stream.publishBatch([1, 2, 3].map(data => ({ data })));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(seen.map(message => message.data)).toEqual([1, 2]);
+  await seen[1].ack();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(seen.map(message => message.data)).toEqual([1, 2, 3]);
+  release();
+  await stream.close();
+});
+it('aborts memory handlers and does not create delayed commits after unsubscribe', async () => {
+  const stream = new StreamImpl<number>('cancel-memory', adapter());
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const seen: Message<number>[] = [];
+  const consumer = stream.createConsumer('one', { groupId: 'group', commitInterval: 100 });
+  await consumer.subscribe(async message => { seen.push(message); await gate; });
+  await stream.publish(1);
+  await vi.advanceTimersByTimeAsync(0);
+  await consumer.close();
+  expect(seen[0].signal?.aborted).toBe(true);
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(vi.getTimerCount()).toBe(0);
+  await stream.close();
+});

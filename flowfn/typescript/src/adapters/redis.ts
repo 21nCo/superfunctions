@@ -1,3 +1,4 @@
+import { DeliveryLease } from '../stream/delivery-lease.js';
 import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
 import { randomUUID } from "node:crypto";
 import { validateWorkflowMutation, type WorkflowMutation } from '../storage/workflow-control.js';
@@ -348,10 +349,12 @@ export class RedisAdapter implements FlowAdapter {
       paused = false,
       timer: ReturnType<typeof setTimeout> | undefined,
       polling = false;
+    const leases = new Map<string, DeliveryLease>();
+    const callbacks = new Set<string>();
     const pending = new Map<string, string>(),
       commits = new Set<ReturnType<typeof setTimeout>>();
     const release = async (id: string, token: string, requeue: boolean) => {
-      await this.redis.eval(`
+      return Boolean(await this.redis.eval(`
 if redis.call('EXISTS',KEYS[1])==0 then redis.call('HDEL',KEYS[2],ARGV[2]); return 0 end
 local p=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[2],ARGV[2],1)
 if #p==0 or p[1][2]~=ARGV[3] or redis.call('HGET',KEYS[2],ARGV[2])~=ARGV[4] then return 0 end
@@ -359,22 +362,38 @@ if tonumber(p[1][3])>=tonumber(ARGV[6]) then return 0 end
 redis.call('HDEL',KEYS[2],ARGV[2])
 if ARGV[5]=='1' then redis.call('RPUSH',KEYS[3],ARGV[2]); return 1 end
 return redis.call('XACK',KEYS[1],ARGV[1],ARGV[2])
-`, 3, key, tokenKey, retryKey, group, id, consumer, token, requeue ? '1' : '0', options.visibilityTimeout ?? 30000);
+`, 3, key, tokenKey, retryKey, group, id, consumer, token, requeue ? '1' : '0', options.visibilityTimeout ?? 30000));
     };
-    const deliver = (id: string, fields: string[], token: string) => {
+    const deliver = (id: string, fields: string[], token: string, acquiredAt: number) => {
       pending.set(id, token);
+      callbacks.add(token);
+      const lease = new DeliveryLease(options.visibilityTimeout ?? 30000, acquiredAt, async () => Boolean(await this.redis.eval(`
+-- flowfn renew stream delivery
+if redis.call('HGET',KEYS[2],ARGV[2])~=ARGV[4] then return 0 end
+local p=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[2],ARGV[2],1)
+if #p==0 or p[1][2]~=ARGV[3] or tonumber(p[1][3])>=tonumber(ARGV[5]) then return 0 end
+local claimed=redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[3],0,ARGV[2],'JUSTID')
+return #claimed
+`, 2, key, tokenKey, group, id, consumer, token, options.visibilityTimeout ?? 30000)), () => {
+        if (pending.get(id) === token) pending.delete(id);
+        leases.delete(token);
+      });
+      leases.set(token, lease);
       const settle = async (requeue: boolean) => {
         if (!active || pending.get(id) !== token) return;
-        await release(id, token, requeue);
+        const owned = await release(id, token, requeue);
+        if (owned) lease.stop(); else lease.abort();
+        leases.delete(token);
         if (pending.get(id) === token) pending.delete(id);
       };
       const message = {
         ...this.message(stream, id, fields),
+        signal: lease.controller.signal,
         ack: () => settle(false),
         nack: (requeue = true) => settle(requeue),
       };
       void Promise.resolve()
-        .then(() => handler(message))
+        .then(() => { if (lease.controller.signal.aborted) throw new Error("Stream delivery lease lost"); return handler(message); })
         .then(
           async () => {
             if (active && options.autoCommit !== false) {
@@ -391,16 +410,18 @@ return redis.call('XACK',KEYS[1],ARGV[1],ARGV[2])
             await settle(true);
           },
         )
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => { lease.stop(); leases.delete(token); callbacks.delete(token); });
     };
     const poll = async () => {
       if (!active || polling) return;
       polling = true;
       try {
         if (!paused) {
-          const room = (options.maxInFlight ?? 1) - pending.size;
+          const room = (options.maxInFlight ?? 1) - new Set([...pending.values(), ...callbacks]).size;
           if (room > 0) {
             const attempt = randomUUID();
+            const acquiredAt = performance.now();
             const messages = await this.redis.eval(`
 local messages={}
 -- A retry is claimable only after its previous token was released atomically.
@@ -430,7 +451,7 @@ return messages
 `, 3, key, tokenKey, retryKey, group, consumer, room, options.visibilityTimeout ?? 30000, attempt) as Array<[string, string[]]>;
             for (const [id, fields] of messages) {
               const token = `${attempt}:${id}`;
-              if (active && !paused) deliver(id, fields, token);
+              if (active && !paused) deliver(id, fields, token, acquiredAt);
               else await release(id, token, true);
             }
           }
@@ -453,6 +474,8 @@ return messages
         active = false;
         if (timer) clearTimeout(timer);
         for (const commit of commits) clearTimeout(commit);
+        for (const lease of leases.values()) lease.abort();
+        leases.clear();
         await Promise.all([...pending].map(([id, token]) => release(id, token, true)));
         pending.clear();
         this.subscriptions.delete(subscription);

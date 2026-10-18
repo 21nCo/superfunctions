@@ -38,6 +38,8 @@ export interface Stream<T = any> {
 }
 
 export interface Message<T = any> {
+  /** Aborted when a durable consumer loses ownership or unsubscribes. */
+  readonly signal?: AbortSignal;
   id: string;
   stream: string;
   data: T;
@@ -67,7 +69,7 @@ export interface ConsumerOptions {
   autoCommit?: boolean;
   commitInterval?: number;
   maxInFlight?: number;
-  /** Idle Redis delivery lease before a crashed consumer can be reclaimed. */
+  /** Durable delivery lease; renewed while the consumer handler is running. */
   visibilityTimeout?: number;
 }
 

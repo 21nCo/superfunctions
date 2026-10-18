@@ -76,8 +76,12 @@ stream instance; applications must supply the policy when reopening a stream.
 Redis consumer deliveries carry an atomic attempt token. Acknowledgment, requeue,
 and unsubscribe cannot change a replacement delivery, even when consumers reuse a
 name. A delivery past its visibility timeout cannot acknowledge until it is
-reclaimed as a new attempt. Handlers should finish within the configured lease;
-consumer lease renewal remains outstanding.
+reclaimed as a new attempt. Redis and PostgreSQL renew the receipt while its
+handler is running. `message.signal` aborts when ownership is lost, renewal cannot
+be confirmed before the last lease deadline, or the consumer unsubscribes.
+Callbacks must cooperate with the signal; late acknowledgments remain fenced.
+Renewal stops when the handler returns, so delayed manual acknowledgment and
+`commitInterval` must fit within the remaining visibility lease.
 
 ### Errors and tracing
 
