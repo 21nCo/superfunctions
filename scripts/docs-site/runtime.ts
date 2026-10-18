@@ -407,7 +407,8 @@ function collectionDirectory(
     : collection === "api" ? config.content.apiDir ?? "content/api"
     : config.content.assetsDir ?? "static";
   // Collection directories are relative to content.root, as in the filesystem provider.
-  const root = normalizeProviderPath(config.content.root ?? ".").replace(/^\.\/?/, "").replace(/\/+$/, "");
+  const normalizedRoot = normalizeProviderPath(config.content.root ?? ".");
+  const root = (normalizedRoot === "." ? "" : normalizedRoot.replace(/^\.\//, "")).replace(/\/+$/, "");
   return normalizeProviderPath(root ? `${root}/${directory}` : directory);
 }
 

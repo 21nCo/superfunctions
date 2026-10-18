@@ -73,6 +73,13 @@ Extension adapter in the consumer repo:
 ```ts
 import { createRuntime } from "@extfn/core";
 
+// ExtFn detects extension pages from their URL. A content script must name itself
+// (its contentScripts[].id) before creating a runtime, or createRuntime() throws
+// E_CONTEXT_UNAVAILABLE.
+if (!/^(chrome|moz)-extension:$/.test(globalThis.location?.protocol ?? "")) {
+  (globalThis as { __EXTFN_CONTENT_SCRIPT_ID__?: string }).__EXTFN_CONTENT_SCRIPT_ID__ = "panel";
+}
+
 const runtime = createRuntime();
 
 export const extfnHost = {

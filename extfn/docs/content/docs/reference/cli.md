@@ -118,7 +118,7 @@ Options:
 Behavior:
 
 - Always rebuilds the selected targets before scanning or creating archives, even when build output already exists.
-- Writes archives to `dist/packages` unless `--out-dir` or `EXTFN_PACKAGE_OUT_DIR` is set.
+- Writes archives to `dist/packages`, relative to the directory containing `extfn.config.ts`, unless `--out-dir` or `EXTFN_PACKAGE_OUT_DIR` is set.
 - Runs `scan` by default before emitting archives.
 - Chromium archives use `.zip`.
 - Firefox archives use `.xpi`.
