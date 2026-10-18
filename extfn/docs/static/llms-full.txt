@@ -384,7 +384,8 @@ import { createRuntime } from "@extfn/core";
 // (its contentScripts[].id) before creating a runtime, or createRuntime() throws
 // E_CONTEXT_UNAVAILABLE.
 if (!/^(chrome|moz)-extension:$/.test(globalThis.location?.protocol ?? "")) {
-  (globalThis as { __EXTFN_CONTENT_SCRIPT_ID__?: string }).__EXTFN_CONTENT_SCRIPT_ID__ = "panel";
+  // Set this in each content entrypoint to that entrypoint's contentScripts[].id.
+  (globalThis as { __EXTFN_CONTENT_SCRIPT_ID__?: string }).__EXTFN_CONTENT_SCRIPT_ID__ = "your-content-script-id";
 }
 
 const runtime = createRuntime();
