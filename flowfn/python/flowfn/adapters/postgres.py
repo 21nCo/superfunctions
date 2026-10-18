@@ -205,11 +205,12 @@ class PostgresSubscription:
         self.closed = False
         self.tasks: list[asyncio.Task[None]] = []
         self.error: Optional[Exception] = None
+        self._claim_lock = asyncio.Lock()
 
     def start(self) -> None:
         self.tasks = [asyncio.create_task(self._worker()) for _ in range(self.options.max_in_flight if self.options else 1)]
 
-    async def _next(self) -> Any:
+    async def _next(self, delivery_owner: str) -> Any:
         pool = await self.adapter._database()
         namespace = self.adapter.namespace
         if self.group is None:
@@ -220,65 +221,69 @@ class PostgresSubscription:
                 cursor = await connection.fetchval('SELECT cursor FROM flowfn_py_groups WHERE namespace=$1 AND stream=$2 AND name=$3 FOR UPDATE', namespace,self.stream,self.group)
                 pending = await connection.fetchval('SELECT event_id FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND expires_at<=clock_timestamp() ORDER BY event_id LIMIT 1 FOR UPDATE SKIP LOCKED', namespace,self.stream,self.group)
                 if pending is not None:
-                    await connection.execute("UPDATE flowfn_py_pending SET consumer=$4,expires_at=clock_timestamp()+$5*interval '1 millisecond' WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$6",namespace,self.stream,self.group,self.consumer,self.adapter.reclaim_after_ms,pending)
+                    await connection.execute("UPDATE flowfn_py_pending SET consumer=$4,expires_at=clock_timestamp()+$5*interval '1 millisecond' WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$6",namespace,self.stream,self.group,delivery_owner,self.adapter.reclaim_after_ms,pending)
                     return await connection.fetchrow('SELECT id,payload FROM flowfn_py_events WHERE id=$1',pending)
                 row = await connection.fetchrow('SELECT id,payload FROM flowfn_py_events WHERE namespace=$1 AND stream=$2 AND id>$3 ORDER BY id LIMIT 1', namespace,self.stream,cursor)
                 if row is not None:
                     await connection.execute('UPDATE flowfn_py_groups SET cursor=$4 WHERE namespace=$1 AND stream=$2 AND name=$3',namespace,self.stream,self.group,row['id'])
-                    await connection.execute("INSERT INTO flowfn_py_pending VALUES($1,$2,$3,$4,$5,clock_timestamp()+$6*interval '1 millisecond')",namespace,self.stream,self.group,row['id'],self.consumer,self.adapter.reclaim_after_ms)
+                    await connection.execute("INSERT INTO flowfn_py_pending VALUES($1,$2,$3,$4,$5,clock_timestamp()+$6*interval '1 millisecond')",namespace,self.stream,self.group,row['id'],delivery_owner,self.adapter.reclaim_after_ms)
                 return row
 
-    async def _owned(self, identity: int, acknowledge: bool = False) -> bool:
+    async def _owned(self, identity: int, delivery_owner: str, acknowledge: bool = False) -> bool:
         pool = await self.adapter._database()
-        if acknowledge:
-            result = await pool.execute('DELETE FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 AND consumer=$5', self.adapter.namespace,self.stream,self.group,identity,self.consumer)
-        else:
-            result = await pool.execute("UPDATE flowfn_py_pending SET expires_at=clock_timestamp()+$6*interval '1 millisecond' WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 AND consumer=$5", self.adapter.namespace,self.stream,self.group,identity,self.consumer,self.adapter.reclaim_after_ms)
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                # Evaluate expiry only after taking the row lock: a blocked
+                # renewal cannot revive a claim using a timestamp from before its wait.
+                await connection.fetchval('SELECT event_id FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 FOR UPDATE',self.adapter.namespace,self.stream,self.group,identity)
+                if acknowledge:
+                    result = await connection.execute('DELETE FROM flowfn_py_pending WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 AND consumer=$5 AND expires_at>clock_timestamp()', self.adapter.namespace,self.stream,self.group,identity,delivery_owner)
+                else:
+                    result = await connection.execute("UPDATE flowfn_py_pending SET expires_at=clock_timestamp()+$6*interval '1 millisecond' WHERE namespace=$1 AND stream=$2 AND group_name=$3 AND event_id=$4 AND consumer=$5 AND expires_at>clock_timestamp()", self.adapter.namespace,self.stream,self.group,identity,delivery_owner,self.adapter.reclaim_after_ms)
         return bool(result != ('DELETE 0' if acknowledge else 'UPDATE 0'))
-
-    async def _heartbeat(self, identity: int) -> None:
-        while not self.closed:
-            await asyncio.sleep(self.adapter.reclaim_after_ms / 3000)
-            if not await self._owned(identity):
-                return
 
     async def _worker(self) -> None:
         while not self.closed:
             await self.running.wait()
             try:
-                row = await self._next()
+                delivery_owner = self.consumer + ':' + uuid.uuid4().hex
+                # One polling request per subscription leaves pool capacity for
+                # acknowledgments and renewal while handlers still run concurrently.
+                async with self._claim_lock:
+                    claim_started = time.monotonic()
+                    row = await self._next(delivery_owner)
+                    if row is None:
+                        await asyncio.sleep(.02)
                 if row is None:
-                    await asyncio.sleep(.02)
                     continue
                 await self.running.wait()
                 message = Message.model_validate_json(row['payload'])
                 decision: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
 
-                async def settle(requeue: bool, target: asyncio.Future[bool] = decision, delivery_id: int = row['id']) -> None:
+                async def settle(requeue: bool, target: asyncio.Future[bool] = decision, delivery_id: int = row['id'], token: str = delivery_owner) -> None:
                     if not target.done():
-                        if self.group and not requeue and not await self._owned(delivery_id, acknowledge=True):
+                        if self.group and not requeue and not await self._owned(delivery_id, token, acknowledge=True):
                             raise RuntimeError('Stream delivery ownership changed')
                         target.set_result(requeue)
 
                 message._acknowledge = settle
-                heartbeat = asyncio.create_task(self._heartbeat(row['id'])) if self.group else None
+                async def process() -> None:
+                    await self.handler(message)
+                    if self.options is None or self.options.auto_commit:
+                        await settle(False)
+                    await decision
+
                 try:
-                    try:
-                        await self.handler(message)
-                        if self.options is None or self.options.auto_commit:
-                            await settle(False)
-                        requeue = await decision
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        self.error = exc
-                        requeue = True
-                    if not self.group:
+                    if self.group:
+                        from flowfn.adapters.stream_lease import run_with_lease
+                        await run_with_lease(process,lambda: self._owned(row['id'],delivery_owner),
+                                             self.adapter.reclaim_after_ms,claim_started)
+                    else:
+                        await process()
                         self.cursor = row['id']
                 finally:
-                    if heartbeat is not None:
-                        heartbeat.cancel()
-                        await asyncio.gather(heartbeat,return_exceptions=True)
+                    if not decision.done():
+                        decision.cancel()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
