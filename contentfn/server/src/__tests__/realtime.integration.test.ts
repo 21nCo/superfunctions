@@ -105,8 +105,8 @@ describe("PHASE_10 realtime feed", () => {
 
       await api.docs.publish({ dataset: "prod", id: "post-ds" });
 
-      expect(received.length).toBe(1);
-      const evt = received[0] as RealtimeEventMessage;
+      expect(received.map(message => (message as RealtimeEventMessage).eventType)).toEqual(["doc.created", "doc.published"]);
+      const evt = received[1] as RealtimeEventMessage;
       expect(evt.eventType).toBe("doc.published");
       expect(evt.document!._id).toBe("post-ds");
 
@@ -287,8 +287,8 @@ describe("PHASE_10 realtime feed", () => {
 
       await api.docs.publish({ dataset: "prod", id: "post-pub" });
 
-      expect(received.length).toBe(1);
-      const evt = received[0] as RealtimeEventMessage;
+      expect(received.map(message => (message as RealtimeEventMessage).eventType)).toEqual(["doc.created", "doc.published"]);
+      const evt = received[1] as RealtimeEventMessage;
       expect(evt.type).toBe("event");
       expect(evt.eventType).toBe("doc.published");
       expect(evt.dataset).toBe("prod");

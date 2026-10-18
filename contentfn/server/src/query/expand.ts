@@ -1,4 +1,5 @@
-import type { Adapter } from "@superfunctions/db";
+import { documentStorageId } from "../storage/documentIdentity.js";
+import type { ContentfnDatabase as Adapter } from "../storage/database.js";
 import type {
   ContentfnDocument,
   ContentfnEnvelope,
@@ -34,7 +35,7 @@ async function fetchDocument(
     model: CONTENTFN_TABLE_NAMES.docsPublished,
     where: [
       { field: "dataset", operator: "eq" as const, value: dataset },
-      { field: "documentId", operator: "eq" as const, value: docId },
+      { field: "id", operator: "eq" as const, value: documentStorageId(dataset, docId) },
     ],
   });
 
@@ -50,7 +51,7 @@ function applyProjectionToDoc(
   projection: CfqlProjection | undefined
 ): ContentfnDocument {
   if (!projection || !projection.fields) {
-    return doc;
+    return { ...doc };
   }
 
   const projected: Record<string, unknown> = {};
@@ -127,7 +128,7 @@ async function expandReference(
   visited.add(ref._ref);
 
   const referencedDoc = await fetchDocument(config.db, config.dataset, ref._ref);
-  
+
   if (!referencedDoc) {
     return ok(ref);
   }
@@ -136,7 +137,7 @@ async function expandReference(
 
   if (projection?.expand) {
     for (const [expandKey, expandSpec] of Object.entries(projection.expand)) {
-      const fieldValue = projectedDoc[expandSpec.field];
+      const fieldValue = referencedDoc[expandSpec.field];
       if (fieldValue !== undefined) {
         const expandResult = await expandField(
           config,
@@ -162,14 +163,14 @@ export async function expandDocument(
   projection: CfqlProjection | undefined
 ): Promise<ContentfnEnvelope<ContentfnDocument>> {
   if (!projection?.expand) {
-    return ok(doc);
+    return ok(applyProjectionToDoc(doc, projection));
   }
 
-  const expandedDoc = { ...doc };
-  
+  const expandedDoc = applyProjectionToDoc(doc, projection);
+
   for (const [expandKey, expandSpec] of Object.entries(projection.expand)) {
     const fieldValue = doc[expandSpec.field];
-    
+
     if (fieldValue !== undefined) {
       const visited = new Set<string>();
       const expandResult = await expandField(
@@ -179,11 +180,11 @@ export async function expandDocument(
         visited,
         1
       );
-      
+
       if (!expandResult.ok) {
         return expandResult as ContentfnEnvelope<ContentfnDocument>;
       }
-      
+
       expandedDoc[expandKey] = expandResult.result;
     }
   }

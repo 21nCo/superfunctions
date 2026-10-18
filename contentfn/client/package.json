@@ -1,16 +1,21 @@
 {
   "name": "@contentfn/client",
-  "version": "0.0.2",
-  "description": "ContentFn client - types and API surface (types-only in initial phase)",
+  "version": "0.2.0",
+  "description": "Typed browser and Node HTTP client for ContentFn",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "files": [
@@ -26,16 +31,11 @@
   "publishConfig": {
     "access": "public"
   },
-  "superfunctions": {
-    "initFunction": "contentFn",
-    "schemaVersion": 1,
-    "namespace": "contentfn"
-  },
   "scripts": {
     "build": "tsup",
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck": "tsc --noEmit",
-    "test": "node -e \"console.log('No tests configured')\""
+    "test": "vitest run"
   },
   "engines": {
     "node": ">=18.18.0"
@@ -46,11 +46,12 @@
   ],
   "sideEffects": false,
   "dependencies": {
-    "@contentfn/core": "0.0.2"
+    "@contentfn/core": "0.2.0"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",
     "tsup": "^8.5.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   }
 }

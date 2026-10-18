@@ -1,4 +1,4 @@
-import type { Adapter } from "@superfunctions/db";
+import type { ContentfnDatabase as Adapter } from "../storage/database.js";
 import type { ContentfnEnvelope, ContentfnDocument } from "@contentfn/core";
 import { ok, err } from "@contentfn/core";
 import { nowISO } from "../time/clock.js";
@@ -12,6 +12,8 @@ import {
   type RevisionRecord,
 } from "./format.js";
 
+const compareText = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
+
 export interface ExportConfig {
   db: Adapter;
 }
@@ -19,7 +21,7 @@ export interface ExportConfig {
 export async function exportDataset(
   config: ExportConfig,
   input: { dataset: string }
-): Promise<ContentfnEnvelope<{ artifact: ContentfnExportArtifact }>> {
+): Promise<ContentfnEnvelope<{ dataset: string; exportedAt: string; artifact: ContentfnExportArtifact }>> {
   const exists = await datasetExists({ db: config.db }, input.dataset);
   if (!exists) {
     return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
@@ -46,7 +48,7 @@ export async function exportDataset(
   });
   const publishedDocs = (publishedRows as Array<{ docJson: ContentfnDocument; id: string }>)
     .map((r) => r.docJson)
-    .sort((a, b) => a._id.localeCompare(b._id));
+    .sort((a, b) => compareText(a._id, b._id));
 
   const draftRows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.docsDrafts,
@@ -54,7 +56,7 @@ export async function exportDataset(
   });
   const draftDocs = (draftRows as Array<{ docJson: ContentfnDocument; id: string }>)
     .map((r) => r.docJson)
-    .sort((a, b) => a._id.localeCompare(b._id));
+    .sort((a, b) => compareText(a._id, b._id));
 
   const assetRows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.assets,
@@ -80,7 +82,7 @@ export async function exportDataset(
       url: r.url,
       createdAt: r.createdAt,
     }))
-    .sort((a, b) => a.assetId.localeCompare(b.assetId));
+    .sort((a, b) => compareText(a.assetId, b.assetId));
 
   const revisionRows = await config.db.findMany({
     model: CONTENTFN_TABLE_NAMES.revisions,
@@ -101,9 +103,9 @@ export async function exportDataset(
       docJson: r.docJson,
     }))
     .sort((a, b) => {
-      const docCmp = a.docId.localeCompare(b.docId);
+      const docCmp = compareText(a.docId, b.docId);
       if (docCmp !== 0) return docCmp;
-      return a.timestamp.localeCompare(b.timestamp);
+      return compareText(a.timestamp, b.timestamp) || compareText(a.perspective, b.perspective) || compareText(a.rev, b.rev);
     });
 
   const artifact: ContentfnExportArtifact = {
@@ -117,5 +119,5 @@ export async function exportDataset(
     revisions,
   };
 
-  return ok({ artifact });
+  return ok({ dataset: input.dataset, exportedAt: artifact.exportedAt, artifact });
 }

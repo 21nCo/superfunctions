@@ -9,7 +9,7 @@ export function decodeCursor(cursor: string): CursorPayload | null {
   try {
     const json = Buffer.from(cursor, "base64url").toString("utf8");
     const payload = JSON.parse(json);
-    if (!payload || typeof payload !== "object" || !Array.isArray(payload.values)) {
+    if (!payload || typeof payload !== "object" || !Array.isArray(payload.values) || payload.values.some((value: unknown) => value !== null && !["string", "number", "boolean"].includes(typeof value))) {
       return null;
     }
     return payload as CursorPayload;

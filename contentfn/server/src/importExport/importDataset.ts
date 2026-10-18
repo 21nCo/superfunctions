@@ -1,4 +1,5 @@
-import type { Adapter } from "@superfunctions/db";
+import { atomicMutation } from "../storage/database.js";
+import type { ContentfnDatabase as Adapter } from "../storage/database.js";
 import type { ContentfnEnvelope } from "@contentfn/core";
 import { ok, err } from "@contentfn/core";
 import { CONTENTFN_TABLE_NAMES } from "../storage/schema.js";
@@ -7,7 +8,7 @@ import { datasetCreate } from "../storage/datasets.js";
 import { schemaHash } from "../hash/schemaHash.js";
 import { nowISO } from "../time/clock.js";
 import { validateArtifact, type ContentfnExportArtifact } from "./format.js";
-import { documentStorageId } from "../storage/documentIdentity.js";
+import { documentStorageId, revisionStorageId } from "../storage/documentIdentity.js";
 
 export interface ImportConfig {
   db: Adapter;
@@ -17,6 +18,7 @@ export async function importDataset(
   config: ImportConfig,
   input: { dataset: string; artifact: unknown }
 ): Promise<ContentfnEnvelope<Record<string, never>>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => importDataset({ db }, input));
   if (!validateArtifact(input.artifact)) {
     return err("VALIDATION_FAILED", "Malformed import artifact", { path: "artifact" });
   }
@@ -41,7 +43,8 @@ export async function importDataset(
     });
 
     if (existingSchema) {
-      const cur = existingSchema as { version: number };
+      const cur = existingSchema as { version: number; schemaHash: string };
+      if (artifact.schema.version === cur.version && hash !== cur.schemaHash) return err("SCHEMA_VERSION_CONFLICT", "Import schema has different content at the current version", { dataset: input.dataset });
       if (artifact.schema.version < cur.version) {
         return err("SCHEMA_VERSION_CONFLICT", "Import schema version is older than current", {
           dataset: input.dataset,
@@ -77,7 +80,7 @@ export async function importDataset(
       model: CONTENTFN_TABLE_NAMES.docsPublished,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: doc._id },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, doc._id) },
       ],
     });
     if (existing) {
@@ -85,7 +88,7 @@ export async function importDataset(
         model: CONTENTFN_TABLE_NAMES.docsPublished,
         where: [
           { field: "dataset", operator: "eq" as const, value: input.dataset },
-          { field: "documentId", operator: "eq" as const, value: doc._id },
+          { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, doc._id) },
         ],
         data: {
           type: doc._type,
@@ -118,7 +121,7 @@ export async function importDataset(
       model: CONTENTFN_TABLE_NAMES.docsDrafts,
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
-        { field: "documentId", operator: "eq" as const, value: doc._id },
+        { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, doc._id) },
       ],
     });
     if (existing) {
@@ -126,7 +129,7 @@ export async function importDataset(
         model: CONTENTFN_TABLE_NAMES.docsDrafts,
         where: [
           { field: "dataset", operator: "eq" as const, value: input.dataset },
-          { field: "documentId", operator: "eq" as const, value: doc._id },
+          { field: "id", operator: "eq" as const, value: documentStorageId(input.dataset, doc._id) },
         ],
         data: {
           type: doc._type,
@@ -164,6 +167,7 @@ export async function importDataset(
       await config.db.create({
         model: CONTENTFN_TABLE_NAMES.assets,
         data: {
+          id: documentStorageId(input.dataset, asset.assetId),
           dataset: input.dataset,
           assetId: asset.assetId,
           contentType: asset.contentType,
@@ -184,6 +188,7 @@ export async function importDataset(
       where: [
         { field: "dataset", operator: "eq" as const, value: input.dataset },
         { field: "docId", operator: "eq" as const, value: rev.docId },
+        { field: "perspective", operator: "eq" as const, value: rev.perspective },
         { field: "rev", operator: "eq" as const, value: rev.rev },
       ],
     });
@@ -191,6 +196,7 @@ export async function importDataset(
       await config.db.create({
         model: CONTENTFN_TABLE_NAMES.revisions,
         data: {
+          id: revisionStorageId(input.dataset, rev.docId, rev.perspective, rev.rev),
           dataset: input.dataset,
           docId: rev.docId,
           perspective: rev.perspective,

@@ -25,7 +25,7 @@ function validateSchemaInternal(schema: unknown, path: string): ContentfnEnvelop
     return err("SCHEMA_INVALID", "Schema must be an object", { path });
   }
   const s = schema as Record<string, unknown>;
-  if (typeof s.version !== "number" || s.version < 1) {
+  if (!Number.isInteger(s.version) || (s.version as number) < 1) {
     return err("SCHEMA_INVALID", "Schema version must be a positive number", {
       path: path ? `${path}.version` : "version",
     });
@@ -37,6 +37,7 @@ function validateSchemaInternal(schema: unknown, path: string): ContentfnEnvelop
   }
 
   const typeNames = new Set<string>();
+  const allTypeNames = new Set(s.documentTypes.filter((value): value is ContentfnDocumentType => value !== null && typeof value === "object" && typeof value.name === "string").map(value => value.name));
   for (let i = 0; i < s.documentTypes.length; i++) {
     const dt = s.documentTypes[i];
     const typePath = `documentTypes[${i}]`;
@@ -64,7 +65,7 @@ function validateSchemaInternal(schema: unknown, path: string): ContentfnEnvelop
         path: `${typePath}.fields`,
       });
     }
-    const fieldRes = validateFields(docType.fields, typeNames, `${typePath}.fields`);
+    const fieldRes = validateFields(docType.fields, allTypeNames, `${typePath}.fields`);
     if (!fieldRes.ok) return fieldRes;
   }
 
@@ -94,6 +95,9 @@ function validateFields(
       });
     }
     seen.add(f.name);
+    if (f.required !== undefined && typeof f.required !== "boolean") {
+      return err("SCHEMA_INVALID", "required must be boolean", { path: `${fieldPath}.required` });
+    }
 
     const typeRes = validateFieldType(f.type, typeNames, `${fieldPath}.type`);
     if (!typeRes.ok) return typeRes;
@@ -118,7 +122,7 @@ function validateFields(
           });
         }
         if (r.rule === "min" || r.rule === "max") {
-          if (typeof r.value !== "number") {
+          if (typeof r.value !== "number" || !Number.isFinite(r.value)) {
             return err("SCHEMA_INVALID", `${r.rule} rule requires numeric value`, {
               path: `${fieldPath}.validation[${v}].value`,
             });
@@ -128,6 +132,16 @@ function validateFields(
           return err("SCHEMA_INVALID", "regex rule requires string value", {
             path: `${fieldPath}.validation[${v}].value`,
           });
+        }
+        if (r.rule === "regex" && typeof r.value === "string") {
+          try { new RegExp(r.value); } catch { return err("SCHEMA_INVALID", "regex must be valid", { path: `${fieldPath}.validation[${v}].value` }); }
+        }
+        const stringField = f.type.kind === "primitive" && ["string", "text"].includes(f.type.type);
+        const numericField = f.type.kind === "primitive" && f.type.type === "number";
+        if (((r.rule === "regex" || r.rule === "enum") && !stringField)
+          || (r.rule === "unique" && f.type.kind !== "array")
+          || ((r.rule === "min" || r.rule === "max") && !numericField && !stringField && f.type.kind !== "array")) {
+          return err("SCHEMA_INVALID", "Validation rule is incompatible with field type", { path: `${fieldPath}.validation[${v}]` });
         }
         if (r.rule === "enum") {
           if (!Array.isArray(r.value) || r.value.some((x: unknown) => typeof x !== "string")) {
@@ -168,35 +182,17 @@ function validateFieldType(
       for (let i = 0; i < ft.of.length; i++) {
         const item = ft.of[i];
         const itemPath = `${path}.of[${i}]`;
-        if (item && typeof item === "object" && "kind" in item) {
-          if ((item as { kind: string }).kind === "reference") {
-            const ref = item as { to?: string[] };
-            if (!Array.isArray(ref.to) || ref.to.length === 0) {
-              return err("SCHEMA_INVALID", "reference to must be non-empty string array", {
-                path: `${itemPath}.to`,
-              });
-            }
-            for (const t of ref.to) {
-              if (!typeNames.has(t)) {
-                return err("SCHEMA_INVALID", "Reference target type does not exist", {
-                  path: itemPath,
-                  type: t,
-                });
-              }
-            }
-          } else {
-            const res = validateFieldType(item as ContentfnFieldType, typeNames, itemPath);
-            if (!res.ok) return res;
-          }
-        }
+        const res = validateFieldType(item as ContentfnFieldType, typeNames, itemPath);
+        if (!res.ok) return res;
       }
-      if (ft.maxLength !== undefined && (typeof ft.maxLength !== "number" || ft.maxLength < 1)) {
-        return err("SCHEMA_INVALID", "maxLength must be positive number", {
+      if (ft.maxLength !== undefined && (!Number.isInteger(ft.maxLength) || ft.maxLength < 0)) {
+        return err("SCHEMA_INVALID", "maxLength must be a non-negative integer", {
           path: `${path}.maxLength`,
         });
       }
       return { ok: true, result: undefined };
     case "reference":
+      if (ft.weak !== undefined && typeof ft.weak !== "boolean") return err("SCHEMA_INVALID", "weak must be boolean", { path: `${path}.weak` });
       if (!Array.isArray(ft.to) || ft.to.length === 0) {
         return err("SCHEMA_INVALID", "reference to must be non-empty string array", {
           path: `${path}.to`,
@@ -212,6 +208,11 @@ function validateFieldType(
       }
       return { ok: true, result: undefined };
     case "richtext":
+      if (ft.of !== undefined && ft.of !== "block") return err("SCHEMA_INVALID", "richtext of must be block", { path: `${path}.of` });
+      for (const key of ["allowMarks", "allowObjects"] as const) {
+        const list = ft[key];
+        if (list !== undefined && (!Array.isArray(list) || list.some(value => typeof value !== "string" || !value))) return err("SCHEMA_INVALID", "richtext allow lists must contain non-empty strings", { path: `${path}.${key}` });
+      }
       return { ok: true, result: undefined };
     case "markdown":
       if (ft.dialect !== undefined && ft.dialect !== "commonmark" && ft.dialect !== "gfm") {

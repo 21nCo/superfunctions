@@ -1,9 +1,11 @@
+import { validateDocumentAgainstSchema } from "./document-validation.js";
+import { atomicMutation } from "./database.js";
 /**
  * Schema storage: read/write schema records per dataset.
  * Enforces monotonic versioning and deterministic schemaHash.
  */
 
-import type { Adapter } from "@superfunctions/db";
+import type { ContentfnDatabase as Adapter } from "./database.js";
 import type { ContentfnSchema, ContentfnEnvelope } from "@contentfn/core";
 import { ok, err, validateSchema } from "@contentfn/core";
 import { nowISO } from "@contentfn/core";
@@ -45,8 +47,9 @@ export async function schemaGet(
  */
 export async function schemaUpsert(
   config: SchemaStorageConfig,
-  input: { dataset: string; schema: ContentfnSchema }
+  input: { dataset: string; schema: ContentfnSchema; migration?: { description: string } }
 ): Promise<ContentfnEnvelope<{ schemaHash: string }>> {
+  if ("transaction" in config.db) return atomicMutation(config.db, db => schemaUpsert({ ...config, db }, input));
   const exists = await datasetExists({ db: config.db }, input.dataset);
   if (!exists) {
     return err("DATASET_NOT_FOUND", "Dataset not found", { dataset: input.dataset });
@@ -95,9 +98,20 @@ export async function schemaUpsert(
     return ok({ schemaHash: hash });
   }
 
-  await config.db.update({
+  if (input.migration !== undefined && (!input.migration || typeof input.migration.description !== "string" || !input.migration.description.trim() || input.migration.description.length > 2000)) return err("VALIDATION_FAILED", "migration.description must document the explicit migration steps", { path: "migration.description" });
+  if (!input.migration) {
+    for (const model of [CONTENTFN_TABLE_NAMES.docsDrafts, CONTENTFN_TABLE_NAMES.docsPublished]) {
+      const documents = await config.db.findMany({ model, where: [{ field: "dataset", operator: "eq", value: input.dataset }] });
+      for (const row of documents) {
+        const document = row.docJson as import("@contentfn/core").ContentfnDocument;
+        const compatible = validateDocumentAgainstSchema(schema, document._type, document);
+        if (!compatible.ok) return err("SCHEMA_INVALID", "Schema would invalidate existing content; migrate it first or provide migration.description", { id: document._id, path: compatible.error.details.path });
+      }
+    }
+  }
+  const changed = await config.db.updateMany({
     model: CONTENTFN_TABLE_NAMES.schema,
-    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }],
+    where: [{ field: "dataset", operator: "eq" as const, value: input.dataset }, { field: "version", operator: "eq" as const, value: cur.version }, { field: "schemaHash", operator: "eq" as const, value: cur.schemaHash }],
     data: {
       version: schema.version,
       schemaJson: schema,
@@ -105,5 +119,6 @@ export async function schemaUpsert(
       updatedAt: now,
     },
   });
+  if (changed !== 1) return err("SCHEMA_VERSION_CONFLICT", "Schema changed concurrently; reload before applying the update", { dataset: input.dataset });
   return ok({ schemaHash: hash });
 }

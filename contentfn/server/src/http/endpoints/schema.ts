@@ -22,7 +22,7 @@ export async function handleSchemaUpsert(
       },
     };
   }
-  const b = body as { dataset?: unknown; schema?: unknown };
+  const b = body as { dataset?: unknown; schema?: unknown; migration?: { description: string } };
   if (b.dataset === undefined) {
     return {
       ok: false,
@@ -46,6 +46,7 @@ export async function handleSchemaUpsert(
   return schemaUpsert(config, {
     dataset: String(b.dataset),
     schema: b.schema as ContentfnSchema,
+    migration: b.migration,
   });
 }
 
