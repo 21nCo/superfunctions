@@ -291,6 +291,7 @@ const malformedEvidence = (detail: string) => new PortRegistryError("DEVFN_REGIS
  * here rather than read as present or absent.
  */
 function assertServingInvocation(invocation: RegistryInvocation): void {
+  if (![invocation.id, invocation.projectId, invocation.instanceId].every(nonEmptyText)) throw malformedEvidence(`invocation ${String(invocation.id)} identity`);
   if (invocation.ownerJournal !== undefined && invocation.ownerJournal !== true) throw malformedEvidence(`invocation ${String(invocation.id)} ownerJournal`);
   if (invocation.launching !== undefined && (!Array.isArray(invocation.launching) || !invocation.launching.every(nonEmptyText))) {
     throw malformedEvidence(`invocation ${String(invocation.id)} launching`);
@@ -299,6 +300,7 @@ function assertServingInvocation(invocation: RegistryInvocation): void {
 
 function assertServingOwner(allocation: PortAllocation): void {
   const { process: owner, container } = allocation;
+  if (![allocation.projectId, allocation.instanceId].every(nonEmptyText)) throw malformedEvidence(`lease ${String(allocation.id)} identity`);
   if (owner !== undefined && (!owner || typeof owner !== "object" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 ||
     (owner.birthSignature !== undefined && !nonEmptyText(owner.birthSignature)) || (owner.recordedAt !== undefined && typeof owner.recordedAt !== "string"))) {
     throw malformedEvidence(`lease ${String(allocation.id)} process owner`);
@@ -360,10 +362,14 @@ export class FilePortRegistry {
   }
 
   public async read(): Promise<RegistryState> {
+    return await this.readState(true);
+  }
+
+  private async readState(normalize: boolean): Promise<RegistryState> {
     try {
       const state = JSON.parse(await readFile(this.filePath, "utf8")) as RegistryState;
       if (state.version !== 1 || !Array.isArray(state.allocations) || !Array.isArray(state.invocations)) throw new Error("Unsupported registry schema");
-      recordLeaseOwnerTimes(state);
+      if (normalize) recordLeaseOwnerTimes(state);
       return state;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return structuredClone(EMPTY);
@@ -791,14 +797,18 @@ export class FilePortRegistry {
    * routing lock across this check and the action it permits.
    */
   public async instanceServesPort(instanceId: string, targetPort: number): Promise<boolean> {
-    const state = await withRoutingLock(path.dirname(this.filePath), async () => await this.read());
+    const state = await withRoutingLock(path.dirname(this.filePath), async () => await this.readState(false));
     const invocations = state.invocations.filter((invocation) => invocation.instanceId === instanceId);
     for (const invocation of invocations) assertServingInvocation(invocation);
+    const leases = state.allocations.filter((allocation) => invocations.some((invocation) => allocation.invocationId === invocation.id) &&
+      allocation.state === "active" && allocation.protocol === "tcp" && allocation.port === targetPort);
+    // Owner evidence is checked as persisted: normalization would read a malformed record time as an earlier release's absent one.
+    for (const allocation of leases) assertServingOwner(allocation);
+    recordLeaseOwnerTimes(state);
     for (const invocation of invocations) {
       if (invocation.state !== "ready" || invocation.ownerJournal !== true || invocation.launching?.length) continue;
-      for (const allocation of state.allocations) {
-        if (allocation.invocationId !== invocation.id || allocation.state !== "active" || allocation.protocol !== "tcp" || allocation.port !== targetPort) continue;
-        assertServingOwner(allocation);
+      for (const allocation of leases) {
+        if (allocation.invocationId !== invocation.id) continue;
         // A lease joined to this invocation by id alone, but recorded for another lifecycle, is no evidence for it.
         if (allocation.instanceId !== invocation.instanceId || allocation.projectId !== invocation.projectId) continue;
         if (!allocation.process && !allocation.container) continue;
