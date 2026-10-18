@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'compfn-packed-consumer-'));
-const run = (command, args, cwd = directory) => execFileSync(command, args, { cwd, encoding:'utf8', stdio:['ignore','pipe','pipe'] });
+const npmCommand = process.env.NPM_CLI ? process.execPath : 'npm';
+const npmArgs = args => process.env.NPM_CLI ? [process.env.NPM_CLI, ...args] : args;
+const run = (command, args, cwd = directory) => execFileSync(command === 'npm' ? npmCommand : command, command === 'npm' ? npmArgs(args) : args, { cwd, encoding:'utf8', stdio:['ignore','pipe','pipe'] });
 try {
   const dependencies = {};
   for (const path of ['packages/observability','packages/db','packages/http','mcpfn/core','packages/admin','compfn','compfn/admin']) {
@@ -31,12 +33,12 @@ void createCompFnDomainAdminService({compfn:api,scope:{workspaceId:'w'}});`);
   }
   writeFileSync(join(directory,'smoke.mjs'), `import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {createRequire} from 'node:module';import {compFn,loadBundle} from 'compfn';import {memoryAdapter} from '@superfunctions/db/adapters/memory';import {createCompFnDomainAdminService} from '@compfn/admin';const require=createRequire(import.meta.url);const db=memoryAdapter();await db.initialize();const api=compFn({database:db});const bundle=JSON.parse(readFileSync(require.resolve('compfn/bundles/soc2-type2.json'),'utf8'));const loaded=await loadBundle(api,bundle);assert.equal(loaded.ok,true,JSON.stringify(loaded));assert.equal(loaded.result.controls.length,43);assert.equal(typeof createCompFnDomainAdminService({compfn:api,scope:{workspaceId:'w'}}).listControls,'function');await db.close();console.log('Packed bundle + SSR imports passed',process.version);`);
   const results=[];
-  for (const version of ['18.18.0','20','22']) {
+  for (const version of ['18.18.0','20.0.0','20','22']) {
     const result=spawnSync('npx',['--yes',`--package=node@${version}`,'node','smoke.mjs'],{cwd:directory,encoding:'utf8'});
     results.push({version,status:result.status,stdout:result.stdout,stderr:result.stderr});
     console.log(JSON.stringify(results.at(-1)));
   }
-  const audit=spawnSync('npm',['audit','--omit=dev','--json'],{cwd:directory,encoding:'utf8'});
+  const audit=spawnSync(npmCommand,npmArgs(['audit','--omit=dev','--json']),{cwd:directory,encoding:'utf8'});
   writeFileSync(join(directory,'audit.json'),audit.stdout);
   writeFileSync(join(directory,'results.json'),JSON.stringify(results,null,2));
   console.log('Runtime audit:',JSON.parse(audit.stdout).metadata);
