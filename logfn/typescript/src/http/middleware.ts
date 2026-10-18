@@ -2,6 +2,7 @@
  * Core request logger middleware
  */
 
+import { sanitizeValue } from "../validation.js";
 import type { Logger } from "../core/logger.js";
 import { parseW3CTraceContext } from "../pipeline/request-ids.js";
 
@@ -162,19 +163,27 @@ export function redactHeaders(
  * Truncate body to max size
  */
 export function truncateBody(body: any, maxSize = 8192): any {
-  if (!body) return undefined;
-
-  const serialized = typeof body === "string" ? body : JSON.stringify(body);
-
-  if (serialized.length <= maxSize) {
-    return body;
+  if (body === null || body === undefined) return undefined;
+  if (!Number.isFinite(maxSize) || maxSize < 64) {
+    throw new RangeError("Body capture limit must be at least 64 bytes");
   }
+  const cleaned = sanitizeValue(body);
+  const serialized = JSON.stringify(cleaned);
+  const encoder = new TextEncoder();
+  const size = encoder.encode(serialized).byteLength;
+  if (size <= maxSize) return cleaned;
 
-  return {
-    _truncated: true,
-    _size: serialized.length,
-    _preview: serialized.slice(0, 200),
-  };
+  const result = { _truncated: true, _size: size, _preview: "" };
+  // Bound the complete JSON value, including metadata and escaped characters.
+  for (const point of Array.from(typeof cleaned === "string" ? cleaned : serialized).slice(0, 200)) {
+    const previous = result._preview;
+    result._preview += point;
+    if (encoder.encode(JSON.stringify(result)).byteLength > maxSize) {
+      result._preview = previous;
+      break;
+    }
+  }
+  return result;
 }
 
 /** One decision for the automatic info-level request/response pair. */

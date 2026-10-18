@@ -78,3 +78,8 @@ Fixed default secret-header redaction being disabled by adapter/customlists. Fas
 All three framework adapters now attach trace, span, request, user and tenant identifiers to the event envelope through inherited child correlation. Automatic info-level start/completion events use one sampling decision per request; invalid rates fail at middleware setup. Sampled-out requests retain their application logger. Express observes finish/close once, distinguishes aborted responses, and leaves response.end unchanged.
 
 The full core suite passed220 tests with typecheck/build; the final focused framework suite passed11 tests after adding parent/child correlation isolation and captured identity assertions. Existing actual Express HTTP, Fastify inject and Hono request checks cover the adapters. This does not prove all failure/streaming/body-limit cases; those and the broader sharedHTTP/admin/Python parity gates remain open.
+
+
+## Captured body serialization
+
+Parsed body capture now uses the shared LogFn sanitizer before serialization, preserving false/zero/empty values and safely representing cycles and unsupported values. Its bound measures UTF-8 JSON bytes including truncation metadata, with previews cut at Unicode code points.224 core tests, source typecheck and build pass, including multibyte, escaped text, circular objects and false/zero cases. Hono still reads a complete cloned request body before truncation; bounded streaming capture remains open.
