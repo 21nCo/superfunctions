@@ -1,0 +1,15 @@
+inventory open PRs in superfunctions
+
+---
+
+provide desc of what each PR is about and also the potential sequence of merge
+
+---
+
+leave the prs where currently active or recent work is going on and suggest me the new order of merge
+
+---
+
+proceed and complete waves 1 to 3... blacksmith yes
+
+while you work - make sure you wait for all PR review bot rounds to settle and no valid code review findings are left
