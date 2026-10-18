@@ -1,0 +1,23 @@
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_d4a162f2d2afd9 14-17,78,129-138
+flowfn/python/flowfn/adapters/postgres.py
+  s_e1c5fc1a65c0cf::t_4f0b9220af0649 15,22,46-55
+flowfn/python/tests/test_durable_adapters.py
+  s_e1c5fc1a65c0cf::t_6517a3b4ad34c4 190-212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c60bd2d22d08158336b9f7fbe041c3d87949210",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
