@@ -1,99 +1,42 @@
-/**
- * Fastify plugin for HTTP response caching
- */
-
-import type { CacheFn } from "../core/cache.js";
-
-export interface FastifyPluginOptions {
-  cache: CacheFn;
-}
-
+/** Fastify response caching hooks. */
+import type { CacheFn } from '../core/cache.js';
+import { eligible, headers, isResponse, key, snapshot } from './http-cache.js';
+export interface FastifyPluginOptions { cache: CacheFn; }
 export interface FastifyRouteOptions {
-  ttl?: number;
-  key?: string | ((req: any) => string);
-  tags?: string[] | ((req: any) => string[]);
-  condition?: (req: any) => boolean;
+  ttl?: number; key?: string | ((req: any) => string); tags?: string[] | ((req: any) => string[]);
+  condition?: (req: any) => boolean; vary?: string[];
 }
-
-/**
- * Fastify plugin for caching
- */
-export async function fastify(fastify: any, options: FastifyPluginOptions) {
+export async function fastify(app: any, options: FastifyPluginOptions) {
   const cache = options.cache;
-
-  if (!cache) {
-    throw new Error("Cache instance is required for Fastify plugin");
-  }
-
-  // Decorate fastify instance with cache
-  fastify.decorate("cache", cache);
-
-  // Add hook for caching
-  fastify.addHook("onRequest", async (request: any, reply: any) => {
-    const routeOptions: FastifyRouteOptions | undefined =
-      request.routeOptions?.config?.cachefn;
-
-    if (!routeOptions) {
-      return;
-    }
-
-    // Check condition
-    if (routeOptions.condition && !routeOptions.condition(request)) {
-      return;
-    }
-
-    // Only cache GET requests by default
-    if (request.method !== "GET") {
-      return;
-    }
-
-    // Generate cache key
-    const cacheKey =
-      typeof routeOptions.key === "function"
-        ? routeOptions.key(request)
-        : routeOptions.key || request.url;
-
-    // Try to get from cache
-    const cached = await cache.get(cacheKey);
-    if (cached) {
-      reply.send(cached);
-    }
-  });
-
-  // Add hook for storing responses
-  fastify.addHook("onSend", async (request: any, reply: any, payload: any) => {
-    const routeOptions: FastifyRouteOptions | undefined =
-      request.routeOptions?.config?.cachefn;
-
-    if (!routeOptions || reply.sent) {
-      return payload;
-    }
-
-    // Only cache successful responses
-    if (reply.statusCode < 200 || reply.statusCode >= 300) {
-      return payload;
-    }
-
-    // Generate cache key
-    const cacheKey =
-      typeof routeOptions.key === "function"
-        ? routeOptions.key(request)
-        : routeOptions.key || request.url;
-
-    // Get tags
-    const tags =
-      typeof routeOptions.tags === "function"
-        ? routeOptions.tags(request)
-        : routeOptions.tags;
-
-    // Parse and cache the response
+  if (!cache) throw new Error('Cache instance is required for Fastify plugin');
+  app.decorate('cache', cache);
+  const requests = new WeakMap<object, { key: string; options: FastifyRouteOptions; hit: boolean }>();
+  app.addHook('preHandler', async (request: any, reply: any) => {
+    const opts: FastifyRouteOptions | undefined = request.routeOptions?.config?.cachefn;
+    const h = headers(request.headers);
+    if (!opts || !eligible(request.method, h) || (opts.condition && !opts.condition(request))) return;
+    const cacheKey = key(typeof opts.key === 'function' ? opts.key(request) : opts.key ?? request.url, h, opts.vary);
+    const state = { key: cacheKey, options: opts, hit: false };
+    requests.set(request, state);
     try {
-      const data = typeof payload === "string" ? JSON.parse(payload) : payload;
-      await cache.set(cacheKey, data, { ttl: routeOptions.ttl, tags });
-    } catch (err) {
-      // Ignore parsing errors
+      const cached = await cache.get(cacheKey);
+      if (isResponse(cached)) {
+        state.hit = true;
+        reply.code(cached.status).headers(cached.headers);
+        return reply.send(cached.kind === 'bytes' ? Buffer.from(cached.body as number[]) : cached.body);
+      }
+    } catch { /* Fall through to the route handler. */ }
+  });
+  app.addHook('onSend', async (request: any, reply: any, payload: any) => {
+    const state = requests.get(request);
+    if (!state || state.hit || reply.sent || (typeof payload !== 'string' && !Buffer.isBuffer(payload) && payload !== null)) return payload;
+    const response = snapshot(reply.statusCode, reply.getHeaders(), Buffer.isBuffer(payload) ? Array.from(payload) : payload, Buffer.isBuffer(payload) ? 'bytes' : 'text', state.options.vary);
+    if (response) {
+      try {
+        const tags = typeof state.options.tags === 'function' ? state.options.tags(request) : state.options.tags;
+        await cache.set(state.key, response, { ttl: state.options.ttl, tags });
+      } catch { /* Cache failure cannot replace the handler response. */ }
     }
-
     return payload;
   });
 }

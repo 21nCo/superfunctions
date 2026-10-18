@@ -17,14 +17,36 @@ def hash_value(value: Any) -> str:
     Returns:
         Hex digest of the hash
     """
-    # Convert value to JSON string for consistent hashing
-    try:
-        json_str = json.dumps(value, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        # Fallback to string representation
-        json_str = str(value)
 
-    return hashlib.sha256(json_str.encode()).hexdigest()[:16]
+    def encode(item: Any, active: set[int]) -> Any:
+        if item is None:
+            return ["none"]
+        if type(item) in (str, bool, int):
+            return [type(item).__name__, item]
+        if type(item) is float:
+            return ["float", item.hex()]
+        if type(item) is bytes:
+            return ["bytes", item.hex()]
+        if type(item) not in (list, tuple, dict, set, frozenset):
+            raise TypeError("Unsupported cache key value; supply a custom key_generator")
+        identity = id(item)
+        if identity in active:
+            raise ValueError("Circular cache key value; supply a custom key_generator")
+        active.add(identity)
+        try:
+            if isinstance(item, dict):
+                values = [[encode(k, active), encode(v, active)] for k, v in item.items()]
+                values.sort(key=lambda pair: json.dumps(pair[0]))
+            else:
+                values = [encode(v, active) for v in item]
+                if isinstance(item, (set, frozenset)):
+                    values.sort(key=json.dumps)
+            return [type(item).__name__, values]
+        finally:
+            active.remove(identity)
+
+    payload = json.dumps(encode(value, set()), ensure_ascii=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def hash_args(*args: Any, **kwargs: Any) -> str:

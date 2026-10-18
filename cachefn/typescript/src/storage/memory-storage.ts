@@ -23,14 +23,20 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   private tagIndex: Map<string, Set<string>> = new Map();
   private keyTags: Map<string, Set<string>> = new Map();
   private maxSize: number;
+  private nextExpiration = Infinity;
   private onEviction?: (key: string, reason: string) => void;
 
   constructor(config: MemoryStorageConfig = {}) {
     this.maxSize = config.maxSize ?? 1000;
+    if (!Number.isSafeInteger(this.maxSize) || this.maxSize < 0) {
+      throw new RangeError("maxSize must be a non-negative safe integer");
+    }
     this.onEviction = config.onEviction;
   }
 
-  async get(key: string): Promise<T | undefined> {
+  async get(key: string): Promise<T | undefined> { return this.getSync(key); }
+
+  getSync(key: string): T | undefined {
     const entry = this.cache.get(key);
 
     if (!entry) {
@@ -39,7 +45,7 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
 
     // Check if expired
     if (isExpired(entry)) {
-      await this.delete(key);
+      void this.delete(key);
       return undefined;
     }
 
@@ -51,46 +57,62 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
     return entry.value;
   }
 
-  async set(key: string, value: T, metadata: EntryMetadata): Promise<void> {
-    // Evict if at capacity and key doesn't exist
-    if (!this.cache.has(key) && this.cache.size >= this.maxSize) {
-      await this.evictLRU();
+  async set(key: string, value: T, metadata: EntryMetadata): Promise<void> { this.setSync(key, value, metadata); }
+
+  setSync(key: string, value: T, metadata: EntryMetadata): void {
+    if (this.maxSize === 0) return;
+    // Reclaim expired entries before evicting a live least-recently-used value.
+    if (this.cache.size >= this.maxSize && Date.now() >= this.nextExpiration) {
+      this.nextExpiration = Infinity;
+      for (const [storedKey, entry] of this.cache) {
+        if (isExpired(entry)) void this.delete(storedKey);
+        else if (entry.expiresAt !== undefined) this.nextExpiration = Math.min(this.nextExpiration, entry.expiresAt);
+      }
     }
+    // Defer observer notification until the replacement is fully committed.
+    // Observers may synchronously write into this same storage instance.
+    const evicted = !this.cache.has(key) && this.cache.size >= this.maxSize
+      ? this.evictLRU() : undefined;
 
     // Remove old tags if updating existing entry
     if (this.cache.has(key)) {
-      await this.removeAllTagsForKey(key);
+      this.removeAllTagsForKey(key);
     }
 
     const entry: CacheEntry<T> = {
       key,
       value,
+      priority: metadata.priority,
       createdAt: metadata.createdAt,
       expiresAt: metadata.expiresAt,
-      tags: metadata.tags,
+      tags: metadata.tags ? [...metadata.tags] : undefined,
       hits: metadata.hits,
       lastAccess: metadata.lastAccess,
     };
 
+    if (entry.expiresAt !== undefined) this.nextExpiration = Math.min(this.nextExpiration, entry.expiresAt);
     this.cache.set(key, entry);
     this.lru.touch(key);
 
     // Update tag index
     if (metadata.tags) {
       for (const tag of metadata.tags) {
-        await this.addTag(tag, key);
+        void this.addTag(tag, key);
       }
     }
+    if (evicted !== undefined) this.onEviction?.(evicted, "lru");
   }
 
-  async has(key: string): Promise<boolean> {
+  async has(key: string): Promise<boolean> { return this.hasSync(key); }
+
+  hasSync(key: string): boolean {
     const entry = this.cache.get(key);
     if (!entry) {
       return false;
     }
 
     if (isExpired(entry)) {
-      await this.delete(key);
+      void this.delete(key);
       return false;
     }
 
@@ -105,13 +127,14 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
 
     this.cache.delete(key);
     this.lru.remove(key);
-    await this.removeAllTagsForKey(key);
+    this.removeAllTagsForKey(key);
 
     return true;
   }
 
   async clear(): Promise<void> {
     this.cache.clear();
+    this.nextExpiration = Infinity;
     this.lru.clear();
     this.tagIndex.clear();
     this.keyTags.clear();
@@ -165,6 +188,10 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   }
 
   async addTag(tag: string, key: string): Promise<void> {
+    const entry = this.cache.get(key);
+    if (!entry) return;
+    if (isExpired(entry)) { void this.delete(key); return; }
+    entry.tags = [...new Set([...(entry.tags ?? []), tag])];
     // Update tag index
     if (!this.tagIndex.has(tag)) {
       this.tagIndex.set(tag, new Set());
@@ -179,6 +206,9 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   }
 
   async removeTag(tag: string, key: string): Promise<void> {
+    const entry = this.cache.get(key);
+    if (entry && isExpired(entry)) { void this.delete(key); return; }
+    if (entry) entry.tags = entry.tags?.filter(value => value !== tag);
     // Remove from tag index
     const keys = this.tagIndex.get(tag);
     if (keys) {
@@ -199,6 +229,7 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   }
 
   async getTagsForKey(key: string): Promise<string[]> {
+    if (!await this.has(key)) return [];
     const tags = this.keyTags.get(key);
     return tags ? Array.from(tags) : [];
   }
@@ -215,12 +246,24 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
     }
 
     return {
+      priority: entry.priority,
       createdAt: entry.createdAt,
       expiresAt: entry.expiresAt,
-      tags: entry.tags,
+      tags: entry.tags ? [...entry.tags] : undefined,
       hits: entry.hits,
       lastAccess: entry.lastAccess,
     };
+  }
+
+  /** Remove one priority group atomically before notifying reentrant observers. */
+  evictUnderPressure(owns: (key: string) => boolean): void {
+    const candidates = [...this.cache.values()].filter(entry => owns(entry.key));
+    for (const entry of candidates) if (isExpired(entry)) void this.delete(entry.key);
+    const live = candidates.filter(entry => !isExpired(entry));
+    const priority = (['low', 'normal', 'high'] as const).find(level => live.some(entry => (entry.priority ?? 'normal') === level));
+    const removed = live.filter(entry => (entry.priority ?? 'normal') === priority);
+    for (const entry of removed) void this.delete(entry.key);
+    for (const entry of removed) this.onEviction?.(entry.key, 'memory-pressure');
   }
 
   /**
@@ -238,21 +281,24 @@ export class MemoryStorage<T = any> implements StorageBackend<T> {
   /**
    * Evict the least recently used entry
    */
-  private async evictLRU(): Promise<void> {
+  private evictLRU(): string | undefined {
     const key = this.lru.evictLRU();
-    if (key) {
-      await this.delete(key);
-      this.onEviction?.(key, "lru");
-    }
+    if (key !== undefined) void this.delete(key);
+    return key;
   }
 
   /**
    * Remove all tags for a key
    */
-  private async removeAllTagsForKey(key: string): Promise<void> {
-    const tags = await this.getTagsForKey(key);
-    for (const tag of tags) {
-      await this.removeTag(tag, key);
+  private removeAllTagsForKey(key: string): void {
+    const tags = this.keyTags.get(key);
+    if (tags) {
+      for (const tag of tags) {
+        const keys = this.tagIndex.get(tag);
+        keys?.delete(key);
+        if (keys?.size === 0) this.tagIndex.delete(tag);
+      }
     }
+    this.keyTags.delete(key);
   }
 }

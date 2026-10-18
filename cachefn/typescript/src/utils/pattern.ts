@@ -20,7 +20,13 @@ export function globToRegex(pattern: string): RegExp {
  */
 export function matchesPattern(key: string, pattern: string | RegExp): boolean {
   if (pattern instanceof RegExp) {
-    return pattern.test(key);
+    const lastIndex = pattern.lastIndex;
+    try {
+      pattern.lastIndex = 0;
+      return pattern.test(key);
+    } finally {
+      pattern.lastIndex = lastIndex;
+    }
   }
   return globToRegex(pattern).test(key);
 }

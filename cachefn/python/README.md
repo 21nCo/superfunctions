@@ -2,22 +2,22 @@
 
 > Self-hosted caching solution for Python applications
 
-CacheFn is a developer-first caching library that provides memory caching, function memoization, and tag-based invalidation with zero external dependencies.
+CacheFn is a developer-first caching library that provides memory caching, function memoization, and tag-based invalidation without requiring an external cache service. The SDK depends on Pydantic.
 
 ## Status
 
-- **Version**: 0.1.0 (V0)
-- **Python**: ✅ Complete (Memory storage)
-- **TypeScript SDK**: ✅ Complete
+- **Version**: 0.0.1
+- **Python scope**: Memory storage and memoization
+- Production-readiness validation is in progress; the roadmap below is future scope.
 
 ## Features
 
-✅ **Zero Dependencies** - No Redis, Memcached, or external services required  
-✅ **Memory Storage** - In-memory cache with LRU eviction  
-✅ **Type-Safe** - Full type hints with Pydantic models  
-✅ **Function Memoization** - Cache expensive function results  
-✅ **Tag-based Invalidation** - Flexible cache invalidation strategies  
-✅ **Analytics** - Built-in hit/miss tracking and statistics  
+✅ **No external cache service** - No Redis, Memcached, or external services required\
+✅ **Memory Storage** - In-memory cache with LRU eviction\
+✅ **Type-Safe** - Full type hints with Pydantic models\
+✅ **Function Memoization** - Cache expensive function results\
+✅ **Tag-based Invalidation** - Flexible cache invalidation strategies\
+✅ **Analytics** - Built-in hit/miss tracking and statistics\
 ✅ **Async First** - Built for modern async Python applications
 
 ## Installation
@@ -92,10 +92,10 @@ async def expensive_operation(user_id: str):
 async def main():
     # First call - takes 1 second
     result = await expensive_operation("123")
-    
+
     # Second call - instant (cached)
     result = await expensive_operation("123")
-    
+
     # Clear cache for this function
     await expensive_operation.clear()
 
@@ -132,6 +132,7 @@ async def fetch_user_from_db(user_id: str):
 
 async def main():
     cache = cache_fn(name="users", max_size=100)
+    user_id = "123"
 
     # Get or fetch pattern
     user = await cache.get_or_fetch(
@@ -217,10 +218,29 @@ async def my_function(...):
 @memoize_sync(
     max_size: int = 1000,
     key_generator: Optional[Callable] = None,
+    ttl: Optional[int] = None,
 )
 def my_function(...):
     ...
 ```
+
+Memoization caches `None` results. Both decorators use least-recently-used
+capacity eviction. Synchronous memoization accepts a TTL in milliseconds;
+`None` retains results until eviction or invalidation. Its `stats()` dictionary
+includes `size`, `max_size`, `hits`, `misses`, `hit_rate` (percentage), and `evictions`.
+`clear()` resets those counters.
+
+Async memoization and `get_or_fetch` share a pending computation per key within
+one event loop. Cancelling one waiter does not cancel the shared computation.
+Failures are not cached. Explicit writes and invalidation prevent older pending
+computations from repopulating the cache; existing waiters still receive their
+result. Fetchers may return a value or an awaitable.
+
+Default memoization keys distinguish built-in value types, including tuples,
+lists, bytes, sets, and dictionary key types. Supply `key_generator` for custom
+objects or cyclic data. Cache instances and synchronous wrappers are intended
+for use within one event loop or thread; cross-thread access requires external
+synchronization. Memory storage is process-local.
 
 ## Events
 

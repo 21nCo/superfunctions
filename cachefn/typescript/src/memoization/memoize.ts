@@ -1,146 +1,137 @@
-/**
- * Function memoization
- */
-
-import type {
-  MemoizeOptions,
-  MemoizedFunction,
-  CacheStats,
-} from "../core/types.js";
+/** Function memoization with instance-local caches. */
+import type { MemoizeOptions, MemoizedFunction } from "../core/types.js";
 import { CacheFn } from "../core/cache.js";
+import { StatsTracker } from "../analytics/stats.js";
 import { generateKey } from "../utils/hash.js";
+import { calculateExpiration } from "../strategies/ttl-manager.js";
 
-/**
- * Memoize a function with caching
- */
+export type AsyncMemoized<T extends (...args: any[]) => any> =
+  ((this: ThisParameterType<T>, ...args: Parameters<T>) => Promise<Awaited<ReturnType<T>>>) & MemoizedFunction & { cache: CacheFn<Awaited<ReturnType<T>>> };
+
+let instanceId = 0;
+
+function capacity(value = 1000): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("maxSize must be a non-negative safe integer");
+  }
+  return value;
+}
+
+/** Always returns a Promise, including when the original function is synchronous. */
 export function memoize<T extends (...args: any[]) => any>(
   fn: T,
   options?: MemoizeOptions<T>
-): T & MemoizedFunction {
-  // Create a dedicated cache instance for this function
-  const cache = new CacheFn({
-    name: `memoize-${fn.name || "anonymous"}`,
+): AsyncMemoized<T> {
+  const maxSize = capacity(options?.maxSize);
+  const cache = new CacheFn<Awaited<ReturnType<T>>>({
+    // Function names are not unique; persistent backends must also be isolated.
+    name: `memoize-${Date.now()}-${++instanceId}-${Math.random().toString(36).slice(2)}`,
     storage: options?.storage ?? "memory",
-    maxSize: options?.maxSize ?? 1000,
+    maxSize,
     defaultTTL: options?.ttl,
   });
+  const keyGenerator = options?.keyGenerator ??
+    ((...args: Parameters<T>) => generateKey(fn.name || "fn", args));
+  const pending = new Map<string, object>();
+  const flights = new Map<string, Promise<Awaited<ReturnType<T>>>>();
 
-  // Default key generator
-  const keyGenerator =
-    options?.keyGenerator ??
-    ((...args: any[]) => {
-      return generateKey(fn.name || "fn", args);
-    });
+  const clearCache = cache.clear.bind(cache), deleteCache = cache.delete.bind(cache), setCache = cache.set.bind(cache);
+  cache.clear = async options => { pending.clear(); flights.clear(); await clearCache(options); };
+  cache.delete = async key => { pending.delete(key); flights.delete(key); return deleteCache(key); };
+  cache.set = async (key, value, options) => { pending.delete(key); flights.delete(key); await setCache(key, value, options); };
+  const invalidateTag = cache.invalidateByTag.bind(cache), invalidatePattern = cache.invalidateByPattern.bind(cache);
+  cache.invalidateByTag = async tag => { pending.clear(); flights.clear(); await invalidateTag(tag); };
+  cache.invalidateByPattern = async pattern => { pending.clear(); flights.clear(); await invalidatePattern(pattern); };
 
-  // Create the memoized function
-  const memoized = async function (
-    this: any,
-    ...args: Parameters<T>
-  ): Promise<ReturnType<T>> {
+  const memoized = async function (this: ThisParameterType<T>, ...args: Parameters<T>): Promise<Awaited<ReturnType<T>>> {
     const key = keyGenerator(...args);
-
-    // Try to get from cache
-    const cached = await cache.get(key);
-    if (cached !== undefined) {
-      return cached;
-    }
-
-    // Call the original function
-    const result = await fn.apply(this, args);
-
-    // Store in cache
-    await cache.set(key, result, { tags: options?.tags });
-
+    const existing = flights.get(key);
+    if (existing) return existing;
+    const token = {};
+    pending.set(key, token);
+    const result = (async (): Promise<Awaited<ReturnType<T>>> => {
+      const cached = await cache.get(key);
+      if ((cached !== undefined || await cache.has(key)) && pending.get(key) === token) return cached as Awaited<ReturnType<T>>;
+      const value: Awaited<ReturnType<T>> = await fn.apply(this, args);
+      // Invalidation must not allow an earlier computation to repopulate the cache.
+      if (maxSize > 0 && pending.get(key) === token) {
+        await cache.set(key, value, { tags: options?.tags });
+      }
+      return value;
+    })();
+    flights.set(key, result);
+    const cleanup = () => {
+      if (pending.get(key) === token) {
+        pending.delete(key);
+        flights.delete(key);
+      }
+    };
+    result.then(cleanup, cleanup);
     return result;
   };
-
-  // Attach cache control methods
+  memoized.cache = cache;
   memoized.clear = async () => {
+    pending.clear();
+    flights.clear();
     await cache.clear();
   };
-
   memoized.delete = async (...args: Parameters<T>) => {
     const key = keyGenerator(...args);
+    pending.delete(key);
+    flights.delete(key);
     await cache.delete(key);
   };
-
-  memoized.stats = async (): Promise<CacheStats> => {
-    return await cache.getStats();
-  };
-
-  return memoized as T & MemoizedFunction;
+  memoized.stats = () => cache.getStats();
+  return memoized;
 }
 
-/**
- * Synchronous memoization (wraps async memoize but returns sync function)
- */
+/** Synchronous, memory-only memoization with TTL and LRU eviction. */
 export function memoizeSync<T extends (...args: any[]) => any>(
   fn: T,
   options?: MemoizeOptions<T>
 ): T & MemoizedFunction {
-  const asyncMemoized = memoize(
-    async (...args: Parameters<T>) => fn(...args),
-    options
-  );
-
-  const syncMemoized = function (
-    this: any,
-    ...args: Parameters<T>
-  ): ReturnType<T> {
-    // For sync functions, we need to use a sync cache approach
-    // This is a simplified version that uses a Map
-    const key = (
-      options?.keyGenerator ??
-      ((...args: any[]) => generateKey(fn.name || "fn", args))
-    )(...args);
-
-    // Use a simple Map for sync memoization
-    if (!syncMemoized._cache) {
-      syncMemoized._cache = new Map();
+  if (options?.storage && options.storage !== "memory") {
+    throw new TypeError("memoizeSync supports only memory storage");
+  }
+  const maxSize = capacity(options?.maxSize);
+  const cache = new Map<string, { value: ReturnType<T>; expiresAt?: number }>();
+  const stats = new StatsTracker();
+  const keyGenerator = options?.keyGenerator ??
+    ((...args: Parameters<T>) => generateKey(fn.name || "fn", args));
+  const prune = () => {
+    const now = Date.now();
+    for (const [key, entry] of cache) {
+      if (entry.expiresAt !== undefined && now >= entry.expiresAt) cache.delete(key);
     }
-
-    if (syncMemoized._cache.has(key)) {
-      return syncMemoized._cache.get(key);
+  };
+  const memoized = function (this: ThisParameterType<T>, ...args: Parameters<T>): ReturnType<T> {
+    const key = keyGenerator(...args);
+    prune();
+    const entry = cache.get(key);
+    if (entry) {
+      cache.delete(key);
+      cache.set(key, entry);
+      stats.recordHit();
+      return entry.value;
     }
-
-    const result = fn.apply(this, args);
-    syncMemoized._cache.set(key, result);
-
-    // Apply max size limit
-    const maxSize = options?.maxSize ?? 1000;
-    if (syncMemoized._cache.size > maxSize) {
-      const firstKey = syncMemoized._cache.keys().next().value;
-      syncMemoized._cache.delete(firstKey);
+    stats.recordMiss();
+    const value = fn.apply(this, args);
+    if (maxSize > 0) {
+      // Re-entrant calls may have filled the cache while computing this result.
+      cache.delete(key);
+      while (cache.size >= maxSize) {
+        cache.delete(cache.keys().next().value!);
+        stats.recordEviction();
+      }
+      cache.set(key, { value, expiresAt: calculateExpiration(options?.ttl) });
+      stats.recordSet();
     }
-
-    return result;
-  } as any;
-
-  syncMemoized._cache = new Map();
-
-  syncMemoized.clear = async () => {
-    syncMemoized._cache.clear();
+    return value;
   };
-
-  syncMemoized.delete = async (...args: Parameters<T>) => {
-    const key = (
-      options?.keyGenerator ??
-      ((...args: any[]) => generateKey(fn.name || "fn", args))
-    )(...args);
-    syncMemoized._cache.delete(key);
+  memoized.clear = async () => { cache.clear(); stats.reset(); };
+  memoized.delete = async (...args: Parameters<T>) => {
+    if (cache.delete(keyGenerator(...args))) stats.recordDelete();
   };
-
-  syncMemoized.stats = async (): Promise<CacheStats> => {
-    return {
-      hits: 0,
-      misses: 0,
-      hitRate: 0,
-      sets: syncMemoized._cache.size,
-      deletes: 0,
-      evictions: 0,
-      size: syncMemoized._cache.size,
-    };
-  };
-
-  return syncMemoized as T & MemoizedFunction;
+  memoized.stats = async () => { prune(); return stats.getStats(cache.size); };
+  return memoized as T & MemoizedFunction;
 }

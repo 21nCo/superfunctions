@@ -3,7 +3,7 @@ Event emitter for cache events.
 """
 
 from collections import defaultdict
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 
 class EventEmitter:
@@ -29,7 +29,7 @@ class EventEmitter:
             event: Event name
             handler: Event handler function to remove
         """
-        if event in self._handlers:
+        if handler in self._handlers.get(event, []):
             self._handlers[event].remove(handler)
 
     def emit(self, event: str, data: Any) -> None:
@@ -40,7 +40,7 @@ class EventEmitter:
             data: Event data
         """
         if event in self._handlers:
-            for handler in self._handlers[event]:
+            for handler in list(self._handlers[event]):
                 try:
                     handler(data)
                 except Exception:
@@ -57,7 +57,3 @@ class EventEmitter:
             self._handlers.clear()
         elif event in self._handlers:
             del self._handlers[event]
-
-
-# Type alias
-from typing import Optional

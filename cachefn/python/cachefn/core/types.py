@@ -2,9 +2,9 @@
 Core type definitions for CacheFn.
 """
 
-from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
-from pydantic import BaseModel, Field
+from typing import Callable, Generic, Literal, Optional, Protocol, TypeVar
 
+from pydantic import BaseModel, ConfigDict, Field
 
 # Storage types
 StorageType = Literal["memory"]
@@ -24,10 +24,7 @@ class CacheFnConfig(BaseModel):
     default_ttl: Optional[int] = Field(default=None, description="Default TTL in milliseconds")
     namespace: Optional[str] = Field(default=None, description="Namespace for cache keys")
 
-    class Config:
-        """Pydantic config."""
-
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
 
 class SetOptions(BaseModel):
@@ -36,10 +33,7 @@ class SetOptions(BaseModel):
     ttl: Optional[int] = Field(default=None, description="Time-to-live in milliseconds")
     tags: Optional[list[str]] = Field(default=None, description="Tags for invalidation")
 
-    class Config:
-        """Pydantic config."""
-
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
 
 class EntryMetadata(BaseModel):
@@ -51,10 +45,7 @@ class EntryMetadata(BaseModel):
     hits: int = Field(default=0, description="Number of cache hits")
     last_access: int = Field(..., description="Last access timestamp")
 
-    class Config:
-        """Pydantic config."""
-
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
 
 class CacheEntry(BaseModel, Generic[T]):
@@ -68,10 +59,7 @@ class CacheEntry(BaseModel, Generic[T]):
     hits: int = Field(default=0, description="Number of cache hits")
     last_access: int = Field(..., description="Last access timestamp")
 
-    class Config:
-        """Pydantic config."""
-
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class CacheStats(BaseModel):
@@ -88,10 +76,7 @@ class CacheStats(BaseModel):
         default=None, description="Estimated memory usage in bytes (memory storage only)"
     )
 
-    class Config:
-        """Pydantic config."""
-
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
 
 class CacheEvent(BaseModel):
@@ -155,11 +140,7 @@ class MemoizeOptions(BaseModel):
     storage: StorageType = Field(default="memory", description="Storage backend")
     tags: Optional[list[str]] = Field(default=None, description="Tags for invalidation")
 
-    class Config:
-        """Pydantic config."""
-
-        arbitrary_types_allowed = True
-        frozen = True
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
 
 class StorageBackend(Protocol[T]):

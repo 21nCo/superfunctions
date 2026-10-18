@@ -36,7 +36,7 @@ export class EventEmitter {
   emit(event: string, data: any): void {
     const handlers = this.listeners.get(event);
     if (handlers) {
-      handlers.forEach((handler) => {
+      [...handlers].forEach((handler) => {
         try {
           handler(data);
         } catch (error) {
@@ -50,7 +50,7 @@ export class EventEmitter {
    * Remove all listeners for an event or all events
    */
   removeAllListeners(event?: string): void {
-    if (event) {
+    if (event !== undefined) {
       this.listeners.delete(event);
     } else {
       this.listeners.clear();

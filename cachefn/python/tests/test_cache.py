@@ -3,8 +3,10 @@ Tests for CacheFn core functionality.
 """
 
 import asyncio
+
 import pytest
-from cachefn import CacheFn, cache_fn, CacheFnConfig
+
+from cachefn import CacheFn, cache_fn
 
 
 @pytest.fixture

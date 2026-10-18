@@ -6,8 +6,8 @@
 
 CacheFn V0 focuses on delivering a production-ready, self-hosted caching solution with memory and IndexedDB storage tiers, basic invalidation strategies, and function memoization. This establishes the foundation for future enhancements.
 
-**Version**: 0.1.0  
-**Target Release**: Q1 2026  
+**Version**: 0.1.0\
+**Target Release**: Q1 2026\
 **Status**: Implementation Ready
 
 ## Core Philosophy (V0)
@@ -23,28 +23,28 @@ CacheFn V0 focuses on delivering a production-ready, self-hosted caching solutio
 ## V0 Scope
 
 ### In Scope
-âœ… Memory cache with LRU eviction  
-âœ… IndexedDB cache for browser persistence  
-âœ… Basic TTL-based expiration  
-âœ… Tag-based invalidation  
-âœ… Function memoization  
-âœ… Basic analytics (hit/miss rates)  
-âœ… TypeScript SDK with type-safe schemas  
-âœ… Framework middleware (Express, Hono, Fastify)  
-âœ… Browser-first optimizations (LocalStorage fallback, memory monitoring)  
-âœ… Offline-first patterns  
+âœ… Memory cache with LRU eviction\
+âœ… IndexedDB cache for browser persistence\
+âœ… Basic TTL-based expiration\
+âœ… Tag-based invalidation\
+âœ… Function memoization\
+âœ… Basic analytics (hit/miss rates)\
+âœ… TypeScript SDK with type-safe schemas\
+âœ… Framework middleware (Express, Hono, Fastify)\
+âœ… Browser-first optimizations (LocalStorage fallback, memory monitoring)\
+âœ… Offline-first patterns\
 âœ… SuperFunctions integration examples
 
 ### Out of Scope (Future Versions)
-❌ File system cache  
-❌ Database cache backend  
-❌ Distributed caching  
-❌ Compression  
-❌ Cache warming  
-❌ Advanced eviction policies (LFU, custom)  
-❌ Query result caching  
-❌ Dashboard/CLI  
-❌ Python SDK  
+❌ File system cache\
+❌ Database cache backend\
+❌ Distributed caching\
+❌ Compression\
+❌ Cache warming\
+❌ Advanced eviction policies (LFU, custom)\
+❌ Query result caching\
+❌ Dashboard/CLI\
+❌ Python SDK\
 
 ## Architecture (V0)
 
@@ -120,22 +120,22 @@ interface CacheEntry<T> {
 
 class CacheFn<T = any> {
   constructor(config: CacheFnConfig);
-  
+
   async get(key: string): Promise<T | undefined>;
   async set(key: string, value: T, options?: SetOptions): Promise<void>;
   async has(key: string): Promise<boolean>;
   async delete(key: string): Promise<boolean>;
   async clear(): Promise<void>;
-  
+
   async getMany(keys: string[]): Promise<Array<T | undefined>>;
   async setMany(entries: Array<{ key: string; value: T; options?: SetOptions }>): Promise<void>;
   async deleteMany(keys: string[]): Promise<void>;
-  
+
   async keys(pattern?: string): Promise<string[]>;
   async size(): Promise<number>;
-  
+
   async getStats(): Promise<CacheStats>;
-  
+
   on(event: string, handler: Function): void;
   off(event: string, handler: Function): void;
 }
@@ -162,7 +162,7 @@ await cache.set('user:123', { name: 'Alice', age: 30 });
 
 const user = await cache.get('user:123');
 
-await cache.set('session:abc', sessionData, { 
+await cache.set('session:abc', sessionData, {
   ttl: 3600000,
   tags: ['sessions', 'user:123']
 });
@@ -199,15 +199,15 @@ class MemoryStorage<T> implements StorageBackend<T> {
   private cache: Map<string, CacheEntry<T>>;
   private lruList: DoublyLinkedList<string>;
   private maxSize: number;
-  
+
   constructor(config: MemoryStorageConfig);
-  
+
   async get(key: string): Promise<T | undefined>;
   async set(key: string, value: T, metadata: EntryMetadata): Promise<void>;
   async delete(key: string): Promise<boolean>;
   async clear(): Promise<void>;
   async keys(pattern?: string): Promise<string[]>;
-  
+
   private evictLRU(): void;
   private isExpired(entry: CacheEntry<T>): boolean;
 }
@@ -246,9 +246,9 @@ interface IndexedDBSchema {
 class IndexedDBStorage<T> implements StorageBackend<T> {
   private db: IDBDatabase;
   private dbName: string;
-  
+
   constructor(config: IndexedDBStorageConfig);
-  
+
   async init(): Promise<void>;
   async get(key: string): Promise<T | undefined>;
   async set(key: string, value: T, metadata: EntryMetadata): Promise<void>;
@@ -408,31 +408,31 @@ interface MiddlewareOptions {
 
 function middleware(options: MiddlewareOptions) {
   const cache = options.cache || defaultCache;
-  
+
   return async (req: any, res: any, next: any) => {
     if (options.condition && !options.condition(req)) {
       return next();
     }
-    
-    const cacheKey = typeof options.key === 'function' 
-      ? options.key(req) 
+
+    const cacheKey = typeof options.key === 'function'
+      ? options.key(req)
       : options.key || req.url;
-    
+
     const cached = await cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
     }
-    
+
     const originalJson = res.json.bind(res);
     res.json = (data: any) => {
       const tags = typeof options.tags === 'function'
         ? options.tags(req)
         : options.tags;
-      
+
       cache.set(cacheKey, data, { ttl: options.ttl, tags });
       return originalJson(data);
     };
-    
+
     next();
   };
 }
@@ -614,17 +614,17 @@ class CacheFn<T> {
     fetcher: () => Promise<T>,
     options?: SetOptions
   ): Promise<T>;
-  
+
   async invalidate(key: string): Promise<boolean>;
   async invalidateByTag(tag: string): Promise<void>;
   async invalidateByTags(tags: string[]): Promise<void>;
   async invalidateByPattern(pattern: string | RegExp): Promise<void>;
-  
+
   async touch(key: string): Promise<void>;
-  
-  async entries(options?: { 
-    pattern?: string; 
-    limit?: number 
+
+  async entries(options?: {
+    pattern?: string;
+    limit?: number
   }): Promise<Array<{ key: string; value: T }>>;
 }
 ```
@@ -639,9 +639,9 @@ const user = await cache.getOrFetch(
 
 await cache.touch('important:key');
 
-const sessions = await cache.entries({ 
-  pattern: 'session:*', 
-  limit: 100 
+const sessions = await cache.entries({
+  pattern: 'session:*',
+  limit: 100
 });
 ```
 
@@ -700,7 +700,7 @@ authFn.use(async (ctx, next) => {
     ctx.user = cached;
     return next();
   }
-  
+
   const user = await authFn.verifySession(ctx.sessionId);
   await sessionCache.set(`session:${ctx.sessionId}`, user, {
     tags: [`user:${user.id}`, 'sessions']
@@ -734,11 +734,11 @@ const rateLimitCache = cacheFn({
 const checkRateLimit = async (userId: string, action: string) => {
   const key = `ratelimit:${userId}:${action}`;
   const current = await rateLimitCache.get(key) || 0;
-  
+
   if (current >= 100) {
     throw new Error('Rate limit exceeded');
   }
-  
+
   await rateLimitCache.set(key, current + 1, { ttl: 60000 });
 };
 ```
@@ -782,13 +782,13 @@ const responseCache = cacheFn({
 
 botFn.on('messageCreate', async (message) => {
   const cacheKey = `msg:${message.content}`;
-  
+
   const cached = await responseCache.get(cacheKey);
   if (cached) {
     await message.reply(cached);
     return;
   }
-  
+
   const response = await generateResponse(message.content);
   await responseCache.set(cacheKey, response);
   await message.reply(response);
@@ -802,12 +802,12 @@ const webhookDedupeCache = cacheFn({
 
 botFn.on('webhook', async (payload) => {
   const payloadHash = hash(payload);
-  
+
   if (await webhookDedupeCache.has(payloadHash)) {
     console.log('Duplicate webhook, ignoring');
     return;
   }
-  
+
   await webhookDedupeCache.set(payloadHash, true);
   await processWebhook(payload);
 });

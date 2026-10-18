@@ -6,8 +6,8 @@
 
 CacheFn is a developer-first caching solution that combines multi-tier caching, intelligent invalidation strategies, function memoization, and analytics into a single self-hosted platform. It builds on the super-functions ecosystem, reusing proven patterns from searchfn, testfn, and secfn.
 
-**Version**: 1.0.0  
-**Target Release**: Q2 2026  
+**Version**: 1.0.0\
+**Target Release**: Q2 2026\
 **Status**: Specification
 
 ## Core Philosophy
@@ -47,9 +47,9 @@ cachefn/
 ## Storage Tiers
 
 ### Tier 1: Memory Cache
-**Performance**: <1ms access time  
-**Capacity**: RAM-limited (configurable)  
-**Persistence**: None (session-only)  
+**Performance**: <1ms access time\
+**Capacity**: RAM-limited (configurable)\
+**Persistence**: None (session-only)\
 **Use cases**: Hot data, frequently accessed values
 
 **Implementation**:
@@ -59,9 +59,9 @@ cachefn/
 - Reuse patterns from `searchfn/src/cache/lru-cache.ts`
 
 ### Tier 2: IndexedDB Cache
-**Performance**: 1-10ms access time  
-**Capacity**: Hundreds of MB per origin  
-**Persistence**: Survives page reloads  
+**Performance**: 1-10ms access time\
+**Capacity**: Hundreds of MB per origin\
+**Persistence**: Survives page reloads\
 **Use cases**: Browser apps, offline-first, user preferences
 
 **Implementation**:
@@ -71,9 +71,9 @@ cachefn/
 - Background cleanup workers
 
 ### Tier 3: File System Cache
-**Performance**: 5-50ms access time  
-**Capacity**: GB+ (disk-limited)  
-**Persistence**: Survives restarts  
+**Performance**: 5-50ms access time\
+**Capacity**: GB+ (disk-limited)\
+**Persistence**: Survives restarts\
 **Use cases**: Server-side apps, build artifacts, large assets
 
 **Implementation**:
@@ -83,9 +83,9 @@ cachefn/
 - Automatic cleanup based on disk usage
 
 ### Tier 4: Database Cache
-**Performance**: 10-100ms access time  
-**Capacity**: Unlimited (cloud DB)  
-**Persistence**: Distributed, replicated  
+**Performance**: 10-100ms access time\
+**Capacity**: Unlimited (cloud DB)\
+**Persistence**: Distributed, replicated\
 **Use cases**: Multi-instance apps, shared caches
 
 **Implementation**:
@@ -150,8 +150,8 @@ const cache = cacheFn({
   analytics: true
 });
 
-await cache.set('user:123', userData, { 
-  ttl: 60000, 
+await cache.set('user:123', userData, {
+  ttl: 60000,
   tags: ['user', 'profile'],
   priority: 'high'
 });
@@ -321,7 +321,7 @@ emitEvent('user.updated', { userId: '123' });
 #### Conditional Invalidation
 ```typescript
 await cache.invalidateWhere((key, value, metadata) => {
-  return metadata.tags?.includes('stale') || 
+  return metadata.tags?.includes('stale') ||
          value.lastModified < Date.now() - 86400000;
 });
 ```
@@ -343,9 +343,9 @@ const allKeys = await cache.keys();
 
 const userKeys = await cache.keys('user:*');
 
-const entries = await cache.entries({ 
-  pattern: 'session:*', 
-  limit: 100 
+const entries = await cache.entries({
+  pattern: 'session:*',
+  limit: 100
 });
 ```
 
@@ -389,7 +389,7 @@ import express from 'express';
 
 const app = express();
 
-app.get('/api/users', 
+app.get('/api/users',
   cacheFn.middleware({
     ttl: 60000,
     key: (req) => `users:page:${req.query.page}`,
@@ -970,7 +970,7 @@ authFn.use(async (ctx, next) => {
     ctx.user = cached;
     return next();
   }
-  
+
   const user = await authFn.verifySession(ctx.sessionId);
   await sessionCache.set(`session:${ctx.sessionId}`, user);
   ctx.user = user;
@@ -1013,11 +1013,11 @@ const rateLimitCache = cacheFn({
 const checkRateLimit = async (userId: string, action: string) => {
   const key = `ratelimit:${userId}:${action}`;
   const current = await rateLimitCache.get(key) || 0;
-  
+
   if (current >= 100) {
     throw new Error('Rate limit exceeded');
   }
-  
+
   await rateLimitCache.set(key, current + 1, { ttl: 60000 });
 };
 ```
@@ -1053,12 +1053,12 @@ const snapshotCache = cacheFn({
 testFn.visualTest('homepage renders correctly', async () => {
   const screenshot = await takeScreenshot();
   const baseline = await snapshotCache.get('homepage-baseline');
-  
+
   if (!baseline) {
     await snapshotCache.set('homepage-baseline', screenshot);
     return;
   }
-  
+
   const diff = await compareImages(screenshot, baseline);
   expect(diff.percentage).toBeLessThan(0.1);
 });
@@ -1091,13 +1091,13 @@ const discordResponseCache = cacheFn({
 
 botFn.on('messageCreate', async (message) => {
   const cacheKey = `discord:msg:${message.content}`;
-  
+
   const cached = await discordResponseCache.get(cacheKey);
   if (cached) {
     await message.reply(cached);
     return;
   }
-  
+
   const response = await generateResponse(message.content);
   await discordResponseCache.set(cacheKey, response);
   await message.reply(response);
@@ -1121,12 +1121,12 @@ const webhookDedupeCache = cacheFn({
 
 botFn.on('webhook', async (payload) => {
   const payloadHash = hash(payload);
-  
+
   if (await webhookDedupeCache.has(payloadHash)) {
     console.log('Duplicate webhook, ignoring');
     return;
   }
-  
+
   await webhookDedupeCache.set(payloadHash, true);
   await processWebhook(payload);
 });

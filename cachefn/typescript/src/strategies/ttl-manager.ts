@@ -8,7 +8,7 @@ import type { CacheEntry } from "../core/types.js";
  * Check if a cache entry has expired
  */
 export function isExpired<T>(entry: CacheEntry<T>): boolean {
-  if (!entry.expiresAt) {
+  if (entry.expiresAt === undefined) {
     return false;
   }
   return Date.now() >= entry.expiresAt;
@@ -28,7 +28,7 @@ export function calculateExpiration(ttl?: number): number | undefined {
  * Get remaining TTL in milliseconds
  */
 export function getRemainingTTL<T>(entry: CacheEntry<T>): number | undefined {
-  if (!entry.expiresAt) {
+  if (entry.expiresAt === undefined) {
     return undefined;
   }
   const remaining = entry.expiresAt - Date.now();

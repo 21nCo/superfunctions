@@ -3,7 +3,9 @@ Tests for memoization functionality.
 """
 
 import asyncio
+
 import pytest
+
 from cachefn import memoize, memoize_sync
 
 
@@ -96,14 +98,14 @@ async def test_async_memoize_ttl() -> None:
         return x * 2
 
     # First call
-    result = await func(5)
+    assert await func(5) == 10
     assert call_count == 1
 
     # Wait for expiration
     await asyncio.sleep(0.15)
 
     # Should recompute
-    result = await func(5)
+    assert await func(5) == 10
     assert call_count == 2
 
 

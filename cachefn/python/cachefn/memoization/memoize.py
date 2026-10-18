@@ -2,8 +2,10 @@
 Function memoization with caching.
 """
 
-import asyncio
 import functools
+import inspect
+import time
+from collections import OrderedDict
 from typing import Any, Callable, Optional, TypeVar
 
 from ..core.cache import CacheFn, cache_fn
@@ -51,21 +53,9 @@ class MemoizedFunction:
         """
         key = self._key_generator(*args, **kwargs)
 
-        # Try to get from cache
-        cached = await self._cache.get(key)
-        if cached is not None:
-            return cached
-
-        # Call the original function
-        if asyncio.iscoroutinefunction(self._func):
-            result = await self._func(*args, **kwargs)
-        else:
-            result = self._func(*args, **kwargs)
-
-        # Store in cache
-        await self._cache.set(key, result, tags=self._tags)
-
-        return result
+        return await self._cache.get_or_fetch(
+            key, lambda: self._func(*args, **kwargs), tags=self._tags
+        )
 
     async def clear(self) -> None:
         """Clear all cached results."""
@@ -123,12 +113,14 @@ def memoize(
         func_cache = cache_fn(
             name=f"memoize-{func.__name__}",
             storage=storage,
-            max_size=max_size or 1000,
+            max_size=1000 if max_size is None else max_size,
             default_ttl=ttl,
         )
 
         # Default key generator
-        default_key_gen = lambda *args, **kwargs: generate_key(func.__name__, *args, **kwargs)
+        def default_key_gen(*args: Any, **kwargs: Any) -> str:
+            return generate_key(func.__name__, *args, **kwargs)
+
         key_gen = key_generator or default_key_gen
 
         return MemoizedFunction(func, func_cache, key_gen, tags)
@@ -144,6 +136,7 @@ class MemoizedSyncFunction:
         func: Callable[..., Any],
         key_generator: Callable[..., str],
         max_size: int = 1000,
+        ttl: Optional[int] = None,
     ) -> None:
         """
         Initialize synchronous memoized function.
@@ -155,8 +148,16 @@ class MemoizedSyncFunction:
         """
         self._func = func
         self._key_generator = key_generator
+        if isinstance(max_size, bool) or not isinstance(max_size, int) or max_size <= 0:
+            raise ValueError("max_size must be a positive integer")
+        if ttl is not None and (isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 0):
+            raise ValueError("ttl must be a non-negative integer or None")
+        if inspect.iscoroutinefunction(func):
+            raise TypeError("Use memoize for async functions")
         self._max_size = max_size
-        self._cache: dict[str, Any] = {}
+        self._ttl = ttl
+        self._hits = self._misses = self._evictions = 0
+        self._cache: OrderedDict[str, tuple[Any, Optional[float]]] = OrderedDict()
         functools.update_wrapper(self, func)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -172,26 +173,33 @@ class MemoizedSyncFunction:
         """
         key = self._key_generator(*args, **kwargs)
 
-        # Check cache
+        self._purge_expired()
         if key in self._cache:
-            return self._cache[key]
+            self._hits += 1
+            self._cache.move_to_end(key)
+            return self._cache[key][0]
 
-        # Call original function
+        self._misses += 1
         result = self._func(*args, **kwargs)
-
-        # Store in cache
-        self._cache[key] = result
-
-        # Evict oldest if over max size (simple FIFO)
+        expires = None if self._ttl is None else time.monotonic() + self._ttl / 1000
+        self._purge_expired()
+        self._cache[key] = (result, expires)
+        self._cache.move_to_end(key)
         if len(self._cache) > self._max_size:
-            oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
-
+            self._cache.popitem(last=False)
+            self._evictions += 1
         return result
+
+    def _purge_expired(self) -> None:
+        now = time.monotonic()
+        for key, (_, expires) in list(self._cache.items()):
+            if expires is not None and expires <= now:
+                del self._cache[key]
 
     def clear(self) -> None:
         """Clear all cached results."""
         self._cache.clear()
+        self._hits = self._misses = self._evictions = 0
 
     def delete(self, *args: Any, **kwargs: Any) -> None:
         """
@@ -211,12 +219,22 @@ class MemoizedSyncFunction:
         Returns:
             Basic statistics dict
         """
-        return {"size": len(self._cache), "max_size": self._max_size}
+        self._purge_expired()
+        total = self._hits + self._misses
+        return {
+            "size": len(self._cache),
+            "max_size": self._max_size,
+            "hits": self._hits,
+            "misses": self._misses,
+            "evictions": self._evictions,
+            "hit_rate": self._hits / total * 100 if total else 0.0,
+        }
 
 
 def memoize_sync(
     max_size: int = 1000,
     key_generator: Optional[Callable[..., str]] = None,
+    ttl: Optional[int] = None,
 ) -> Callable[[F], MemoizedSyncFunction]:
     """
     Decorator to memoize a synchronous function (non-async).
@@ -238,9 +256,11 @@ def memoize_sync(
 
     def decorator(func: F) -> MemoizedSyncFunction:
         # Default key generator
-        default_key_gen = lambda *args, **kwargs: generate_key(func.__name__, *args, **kwargs)
+        def default_key_gen(*args: Any, **kwargs: Any) -> str:
+            return generate_key(func.__name__, *args, **kwargs)
+
         key_gen = key_generator or default_key_gen
 
-        return MemoizedSyncFunction(func, key_gen, max_size)
+        return MemoizedSyncFunction(func, key_gen, max_size, ttl)
 
     return decorator

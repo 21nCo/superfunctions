@@ -6,19 +6,19 @@ CacheFn is a developer-first caching solution that combines multi-tier caching, 
 
 ## Status
 
-- **Version**: 0.1.0 (V0)
-- **TypeScript SDK**: ✅ Complete
-- **Python SDK**: ✅ Complete
+- TypeScript: `@cachefn/core` 0.0.3 (memory, IndexedDB, localStorage, and automatic fallback), `@cachefn/admin` 0.1.0.
+- Python: `cachefn` 0.0.1 (memory storage).
+- Production-readiness validation is in progress. `SPEC.md` describes the broader roadmap; `V0_SPEC.md` is the original design, and the SDK READMEs describe the implemented APIs.
 
 ## Features
 
-✅ **Zero Dependencies** - No Redis, Memcached, or external services required  
-✅ **Multi-tier Storage** - Memory and IndexedDB backends  
-✅ **Type-Safe** - Full TypeScript support with type inference  
-✅ **Function Memoization** - Cache expensive function results  
-✅ **Tag-based Invalidation** - Flexible cache invalidation strategies  
-✅ **Framework Middleware** - Express, Hono, and Fastify support  
-✅ **Analytics** - Built-in hit/miss tracking and statistics  
+✅ **No external cache service** - No Redis, Memcached, or external services required\
+✅ **Multi-tier Storage** - Memory and IndexedDB backends\
+✅ **Type-Safe** - Full TypeScript support with type inference\
+✅ **Function Memoization** - Cache expensive function results\
+✅ **Tag-based Invalidation** - Flexible cache invalidation strategies\
+✅ **Framework Middleware** - Express, Hono, and Fastify support\
+✅ **Analytics** - Built-in hit/miss tracking and statistics\
 ✅ **Browser + Node.js** - Works everywhere
 
 ## Quick Start
@@ -26,14 +26,14 @@ CacheFn is a developer-first caching solution that combines multi-tier caching, 
 ### Installation
 
 ```bash
-cd cachefn/ts-sdk
+cd cachefn/typescript
 npm install
 ```
 
 ### Basic Usage
 
 ```typescript
-import { cacheFn } from "cachefn";
+import { cacheFn } from "@cachefn/core";
 
 // Create a cache instance
 const cache = cacheFn({
@@ -50,7 +50,7 @@ await cache.set("user:123", { name: "Alice", age: 30 });
 const user = await cache.get("user:123");
 
 // Invalidate by tag
-await cache.set("session:abc", sessionData, {
+await cache.set("session:abc", { userId: "123" }, {
   ttl: 3600000,
   tags: ["sessions", "user:123"],
 });
@@ -60,9 +60,9 @@ await cache.invalidateByTag("sessions");
 ### Function Memoization
 
 ```typescript
-import { memoize } from "cachefn";
+import { memoizeSync } from "@cachefn/core";
 
-const fibonacci = memoize(
+const fibonacci = memoizeSync(
   (n: number): number => {
     if (n <= 1) return n;
     return fibonacci(n - 1) + fibonacci(n - 2);
@@ -76,13 +76,13 @@ console.log(fibonacci(40)); // Cached!
 
 ## Documentation
 
-- **TypeScript SDK**: See [ts-sdk/README.md](ts-sdk/README.md) for complete API documentation
+- **TypeScript SDK**: See [typescript/README.md](typescript/README.md) for complete API documentation
 - **Full Specification**: See [SPEC.md](SPEC.md) for the complete feature roadmap
-- **V0 Specification**: See [V0_SPEC.md](V0_SPEC.md) for current implementation details
+- **V0 Specification**: See [V0_SPEC.md](V0_SPEC.md) for the original design
 
 ## Examples
 
-See the `ts-sdk/examples/` directory:
+See the `typescript/examples/` directory:
 
 - `basic-usage.ts` - Basic cache operations
 - `memoization.ts` - Function memoization examples
@@ -93,11 +93,11 @@ See the `ts-sdk/examples/` directory:
 
 ```
 cachefn/
-├── ts-sdk/          # TypeScript SDK (v0.1.0)
+├── typescript/          # TypeScript SDK
 │   ├── src/         # Source code
-│   ├── __tests__/   # Tests (37 passing)
+│   ├── __tests__/   # Tests
 │   └── examples/    # Usage examples
-├── python/          # Python SDK (planned)
+├── python/          # Python SDK
 ├── SPEC.md          # Full specification
 └── V0_SPEC.md       # V0 specification
 ```
@@ -107,7 +107,7 @@ cachefn/
 ### Build
 
 ```bash
-cd ts-sdk
+cd typescript
 npm run build
 ```
 
@@ -136,8 +136,45 @@ See the [V0_SPEC.md](V0_SPEC.md) for integration examples.
 
 ## License
 
-MIT
+TypeScript: MIT. Python: Apache-2.0 (see `python/LICENSE`).
 
 ## Contributing
 
 Contributions are welcome! Please see the main [super-functions repository](https://github.com/21nCo/super-functions) for contribution guidelines.
+
+## Delivery validation
+
+The clean release source was validated on 2026-10-16 with 217 TypeScript core
+and eight admin tests, both builds and typechecks, packed ESM/CommonJS runtime
+and NodeNext/Node16 declaration consumers, and 27 assertions in Chrome
+154.0.8037.58. Python 3.12 passed 55 tests; Python 3.10 passed 52 with three
+version-specific skips. The rebuilt Python wheel passed installed runtime and
+typed-consumer checks on both versions, including its `py.typed` marker.
+
+An isolated consumer of Cache core 0.0.3/admin 0.1.0 and the explicit local shared
+admin 0.1.5/MCP core 0.0.6 tarballs reported zero production audit vulnerabilities.
+This verifies the local release artifacts; those shared prerequisites must be
+published before registry installation can succeed. The dependent branch uses
+the shared prerequisite workspace versions without duplicating their source
+changes in the CacheFn product diff.
+
+The root lockfile was generated by npm 11.21.0 because npm 10.8.2 crashed during
+initial Vitest 4 resolution, then reconciled and checked by npm 10.8.2. It contains
+npm's dependency placement changes; no temporary tarball dependencies are stored
+in the release manifests or lockfile. The disposable validation script is in
+`typescript/scripts/delivery-acceptance.mjs`.
+
+Lock generation used `npm install --package-lock-only --workspace @cachefn/core
+--workspace @cachefn/admin --ignore-scripts --no-audit --no-fund` first with npm
+11.21.0, then npm 10.8.2. Validation used `npm ci --dry-run --workspace
+@cachefn/core --workspace @cachefn/admin --ignore-scripts --no-audit --no-fund`
+with npm 10.8.2. Relative to the shared prerequisite commit, npm added 58 lock
+nodes, removed 239, and changed 43 existing entries. All 27 existing version
+changes are upgrades, including patched HTTP test dependencies and Rolldown's
+optional platform packages; no existing package version was downgraded.
+
+Remaining original acceptance gates are TestFn integration (the package is absent
+on this base), native Safari validation, and Firefox validation on a compatible
+host. Prior WebKit checks are engine evidence rather than native Safari evidence.
+The SDK READMEs define the implemented concurrency, storage, offline queue, and
+middleware boundaries; these remaining gates are not reclassified as roadmap.

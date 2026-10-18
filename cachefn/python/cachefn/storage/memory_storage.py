@@ -4,7 +4,7 @@ Memory storage backend with LRU eviction.
 
 import time
 from collections import OrderedDict
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..core.types import CacheEntry, EntryMetadata
 from ..utils.pattern import filter_by_pattern
@@ -21,12 +21,17 @@ class MemoryStorage:
         Args:
             max_size: Maximum number of entries (None for unlimited)
         """
+        if max_size is not None and (
+            isinstance(max_size, bool) or not isinstance(max_size, int) or max_size <= 0
+        ):
+            raise ValueError("max_size must be a positive integer or None")
         self._cache: OrderedDict[str, CacheEntry[Any]] = OrderedDict()
         self._tags: dict[str, set[str]] = {}  # tag -> set of keys
         self._max_size = max_size
-        self._eviction_callback: Optional[callable] = None
+        self.last_evicted_key: Optional[str] = None
+        self._eviction_callback: Optional[Callable[[], None]] = None
 
-    def set_eviction_callback(self, callback: callable) -> None:
+    def set_eviction_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when entries are evicted."""
         self._eviction_callback = callback
 
@@ -68,6 +73,11 @@ class MemoryStorage:
             value: Value to cache
             metadata: Entry metadata
         """
+        await self._purge_expired()
+        # Remove old tag memberships before replacing a value.
+        if key in self._cache:
+            await self.delete(key)
+
         # Check if we need to evict
         if self._max_size and key not in self._cache and len(self._cache) >= self._max_size:
             await self._evict_lru()
@@ -78,7 +88,7 @@ class MemoryStorage:
             value=value,
             created_at=metadata.created_at,
             expires_at=metadata.expires_at,
-            tags=metadata.tags,
+            tags=list(metadata.tags) if metadata.tags else None,
             hits=metadata.hits,
             last_access=metadata.last_access,
         )
@@ -156,6 +166,7 @@ class MemoryStorage:
         Returns:
             List of matching keys
         """
+        await self._purge_expired()
         all_keys = list(self._cache.keys())
         return filter_by_pattern(all_keys, pattern)
 
@@ -166,6 +177,7 @@ class MemoryStorage:
         Returns:
             Number of entries
         """
+        await self._purge_expired()
         return len(self._cache)
 
     async def get_keys_by_tag(self, tag: str) -> list[str]:
@@ -178,9 +190,15 @@ class MemoryStorage:
         Returns:
             List of keys with the tag
         """
+        await self._purge_expired()
         if tag not in self._tags:
             return []
         return list(self._tags[tag])
+
+    async def _purge_expired(self) -> None:
+        for key, entry in list(self._cache.items()):
+            if is_expired(entry.expires_at):
+                await self.delete(key)
 
     async def _evict_lru(self) -> None:
         """Evict the least recently used entry."""
@@ -191,6 +209,7 @@ class MemoryStorage:
         key = next(iter(self._cache))
         await self.delete(key)
 
+        self.last_evicted_key = key
         # Call eviction callback if set
         if self._eviction_callback:
             self._eviction_callback()

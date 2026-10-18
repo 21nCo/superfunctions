@@ -3,11 +3,12 @@ Tests for utility functions.
 """
 
 import re
-from cachefn.utils.hash import hash_value, hash_args, generate_key
-from cachefn.utils.pattern import glob_to_regex, matches_pattern, filter_by_pattern
-from cachefn.utils.serialize import serialize, deserialize, estimate_size
-from cachefn.utils.ttl import calculate_expiration, is_expired, get_remaining_ttl
 import time
+
+from cachefn.utils.hash import generate_key, hash_args, hash_value
+from cachefn.utils.pattern import filter_by_pattern, glob_to_regex, matches_pattern
+from cachefn.utils.serialize import deserialize, estimate_size, serialize
+from cachefn.utils.ttl import calculate_expiration, get_remaining_ttl, is_expired
 
 
 def test_hash_value() -> None:

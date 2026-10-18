@@ -8,6 +8,7 @@ import type { CacheEntry, SetOptions } from "../core/types.js";
  * Entry metadata for storage operations
  */
 export interface EntryMetadata {
+  priority?: import('../core/types.js').CachePriority;
   createdAt: number;
   expiresAt?: number;
   tags?: string[];

@@ -2,6 +2,8 @@
 Main CacheFn class implementation.
 """
 
+import asyncio
+import inspect
 import re
 import time
 from typing import Any, Callable, Optional
@@ -40,6 +42,8 @@ class CacheFn:
         self._namespace = config.namespace
         self._events = EventEmitter()
         self._stats = StatsTracker()
+        self._pending: dict[str, asyncio.Task[Any]] = {}
+        self._pending_tags: dict[str, tuple[str, ...]] = {}
 
         # Initialize storage backend
         self._storage = self._create_storage(config)
@@ -107,7 +111,7 @@ class CacheFn:
         value = await self._storage.get(full_key)
         access_time = (time.perf_counter() - start_time) * 1000  # Convert to ms
 
-        if value is not None:
+        if value is not None or await self._storage.has(full_key):
             self._stats.record_hit()
             self._events.emit("hit", HitEvent(key=full_key, access_time=access_time))
         else:
@@ -128,6 +132,8 @@ class CacheFn:
             ttl: Optional TTL in milliseconds
             tags: Optional tags for invalidation
         """
+        self._pending.pop(key, None)
+        self._pending_tags.pop(key, None)
         full_key = self._get_full_key(key)
         effective_ttl = ttl if ttl is not None else self._default_ttl
 
@@ -167,6 +173,8 @@ class CacheFn:
         Returns:
             True if key was deleted, False if not found
         """
+        self._pending.pop(key, None)
+        self._pending_tags.pop(key, None)
         full_key = self._get_full_key(key)
         deleted = await self._storage.delete(full_key)
 
@@ -178,6 +186,8 @@ class CacheFn:
 
     async def clear(self) -> None:
         """Clear all values from cache."""
+        self._pending.clear()
+        self._pending_tags.clear()
         await self._storage.clear()
         self._stats.reset()
 
@@ -271,14 +281,36 @@ class CacheFn:
             Cached or fetched value
         """
         cached = await self.get(key)
-
-        if cached is not None:
+        if cached is not None or await self.has(key):
             return cached
 
-        value = await fetcher() if callable(fetcher) else fetcher
-        await self.set(key, value, ttl=ttl, tags=tags)
+        task = self._pending.get(key)
+        if task is None:
 
-        return value
+            async def compute() -> Any:
+                # An eager task factory may run this coroutine inside create_task.
+                # Suspend until the caller registers its task and tags so fills,
+                # failures and invalidation all observe the same pending owner.
+                await asyncio.sleep(0)
+                try:
+                    value = fetcher() if callable(fetcher) else fetcher
+                    if inspect.isawaitable(value):
+                        value = await value
+                    # An explicit write, clear or delete supersedes this fill.
+                    if self._pending.get(key) is asyncio.current_task():
+                        await self.set(key, value, ttl=ttl, tags=tags)
+                    return value
+                finally:
+                    if self._pending.get(key) is asyncio.current_task():
+                        self._pending.pop(key, None)
+                        self._pending_tags.pop(key, None)
+
+            task = asyncio.create_task(compute())
+            self._pending[key] = task
+            self._pending_tags[key] = tuple(tags or ())
+            # Retrieve errors even if every waiting caller is cancelled.
+            task.add_done_callback(lambda done: done.exception() if not done.cancelled() else None)
+        return await asyncio.shield(task)
 
     async def invalidate(self, key: str) -> bool:
         """
@@ -299,11 +331,15 @@ class CacheFn:
         Args:
             tag: Tag to invalidate
         """
+        for key, tags in list(self._pending_tags.items()):
+            if tag in tags:
+                self._pending.pop(key, None)
+                self._pending_tags.pop(key, None)
         keys = await self._storage.get_keys_by_tag(tag)
         count = len(keys)
 
         for key in keys:
-            await self._storage.delete(key)
+            await self.delete(self._strip_namespace(key))
 
         self._events.emit("invalidate", InvalidateEvent(pattern=f"tag:{tag}", count=count))
 
@@ -326,6 +362,9 @@ class CacheFn:
         """
         all_keys = await self.keys()
         matching_keys = filter_by_pattern(all_keys, pattern)
+        for key in filter_by_pattern(list(self._pending), pattern):
+            self._pending.pop(key, None)
+            self._pending_tags.pop(key, None)
         count = len(matching_keys)
 
         for key in matching_keys:
@@ -362,13 +401,15 @@ class CacheFn:
         """
         keys = await self.keys(pattern)
 
-        if limit:
+        if limit is not None:
+            if limit < 0:
+                raise ValueError("limit must be non-negative")
             keys = keys[:limit]
 
         entries = []
         for key in keys:
             value = await self.get(key)
-            if value is not None:
+            if value is not None or await self.has(key):
                 entries.append({"key": key, "value": value})
 
         return entries
@@ -411,7 +452,8 @@ class CacheFn:
     def _on_eviction(self) -> None:
         """Handle eviction event from storage."""
         self._stats.record_eviction()
-        self._events.emit("eviction", EvictionEvent(key="unknown", reason="lru"))
+        key = getattr(self._storage, "last_evicted_key", None)
+        self._events.emit("eviction", EvictionEvent(key=key or "unknown", reason="lru"))
 
 
 def cache_fn(

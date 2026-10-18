@@ -42,7 +42,9 @@ def matches_pattern(key: str, pattern: str | re.Pattern[str]) -> bool:
         return bool(pattern.match(key))
 
 
-def filter_by_pattern(keys: list[str], pattern: Optional[str | re.Pattern[str]] = None) -> list[str]:
+def filter_by_pattern(
+    keys: list[str], pattern: Optional[str | re.Pattern[str]] = None
+) -> list[str]:
     """
     Filter keys by a pattern.
 
