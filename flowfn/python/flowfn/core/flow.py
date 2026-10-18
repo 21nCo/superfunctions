@@ -1,5 +1,7 @@
 """Core FlowFn implementation."""
 
+import asyncio
+import math
 from dataclasses import asdict
 from typing import Any, Optional, TYPE_CHECKING, Union
 from pydantic import BaseModel, Field
@@ -35,6 +37,8 @@ class FlowFn:
     def __init__(self, config: FlowFnConfig):
         """Initialize FlowFn with configuration."""
         self.config = config
+        self._closing = False
+        self._close_task: Optional[asyncio.Task[None]] = None
         self._adapter: FlowAdapter
         self._queues: dict[str, "Queue"] = {}
         self._streams: dict[str, "Stream"] = {}
@@ -70,6 +74,7 @@ class FlowFn:
 
     def queue(self, name: str, options: Optional[dict[str, Any]] = None) -> "Queue":
         """Get or create a queue."""
+        self._require_open()
         if name not in self._queues:
             from flowfn.queue.queue import Queue
 
@@ -88,6 +93,7 @@ class FlowFn:
 
     def stream(self, name: str, options: Optional[dict[str, Any]] = None) -> "Stream":
         """Get or create a stream."""
+        self._require_open()
         if name not in self._streams:
             from flowfn.stream.stream import Stream
 
@@ -102,9 +108,10 @@ class FlowFn:
 
     def workflow(self, name: str) -> "WorkflowBuilder":
         """Create a workflow builder."""
+        self._require_open()
         from flowfn.workflow.builder import WorkflowBuilder
 
-        return WorkflowBuilder(name, self._adapter, self._workflows.append)
+        return WorkflowBuilder(name, self._adapter, self._register_workflow)
 
     async def list_workflows(self) -> list["Workflow"]:
         """List all workflows."""
@@ -112,12 +119,14 @@ class FlowFn:
 
     def dlq(self) -> "DLQManager":
         """Inspect and retry failed jobs through the same adapter."""
+        self._require_open()
         from flowfn.queue.dlq import DLQManager
 
         return DLQManager(adapter=self._adapter)
 
     def scheduler(self) -> Scheduler:
         """Get scheduler instance."""
+        self._require_open()
         return self._scheduler
 
     @property
@@ -135,22 +144,35 @@ class FlowFn:
         """Get event tracker."""
         return self._event_tracker
 
-    async def close(self) -> None:
-        """Close all connections and cleanup."""
-        await self._scheduler.close()
-        for workflow in self._workflows:
-            await workflow.close()
+    def _require_open(self) -> None:
+        if self._closing:
+            raise RuntimeError('FlowFn is closed')
 
-        # Close all queues
-        for queue in self._queues.values():
-            await queue.close()
+    def _register_workflow(self, workflow: "Workflow") -> None:
+        self._require_open()
+        self._workflows.append(workflow)
 
-        # Close all streams
-        for stream in self._streams.values():
-            await stream.close()
-
-        if self._adapter:
-            await self._adapter.cleanup()
+    async def close(self, timeout: float = 30.0) -> None:
+        """Bound this wait while shared cleanup safely drains admitted work."""
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError('Shutdown timeout must be finite and nonnegative')
+        if self._close_task is None:
+            self._closing = True
+            resources: list[Any] = [self._scheduler, *self._workflows, *self._queues.values(), *self._streams.values()]
+            for resource in resources:
+                resource._closed = True
+            async def finish() -> None:
+                results = await asyncio.gather(*(resource.close() for resource in resources),return_exceptions=True)
+                failures = [item for item in results if isinstance(item,BaseException)]
+                if failures:
+                    raise RuntimeError('FlowFn resource shutdown failed') from failures[0]
+                await self._adapter.cleanup()
+            self._close_task = asyncio.create_task(finish())
+            self._close_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+        done, _ = await asyncio.wait((self._close_task,),timeout=timeout)
+        if not done:
+            raise TimeoutError('FlowFn shutdown deadline exceeded; cleanup remains active')
+        await asyncio.shield(self._close_task)
 
 
 def create_flow(adapter: Union[str, FlowAdapter] = "memory", **kwargs: Any) -> FlowFn:

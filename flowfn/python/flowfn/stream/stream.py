@@ -13,6 +13,7 @@ from flowfn.stream.types import (
 )
 from flowfn.adapters.base import FlowAdapter
 import asyncio
+from flowfn.core.lifecycle import Admissions
 import uuid
 import time
 
@@ -33,26 +34,28 @@ class Stream:
         self._registrations: list[asyncio.Task[Any]] = []
         self._subscriptions: list[Any] = []
         self._closed = False
+        self._admissions = Admissions(lambda: self._closed)
         self._consumers: list[Consumer] = []
 
     async def publish(self, data: Any, opts: Optional[PublishOptions] = None) -> str:
         """Publish a message."""
-        await self.ready()
-        options = opts or PublishOptions()
+        async with self._admissions.track():
+            await self.ready()
+            options = opts or PublishOptions()
 
-        message = Message(
-            id=str(uuid.uuid4()),
-            stream=self.name,
-            data=data,
-            headers=options.headers,
-            timestamp=self._now(),
-            partition=options.partition,
-            key=options.key,
-        )
+            message = Message(
+                id=str(uuid.uuid4()),
+                stream=self.name,
+                data=data,
+                headers=options.headers,
+                timestamp=self._now(),
+                partition=options.partition,
+                key=options.key,
+            )
 
-        message_id = await self._adapter.publish(self.name, message)
-        await self._apply_retention()
-        return message_id
+            message_id = await self._adapter.publish(self.name, message)
+            await self._apply_retention()
+            return message_id
 
     async def publish_batch(self, messages: list[dict[str, Any]]) -> list[str]:
         """Publish multiple messages."""
@@ -161,6 +164,7 @@ class Stream:
     async def close(self) -> None:
         """Finish registration and unsubscribe before adapter cleanup."""
         self._closed = True
+        await self._admissions.drain()
         for consumer in self._consumers:
             await consumer.close()
         if self._registrations:
@@ -196,18 +200,21 @@ class Consumer:
         self._retention = retention
         self._subscription: Any = None
         self._paused = False
+        self._closed = False
+        self._admissions = Admissions(lambda: self._closed)
 
     async def subscribe(self, handler: MessageHandler) -> None:
         """Subscribe with handler."""
-        if self._subscription is not None:
-            raise RuntimeError("Consumer is already subscribed")
-        if self._retention is not None:
-            await self._retention()
-        self._subscription = await self._adapter.consume(
-            self.stream, self.opts.group_id, self.consumer_id, handler, self.opts
-        )
-        if self._paused:
-            await self._subscription.pause()
+        async with self._admissions.track():
+            if self._subscription is not None:
+                raise RuntimeError("Consumer is already subscribed")
+            if self._retention is not None:
+                await self._retention()
+            self._subscription = await self._adapter.consume(
+                self.stream, self.opts.group_id, self.consumer_id, handler, self.opts
+            )
+            if self._paused:
+                await self._subscription.pause()
 
     async def pause(self) -> None:
         """Pause consumer."""
@@ -217,11 +224,15 @@ class Consumer:
 
     async def resume(self) -> None:
         """Resume consumer."""
+        if self._closed:
+            raise RuntimeError("Consumer is closed")
         self._paused = False
         if self._subscription is not None:
             await self._subscription.resume()
 
     async def close(self) -> None:
         """Close consumer."""
+        self._closed = True
+        await self._admissions.drain()
         if self._subscription:
             await self._subscription.unsubscribe()

@@ -10,6 +10,7 @@ from flowfn.workflow.types import (
 )
 from flowfn.adapters.base import FlowAdapter
 import asyncio
+from flowfn.core.lifecycle import Admissions
 import uuid
 import time
 import hashlib
@@ -45,6 +46,7 @@ class Workflow:
         self._saga_stacks: dict[str, list[dict[str, Any]]] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._closed = False
+        self._admissions = Admissions(lambda: self._closed)
         self.version = version
         self.lease_ms = lease_ms
         self._lease_lost: set[str] = set()
@@ -72,35 +74,39 @@ class Workflow:
 
     async def execute(self, input_data: Any) -> WorkflowExecution:
         """Execute the workflow."""
-        if self._closed:
-            raise RuntimeError("Workflow is closed")
-        execution_id = str(uuid.uuid4())
-        now = self._now()
+        async with self._admissions.track():
+            if self._closed:
+                raise RuntimeError("Workflow is closed")
+            execution_id = str(uuid.uuid4())
+            now = self._now()
 
-        execution = WorkflowExecution(
-            id=execution_id,
-            workflow_id=self.name,
-            input=input_data,
-            definition_version=self.version,
-            definition_hash=self.definition_hash,
-            status=ExecutionStatus.RUNNING,
-            started_at=now,
-            created_at=now,
-            updated_at=now,
-        )
+            execution = WorkflowExecution(
+                id=execution_id,
+                workflow_id=self.name,
+                input=input_data,
+                definition_version=self.version,
+                definition_hash=self.definition_hash,
+                status=ExecutionStatus.RUNNING,
+                started_at=now,
+                created_at=now,
+                updated_at=now,
+            )
 
-        self._executions[execution_id] = execution
-        await self._persist(execution)
-        execution = await self._claim(execution_id)
-        self._executions[execution_id] = execution
+            self._executions[execution_id] = execution
+            await self._persist(execution)
+            execution = await self._claim(execution_id)
+            self._executions[execution_id] = execution
 
-        # Log start event
-        await self._log_event(
-            execution_id, "execution.started", {"workflow": self.name, "input": input_data}
-        )
+            # Log start event
+            await self._log_event(
+                execution_id, "execution.started", {"workflow": self.name, "input": input_data}
+            )
 
-        self._start(execution)
-        return execution
+            if self._closed:
+                await self.cancel_execution(execution_id)
+            else:
+                self._start(execution)
+            return execution
 
     async def _claim(self, execution_id: str) -> WorkflowExecution:
         claimed = await self._adapter.transition_workflow_state(execution_id, "claim", {
@@ -113,13 +119,17 @@ class Workflow:
 
     async def resume_execution(self, execution_id: str) -> WorkflowExecution:
         """Claim an abandoned execution and resume its incomplete steps."""
-        if self._closed:
-            raise RuntimeError("Workflow is closed")
-        execution = await self._claim(execution_id)
-        self._executions[execution_id] = execution
-        await self._log_event(execution_id, "execution.resumed", {})
-        self._start(execution)
-        return execution
+        async with self._admissions.track():
+            if self._closed:
+                raise RuntimeError("Workflow is closed")
+            execution = await self._claim(execution_id)
+            self._executions[execution_id] = execution
+            await self._log_event(execution_id, "execution.resumed", {})
+            if self._closed:
+                await self.cancel_execution(execution_id)
+            else:
+                self._start(execution)
+            return execution
 
     def _start(self, execution: WorkflowExecution) -> None:
         execution_id = execution.id
@@ -412,6 +422,7 @@ class Workflow:
     async def close(self) -> None:
         """Cancel and await owned executions before adapter cleanup."""
         self._closed = True
+        await self._admissions.drain()
         tasks = list(self._tasks.values())
         heartbeats = list(self._heartbeats.values())
         for execution_id in list(self._tasks):

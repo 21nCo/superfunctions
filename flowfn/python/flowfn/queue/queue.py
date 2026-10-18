@@ -14,6 +14,7 @@ from flowfn.queue.types import (
 )
 from flowfn.adapters.base import FlowAdapter
 import asyncio
+from flowfn.core.lifecycle import Admissions
 import uuid
 import time
 import math
@@ -29,36 +30,38 @@ class Queue:
         self._processing = False
         self._paused = False
         self._closed = False
+        self._admissions = Admissions(lambda: self._closed)
         self._workers: list[asyncio.Task[None]] = []
 
     async def add(self, name: str, data: Any, opts: Optional[JobOptions] = None) -> Job:
         """Add a job to the queue."""
-        if self._closed:
-            raise RuntimeError("Queue is closed")
-        defaults = self._options.get("default_job_options", {})
-        provided = opts.model_dump(exclude_unset=True) if opts is not None else {}
-        if opts is not None and opts.backoff is not None:
-            provided["backoff"] = opts.backoff
-        job_options = JobOptions.model_validate({**defaults, **provided})
-        if (
-            job_options.backoff
-            and job_options.backoff.type == BackoffType.CUSTOM
-            and job_options.backoff.strategy is None
-        ):
-            raise ValueError("Custom backoff requires a strategy")
+        async with self._admissions.track():
+            if self._closed:
+                raise RuntimeError("Queue is closed")
+            defaults = self._options.get("default_job_options", {})
+            provided = opts.model_dump(exclude_unset=True) if opts is not None else {}
+            if opts is not None and opts.backoff is not None:
+                provided["backoff"] = opts.backoff
+            job_options = JobOptions.model_validate({**defaults, **provided})
+            if (
+                job_options.backoff
+                and job_options.backoff.type == BackoffType.CUSTOM
+                and job_options.backoff.strategy is None
+            ):
+                raise ValueError("Custom backoff requires a strategy")
 
-        job = Job(
-            id=job_options.job_id or str(uuid.uuid4()),
-            name=name,
-            data=data,
-            opts=job_options,
-            timestamp=self._now(),
-            delay=job_options.delay,
-            available_at=self._now() + job_options.delay,
-            state=JobStatus.DELAYED if job_options.delay else JobStatus.WAITING,
-        )
+            job = Job(
+                id=job_options.job_id or str(uuid.uuid4()),
+                name=name,
+                data=data,
+                opts=job_options,
+                timestamp=self._now(),
+                delay=job_options.delay,
+                available_at=self._now() + job_options.delay,
+                state=JobStatus.DELAYED if job_options.delay else JobStatus.WAITING,
+            )
 
-        return await self._adapter.enqueue(self.name, job)
+            return await self._adapter.enqueue(self.name, job)
 
     async def add_bulk(self, jobs: list[dict[str, Any]]) -> list[Job]:
         """Add multiple jobs."""
@@ -101,7 +104,7 @@ class Queue:
 
     async def _worker(self, handler: JobHandler) -> None:
         """Worker coroutine."""
-        while self._processing:
+        while self._processing and not self._closed:
             try:
                 if self._paused:
                     await asyncio.sleep(0.01)
@@ -255,6 +258,7 @@ class Queue:
         """Close the queue."""
         self._closed = True
         self._processing = False
+        await self._admissions.drain()
 
         # Cancel all workers
         for task in self._workers:
