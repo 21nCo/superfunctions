@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { FlowAdapter } from "./base.js";
 import { Job, QueueStats } from "../queue/types.js";
 import {
@@ -36,6 +37,25 @@ export class RedisAdapter implements FlowAdapter {
     return `${this.prefix}${type}:${name}`;
   }
 
+  async createJob(queue: string, job: Job): Promise<Job> {
+    const value = { ...job, timestamp: Date.now(), state: job.opts.delay ? "delayed" : "waiting", delay: job.opts.delay ?? 0 };
+    const result = await this.redis.eval(`
+      local proposed = cjson.decode(ARGV[1])
+      local existing = redis.call('HGET', KEYS[1], proposed.id)
+      if existing then return existing end
+      if proposed.deduplicationId then
+        local entries = redis.call('HVALS', KEYS[1])
+        for _,entry in ipairs(entries) do
+          local job = cjson.decode(entry)
+          if job.deduplicationId == proposed.deduplicationId and job.state ~= 'completed' and job.state ~= 'failed' then return entry end
+        end
+      end
+      redis.call('HSET', KEYS[1], proposed.id, ARGV[1])
+      if proposed.delay > 0 then redis.call('ZADD', KEYS[2], proposed.timestamp + proposed.delay, proposed.id) end
+      return ARGV[1]
+    `, 2, this.key("jobs", queue), this.key("delayed", queue), JSON.stringify(value));
+    return JSON.parse(String(result));
+  }
   async enqueue(queue: string, job: Job): Promise<string> {
     const value = {
       ...job,
@@ -43,21 +63,10 @@ export class RedisAdapter implements FlowAdapter {
       state: job.opts.delay ? "delayed" : "waiting",
       delay: job.opts.delay ?? 0,
     };
-    await this.redis.hset(
-      this.key("jobs", queue),
-      job.id,
-      JSON.stringify(value),
-    );
-    if (value.delay > 0)
-      await this.redis.zadd(
-        this.key("delayed", queue),
-        value.timestamp + value.delay,
-        job.id,
-      );
-    else await this.redis.zrem(this.key("delayed", queue), job.id);
+    await this.writeJob(queue, value as Job, true);
     return job.id;
   }
-  async dequeue(queue: string, name?: string): Promise<Job | null> {
+  async dequeue(queue: string, name?: string, leaseDuration = 30_000): Promise<Job | null> {
     const result = await this.redis.eval(
       `
       local entries = redis.call('HGETALL', KEYS[1])
@@ -74,7 +83,7 @@ export class RedisAdapter implements FlowAdapter {
         end
       end
       if not chosen then return nil end
-      chosen.state = 'active'; chosen.processedOn = tonumber(ARGV[1])
+      chosen.state = 'active'; chosen.processedOn = tonumber(ARGV[1]); local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000); chosen.lease = {token=ARGV[3], expiresAt=now+tonumber(ARGV[4])}
       local encoded = cjson.encode(chosen)
       redis.call('HSET',KEYS[1],chosen.id,encoded)
       redis.call('ZREM',KEYS[2],chosen.id)
@@ -85,30 +94,83 @@ export class RedisAdapter implements FlowAdapter {
       this.key("delayed", queue),
       Date.now(),
       name ?? "",
+      randomUUID(),
+      leaseDuration,
     );
     return result ? JSON.parse(String(result)) : null;
   }
-  async saveJob(queue: string, job: Job): Promise<void> {
-    await this.redis.hset(this.key("jobs", queue), job.id, JSON.stringify(job));
+  private async writeJob(queue: string, job: Job, enqueue = false): Promise<void> {
+    const result = await this.redis.eval(`
+      local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
+      local value = cjson.decode(ARGV[1])
+      local raw = redis.call('HGET', KEYS[1], value.id)
+      local old = raw and cjson.decode(raw) or nil
+      local token = value.lease and value.lease.token
+      if old and old.lease then
+        if old.lease.token ~= token or old.lease.expiresAt <= now then return 0 end
+      elseif token then return 0 end
+      if ARGV[3] == '1' and value.deduplicationId then
+        for _,entry in ipairs(redis.call('HVALS',KEYS[1])) do
+          local other = cjson.decode(entry)
+          if other.id ~= value.id and other.deduplicationId == value.deduplicationId and other.state ~= 'completed' and other.state ~= 'failed' then return -1 end
+        end
+      end
+      if ARGV[3] == '1' or value.state == 'completed' or value.state == 'failed' then value.lease = nil
+      elseif old and old.lease then value.lease = old.lease end
+      redis.call('HSET',KEYS[1],value.id,cjson.encode(value))
+      if value.state == 'delayed' then redis.call('ZADD',KEYS[2],value.timestamp + value.delay,value.id) else redis.call('ZREM',KEYS[2],value.id) end
+      return 1
+    `, 2, this.key("jobs", queue), this.key("delayed", queue), JSON.stringify(job), Date.now(), enqueue ? "1" : "0");
+    if (Number(result) === -1) throw new Error("Active job already owns deduplication key");
+    if (Number(result) !== 1) throw new Error("Job lease lost");
+  }
+  async saveJob(queue: string, job: Job): Promise<void> { await this.writeJob(queue, job); }
+  async renewJobLease(queue: string, id: string, token: string, duration: number): Promise<boolean> {
+    return Number(await this.redis.eval(`
+      local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
+      local raw = redis.call('HGET',KEYS[1],ARGV[1]); if not raw then return 0 end
+      local job = cjson.decode(raw)
+      if job.state ~= 'active' or not job.lease or job.lease.token ~= ARGV[2] or job.lease.expiresAt <= now then return 0 end
+      job.lease.expiresAt = now + tonumber(ARGV[4])
+      redis.call('HSET',KEYS[1],ARGV[1],cjson.encode(job)); return 1
+    `, 1, this.key("jobs", queue), id, token, Date.now(), duration)) === 1;
+  }
+  async recoverStalledJobs(queue: string, maxStalledCount: number): Promise<Job[]> {
+    const result = await this.redis.eval(`
+      local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
+      local recovered = {}
+      for _,raw in ipairs(redis.call('HVALS',KEYS[1])) do
+        local job = cjson.decode(raw)
+        if job.state == 'active' and job.lease and job.lease.expiresAt <= now then
+          job.lease = nil; job.stalledCount = (job.stalledCount or 0) + 1; job.state = 'waiting'
+          if job.stalledCount > tonumber(ARGV[2]) then job.state = 'failed'; job.failedReason = 'Job exceeded maximum stalled count'; job.finishedOn = tonumber(ARGV[1]) end
+          redis.call('HSET',KEYS[1],job.id,cjson.encode(job)); table.insert(recovered,cjson.encode(job))
+        end
+      end
+      return recovered
+    `, 1, this.key("jobs", queue), Date.now(), maxStalledCount) as string[];
+    return result.map(raw => JSON.parse(raw));
   }
   async removeJob(queue: string, id: string): Promise<void> {
     await this.redis.hdel(this.key("jobs", queue), id);
     await this.redis.zrem(this.key("delayed", queue), id);
   }
-  async ack(queue: string, id: string): Promise<void> {
+  async ack(queue: string, id: string, token?: string): Promise<void> {
     const job = await this.getJob(queue, id);
     if (job && job.state !== "failed") {
+      if (job.lease?.token !== token) throw new Error("Job lease lost");
       job.state = "completed";
       job.finishedOn ??= Date.now();
       await this.saveJob(queue, job);
     }
   }
-  async nack(queue: string, id: string, requeue = true): Promise<void> {
+  async nack(queue: string, id: string, requeue = true, token?: string): Promise<void> {
     const job = await this.getJob(queue, id);
     if (job) {
+      if (job.lease?.token !== token) throw new Error("Job lease lost");
       job.state = requeue ? "waiting" : "failed";
       if (!requeue) job.finishedOn ??= Date.now();
-      await this.saveJob(queue, job);
+      await this.writeJob(queue, job, requeue);
     }
   }
 

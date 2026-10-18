@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { FlowAdapter } from "./base.js";
 import { Job, QueueStats } from "../queue/types.js";
 import {
@@ -27,15 +28,28 @@ export class MemoryAdapter implements FlowAdapter {
     if (!this.queues.has(queue)) this.queues.set(queue, new Map());
     return this.queues.get(queue)!;
   }
+  async createJob(queue: string, job: Job): Promise<Job> {
+    const jobs = this.queue(queue);
+    const existing = jobs.get(job.id) ?? (job.deduplicationId === undefined ? undefined :
+      [...jobs.values()].find(value => value.deduplicationId === job.deduplicationId && !["completed", "failed"].includes(value.state)));
+    if (existing) return snapshotJob(existing);
+    // enqueue has no suspension before insertion, preserving the atomic boundary.
+    await this.enqueue(queue, job);
+    return snapshotJob(jobs.get(job.id)!);
+  }
   async enqueue(queue: string, job: Job): Promise<string> {
+    this.assertLease(this.queue(queue).get(job.id), job.lease?.token);
+    if (job.deduplicationId !== undefined && [...this.queue(queue).values()].some(other => other.id !== job.id && other.deduplicationId === job.deduplicationId && !["completed", "failed"].includes(other.state)))
+      throw new Error("Active job already owns deduplication key");
     const value = snapshotJob(job);
+    delete value.lease;
     value.state = (value.opts.delay ?? 0) > 0 ? "delayed" : "waiting";
     value.delay = value.opts.delay ?? 0;
     value.timestamp = Date.now();
     this.queue(queue).set(value.id, value);
     return value.id;
   }
-  async dequeue(queue: string, name?: string): Promise<Job | null> {
+  async dequeue(queue: string, name?: string, leaseDuration = 30_000): Promise<Job | null> {
     const jobs = [...this.queue(queue).values()].filter(
       (job) =>
         (!name || job.name === name) &&
@@ -55,27 +69,59 @@ export class MemoryAdapter implements FlowAdapter {
       ),
     );
     if (!ready) return null;
+    ready.lease = { token: randomUUID(), expiresAt: Date.now() + leaseDuration };
     ready.state = "active";
     ready.processedOn = Date.now();
     return snapshotJob(ready);
   }
   async saveJob(queue: string, job: Job): Promise<void> {
+    this.assertLease(this.queue(queue).get(job.id), job.lease?.token);
     if (!this.queue(queue).has(job.id)) throw new Error("Job not found");
-    this.queue(queue).set(job.id, snapshotJob(job));
+    const value = snapshotJob(job);
+    if (["completed", "failed"].includes(value.state)) delete value.lease;
+    else if (value.lease) value.lease = structuredClone(this.queue(queue).get(job.id)!.lease);
+    this.queue(queue).set(job.id, value);
+  }
+  private assertLease(current: Job | undefined, token?: string) {
+    if (current?.lease && (current.lease.token !== token || current.lease.expiresAt <= Date.now()))
+      throw new Error("Job lease lost");
+    if (!current?.lease && token) throw new Error("Job lease lost");
+  }
+  async renewJobLease(queue: string, id: string, token: string, duration: number): Promise<boolean> {
+    const job = this.queue(queue).get(id);
+    if (job?.state !== "active" || job.lease?.token !== token || job.lease.expiresAt <= Date.now()) return false;
+    job.lease.expiresAt = Date.now() + duration;
+    return true;
+  }
+  async recoverStalledJobs(queue: string, maxStalledCount: number): Promise<Job[]> {
+    const recovered: Job[] = [];
+    for (const job of this.queue(queue).values()) {
+      if (job.state !== "active" || !job.lease || job.lease.expiresAt > Date.now()) continue;
+      delete job.lease;
+      job.stalledCount = (job.stalledCount ?? 0) + 1;
+      job.state = job.stalledCount > maxStalledCount ? "failed" : "waiting";
+      if (job.state === "failed") { job.failedReason = "Job exceeded maximum stalled count"; job.finishedOn = Date.now(); }
+      recovered.push(snapshotJob(job));
+    }
+    return recovered;
   }
   async removeJob(queue: string, id: string): Promise<void> {
     this.queue(queue).delete(id);
   }
-  async ack(queue: string, id: string): Promise<void> {
+  async ack(queue: string, id: string, token?: string): Promise<void> {
     const job = this.queue(queue).get(id);
+    this.assertLease(job, token);
     if (job && job.state !== "failed") {
       job.state = "completed";
+      delete job.lease;
       job.finishedOn ??= Date.now();
     }
   }
-  async nack(queue: string, id: string, requeue = true): Promise<void> {
+  async nack(queue: string, id: string, requeue = true, token?: string): Promise<void> {
     const job = this.queue(queue).get(id);
+    this.assertLease(job, token);
     if (job) {
+      delete job.lease;
       job.state = requeue ? "waiting" : "failed";
       if (!requeue) job.finishedOn ??= Date.now();
     }

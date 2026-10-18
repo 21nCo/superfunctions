@@ -10,6 +10,9 @@ export function snapshotJob(job: Job): Job {
   return JSON.parse(JSON.stringify(job));
 }
 export class JobImpl<T = any> implements Job<T> {
+  deduplicationId?: string;
+  lease?: { token: string; expiresAt: number };
+  stalledCount?: number;
   id: string;
   name: string;
   data: T;
@@ -80,6 +83,8 @@ export class JobImpl<T = any> implements Job<T> {
     if (this.state !== "failed")
       throw new Error("Only failed jobs can be retried");
     if (!this.services) throw new Error("Retry requires a queue-bound job");
+    const previous = snapshotJob(this);
+    delete this.lease;
     this.state = "waiting";
     this.attemptsMade = 0;
     this.delay = 0;
@@ -87,7 +92,8 @@ export class JobImpl<T = any> implements Job<T> {
     this.discarded = false;
     delete this.finishedOn;
     delete this.failedReason;
-    await this.services.retry(this);
+    try { await this.services.retry(this); }
+    catch (error) { Object.assign(this, previous); throw error; }
   }
   async discard(): Promise<void> {
     this.discarded = true;

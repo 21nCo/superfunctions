@@ -68,6 +68,10 @@ try {
     "run",
     "test",
     "--",
+    "--testTimeout",
+    "30000",
+    "--hookTimeout",
+    "30000",
     "src/adapters/redis.test.ts",
     "src/adapters/postgres/postgres.test.ts",
   ];

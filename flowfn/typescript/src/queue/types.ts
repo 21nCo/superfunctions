@@ -7,6 +7,8 @@ export interface Queue<T = any> {
     jobs: Array<{ name: string; data: T; opts?: JobOptions }>,
   ): Promise<Job<T>[]>;
 
+  configureLeaseSettings(options: { leaseDuration?: number; stalledInterval?: number; maxStalledCount?: number }): void;
+
   // Processing
   process(handler: JobHandler<T>): void;
   process(name: string, handler: JobHandler<T>): void;
@@ -53,6 +55,10 @@ export type QueueEvent =
 
 export interface Job<T = any> {
   readonly signal?: AbortSignal;
+  /** Persisted queue-scoped enqueue deduplication identity. */
+  deduplicationId?: string;
+  lease?: { token: string; expiresAt: number };
+  stalledCount?: number;
   id: string;
   name: string;
   data: T;
@@ -123,6 +129,9 @@ export type BackoffStrategy = (attemptsMade: number, error: Error, job: Job) => 
 
 export interface QueueOptions {
   backoffStrategies?: Record<string, BackoffStrategy>;
+  stalledInterval?: number;
+  leaseDuration?: number;
+  maxStalledCount?: number;
   defaultJobOptions?: JobOptions;
   limiter?: RateLimiterOptions;
   cache?: CacheOptions;

@@ -168,6 +168,18 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
         await destination.ensureGroup(row.stream, row.group_id, true);
     });
   }
+  async createJob(queue: string, job: Job): Promise<Job> {
+    return this.db.transaction(async (tx: any) => {
+      // Serialize creation within a queue, including deduplication keys with different IDs.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([this.schema, queue])}, 0))`);
+      const jobs = this.table("flowfn_jobs");
+      const existing = await this.rows(sql`SELECT data FROM ${jobs} WHERE queue=${queue} AND (id=${job.id} ${job.deduplicationId === undefined ? sql`` : sql`OR (data->>'deduplicationId'=${job.deduplicationId} AND state NOT IN ('completed','failed'))`}) ORDER BY CASE WHEN id=${job.id} THEN 0 ELSE 1 END LIMIT 1`, tx);
+      if (existing.length) return existing[0].data as Job;
+      const value = { ...job, state: job.opts.delay ? "delayed" : "waiting", timestamp: Date.now(), delay: job.opts.delay ?? 0 };
+      await tx.execute(sql`INSERT INTO ${jobs} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) VALUES (${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},${value.timestamp + value.delay},${value.timestamp},NULL,${JSON.stringify(value)}::jsonb)`);
+      return value as Job;
+    });
+  }
   async enqueue(queue: string, job: Job): Promise<string> {
     const value = {
       ...job,
@@ -175,12 +187,19 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       timestamp: Date.now(),
       delay: job.opts.delay ?? 0,
     };
-    await this.db.execute(
+    await this.withLease(queue, job, async (tx: any) => {
+    delete value.lease;
+    if (job.deduplicationId !== undefined) {
+      const matches = await this.rows(sql`SELECT id FROM ${this.table("flowfn_jobs")} WHERE queue=${queue} AND id<>${job.id} AND data->>'deduplicationId'=${job.deduplicationId} AND state NOT IN ('completed','failed') LIMIT 1`, tx);
+      if (matches.length) throw new Error("Active job already owns deduplication key");
+    }
+    await tx.execute(
       sql`INSERT INTO ${this.table("flowfn_jobs")} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) VALUES (${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},${value.timestamp + value.delay},${value.timestamp},NULL,${JSON.stringify(value)}::jsonb) ON CONFLICT(queue,id) DO UPDATE SET name=EXCLUDED.name,state=EXCLUDED.state,priority=EXCLUDED.priority,available_at=EXCLUDED.available_at,timestamp=EXCLUDED.timestamp,finished_on=NULL,data=EXCLUDED.data`,
     );
+    }, true);
     return job.id;
   }
-  async dequeue(queue: string, name?: string): Promise<Job | null> {
+  async dequeue(queue: string, name?: string, leaseDuration = 30_000): Promise<Job | null> {
     return this.db.transaction(async (tx: any) => {
       const jobs = this.table("flowfn_jobs");
       const rows = await this.rows(
@@ -189,6 +208,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       );
       if (!rows.length) return null;
       const job = rows[0].data as Job;
+      job.lease = { token: randomUUID(), expiresAt: await this.databaseNow(tx) + leaseDuration };
       job.state = "active";
       job.processedOn = Date.now();
       await tx.execute(
@@ -197,28 +217,68 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       return job;
     });
   }
+  private async databaseNow(tx: any = this.db): Promise<number> {
+    const rows = await this.rows(sql`SELECT floor(extract(epoch from clock_timestamp()) * 1000)::bigint AS now`, tx);
+    return Number(rows[0].now);
+  }
+  private async withLease(queue: string, job: Job, action: (tx: any, current?: Job) => Promise<void>, serialize = false) {
+    await this.db.transaction(async (tx: any) => {
+      if (serialize) await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([this.schema, queue])}, 0))`);
+      const rows = await this.rows(sql`SELECT data FROM ${this.table("flowfn_jobs")} WHERE queue=${queue} AND id=${job.id} FOR UPDATE`, tx);
+      const current = rows[0]?.data as Job | undefined;
+      if (current?.lease ? current.lease.token !== job.lease?.token || current.lease.expiresAt <= await this.databaseNow(tx) : !!job.lease)
+        throw new Error("Job lease lost");
+      await action(tx, current);
+    });
+  }
   async saveJob(queue: string, job: Job): Promise<void> {
-    await this.db.execute(
-      sql`UPDATE ${this.table("flowfn_jobs")} SET state=${job.state},finished_on=${job.finishedOn ?? null},data=${JSON.stringify(job)}::jsonb WHERE queue=${queue} AND id=${job.id}`,
-    );
+    await this.withLease(queue, job, async (tx, current) => {
+      const value = { ...job, lease: ["completed", "failed"].includes(job.state) ? undefined : current?.lease };
+      await tx.execute(sql`UPDATE ${this.table("flowfn_jobs")} SET state=${job.state},finished_on=${job.finishedOn ?? null},data=${JSON.stringify(value)}::jsonb WHERE queue=${queue} AND id=${job.id}`);
+    });
+  }
+  async renewJobLease(queue: string, id: string, token: string, duration: number): Promise<boolean> {
+    const now = sql`floor(extract(epoch from clock_timestamp()) * 1000)::bigint`;
+    const rows = await this.rows(sql`UPDATE ${this.table("flowfn_jobs")} SET data=jsonb_set(data,'{lease,expiresAt}',to_jsonb((${now} + ${duration})::bigint)) WHERE queue=${queue} AND id=${id} AND state='active' AND data->'lease'->>'token'=${token} AND (data->'lease'->>'expiresAt')::bigint>${now} RETURNING id`);
+    return rows.length === 1;
+  }
+  async recoverStalledJobs(queue: string, maxStalledCount: number): Promise<Job[]> {
+    return this.db.transaction(async (tx: any) => {
+      const jobs = this.table("flowfn_jobs");
+      const rows = await this.rows(sql`SELECT data FROM ${jobs} WHERE queue=${queue} AND state='active' AND (data->'lease'->>'expiresAt')::bigint<=${await this.databaseNow(tx)} FOR UPDATE SKIP LOCKED`, tx);
+      const recovered: Job[] = [];
+      for (const row of rows) {
+        const job = row.data as Job;
+        delete job.lease;
+        job.stalledCount = (job.stalledCount ?? 0) + 1;
+        job.state = job.stalledCount > maxStalledCount ? "failed" : "waiting";
+        if (job.state === "failed") { job.failedReason = "Job exceeded maximum stalled count"; job.finishedOn = Date.now(); }
+        await tx.execute(sql`UPDATE ${jobs} SET state=${job.state},finished_on=${job.finishedOn ?? null},data=${JSON.stringify(job)}::jsonb WHERE queue=${queue} AND id=${job.id}`);
+        recovered.push(job);
+      }
+      return recovered;
+    });
   }
   async removeJob(queue: string, id: string): Promise<void> {
     await this.db.execute(
       sql`DELETE FROM ${this.table("flowfn_jobs")} WHERE queue=${queue} AND id=${id}`,
     );
   }
-  async ack(queue: string, id: string): Promise<void> {
+  async ack(queue: string, id: string, token?: string): Promise<void> {
     const job = await this.getJob(queue, id);
     if (job && job.state !== "failed") {
+      if (job.lease?.token !== token) throw new Error("Job lease lost");
       job.state = "completed";
       job.finishedOn ??= Date.now();
       await this.saveJob(queue, job);
     }
   }
-  async nack(queue: string, id: string, requeue = true): Promise<void> {
+  async nack(queue: string, id: string, requeue = true, token?: string): Promise<void> {
     const job = await this.getJob(queue, id);
     if (job) {
-      job.state = requeue ? "waiting" : "failed";
+      if (job.lease?.token !== token) throw new Error("Job lease lost");
+      if (requeue) { job.opts.delay = 0; await this.enqueue(queue, job); return; }
+      job.state = "failed";
       if (!requeue) job.finishedOn ??= Date.now();
       await this.saveJob(queue, job);
     }

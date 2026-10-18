@@ -6,7 +6,7 @@ export interface WorkerOptions {
   flow: FlowFn;
   queues: string[];
   concurrency?: number | Record<string, number>;
-  settings?: { stalledInterval?: number; maxStalledCount?: number };
+  settings?: { leaseDuration?: number; stalledInterval?: number; maxStalledCount?: number };
 }
 
 /** Owns registered processors and forwards their queue lifecycle events. */
@@ -37,7 +37,9 @@ export class Worker extends EventEmitter {
       : (this.options.concurrency?.[name] ?? 1);
   }
   private startProcessor(name: string, handler: (job: Job) => Promise<any>) {
-    this.options.flow.queue(name).process(this.concurrency(name), handler);
+    const queue = this.options.flow.queue(name);
+    if (this.options.settings) queue.configureLeaseSettings(this.options.settings);
+    queue.process(this.concurrency(name), handler);
   }
   async run(): Promise<void> {
     if (this.closed) throw new Error("Worker is closed");
@@ -47,7 +49,7 @@ export class Worker extends EventEmitter {
     for (const name of this.options.queues) {
       const queue = this.options.flow.queue(name);
       const listeners: Array<[QueueEvent, (...args: any[]) => void]> = (
-        ["active", "completed", "failed", "progress"] as QueueEvent[]
+        ["active", "completed", "failed", "progress", "stalled"] as QueueEvent[]
       ).map((event) => [event, (...args: any[]) => this.emit(event, ...args)]);
       for (const [event, listener] of listeners) queue.on(event, listener);
       this.subscriptions.set(queue, listeners);

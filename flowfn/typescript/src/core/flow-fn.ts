@@ -111,6 +111,9 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
       const original = this.adapter;
       const scoped = new Set([
         "enqueue",
+        "createJob",
+        "renewJobLease",
+        "recoverStalledJobs",
         "dequeue",
         "ack",
         "nack",

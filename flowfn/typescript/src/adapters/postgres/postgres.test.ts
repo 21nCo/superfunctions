@@ -28,6 +28,69 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
       await pool.end();
     });
+    it("reclaims expired queue leases and fences stale writes, retries and acknowledgments", async () => {
+      const original = new JobImpl("work", { value: 1 });
+      await adapter.createJob("leases", original);
+      // A fast worker clock must not extend durable lease ownership.
+      const skew = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+      let stale: NonNullable<Awaited<ReturnType<typeof adapter.dequeue>>>;
+      try { stale = (await adapter.dequeue("leases", undefined, 25))!; }
+      finally { skew.mockRestore(); }
+      await new Promise(resolve => setTimeout(resolve, 40));
+      expect(await adapter.renewJobLease("leases", stale.id, stale.lease!.token, 100)).toBe(false);
+      const recovered = await adapter.recoverStalledJobs("leases", 1);
+      expect(recovered).toHaveLength(1);
+      expect(recovered[0].stalledCount).toBe(1);
+      const current = (await adapter.dequeue("leases", undefined, 1000))!;
+      expect(current.lease!.token).not.toBe(stale.lease!.token);
+      await expect(adapter.saveJob("leases", { ...stale, state: "completed", returnvalue: "stale" })).rejects.toThrow("lease lost");
+      await expect(adapter.enqueue("leases", stale)).rejects.toThrow("lease lost");
+      await expect(adapter.ack("leases", stale.id, stale.lease!.token)).rejects.toThrow("lease lost");
+      await expect(adapter.nack("leases", stale.id, true, stale.lease!.token)).rejects.toThrow("lease lost");
+      await adapter.saveJob("leases", { ...current, state: "completed", returnvalue: "current" });
+      expect((await adapter.getJob("leases", stale.id))!.returnvalue).toBe("current");
+      await expect(adapter.saveJob("leases", stale)).rejects.toThrow("lease lost");
+    });
+    it("renews running jobs and terminally fails repeated stalled claims", async () => {
+      const queue = new QueueImpl("renewed", adapter, { leaseDuration: 180, stalledInterval: 20 });
+      try {
+        const job = await queue.add("long", {});
+        queue.process(async () => { await new Promise(resolve => setTimeout(resolve, 450)); return 42; });
+        await queue.drain();
+        expect((await queue.getJob(job.id))!.returnvalue).toBe(42);
+        expect((await queue.getJob(job.id))!.stalledCount ?? 0).toBe(0);
+      } finally { await queue.close(); }
+      await adapter.createJob("stalled", new JobImpl("work", {}));
+      const first = (await adapter.dequeue("stalled", undefined, 20))!;
+      await new Promise(resolve => setTimeout(resolve, 35));
+      await adapter.recoverStalledJobs("stalled", 1);
+      await adapter.dequeue("stalled", undefined, 20);
+      await new Promise(resolve => setTimeout(resolve, 35));
+      const terminal = await adapter.recoverStalledJobs("stalled", 1);
+      expect(terminal[0].state).toBe("failed");
+      expect((await adapter.getJob("stalled", first.id))!.stalledCount).toBe(2);
+    });
+    it("atomically deduplicates competing queue instances without overwriting IDs", async () => {
+      const queues = Array.from({ length: 12 }, () => new QueueImpl("dedup", adapter));
+      try {
+        const keyed = await Promise.all(queues.map((queue, i) => queue.add("work", { i }, { deduplicationKey: "shared" })));
+        expect(new Set(keyed.map(job => job.id)).size).toBe(1);
+        expect(await adapter.getAllJobs("dedup")).toHaveLength(1);
+        const ids = await Promise.all(queues.map((queue, i) => queue.add("id", { i }, { jobId: "fixed" })));
+        expect(new Set(ids.map(job => JSON.stringify(job.data))).size).toBe(1);
+        const payloads = await Promise.all(queues.map(queue => queue.add("payload", { nested: [1, 2] }, { preventDuplicates: true })));
+        expect(new Set(payloads.map(job => job.id)).size).toBe(1);
+        const first = keyed[0];
+        await first.moveToFailed(new Error("done"));
+        const next = await queues[0].add("work", {}, { deduplicationKey: "shared" });
+        expect(next.id).not.toBe(first.id);
+        await expect(first.retry()).rejects.toThrow("deduplication key");
+        expect((await adapter.getJob("dedup", first.id))?.state).toBe("failed");
+        const other = new QueueImpl("other-dedup", adapter);
+        expect((await other.add("work", {}, { deduplicationKey: "shared" })).id).not.toBe(next.id);
+        await other.close();
+      } finally { await Promise.all(queues.map(queue => queue.close())); }
+    });
     it("claims jobs atomically with SKIP LOCKED and scopes identical IDs by queue", async () => {
       for (let i = 0; i < 20; i++)
         await adapter.enqueue(

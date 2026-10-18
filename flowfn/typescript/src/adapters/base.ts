@@ -12,10 +12,14 @@ import { WorkflowExecution } from "../workflow/types.js";
 
 export interface FlowAdapter {
   // Queue operations
+  /** Atomic insert or return existing ID/active deduplication match. */
+  createJob?(queue: string, job: Job): Promise<Job>;
   enqueue(queue: string, job: Job): Promise<string>;
-  dequeue(queue: string, name?: string): Promise<Job | null>;
-  ack(queue: string, jobId: string): Promise<void>;
-  nack(queue: string, jobId: string, requeue?: boolean): Promise<void>;
+  dequeue(queue: string, name?: string, leaseDuration?: number): Promise<Job | null>;
+  renewJobLease?(queue: string, jobId: string, token: string, duration: number): Promise<boolean>;
+  recoverStalledJobs?(queue: string, maxStalledCount: number): Promise<Job[]>;
+  ack(queue: string, jobId: string, token?: string): Promise<void>;
+  nack(queue: string, jobId: string, requeue?: boolean, token?: string): Promise<void>;
 
   saveJob?(queue: string, job: Job): Promise<void>;
   removeJob?(queue: string, jobId: string): Promise<void>;

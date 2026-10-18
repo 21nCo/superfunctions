@@ -26,6 +26,8 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private dlq?: MemoryDLQManager;
   private limiter?: RateLimiter;
   private cache = new Map<string, { value: any; expires: number }>();
+  private leases = new Map<string, { timer: ReturnType<typeof setInterval>; lost: boolean; controller?: AbortController }>();
+  private recoveredAt = 0;
   private additions: Promise<unknown> = Promise.resolve();
   constructor(
     public name: string,
@@ -33,6 +35,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     private options: QueueOptions = {},
   ) {
     super();
+    this.configureLeaseSettings(options);
     if (options.dlq?.enabled) this.dlq = new MemoryDLQManager(options.dlq);
     if (options.limiter) {
       if (
@@ -52,6 +55,35 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
       (!Number.isFinite(options.cache.ttl) || options.cache.ttl < 0)
     )
       throw new Error("Invalid cache ttl");
+  }
+  configureLeaseSettings(settings: { leaseDuration?: number; stalledInterval?: number; maxStalledCount?: number }) {
+    if (this.workers.size) throw new Error("Cannot change lease settings while processing");
+    for (const key of ["leaseDuration", "stalledInterval", "maxStalledCount"] as const) {
+      const value = settings[key];
+      if (value !== undefined && (!Number.isInteger(value) || value < (key === "maxStalledCount" ? 0 : 1))) throw new Error(`Invalid ${key}`);
+      if (value !== undefined) this.options[key] = value;
+    }
+  }
+  private releaseLease(job: Job) {
+    const guard = this.leases.get(job.id);
+    if (guard) clearInterval(guard.timer);
+    this.leases.delete(job.id);
+  }
+  private guardLease(job: Job) {
+    if (!job.lease || !this.adapter.renewJobLease) throw new Error("Adapter must support job leases");
+    const duration = this.options.leaseDuration ?? 30_000;
+    let pending = false;
+    const guard = { lost: false, controller: undefined as AbortController | undefined, timer: setInterval(async () => {
+      if (pending || guard.lost) return;
+      pending = true;
+      try {
+        if (!await this.adapter.renewJobLease!(this.name, job.id, job.lease!.token, duration)) {
+          guard.lost = true; guard.controller?.abort();
+        }
+      } catch { guard.lost = true; guard.controller?.abort(); }
+      finally { pending = false; }
+    }, Math.max(1, Math.floor(duration / 3))) };
+    this.leases.set(job.id, guard);
   }
   private open() {
     if (this.closed) throw new Error("Queue is closed");
@@ -126,24 +158,14 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
       throw new Error("Priority must be finite");
     const operation = this.additions.then(async () => {
       this.open();
-      if (options.jobId) {
-        const existing = await this.adapter.getJob(this.name, options.jobId);
-        if (existing) return this.hydrate(existing);
-      }
-      if (options.preventDuplicates || options.deduplicationKey !== undefined) {
-        const jobs = await this.adapter.getAllJobs(this.name);
-        const existing = jobs.find(
-          (job) =>
-            !["failed", "completed"].includes(job.state) &&
-            (options.deduplicationKey !== undefined
-              ? job.opts.deduplicationKey === options.deduplicationKey
-              : job.name === name &&
-                JSON.stringify(job.data) === JSON.stringify(data)),
-        );
-        if (existing) return this.hydrate(existing);
-      }
-      const job = this.hydrate(new JobImpl(name, data, options));
-      await this.adapter.enqueue(this.name, job);
+      if (!this.adapter.createJob)
+        throw new Error("Adapter must implement atomic createJob for enqueue");
+      const proposed = new JobImpl(name, data, options);
+      if (options.deduplicationKey !== undefined)
+        proposed.deduplicationId = JSON.stringify(["key", options.deduplicationKey]);
+      else if (options.preventDuplicates)
+        proposed.deduplicationId = JSON.stringify(["data", name, data]);
+      const job = this.hydrate(await this.adapter.createJob(this.name, snapshotJob(proposed)));
       this.emitSafe("waiting", job);
       this.wake();
       return job;
@@ -191,20 +213,34 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     for (let i = 0; i < concurrency; i++) this.track(this.loop(name, handler));
   }
   private async take(name?: string): Promise<JobImpl<T> | null> {
-    const raw = await this.adapter.dequeue(this.name, name);
+    if (Date.now() - this.recoveredAt >= (this.options.stalledInterval ?? 30_000)) {
+      this.recoveredAt = Date.now();
+      if (!this.adapter.recoverStalledJobs) throw new Error("Adapter must support stalled job recovery");
+      for (const stalled of await this.adapter.recoverStalledJobs(this.name, this.options.maxStalledCount ?? 1)) {
+        const job = this.hydrate(stalled);
+        this.emitSafe("stalled", job);
+        if (job.state === "failed") {
+          if (this.dlq) await this.dlq.moveToDLQ(snapshotJob(job), job.failedReason!, this.name);
+          this.emitSafe("failed", job, new Error(job.failedReason));
+          await this.prune(job, "failed", job.opts.removeOnFail);
+        }
+      }
+    }
+    const raw = await this.adapter.dequeue(this.name, name, this.options.leaseDuration ?? 30_000);
     if (!raw) return null;
     if ((name && raw.name !== name) || this.paused || this.closed) {
-      await this.adapter.nack(this.name, raw.id, true);
+      await this.adapter.nack(this.name, raw.id, true, raw.lease?.token);
       return null;
     }
     const job = this.hydrate(raw);
     for (const id of job.opts.waitFor ?? []) {
       const dependency = await this.adapter.getJob(this.name, id);
       if (dependency?.state !== "completed") {
-        await this.adapter.nack(this.name, job.id, true);
+        await this.adapter.nack(this.name, job.id, true, job.lease?.token);
         return null;
       }
     }
+    this.guardLease(job);
     return job;
   }
   private async loop(
@@ -232,6 +268,8 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private async runJob(job: JobImpl<T>, handler: JobHandler<T>): Promise<void> {
     const controller = new AbortController();
     this.controllers.add(controller);
+    const guard = this.leases.get(job.id)!;
+    guard.controller = controller;
     Object.defineProperty(job, "signal", {
       value: controller.signal,
       enumerable: false,
@@ -282,17 +320,24 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
             expires: Date.now() + this.options.cache!.ttl,
           });
       }
+      if (guard.lost) return;
       await job.moveToCompleted(result);
-      await this.adapter.ack(this.name, job.id);
       this.emitSafe("completed", job, result);
       await this.prune(job, "completed", job.opts.removeOnComplete);
     } catch (error) {
-      await this.fail(job, error as Error);
+      if (!guard.lost && !(error instanceof Error && error.message === "Job lease lost")) await this.fail(job, error as Error);
     } finally {
+      this.releaseLease(job);
       this.controllers.delete(controller);
     }
   }
   private async fail(job: JobImpl<T>, error: Error): Promise<void> {
+    try { await this.failOwned(job, error); }
+    catch (failure) {
+      if (!(failure instanceof Error && failure.message === "Job lease lost")) throw failure;
+    }
+  }
+  private async failOwned(job: JobImpl<T>, error: Error): Promise<void> {
     job.attemptsMade++;
     (job.stacktrace ??= []).push(error.stack ?? error.message);
     if (job.opts.stackTraceLimit !== undefined)
@@ -319,7 +364,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
       await this.adapter.enqueue(this.name, job);
     } else {
       await job.moveToFailed(error);
-      await this.adapter.nack(this.name, job.id, false);
+
       if (this.dlq)
         await this.dlq.moveToDLQ(snapshotJob(job), error.message, this.name);
       await this.prune(job, "failed", job.opts.removeOnFail);
@@ -375,8 +420,10 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
           );
           if (!batch.length) continue;
           if (this.closed || this.paused) {
-            for (const job of batch)
-              await this.adapter.nack(this.name, job.id, true);
+            for (const job of batch) {
+              await this.adapter.nack(this.name, job.id, true, job.lease?.token);
+              this.releaseLease(job);
+            }
             continue;
           }
           this.inFlight += batch.length;
@@ -385,13 +432,14 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
             if (!Array.isArray(results) || results.length !== batch.length)
               throw new Error("Batch handler must return one result per job");
             for (let i = 0; i < batch.length; i++) {
+              if (this.leases.get(batch[i].id)?.lost) continue;
               await batch[i].moveToCompleted(results[i]);
-              await this.adapter.ack(this.name, batch[i].id);
               this.emitSafe("completed", batch[i], results[i]);
             }
           } catch (error) {
-            for (const job of batch) await this.fail(job, error as Error);
+            for (const job of batch) if (!this.leases.get(job.id)?.lost && job.state !== "completed" && !(error instanceof Error && error.message === "Job lease lost")) await this.fail(job, error as Error);
           } finally {
+            for (const job of batch) this.releaseLease(job);
             this.inFlight -= batch.length;
           }
         }
@@ -441,7 +489,11 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     this.closed = true;
     for (const controller of this.controllers) controller.abort();
     this.wake();
-    await Promise.all([...this.workers]);
-    this.cache.clear();
+    try { await Promise.all([...this.workers]); }
+    finally {
+      for (const guard of this.leases.values()) clearInterval(guard.timer);
+      this.leases.clear();
+      this.cache.clear();
+    }
   }
 }
