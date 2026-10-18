@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57VAVWR9C9NFV6R5MNRC86Q",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "flowfn/typescript/docs/queue-ownership.md",
+    "flowfn/typescript/scripts/provider-acceptance.mjs",
+    "flowfn/typescript/src/adapters/base.ts",
+    "flowfn/typescript/src/adapters/memory.ts",
+    "flowfn/typescript/src/adapters/postgres/index.ts",
+    "flowfn/typescript/src/adapters/postgres/postgres.test.ts",
+    "flowfn/typescript/src/adapters/redis.test.ts",
+    "flowfn/typescript/src/adapters/redis.ts",
+    "flowfn/typescript/src/core/flow-fn.ts",
+    "flowfn/typescript/src/queue/job.ts",
+    "flowfn/typescript/src/queue/leases.test.ts",
+    "flowfn/typescript/src/queue/queue.ts",
+    "flowfn/typescript/src/queue/types.ts",
+    "flowfn/typescript/src/queue/worker.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
