@@ -1,0 +1,63 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57VRQAQ4Y8FNBGMC3Q3QRXG",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-18T15:58:28.212328Z",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "flowfn/typescript/README.md",
+    "flowfn/typescript/package.json",
+    "flowfn/typescript/scripts/packed-consumer-acceptance.mjs",
+    "flowfn/typescript/src/adapters/postgres/schema.ts",
+    "flowfn/typescript/src/adapters/redis.ts",
+    "flowfn/typescript/src/core/flow-fn.ts",
+    "flowfn/typescript/src/queue/queue.ts",
+    "flowfn/typescript/src/queue/worker.ts",
+    "flowfn/typescript/tsup.config.ts"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "ef71424e83cb",
+  "checkpoint_transcript_start": 6962,
+  "transcript_lines_at_start": 6962,
+  "compact_transcript_start": 835,
+  "token_usage": {
+    "input_tokens": 18644,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 4119040,
+    "output_tokens": 6307,
+    "api_call_count": 33
+  },
+  "session_metrics": {
+    "turn_count": 17
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-18T15:58:27.963596Z",
+    "agent_lines": 1409,
+    "agent_removed": 587,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1409,
+    "total_lines_changed": 1996,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
