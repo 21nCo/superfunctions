@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import Redis from "ioredis";
 import { workflowControlContract } from '../storage/workflow-control-contract.js';
 import { workflowCrashContract } from '../storage/workflow-crash-contract.js';
+import { schedulerContract } from '../storage/scheduler-contract.js';
 import { RedisAdapter } from "./redis.js";
 import { JobImpl } from "../queue/job.js";
 import { QueueImpl } from "../queue/queue.js";
@@ -15,6 +16,8 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
     let adapter: RedisAdapter;
     let redis: Redis;
     let prefix: string;
+    it('recovers a schedule occurrence after SIGKILL with a stable idempotency identity', async () => { await workflowCrashContract(adapter, 'redis', prefix, true); });
+    it('shares durable schedule ownership and preserves attempts across restart', async () => { await schedulerContract(adapter); });
     it('recovers a SIGKILL checkpoint in a new process without repeating effects', async () => { await workflowCrashContract(adapter, 'redis', prefix); });
     it('enforces durable workflow ownership and concurrent catalogs', async () => { await workflowControlContract(adapter); });
     beforeEach(() => {

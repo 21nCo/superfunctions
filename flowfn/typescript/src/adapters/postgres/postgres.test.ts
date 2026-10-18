@@ -10,11 +10,14 @@ import type { Message } from "../../stream/types.js";
 import { WorkflowBuilderImpl } from "../../workflow/workflow.js";
 import { workflowControlContract } from '../../storage/workflow-control-contract.js';
 import { workflowCrashContract } from '../../storage/workflow-crash-contract.js';
+import { schedulerContract } from '../../storage/scheduler-contract.js';
 
 describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
   "PostgreSQL native contract (requires FLOWFN_POSTGRES_URL)",
   () => {
     let pool: Pool, adapter: PostgresAdapter, schema: string;
+    it('recovers a schedule occurrence after SIGKILL with a stable idempotency identity', async () => { await workflowCrashContract(adapter, 'postgres', schema, true); });
+    it('shares durable schedule ownership and preserves attempts across restart', async () => { await schedulerContract(adapter); });
     it('recovers a SIGKILL checkpoint in a new process without repeating effects', async () => { await workflowCrashContract(adapter, 'postgres', schema); });
     it('enforces durable workflow ownership and concurrent catalogs', async () => { await workflowControlContract(adapter); });
     beforeEach(async () => {

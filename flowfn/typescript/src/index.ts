@@ -1,5 +1,6 @@
 export * from "./core/flow-fn.js";
 export * from "./core/scheduler.js";
+export * from "./core/durable-scheduler.js";
 export * from "./core/metrics.js";
 
 export * from "./queue/types.js";

@@ -5,12 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { expect } from 'vitest';
 import type { FlowAdapter } from '../adapters/base.js';
 
-export async function workflowCrashContract(adapter: FlowAdapter, kind: string, scope: string) {
+export async function workflowCrashContract(adapter: FlowAdapter, kind: string, scope: string, scheduler = false) {
   const name = `restart-${randomUUID()}`;
   const children: ReturnType<typeof fork>[] = [];
   const start = (executionId?: string) => {
-    const child = fork(resolve('scripts/workflow-crash-worker.mjs'), [], {
-      env: { ...process.env, FLOWFN_CRASH_CONFIG: JSON.stringify({ kind, scope, name, executionId }) },
+    const child = fork(resolve(`scripts/${scheduler ? 'scheduler' : 'workflow'}-crash-worker.mjs`), [], {
+      env: { ...process.env, FLOWFN_CRASH_CONFIG: JSON.stringify({ kind, scope, name, executionId, resume: Boolean(executionId) }) },
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
     });
     children.push(child);
@@ -25,18 +25,26 @@ export async function workflowCrashContract(adapter: FlowAdapter, kind: string, 
   });
   try {
     const original = start();
-    const { executionId } = await message(original);
+    const initial = await message(original);
+    const executionId = scheduler ? 'resume' : initial.executionId;
     const exited = once(original, 'exit');
     original.kill('SIGKILL');
     await exited;
     await new Promise(resolve => setTimeout(resolve, 220));
     const restored = start(executionId);
     const finished = once(restored, 'exit');
-    const { result } = await message(restored);
-    expect(result.output).toBe(12);
-    expect(result.input).toEqual({ values: [], nested: { empty: [] } });
+    const result = await message(restored);
+    if (scheduler) expect(result.completed).toBe(true);
+    else {
+      expect(result.result.output).toBe(12);
+      expect(result.result.input).toEqual({ values: [], nested: { empty: [] } });
+    }
     await finished;
-    expect((await adapter.getStreamInfo(name)).length).toBe(1);
+    expect((await adapter.getStreamInfo(name)).length).toBe(scheduler ? 2 : 1);
+    if (scheduler) {
+      const messages = await adapter.getMessages!(name, '-', '+');
+      expect(messages[0].data.occurrence).toBe(messages[1].data.occurrence);
+    }
   } finally {
     for (const child of children) if (child.exitCode === null && child.signalCode === null) {
       const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;

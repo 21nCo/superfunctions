@@ -1,5 +1,7 @@
 import parser from "cron-parser";
 export interface ScheduleOptions {
+  /** Change to start a new durable schedule generation when handler behavior changes. */
+  version?: string;
   pattern?: string;
   timezone?: string;
   data?: any;

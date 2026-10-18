@@ -10,7 +10,7 @@ import {
   ApprovalDecision,
 } from "../workflow/types.js";
 import { WorkflowBuilderImpl } from "../workflow/workflow.js";
-import { Scheduler } from "./scheduler.js";
+import { DurableScheduler } from "./durable-scheduler.js";
 import { MetricsManager } from "./metrics.js";
 import {
   HealthCheckerImpl,
@@ -56,7 +56,7 @@ export interface FlowFn {
     decision: ApprovalDecision,
   ): Promise<void>;
 
-  scheduler(): Scheduler;
+  scheduler(): DurableScheduler;
 
   metrics: MetricsManager;
   healthCheck(): Promise<HealthStatus>;
@@ -78,7 +78,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
   private queues: Map<string, Queue> = new Map();
   private streams: Map<string, Stream> = new Map();
   private _metrics: MetricsManager;
-  private _scheduler: Scheduler;
+  private _scheduler: DurableScheduler;
   private healthChecker: HealthCheckerImpl;
   private eventTracker: EventTracker;
   private startTime: number;
@@ -152,7 +152,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
       streams: () => this.streams.size,
       workflows: () => [...this.workflows.values()],
     });
-    this._scheduler = new Scheduler();
+    this._scheduler = new DurableScheduler(this.adapter, this.workflowNamespace);
     this.healthChecker = new HealthCheckerImpl();
     this.eventTracker = new MemoryEventTracker();
 
@@ -325,7 +325,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
     ).approveExecution(executionId, decision);
   }
 
-  scheduler(): Scheduler {
+  scheduler(): DurableScheduler {
     return this._scheduler;
   }
 

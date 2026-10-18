@@ -39,6 +39,6 @@ workflows. The provider acceptance runner includes competing-owner, expired-owne
 hung-renewal and separate-process SIGKILL recovery checks.
 
 Signals and approval calls currently require the owning runtime. Distributed
-signal delivery, automatic discovery/recovery and persistent distributed scheduling
+signal delivery and automatic workflow discovery/recovery
 remain outstanding contracts. Functional checks do not establish workflow
 throughput, latency or concurrent-execution targets.
