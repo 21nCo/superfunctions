@@ -24,3 +24,11 @@ Validation is in progress. ContentFn will be stacked on this branch only after s
 - Fresh packed MCP/admin consumer: Node18.18 and20.19 ESM/CJS schema/protocol tests passed; actual HTTP initialization and admin smoke passed on20.19; production audit0. The script explicitly reports that Node18 HTTP needs global WebCrypto enabled; Node18 core protocol tests passed.
 - DB synchronous schema-only entry passed on exact Node20.19.
 - Native SQLite target acceptance passed for JSON roundtrip, JSON predicate count and transaction rollback; the reproducible script is `shared-sqlite-acceptance.mjs` alongside this receipt.
+
+## Additional consumer prerequisites
+
+BrowseFn also requires middleware0.3.0's per-key limits/blocked-key result and storage-local0.2.0's matching storage dependency. Middleware now declares DB0.4 support and tests against0.4, while retaining its previous supported ranges. Source changes come from the existing BrowseFn implementation64185926c.
+
+MemoryFn's manifest declared mandatory `secfn:*`, although a repository search finds no SecFn reference in its sources or documentation (only that manifest entry). npm auto-installed the legacy published secfn0.0.2, whose DB^0.1 peer conflicts with the current shared DB workspace. The unused integration peer is now optional, preserving the ability for consumers to opt in without forcing the incompatible legacy runtime on other workspace installations. Its stale peer-only lock nodes were removed before standard npm regeneration; no peer range was widened and no force/legacy-peer-deps flags were used.
+
+The follow-up default npm10 clean scoped ci on Node22 installed576 packages successfully. Middleware26 and storage-local27 tests passed; both builds passed; native SQLite JSON/predicate/rollback acceptance passed again. Source provenance is via local workspace links under this worktree for DB0.4.0, HTTP0.3.1, admin0.1.5, MCPcore0.0.6, middleware0.3.0 and storage-local0.2.0. Legacy secfn is absent from the installed graph.
