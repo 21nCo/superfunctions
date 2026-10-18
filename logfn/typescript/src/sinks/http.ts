@@ -3,6 +3,7 @@
  */
 
 import type { LogEvent, Sink } from "../types.js";
+import { IndexedDbQueue } from "./indexeddb-queue.js";
 
 /**
  * HTTP sink options
@@ -38,6 +39,9 @@ export interface HttpSinkOptions {
   /** Offline buffer strategy */
   offlineBuffer?: "memory" | "indexeddb";
 
+  /** Stable non-secret identity separating authenticated durable queues. */
+  offlineKey?: string;
+
   /** Maximum queue size (default: 5000) */
   maxQueue?: number;
 }
@@ -64,6 +68,15 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
 
   const { attempts = 5, backoffMs = 200 } = retry;
 
+  if (options.offlineBuffer === "indexeddb" && typeof indexedDB === "undefined") {
+    throw new Error("IndexedDB offline buffering requires IndexedDB support");
+  }
+  if (options.offlineBuffer === "indexeddb" && (auth?.token || auth?.secretHeader || Object.keys(headers).length) && !options.offlineKey) {
+    throw new Error("Authenticated IndexedDB buffering requires a non-secret offlineKey");
+  }
+  const durable = options.offlineBuffer === "indexeddb"
+    ? new IndexedDbQueue(JSON.stringify([url, options.offlineKey ?? "public"]), maxQueue) : undefined;
+  let writes: Promise<void> = Promise.resolve();
   let closed = false;
   let closing: Promise<void> | null = null;
   let buffer: LogEvent[] = [];
@@ -125,9 +138,18 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
   /** All callers join the active drain; failed batches remain queued. */
   function flushBuffer(keepalive = false): Promise<void> {
     if (flushing) return flushing;
-    if (buffer.length === 0) return Promise.resolve();
+    if (!durable && buffer.length === 0) return Promise.resolve();
     let failed = false;
     const drain = async () => {
+      if (durable) {
+        await writes;
+        while (true) {
+          const records = await durable.batch(batchSize);
+          if (!records.length) return;
+          await sendBatch(records.map(record => record.event), keepalive);
+          await durable.acknowledge(records);
+        }
+      }
       while (buffer.length > 0) {
         const toSend = buffer.splice(0, batchSize);
         try {
@@ -172,7 +194,9 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     if (browserDocument?.visibilityState === "hidden") backgroundFlush();
   };
   const unloadHandler = () => {
-    if (closed || buffer.length === 0) return;
+    if (closed) return;
+    if (durable) { backgroundFlush(true); return; }
+    if (buffer.length === 0) return;
     // Beacon cannot carry configured authentication or custom headers. Keep
     // such deliveries on fetch, preserving their request contract.
     if (!auth?.token && !auth?.secretHeader && Object.keys(headers).length === 0 &&
@@ -194,6 +218,15 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
 
   const sink: HttpSink = (batch: LogEvent[]) => {
     if (closed || closing) throw new Error("HTTP sink is closed");
+    if (durable) {
+      // Persist before delivery; Logger.flush joins this returned promise.
+      const operation = writes.then(() => durable.add(batch));
+      writes = operation.catch(() => {});
+      return operation.then(async () => {
+        if ((await durable.batch(batchSize)).length >= batchSize) backgroundFlush();
+        else scheduleFlush();
+      });
+    }
     // Add to buffer
     buffer.push(...batch);
 
@@ -209,6 +242,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     } else {
       scheduleFlush();
     }
+    return undefined;
   };
 
   sink.flush = async (): Promise<void> => {
@@ -224,6 +258,7 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     if (closing) return closing;
     closing = (async () => {
       await sink.flush!();
+      await durable?.close();
       closed = true;
       browserDocument?.removeEventListener("visibilitychange", visibilityHandler);
       browserWindow?.removeEventListener("beforeunload", unloadHandler);
@@ -231,5 +266,6 @@ export function sinkHttp(options: HttpSinkOptions): HttpSink {
     return closing;
   };
 
+  if (durable) scheduleFlush(); // Recover persisted events after page/process restart.
   return sink;
 }

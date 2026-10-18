@@ -438,3 +438,33 @@ Unload requests with authentication or custom headers use best-effort keepalive
 fetch. Header-free beacon attempts are bounded below the browser payload limit;
 queued events remain until confirmed HTTP delivery, so duplicates are possible.
 Unload transport is not a substitute for durable offline storage.
+
+### Durable browser HTTP queue
+
+`offlineBuffer: "indexeddb"` now persists each accepted batch before delivery.
+Direct sink callers must await the returned promise; `Logger.flush()` already
+joins these writes. Records are deleted only after a successful HTTP response,
+using exact record IDs so concurrent enqueue is not accidentally acknowledged.
+Delivery is at least once: a crash after server acceptance but before local
+acknowledgement can produce duplicates. Ingestion should deduplicate where needed.
+
+Queues recover on sink creation and retain the newest `maxQueue` waiting events.
+IndexedDB must be available; storage errors reject enqueue instead of silently
+falling back to volatile memory. For authentication or custom headers, supply a
+stable, non-secret `offlineKey` unique to the tenant/credential scope. Reuse it
+across token rotation for the same identity; use a different key when switching
+identities. Credentials are not stored with queued events. Browser storage
+clearing, eviction and private-session policies can still remove local data.
+
+```ts
+const sink = sinkHttp({
+  url: '/logs',
+  offlineBuffer: 'indexeddb',
+  offlineKey: 'workspace-123',
+  auth: { token },
+});
+```
+
+The acceptance script `logfn/scripts/browser-offline-acceptance.mjs` checks failed
+delivery, Chrome process restart, recovery, and deletion after acknowledgement.
+Build first; set `PLAYWRIGHT_MODULE` and `CHROME_PATH` when needed.

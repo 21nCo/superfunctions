@@ -55,3 +55,9 @@ LoggerOptions now exposes the previously documented onError callback, inherited 
 ## HTTP lifecycle cleanup and authenticated unload
 
 HttpSink.close drains and removes owned timers/listeners, rejects future enqueue, joins concurrent closes and remains retryable after deliveryfailure. Visibility listeners now attach to document. Auth/customheaders stay on keepalivefetch rather than headerlessbeacons. Publicbeacons are bounded to60000bytes/batchsize, preservequeueddata untilconfirmedHTTPdelivery and fallbackwhenrejected.189coretests/typecheck/buildpass, including six event-target lifecycle regressions. These tests simulate browser targets; actual browserunload/IndexedDBdurability remain open, and no durability claim is made.
+
+## Durable IndexedDB HTTP queue
+
+Implemented transactional per-queue persistence, exact-ID acknowledgement, newest-events bounds, stable non-secret authenticated queue keys, automatic recovery and explicit unavailable-storage failure. Sink enqueue returns persistence completion and Loggerflush joins it. At-least-once delivery/eviction/identity-isolation responsibilities documented. Memorymode unchanged. Testdependency fake-indexeddb added with standardnpm11lock regeneration; clean scopednpm10ci327 passes.
+
+Fullcore195tests/typecheck/build pass before final rollbacktest; focusedIndexedDB7tests pass including atomic transactionrollback, reopen/isolation, concurrentenqueue/exactack, HTTPfailure-retention, authenticatedrecovery and batchthreshold. ActualChrome154.0.8037.58 persistent-profile processrestart script passes:503retained, browserclosed/reopened, eventdelivered, nextreloadempty. Tempbrowserprofile removed. Firefox/nativeSafari/quota/private-mode behavior and remaining fullspec/admin/sharedHTTP/Pythonparity/performance gates are still open. No fullreadiness claim.
