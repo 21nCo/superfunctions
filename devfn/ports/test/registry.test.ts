@@ -774,8 +774,9 @@ esac
         ["pid text", { process: { ...self, pid: String(self.pid) } }, "invalid"],
         ["empty signature", { process: { ...self, birthSignature: "" } }, "invalid"],
         ["no signature", { process: { pid: self.pid } }, false],
-        ...[null, 0, false].map((recordedAt): [string, Record<string, unknown>, "invalid"] => [`record time ${String(recordedAt)}`, { process: { ...self, recordedAt } }, "invalid"]),
+        ...[null, 0, false, "", "not-a-time"].map((recordedAt): [string, Record<string, unknown>, "invalid"] => [`record time ${String(recordedAt)}`, { process: { ...self, recordedAt } }, "invalid"]),
         ["legacy owner without record time", { process: self }, true],
+        ["valid record time", { process: { ...self, recordedAt: new Date().toISOString() } }, true],
         ["empty container", { container: { id: "" } }, "invalid"],
         ["container environment", { container: { id: "fixture", dockerEnvironment: { DOCKER_HOST: 1 } } }, "invalid"],
       ];

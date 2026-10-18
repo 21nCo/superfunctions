@@ -302,7 +302,7 @@ function assertServingOwner(allocation: PortAllocation): void {
   const { process: owner, container } = allocation;
   if (![allocation.projectId, allocation.instanceId].every(nonEmptyText)) throw malformedEvidence(`lease ${String(allocation.id)} identity`);
   if (owner !== undefined && (!owner || typeof owner !== "object" || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 ||
-    (owner.birthSignature !== undefined && !nonEmptyText(owner.birthSignature)) || (owner.recordedAt !== undefined && typeof owner.recordedAt !== "string"))) {
+    (owner.birthSignature !== undefined && !nonEmptyText(owner.birthSignature)) || (owner.recordedAt !== undefined && !(typeof owner.recordedAt === "string" && Number.isFinite(Date.parse(owner.recordedAt)))))) {
     throw malformedEvidence(`lease ${String(allocation.id)} process owner`);
   }
   if (container !== undefined && (!container || typeof container !== "object" || !nonEmptyText(container.id) ||
