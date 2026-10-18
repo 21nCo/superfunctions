@@ -3,7 +3,7 @@
   "checkpoint_id": "01M580CCP35K9ZK8PPABTZWD8J",
   "strategy": "manual-commit",
   "branch": "codex/docs-uifn-20260926",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     ".github/workflows/ci.yml",
     "authfn/docs/package.json",
@@ -18,6 +18,20 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 2,
+    "cache_creation_tokens": 636,
+    "cache_read_tokens": 112046,
+    "output_tokens": 446,
+    "api_call_count": 1
+  }
 }
