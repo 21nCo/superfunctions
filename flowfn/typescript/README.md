@@ -25,7 +25,7 @@ deduplication and at-least-once delivery; [retry strategies](docs/retry-strategi
 for custom backoff; and [usage](docs/USAGE.md) for the broader API.
 
 D1, SQS and Kafka adapters are not implemented. Stream partition assignment,
-complete telemetry, global bounded shutdown and the original performance targets
+distributed trace propagation, global bounded shutdown and the original performance targets
 remain incomplete. Workflow ownership and scheduler coordination are durable on
 Redis and PostgreSQL. This package is not yet a production-readiness claim.
 
@@ -52,3 +52,33 @@ Worker settings accept `leaseDuration` (or `lockDuration`), `lockRenewTime`,
 lease settings. Signal handlers are opt-in and are removed on close. Bounded
 shutdown here covers worker processors; non-cooperative workflow or scheduler
 callbacks still need separate lifecycle handling.
+
+### Errors and tracing
+
+`createFlow({ adapter, onError(error, context) { ... } })` reports failed adapter
+operations and job, stream, workflow-step, compensation, and schedule callbacks.
+The context contains the operation name and identifying attributes. Failures are
+reported at each failed operation boundary; a nested operation can therefore
+produce more than one notification. Throwing or returning a rejected promise from
+`onError` does not replace the application error.
+
+After configuring your application's OpenTelemetry SDK and context manager,
+enable tracing for a flow with `telemetry: { enabled: true }`, or enable it across
+runtimes using the instrumentation entry point:
+
+```ts
+import { FlowInstrumentation } from '@flowfn/core/instrumentation';
+const instrumentation = new FlowInstrumentation();
+instrumentation.enable();
+// Jobs, workflow steps, stream handlers, schedules and flow-managed adapter
+// operations now create active spans using the application's global tracer.
+instrumentation.disable();
+```
+
+An explicit `telemetry: { enabled: false }` opts a flow out of global tracing.
+For a custom OpenTelemetry tracer, pass
+`telemetry: { enabled: true, provider: 'custom', tracer }`. Span attributes include
+resource and execution identifiers, never job payloads, workflow inputs or message
+bodies. Failed spans record exception messages. Configure the SDK's exporter and
+sampling policy in the application; FlowFn does not install an exporter or context
+manager. Cross-process trace-context propagation remains outstanding.

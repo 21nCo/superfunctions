@@ -1,3 +1,4 @@
+import { OperationObserver } from '../instrumentation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import parser from 'cron-parser';
 import { Scheduler, type ScheduleOptions } from './scheduler.js';
@@ -17,7 +18,7 @@ export class DurableScheduler extends Scheduler {
   private stopping = false;
   private work = new Set<Promise<void>>();
   private scope: string;
-  constructor(private adapter: FlowAdapter, namespace = '', private leaseDuration = 30_000) {
+  constructor(private adapter: FlowAdapter, namespace = '', private leaseDuration = 30_000, private observer = new OperationObserver()) {
     super();
     this.scope = createHash('sha256').update(JSON.stringify(['scheduler', namespace])).digest('hex');
     if (!Number.isSafeInteger(leaseDuration) || leaseDuration <= 0) throw new Error('Invalid scheduler lease duration');
@@ -124,7 +125,7 @@ export class DurableScheduler extends Scheduler {
     }, Math.min(2147483647, Math.max(1, Math.floor(this.leaseDuration / 3))));
     let error: string | undefined;
     try {
-      await binding.handler(structuredClone(options.data), { signal: controller.signal, scheduledAt: state.nextRun, occurrence: `${runId}:${state.count}` });
+      await this.observer.run('flowfn.schedule.execute', { 'flowfn.schedule': name, 'flowfn.occurrence': `${runId}:${state.count}` }, () => binding.handler(structuredClone(options.data), { signal: controller.signal, scheduledAt: state.nextRun, occurrence: `${runId}:${state.count}` }));
     } catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
     finally { clearInterval(timer); binding.abort = undefined; }
     if (lost) return;

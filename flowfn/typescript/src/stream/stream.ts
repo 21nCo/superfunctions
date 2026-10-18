@@ -1,3 +1,4 @@
+import { OperationObserver } from '../instrumentation.js';
 import { randomUUID } from "node:crypto";
 import type {
   Stream,
@@ -23,6 +24,7 @@ export class StreamImpl<T = any> implements Stream<T> {
     private adapter: FlowAdapter,
     private options: StreamOptions = {},
     private record?: (metric: string, value: number) => void,
+    private observer = new OperationObserver(),
   ) {
     for (const value of [options.maxLength, options.retention])
       if (value !== undefined && (!Number.isFinite(value) || value < 0))
@@ -80,7 +82,7 @@ export class StreamImpl<T = any> implements Stream<T> {
           "stream.latency",
           Math.max(0, Date.now() - message.timestamp),
         );
-        await handler({ ...message, stream: this.name });
+        await this.observer.run('flowfn.stream.process', { 'flowfn.stream': this.name, 'flowfn.message.id': message.id }, () => handler({ ...message, stream: this.name }));
       },
       options,
     );
@@ -112,7 +114,7 @@ export class StreamImpl<T = any> implements Stream<T> {
               "stream.latency",
               Math.max(0, Date.now() - message.timestamp),
             );
-            await handler({ ...message, stream: this.name });
+            await this.observer.run('flowfn.stream.process', { 'flowfn.stream': this.name, 'flowfn.message.id': message.id }, () => handler({ ...message, stream: this.name }));
           },
           options,
         );

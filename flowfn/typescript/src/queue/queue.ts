@@ -1,3 +1,4 @@
+import { OperationObserver } from '../instrumentation.js';
 import type {
   Queue,
   Job,
@@ -35,6 +36,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
     public name: string,
     private adapter: FlowAdapter,
     private options: QueueOptions = {},
+    private observer = new OperationObserver(),
   ) {
     super();
     this.configureLeaseSettings(options);
@@ -352,7 +354,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
         result = structuredClone(cached.value);
       else {
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const task = Promise.resolve().then(() => handler(job));
+        const task = this.observer.run('flowfn.job.execute', { 'flowfn.queue': this.name, 'flowfn.job.id': job.id, 'flowfn.job.name': job.name }, () => handler(job));
         try {
           result =
             job.opts.timeout === undefined

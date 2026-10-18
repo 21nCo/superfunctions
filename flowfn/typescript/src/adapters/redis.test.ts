@@ -1,3 +1,4 @@
+import { telemetryContract } from '../storage/telemetry-contract.js';
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import Redis from "ioredis";
@@ -17,6 +18,7 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
     let adapter: RedisAdapter;
     let redis: Redis;
     let prefix: string;
+    it('exports native operation spans and reports callback failures', async () => { await telemetryContract(adapter); });
     it('bounds worker shutdown and fences abandoned callbacks', async () => { await workerOwnershipContract(adapter, 1000); });
     it('scales independent worker groups without closing shared queues', async () => { await workerPoolContract(adapter); });
     it('recovers a schedule occurrence after SIGKILL with a stable idempotency identity', async () => { await workflowCrashContract(adapter, 'redis', prefix, true); });

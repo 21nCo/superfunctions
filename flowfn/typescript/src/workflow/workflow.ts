@@ -1,3 +1,4 @@
+import { OperationObserver } from '../instrumentation.js';
 import {
   Workflow,
   WorkflowBuilder,
@@ -67,6 +68,7 @@ export class WorkflowBuilderImpl<T = any> implements WorkflowBuilder<T> {
     private onBuild?: (workflow: WorkflowImpl<T>) => void,
     private scope = "",
     private onEvent?: (event: string, data: any) => void,
+    private observer = new OperationObserver(),
   ) {
     this.name = name;
     this.adapter = adapter;
@@ -174,6 +176,7 @@ export class WorkflowBuilderImpl<T = any> implements WorkflowBuilder<T> {
       this.onEvent,
       this.leaseDuration,
       this.definitionVersion,
+      this.observer,
     );
     this.onBuild?.(workflow);
     return workflow;
@@ -271,6 +274,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     private onEvent?: (event: string, data: any) => void,
     private leaseDuration = 30_000,
     definitionVersion = '1',
+    private observer = new OperationObserver(),
   ) {
     if (!name) throw new Error("Workflow name is required");
     this.name = name;
@@ -600,7 +604,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         if (record.compensated.includes(key)) continue;
         const step = this.definitions.get(key)!;
         try {
-          await step.compensate?.(rollbackContext);
+          await this.observer.run('flowfn.workflow.compensate', { 'flowfn.workflow': this.name, 'flowfn.execution.id': record.id, 'flowfn.step': step.name ?? key }, () => step.compensate?.(rollbackContext));
           record.compensated.push(key);
           this.event(record, "compensation.completed", { step: step.name });
         } catch (failure) {
@@ -651,6 +655,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       this.event(record, "step.started", { step: step.name ?? step.type });
       await this.persist(runtime);
       try {
+        await this.observer.run('flowfn.workflow.step', { 'flowfn.workflow': this.name, 'flowfn.execution.id': record.id, 'flowfn.step': step.name ?? step.type }, async () => {
         if ((step.type === "step" || step.type === "saga") && step.handler) {
           let waitIndex = 0;
           const stepContext = {
@@ -744,6 +749,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         this.event(record, "step.completed", { step: step.name ?? step.type });
         await this.persist(runtime);
         this.check(runtime);
+        });
       } catch (error) {
         if (runtime.lost) throw new Error('Workflow lease lost');
         this.event(record, "step.failed", {

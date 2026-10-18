@@ -1,3 +1,4 @@
+import { OperationObserver, type FlowTelemetryOptions, type FlowErrorContext } from '../instrumentation.js';
 import { FlowAdapter } from "../adapters/base.js";
 import { MemoryAdapter } from "../adapters/memory.js";
 import { Queue, QueueOptions } from "../queue/types.js";
@@ -33,11 +34,8 @@ export interface FlowFnConfig {
   defaultJobOptions?: any;
   defaultQueueOptions?: QueueOptions;
   defaultStreamOptions?: StreamOptions;
-  telemetry?: {
-    enabled: boolean;
-    provider?: "opentelemetry" | "custom";
-  };
-  onError?: (error: Error, context: any) => void;
+  telemetry?: FlowTelemetryOptions;
+  onError?: (error: Error, context: FlowErrorContext) => void;
 }
 
 export interface FlowFn {
@@ -70,6 +68,7 @@ export interface FlowFn {
 
 export class FlowFnImpl extends EventEmitter implements FlowFn {
   private adapter: FlowAdapter;
+  private observer: OperationObserver;
   private workflows = new Map<string, Workflow>();
   private workflowNamespace: string;
   private closed = false;
@@ -86,6 +85,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
   constructor(config: FlowFnConfig) {
     super();
     this.startTime = Date.now();
+    this.observer = new OperationObserver(config.telemetry, config.onError);
     this.workflowNamespace = config.namespace ?? "";
 
     if (config.adapter === "memory") {
@@ -147,12 +147,19 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
         },
       });
     }
+    const adapter = this.adapter;
+    const observer = this.observer;
+    this.adapter = new Proxy(adapter, { get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== 'function' || property === 'constructor') return value;
+      return (...args: any[]) => observer.run(`flowfn.adapter.${String(property)}`, { 'flowfn.namespace': config.namespace ?? '' }, () => value.apply(target, args));
+    } });
     this._metrics = new MetricsManager(this.adapter, {
       queues: () => this.queues.size,
       streams: () => this.streams.size,
       workflows: () => [...this.workflows.values()],
     });
-    this._scheduler = new DurableScheduler(this.adapter, this.workflowNamespace);
+    this._scheduler = new DurableScheduler(this.adapter, this.workflowNamespace, 30_000, this.observer);
     this.healthChecker = new HealthCheckerImpl();
     this.eventTracker = new MemoryEventTracker();
 
@@ -206,7 +213,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
             ...this.defaultQueueOptions?.defaultJobOptions,
             ...options?.defaultJobOptions,
           },
-        }),
+        }, this.observer),
       );
       const queue = this.queues.get(name)!;
       for (const event of [
@@ -265,6 +272,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
           },
           (metric, value) =>
             this._metrics.record(metric, value, { stream: name }),
+          this.observer,
         ),
       );
     }
@@ -289,6 +297,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
       (event, data) => {
         this.emit(event, data);
       },
+      this.observer,
     );
   }
 

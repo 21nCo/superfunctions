@@ -1,3 +1,4 @@
+import { telemetryContract } from '../../storage/telemetry-contract.js';
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
@@ -17,6 +18,7 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
   "PostgreSQL native contract (requires FLOWFN_POSTGRES_URL)",
   () => {
     let pool: Pool, adapter: PostgresAdapter, schema: string;
+    it('exports native operation spans and reports callback failures', async () => { await telemetryContract(adapter); });
     it('bounds worker shutdown and fences abandoned callbacks', async () => { await workerOwnershipContract(adapter, 1000); });
     it('scales independent worker groups without closing shared queues', async () => { await workerPoolContract(adapter); });
     it('recovers a schedule occurrence after SIGKILL with a stable idempotency identity', async () => { await workflowCrashContract(adapter, 'postgres', schema, true); });
