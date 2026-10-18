@@ -147,3 +147,18 @@ await scheduler.cancel('weekly-report')
 ```
 
 `await scheduler.list()` returns detached snapshots with next run time, attempted run count and the latest callback error. Callback failures count toward the optional run limit and do not stop subsequent scheduled runs. Invocations of the same schedule never overlap; missed repeat intervals are skipped. `start_date` must be timezone-aware. Pausing prevents new invocations; an already running callback continues. Closing the scheduler or FlowFn cancels and awaits its callbacks. Schedule definitions and execution state are not durable or shared between processes; distributed scheduler ownership and restart recovery remain unimplemented.
+
+## Redis adapter
+
+Install `flowfn[redis]` and pass an adapter explicitly:
+
+```python
+from flowfn.adapters.redis import RedisAdapter
+flow = create_flow(RedisAdapter('redis://localhost:6379', namespace='my-app'))
+```
+
+Redis 6.2 or newer is required. Independent clients share queue transitions, dependency outcomes, dead letters, workflow snapshots, and stream consumer groups. Namespace keys isolate applications. Queue mutations use Redis optimistic transactions; queue state currently occupies one JSON snapshot per namespace, so queue size and concurrent-writer scalability require workload-specific validation. Persistence across Redis server restarts depends on Redis persistence configuration.
+
+Consumer groups use pending-message recovery with lease heartbeats and ownership-checked acknowledgements. Closing a consumer leaves its unacknowledged deliveries recoverable after `reclaim_after_ms` (default 30 seconds). Handlers must tolerate redelivery after failures or network partitions. Trimming preserves entries still unread or pending in any group, so requested retention bounds may be exceeded until groups acknowledge those messages. Plain subscriptions deliver publications after registration without durable group state.
+
+Active queue jobs receive renewable leases; abandoned jobs become eligible for another claim after lease expiry, and stale completion writes are rejected. Handlers must be idempotent because a partitioned worker can continue external side effects after losing its lease. Workflow snapshots persist, but hosts must restore workflow definitions and resume orchestration. Distributed scheduler ownership, scalable queue storage and PostgreSQL provider support remain readiness gates; Redis support does not imply those features are complete.

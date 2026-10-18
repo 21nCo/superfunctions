@@ -67,6 +67,8 @@ class Job(BaseModel):
     # Status
     state: JobStatus = JobStatus.WAITING
     progress: int = 0
+    lease_token: Optional[str] = None
+    lease_expires_at: Optional[int] = None
     returnvalue: Optional[Any] = None
 
     # Timing
