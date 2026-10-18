@@ -4,6 +4,13 @@ from typing import Any, Optional, Callable, Awaitable
 from pydantic import BaseModel, Field, PrivateAttr
 
 
+class StreamOptions(BaseModel):
+    """Stream retention: maximum entries and maximum age in milliseconds."""
+
+    max_length: Optional[int] = Field(default=None, ge=0)
+    retention: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
+
+
 class PublishOptions(BaseModel):
     """Message publish options."""
 
@@ -68,7 +75,7 @@ class TrimStrategy(BaseModel):
     """Stream trim strategy."""
 
     max_length: Optional[int] = Field(default=None, ge=0)
-    max_age_seconds: Optional[int] = Field(default=None, ge=0)
+    max_age_seconds: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 # Type aliases

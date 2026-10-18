@@ -143,6 +143,8 @@ class RedisAdapter(DurableQueues):
         local rows = redis.call('XRANGE', KEYS[1], '-', '+')
         local groups = redis.call('XINFO', 'GROUPS', KEYS[1])
         local removed = 0
+        local clock = redis.call('TIME')
+        local cutoff = tonumber(ARGV[2]) >= 0 and (tonumber(clock[1])*1000+math.floor(tonumber(clock[2])/1000)-tonumber(ARGV[2])*1000) or -1
         local function greater(a,b)
           local am,as = string.match(a, '(%d+)-(%d+)')
           local bm,bs = string.match(b, '(%d+)-(%d+)')
@@ -152,7 +154,7 @@ class RedisAdapter(DurableQueues):
           local id = row[1]
           local millis = tonumber(string.match(id, '(%d+)-'))
           local candidate = (tonumber(ARGV[1])>=0 and i<=#rows-tonumber(ARGV[1]))
-                            or (tonumber(ARGV[2])>=0 and millis<tonumber(ARGV[2]))
+                            or (cutoff>=0 and millis<cutoff)
           if candidate then
             local protected = false
             for _,group in ipairs(groups) do
@@ -174,9 +176,9 @@ class RedisAdapter(DurableQueues):
         key = self._stream(stream)
         if not await self.client.exists(key):
             return 0
-        cutoff = int(time.time()*1000) - strategy.max_age_seconds*1000 if strategy.max_age_seconds is not None else -1
+        age = strategy.max_age_seconds if strategy.max_age_seconds is not None else -1
         result: int = await cast(Awaitable[Any], self.client.eval(script, 1, key,
-                                            str(strategy.max_length if strategy.max_length is not None else -1), str(cutoff)))
+                                            str(strategy.max_length if strategy.max_length is not None else -1), str(age)))
         return result
 
     async def subscribe(self, stream: str, handler: Any) -> 'RedisSubscription':

@@ -8,12 +8,14 @@ from flowfn.stream.types import ConsumerOptions, Message, MessageHandler
 
 class MemoryConsumerGroup:
     def __init__(self, messages: list[Message]) -> None:
+        self.unacknowledged = {message.id for message in messages}
         self.pending: asyncio.Queue[Message] = asyncio.Queue()
         for message in messages:
             self.pending.put_nowait(message)
         self.consumers: dict[str, MemoryConsumer] = {}
 
     def publish(self, message: Message) -> None:
+        self.unacknowledged.add(message.id)
         self.pending.put_nowait(message)
 
     def subscribe(
@@ -66,6 +68,8 @@ class MemoryConsumer:
                 async def settle(requeue: bool, target: asyncio.Future[bool] = decision) -> None:
                     if not target.done():
                         target.set_result(requeue)
+                        if not requeue:
+                            self.group.unacknowledged.discard(original.id)
 
                 message._acknowledge = settle
                 try:
@@ -88,6 +92,8 @@ class MemoryConsumer:
                     self.group.pending.put_nowait(original)
                 raise
             finally:
+                if not decision.done():
+                    decision.cancel()  # A disconnected delivery cannot acknowledge a later claim.
                 self.group.pending.task_done()
 
     async def pause(self) -> None:

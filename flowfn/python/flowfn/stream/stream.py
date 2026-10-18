@@ -1,6 +1,6 @@
 """Stream implementation."""
 
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, Awaitable
 from flowfn.stream.types import (
     Message,
     PublishOptions,
@@ -9,6 +9,7 @@ from flowfn.stream.types import (
     ConsumerOptions,
     StreamInfo,
     TrimStrategy,
+    StreamOptions,
 )
 from flowfn.adapters.base import FlowAdapter
 import asyncio
@@ -23,6 +24,11 @@ class Stream:
         self.name = name
         self._adapter = adapter
         self._options = options or {}
+        retention = StreamOptions.model_validate(self._options)
+        self._retention = TrimStrategy(
+            max_length=retention.max_length,
+            max_age_seconds=retention.retention / 1000 if retention.retention is not None else None,
+        )
         self._messages: dict[str, Message] = {}
         self._registrations: list[asyncio.Task[Any]] = []
         self._subscriptions: list[Any] = []
@@ -45,9 +51,7 @@ class Stream:
         )
 
         message_id = await self._adapter.publish(self.name, message)
-        max_length = self._options.get("max_length")
-        if max_length is not None:
-            await self.trim(TrimStrategy(max_length=max_length))
+        await self._apply_retention()
         return message_id
 
     async def publish_batch(self, messages: list[dict[str, Any]]) -> list[str]:
@@ -66,6 +70,7 @@ class Stream:
             raise RuntimeError("Stream is closed")
 
         async def register(func: MessageHandler) -> Any:
+            await self._apply_retention()
             subscription = await self._adapter.subscribe(self.name, func)
             self._subscriptions.append(subscription)
             return subscription
@@ -96,12 +101,17 @@ class Stream:
         """Create a consumer."""
         if self._closed:
             raise RuntimeError("Stream is closed")
-        consumer = Consumer(self.name, consumer_id, opts, self._adapter, self._messages)
+        consumer = Consumer(self.name, consumer_id, opts, self._adapter, self._messages, self._apply_retention)
         self._consumers.append(consumer)
         return consumer
 
+    async def _apply_retention(self) -> None:
+        if self._retention.max_length is not None or self._retention.max_age_seconds is not None:
+            await self._adapter.trim_stream(self.name, self._retention)
+
     async def get_info(self) -> StreamInfo:
         """Get stream info."""
+        await self._apply_retention()
         info = await self._adapter.get_stream_info(self.name)
         return info
 
@@ -113,6 +123,7 @@ class Stream:
         self, start: str, end: str, count: Optional[int] = None
     ) -> list[Message]:
         """Get messages by ID range."""
+        await self._apply_retention()
         all_messages = sorted(
             await self._adapter.get_stream_messages(self.name), key=lambda m: m.timestamp
         )
@@ -128,6 +139,7 @@ class Stream:
 
     async def replay(self, from_timestamp: int, handler: MessageHandler) -> int:
         """Replay messages from timestamp."""
+        await self._apply_retention()
         messages = sorted(
             [
                 m
@@ -174,12 +186,14 @@ class Consumer:
         opts: ConsumerOptions,
         adapter: FlowAdapter,
         messages: dict[str, Message],
+        retention: Optional[Callable[[], Awaitable[None]]] = None,
     ):
         self.stream = stream
         self.consumer_id = consumer_id
         self.opts = opts
         self._adapter = adapter
         self._messages = messages
+        self._retention = retention
         self._subscription: Any = None
         self._paused = False
 
@@ -187,6 +201,8 @@ class Consumer:
         """Subscribe with handler."""
         if self._subscription is not None:
             raise RuntimeError("Consumer is already subscribed")
+        if self._retention is not None:
+            await self._retention()
         self._subscription = await self._adapter.consume(
             self.stream, self.opts.group_id, self.consumer_id, handler, self.opts
         )

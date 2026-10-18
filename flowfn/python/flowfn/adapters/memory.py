@@ -357,6 +357,9 @@ class MemoryAdapter:
             retained = [message for message in retained if message.timestamp >= cutoff]
         if strategy.max_length is not None:
             retained = retained[-strategy.max_length :] if strategy.max_length else []
+        protected = set().union(*(group.unacknowledged for (name, _), group in self._groups.items() if name == stream))
+        retained_ids = {message.id for message in retained} | protected
+        retained = [message for message in messages if message.id in retained_ids]
         self._streams[stream] = retained
         return len(messages) - len(retained)
 
