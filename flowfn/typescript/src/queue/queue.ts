@@ -1,3 +1,4 @@
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
 import { OperationObserver } from '../instrumentation.js';
 import type {
   Queue,
@@ -21,6 +22,7 @@ interface ProcessorState<T> { stopped: boolean; jobs: Set<JobImpl<T>> }
 export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   private paused = false;
   private closed = false;
+  private closing?: Promise<void>;
   private workers = new Set<Promise<void>>();
   private producers = new Set<Promise<unknown>>();
   private inFlight = 0;
@@ -561,18 +563,22 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
   getDLQ() {
     return this.dlq;
   }
-  async close() {
+  close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
+    if (this.closing) return this.closing;
     this.closed = true;
     for (const controller of this.controllers) controller.abort();
     this.wake();
-    try {
+    const abandon = () => {
+      for (const guard of this.leases.values()) { guard.lost = true; guard.controller?.abort(); clearInterval(guard.timer); }
+      this.leases.clear();
+      this.workers.clear();
+      this.cache.clear();
+    };
+    const work = (async () => {
       await Promise.allSettled([...this.producers]);
       await Promise.all([...this.workers]);
-    }
-    finally {
-      for (const guard of this.leases.values()) clearInterval(guard.timer);
-      this.leases.clear();
-      this.cache.clear();
-    }
+    })();
+    return this.closing = boundedShutdown(work, timeout, `Queue ${this.name}`, abandon).finally(abandon);
   }
 }

@@ -1,3 +1,4 @@
+import { shutdownContract } from '../storage/shutdown-contract.js';
 import { telemetryContract } from '../storage/telemetry-contract.js';
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -18,6 +19,7 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
     let adapter: RedisAdapter;
     let redis: Redis;
     let prefix: string;
+    it('bounds global shutdown and fences late callback results', async () => { await shutdownContract(adapter); });
     it('exports native operation spans and reports callback failures', async () => { await telemetryContract(adapter); });
     it('bounds worker shutdown and fences abandoned callbacks', async () => { await workerOwnershipContract(adapter, 1000); });
     it('scales independent worker groups without closing shared queues', async () => { await workerPoolContract(adapter); });

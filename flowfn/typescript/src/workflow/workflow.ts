@@ -1,3 +1,4 @@
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
 import { OperationObserver } from '../instrumentation.js';
 import {
   Workflow,
@@ -262,6 +263,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   private known = new Map<string, Checkpoint>();
   private definitions = new Map<string, StepDefinition>();
   private closed = false;
+  private closing?: Promise<void>;
   private catalogWrites: Promise<void> = Promise.resolve();
   private definitionHash: string;
   private recoveryTimer?: ReturnType<typeof setTimeout>;
@@ -344,6 +346,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   }
   private loseOwnership(runtime: Runtime): void {
     runtime.lost = true;
+    if (runtime.timer) clearInterval(runtime.timer);
     runtime.leaseLost.abort();
     runtime.controller.abort();
   }
@@ -418,7 +421,9 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     try {
       await this.acquire(runtime, true);
       await this.indexExecution(record.id);
+      this.ensureOpen();
     } catch (error) {
+      this.loseOwnership(runtime);
       if (runtime.timer) clearInterval(runtime.timer);
       this.active.delete(record.id);
       this.known.delete(record.id);
@@ -498,6 +503,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     for (;;) {
       this.check(runtime);
       await this.receiveSignals(runtime);
+      this.check(runtime);
       const deadline = record.waits[key].deadline;
       if (deadline !== undefined && Date.now() >= deadline) {
         delete record.waits[key];
@@ -956,6 +962,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       await this.acquire(runtime, false);
       this.event(record, "execution.resumed");
       await this.persist(runtime);
+      this.ensureOpen();
     } catch (error) {
       this.loseOwnership(runtime);
       if (runtime.timer) clearInterval(runtime.timer);
@@ -1029,12 +1036,22 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         : 0,
     };
   }
-  async close(): Promise<void> {
+  close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
+    if (this.closing) return this.closing;
     this.closed = true;
     if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
-    await this.recoveryTask?.catch(() => undefined);
-    const runtimes = [...this.active.values()];
-    for (const runtime of runtimes) runtime.controller.abort();
-    await Promise.all(runtimes.map((runtime) => runtime.task));
+    for (const runtime of this.active.values()) runtime.controller.abort();
+    const work = (async () => {
+      await this.recoveryTask?.catch(() => undefined);
+      const runtimes = [...this.active.values()];
+      for (const runtime of runtimes) runtime.controller.abort();
+      await Promise.all(runtimes.map(runtime => runtime.task));
+    })();
+    return this.closing = boundedShutdown(work, timeout, `Workflow ${this.name}`, () => {
+      for (const runtime of this.active.values()) this.loseOwnership(runtime);
+      this.active.clear();
+      this.tasks.clear();
+    });
   }
 }

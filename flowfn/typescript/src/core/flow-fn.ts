@@ -1,3 +1,4 @@
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from './shutdown.js';
 import { OperationObserver, type FlowTelemetryOptions, type FlowErrorContext } from '../instrumentation.js';
 import { FlowAdapter } from "../adapters/base.js";
 import { MemoryAdapter } from "../adapters/memory.js";
@@ -63,7 +64,7 @@ export interface FlowFn {
   on(event: string, handler: (...args: any[]) => void): void;
   off(event: string, handler: (...args: any[]) => void): void;
 
-  close(): Promise<void>;
+  close(options?: ShutdownOptions): Promise<void>;
 }
 
 export class FlowFnImpl extends EventEmitter implements FlowFn {
@@ -72,6 +73,7 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
   private workflows = new Map<string, Workflow>();
   private workflowNamespace: string;
   private closed = false;
+  private closing?: Promise<void>;
   private defaultQueueOptions?: QueueOptions;
   private defaultStreamOptions?: StreamOptions;
   private queues: Map<string, Queue> = new Map();
@@ -364,15 +366,27 @@ export class FlowFnImpl extends EventEmitter implements FlowFn {
     return this.eventTracker;
   }
 
-  async close(): Promise<void> {
+  close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
+    if (this.closing) return this.closing;
     this.closed = true;
-    await this._scheduler.close();
-    await Promise.all(
-      [...this.workflows.values()].map((workflow) => workflow.close()),
-    );
-    for (const q of this.queues.values()) await q.close();
-    for (const s of this.streams.values()) await s.close();
-    await this.adapter.cleanup();
+    const deadline = performance.now() + timeout;
+    return this.closing = (async () => {
+      const results = await Promise.allSettled([
+        ...this.listeners("closing").map(listener => boundedShutdown(Promise.resolve().then(() => listener({ timeout })), timeout, "Shutdown hook")),
+        this._scheduler.close({ timeout }),
+        ...[...this.workflows.values()].map(workflow => workflow.close({ timeout })),
+        ...[...this.queues.values()].map(queue => queue.close({ timeout })),
+        ...[...this.streams.values()].map(stream => stream.close({ timeout })),
+      ]);
+      const remaining = Math.max(0, deadline - performance.now());
+      let cleanupError: unknown;
+      try { await boundedShutdown(this.adapter.cleanup({ timeout: remaining }), remaining, 'Adapter'); }
+      catch (error) { cleanupError = error; }
+      const failure = results.find(result => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+      if (cleanupError) throw cleanupError;
+    })();
   }
 }
 

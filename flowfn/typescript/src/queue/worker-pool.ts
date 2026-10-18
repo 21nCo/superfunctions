@@ -1,3 +1,4 @@
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
 import { EventEmitter } from 'eventemitter3';
 import { Worker, type WorkerOptions } from './worker.js';
 import type { FlowFn } from '../core/flow-fn.js';
@@ -25,6 +26,7 @@ export class WorkerPool extends EventEmitter {
   private started = false;
   private stopped = false;
   private closing?: Promise<void>;
+  private onFlowClose = (options: ShutdownOptions) => this.close(options);
   private onSignal = () => { void this.close().catch(error => this.emit('error', error)); };
   constructor(private options: WorkerPoolOptions) {
     super();
@@ -56,6 +58,7 @@ export class WorkerPool extends EventEmitter {
     if (this.stopped) throw new Error('Worker pool is closed');
     if (this.started) { await this.scaling; return; }
     this.started = true;
+    this.options.flow.on("closing", this.onFlowClose);
     this.scaling = (async () => { while (!this.stopped && this.workers.length < this.options.minWorkers) await this.add(); })();
     try { await this.scaling; }
     catch (error) { this.started = false; throw error; }
@@ -87,18 +90,21 @@ export class WorkerPool extends EventEmitter {
   async getStats() {
     return { activeWorkers: this.workers.filter(worker => worker.getStats().running).length, maxWorkers: this.options.maxWorkers, minWorkers: this.options.minWorkers, activeJobs: this.workers.reduce((sum, worker) => sum + worker.getStats().activeJobs, 0) };
   }
-  close(): Promise<void> {
+  close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout({ timeout: options.timeout ?? this.options.workerOptions?.shutdownTimeout });
     if (this.closing) return this.closing;
     this.stopped = true;
+    this.options.flow.off("closing", this.onFlowClose);
     if (this.timer) clearInterval(this.timer);
     for (const signal of new Set(this.options.signals ?? [])) process.off(signal, this.onSignal);
-    return this.closing = (async () => {
+    return this.closing = boundedShutdown((async () => {
+      const closingWorkers = Promise.allSettled(this.workers.splice(0).map(worker => worker.close({ timeout })));
       await this.scaling?.catch(() => undefined);
-      const results = await Promise.allSettled(this.workers.splice(0).map(worker => worker.close()));
+      const results = await closingWorkers;
       const failed = results.find(result => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
       this.emit('closed');
-    })();
+    })(), timeout, 'Worker pool');
   }
 }
 export function createWorkerPool(options: WorkerPoolOptions): WorkerPool { return new WorkerPool(options); }

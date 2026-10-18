@@ -25,7 +25,7 @@ deduplication and at-least-once delivery; [retry strategies](docs/retry-strategi
 for custom backoff; and [usage](docs/USAGE.md) for the broader API.
 
 D1, SQS and Kafka adapters are not implemented. Stream partition assignment,
-distributed trace propagation, global bounded shutdown and the original performance targets
+distributed trace propagation and the original performance targets
 remain incomplete. Workflow ownership and scheduler coordination are durable on
 Redis and PostgreSQL. This package is not yet a production-readiness claim.
 
@@ -33,7 +33,7 @@ Redis and PostgreSQL. This package is not yet a production-readiness claim.
 
 `createWorker({ flow, queues, concurrency, shutdownTimeout, signals })` owns only
 its registered processors. `await worker.close()` aborts those jobs' signals and
-waits up to `shutdownTimeout` (30 seconds by default); producers and other workers
+waits up to `shutdownTimeout` (25 seconds by default); producers and other workers
 on the queue remain usable. On timeout it rejects, stops renewing the abandoned
 leases and fences late results. JavaScript callbacks and external side effects
 cannot be forcibly stopped: handlers must observe `job.signal` and use idempotent
@@ -49,9 +49,21 @@ closes its workers. This does not provision machines or operating-system process
 
 Worker settings accept `leaseDuration` (or `lockDuration`), `lockRenewTime`,
 `stalledInterval` and `maxStalledCount`. Workers sharing a queue must use compatible
-lease settings. Signal handlers are opt-in and are removed on close. Bounded
-shutdown here covers worker processors; non-cooperative workflow or scheduler
-callbacks still need separate lifecycle handling.
+lease settings. Signal handlers are opt-in and are removed on close.
+
+### Shutdown
+
+`await flow.close({ timeout: 25_000 })` shares one deadline across workers, queues,
+workflows, schedules, streams and adapter cleanup. Closing rejects new work, aborts
+active callback signals, removes polling and signal handlers, and attempts storage
+cleanup even when a component times out. The default is 25 seconds. A timeout
+rejects with `ShutdownTimeoutError` and fences late callback results. Individual
+resources also accept `close({ timeout })`.
+
+Handlers must cooperate with cancellation; shutdown cannot undo external side
+effects or storage requests already issued. Redis connections are disconnected
+when cleanup fails or times out. PostgreSQL connections belong to the caller, who
+must close their own pool after closing the flow.
 
 ### Errors and tracing
 

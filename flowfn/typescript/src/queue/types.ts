@@ -1,3 +1,4 @@
+import type { ShutdownOptions } from '../core/shutdown.js';
 export interface Queue<T = any> {
   name: string;
 
@@ -43,7 +44,7 @@ export interface Queue<T = any> {
   off(event: QueueEvent, handler: (...args: any[]) => void): void;
 
   // Lifecycle
-  close(): Promise<void>;
+  close(options?: ShutdownOptions): Promise<void>;
 }
 export interface QueueProcessor {
   readonly activeJobs: number;

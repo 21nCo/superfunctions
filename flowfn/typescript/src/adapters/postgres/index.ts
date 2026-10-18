@@ -1,3 +1,4 @@
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../../core/shutdown.js';
 import { randomUUID, createHash } from "node:crypto";
 import { mutateWorkflow, validateWorkflowMutation, type WorkflowMutation } from '../../storage/workflow-control.js';
 import { sql, type SQL } from "drizzle-orm";
@@ -674,10 +675,9 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       )[0]?.state ?? null
     );
   }
-  async cleanup(): Promise<void> {
+  async cleanup(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
     this.closed = true;
-    await Promise.all(
-      [...this.subscriptions].map((subscription) => subscription.unsubscribe()),
-    );
+    await boundedShutdown(Promise.all([...this.subscriptions].map(subscription => subscription.unsubscribe())), timeout, 'PostgreSQL adapter');
   }
 }

@@ -1,3 +1,4 @@
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from './shutdown.js';
 import { OperationObserver } from '../instrumentation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import parser from 'cron-parser';
@@ -16,6 +17,7 @@ const canonical = (value: unknown) => JSON.stringify(value, (_key, item) => item
 export class DurableScheduler extends Scheduler {
   private bindings = new Map<string, Binding>();
   private stopping = false;
+  private durableClosing?: Promise<void>;
   private work = new Set<Promise<void>>();
   private scope: string;
   constructor(private adapter: FlowAdapter, namespace = '', private leaseDuration = 30_000, private observer = new OperationObserver()) {
@@ -106,9 +108,10 @@ export class DurableScheduler extends Scheduler {
     }
     const controller = new AbortController();
     let lost = false, pending = false, renewal: Promise<void> = Promise.resolve();
-    const lose = () => { lost = true; controller.abort(); };
+    let timer: ReturnType<typeof setInterval>;
+    const lose = () => { lost = true; clearInterval(timer); controller.abort(); };
     binding.abort = lose;
-    const timer = setInterval(() => {
+    timer = setInterval(() => {
       if (lost) return;
       if (performance.now() >= deadline) { lose(); return; }
       if (pending) return;
@@ -161,9 +164,11 @@ export class DurableScheduler extends Scheduler {
   override cancel(name: string) { return this.control(name, 'cancelled', true); }
   override pause(name: string) { return this.control(name, 'paused', true); }
   override resume(name: string) { return this.control(name, 'paused', false); }
-  override async close() {
+  override close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
+    if (this.durableClosing) return this.durableClosing;
     this.stopping = true;
     for (const binding of this.bindings.values()) { if (binding.timer) clearTimeout(binding.timer); binding.abort?.(); }
-    await Promise.allSettled([...this.work]);
+    return this.durableClosing = boundedShutdown(Promise.allSettled([...this.work]), timeout, 'Scheduler', () => { this.bindings.clear(); this.work.clear(); });
   }
 }

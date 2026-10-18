@@ -57,3 +57,5 @@ export {
   type ListOptions as StorageListOptions,
 } from "./storage/workflow-storage.js";
 export * from "./storage/event-log.js";
+
+export { ShutdownTimeoutError, type ShutdownOptions } from "./core/shutdown.js";

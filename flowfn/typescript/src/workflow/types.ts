@@ -1,3 +1,4 @@
+import type { ShutdownOptions } from '../core/shutdown.js';
 export interface WorkflowContext<T = any> {
   signal: AbortSignal;
   workflowId: string;
@@ -31,7 +32,7 @@ export interface Workflow<T = any> {
     decision: ApprovalDecision,
   ): Promise<void>;
   waitForCompletion(executionId: string): Promise<WorkflowExecution>;
-  close(): Promise<void>;
+  close(options?: ShutdownOptions): Promise<void>;
 
   getExecutionHistory(executionId: string): Promise<WorkflowEvent[]>;
   getMetrics(): Promise<WorkflowMetrics>;

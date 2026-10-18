@@ -1,3 +1,4 @@
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
 import { randomUUID } from "node:crypto";
 import { validateWorkflowMutation, type WorkflowMutation } from '../storage/workflow-control.js';
 import { FlowAdapter } from "./base.js";
@@ -646,11 +647,18 @@ local output=cjson.encode(next); redis.call('SET',KEYS[1],output); return output
     return { name: stream, length, groups, lag };
   }
 
-  async cleanup(): Promise<void> {
+  async cleanup(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
     this.closed = true;
-    await Promise.all(
-      [...this.subscriptions].map((subscription) => subscription.unsubscribe()),
-    );
-    await this.redis.quit();
+    const work = (async () => {
+      await Promise.all([...this.subscriptions].map(subscription => subscription.unsubscribe()));
+      await this.redis.quit();
+    })();
+    try {
+      await boundedShutdown(work, timeout, 'Redis adapter', () => this.redis.disconnect());
+    } catch (error) {
+      this.redis.disconnect();
+      throw error;
+    }
   }
 }

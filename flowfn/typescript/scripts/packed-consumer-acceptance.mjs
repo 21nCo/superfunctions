@@ -31,7 +31,7 @@ queue.process(async job => job.data * 2);
 const job = await queue.add('work', 21);
 await queue.drain();
 if ((await queue.getJob(job.id)).returnvalue !== 42) throw new Error('Packed processing failed');
-await flow.close();
+await flow.close({ timeout: 1000 });
 instrumentation.disable();
 if (observed < 2) throw new Error('Packed instrumentation entry point does not share runtime state');
 if (typeof RedisAdapter !== 'function' || typeof PostgresAdapter !== 'function') throw new Error('Missing adapter export');
@@ -41,7 +41,7 @@ if (typeof RedisAdapter !== 'function' || typeof PostgresAdapter !== 'function')
   run(process.execPath, ['consumer.mjs']);
   run(process.execPath, ['consumer.cjs']);
   run(process.execPath, ['-e', "const pkg=require('@flowfn/core/package.json');if(typeof require('@flowfn/core')[pkg.superfunctions.initFunction]!=='function')throw Error('Invalid initializer metadata')"]);
-  const types = `import { FlowInstrumentation } from '@flowfn/core/instrumentation';\nnew FlowInstrumentation().enable();\nimport { createFlow, type Job, type BackoffStrategy } from '@flowfn/core';\nimport { MemoryAdapter } from '@flowfn/core/adapters/memory';\nimport { RedisAdapter } from '@flowfn/core/adapters/redis';\nimport { PostgresAdapter } from '@flowfn/core/adapters/postgres';\nconst strategy: BackoffStrategy = (attempt, error, job) => attempt;\nconst queue = createFlow({ adapter: new MemoryAdapter() }).queue<{ value: number }>('typed', { backoffStrategies: { strategy } });\nqueue.process(async job => job.data.value);\nvoid RedisAdapter; void PostgresAdapter;\n`;
+  const types = `import { FlowInstrumentation } from '@flowfn/core/instrumentation';\nnew FlowInstrumentation().enable();\nimport { createFlow, type Job, type BackoffStrategy } from '@flowfn/core';\nimport { MemoryAdapter } from '@flowfn/core/adapters/memory';\nimport { RedisAdapter } from '@flowfn/core/adapters/redis';\nimport { PostgresAdapter } from '@flowfn/core/adapters/postgres';\nconst strategy: BackoffStrategy = (attempt, error, job) => attempt;\nconst queue = createFlow({ adapter: new MemoryAdapter() }).queue<{ value: number }>('typed', { backoffStrategies: { strategy } });\nqueue.process(async job => job.data.value);\nvoid queue.close({ timeout: 1000 });\nvoid RedisAdapter; void PostgresAdapter;\n`;
   writeFileSync(join(fixture, 'consumer.mts'), types);
   writeFileSync(join(fixture, 'consumer.cts'), types);
   run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--skipLibCheck', 'false', 'consumer.mts', 'consumer.cts']);

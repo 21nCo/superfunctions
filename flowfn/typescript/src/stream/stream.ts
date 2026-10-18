@@ -1,3 +1,4 @@
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
 import { OperationObserver } from '../instrumentation.js';
 import { randomUUID } from "node:crypto";
 import type {
@@ -18,6 +19,7 @@ export class StreamImpl<T = any> implements Stream<T> {
   private subscriptions = new Set<Subscription>();
   private consumers = new Set<Consumer<T>>();
   private closed = false;
+  private closing?: Promise<void>;
   private count = 0;
   constructor(
     public name: string,
@@ -78,6 +80,7 @@ export class StreamImpl<T = any> implements Stream<T> {
     const inner = await this.adapter.subscribe(
       this.name,
       async (message) => {
+        this.open();
         this.record?.(
           "stream.latency",
           Math.max(0, Date.now() - message.timestamp),
@@ -86,6 +89,7 @@ export class StreamImpl<T = any> implements Stream<T> {
       },
       options,
     );
+    if (this.closed) { await inner.unsubscribe(); throw new Error("Stream is closed"); }
     const subscription: Subscription = {
       unsubscribe: async () => {
         await inner.unsubscribe();
@@ -100,6 +104,7 @@ export class StreamImpl<T = any> implements Stream<T> {
     let subscription: Subscription | undefined,
       closed = false,
       paused = false;
+    let closingConsumer: Promise<void> | undefined;
     const consumer: Consumer<T> = {
       subscribe: async (handler) => {
         this.open();
@@ -110,6 +115,8 @@ export class StreamImpl<T = any> implements Stream<T> {
           options.groupId,
           id,
           async (message) => {
+            this.open();
+            if (closed) throw new Error("Consumer is closed");
             this.record?.(
               "stream.latency",
               Math.max(0, Date.now() - message.timestamp),
@@ -118,6 +125,7 @@ export class StreamImpl<T = any> implements Stream<T> {
           },
           options,
         );
+        if (this.closed || closed) { await subscription.unsubscribe(); throw new Error("Consumer is closed"); }
         if (paused) {
           if (!subscription.pause)
             throw new Error("Adapter does not support consumer pause");
@@ -142,10 +150,11 @@ export class StreamImpl<T = any> implements Stream<T> {
           await subscription.resume();
         }
       },
-      close: async () => {
+      close: (shutdown: ShutdownOptions = {}) => {
+        const timeout = shutdownTimeout(shutdown);
+        if (closingConsumer) return closingConsumer;
         closed = true;
-        await subscription?.unsubscribe();
-        this.consumers.delete(consumer);
+        return closingConsumer = boundedShutdown(subscription?.unsubscribe() ?? Promise.resolve(), timeout, `Consumer ${id}`).finally(() => this.consumers.delete(consumer));
       },
     };
     this.consumers.add(consumer);
@@ -186,11 +195,13 @@ export class StreamImpl<T = any> implements Stream<T> {
   getMessageCount() {
     return this.count;
   }
-  async close(): Promise<void> {
+  close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
+    if (this.closing) return this.closing;
     this.closed = true;
-    await Promise.all(
-      [...this.subscriptions].map((subscription) => subscription.unsubscribe()),
-    );
-    await Promise.all([...this.consumers].map((consumer) => consumer.close()));
+    return this.closing = boundedShutdown(Promise.all([
+      ...[...this.subscriptions].map(subscription => subscription.unsubscribe()),
+      ...[...this.consumers].map(consumer => consumer.close({ timeout })),
+    ]), timeout, `Stream ${this.name}`);
   }
 }

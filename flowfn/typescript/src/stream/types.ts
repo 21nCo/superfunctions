@@ -1,3 +1,4 @@
+import type { ShutdownOptions } from '../core/shutdown.js';
 export interface StreamOptions {
   maxLength?: number;
   retention?: number;
@@ -33,7 +34,7 @@ export interface Stream<T = any> {
   ): Promise<Message<T>[]>;
 
   // Lifecycle
-  close(): Promise<void>;
+  close(options?: ShutdownOptions): Promise<void>;
 }
 
 export interface Message<T = any> {
@@ -74,7 +75,7 @@ export interface Consumer<T = any> {
   subscribe(handler: MessageHandler<T>): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
-  close(): Promise<void>;
+  close(options?: ShutdownOptions): Promise<void>;
 }
 
 export type MessageHandler<T> = (message: Message<T>) => Promise<void>;

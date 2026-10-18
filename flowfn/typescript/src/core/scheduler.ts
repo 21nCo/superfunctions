@@ -1,3 +1,4 @@
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from './shutdown.js';
 import parser from "cron-parser";
 export interface ScheduleOptions {
   /** Change to start a new durable schedule generation when handler behavior changes. */
@@ -24,6 +25,7 @@ export class Scheduler {
   private tasks = new Map<string, Task>();
   private active = new Set<Promise<void>>();
   private closed = false;
+  private closing?: Promise<void>;
   private next(options: ScheduleOptions, now: number): number {
     return options.pattern
       ? parser
@@ -174,9 +176,12 @@ export class Scheduler {
       this.plan(name, task);
     }
   }
-  async close() {
+  close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
+    if (this.closing) return this.closing;
     this.closed = true;
-    for (const name of this.tasks.keys()) await this.cancel(name);
-    await Promise.all([...this.active]);
+    for (const task of this.tasks.values()) if (task.timer) clearTimeout(task.timer);
+    this.tasks.clear();
+    return this.closing = boundedShutdown(Promise.all([...this.active]), timeout, 'Scheduler', () => this.active.clear());
   }
 }

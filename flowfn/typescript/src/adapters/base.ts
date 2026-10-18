@@ -1,3 +1,4 @@
+import type { ShutdownOptions } from '../core/shutdown.js';
 import { Job, QueueStats } from "../queue/types.js";
 import {
   Message,
@@ -64,5 +65,5 @@ export interface FlowAdapter {
   cleanJobs(queue: string, grace: number, status: string): Promise<number>;
   getQueueStats(queue: string): Promise<QueueStats>;
   getStreamInfo(stream: string): Promise<StreamInfo>;
-  cleanup(): Promise<void>;
+  cleanup(options?: ShutdownOptions): Promise<void>;
 }

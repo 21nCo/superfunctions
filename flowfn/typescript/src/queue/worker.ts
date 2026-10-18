@@ -1,3 +1,4 @@
+import { DEFAULT_SHUTDOWN_TIMEOUT, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
 import { FlowFn } from "../core/flow-fn.js";
 import { Queue, Job, QueueEvent, QueueProcessor } from "./types.js";
 import { EventEmitter } from "eventemitter3";
@@ -22,6 +23,7 @@ export class Worker extends EventEmitter {
   private closed = false;
   private processors = new Map<string, QueueProcessor>();
   private closing?: Promise<void>;
+  private onFlowClose = (options: ShutdownOptions) => this.close(options);
   private signalHandler = () => { void this.close().catch(error => this.emit('error', error)); };
   constructor(private readonly options: WorkerOptions) {
     super();
@@ -53,6 +55,7 @@ export class Worker extends EventEmitter {
     if (this.closed) throw new Error("Worker is closed");
     if (this.started) return;
     this.started = true;
+    this.options.flow.on("closing", this.onFlowClose);
     for (const signal of new Set(this.options.signals ?? [])) process.on(signal, this.signalHandler);
     this.options.flow.metrics.registerWorker(this);
     try {
@@ -81,16 +84,19 @@ export class Worker extends EventEmitter {
     this.handlers.set(queueName, handler);
   }
   getStats() { return { activeJobs: [...this.processors.values()].reduce((sum, processor) => sum + processor.activeJobs, 0), running: this.started && !this.closed }; }
-  close(): Promise<void> {
+  close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout({ timeout: options.timeout ?? this.options.shutdownTimeout ?? DEFAULT_SHUTDOWN_TIMEOUT });
     if (this.closing) return this.closing;
     this.closed = true;
+    this.options.flow.off("closing", this.onFlowClose);
     for (const signal of new Set(this.options.signals ?? [])) process.off(signal, this.signalHandler);
-    this.emit("closing");
-    return this.closing = this.closeProcessors();
+    this.closing = this.closeProcessors(timeout);
+    try { this.emit("closing"); } catch { /* Observers cannot prevent processor cleanup. */ }
+    return this.closing;
   }
-  private async closeProcessors(): Promise<void> {
+  private async closeProcessors(timeout: number): Promise<void> {
     try {
-      const results = await Promise.allSettled([...this.processors.values()].map(processor => processor.close({ timeout: this.options.shutdownTimeout ?? 30_000 })));
+      const results = await Promise.allSettled([...this.processors.values()].map(processor => processor.close({ timeout })));
       const failed = results.find(result => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
     } finally {
@@ -98,7 +104,7 @@ export class Worker extends EventEmitter {
         for (const [event, listener] of listeners) queue.off(event, listener);
       this.subscriptions.clear();
       this.options.flow.metrics.unregisterWorker(this);
-      this.emit("closed");
+      try { this.emit("closed"); } catch { /* Preserve the processor shutdown outcome. */ }
     }
   }
 }
