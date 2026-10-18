@@ -256,10 +256,11 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       await stream.publish(1);
       await vi.waitFor(() => expect(seen).toHaveLength(1));
       await a.pause();
+      await pool.query(`UPDATE "${schema}".flowfn_deliveries SET delivered_at=0`);
       const b = stream.createConsumer("b", {
         groupId: "group",
         autoCommit: false,
-        visibilityTimeout: 30,
+        visibilityTimeout: 1000,
       });
       await b.subscribe(async (message) => {
         recovered.push(message);
@@ -275,6 +276,28 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
         (await pool.query(`SELECT state FROM "${schema}".flowfn_deliveries`))
           .rows[0].state,
       ).toBe("completed");
+      await stream.close();
+    });
+    it.each(['ack', 'nack', 'unsubscribe'] as const)('uses server time and rejects expired delivery %s before takeover', async action => {
+      const stream = new StreamImpl<number>('server-clock', adapter);
+      const seen: Message<number>[] = [];
+      const consumer = stream.createConsumer('owner', { groupId: 'group', autoCommit: false, visibilityTimeout: 1000 });
+      await consumer.subscribe(async message => { seen.push(message); });
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3600000);
+      try {
+        await stream.publish(1);
+        await vi.waitFor(() => expect(seen).toHaveLength(1));
+      } finally { clock.mockRestore(); }
+      await consumer.pause();
+      const [{ skew }] = (await pool.query(`SELECT abs(delivered_at-floor(extract(epoch from clock_timestamp())*1000)) AS skew FROM "${schema}".flowfn_deliveries`)).rows;
+      expect(Number(skew)).toBeLessThan(1000);
+      await pool.query(`UPDATE "${schema}".flowfn_deliveries SET delivered_at=0`);
+      if (action === 'ack') await seen[0].ack();
+      else if (action === 'nack') await seen[0].nack(true);
+      else await consumer.close();
+      expect((await pool.query(`SELECT state FROM "${schema}".flowfn_deliveries`)).rows[0].state).toBe('active');
+      await consumer.close();
+      expect((await pool.query(`SELECT state FROM "${schema}".flowfn_deliveries`)).rows[0].state).toBe('active');
       await stream.close();
     });
     it("migrates legacy data transactionally while retaining original tables as backups", async () => {

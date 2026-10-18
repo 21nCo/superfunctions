@@ -541,6 +541,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
     const deliveries = this.table("flowfn_deliveries"),
       messages = this.table("flowfn_messages"),
       groups = this.table("flowfn_consumer_groups");
+    const serverNow = sql`floor(extract(epoch from clock_timestamp()) * 1000)::bigint`;
     const claim = async () =>
       this.db.transaction(async (tx: any) => {
         await this.rows(
@@ -548,7 +549,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
           tx,
         );
         const old = await this.rows(
-          sql`SELECT d.message_id,m.* FROM ${deliveries} d JOIN ${messages} m ON m.id=d.message_id WHERE d.stream=${stream} AND d.group_id=${group} AND (d.state='waiting' OR (d.state='active' AND d.delivered_at<=${Date.now() - lease})) ORDER BY m.position FOR UPDATE OF d SKIP LOCKED LIMIT 1`,
+          sql`SELECT d.message_id,m.* FROM ${deliveries} d JOIN ${messages} m ON m.id=d.message_id WHERE d.stream=${stream} AND d.group_id=${group} AND (d.state='waiting' OR (d.state='active' AND d.delivered_at<=${serverNow}-${lease})) ORDER BY m.position FOR UPDATE OF d SKIP LOCKED LIMIT 1`,
           tx,
         );
         let row = old[0];
@@ -565,7 +566,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
         }
         const receipt = randomUUID();
         await tx.execute(
-          sql`INSERT INTO ${deliveries} (stream,group_id,message_id,consumer_id,receipt,state,delivered_at) VALUES (${stream},${group},${row.id},${consumer},${receipt},'active',${Date.now()}) ON CONFLICT(stream,group_id,message_id) DO UPDATE SET consumer_id=EXCLUDED.consumer_id,receipt=EXCLUDED.receipt,state='active',delivered_at=EXCLUDED.delivered_at`,
+          sql`INSERT INTO ${deliveries} (stream,group_id,message_id,consumer_id,receipt,state,delivered_at) VALUES (${stream},${group},${row.id},${consumer},${receipt},'active',${serverNow}) ON CONFLICT(stream,group_id,message_id) DO UPDATE SET consumer_id=EXCLUDED.consumer_id,receipt=EXCLUDED.receipt,state='active',delivered_at=EXCLUDED.delivered_at`,
         );
         return { row, receipt };
       });
@@ -574,7 +575,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       const settle = async (requeue: boolean) => {
         if (!active || pending.get(row.id) !== receipt) return;
         const task = this.db.execute(
-          sql`UPDATE ${deliveries} SET state=${requeue ? "waiting" : "completed"} WHERE stream=${stream} AND group_id=${group} AND message_id=${row.id} AND receipt=${receipt}`,
+          sql`UPDATE ${deliveries} SET state=${requeue ? "waiting" : "completed"} WHERE stream=${stream} AND group_id=${group} AND message_id=${row.id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease}`,
         );
         settlements.add(task);
         try { await task; pending.delete(row.id); }
@@ -612,7 +613,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
           if (!result) break;
           if (!active || paused) {
             await this.db.execute(
-              sql`UPDATE ${deliveries} SET state='waiting' WHERE stream=${stream} AND group_id=${group} AND message_id=${result.row.id} AND receipt=${result.receipt}`,
+              sql`UPDATE ${deliveries} SET state='waiting' WHERE stream=${stream} AND group_id=${group} AND message_id=${result.row.id} AND receipt=${result.receipt} AND state='active' AND delivered_at>${serverNow}-${lease}`,
             );
             break;
           }
@@ -639,7 +640,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
         await Promise.allSettled([...settlements]);
         for (const [id, receipt] of pending)
           await this.db.execute(
-            sql`UPDATE ${deliveries} SET state='waiting' WHERE stream=${stream} AND group_id=${group} AND message_id=${id} AND receipt=${receipt}`,
+            sql`UPDATE ${deliveries} SET state='waiting' WHERE stream=${stream} AND group_id=${group} AND message_id=${id} AND receipt=${receipt} AND state='active' AND delivered_at>${serverNow}-${lease}`,
           );
         pending.clear();
         this.subscriptions.delete(subscription);
