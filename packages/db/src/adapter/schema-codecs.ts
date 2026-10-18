@@ -21,6 +21,34 @@ import type {
   WhereClause,
 } from "./types.js";
 
+// Tracks codec ownership so wrapping an already-configured adapter never encodes JSON twice.
+const codecSchemas = new WeakMap<object, TableSchemaMap>();
+const codecSchemaKey = Symbol.for("@superfunctions/db/schema-codecs");
+function registeredSchema(adapter: object): TableSchemaMap | undefined {
+  return codecSchemas.get(adapter) ?? (adapter as { [codecSchemaKey]?: TableSchemaMap })[codecSchemaKey];
+}
+export function registerAdapterCodecs<T extends object>(adapter: T, schema: TableSchemaMap): T {
+  codecSchemas.set(adapter, schema);
+  Object.defineProperty(adapter, codecSchemaKey, { value: schema, configurable: true });
+  return adapter;
+}
+function unhandledJsonSchema(adapter: object, schema: TableSchemaMap): TableSchemaMap {
+  const existing = registeredSchema(adapter);
+  if (!existing) return schema;
+  return Object.fromEntries(Object.entries(schema).map(([model, table]) => [model, {
+    ...table, fields: Object.fromEntries(Object.entries(table.fields).map(([name, field]) => [name,
+      field.type === "json" && field.jsonStorageType === "json-text" && existing[model]?.fields[name]?.jsonStorageType === "json-text"
+        ? { ...field, jsonStorageType: "native" as const } : field,
+    ])),
+  }]));
+}
+function combinedCodecSchema(adapter: object, schema: TableSchemaMap): TableSchemaMap {
+  const existing = registeredSchema(adapter) ?? {};
+  const combined = { ...existing };
+  for (const [model, table] of Object.entries(schema)) combined[model] = { ...table, fields: { ...existing[model]?.fields, ...table.fields } };
+  return combined;
+}
+
 export function normalizeAdapterSchema(
   input: AdapterSchemaInput | undefined,
 ): TableSchemaMap {
@@ -68,19 +96,21 @@ export function transformWhereForStorage(
   model: string,
   where: WhereClause[] | undefined,
 ): WhereClause[] | undefined {
-  const table = schema[model];
+  const table = Object.prototype.hasOwnProperty.call(schema, model) ? schema[model] : undefined;
   if (!table || !where?.length) {
     return where;
   }
 
   return where.map((clause) => {
     const field = table.fields[clause.field];
-    if (!isDateField(field)) {
+    const jsonText = field?.type === "json" && field.jsonStorageType === "json-text";
+    if (!isDateField(field) && !jsonText) {
       return clause;
     }
 
-    const convert = (value: unknown) =>
-      convertDateForStorage(value, field, `${model}.${clause.field}`);
+    const convert = (value: unknown) => jsonText
+      ? transformRecordForStorage(schema, model, { [clause.field]: value })[clause.field]
+      : convertDateForStorage(value, field, `${model}.${clause.field}`);
     const value =
       clause.operator === "in" || clause.operator === "not_in"
         ? readWhereArrayValue(clause.value, `${model}.${clause.field}`).map(
@@ -99,9 +129,10 @@ export function wrapWithSchema(
   adapter: Adapter,
   schemaInput: AdapterSchemaInput,
 ): Adapter {
-  const schema = normalizeAdapterSchema(schemaInput);
+  const requestedSchema = normalizeAdapterSchema(schemaInput);
+  const schema = unhandledJsonSchema(adapter, requestedSchema);
 
-  return {
+  return registerAdapterCodecs({
     ...adapter,
     id: adapter.id,
     name: adapter.name,
@@ -212,9 +243,11 @@ export function wrapWithSchema(
       }),
     transaction: <R>(
       callback: (trx: TransactionAdapter) => Promise<R>,
+      options?: Parameters<Adapter["transaction"]>[1],
     ): Promise<R> =>
       adapter.transaction((trx) =>
         callback(wrapTransactionWithSchema(trx, schema)),
+        options,
       ),
     initialize: (): Promise<void> => adapter.initialize(),
     isHealthy: () => adapter.isHealthy(),
@@ -228,7 +261,7 @@ export function wrapWithSchema(
     createSchema: adapter.createSchema
       ? (params: CreateSchemaParams) => adapter.createSchema!(params)
       : undefined,
-  };
+  }, combinedCodecSchema(adapter, requestedSchema));
 }
 
 function readSchemaModelName(table: unknown): string {
@@ -250,9 +283,10 @@ function readWhereArrayValue(value: unknown, fieldPath: string): unknown[] {
 
 function wrapTransactionWithSchema(
   adapter: TransactionAdapter,
-  schema: TableSchemaMap,
+  requestedSchema: TableSchemaMap,
 ): TransactionAdapter {
-  return {
+  const schema = unhandledJsonSchema(adapter, requestedSchema);
+  return registerAdapterCodecs({
     ...adapter,
     create: async <T = any>(params: CreateParams): Promise<T> =>
       transformRecordForRuntime(
@@ -356,7 +390,7 @@ function wrapTransactionWithSchema(
         ...params,
         where: transformWhereForStorage(schema, params.model, params.where),
       }),
-  };
+  }, combinedCodecSchema(adapter, requestedSchema));
 }
 
 function transformRecord<T>(
@@ -369,7 +403,7 @@ function transformRecord<T>(
     return record;
   }
 
-  const table = schema[model];
+  const table = Object.prototype.hasOwnProperty.call(schema, model) ? schema[model] : undefined;
   if (!table) {
     return record;
   }
@@ -378,7 +412,25 @@ function transformRecord<T>(
   const next = { ...(record as Record<string, unknown>) };
 
   for (const [fieldName, field] of Object.entries(table.fields)) {
-    if (!isDateField(field) || !(fieldName in next)) {
+    if (!(fieldName in next)) continue;
+    if (field.type === "json" && field.jsonStorageType === "json-text") {
+      const value = next[fieldName];
+      if (value !== null && value !== undefined) {
+        try {
+          if (direction === "storage") {
+            const serialized = JSON.stringify(value);
+            if (serialized === undefined) throw new Error("Unserializable JSON");
+            next[fieldName] = serialized;
+          } else {
+            if (typeof value !== "string") throw new Error("Expected JSON text");
+            next[fieldName] = JSON.parse(value);
+          }
+          changed = true;
+        } catch { throw new TypeError(`${model}.${fieldName} contains invalid JSON ${direction === "storage" ? "value" : "text"}`); }
+      }
+      continue;
+    }
+    if (!isDateField(field)) {
       continue;
     }
 

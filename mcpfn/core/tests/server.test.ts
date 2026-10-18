@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -59,6 +60,46 @@ describe("McpFnServer", () => {
     ).resolves.toMatchObject({
       structuredContent: { result: 5 },
     });
+  });
+
+  it("returns handler McpErrors as tool errors while preserving routing errors", async () => {
+    const registry = new McpFnRegistry().register({
+      name: "handler_error",
+      description: "Throw a handler error.",
+      inputSchema: { type: "object", additionalProperties: false },
+      handler: async () => { throw new McpError(ErrorCode.InternalError, "handler failed"); },
+    });
+    const server = createMcpFnServer({ info: { name: "error-server", version: "1" }, registry });
+    const client = new Client({ name: "error-client", version: "1" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    await expect(client.callTool({ name: "handler_error", arguments: {} })).resolves.toMatchObject({
+      isError: true,
+      structuredContent: { error: { code: "MCPFN_TOOL_ERROR" } },
+    });
+    await expect(client.callTool({ name: "missing", arguments: {} })).rejects.toBeInstanceOf(McpError);
+  });
+
+  it("preserves protocol errors from profile resolution", async () => {
+    const registry = new McpFnRegistry().register({
+      name: "echo", description: "Echo.", inputSchema: { type: "object" },
+      handler: async () => structuredResult({ ok: true }),
+    });
+    const server = createMcpFnServer({
+      info: { name: "profile-error-server", version: "1" }, registry,
+      clientProfiles: {
+        profiles: [],
+        resolveVerifiedIdentity: () => { throw new McpError(ErrorCode.InvalidRequest, "denied"); },
+      },
+    });
+    const client = new Client({ name: "profile-error-client", version: "1" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+    await expect(client.callTool({ name: "echo", arguments: {} })).rejects.toBeInstanceOf(McpError);
   });
 
   it("normalizes structured results without treating repeated references as cycles", () => {
@@ -364,6 +405,68 @@ describe("McpFnServer", () => {
     expect(server.manifest().tools.map(({ name }) => name)).toEqual(["hidden", "visible"]);
   });
 
+  it("checks only the requested tool on calls without client profiles", async () => {
+    const checked: string[] = [];
+    const registry = new McpFnRegistry()
+      .register({
+        name: "available",
+        description: "Available tool.",
+        inputSchema: { type: "object" },
+        handler: async () => structuredResult({ ok: true }),
+      })
+      .register({
+        name: "unrelated",
+        description: "Unrelated tool.",
+        inputSchema: { type: "object" },
+        handler: async () => structuredResult({ ok: true }),
+      });
+    const server = createMcpFnServer({
+      info: { name: "visibility-scope", version: "1.0.0" },
+      registry,
+      toolVisibility: ({ tool }) => {
+        checked.push(tool.name);
+        if (tool.name === "unrelated") throw new Error("unrelated policy unavailable");
+        return true;
+      },
+    });
+    const client = new Client(
+      { name: "visibility-scope-client", version: "1.0.0" },
+      { capabilities: {} },
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    closeables.push(client, server);
+
+    await expect(client.callTool({ name: "available" })).resolves.toMatchObject({
+      structuredContent: { ok: true },
+    });
+    expect(checked).toEqual(["available"]);
+  });
+
+  it("resolves verified identity before running list visibility hooks", async () => {
+    const order: string[] = [];
+    const registry = new McpFnRegistry().register({
+      name: "private", description: "Private tool.", inputSchema: { type: "object" },
+      handler: async () => structuredResult({ ok: true }),
+    });
+    const server = createMcpFnServer({
+      info: { name: "profile-visibility-order", version: "1" }, registry,
+      toolVisibility: () => { order.push("visibility"); return true; },
+      clientProfiles: { profiles: [], resolveVerifiedIdentity: () => {
+        order.push("identity");
+        throw new Error("identity rejected");
+      } },
+    });
+    const client = new Client({ name: "profile-visibility-client", version: "1" });
+    const [left, right] = InMemoryTransport.createLinkedPair();
+    await server.connect(right); await client.connect(left);
+    closeables.push(client, server);
+
+    await expect(client.listTools()).rejects.toThrow(/identity rejected/);
+    expect(order).toEqual(["identity"]);
+  });
+
   it("returns a tool error for invalid arguments without invoking the handler", async () => {
     let called = false;
     const registry = new McpFnRegistry().register({
@@ -592,5 +695,180 @@ describe("McpFnServer", () => {
     expect(await called.json()).toMatchObject({
       result: { structuredContent: { clientId: "client-42" } },
     });
+  });
+
+  it("configures every isolated stateless request server before connecting it", async () => {
+    const registry = new McpFnRegistry().register({
+      name: "visible_without_configuration",
+      description: "Prove request-server configuration can wrap live protocol handlers.",
+      inputSchema: { type: "object" },
+      handler: async () => structuredResult({ ok: true }),
+    });
+    const server = createMcpFnServer({
+      info: { name: "configured-stateless", version: "1.0.0" },
+      registry,
+    });
+    const configuredServers: Array<typeof server> = [];
+    const handler = await server.createWebStandardHandler({
+      enableJsonResponse: true,
+      configureRequestServer: (requestServer) => {
+        configuredServers.push(requestServer);
+        requestServer.protocol.setRequestHandler(ListToolsRequestSchema, async () => ({
+          tools: [],
+        }));
+      },
+    });
+    closeables.push(server);
+    const post = (body: unknown) => handler(new Request("https://example.com/mcp", {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }));
+
+    const initialized = await post({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0.0" },
+      },
+    });
+    expect(initialized.status).toBe(200);
+    const listed = await post({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    await expect(listed.json()).resolves.toMatchObject({ result: { tools: [] } });
+    expect(configuredServers).toHaveLength(2);
+    expect(new Set(configuredServers).size).toBe(2);
+    expect(configuredServers).not.toContain(server);
+  });
+
+  it("routes sessionful HTTP clients to isolated transports", async () => {
+    const registry = new McpFnRegistry().register({
+      name: "echo",
+      description: "Echo a value.",
+      inputSchema: {
+        type: "object",
+        properties: { value: { type: "string" } },
+        required: ["value"],
+      },
+      handler: async ({ value }) => structuredResult({ value }),
+    });
+    const server = createMcpFnServer({
+      info: { name: "session-test", version: "1.0.0" },
+      registry,
+    });
+    let nextSession = 0;
+    let signalCloseStarted: () => void;
+    let finishClose: () => void;
+    const closeStarted = new Promise<void>((resolve) => {
+      signalCloseStarted = resolve;
+    });
+    const closeCanFinish = new Promise<void>((resolve) => {
+      finishClose = resolve;
+    });
+    const configuredServers: Array<typeof server> = [];
+    const closeCalls = new Map<typeof server, number>();
+    const handler = await server.createWebStandardHandler({
+      enableJsonResponse: true,
+      sessionIdGenerator: () => `session-${++nextSession}`,
+      onsessionclosed: async (id) => {
+        if (id === "session-1") {
+          signalCloseStarted();
+          await closeCanFinish;
+        }
+      },
+      configureRequestServer: (requestServer) => {
+        configuredServers.push(requestServer);
+        const close = requestServer.close.bind(requestServer);
+        requestServer.close = async () => {
+          closeCalls.set(requestServer, (closeCalls.get(requestServer) ?? 0) + 1);
+          await close();
+        };
+      },
+    });
+    closeables.push(server);
+    const post = (body: unknown, sessionId?: string) => handler(new Request(
+      "https://example.com/mcp",
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+          ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+        },
+        body: JSON.stringify(body),
+      },
+    ));
+    const initialize = (id: number) => post({
+      jsonrpc: "2.0",
+      id,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: `client-${id}`, version: "1.0.0" },
+      },
+    });
+
+    const rejected = await post({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "tools/list",
+    });
+    expect(rejected.status).toBe(400);
+    await rejected.text();
+    expect(configuredServers).toHaveLength(1);
+    expect(configuredServers).not.toContain(server);
+    expect(closeCalls.get(configuredServers[0]!)).toBe(1);
+
+    const first = await initialize(1);
+    const second = await initialize(2);
+    const firstSession = first.headers.get("mcp-session-id");
+    const secondSession = second.headers.get("mcp-session-id");
+    expect(firstSession).toBe("session-1");
+    expect(secondSession).toBe("session-2");
+    expect(configuredServers).toHaveLength(3);
+    expect(configuredServers).not.toContain(server);
+
+    for (const [id, sessionId] of [[3, firstSession], [4, secondSession]] as const) {
+      const response = await post({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name: "echo", arguments: { value: sessionId } },
+      }, sessionId!);
+      expect(await response.json()).toMatchObject({
+        result: { structuredContent: { value: sessionId } },
+      });
+    }
+    expect(configuredServers).toHaveLength(3);
+
+    const remove = (sessionId: string) => handler(new Request("https://example.com/mcp", {
+        method: "DELETE",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "mcp-protocol-version": "2025-11-25",
+          "mcp-session-id": sessionId,
+        },
+      }));
+    const firstRemoval = remove(firstSession!);
+    await closeStarted;
+    const whileClosing = await post({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "echo", arguments: { value: "too-late" } },
+    }, firstSession!);
+    expect(whileClosing.status).toBe(404);
+    finishClose();
+    expect((await firstRemoval).status).toBe(200);
+    expect(closeCalls.get(configuredServers[1]!)).toBe(1);
+
+    expect((await remove(secondSession!)).status).toBe(200);
+    expect(closeCalls.get(configuredServers[2]!)).toBe(1);
   });
 });

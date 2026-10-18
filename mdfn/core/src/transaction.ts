@@ -1,5 +1,7 @@
 import { mapSelection, mapSidecar } from "./anchors";
 import { hashString } from "./hash";
+import { immutableDocument } from "./immutable";
+import { validateMdfnSelection } from "./selection";
 import { validateMdfnSidecar } from "./sidecar";
 import type {
   ChangedRange,
@@ -75,7 +77,9 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
   for (const operation of transaction.operations) {
     if (operation.kind === "replace-source") {
       if (operation.to > markdown.length) throw new RangeError("MDFN_TRANSACTION_RANGE_OUT_OF_BOUNDS");
-      markdown = `${markdown.slice(0, operation.from)}${operation.text}${markdown.slice(operation.to)}`;
+      const nextMarkdown = `${markdown.slice(0, operation.from)}${operation.text}${markdown.slice(operation.to)}`;
+      if (nextMarkdown === markdown) continue;
+      markdown = nextMarkdown;
       const range = { from: operation.from, to: operation.to, insertedLength: operation.text.length };
       ranges.push(range);
       const mappedSelection = mapSelection(selection, [range]);
@@ -85,7 +89,7 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
       sidecarChanged ||= mappedSidecar !== sidecar;
       sidecar = mappedSidecar;
       const parsed = projector.parse(markdown);
-      document = parsed.document;
+      document = immutableDocument(parsed.document);
       diagnostics = parsed.diagnostics;
       documentChanged = true;
       continue;
@@ -94,8 +98,9 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
       const serialized = projector.serialize(operation.document, markdown);
       const previousMarkdown = markdown;
       markdown = serialized.markdown;
-      document = operation.document;
-      diagnostics = serialized.diagnostics;
+      const parsed = projector.parse(markdown);
+      document = immutableDocument(parsed.document);
+      diagnostics = Object.freeze([...serialized.diagnostics, ...parsed.diagnostics]);
       if (previousMarkdown !== markdown) {
         let from = 0;
         const shared = Math.min(previousMarkdown.length, markdown.length);
@@ -119,7 +124,7 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
       continue;
     }
     if (operation.kind === "selection") {
-      selection = operation.selection;
+      selection = validateMdfnSelection(operation.selection, markdown.length);
       selectionChanged = true;
       continue;
     }
@@ -127,7 +132,7 @@ export function applyTransaction(state: EditorState, transaction: Transaction, p
     sidecarChanged = true;
   }
 
-  if (transaction.operations.length === 0) {
+  if (transaction.operations.length === 0 || (!documentChanged && !selectionChanged && !sidecarChanged)) {
     return {
       previous: state,
       current: state,
