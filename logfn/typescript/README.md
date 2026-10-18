@@ -474,3 +474,10 @@ invalid version/flag fields, and extra fields on version00. Additive future
 versions preserve the known trace/span fields. `withRequestIds()` fills missing
 IDs while preserving supplied IDs. Format rules follow the
 [W3C Trace Context specification](https://www.w3.org/TR/trace-context/#traceparent-header-field-values).
+
+Request middleware always redacts `authorization`, `cookie`, `x-api-key` and
+`x-auth-token`; custom `redactHeaders` entries extend that baseline. Fastify
+middleware exposes the LogFn child as typed `request.logfn`, preserving Fastify's
+native `request.log`. Its request event is emitted at `preHandler` so opt-in
+body capture sees the parsed body. Register identity hooks before this plugin
+when `captureUser` depends on their results.

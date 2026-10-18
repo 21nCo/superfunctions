@@ -140,7 +140,7 @@ export function redactHeaders(
   ]
 ): Record<string, string> {
   const result: Record<string, string> = {};
-  const redactSet = new Set(redactList.map((h) => h.toLowerCase()));
+  const redactSet = new Set(["authorization", "cookie", "x-api-key", "x-auth-token", ...redactList.map((h) => h.toLowerCase())]);
 
   for (const [key, value] of Object.entries(headers)) {
     if (!value) continue;

@@ -8,6 +8,14 @@ import type {
   FastifyPluginCallback,
 } from "fastify";
 import type { RequestLoggerOptions } from "./middleware.js";
+import type { Logger } from "../core/logger.js";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    /** LogFn request logger; Fastify's native request.log remains unchanged. */
+    logfn?: Logger;
+  }
+}
 import {
   extractCorrelationIds,
   redactHeaders,
@@ -28,7 +36,7 @@ export function requestLogger(
     captureUser,
   } = options;
 
-  return (fastify, _opts, done) => {
+  const plugin: FastifyPluginCallback = (fastify, _opts, done) => {
     fastify.addHook("onRequest", async (request: FastifyRequest) => {
       const startTime = Date.now();
 
@@ -47,25 +55,22 @@ export function requestLogger(
         : undefined;
 
       // Attach logger to request
-      (request as any).log = requestLogger;
+      request.logfn = requestLogger;
 
       // Store start time for latency calculation
       (request as any)._startTime = startTime;
+    });
 
-      // Capture user/tenant if provided
-      let userId: string | undefined;
-      let tenantId: string | undefined;
+    // Body parsing has completed by preHandler.
+    fastify.addHook("preHandler", async (request: FastifyRequest) => {
+      const requestLogger = request.logfn;
       if (captureUser) {
         const userInfo = captureUser(request);
-        userId = userInfo?.userId;
-        tenantId = userInfo?.tenantId;
+        (request as any)._userId = userInfo?.userId;
+        (request as any)._tenantId = userInfo?.tenantId;
       }
-
-      // Store user info
-      (request as any)._userId = userId;
-      (request as any)._tenantId = tenantId;
-
-      // Log request start
+      const userId = (request as any)._userId;
+      const tenantId = (request as any)._tenantId;
       if (requestLogger) {
         requestLogger.info("Request started", {
           method: request.method,
@@ -84,7 +89,7 @@ export function requestLogger(
       async (request: FastifyRequest, reply: FastifyReply) => {
         const startTime = (request as any)._startTime || Date.now();
         const latencyMs = Date.now() - startTime;
-        const requestLogger = (request as any).log;
+        const requestLogger = request.logfn;
         const userId = (request as any)._userId;
         const tenantId = (request as any)._tenantId;
 
@@ -105,6 +110,9 @@ export function requestLogger(
 
     done();
   };
+  // Register the hooks in the caller scope, like a conventional Fastify plugin.
+  Object.defineProperty(plugin, Symbol.for("skip-override"), { value: true });
+  return plugin;
 }
 
 // Re-export types

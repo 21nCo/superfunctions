@@ -67,3 +67,7 @@ Fullcore195tests/typecheck/build pass before final rollbacktest; focusedIndexedD
 Fresh isolated core tarball consumers pass ESM realHTTP/redaction/shutdown and dynamicCJS onNode18.17.0/20.19.0/22.23.3, strictNode16/NodeNext declaration checks and runtimeaudit0. Consumer installs onlycoretarball; compiler comes from developmentcheckout. Pack excludes testfiles. Reproducible helper logfn/scripts/packed-core-acceptance.mjs removes its temporaryconsumer.
 
 Traceparser now rejects nonhex/uppercase/zero IDs, malformedflags,ffversion,v00extensions and trailingnewline; additivefutureversions retainknownfields. withRequestIds fills missing IDs without overwriting supplied ones. Based on W3CTraceContext3.2.2/3.2.4 https://www.w3.org/TR/trace-context/ .210coretests/typecheck/buildpass and latestpackedchecksabove pass. Complete framework/admin/packageownership/Pythonparity/performance gates remain open.
+
+## Framework request logging
+
+Fixed default secret-header redaction being disabled by adapter/customlists. Fastify preserves native request.log, exposes typed request.logfn, registers hooks in caller scope, and captures parsed body at preHandler.213coretests/typecheck/buildpass. New ExpressactualHTTP, Fastifyinject and HonoRequest tests verify secretredaction; Fastify additionallychecks native loggerchild/body/LogFn attachment. Remaining middleware sampling/correlationtoplevel/completion/boundedbody and sharedHTTP integration gates still need verification.
