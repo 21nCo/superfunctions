@@ -1,0 +1,42 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57WVDRF6ZZ6CENMC44KPW47",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "flowfn/typescript/docs/workflow-ownership.md",
+    "flowfn/typescript/scripts/provider-acceptance.mjs",
+    "flowfn/typescript/scripts/workflow-crash-worker.mjs",
+    "flowfn/typescript/src/adapters/base.ts",
+    "flowfn/typescript/src/adapters/memory.ts",
+    "flowfn/typescript/src/adapters/postgres/index.ts",
+    "flowfn/typescript/src/adapters/postgres/postgres.test.ts",
+    "flowfn/typescript/src/adapters/redis.test.ts",
+    "flowfn/typescript/src/adapters/redis.ts",
+    "flowfn/typescript/src/storage/workflow-control-contract.ts",
+    "flowfn/typescript/src/storage/workflow-control.test.ts",
+    "flowfn/typescript/src/storage/workflow-control.ts",
+    "flowfn/typescript/src/storage/workflow-crash-contract.ts",
+    "flowfn/typescript/src/workflow/lifecycle.test.ts",
+    "flowfn/typescript/src/workflow/types.ts",
+    "flowfn/typescript/src/workflow/workflow.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 115030,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1793408,
+    "output_tokens": 5923,
+    "api_call_count": 20,
+    "subagent_tokens_complete": false
+  }
+}
