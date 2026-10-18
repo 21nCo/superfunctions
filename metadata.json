@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M580DSFVAB18M8TWF29AHPCS",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "flowfn/typescript/README.md",
+    "flowfn/typescript/src/adapters/postgres/index.ts",
+    "flowfn/typescript/src/adapters/postgres/postgres.test.ts",
+    "flowfn/typescript/src/adapters/redis.test.ts",
+    "flowfn/typescript/src/adapters/redis.ts",
+    "flowfn/typescript/src/storage/stream-lease-contract.ts",
+    "flowfn/typescript/src/stream/delivery-lease.test.ts",
+    "flowfn/typescript/src/stream/delivery-lease.ts",
+    "flowfn/typescript/src/stream/lifecycle.test.ts",
+    "flowfn/typescript/src/stream/memory-groups.ts",
+    "flowfn/typescript/src/stream/types.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
