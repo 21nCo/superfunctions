@@ -1,0 +1,19 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M580X2A1DKX8P4N924B7F3YE",
+  "strategy": "manual-commit",
+  "branch": "cursor/botfn-standalone-monorepo-debris-4111",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "botfn/AGENTS.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
