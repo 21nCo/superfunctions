@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { once } from "node:events";
 import { expect, it } from "vitest";
 import { watchLogsHandler } from "./watch.js";
+import { sinkHttp } from "../sinks/http.js";
 
 it("acknowledges a real HTTP batch only after a durable write, and retries storage failures", async () => {
   const directory = await mkdtemp(join(tmpdir(), "logfn-ingest-"));
@@ -42,6 +43,11 @@ it("acknowledges a real HTTP batch only after a durable write, and retries stora
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({ accepted: 1 });
     expect(JSON.parse((await readFile(file, "utf8")).trim())).toEqual(event);
+    const sink = sinkHttp({ url, batch: 2, auth: { token: "test" }, retry: { attempts: 1 } });
+    sink(["second", "third", "fourth"].map(msg => ({ ...event, level: "info" as const, msg })));
+    await sink.flush!();
+    expect((await readFile(file, "utf8")).trim().split("\n").map(line => JSON.parse(line).msg))
+      .toEqual(["persisted", "second", "third", "fourth"]);
   } finally {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));

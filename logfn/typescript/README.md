@@ -388,3 +388,15 @@ MIT
 ## Contributing
 
 Contributions welcome! Please see the main repository for guidelines.
+
+### HTTP delivery guarantees
+
+`batch` limits each request's event count. Concurrent `flush()` calls wait for the
+same active drain, including queued arrivals during delivery. A failed explicit
+flush rejects and retains unsent events for a later flush; background failures are
+reported to the internal console channel. Overflow continues to discard oldest
+queued events at `maxQueue`. Each request attempt gets a fresh timeout; network
+failures, timeouts, 408, 429 and 5xx retry within `retry.attempts`, with backoff capped
+at five seconds. Other 4xx responses end that send attempt immediately. Requests
+may be retried after ambiguous network failure, so destinations should tolerate
+duplicate events.

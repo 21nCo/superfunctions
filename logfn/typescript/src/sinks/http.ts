@@ -61,7 +61,11 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
 
   let buffer: LogEvent[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
-  let flushing = false;
+  let flushing: Promise<void> | null = null;
+  for (const [name, value] of Object.entries({ batchSize, flushIntervalMs, timeoutMs, maxQueue, attempts })) {
+    if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive safe integer`);
+  }
+  if (!Number.isFinite(backoffMs) || backoffMs < 0) throw new RangeError("backoffMs must be finite and nonnegative");
 
   /**
    * Send events to the HTTP endpoint with retry
@@ -79,78 +83,64 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
       requestHeaders[auth.secretHeader] = auth.token || "";
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    let lastError: Error | null = null;
-
+    let lastError: unknown = new Error("Request failed");
     for (let attempt = 0; attempt < attempts; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      let terminal = false;
       try {
         const response = await fetch(url, {
-          method: "POST",
-          headers: requestHeaders,
-          body: JSON.stringify({ events }),
-          signal: controller.signal,
+          method: "POST", headers: requestHeaders,
+          body: JSON.stringify({ events }), signal: controller.signal,
         });
-
-        clearTimeout(timeoutId);
-
         if (response.ok) {
-          return; // Success
+          await response.body?.cancel();
+          return;
         }
-
-        // Don't retry on client errors
-        if (response.status >= 400 && response.status < 500) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        // Retry on server errors
-        lastError = new Error(
-          `HTTP ${response.status}: ${response.statusText}`
-        );
+        terminal = response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429;
+        lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
+        await response.body?.cancel();
       } catch (error) {
+        lastError = error;
+      } finally {
         clearTimeout(timeoutId);
-        lastError = error as Error;
-
-        // Don't retry on abort
-        if (lastError.name === "AbortError") {
-          throw lastError;
-        }
       }
-
-      // Exponential backoff with jitter
+      if (terminal) throw lastError;
       if (attempt < attempts - 1) {
-        const delay = backoffMs * Math.pow(2, attempt) + Math.random() * 100;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        const delay = Math.min(5000, backoffMs * 2 ** Math.min(attempt, 30) + Math.random() * 100);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
-
-    throw lastError || new Error("Unknown error");
+    throw lastError;
   }
 
-  /**
-   * Flush buffered events
-   */
-  async function flushBuffer(): Promise<void> {
-    if (flushing || buffer.length === 0) {
-      return;
-    }
+  /** All callers join the active drain; failed batches remain queued. */
+  function flushBuffer(): Promise<void> {
+    if (flushing) return flushing;
+    if (buffer.length === 0) return Promise.resolve();
+    let failed = false;
+    const drain = async () => {
+      while (buffer.length > 0) {
+        const toSend = buffer.splice(0, batchSize);
+        try {
+          await sendBatch(toSend);
+        } catch (error) {
+          failed = true;
+          // Preserve queue order and the documented newest-events overflow policy.
+          buffer = [...toSend, ...buffer].slice(-maxQueue);
+          throw error;
+        }
+      }
+    };
+    flushing = drain().finally(() => {
+      flushing = null;
+      if (!failed && buffer.length > 0) scheduleFlush();
+    });
+    return flushing;
+  }
 
-    flushing = true;
-    const toSend = buffer.splice(0, buffer.length);
-
-    try {
-      await sendBatch(toSend);
-    } catch (error) {
-      // On error, put events back at the front (up to maxQueue)
-      const putBack = toSend.slice(0, Math.max(0, maxQueue - buffer.length));
-      buffer.unshift(...putBack);
-
-      // Log error internally (without recursion)
-      console.error("[logfn http-sink error]", error);
-    } finally {
-      flushing = false;
-    }
+  function backgroundFlush(): void {
+    void flushBuffer().catch(error => console.error("[logfn http-sink error]", error));
   }
 
   /**
@@ -163,9 +153,7 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
 
     flushTimer = setTimeout(() => {
       flushTimer = null;
-      flushBuffer().catch(() => {
-        // Error already handled in flushBuffer
-      });
+      backgroundFlush();
     }, flushIntervalMs);
   }
 
@@ -175,7 +163,7 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
   if (typeof window !== "undefined") {
     window.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") {
-        flushBuffer().catch(() => {});
+        backgroundFlush();
       }
     });
 
@@ -205,7 +193,7 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
 
     // Flush if batch size reached
     if (buffer.length >= batchSize) {
-      flushBuffer().catch(() => {});
+      backgroundFlush();
     } else {
       scheduleFlush();
     }
