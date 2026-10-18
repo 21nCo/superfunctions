@@ -104,3 +104,10 @@ Python redaction now traverses nested lists/dictionaries after cycle-safe saniti
 Logger now sanitizes and bounds events before sink delivery, caps tags at20, preserves whole context entries that fit and marks truncation. Oversized optional envelope fields are dropped before required text is shortened at Unicode code-point boundaries. Size uses the standard escaped JSON representation, conservatively covering compact UTF-8 HTTP payloads. Context budgeting adds per-entry encoded costs rather than repeatedly serializing the growing context.
 
 30 tests pass on Python3.9 and3.12, plus a fresh Python3.12 wheel. Strict mypy1.18.2 passes the two changed source modules. Tests include oversized Unicode message/name/context, small context preservation, source nonmutation and tag count. Other Python framework/sharedHTTP/correlation/error-callback parity requirements remain open.
+
+
+## Default request logger and ingress contract
+
+Express, Fastify and Hono now use request children from a lazy shared console root when no application logger is configured. Automatic logging and attached request loggers therefore satisfy the original optional-logger contract. Watch ingestion checks the supported schema version and individual64KiB UTF-8 event limit before invoking ingestion; invalid batches cause no partial callback delivery. Existing missing-field errors retain precedence.
+
+229 core tests, typecheck and build pass. Tests exercise default logging in all three frameworks and mixed valid/invalid batches for version/size rejection. Shared HTTP abstractions, target shared dependency integration, admin and remaining full-spec runtime/Python/performance gates remain open.

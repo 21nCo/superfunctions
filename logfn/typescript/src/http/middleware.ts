@@ -3,7 +3,8 @@
  */
 
 import { sanitizeValue } from "../validation.js";
-import type { Logger } from "../core/logger.js";
+import { Logger } from "../core/logger.js";
+import { sinkConsole } from "../sinks/console.js";
 import { parseW3CTraceContext } from "../pipeline/request-ids.js";
 
 /**
@@ -236,4 +237,12 @@ export async function captureRequestBody(request: Request, timeoutMs = 100): Pro
     // Awaiting it here would deadlock before the route can consume its body.
     if (reader) void reader.cancel().catch(() => {});
   }
+}
+
+
+let defaultRequestLogger: Logger | undefined;
+
+/** Lazily shared root for adapters without an application logger. */
+export function getDefaultRequestLogger(): Logger {
+  return defaultRequestLogger ??= new Logger({ name: "logfn.http", sinks: [sinkConsole()] });
 }

@@ -6,6 +6,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { RequestLoggerOptions } from "./middleware.js";
 import {
   extractCorrelationIds,
+  getDefaultRequestLogger,
   createRequestSampler,
   redactHeaders,
   captureRequestBody,
@@ -20,7 +21,7 @@ export function requestLogger(
   const {
     header = "traceparent",
     redactHeaders: redactList = [],
-    logger,
+    logger = getDefaultRequestLogger(),
     includeBody = false,
     captureUser,
   } = options;

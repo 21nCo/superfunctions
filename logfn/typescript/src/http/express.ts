@@ -6,6 +6,7 @@ import type { Request, Response, NextFunction } from "express";
 import type { RequestLoggerOptions } from "./middleware.js";
 import {
   extractCorrelationIds,
+  getDefaultRequestLogger,
   createRequestSampler,
   redactHeaders,
   truncateBody,
@@ -18,7 +19,7 @@ export function requestLogger(options: RequestLoggerOptions = {}) {
   const {
     header = "traceparent",
     redactHeaders: redactList = [],
-    logger,
+    logger = getDefaultRequestLogger(),
     includeBody = false,
     captureUser,
   } = options;

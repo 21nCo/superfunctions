@@ -2,7 +2,7 @@
  * WatchFn ingest handler
  */
 
-import type { LogEvent } from "../types.js";
+import { DEFAULT_VERSION, MAX_EVENT_SIZE, type LogEvent } from "../types.js";
 import { isValidLogEvent } from "../validation.js";
 
 export interface WatchLogsHandlerOptions {
@@ -151,6 +151,10 @@ export function watchLogsHandler(options: WatchLogsHandlerOptions = {}) {
             headers: { "Content-Type": "application/json" },
           }
         );
+      }
+      if (event.version !== DEFAULT_VERSION) return error("Unsupported event version", 400);
+      if (new TextEncoder().encode(JSON.stringify(event)).byteLength > MAX_EVENT_SIZE) {
+        return error("Event too large", 413);
       }
     }
 

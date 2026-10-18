@@ -18,6 +18,7 @@ declare module "fastify" {
 }
 import {
   extractCorrelationIds,
+  getDefaultRequestLogger,
   createRequestSampler,
   redactHeaders,
   truncateBody,
@@ -32,7 +33,7 @@ export function requestLogger(
   const {
     header = "traceparent",
     redactHeaders: redactList = [],
-    logger,
+    logger = getDefaultRequestLogger(),
     includeBody = false,
     captureUser,
   } = options;

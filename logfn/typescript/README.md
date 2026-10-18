@@ -351,7 +351,7 @@ const logger = createLogger({
 
 ## HTTP request logging
 
-Import `requestLogger` from `@logfn/core/http/express`, `/http/fastify`, or `/http/hono` and supply a `logger`. Request correlation fields appear at the event top level and are inherited by application logs from the request logger. Fastify exposes it as `request.logfn`, preserving the native `request.log`.
+Import `requestLogger` from `@logfn/core/http/express`, `/http/fastify`, or `/http/hono` and optionally supply a `logger`. Without one, all adapters create request children from a shared `logfn.http` console logger. Request correlation fields appear at the event top level and are inherited by application logs from the request logger. Fastify exposes it as `request.logfn`, preserving the native `request.log`.
 
 `sample` applies one decision to each automatic info-level request/completion pair (`{ info: rate }` or a number from0 to1). It does not disable the attached application logger. Default secret-header redaction remains active alongside custom header names.
 
@@ -489,3 +489,5 @@ middleware exposes the LogFn child as typed `request.logfn`, preserving Fastify'
 native `request.log`. Its request event is emitted at `preHandler` so opt-in
 body capture sees the parsed body. Register identity hooks before this plugin
 when `captureUser` depends on their results.
+
+The WatchFn ingestion handler rejects unsupported event versions with HTTP 400 and events larger than 64 KiB of UTF-8 JSON with HTTP 413. Validation covers the entire batch before invoking the configured ingestion callback, so an invalid event cannot cause partial callback delivery.

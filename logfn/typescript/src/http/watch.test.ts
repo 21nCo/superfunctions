@@ -398,3 +398,15 @@ describe("WatchFn Ingest Handler", () => {
     });
   });
 });
+
+
+it('rejects unsupported versions and oversized UTF-8 events before ingestion', async () => {
+  const batches: unknown[] = [];
+  const handler = createHandler({ ingest: events => { batches.push(events); } });
+  const base = { ts: '2026-01-14T12:00:00.000Z', level: 'info', msg: 'ok', name: 'test', version: '0' };
+  for (const [event, status] of [[{ ...base, version: '1' }, 400], [{ ...base, msg: '😀'.repeat(20000) }, 413]] as const) {
+    const response = await handler(new Request('http://localhost/watch/logs', { method: 'POST', body: JSON.stringify({ events: [base, event] }) }));
+    expect(response.status).toBe(status);
+  }
+  expect(batches).toEqual([]);
+});

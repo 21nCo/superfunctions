@@ -116,3 +116,29 @@ it('Hono does not hold a route indefinitely for a stalled body', async () => {
     expect(events[0].ctx?.body).toEqual({ _omitted: 'body_capture_timeout' });
   } finally { controller.close(); }
 });
+
+
+it('Hono and Fastify attach a usable default logger when none is supplied', async () => {
+  const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const app = new Hono();
+  app.use(honoLogger());
+  app.get('/', c => { expect(c.get('log')).toBeInstanceOf(Logger); return c.text('ok'); });
+  const fastify = Fastify(); fastify.register(fastifyLogger());
+  fastify.get('/', request => { expect(request.logfn).toBeInstanceOf(Logger); return 'ok'; });
+  try {
+    expect((await app.request('/')).status).toBe(200);
+    expect((await fastify.inject('/')).statusCode).toBe(200);
+    expect(output).toHaveBeenCalledTimes(4);
+  } finally { await fastify.close(); output.mockRestore(); }
+});
+
+it('Express attaches a usable default logger when none is supplied', async () => {
+  const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const app = express(); app.use(expressLogger());
+  app.get('/', (req, res) => { expect((req as any).log).toBeInstanceOf(Logger); res.send('ok'); });
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  try {
+    expect((await fetch(`http://127.0.0.1:${(server.address() as {port:number}).port}`)).status).toBe(200);
+    expect(output).toHaveBeenCalledTimes(2);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); output.mockRestore(); }
+});
