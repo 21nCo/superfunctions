@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57XPS2960AW09APRVAT2CBJ",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "flowfn/admin/README.md",
+    "flowfn/admin/src/__tests__/admin.test.ts",
+    "flowfn/admin/src/adapter.ts",
+    "flowfn/admin/src/capability.ts",
+    "flowfn/admin/src/client.ts",
+    "flowfn/admin/src/domain-service.ts",
+    "flowfn/admin/src/runtime-capability.ts",
+    "flowfn/admin/src/types.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 24832,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 3675776,
+    "output_tokens": 10375,
+    "api_call_count": 23,
+    "subagent_tokens_complete": false
+  }
+}
