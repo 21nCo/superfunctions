@@ -123,6 +123,12 @@ async def test_durable_snapshot_new_connection_and_namespaces(adapters):
     isolated = type(a)(a.test_url, namespace='isolated-' + uuid.uuid4().hex)
     try:
         assert (await restored.load_workflow_state('exec')).id == 'exec'
+        from flowfn.workflow.workflow import Workflow
+        listed = await Workflow('workflow', restored, []).list_executions()
+        assert [item.id for item in listed] == ['exec']
+        assert await Workflow('other', restored, []).list_executions() == []
+        with pytest.raises(ValueError, match='Execution not found'):
+            await Workflow('other', restored, []).get_execution('exec')
         assert len(await restored.get_all_jobs('q')) == 2
         assert await isolated.get_all_jobs('q') == []
     finally:

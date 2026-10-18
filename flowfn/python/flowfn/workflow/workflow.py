@@ -242,11 +242,14 @@ class Workflow:
         """Get execution by ID."""
         # Check local cache first
         if execution_id in self._executions:
-            return self._executions[execution_id]
+            cached = self._executions[execution_id]
+            if cached.workflow_id != self.name:
+                raise ValueError(f"Execution not found: {execution_id}")
+            return cached
 
         # Load from adapter
         execution = await self._adapter.load_workflow_state(execution_id)
-        if not execution:
+        if not execution or execution.workflow_id != self.name:
             raise ValueError(f"Execution not found: {execution_id}")
 
         return execution
@@ -255,7 +258,7 @@ class Workflow:
         """List executions."""
         options = opts or ListOptions()
 
-        executions = list(self._executions.values())
+        executions = await self._adapter.list_workflow_states(self.name)
 
         # Filter by status
         if options.status:
@@ -310,7 +313,7 @@ class Workflow:
 
     async def get_metrics(self) -> dict[str, Any]:
         """Get workflow metrics."""
-        executions = list(self._executions.values())
+        executions = await self._adapter.list_workflow_states(self.name)
 
         total = len(executions)
         completed = len([e for e in executions if e.status == ExecutionStatus.COMPLETED])

@@ -75,6 +75,21 @@ class RedisAdapter(DurableQueues):
         value = await self.client.get(self.prefix + ':workflow:' + quote(execution_id, safe=''))
         return WorkflowExecution.model_validate_json(value) if value else None
 
+    async def list_workflow_states(self, workflow_id: str) -> list[WorkflowExecution]:
+        self._check_open()
+        executions = []
+        seen: set[str] = set()
+        async for key in self.client.scan_iter(match=self.prefix + ':workflow:*'):
+            if key in seen:
+                continue
+            seen.add(key)
+            raw = await self.client.get(key)
+            if raw is not None:
+                execution = WorkflowExecution.model_validate_json(raw)
+                if execution.workflow_id == workflow_id:
+                    executions.append(execution)
+        return executions
+
     async def publish(self, stream: str, message: Message) -> str:
         await self.client.xadd(self._stream(stream), {'payload': message.model_dump_json()})
         return message.id

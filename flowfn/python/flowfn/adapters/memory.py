@@ -360,6 +360,9 @@ class MemoryAdapter:
         """Load workflow state."""
         return self._workflow_states.get(execution_id)
 
+    async def list_workflow_states(self, workflow_id: str) -> list[Any]:
+        return [deepcopy(item) for item in self._workflow_states.values() if item.workflow_id == workflow_id]
+
     # Lifecycle
     async def cleanup(self) -> None:
         """Cleanup resources."""

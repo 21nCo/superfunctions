@@ -77,6 +77,11 @@ class PostgresAdapter(DurableQueues):
         raw = await pool.fetchval('SELECT payload FROM flowfn_py_workflows WHERE namespace=$1 AND id=$2', self.namespace, execution_id)
         return WorkflowExecution.model_validate_json(raw) if raw else None
 
+    async def list_workflow_states(self, workflow_id: str) -> list[WorkflowExecution]:
+        pool = await self._database()
+        rows = await pool.fetch("SELECT payload FROM flowfn_py_workflows WHERE namespace=$1 AND payload->>'workflow_id'=$2", self.namespace,workflow_id)
+        return [WorkflowExecution.model_validate_json(row['payload']) for row in rows]
+
     async def _lock_stream(self, connection: Any, stream: str) -> None:
         await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", json.dumps([self.namespace,stream]))
 

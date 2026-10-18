@@ -93,6 +93,10 @@ class FlowAdapter(Protocol):
         """Load workflow execution state."""
         ...
 
+    async def list_workflow_states(self, workflow_id: str) -> list["WorkflowExecution"]:
+        """List persisted executions for one workflow definition."""
+        ...
+
     # Lifecycle
     async def cleanup(self) -> None:
         """Cleanup adapter resources."""
