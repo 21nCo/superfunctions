@@ -1,0 +1,22 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57ZAAMN0BX0M8M6AQPDKZFG",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "flowfn/python/README.md",
+    "flowfn/python/flowfn/adapters/postgres.py",
+    "flowfn/python/flowfn/adapters/stream_lease.py",
+    "flowfn/python/tests/test_postgres_stream_ownership.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
