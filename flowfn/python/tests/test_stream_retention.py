@@ -51,7 +51,7 @@ async def test_durable_stream_retention_option_uses_server_clock(adapters,monkey
     a,b=adapters
     if hasattr(a,'client'):
         import flowfn.adapters.redis as module
-        monkeypatch.setattr(module,'time',SimpleNamespace(time=lambda:time.time()+86400))
+        monkeypatch.setattr(module,'time',SimpleNamespace(time=lambda:time.time()+86400,monotonic=time.monotonic))
     await assert_age_policy(a)
     assert [message.data for message in await b.get_stream_messages('publish-age')]==['fresh']
 

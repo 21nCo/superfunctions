@@ -1,4 +1,4 @@
-"""PostgreSQL consumer claims keep distinct ownership within one subscription."""
+"""Durable consumer claims keep distinct ownership within one subscription."""
 import asyncio
 
 import pytest
@@ -60,17 +60,18 @@ async def test_default_consumer_capacity_does_not_flood_claim_connections(adapte
 @pytest.mark.parametrize('renewal',['lost','hung'])
 async def test_stream_handler_is_cancelled_when_renewal_loses_ownership(adapters,monkeypatch,renewal):
     adapter,_=adapters
-    if not hasattr(adapter,'_database'):
-        pytest.skip('PostgreSQL cooperative delivery regression')
-    from flowfn.adapters.postgres import PostgresSubscription
-    original=PostgresSubscription._owned
+    if hasattr(adapter,'_database'):
+        from flowfn.adapters.postgres import PostgresSubscription as Subscription
+    else:
+        from flowfn.adapters.redis import RedisSubscription as Subscription
+    original=Subscription._owned
     async def changed(self,identity,owner,acknowledge=False):
         if acknowledge:
             return await original(self,identity,owner,acknowledge=True)
         if renewal=='hung':
             await asyncio.Event().wait()
         return False
-    monkeypatch.setattr(PostgresSubscription,'_owned',changed)
+    monkeypatch.setattr(Subscription,'_owned',changed)
     entered,cancelled=asyncio.Event(),asyncio.Event()
     async def handle(message):
         entered.set()
@@ -84,7 +85,32 @@ async def test_stream_handler_is_cancelled_when_renewal_loses_ownership(adapters
     try:
         await asyncio.wait_for(entered.wait(),5)
         await asyncio.wait_for(cancelled.wait(),3)
-        pool=await adapter._database()
-        assert await pool.fetchval('SELECT count(*) FROM flowfn_py_pending WHERE namespace=$1',adapter.namespace)==1
+        if hasattr(adapter,'_database'):
+            pool=await adapter._database()
+            assert await pool.fetchval('SELECT count(*) FROM flowfn_py_pending WHERE namespace=$1',adapter.namespace)==1
+        else:
+            assert (await adapter.client.xpending(adapter._stream('cancel'),'group'))['pending']==1
     finally:
         await subscription.unsubscribe()
+
+
+async def test_redis_same_subscription_reclaim_fences_old_ack_and_renew(adapters):
+    adapter,_=adapters
+    if not hasattr(adapter,'client'):
+        pytest.skip('Redis ownership regression')
+    from flowfn.adapters.redis import RedisSubscription
+    key=adapter._stream('owned')
+    await adapter.client.xgroup_create(key,'group',id='0-0',mkstream=True)
+    await adapter.publish('owned',Message(id='one',stream='owned',data={},timestamp=0))
+    subscription=RedisSubscription(adapter,'owned',None,group='group',consumer='same')
+    first=(await subscription._next('attempt-one'))[0][0]
+    await adapter.client.xclaim(key,'group',subscription.consumer,0,[first],idle=2000,justid=True)
+    assert not await subscription._owned(first,'attempt-one')
+    assert not await subscription._owned(first,'attempt-one',acknowledge=True)
+    second=(await subscription._next('attempt-two'))[0][0]
+    assert first==second
+    assert not await subscription._owned(first,'attempt-one')
+    assert not await subscription._owned(first,'attempt-one',acknowledge=True)
+    assert await subscription._owned(second,'attempt-two')
+    assert await subscription._owned(second,'attempt-two',acknowledge=True)
+    assert await adapter.client.hlen(subscription._owners_key)==0

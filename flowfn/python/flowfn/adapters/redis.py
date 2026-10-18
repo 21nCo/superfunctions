@@ -227,82 +227,99 @@ class RedisSubscription:
         self.tasks: list[asyncio.Task[None]] = []
         self.closed = False
         self.error: Optional[Exception] = None
+        self._claim_lock = asyncio.Lock()
+        self._reclaim_cursor = '0-0'
+        self._owners_key = self.key + ':owners:' + quote(group or '',safe='')
 
     def start(self) -> None:
         concurrency = self.options.max_in_flight if self.options else 1
         self.tasks = [asyncio.create_task(self._worker()) for _ in range(concurrency)]
 
+    async def _next(self, delivery_owner: str) -> Any:
+        if not self.group:
+            batches = await self.adapter.client.xread({self.key: self.cursor}, count=1, block=100)
+            return batches[0][1] if batches else []
+        # Claim and record the attempt token atomically. Reusing a Redis consumer
+        # name is safe because stale attempts cannot replace this token later.
+        script = """
+        local claimed=redis.call('XAUTOCLAIM',KEYS[1],ARGV[1],ARGV[2],ARGV[3],ARGV[5],'COUNT',1)
+        local rows=claimed[2]
+        if claimed[3] then
+          for _,id in ipairs(claimed[3]) do redis.call('HDEL',KEYS[2],id) end
+        end
+        if #rows==0 then
+          local batches=redis.call('XREADGROUP','GROUP',ARGV[1],ARGV[2],'COUNT',1,'STREAMS',KEYS[1],'>')
+          if batches then rows=batches[1][2] end
+        end
+        for _,row in ipairs(rows) do redis.call('HSET',KEYS[2],row[1],ARGV[4]) end
+        return {claimed[1],rows}
+        """
+        reply = await cast(Awaitable[Any], self.adapter.client.eval(script,2,self.key,self._owners_key,
+                            self.group,self.consumer,str(self.adapter.reclaim_after_ms),delivery_owner,self._reclaim_cursor))
+        self._reclaim_cursor = reply[0]
+        return [(row[0],dict(zip(row[1][::2],row[1][1::2]))) for row in reply[1]]
+
     async def _worker(self) -> None:
-        client = self.adapter.client
         while not self.closed:
             await self.running.wait()
             try:
-                if self.group:
-                    claimed = await client.xautoclaim(self.key, self.group, self.consumer,
-                                                     self.adapter.reclaim_after_ms, count=1)
-                    rows = claimed[1]
+                delivery_owner = uuid.uuid4().hex
+                async with self._claim_lock:
+                    claim_started = time.monotonic()
+                    rows = await self._next(delivery_owner)
                     if not rows:
-                        batches = await client.xreadgroup(self.group, self.consumer, {self.key: '>'}, count=1, block=100)
-                        rows = batches[0][1] if batches else []
-                else:
-                    batches = await client.xread({self.key: self.cursor}, count=1, block=100)
-                    rows = batches[0][1] if batches else []
+                        await asyncio.sleep(.02)
                 for identity, fields in rows:
                     await self.running.wait()
                     message = Message.model_validate_json(fields['payload'])
                     decision: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
 
-                    async def settle(requeue: bool, future: asyncio.Future[bool] = decision, delivery_id: str = identity) -> None:
+                    async def settle(requeue: bool, future: asyncio.Future[bool] = decision,
+                                     delivery_id: str = identity, token: str = delivery_owner) -> None:
                         if not future.done():
-                            if self.group and not requeue and not await self._owned(delivery_id, acknowledge=True):
+                            if self.group and not requeue and not await self._owned(delivery_id,token,acknowledge=True):
                                 raise RuntimeError('Stream delivery ownership changed')
                             future.set_result(requeue)
 
                     message._acknowledge = settle
-                    heartbeat = asyncio.create_task(self._heartbeat(identity)) if self.group else None
+                    async def process() -> None:
+                        await self.handler(message)
+                        if self.options is None or self.options.auto_commit:
+                            await settle(False)
+                        await decision
+
                     try:
-                        try:
-                            await self.handler(message)
-                            if self.options is None or self.options.auto_commit:
-                                await settle(False)
-                            requeue = await decision
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as exc:
-                            self.error = exc
-                            requeue = True
+                        if self.group:
+                            from flowfn.adapters.stream_lease import run_with_lease
+                            await run_with_lease(process,lambda: self._owned(identity,delivery_owner),
+                                                 self.adapter.reclaim_after_ms,claim_started)
+                        else:
+                            await process()
+                            self.cursor = identity
                     finally:
-                        if heartbeat is not None:
-                            heartbeat.cancel()
-                            await asyncio.gather(heartbeat, return_exceptions=True)
-                    if not self.group:
-                        self.cursor = identity
-                    if requeue:
-                        await asyncio.sleep(.01)
+                        if not decision.done():
+                            decision.cancel()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self.error = exc
                 await asyncio.sleep(.1)
 
-    async def _owned(self, identity: str, acknowledge: bool = False) -> bool:
+    async def _owned(self, identity: str, delivery_owner: str, acknowledge: bool = False) -> bool:
         script = """
         local pending=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[3],ARGV[3],1)
-        if #pending==0 or pending[1][2]~=ARGV[2] then return 0 end
+        if #pending==0 or pending[1][2]~=ARGV[2] or pending[1][3]>=tonumber(ARGV[6])
+           or redis.call('HGET',KEYS[2],ARGV[3])~=ARGV[5] then return 0 end
         if ARGV[4]=='ack' then
+          redis.call('HDEL',KEYS[2],ARGV[3])
           return redis.call('XACK',KEYS[1],ARGV[1],ARGV[3])
         end
         redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[2],0,ARGV[3],'JUSTID')
         return 1
         """
-        return bool(await cast(Awaitable[Any], self.adapter.client.eval(script, 1, self.key, self.group or '',
-                                                    self.consumer, identity, 'ack' if acknowledge else 'renew')))
-
-    async def _heartbeat(self, identity: str) -> None:
-        while not self.closed:
-            await asyncio.sleep(self.adapter.reclaim_after_ms / 3000)
-            if not await self._owned(identity):
-                return
+        return bool(await cast(Awaitable[Any], self.adapter.client.eval(script,2,self.key,self._owners_key,
+                            self.group or '',self.consumer,identity,'ack' if acknowledge else 'renew',
+                            delivery_owner,str(self.adapter.reclaim_after_ms))))
 
     async def pause(self) -> None:
         self.running.clear()
