@@ -45,7 +45,12 @@ export interface HttpSinkOptions {
 /**
  * Create an HTTP sink
  */
-export function sinkHttp(options: HttpSinkOptions): Sink {
+export interface HttpSink extends Sink {
+  /** Drain accepted events and remove owned timers/listeners. Failed close is retryable. */
+  close(): Promise<void>;
+}
+
+export function sinkHttp(options: HttpSinkOptions): HttpSink {
   const {
     url,
     batch: batchSize = 50,
@@ -59,6 +64,8 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
 
   const { attempts = 5, backoffMs = 200 } = retry;
 
+  let closed = false;
+  let closing: Promise<void> | null = null;
   let buffer: LogEvent[] = [];
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let flushing: Promise<void> | null = null;
@@ -70,7 +77,7 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
   /**
    * Send events to the HTTP endpoint with retry
    */
-  async function sendBatch(events: LogEvent[]): Promise<void> {
+  async function sendBatch(events: LogEvent[], keepalive = false): Promise<void> {
     const requestHeaders: Record<string, string> = {
       "Content-Type": "application/json",
       ...headers,
@@ -92,6 +99,7 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
         const response = await fetch(url, {
           method: "POST", headers: requestHeaders,
           body: JSON.stringify({ events }), signal: controller.signal,
+          ...(keepalive ? { keepalive: true } : {}),
         });
         if (response.ok) {
           await response.body?.cancel();
@@ -115,7 +123,7 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
   }
 
   /** All callers join the active drain; failed batches remain queued. */
-  function flushBuffer(): Promise<void> {
+  function flushBuffer(keepalive = false): Promise<void> {
     if (flushing) return flushing;
     if (buffer.length === 0) return Promise.resolve();
     let failed = false;
@@ -123,7 +131,7 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
       while (buffer.length > 0) {
         const toSend = buffer.splice(0, batchSize);
         try {
-          await sendBatch(toSend);
+          await sendBatch(toSend, keepalive);
         } catch (error) {
           failed = true;
           // Preserve queue order and the documented newest-events overflow policy.
@@ -139,15 +147,16 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
     return flushing;
   }
 
-  function backgroundFlush(): void {
-    void flushBuffer().catch(error => console.error("[logfn http-sink error]", error));
+  function backgroundFlush(keepalive = false): void {
+    if (closed) return;
+    void flushBuffer(keepalive).catch(error => console.error("[logfn http-sink error]", error));
   }
 
   /**
    * Schedule a flush
    */
   function scheduleFlush(): void {
-    if (flushTimer) {
+    if (flushTimer || closed || closing) {
       return;
     }
 
@@ -157,31 +166,34 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
     }, flushIntervalMs);
   }
 
-  /**
-   * Add events to browser flush hooks
-   */
-  if (typeof window !== "undefined") {
-    window.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "hidden") {
-        backgroundFlush();
+  const browserWindow = typeof window === "undefined" ? undefined : window;
+  const browserDocument = typeof document === "undefined" ? undefined : document;
+  const visibilityHandler = () => {
+    if (browserDocument?.visibilityState === "hidden") backgroundFlush();
+  };
+  const unloadHandler = () => {
+    if (closed || buffer.length === 0) return;
+    // Beacon cannot carry configured authentication or custom headers. Keep
+    // such deliveries on fetch, preserving their request contract.
+    if (!auth?.token && !auth?.secretHeader && Object.keys(headers).length === 0 &&
+        typeof navigator !== "undefined" && navigator.sendBeacon) {
+      const events = buffer.slice(0, batchSize);
+      let blob = new Blob([JSON.stringify({ events })], { type: "application/json" });
+      while (blob.size > 60000 && events.length > 0) {
+        events.pop();
+        blob = new Blob([JSON.stringify({ events })], { type: "application/json" });
       }
-    });
+      try {
+        if (events.length > 0 && navigator.sendBeacon(url, blob)) return;
+      } catch { /* Fall back to fetch; queue remains retained. */ }
+    }
+    backgroundFlush(true);
+  };
+  browserDocument?.addEventListener("visibilitychange", visibilityHandler);
+  browserWindow?.addEventListener("beforeunload", unloadHandler);
 
-    window.addEventListener("beforeunload", () => {
-      // Synchronous flush attempt (may not complete)
-      if (buffer.length > 0) {
-        // Use sendBeacon if available
-        if (navigator.sendBeacon) {
-          const blob = new Blob([JSON.stringify({ events: buffer })], {
-            type: "application/json",
-          });
-          navigator.sendBeacon(url, blob);
-        }
-      }
-    });
-  }
-
-  const sink: Sink = (batch: LogEvent[]) => {
+  const sink: HttpSink = (batch: LogEvent[]) => {
+    if (closed || closing) throw new Error("HTTP sink is closed");
     // Add to buffer
     buffer.push(...batch);
 
@@ -205,6 +217,18 @@ export function sinkHttp(options: HttpSinkOptions): Sink {
       flushTimer = null;
     }
     await flushBuffer();
+  };
+
+  sink.close = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    if (closing) return closing;
+    closing = (async () => {
+      await sink.flush!();
+      closed = true;
+      browserDocument?.removeEventListener("visibilitychange", visibilityHandler);
+      browserWindow?.removeEventListener("beforeunload", unloadHandler);
+    })().finally(() => { closing = null; });
+    return closing;
   };
 
   return sink;

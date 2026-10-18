@@ -430,3 +430,11 @@ sink delivery and flush failures. Child loggers inherit the callback. Logging
 calls contain callback exceptions and suppress synchronous recursive error
 reporting; an explicit `flush()` still rejects when delivery fails. Without a
 callback, failures go to the internal console error channel.
+
+HTTP sinks expose `await sink.close()` to drain accepted events, clear timers,
+and remove owned browser listeners. New writes are rejected during close and
+after successful close. A failed close retains events and can be retried.
+Unload requests with authentication or custom headers use best-effort keepalive
+fetch. Header-free beacon attempts are bounded below the browser payload limit;
+queued events remain until confirmed HTTP delivery, so duplicates are possible.
+Unload transport is not a substitute for durable offline storage.

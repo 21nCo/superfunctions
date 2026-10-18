@@ -79,11 +79,11 @@ export function attachFlushHooks(logger: Logger): () => void {
     });
   };
 
-  window.addEventListener("visibilitychange", visibilityHandler);
+  document.addEventListener("visibilitychange", visibilityHandler);
   window.addEventListener("beforeunload", unloadHandler);
 
   return () => {
-    window.removeEventListener("visibilitychange", visibilityHandler);
+    document.removeEventListener("visibilitychange", visibilityHandler);
     window.removeEventListener("beforeunload", unloadHandler);
   };
 }

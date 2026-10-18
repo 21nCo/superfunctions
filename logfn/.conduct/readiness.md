@@ -51,3 +51,7 @@ The server preset now installs its HTTP sink when url is supplied. Signal handle
 ## Error callback API
 
 LoggerOptions now exposes the previously documented onError callback, inherited by children. Pipeline, synchronous/asynchronous sink delivery and flush failures report through it; throwing or synchronous recursive callbacks do not escape logging. Explicitflush still rejects.183coretests/typecheck/buildpass, including four new callback regressions. Browser/offline/sharedHTTP/admin/Pythonparity/fullcontract gates remain.
+
+## HTTP lifecycle cleanup and authenticated unload
+
+HttpSink.close drains and removes owned timers/listeners, rejects future enqueue, joins concurrent closes and remains retryable after deliveryfailure. Visibility listeners now attach to document. Auth/customheaders stay on keepalivefetch rather than headerlessbeacons. Publicbeacons are bounded to60000bytes/batchsize, preservequeueddata untilconfirmedHTTPdelivery and fallbackwhenrejected.189coretests/typecheck/buildpass, including six event-target lifecycle regressions. These tests simulate browser targets; actual browserunload/IndexedDBdurability remain open, and no durability claim is made.
