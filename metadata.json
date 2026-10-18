@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57WMR2V2KPQPNC458X6E4N9",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "flowfn/python/README.md",
+    "flowfn/python/flowfn/adapters/base.py",
+    "flowfn/python/flowfn/adapters/durable_queues.py",
+    "flowfn/python/flowfn/adapters/memory.py",
+    "flowfn/python/flowfn/queue/queue.py",
+    "flowfn/python/flowfn/queue/types.py",
+    "flowfn/python/tests/test_queue_lease_cancellation.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 27676,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1716608,
+    "output_tokens": 8749,
+    "api_call_count": 24
+  }
+}
