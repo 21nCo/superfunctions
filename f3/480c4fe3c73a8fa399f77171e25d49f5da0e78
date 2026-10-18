@@ -1,0 +1,27 @@
+extfn/docs/consumer-host-abstraction.md
+  s_7d0a48f0aaecda::t_a1c9aaa0c7454f 80-81
+extfn/docs/content/docs/reference/consumer-host-abstraction.md
+  s_7d0a48f0aaecda::t_0048a512aa62fc 83-84
+extfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_e86513aa88df7b 387-388
+filefn/docs/turbo.json
+  s_7d0a48f0aaecda::t_c9f445c9bc6c22 10-11,17-18
+scripts/docs-site/runtime.ts
+  s_7d0a48f0aaecda::t_b44fa3a7a398ab 411-412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3480c4fe3c73a8fa399f77171e25d49f5da0e78",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
