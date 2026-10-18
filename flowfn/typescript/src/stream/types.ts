@@ -17,9 +17,9 @@ export interface Stream<T = any> {
   // Subscribing
   subscribe(
     handler: MessageHandler<T>,
-    options?: SubscribeOptions,
+    options?: SubscribeOptions<T>,
   ): Promise<Subscription>;
-  createConsumer(consumerId: string, options: ConsumerOptions): Consumer<T>;
+  createConsumer(consumerId: string, options: ConsumerOptions<T>): Consumer<T>;
 
   // Management
   getInfo(): Promise<StreamInfo>;
@@ -59,11 +59,16 @@ export interface PublishOptions {
   partition?: number;
 }
 
-export interface SubscribeOptions {
+export type MessageFilter<T = any> = (message: Message<T>) => boolean | Promise<boolean>;
+
+export interface SubscribeOptions<T = any> {
+  filter?: MessageFilter<T>;
   fromBeginning?: boolean;
 }
 
-export interface ConsumerOptions {
+export interface ConsumerOptions<T = any> {
+  /** False acknowledges the delivery for this group without invoking its handler. */
+  filter?: MessageFilter<T>;
   groupId: string;
   fromBeginning?: boolean;
   autoCommit?: boolean;

@@ -1,3 +1,4 @@
+import { streamFilterContract } from '../storage/stream-filter-contract.js';
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryAdapter } from "../adapters/memory.js";
 import { StreamImpl } from "./stream.js";
@@ -215,5 +216,16 @@ it('aborts memory handlers and does not create delayed commits after unsubscribe
   release();
   await vi.advanceTimersByTimeAsync(0);
   expect(vi.getTimerCount()).toBe(0);
+  await stream.close();
+});
+
+it('filters subscribers and groups while preserving history and retrying failed predicates', async () => { await streamFilterContract(adapter()); });
+it('rejects invalid predicates before subscription acquisition', async () => {
+  const storage = adapter();
+  const acquire = vi.spyOn(storage, 'subscribe');
+  const stream = new StreamImpl('invalid-filter', storage);
+  await expect(stream.subscribe(async () => {}, { filter: true as any })).rejects.toThrow('function');
+  expect(() => stream.createConsumer('one', { groupId: 'group', filter: true as any })).toThrow('function');
+  expect(acquire).not.toHaveBeenCalled();
   await stream.close();
 });

@@ -1,3 +1,4 @@
+import { streamFilterContract } from '../../storage/stream-filter-contract.js';
 import { streamRenewalContract, streamLossContract, streamUnsubscribeContract } from '../../storage/stream-lease-contract.js';
 import { shutdownContract } from '../../storage/shutdown-contract.js';
 import { telemetryContract } from '../../storage/telemetry-contract.js';
@@ -20,6 +21,7 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
   "PostgreSQL native contract (requires FLOWFN_POSTGRES_URL)",
   () => {
     let pool: Pool, adapter: PostgresAdapter, schema: string;
+    it('filters subscribers and group deliveries without losing history or retrying skipped messages', async () => { await streamFilterContract(adapter); });
     it('aborts active stream handlers on unsubscribe and requeues their receipt', async () => { await streamUnsubscribeContract(adapter); });
     it('renews active stream handlers across delivery expiry', async () => { await streamRenewalContract(adapter); });
     it('aborts stream handlers after delivery ownership expires and fences late acknowledgment', async () => { await streamLossContract(adapter, (stream, id) => pool.query(`UPDATE "${schema}".flowfn_deliveries SET delivered_at=0 WHERE stream=$1 AND message_id=$2`, [stream, id])); });

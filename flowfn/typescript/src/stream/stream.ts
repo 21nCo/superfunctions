@@ -7,6 +7,7 @@ import type {
   PublishOptions,
   SubscribeOptions,
   MessageHandler,
+  MessageFilter,
   Subscription,
   ConsumerOptions,
   Consumer,
@@ -68,22 +69,30 @@ export class StreamImpl<T = any> implements Stream<T> {
       ids.push(await this.publish(message.data, message.options));
     return ids;
   }
+  private validateFilter(filter?: MessageFilter<T>): void {
+    if (filter !== undefined && typeof filter !== 'function') throw new Error('Message filter must be a function');
+  }
+  private async deliver(message: Message<T>, handler: MessageHandler<T>, filter?: MessageFilter<T>): Promise<void> {
+    this.record?.('stream.latency', Math.max(0, Date.now() - message.timestamp));
+    const delivered = { ...message, stream: this.name };
+    await this.observer.run('flowfn.stream.process', { 'flowfn.stream': this.name, 'flowfn.message.id': message.id }, async () => {
+      if (filter && !await filter(delivered)) { await delivered.ack(); return; }
+      await handler(delivered);
+    });
+  }
   async subscribe(
     handler: MessageHandler<T>,
-    options?: SubscribeOptions,
+    options?: SubscribeOptions<T>,
   ): Promise<Subscription> {
     this.open();
+    this.validateFilter(options?.filter);
     await this.applyRetention();
     this.open();
     const inner = await this.adapter.subscribe(
       this.name,
       async (message) => {
         this.open();
-        this.record?.(
-          "stream.latency",
-          Math.max(0, Date.now() - message.timestamp),
-        );
-        await this.observer.run('flowfn.stream.process', { 'flowfn.stream': this.name, 'flowfn.message.id': message.id }, () => handler({ ...message, stream: this.name }));
+        await this.deliver(message, handler, options?.filter);
       },
       options,
     );
@@ -97,8 +106,9 @@ export class StreamImpl<T = any> implements Stream<T> {
     this.subscriptions.add(subscription);
     return subscription;
   }
-  createConsumer(id: string, options: ConsumerOptions): Consumer<T> {
+  createConsumer(id: string, options: ConsumerOptions<T>): Consumer<T> {
     this.open();
+    this.validateFilter(options.filter);
     let subscription: Subscription | undefined,
       closed = false,
       paused = false;
@@ -121,11 +131,7 @@ export class StreamImpl<T = any> implements Stream<T> {
           async (message) => {
             this.open();
             if (closed) throw new Error("Consumer is closed");
-            this.record?.(
-              "stream.latency",
-              Math.max(0, Date.now() - message.timestamp),
-            );
-            await this.observer.run('flowfn.stream.process', { 'flowfn.stream': this.name, 'flowfn.message.id': message.id }, () => handler({ ...message, stream: this.name }));
+            await this.deliver(message, handler, options.filter);
           },
           options,
         );

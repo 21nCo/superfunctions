@@ -83,6 +83,16 @@ Callbacks must cooperate with the signal; late acknowledgments remain fenced.
 Renewal stops when the handler returns, so delayed manual acknowledgment and
 `commitInterval` must fit within the remaining visibility lease.
 
+### Message filters
+
+`stream.subscribe(handler, { filter })` and
+`stream.createConsumer(id, { groupId, filter })` accept synchronous or asynchronous
+predicates receiving the typed message. A false result skips the handler. For a
+consumer group it acknowledges that delivery even with `autoCommit: false`, so
+filtered records cannot block later messages. Retained history and other groups
+are unchanged. Predicate errors follow normal delivery retries and `onError`
+reporting. Consumers in one group should use the same predicate.
+
 ### Errors and tracing
 
 `createFlow({ adapter, onError(error, context) { ... } })` reports failed adapter
