@@ -1,0 +1,38 @@
+flowfn/admin/src/domain-service.ts
+  s_e1c5fc1a65c0cf::t_a43c1da50d8828 49-50,164-177,179-198
+  s_e1c5fc1a65c0cf::t_c91e152c182515 1,10,51-52
+  s_e1c5fc1a65c0cf::t_197111b05a9364 11,53,199
+flowfn/admin/src/adapter.ts
+  s_e1c5fc1a65c0cf::t_98ab50a4231497 22-35
+flowfn/admin/src/runtime-capability.ts
+  s_e1c5fc1a65c0cf::t_5ede89d117e2b4 1-60
+flowfn/admin/src/types.ts
+  s_e1c5fc1a65c0cf::t_d6b6fe0cb219b9 11-13,185-198,269-274
+  s_e1c5fc1a65c0cf::t_e5c19b8ed68384 275
+flowfn/admin/README.md
+  s_e1c5fc1a65c0cf::t_b51cfd7415d2d8 18-20,31-38
+flowfn/admin/src/capability.ts
+  s_e1c5fc1a65c0cf::t_98ab50a4231497 8,234,842
+  s_e1c5fc1a65c0cf::t_b51cfd7415d2d8 871
+flowfn/admin/src/client.ts
+  s_e1c5fc1a65c0cf::t_98ab50a4231497 23-25,27,35-56
+flowfn/admin/src/__tests__/admin.test.ts
+  s_e1c5fc1a65c0cf::t_a498ee9acec52e 85-105,140,143,156,166,171,181
+  s_e1c5fc1a65c0cf::t_ff98c565eb397a 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8362992bf1029383e519d24208c6e467b0a9b12e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
