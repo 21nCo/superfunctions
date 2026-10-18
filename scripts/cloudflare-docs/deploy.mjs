@@ -46,6 +46,10 @@ for (const productId of products) {
 
   if (!skipBuild) {
     buildDocs(product, docsDir, environment);
+    if (product.kind === "sveltekit-cloudflare" && !dryRun) {
+      // Exercise the generated SvelteKit server before uploading it.
+      run(process.execPath, [path.join(repoRoot, "scripts/docs-site/check-built-site.mjs")], { cwd: docsDir });
+    }
   }
 
   if (product.kind === "next-static") {
@@ -67,6 +71,7 @@ function buildDocs(product, docsDir, environment) {
     env: {
       CLOUDFLARE_DOCS_DEPLOY: "1",
       CLOUDFLARE_DOCS_ASSETS_ORIGIN: assetsOrigin,
+      CLOUDFLARE_DOCS_PUBLIC_ORIGIN: `https://${product.hosts[environment]}`,
       NEXT_PUBLIC_SITE_URL: `https://${product.hosts[environment]}`,
       NODE_ENV: "production",
       NEXT_TELEMETRY_DISABLED: "1",
