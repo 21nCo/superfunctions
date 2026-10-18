@@ -141,6 +141,15 @@ describe("client-failure event envelope", () => {
     expect(result).toEqual({ ok: false, issues: [{ path: "", code: "TOO_LARGE", message: expect.stringContaining("8192 bytes") }] });
   });
 
+  it.each<[string, (event: any) => any, string]>([
+    // eslint-disable-next-line no-sparse-arrays
+    ["a sparse array hole", (event) => ({ ...event, failure: { ...event.failure, extra: [1, , 2] } }), "/failure/extra/1"],
+    ["a NaN attribute", (event) => ({ ...event, attributes: { retries: Number.NaN } }), "/attributes/retries"],
+  ])("reports %s where it is, as a TYPE issue", (_name, mutate, path) => {
+    const result = validateClientFailureEvent(mutate(clone(fixture("client-failure/valid/network-minimal.json"))));
+    expect(result).toEqual({ ok: false, issues: [expect.objectContaining({ path, code: "TYPE", message: expect.stringMatching(/hole in a sparse array|non-finite number/) })] });
+  });
+
   it("stops after 32 problems, however many the input holds", () => {
     const event = clone(fixture("client-failure/valid/network-minimal.json"));
     const result = validateClientFailureEvent({ ...event, failure: { kind: "unknown", extra: Array.from({ length: 100 }, () => () => 1) } });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { MAX_JSON_VALUES, snapshotPlainData } from "../src/canonical.js";
+import { MAX_JSON_VALUES, MAX_SNAPSHOT_PROBLEMS, snapshotPlainData } from "../src/canonical.js";
 import { canonicalDigest, canonicalJson, sha256Hex } from "../src/index.js";
 
 describe("canonical JSON", () => {
@@ -94,5 +94,32 @@ describe("snapshot value limit", () => {
   ])("an array of %s with %i items is accepted: %s", (kind, length, accepted) => {
     const snapshot = snapshotPlainData(Array.from({ length }, () => (kind === "primitives" ? 0 : {})));
     expect(snapshot.problems).toEqual(accepted ? [] : [{ pointer: "", reason: `exceeds ${MAX_JSON_VALUES} values`, limit: true }]);
+  });
+});
+
+// A snapshot without problems always serializes: a value JSON has no form for is reported where it is, never copied.
+describe("snapshot of values JSON cannot represent", () => {
+  it.each<[string, unknown, string[]]>([
+    // eslint-disable-next-line no-sparse-arrays
+    ["a hole in the middle of an array", { list: [1, , 3] }, ["/list/1 is a hole in a sparse array, not JSON data"]],
+    ["holes only", new Array(2), ["/0 is a hole in a sparse array, not JSON data", "/1 is a hole in a sparse array, not JSON data"]],
+    ["a trailing hole", Object.assign([1], { length: 2 }), ["/1 is a hole in a sparse array, not JSON data"]],
+    ["an undefined array item", { list: ["a", undefined] }, ["/list/1 is undefined, not JSON data"]],
+    ["NaN", { a: Number.NaN }, ["/a is a non-finite number (NaN or Infinity), not JSON data"]],
+    ["Infinity in an array", [Number.POSITIVE_INFINITY], ["/0 is a non-finite number (NaN or Infinity), not JSON data"]],
+    ["-Infinity at the root", Number.NEGATIVE_INFINITY, [" is a non-finite number (NaN or Infinity), not JSON data"]],
+  ])("reports %s", (_name, input, problems) => {
+    const snapshot = snapshotPlainData(input);
+    expect(snapshot.problems.map(({ pointer, reason }) => `${pointer} ${reason}`)).toEqual(problems);
+  });
+
+  it("omits undefined object members and keeps every other value, so the copy serializes", () => {
+    const snapshot = snapshotPlainData({ a: undefined, b: [0, -0, null, ""], c: { d: undefined } });
+    expect(snapshot).toEqual({ value: { b: [0, -0, null, ""], c: {} }, problems: [] });
+    expect(canonicalJson(snapshot.value)).toBe('{"b":[0,0,null,""],"c":{}}');
+  });
+
+  it("stops after the problem limit on an array of holes", () => {
+    expect(snapshotPlainData(new Array(10_000)).problems).toHaveLength(MAX_SNAPSHOT_PROBLEMS);
   });
 });

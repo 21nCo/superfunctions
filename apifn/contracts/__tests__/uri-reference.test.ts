@@ -1,8 +1,7 @@
-import * as fastUri from "fast-uri";
 import { describe, expect, it } from "vitest";
 import { parseUriReference, UriTable, type UriKey } from "../src/uri-reference.js";
 
-// RFC 3986 section 5.4: every example resolves against this base.
+// RFC 3986 section 5.4: every example resolves against this base. The targets are copied verbatim from the RFC tables.
 const RFC_BASE = "http://a/b/c/d;p?q";
 const RFC_EXAMPLES: Array<[reference: string, target: string]> = [
   // 5.4.1 normal examples.
@@ -100,22 +99,18 @@ describe("RFC 3986 reference resolution", () => {
   const keyOf = (text: string) => table.resolve(table.document, parse(text));
   const resolved = (base: string, reference: string): UriKey => table.resolve(keyOf(base), parse(reference));
 
-  it.each(ROWS)("the oracle resolves %j + %j to %j", (base, reference, target) => {
-    expect(fastUri.resolve(base, reference)).toBe(target);
-  });
-
   it.each(ROWS)("resolves %j + %j to the key of %j", (base, reference, target) => {
     expect(resolved(base, reference).key).toBe(keyOf(withoutFragment(target)).key);
   });
 
-  // Keys are equal exactly when the oracle's targets are: no two different URIs share a key, so "/b" and "b" never meet.
-  it("gives one key to each URI the oracle tells apart, across every row", () => {
+  // Keys are equal exactly when the expected targets are: no two different URIs share a key, so "/b" and "b" never meet.
+  it("gives one key to each URI the expected targets tell apart, across every row", () => {
     const byKey = new Map<string, Set<string>>();
-    for (const [base, reference] of ROWS) {
+    for (const [base, reference, target] of ROWS) {
       const key = resolved(base, reference).key;
-      byKey.set(key, (byKey.get(key) ?? new Set()).add(withoutFragment(fastUri.resolve(base, reference))));
+      byKey.set(key, (byKey.get(key) ?? new Set()).add(withoutFragment(target)));
     }
     expect(Array.from(byKey.values(), (targets) => Array.from(targets)).filter((targets) => targets.length > 1)).toEqual([]);
-    expect(byKey.size).toBe(new Set(ROWS.map(([base, reference]) => withoutFragment(fastUri.resolve(base, reference)))).size);
+    expect(byKey.size).toBe(new Set(ROWS.map(([, , target]) => withoutFragment(target))).size);
   });
 });

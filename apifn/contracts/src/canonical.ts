@@ -165,7 +165,10 @@ class StopReading {}
  * Copies plain JSON-like data, reading each own enumerable property exactly
  * once, so a validator checks and returns the same values even when the input
  * has getters or proxies. Arrays and plain objects are copied; anything else
- * that is not JSON data is reported in `problems` and left out. A reference
+ * that is not JSON data (including a non-finite number, a sparse array hole and
+ * an undefined array item) is reported in `problems` and left out, so a
+ * snapshot without problems always serializes. Undefined object members are
+ * omitted, as JSON.stringify and canonicalJson omit them. A reference
  * back to an enclosing object is a cycle; other shared references are copied
  * per path. Cost is bounded before any other check runs: reading stops at
  * {@link MAX_JSON_VALUES} values (an array's length is checked before it is
@@ -202,6 +205,7 @@ export function snapshotPlainData(input: unknown, options: { maxDepth?: number; 
     if (typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
       return problem(pointer, `is a ${typeof value}, not JSON data`);
     }
+    if (typeof value === "number" && !Number.isFinite(value)) return problem(pointer, "is a non-finite number (NaN or Infinity), not JSON data");
     const count = counted ? 0 : 1;
     if (typeof value === "string") spend(count, value.length + 2);
     else if (typeof value === "number") spend(count, String(value).length);
@@ -221,7 +225,16 @@ export function snapshotPlainData(input: unknown, options: { maxDepth?: number; 
       // Each item is one value, counted here once, and at least one byte (its comma or bracket), so a long array stops before its items are read.
       spend(count + length, 1 + length);
       const items: unknown[] = [];
-      for (let index = 0; index < length; index += 1) items.push(copy(value[index], `${pointer}/${index}`, depth + 1, true));
+      for (let index = 0; index < length; index += 1) {
+        const itemPointer = `${pointer}/${index}`;
+        // A hole or an undefined item has no JSON form: JSON.stringify would turn it into null.
+        if (!Object.hasOwn(value, index)) problem(itemPointer, "is a hole in a sparse array, not JSON data");
+        else {
+          const item = value[index];
+          if (item === undefined) problem(itemPointer, "is undefined, not JSON data");
+          else items.push(copy(item, itemPointer, depth + 1, true));
+        }
+      }
       output = items;
     } else {
       spend(count, 2);

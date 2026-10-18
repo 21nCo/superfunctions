@@ -97,6 +97,35 @@ for (const entry of [...cases.literals, ...cases.schemas, ...cases.references, .
 console.log(JSON.stringify(results));
 `;
 
+// Manifest snapshot and shared-object rows: the installed ESM and CJS entry points and the workspace build must
+// reject a sparse manifest at the hole, and report a header schema shared by three operations once.
+const parityBody = `
+const manifest = ${readFileSync(path.join(packageDir, "fixtures/catalog/manifest.json"), "utf8").trim()};
+const holed = JSON.parse(JSON.stringify(manifest));
+delete holed.operations[1];
+const paths = {};
+const operations = [];
+for (const index of [0, 1, 2]) {
+  paths["/r" + index] = { get: { operationId: "op" + index, responses: { "200": { $ref: "#/components/responses/R" } } } };
+  operations.push({ id: "shared.op" + index, operationId: "op" + index });
+}
+const shared = {
+  openapi: "3.1.0",
+  info: { title: "Shared", version: "1" },
+  paths,
+  components: { responses: { R: { description: "ok", headers: { "X-A": { schema: { enum: [] } } } } } },
+};
+const rows = {
+  validateManifest: contracts.validateManifest(holed),
+  buildWithHole: contracts.buildOperationCatalog(JSON.parse(JSON.stringify(shared)), holed).diagnostics,
+  sharedHeader: contracts.buildOperationCatalog(shared, { manifestVersion: 1, api: { id: "example.shared", version: "1" }, operations }).diagnostics,
+};
+if (rows.validateManifest.manifest !== null || rows.validateManifest.diagnostics.map((d) => d.code + " " + d.pointer).join() !== "INVALID_MANIFEST /operations/1") throw new Error("validateManifest accepted a sparse manifest");
+if (rows.sharedHeader.filter((d) => d.code === "INVALID_SPEC").map((d) => d.pointer).join() !== "/components/responses/R/headers/X-A/schema/enum") throw new Error("a shared header schema was not reported exactly once");
+console.log(contracts.canonicalJson(rows));
+`;
+const parityRows = (specifier, cjs) => (cjs ? `const contracts = require(${JSON.stringify(specifier)});` : `import * as contracts from ${JSON.stringify(specifier)};`) + parityBody;
+
 try {
   const packed = JSON.parse(run("npm", ["pack", "--workspace", "@apifn/contracts", "--pack-destination", workdir, "--json"], repoRoot));
   const tarball = path.join(workdir, packed[0].filename);
@@ -143,6 +172,12 @@ try {
   const workspaceRows = run("node", ["proto-workspace.mjs"], workdir).trim();
   if (installedRows !== workspaceRows) throw new Error("OpenAPI 3.0 upconversion rows differ between the installed package and the workspace build");
   console.log(`${Object.keys(JSON.parse(installedRows)).length} OpenAPI 3.0 upconversion rows match 3.1 and the workspace build`);
+  writeFileSync(path.join(consumer, "parity.mjs"), parityRows("@apifn/contracts", false));
+  writeFileSync(path.join(consumer, "parity.cjs"), parityRows("@apifn/contracts", true));
+  writeFileSync(path.join(workdir, "parity-workspace.mjs"), parityRows(pathToFileURL(path.join(packageDir, "dist/index.js")).href, false));
+  const parity = [run("node", ["parity.mjs"], consumer), run("node", ["parity.cjs"], consumer), run("node", ["parity-workspace.mjs"], workdir)].map((output) => output.trim());
+  if (new Set(parity).size !== 1) throw new Error("manifest snapshot or shared-object rows differ between ESM, CJS and the workspace build");
+  console.log("manifest snapshot and shared-object rows match in ESM, CJS and the workspace build");
   console.log(`PACKED_CONSUMER_OK ${packed[0].filename} in ${consumer}`);
 } finally {
   if (!keep) rmSync(workdir, { recursive: true, force: true });

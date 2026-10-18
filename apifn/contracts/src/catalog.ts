@@ -696,6 +696,12 @@ class CatalogBuilder {
   };
   /** What is left of {@link SERVER_SCAN_BUDGET} for this build; servers are judged in a fixed order (paths sorted), so key order cannot change it. */
   private readonly serverScanBudget = { characters: SERVER_SCAN_BUDGET };
+  /**
+   * Results of the checks that depend only on a resolved object, keyed by kind
+   * and the object's pointer, so an object many operations share (a component,
+   * or a path item's parameter) is walked and reported once: see {@link once}.
+   */
+  private readonly checked = new Map<string, unknown>();
   /** The innermost schema being copied that declares a resource `$id`, against which JSON Schema resolves the references inside it. */
   private resource: { pointer: string; uri: UriKey } | null = null;
   private readonly uris = new UriTable();
@@ -781,16 +787,36 @@ class CatalogBuilder {
   }
 
   /**
-   * Checks the Header Objects of a response or encoding; true when any is
-   * declared besides Content-Type, which OpenAPI ignores there.
+   * Runs `check`, the checks that depend only on the object at `pointer`, the
+   * first time `kind` at `pointer` is asked for and returns its cached result
+   * after that, so build work stays linear in the input however many
+   * operations reach one object. Its diagnostics name the first operation that
+   * reaches it (operations are built in a fixed order). Decisions that depend
+   * on the operation, and output, stay with the caller.
+   */
+  private once<T>(kind: string, pointer: string, check: () => T): T {
+    // A muted dry run reports nothing, so it must not stand in for the reporting run.
+    if (this.muted > 0) return check();
+    const key = `${kind} ${pointer}`;
+    if (this.checked.has(key)) return this.checked.get(key) as T;
+    const result = check();
+    this.checked.set(key, result);
+    return result;
+  }
+
+  /**
+   * Checks the Header Objects of a response or encoding, once per headers map;
+   * true when any is declared besides Content-Type, which OpenAPI ignores there.
    */
   headerObjects(headers: Record<string, unknown>, pointer: string, operation: string): boolean {
-    const names = Object.keys(headers).filter((name) => name.toLowerCase() !== "content-type").sort(compareCodeUnits);
-    for (const name of names) {
-      const resolved = this.deref(headers[name], `${pointer}/${pointerSegment(name)}`);
-      if (resolved) this.schemaOrContent(resolved.value, resolved.pointer, `Header ${quote(name)} of operation ${quote(operation)}`, operation);
-    }
-    return names.length > 0;
+    return this.once("headers", pointer, () => {
+      const names = Object.keys(headers).filter((name) => name.toLowerCase() !== "content-type").sort(compareCodeUnits);
+      for (const name of names) {
+        const resolved = this.deref(headers[name], `${pointer}/${pointerSegment(name)}`);
+        if (resolved) this.schemaOrContent(resolved.value, resolved.pointer, `Header ${quote(name)} of operation ${quote(operation)}`, operation);
+      }
+      return names.length > 0;
+    });
   }
 
   /**
@@ -799,8 +825,13 @@ class CatalogBuilder {
    * maps to a Media Type Object. Present members are checked here, schemas
    * at every depth, before the caller decides whether the catalog supports
    * the object, so a parameter or header that is dropped is checked too.
+   * Each resolved object is checked once (see {@link once}).
    */
   schemaOrContent(value: Record<string, unknown>, pointer: string, what: string, operation: string): void {
+    this.once("schemaOrContent", pointer, () => this.checkSchemaOrContent(value, pointer, what, operation));
+  }
+
+  private checkSchemaOrContent(value: Record<string, unknown>, pointer: string, what: string, operation: string): void {
     this.requireMember(value, ["schema", "content"], pointer, what, operation);
     this.checkSchema(own(value, "schema"), `${pointer}/schema`);
     const content = this.member(value, "content", pointer, OBJECT, operation);
@@ -1502,11 +1533,13 @@ class CatalogBuilder {
       // Every REQUIRED member and value first, so a parameter skipped below still reports each problem. A parameter
       // lacking schema and content is still declared, so the path template check does not report it again.
       this.schemaOrContent(value, pointer, `Parameter ${quote(name)} of operation ${quote(id)}`, id);
-      const required = this.member(value, "required", pointer, BOOLEAN, id);
-      // Absent or false; member reported a wrong type.
-      if (location === "path" && required !== true && own(value, "required") === required) {
-        this.report("INVALID_SPEC", `${pointer}/required`, `Path parameter ${quote(name)} of operation ${quote(id)} must declare "required": true, as OpenAPI requires.`, { operation: id });
-      }
+      this.once("parameter required", pointer, () => {
+        const required = this.member(value, "required", pointer, BOOLEAN, id);
+        // Absent or false; member reported a wrong type.
+        if (location === "path" && required !== true && own(value, "required") === required) {
+          this.report("INVALID_SPEC", `${pointer}/required`, `Path parameter ${quote(name)} of operation ${quote(id)} must declare "required": true, as OpenAPI requires.`, { operation: id });
+        }
+      });
       if (location === "path" && !template.includes(name)) {
         this.report("INVALID_SPEC", pointer, `Path parameter ${quote(name)} of operation ${quote(id)} is declared but does not appear in the path template ${redactWhole(entry.path)}.`, { operation: id });
         continue;
@@ -1526,7 +1559,7 @@ class CatalogBuilder {
       parameters.push({
         name,
         in: location,
-        required: location === "path" || required === true,
+        required: location === "path" || own(value, "required") === true,
         deprecated: this.member(value, "deprecated", pointer, BOOLEAN, id) ?? false,
         style,
         explode: this.member(value, "explode", pointer, BOOLEAN, id) ?? style === "form",
@@ -1571,10 +1604,13 @@ class CatalogBuilder {
         const resolved = this.deref(responses[status], `${entry.pointer}/responses/${pointerSegment(status)}`);
         if (!resolved) return [];
         const kind: CatalogResponse["kind"] = status === "default" ? "default" : /^[45]/.test(status) ? "error" : "success";
-        this.requireMember(resolved.value, ["description"], resolved.pointer, `Response ${status} of operation ${quote(id)}`, id);
-        const headers = this.member(resolved.value, "headers", resolved.pointer, OBJECT, id);
-        // Header names are not extensions (`x-ratelimit-remaining` is a header); OpenAPI ignores Content-Type here.
-        if (headers && this.headerObjects(headers, `${resolved.pointer}/headers`, id)) {
+        const declaresHeaders = this.once("response", resolved.pointer, () => {
+          this.requireMember(resolved.value, ["description"], resolved.pointer, `Response ${status} of operation ${quote(id)}`, id);
+          const headers = this.member(resolved.value, "headers", resolved.pointer, OBJECT, id);
+          // Header names are not extensions (`x-ratelimit-remaining` is a header); OpenAPI ignores Content-Type here.
+          return headers !== undefined && this.headerObjects(headers, `${resolved.pointer}/headers`, id);
+        });
+        if (declaresHeaders) {
           this.report("UNSUPPORTED_SERIALIZATION", `${resolved.pointer}/headers`, `Response ${status} headers of operation ${quote(id)} are not described in the catalog; generated clients will not expose them.`, { severity: "warning", operation: id });
         }
         return [
@@ -1643,7 +1679,12 @@ class CatalogBuilder {
     const deprecated = (this.member(op, "deprecated", entry.pointer, BOOLEAN, binding.id) ?? false) || binding.deprecation !== undefined;
     const requestBody = this.deref(op.requestBody, `${entry.pointer}/requestBody`);
     // An empty content map is valid OpenAPI and is published as no media types; only a missing one is an error.
-    if (requestBody) this.requireMember(requestBody.value, ["content"], requestBody.pointer, `Request body of operation ${quote(binding.id)}`, binding.id);
+    if (requestBody) {
+      this.once("requestBody", requestBody.pointer, () => {
+        this.requireMember(requestBody.value, ["content"], requestBody.pointer, `Request body of operation ${quote(binding.id)}`, binding.id);
+        this.member(requestBody.value, "required", requestBody.pointer, BOOLEAN, binding.id);
+      });
+    }
     const bindingPointer = `/operations/${this.manifest.operations.indexOf(binding)}`;
     const name = binding.name ?? toIdentifier(entry.operationId ?? binding.id);
     if (name.length > NAME_MAX_LENGTH) {
@@ -1668,7 +1709,8 @@ class CatalogBuilder {
       parameters: this.parameters(entry, binding.id),
       requestBody: requestBody
         ? {
-            required: this.member(requestBody.value, "required", requestBody.pointer, BOOLEAN, binding.id) ?? false,
+            // once reported a non-boolean.
+            required: own(requestBody.value, "required") === true,
             contents: this.contents(own(requestBody.value, "content"), `${requestBody.pointer}/content`, binding.id, "Request body"),
           }
         : null,

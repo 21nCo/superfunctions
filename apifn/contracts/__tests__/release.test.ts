@@ -187,6 +187,18 @@ describe("createReleaseDescriptor", () => {
     expect(descriptor).not.toBeNull();
   });
 
+  // The input is read into plain data first: a value JSON has no form for is reported where it is, not as a bad artifact.
+  it.each<[string, (next: CreateReleaseInput) => void, string]>([
+    ["a hole in artifacts", (next) => delete (next.artifacts as unknown[])[1], "/artifacts/1"],
+    ["an undefined excluded target", (next) => ((next.catalog.operations[0].sdk.excludedTargets as unknown[]) = ["go", undefined]), "/catalog/operations/0/sdk/excludedTargets/1"],
+  ])("INVALID_RELEASE: %s", (_name, mutate, pointer) => {
+    const next = input();
+    mutate(next);
+    const result = createReleaseDescriptor(next);
+    expect(result.descriptor).toBeNull();
+    expect(result.diagnostics).toEqual([expect.objectContaining({ code: "INVALID_RELEASE", pointer, message: expect.stringMatching(/hole in a sparse array|is undefined/) })]);
+  });
+
   it("reads its input once, so a getter cannot change a value after it was checked", () => {
     let reads = 0;
     const generator = { version: "0.1.0" };

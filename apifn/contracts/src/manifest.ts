@@ -1,3 +1,4 @@
+import { canonicalJson, snapshotPlainData } from "./canonical.js";
 import { containsCredentialIdentifier, pointerSegment, quote, sanitizeReport } from "./credentials.js";
 import type { ApiManifest, Diagnostic } from "./types.js";
 
@@ -153,9 +154,35 @@ function checkBinding(check: ManifestChecker, binding: unknown, pointer: string)
 /**
  * Validates the companion manifest's shape. Unknown fields are rejected so a
  * misspelled exclusion or exposure flag never silently changes artifacts.
+ * The input is read once into plain data (see snapshotPlainData) and the
+ * checks run on that copy, so a returned manifest is never the caller's object
+ * and always serializes; a sparse array, an undefined item or a non-finite
+ * number is an error at its pointer.
  */
 export function validateManifest(input: unknown): { manifest: ApiManifest | null; diagnostics: Diagnostic[] } {
   const check = new ManifestChecker();
+  let snapshot: ReturnType<typeof snapshotPlainData>;
+  try {
+    snapshot = snapshotPlainData(input);
+  } catch {
+    snapshot = { value: undefined, problems: [{ pointer: "", reason: "could not be read (a getter or proxy threw)" }] };
+  }
+  for (const { pointer, reason } of snapshot.problems) check.fail(pointer, `The manifest at ${pointer || "/"} ${reason}.`);
+  if (snapshot.problems.length > 0) return { manifest: null, diagnostics: check.diagnostics };
+  checkManifest(check, snapshot.value);
+  if (check.diagnostics.length === 0) {
+    try {
+      canonicalJson(snapshot.value);
+    } catch {
+      // A lone surrogate in a text field passes the field checks but has no UTF-8 form.
+      check.fail("", "The manifest must be plain JSON data (no class instances, Maps, non-finite numbers, sparse arrays or lone surrogates).");
+    }
+  }
+  const valid = check.diagnostics.length === 0;
+  return { manifest: valid ? (snapshot.value as ApiManifest) : null, diagnostics: check.diagnostics };
+}
+
+function checkManifest(check: ManifestChecker, input: unknown): void {
   const fields = ["manifestVersion", "api", "serialization", "provenance", "operations"];
   if (check.object(input, "", fields, ["manifestVersion", "api", "operations"])) {
     const manifest = input as Record<string, unknown>;
@@ -197,6 +224,4 @@ export function validateManifest(input: unknown): { manifest: ApiManifest | null
       manifest.operations.forEach((binding, index) => checkBinding(check, binding, `/operations/${index}`));
     }
   }
-  const valid = check.diagnostics.length === 0;
-  return { manifest: valid ? (input as ApiManifest) : null, diagnostics: check.diagnostics };
 }

@@ -2167,6 +2167,89 @@ describe("Parameter and Header Object content entries", () => {
 
 // OpenAPI 3.0 requires responses on every operation; 3.1 makes the member optional. In both, a Responses Object holds
 // at least one HTTP status, 1XX-5XX range or "default" response; extensions do not count.
+// An object many operations share (a component, or a path item's parameter) is checked once, so build work stays linear in
+// the input and each problem in it is reported once, at its pointer, however many operations reach it.
+describe("objects shared by many operations", () => {
+  type Attach = (operation: Record<string, any>) => void;
+  /** A spec with `count` operations, each changed by `attach`, over `components`; every operation is bound. */
+  const sharedSpec = (components: Record<string, unknown>, attach: Attach, count: number, pathItem: Record<string, unknown> = {}) => {
+    const paths: Record<string, unknown> = {};
+    const operations: Array<{ id: string; operationId: string }> = [];
+    for (let index = 0; index < count; index += 1) {
+      const operation: Record<string, any> = { operationId: `op${index}`, responses: { "200": { description: "ok" } } };
+      attach(operation);
+      paths[`/r${index}/{id}`] = { ...pathItem, post: operation };
+      operations.push({ id: `shared.op${index}`, operationId: `op${index}` });
+    }
+    const path = { name: "id", in: "path", required: true, schema: { type: "string" } };
+    for (const item of Object.values(paths) as Array<Record<string, any>>) item.parameters ??= [path];
+    return {
+      spec: { openapi: "3.1.0", info: { title: "Shared", version: "1" }, paths, components },
+      manifest: { manifestVersion: 1, api: { id: "example.shared", version: "1" }, serialization: { mediaTypes: ["application/json", "multipart/form-data"] }, operations },
+    };
+  };
+  const parameter: Attach = (operation) => (operation.parameters = [{ $ref: "#/components/parameters/Q" }]);
+  const response: Attach = (operation) => (operation.responses["200"] = { $ref: "#/components/responses/R" });
+  const headerRef: Attach = (operation) => (operation.responses["200"] = { description: "ok", headers: { "X-Shared": { $ref: "#/components/headers/H" } } });
+  const requestBody: Attach = (operation) => (operation.requestBody = { $ref: "#/components/requestBodies/B" });
+  const form = (headers: Record<string, unknown>) => ({ requestBodies: { B: { content: { "multipart/form-data": { schema: { type: "object", properties: { f: { type: "string" } } }, encoding: { f: { headers } } } } } } });
+
+  // Every position checks a schema it does not publish, so the catalog stays O(K + M) while K x M work would not.
+  const POSITIONS: Array<[string, (schema: Record<string, unknown>) => Record<string, unknown>, Attach]> = [
+    ["a component parameter's schema (unsupported style)", (schema) => ({ parameters: { Q: { name: "q", in: "query", style: "matrix", schema } } }), parameter],
+    ["a component parameter's content", (schema) => ({ parameters: { Q: { name: "q", in: "query", content: { "application/json": { schema } } } } }), parameter],
+    ["a component response's header schema", (schema) => ({ responses: { R: { description: "ok", headers: { "X-Shared": { schema } } } } }), response],
+    ["a component response's header content", (schema) => ({ responses: { R: { description: "ok", headers: { "X-Shared": { content: { "application/json": { schema } } } } } } }), response],
+    ["a component header behind $ref", (schema) => ({ headers: { H: { schema } } }), headerRef],
+    ["a form part header of a component request body", (schema) => form({ "X-Shared": { schema } }), requestBody],
+  ];
+
+  it.each(POSITIONS)("checks %s once in linear time", (_name, components, attach) => {
+    const size = 250;
+    const inputs = new Map(
+      [size, size * 4].map((n) => {
+        const schema = { type: "object", properties: Object.fromEntries(Array.from({ length: n }, (_, index) => [`p${index}`, { type: "string", maxLength: 5 }])) };
+        return [n, sharedSpec(components(schema), attach, n / 2)];
+      })
+    );
+    const ratio = scalingRatio((n) => {
+      const { spec: nextSpec, manifest: nextManifest } = inputs.get(n)!;
+      const result = buildUnchecked(clone(nextSpec), clone(nextManifest));
+      expect(only(result.diagnostics, "INVALID_SPEC")).toEqual([]);
+      expect(only(result.diagnostics, "UNSUPPORTED_SERIALIZATION")).toHaveLength(n / 2);
+    }, size, 2);
+    expect(ratio).toBeLessThan(LINEAR_RATIO);
+  }, SCALING_TIMEOUT);
+
+  const ONCE: Array<[string, Record<string, unknown>, Attach, string, Record<string, unknown>?]> = [
+    ["a component parameter's schema", { parameters: { Q: { name: "q", in: "query", schema: { enum: [] } } } }, parameter, "/components/parameters/Q/schema/enum"],
+    ["a component parameter's content entry", { parameters: { Q: { name: "q", in: "query", content: { "application/json": 5 } } } }, parameter, "/components/parameters/Q/content/application~1json"],
+    ["a component path parameter without required: true", { parameters: { Q: { name: "id", in: "path", required: false, schema: { type: "string" } } } }, parameter, "/components/parameters/Q/required"],
+    ["a component response without a description", { responses: { R: { content: {} } } }, response, "/components/responses/R/description"],
+    ["a component response's malformed headers", { responses: { R: { description: "ok", headers: 5 } } }, response, "/components/responses/R/headers"],
+    ["a component response's header schema", { responses: { R: { description: "ok", headers: { "X-A": { schema: { enum: [] } } } } } }, response, "/components/responses/R/headers/X-A/schema/enum"],
+    ["a component header behind $ref", { headers: { H: { schema: { enum: [] } } } }, headerRef, "/components/headers/H/schema/enum"],
+    ["a component request body without content", { requestBodies: { B: { description: "body" } } }, requestBody, "/components/requestBodies/B/content"],
+    ["a component request body's non-boolean required", { requestBodies: { B: { required: "yes", content: {} } } }, requestBody, "/components/requestBodies/B/required"],
+    ["a form part header of a component request body", form({ "X-A": { schema: { enum: [] } } }), requestBody, "/components/requestBodies/B/content/multipart~1form-data/encoding/f/headers/X-A/schema/enum"],
+    ["a path item's path parameter without required: true", {}, () => {}, "/paths/~1r0~1{id}/parameters/0/required", { parameters: [{ name: "id", in: "path", schema: { type: "string" } }], get: { operationId: "get0", responses: { "200": { description: "ok" } } } }],
+  ];
+
+  it.each(ONCE)("reports %s once, naming the first operation, in any key order", (_name, components, attach, pointer, pathItem) => {
+    const { spec: nextSpec, manifest: nextManifest } = sharedSpec(components, attach, pathItem ? 1 : 5, pathItem);
+    if (pathItem) nextManifest.operations.push({ id: "shared.get0", operationId: "get0" });
+    const results = [buildUnchecked(clone(nextSpec), clone(nextManifest)), buildUnchecked(reverseKeys(clone(nextSpec)), clone(nextManifest))];
+    for (const result of results) {
+      expect(result.catalog).toBeNull();
+      const reported = only(result.diagnostics, "INVALID_SPEC");
+      expect(reported.map((diagnostic) => diagnostic.pointer)).toEqual([pointer]);
+      // Schema keyword reports name no operation; any other names the first operation that reaches the object.
+      expect(reported.filter((diagnostic) => diagnostic.operation !== undefined && diagnostic.operation !== (pathItem ? "shared.get0" : "shared.op0"))).toEqual([]);
+    }
+    expect(results[1].diagnostics).toEqual(results[0].diagnostics);
+  });
+});
+
 describe("operation responses", () => {
   const HEALTH = "/paths/~1health";
   const responsesOf = (result: ReturnType<typeof buildOperationCatalog>, id: string) => result.catalog?.operations.find((operation) => operation.id === id)?.responses;
@@ -2791,7 +2874,7 @@ describe("malformed references and inputs", () => {
     ["an operation id", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest.operations[0].id = "\ud800x"), "/operations/0/id"],
     ["an unknown manifest key", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest["\ud800"] = 1), "/\\uD800"],
     ["a naming override", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest.operations[1].name = "x\udfff"), "/operations/1/name"],
-    // Free text passes validateManifest; the manifest digest then rejects the whole manifest.
+    // Free text passes the field checks; validateManifest then rejects the whole manifest, which has no UTF-8 form.
     ["provenance.source", (_spec: unknown, nextManifest: Record<string, any>) => (nextManifest.provenance.source = "\ud800"), ""],
   ])("INVALID_MANIFEST: a lone surrogate in %s", (_name, mutate, pointer) => {
     for (const specText of [false, true]) {
@@ -2805,7 +2888,8 @@ describe("malformed references and inputs", () => {
     const nextManifest = clone(manifest);
     mutate(spec, nextManifest);
     const validated = validateManifest(nextManifest);
-    if (pointer !== "") expect(validated.manifest).toBeNull();
+    expect(validated.manifest).toBeNull();
+    expect(validated.diagnostics.map(({ code, pointer: at }) => `${code} ${at}`)).toContain(`INVALID_MANIFEST ${pointer}`);
     expect(() => canonicalJson(validated.diagnostics)).not.toThrow();
   });
 
@@ -2845,6 +2929,59 @@ describe("malformed references and inputs", () => {
     const missing = clone(manifest);
     missing.api = { id: "example.projects", version: undefined };
     expect(validateManifest(missing).diagnostics.map(({ pointer }) => pointer)).toEqual(["/api/version"]);
+  });
+
+  // validateManifest checks one plain-data copy of its input, as buildOperationCatalog does, so a manifest it accepts
+  // serializes to JSON that manifest.v1 accepts, and both reject a value JSON has no form for at its pointer.
+  /** Each row changes the manifest and returns the pointer of the value JSON has no form for. */
+  const MANIFEST_ARRAYS: Array<[string, string, (nextManifest: Record<string, any>) => unknown[]]> = [
+    ["operations", "/operations", (nextManifest) => nextManifest.operations],
+    ["serialization.mediaTypes", "/serialization/mediaTypes", (nextManifest) => nextManifest.serialization.mediaTypes],
+    ["sdk.excludeTargets", "/operations/4/sdk/excludeTargets", (nextManifest) => (nextManifest.operations[4].sdk.excludeTargets = ["go", "python", "rust"])],
+  ];
+  const ARRAY_PLACES: Array<[string, (items: unknown[]) => number]> = [["start", () => 0], ["middle", () => 1], ["end", (items) => items.length - 1]];
+  const NON_JSON_MANIFESTS: Array<[string, (nextManifest: Record<string, any>) => string]> = [
+    ...MANIFEST_ARRAYS.flatMap(([field, pointer, list]) =>
+      ARRAY_PLACES.flatMap(([place, at]): Array<[string, (nextManifest: Record<string, any>) => string]> => [
+        [`a hole at the ${place} of ${field}`, (nextManifest) => { const items = list(nextManifest); const index = at(items); delete items[index]; return `${pointer}/${index}`; }],
+        [`an undefined item at the ${place} of ${field}`, (nextManifest) => { const items = list(nextManifest); const index = at(items); items[index] = undefined; return `${pointer}/${index}`; }],
+      ])
+    ),
+    ["a trailing hole after operations", (nextManifest) => `/operations/${(nextManifest.operations.length += 1) - 1}`],
+    ["NaN manifestVersion", (nextManifest) => ((nextManifest.manifestVersion = Number.NaN), "/manifestVersion")],
+    ["Infinity manifestVersion", (nextManifest) => ((nextManifest.manifestVersion = Number.POSITIVE_INFINITY), "/manifestVersion")],
+    ["a -Infinity binding member", (nextManifest) => ((nextManifest.operations[0].sdk = { include: Number.NEGATIVE_INFINITY }), "/operations/0/sdk/include")],
+  ];
+  const validateManifestSchema = new Ajv2020({ allErrors: true, strict: true, strictRequired: false }).compile(readJson(path.join(SCHEMAS, "manifest.v1.schema.json")));
+
+  it.each(NON_JSON_MANIFESTS)("INVALID_MANIFEST from validateManifest and buildOperationCatalog: %s", (_name, mutate) => {
+    const nextManifest = clone(manifest);
+    const pointer = mutate(nextManifest);
+    const validated = validateManifest(nextManifest);
+    expect(validated.manifest).toBeNull();
+    expect(validated.diagnostics.map(({ code, pointer: at }) => `${code} ${at}`)).toEqual([`INVALID_MANIFEST ${pointer}`]);
+    expect(() => canonicalJson(validated)).not.toThrow();
+    const built = buildUnchecked(clone(spec), nextManifest);
+    expect(built.catalog).toBeNull();
+    expect(built.diagnostics.map(({ code, pointer: at }) => `${code} ${at}`)).toEqual([`INVALID_MANIFEST ${pointer}`]);
+  });
+
+  it("validateManifest returns a copy of a dense manifest, which manifest.v1 accepts", () => {
+    const input = clone(manifest);
+    const validated = validateManifest(input);
+    expect(validated.diagnostics).toEqual([]);
+    expect(validated.manifest).toEqual(manifest);
+    expect(validated.manifest).not.toBe(input);
+    expect(validated.manifest!.operations).not.toBe(input.operations);
+    expect(validateManifestSchema(JSON.parse(canonicalJson(validated.manifest))), JSON.stringify(validateManifestSchema.errors)).toBe(true);
+    // A later change to the caller's object does not reach the validated manifest.
+    input.operations.push({ id: "late" });
+    expect(validated.manifest!.operations).toHaveLength(manifest.operations.length);
+  });
+
+  it("validateManifest reports a manifest whose getter throws instead of throwing", () => {
+    const input = Object.defineProperty(clone(manifest), "api", { enumerable: true, get: () => { throw new Error("boom"); } });
+    expect(validateManifest(input)).toEqual({ manifest: null, diagnostics: [expect.objectContaining({ code: "INVALID_MANIFEST", pointer: "", source: "manifest" })] });
   });
 
   // JSON data can hold a toString that is not a function; quoting it in a diagnostic must not throw.
