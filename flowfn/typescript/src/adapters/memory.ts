@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mutateWorkflow, validateWorkflowMutation, type WorkflowMutation } from '../storage/workflow-control.js';
 import { FlowAdapter } from "./base.js";
 import { Job, QueueStats } from "../queue/types.js";
 import {
@@ -23,7 +24,7 @@ export class MemoryAdapter implements FlowAdapter {
   private groups = new MemoryConsumerGroups(
     (stream) => this.streams.get(stream) ?? [],
   );
-  private workflowStates: Map<string, WorkflowExecution> = new Map();
+  protected workflowStates: Map<string, WorkflowExecution> = new Map();
   private queue(queue: string): Map<string, Job> {
     if (!this.queues.has(queue)) this.queues.set(queue, new Map());
     return this.queues.get(queue)!;
@@ -248,10 +249,17 @@ export class MemoryAdapter implements FlowAdapter {
     return original.length - retained.length;
   }
 
+  async mutateWorkflowState(id: string, change: WorkflowMutation): Promise<WorkflowExecution | null> {
+    validateWorkflowMutation(change, id);
+    const next = mutateWorkflow(this.workflowStates.get(id) ?? null, change, Date.now());
+    if (next) this.workflowStates.set(id, next);
+    return structuredClone(next);
+  }
   async saveWorkflowState(
     workflowId: string,
     state: WorkflowExecution,
   ): Promise<void> {
+    if (this.workflowStates.get(workflowId)?.revision !== undefined) throw new Error('Workflow requires a revision-checked mutation');
     this.workflowStates.set(workflowId, structuredClone(state));
   }
 

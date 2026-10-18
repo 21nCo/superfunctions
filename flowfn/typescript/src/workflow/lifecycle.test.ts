@@ -220,6 +220,7 @@ it("handles all duration units and does not overflow timers for waits longer tha
   const app = flow();
   const workflow = app
     .workflow("long")
+    .ownership({ leaseDuration: 60 * 86400000 })
     .delay({ days: 30, hours: 1, minutes: 1, seconds: 1, ms: 1 })
     .build();
   const execution = await workflow.execute({});
@@ -231,7 +232,8 @@ it("handles all duration units and does not overflow timers for waits longer tha
   );
 });
 class SnapshotAdapter extends MemoryAdapter {
-  records = new Map<string, WorkflowExecution>();
+  get records() { return this.workflowStates; }
+  set records(value: Map<string, WorkflowExecution>) { this.workflowStates = value; }
   async saveWorkflowState(id: string, state: WorkflowExecution) {
     this.records.set(id, structuredClone(state));
   }
@@ -239,6 +241,22 @@ class SnapshotAdapter extends MemoryAdapter {
     return structuredClone(this.records.get(id) ?? null);
   }
 }
+it('rejects changed workflow definitions before acquiring or modifying their checkpoints', async () => {
+  const adapter = new SnapshotAdapter();
+  const original = new WorkflowBuilderImpl('definition', adapter).waitForEvent('go').build();
+  const execution = await original.execute({});
+  await flush();
+  const before = await adapter.loadWorkflowState(execution.id);
+  for (const changed of [
+    new WorkflowBuilderImpl('definition', adapter).waitForEvent('different').build(),
+    new WorkflowBuilderImpl('definition', adapter).version('2').waitForEvent('go').build(),
+  ]) {
+    await expect(changed.resumeExecution(execution.id)).rejects.toThrow('definition differs');
+    expect(await adapter.loadWorkflowState(execution.id)).toEqual(before);
+    await changed.close();
+  }
+  await original.close();
+});
 it("recovers persisted event waits and history without replaying completed steps", async () => {
   const adapter = new SnapshotAdapter();
   let completedCalls = 0;
@@ -258,6 +276,7 @@ it("recovers persisted event waits and history without replaying completed steps
   const restartAdapter = new SnapshotAdapter();
   restartAdapter.records = structuredClone(adapter.records);
   await original.close();
+  await vi.advanceTimersByTimeAsync(30_001);
   const restored = build(restartAdapter);
   expect((await restored.listExecutions()).map((value) => value.id)).toEqual([
     execution.id,
@@ -335,6 +354,7 @@ it("recovers an already-consumed event when its surrounding handler must replay 
   const restored = new WorkflowBuilderImpl("inside-handler", copied)
     .step("wait", async (ctx) => await ctx.waitForEvent("go"))
     .build();
+  await vi.advanceTimersByTimeAsync(30_001);
   await restored.resumeExecution(execution.id);
   expect((await restored.waitForCompletion(execution.id)).output).toBe(9);
   release();
@@ -344,10 +364,10 @@ it("recovers an already-consumed event when its surrounding handler must replay 
 });
 it("surfaces checkpoint failures instead of reporting durable completion", async () => {
   class FailingAdapter extends SnapshotAdapter {
-    async saveWorkflowState(id: string, value: WorkflowExecution) {
-      if (value.completedAt !== undefined)
+    async mutateWorkflowState(id: string, change: import('../storage/workflow-control.js').WorkflowMutation) {
+      if (change.state?.completedAt !== undefined)
         throw new Error("checkpoint unavailable");
-      await super.saveWorkflowState(id, value);
+      return super.mutateWorkflowState(id, change);
     }
   }
   const workflow = new WorkflowBuilderImpl("failure", new FailingAdapter())

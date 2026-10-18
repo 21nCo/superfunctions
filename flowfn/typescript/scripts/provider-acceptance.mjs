@@ -58,6 +58,7 @@ async function start(kind, image, port, extra = []) {
   throw new Error(`${kind} did not become ready`);
 }
 try {
+  command('npm', ['run', 'build'], { stdio: 'inherit' });
   const redis = await start("redis", "redis:7-alpine", 6379);
   const postgres = await start("postgres", "postgres:16-alpine", 5432, [
     "-e",

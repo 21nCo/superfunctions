@@ -9,6 +9,7 @@ import {
   TrimStrategy,
 } from "../stream/types.js";
 import { WorkflowExecution } from "../workflow/types.js";
+import type { WorkflowMutation } from '../storage/workflow-control.js';
 
 export interface FlowAdapter {
   // Queue operations
@@ -49,6 +50,7 @@ export interface FlowAdapter {
   trimStream?(stream: string, strategy: TrimStrategy): Promise<number>;
 
   // Workflow operations
+  mutateWorkflowState?(workflowId: string, mutation: WorkflowMutation): Promise<WorkflowExecution | null>;
   saveWorkflowState(
     workflowId: string,
     state: WorkflowExecution,

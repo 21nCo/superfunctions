@@ -1,4 +1,5 @@
 import { randomUUID, createHash } from "node:crypto";
+import { mutateWorkflow, validateWorkflowMutation, type WorkflowMutation } from '../../storage/workflow-control.js';
 import { sql, type SQL } from "drizzle-orm";
 import type { FlowAdapter } from "../base.js";
 import type { Job, QueueStats } from "../../queue/types.js";
@@ -647,10 +648,22 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
     pollTask = poll();
     return subscription;
   }
+  async mutateWorkflowState(id: string, change: WorkflowMutation): Promise<WorkflowExecution | null> {
+    validateWorkflowMutation(change, id);
+    return this.db.transaction(async (tx: any) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${this.schema}:workflow:${id}`}, 0))`);
+      const rows = await this.rows(sql`SELECT state FROM ${this.table('flowfn_workflow_executions')} WHERE id=${id} FOR UPDATE`, tx);
+      const clock = await this.rows(sql`SELECT floor(extract(epoch from clock_timestamp()) * 1000)::bigint AS now`, tx);
+      const next = mutateWorkflow(rows[0]?.state ?? null, change, Number(clock[0].now));
+      if (next) await tx.execute(sql`INSERT INTO ${this.table('flowfn_workflow_executions')} (id,workflow_id,state) VALUES (${id},${next.workflowId},${JSON.stringify(next)}::jsonb) ON CONFLICT(id) DO UPDATE SET state=EXCLUDED.state`);
+      return next;
+    });
+  }
   async saveWorkflowState(id: string, state: WorkflowExecution): Promise<void> {
-    await this.db.execute(
-      sql`INSERT INTO ${this.table("flowfn_workflow_executions")} (id,workflow_id,state) VALUES (${id},${state.workflowId},${JSON.stringify(state)}::jsonb) ON CONFLICT(id) DO UPDATE SET workflow_id=EXCLUDED.workflow_id,state=EXCLUDED.state`,
+    const saved = await this.rows(
+      sql`INSERT INTO ${this.table("flowfn_workflow_executions")} AS target (id,workflow_id,state) VALUES (${id},${state.workflowId},${JSON.stringify(state)}::jsonb) ON CONFLICT(id) DO UPDATE SET workflow_id=EXCLUDED.workflow_id,state=EXCLUDED.state WHERE target.state->'revision' IS NULL RETURNING id`,
     );
+    if (!saved.length) throw new Error('Workflow requires a revision-checked mutation');
   }
   async loadWorkflowState(id: string): Promise<WorkflowExecution | null> {
     return (

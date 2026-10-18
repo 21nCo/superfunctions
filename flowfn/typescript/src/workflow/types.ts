@@ -52,6 +52,8 @@ export interface WorkflowWait {
 }
 
 export interface WorkflowExecution {
+  revision?: number;
+  lease?: { token: string; expiresAt: number };
   id: string;
   workflowId: string;
   status: ExecutionStatus;
@@ -134,6 +136,9 @@ export type Duration = {
 };
 
 export interface WorkflowBuilder<T = any> {
+  /** Bump when callback behavior changes; structural changes are detected automatically. */
+  version(version: string): WorkflowBuilder<T>;
+  ownership(options: { leaseDuration: number }): WorkflowBuilder<T>;
   input<I>(): WorkflowBuilder<I>;
 
   step<R>(name: string, handler: StepHandler<T, R>): WorkflowBuilder<T>;

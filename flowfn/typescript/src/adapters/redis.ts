@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { validateWorkflowMutation, type WorkflowMutation } from '../storage/workflow-control.js';
 import { FlowAdapter } from "./base.js";
 import { Job, QueueStats } from "../queue/types.js";
 import {
@@ -526,21 +527,54 @@ export class RedisAdapter implements FlowAdapter {
     return removed;
   }
 
+  async mutateWorkflowState(id: string, change: WorkflowMutation): Promise<WorkflowExecution | null> {
+    validateWorkflowMutation(change, id);
+    const encoded = await this.redis.eval(`
+local raw=redis.call('GET',KEYS[1]); local stored=raw and cjson.decode(raw) or nil
+local current=stored
+if stored and stored.__flowfnState then current=cjson.decode(stored.__flowfnState); current.revision=stored.revision; current.lease=stored.lease end
+local change=cjson.decode(ARGV[1]); local revision=current and (current.revision or 0) or cjson.null
+if revision~=change.expectedRevision then return nil end
+if not current and not change.state then return nil end
+if current and change.state and current.workflowId~=change.state.workflowId then return nil end
+local t=redis.call('TIME'); local now=tonumber(t[1])*1000+math.floor(tonumber(t[2])/1000)
+local lease=current and current.lease
+if change.acquire then
+  if lease and lease.expiresAt>now then return nil end
+elseif lease then
+  if lease.token~=change.token or lease.expiresAt<=now then return nil end
+elseif change.token then return nil end
+local next={__flowfnState=ARGV[2]~='' and ARGV[2] or (stored.__flowfnState or raw)}
+next.revision=(current and current.revision or 0)+1
+next.lease=nil
+if change.acquire or change.renew then next.lease={token=change.token,expiresAt=now+(change.acquire or change.renew)}
+elseif lease and not change.release then next.lease=lease end
+local output=cjson.encode(next); redis.call('SET',KEYS[1],output); return output
+`, 1, this.key('workflow', id), JSON.stringify(change), change.state ? JSON.stringify(change.state) : '');
+    return encoded ? this.decodeWorkflow(String(encoded)) : null;
+  }
+  private decodeWorkflow(encoded: string): WorkflowExecution {
+    const stored = JSON.parse(encoded);
+    if (!stored.__flowfnState) return stored;
+    const value = JSON.parse(stored.__flowfnState);
+    value.revision = stored.revision;
+    delete value.lease;
+    if (stored.lease) value.lease = stored.lease;
+    return value;
+  }
   async saveWorkflowState(
     workflowId: string,
     state: WorkflowExecution,
   ): Promise<void> {
-    await this.redis.set(
-      this.key("workflow", workflowId),
-      JSON.stringify(state),
-    );
+    const saved = await this.redis.eval(`local raw=redis.call('GET',KEYS[1]); if raw and cjson.decode(raw).revision then return 0 end; redis.call('SET',KEYS[1],ARGV[1]); return 1`, 1, this.key('workflow', workflowId), JSON.stringify(state));
+    if (!saved) throw new Error('Workflow requires a revision-checked mutation');
   }
 
   async loadWorkflowState(
     workflowId: string,
   ): Promise<WorkflowExecution | null> {
     const data = await this.redis.get(this.key("workflow", workflowId));
-    return data ? JSON.parse(data) : null;
+    return data ? this.decodeWorkflow(data) : null;
   }
 
   async getJob(queue: string, id: string): Promise<Job | null> {

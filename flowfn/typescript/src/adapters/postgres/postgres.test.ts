@@ -8,11 +8,15 @@ import { QueueImpl } from "../../queue/queue.js";
 import { StreamImpl } from "../../stream/stream.js";
 import type { Message } from "../../stream/types.js";
 import { WorkflowBuilderImpl } from "../../workflow/workflow.js";
+import { workflowControlContract } from '../../storage/workflow-control-contract.js';
+import { workflowCrashContract } from '../../storage/workflow-crash-contract.js';
 
 describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
   "PostgreSQL native contract (requires FLOWFN_POSTGRES_URL)",
   () => {
     let pool: Pool, adapter: PostgresAdapter, schema: string;
+    it('recovers a SIGKILL checkpoint in a new process without repeating effects', async () => { await workflowCrashContract(adapter, 'postgres', schema); });
+    it('enforces durable workflow ownership and concurrent catalogs', async () => { await workflowControlContract(adapter); });
     beforeEach(async () => {
       pool = new Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL });
       schema = `flowfn_${randomUUID().replaceAll("-", "")}`;
@@ -227,40 +231,6 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
       expect(await stream.trim({ maxLength: 0 })).toBe(120);
       expect((await stream.getInfo()).length).toBe(0);
       await stream.close();
-    });
-    it("roundtrips workflow journals and resumes a persisted wait without repeating completed effects", async () => {
-      let calls = 0;
-      const build = (storage: PostgresAdapter) =>
-        new WorkflowBuilderImpl("workflow", storage)
-          .step("effect", async (ctx) => {
-            calls++;
-            ctx.set("value", 5);
-          })
-          .waitForEvent("go")
-          .step("finish", async (ctx, value) => ctx.get("value") + value)
-          .build();
-      const workflow = build(adapter),
-        execution = await workflow.execute({});
-      await vi.waitFor(async () =>
-        expect((await workflow.getExecution(execution.id)).waiting?.kind).toBe(
-          "event",
-        ),
-      );
-      const saved = await adapter.loadWorkflowState(execution.id);
-      await workflow.close();
-      await adapter.saveWorkflowState(execution.id, saved!);
-      const reopened = new PostgresAdapter({
-          db: drizzle(pool),
-          schema,
-          pollInterval: 10,
-        }),
-        restored = build(reopened);
-      await restored.resumeExecution(execution.id);
-      await restored.signalEvent(execution.id, "go", 7);
-      expect((await restored.waitForCompletion(execution.id)).output).toBe(12);
-      expect(calls).toBe(1);
-      await restored.close();
-      await reopened.cleanup();
     });
     it("reclaims expired delivery leases while refusing a stale acknowledgment", async () => {
       const stream = new StreamImpl<number>("stream", adapter),

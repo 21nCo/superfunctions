@@ -45,6 +45,18 @@ type StepDefinition = {
 };
 
 export class WorkflowBuilderImpl<T = any> implements WorkflowBuilder<T> {
+  private definitionVersion = '1';
+  version(version: string): WorkflowBuilder<T> {
+    if (!version.trim()) throw new Error('Workflow version is required');
+    this.definitionVersion = version;
+    return this;
+  }
+  private leaseDuration = 30_000;
+  ownership(options: { leaseDuration: number }): WorkflowBuilder<T> {
+    if (!Number.isSafeInteger(options.leaseDuration) || options.leaseDuration <= 0) throw new Error('Invalid workflow lease duration');
+    this.leaseDuration = options.leaseDuration;
+    return this;
+  }
   public steps: StepDefinition[] = [];
   private name: string;
   private adapter: FlowAdapter;
@@ -160,6 +172,8 @@ export class WorkflowBuilderImpl<T = any> implements WorkflowBuilder<T> {
       this.adapter,
       this.scope,
       this.onEvent,
+      this.leaseDuration,
+      this.definitionVersion,
     );
     this.onBuild?.(workflow);
     return workflow;
@@ -167,6 +181,7 @@ export class WorkflowBuilderImpl<T = any> implements WorkflowBuilder<T> {
 }
 
 interface Checkpoint extends WorkflowExecution {
+  definitionHash: string;
   journal: Record<
     string,
     { output?: any; branch?: boolean; completed: boolean }
@@ -185,6 +200,11 @@ interface Runtime {
   writes: Promise<void>;
   wakes: Set<() => void>;
   settling: boolean;
+  token: string;
+  lost: boolean;
+  leaseLost: AbortController;
+  deadline: number;
+  timer?: ReturnType<typeof setInterval>;
 }
 export class WorkflowCancelledError extends Error {
   constructor() {
@@ -235,12 +255,15 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   private definitions = new Map<string, StepDefinition>();
   private closed = false;
   private catalogWrites: Promise<void> = Promise.resolve();
+  private definitionHash: string;
   constructor(
     name: string,
     steps: StepDefinition[],
     private adapter: FlowAdapter,
     scope = "",
     private onEvent?: (event: string, data: any) => void,
+    private leaseDuration = 30_000,
+    definitionVersion = '1',
   ) {
     if (!name) throw new Error("Workflow name is required");
     this.name = name;
@@ -262,6 +285,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         return result;
       });
     this.steps = copy(steps);
+    this.definitionHash = createHash('sha256').update(JSON.stringify([definitionVersion, this.steps], (_key, value) => typeof value === 'function' ? '[callback]' : value)).digest('hex');
   }
   private ensureOpen() {
     if (this.closed) throw new Error("Workflow is closed");
@@ -287,12 +311,62 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     }
   }
   private persist(runtime: Runtime): Promise<void> {
+    if (runtime.lost) return Promise.reject(new Error('Workflow lease lost'));
     runtime.record.updatedAt = Date.now();
     const snapshot = clone(runtime.record);
-    runtime.writes = runtime.writes.then(() =>
-      this.adapter.saveWorkflowState(snapshot.id, snapshot),
-    );
-    return runtime.writes;
+    runtime.writes = runtime.writes.then(async () => {
+      if (runtime.lost) throw new Error('Workflow lease lost');
+      const saved = await this.adapter.mutateWorkflowState!(snapshot.id, {
+        expectedRevision: runtime.record.revision ?? 0,
+        state: snapshot, token: runtime.token,
+        release: snapshot.completedAt !== undefined,
+      });
+      if (!saved) { this.loseOwnership(runtime); throw new Error('Workflow lease lost'); }
+      runtime.record.revision = saved.revision;
+      runtime.record.lease = saved.lease;
+    });
+    return new Promise<void>((resolve, reject) => {
+      const lost = () => reject(new Error('Workflow lease lost'));
+      runtime.leaseLost.signal.addEventListener('abort', lost, { once: true });
+      runtime.writes.then(resolve, reject).finally(() => runtime.leaseLost.signal.removeEventListener('abort', lost));
+    });
+  }
+  private loseOwnership(runtime: Runtime): void {
+    runtime.lost = true;
+    runtime.leaseLost.abort();
+    runtime.controller.abort();
+  }
+  private async acquire(runtime: Runtime, fresh: boolean): Promise<void> {
+    if (!this.adapter.mutateWorkflowState) throw new Error('Adapter must support atomic workflow ownership');
+    const started = performance.now();
+    const saved = await this.adapter.mutateWorkflowState(runtime.record.id, {
+      expectedRevision: fresh ? null : runtime.record.revision ?? 0,
+      state: runtime.record, token: runtime.token, acquire: this.leaseDuration,
+    });
+    if (!saved) throw new Error('Workflow execution is owned or changed');
+    runtime.record.revision = saved.revision;
+    runtime.record.lease = saved.lease;
+    runtime.deadline = started + this.leaseDuration;
+    let pending = false;
+    runtime.timer = setInterval(() => {
+      if (runtime.lost) return;
+      if (performance.now() >= runtime.deadline) { this.loseOwnership(runtime); return; }
+      if (pending) return;
+      pending = true;
+      const renewal = runtime.writes.then(async () => {
+        if (runtime.lost) return;
+        const started = performance.now();
+        const saved = await this.adapter.mutateWorkflowState!(runtime.record.id, {
+          expectedRevision: runtime.record.revision ?? 0, token: runtime.token, renew: this.leaseDuration,
+        });
+        if (!saved) { this.loseOwnership(runtime); return; }
+        runtime.record.revision = saved.revision;
+        runtime.record.lease = saved.lease;
+        runtime.deadline = started + this.leaseDuration;
+      });
+      runtime.writes = renewal.catch(() => undefined);
+      void renewal.finally(() => { pending = false; }).catch(() => undefined);
+    }, Math.min(2147483647, Math.max(1, Math.floor(this.leaseDuration / 3))));
   }
   private runtime(record: Checkpoint): Runtime {
     const runtime: Runtime = {
@@ -301,6 +375,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       writes: Promise.resolve(),
       settling: false,
       wakes: new Set(),
+      token: uuidv4(), lost: false, deadline: 0, leaseLost: new AbortController(),
     };
     this.active.set(record.id, runtime);
     this.known.set(record.id, record);
@@ -310,6 +385,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     this.ensureOpen();
     const record: Checkpoint = {
       id: uuidv4(),
+      definitionHash: this.definitionHash,
       workflowId: this.id,
       status: "running",
       input: clone(input),
@@ -327,9 +403,10 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     const runtime = this.runtime(record);
     this.event(record, "execution.started");
     try {
-      await this.persist(runtime);
+      await this.acquire(runtime, true);
       await this.indexExecution(record.id);
     } catch (error) {
+      if (runtime.timer) clearInterval(runtime.timer);
       this.active.delete(record.id);
       this.known.delete(record.id);
       throw error;
@@ -490,6 +567,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       record.status = "completed";
       this.event(record, "execution.completed", { output: record.output });
     } catch (error) {
+      if (runtime.lost) throw new Error('Workflow lease lost');
       runtime.settling = true;
       record.status = runtime.controller.signal.aborted
         ? "cancelled"
@@ -529,6 +607,11 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         await this.persist(runtime);
       }
     } finally {
+      if (runtime.lost) {
+        if (runtime.timer) clearInterval(runtime.timer);
+        this.active.delete(record.id);
+        throw new Error('Workflow lease lost');
+      }
       runtime.settling = true;
       record.waits = {};
       this.syncWaits(record);
@@ -536,6 +619,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
       try {
         await this.persist(runtime);
       } finally {
+        if (runtime.timer) clearInterval(runtime.timer);
         this.active.delete(record.id);
       }
     }
@@ -654,6 +738,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         await this.persist(runtime);
         this.check(runtime);
       } catch (error) {
+        if (runtime.lost) throw new Error('Workflow lease lost');
         this.event(record, "step.failed", {
           step: step.name ?? step.type,
           error: (error as Error)?.message ?? String(error),
@@ -675,8 +760,8 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     return previous;
   }
   private async load(executionId: string): Promise<Checkpoint> {
-    const cached = this.known.get(executionId);
-    if (cached) return cached;
+    const active = this.active.get(executionId);
+    if (active) return active.record;
     const record = (await this.adapter.loadWorkflowState(
       executionId,
     )) as Checkpoint | null;
@@ -693,18 +778,21 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   }
   private async indexExecution(executionId: string): Promise<void> {
     const operation = this.catalogWrites.then(async () => {
-      const key = `${this.id}:catalog`,
-        existing = await this.adapter.loadWorkflowState(key);
+      const key = `${this.id}:catalog`;
+      for (;;) {
+      const existing = await this.adapter.loadWorkflowState(key);
       const ids: string[] = existing?.state?.executionIds ?? [];
       if (!ids.includes(executionId)) ids.push(executionId);
-      await this.adapter.saveWorkflowState(key, {
+      const saved = await this.adapter.mutateWorkflowState!(key, { expectedRevision: existing ? existing.revision ?? 0 : null, state: {
         id: key,
         workflowId: this.id,
         status: "completed",
         input: null,
         startedAt: 0,
         state: { executionIds: ids },
-      });
+      }});
+      if (saved) break;
+      }
     });
     this.catalogWrites = operation.catch(() => undefined);
     await operation;
@@ -812,9 +900,12 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     const record = await this.load(executionId);
     if (!record.journal || !record.waits || !record.waitResults)
       throw new Error("Execution predates recoverable workflow checkpoints");
+    if (record.definitionHash !== this.definitionHash) throw new Error('Workflow definition differs from checkpoint');
     if (record.completedAt !== undefined)
       throw new Error("Cannot resume terminal execution");
     const runtime = this.runtime(record);
+    try { await this.acquire(runtime, false); }
+    catch (error) { this.active.delete(record.id); this.known.delete(record.id); throw error; }
     this.event(record, "execution.resumed");
     await this.persist(runtime);
     runtime.task = this.run(runtime);
