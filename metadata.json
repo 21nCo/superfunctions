@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57V0E0WY45KKD7DDQA6W531",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 13,
+  "files_touched": [
+    "flowfn/python/README.md",
+    "flowfn/python/flowfn/adapters/redis.py",
+    "flowfn/python/flowfn/queue/types.py",
+    "flowfn/python/tests/test_redis_adapter.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 16413,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1987072,
+    "output_tokens": 4342,
+    "api_call_count": 24
+  }
+}
