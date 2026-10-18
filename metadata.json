@@ -3,7 +3,7 @@
   "checkpoint_id": "01M580BY7JHCGGGKCWE69EQFS4",
   "strategy": "manual-commit",
   "branch": "codex/flowfn-readiness-20261016",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "flowfn/python/README.md",
     "flowfn/python/flowfn/adapters/memory.py",
@@ -24,6 +24,20 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 44,
+    "cache_creation_tokens": 35022,
+    "cache_read_tokens": 2094914,
+    "output_tokens": 11524,
+    "api_call_count": 22
+  }
 }
