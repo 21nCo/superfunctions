@@ -1,0 +1,49 @@
+inventory open PRs in superfunctions
+
+---
+
+provide desc of what each PR is about and also the potential sequence of merge
+
+---
+
+leave the prs where currently active or recent work is going on and suggest me the new order of merge
+
+---
+
+proceed and complete waves 1 to 3... blacksmith yes
+
+while you work - make sure you wait for all PR review bot rounds to settle and no valid code review findings are left
+
+---
+
+<task-notification>
+<task-id>boi6tf6l0</task-id>
+<tool-use-id>toolu_01H9KaujYWmacbn77aorvLDD</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/boi6tf6l0.output</output-file>
+<status>completed</status>
+<summary>Background command "Install dependencies in #213 worktree" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+continue merging waves 1-3 (check background tasks bldxfyphw and boi6tf6l0)
+
+---
+
+<task-notification>
+<task-id>bldxfyphw</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/bldxfyphw.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for wave 1 and #180 checks to settle" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bcplggrc2</task-id>
+<tool-use-id>toolu_01FXhhvsQnQCJqYfcjFwjXfp</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/bcplggrc2.output</output-file>
+<status>completed</status>
+<summary>Background command "Update todo; wait for 211/226/180/213 to settle" completed (exit code 0)</summary>
+</task-notification>
