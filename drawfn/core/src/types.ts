@@ -117,7 +117,8 @@ export type DrawfnErrorCode =
   | "EDIT_CONTEXT_CONFLICT"
   | "EXPORT_EMPTY_SELECTION"
   | "EXPORT_IMAGE_LOAD_FAILED"
-  | "EXPORT_RENDER_FAILED";
+  | "EXPORT_RENDER_FAILED"
+  | "NODE_PREVIEW_FAILED";
 
 export type DrawfnError = {
   code: DrawfnErrorCode;

@@ -181,6 +181,16 @@ export class SelectTool extends BaseTool {
     this.initialBounds = null;
   }
 
+  handlePointerCancel(): void {
+    this.dragStart = null;
+    this.dragElementId = null;
+    this.dragHandle = null;
+    this.initialBounds = null;
+    this.marqueeStart = null;
+    this.marqueeCurrent = null;
+    this.isMarqueeActive = false;
+  }
+
   getMarquee(): { start: Point; current: Point } | null {
     if (this.isMarqueeActive && this.marqueeStart && this.marqueeCurrent) {
       return { start: this.marqueeStart, current: this.marqueeCurrent };

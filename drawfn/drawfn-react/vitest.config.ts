@@ -16,11 +16,6 @@ export default defineConfig({
     },
     dedupe: ["react", "react-dom"],
   },
-  esbuild: {
-    jsx: "transform",
-    jsxFactory: "React.createElement",
-    jsxFragment: "React.Fragment",
-  },
   test: {
     environment: "jsdom",
     globals: true,

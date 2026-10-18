@@ -13,7 +13,8 @@ export const MAX_SCENE_ELEMENTS = 2000;
 export const MAX_FREEDRAW_POINTS = 16384;
 
 export function generateId(): string {
-  return `e_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  return `e_${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 export function deepClone<T>(value: T): T {
@@ -47,8 +48,10 @@ export function screenToCanvas(
   canvas: HTMLCanvasElement
 ): Point {
   const rect = canvas.getBoundingClientRect();
-  const x = (screenPoint.x - rect.left - camera.x) / camera.zoom;
-  const y = (screenPoint.y - rect.top - camera.y) / camera.zoom;
+  const scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
+  const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
+  const x = ((screenPoint.x - rect.left) * scaleX - camera.x) / camera.zoom;
+  const y = ((screenPoint.y - rect.top) * scaleY - camera.y) / camera.zoom;
   return { x, y };
 }
 

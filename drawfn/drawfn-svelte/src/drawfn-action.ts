@@ -20,32 +20,50 @@ function scenesAreEqual(left?: Scene, right?: Scene): boolean {
 }
 
 export function drawfn(canvas: HTMLCanvasElement, options?: DrawfnActionOptions) {
-  const instance = new Drawfn({
-    canvas,
-    overlayRoot: options?.overlayRoot,
-    getImageBitmap: options?.getImageBitmap,
-  });
   let currentOptions = options;
+  let instance: Drawfn;
+  let unsubscribeSceneChanged: (() => void) | undefined;
+  let destroyed = false;
+  let lastLoadedSceneKey: string | undefined;
 
-  const unsubscribeSceneChanged = instance.on("sceneChanged", (meta) => {
-    currentOptions?.onSceneChange?.(meta.scene, meta);
-  });
-
-  if (options?.scene && !scenesAreEqual(instance.getScene(), options.scene)) {
-    instance.load(options.scene);
+  function create(scene?: Scene): void {
+    instance = new Drawfn({
+      canvas,
+      overlayRoot: currentOptions?.overlayRoot,
+      getImageBitmap: currentOptions?.getImageBitmap,
+      onNodeClick: (...args) => currentOptions?.onNodeClick?.(...args),
+      getNodePreview: currentOptions?.getNodePreview ? (id) => currentOptions?.getNodePreview?.(id) ?? Promise.resolve({}) : undefined,
+    });
+    unsubscribeSceneChanged = instance.on("sceneChanged", (meta) => {
+      currentOptions?.onSceneChange?.(meta.scene, meta);
+    });
+    if (scene && !scenesAreEqual(instance.getScene(), scene)) instance.load(scene);
+    lastLoadedSceneKey = currentOptions?.scene ? JSON.stringify(currentOptions.scene) : undefined;
+    currentOptions?.onReady?.(instance);
   }
-
-  options?.onReady?.(instance);
+  create(options?.scene);
 
   return {
-    update(newOptions: DrawfnActionOptions) {
+    update(newOptions: DrawfnActionOptions = {}) {
+      if (destroyed) return;
+      const rebuild = newOptions.overlayRoot !== currentOptions?.overlayRoot ||
+        newOptions.getImageBitmap !== currentOptions?.getImageBitmap ||
+        Boolean(newOptions.getNodePreview) !== Boolean(currentOptions?.getNodePreview);
       currentOptions = newOptions;
-
-      if (newOptions.scene && !scenesAreEqual(instance.getScene(), newOptions.scene)) {
-        instance.load(newOptions.scene);
+      if (rebuild) {
+        const scene = newOptions.scene ?? instance.getScene();
+        unsubscribeSceneChanged?.();
+        instance.destroy();
+        create(scene);
+      } else if (newOptions.scene) {
+        const key = JSON.stringify(newOptions.scene);
+        if (key !== lastLoadedSceneKey && !scenesAreEqual(instance.getScene(), newOptions.scene)) instance.load(newOptions.scene);
+        lastLoadedSceneKey = key;
       }
     },
     destroy() {
+      if (destroyed) return;
+      destroyed = true;
       unsubscribeSceneChanged?.();
       instance.destroy();
     },

@@ -5,14 +5,15 @@ export default defineConfig({
   plugins: [
     svelte({
       hot: !process.env.VITEST,
-      preprocess: vitePreprocess(),
+      preprocess: vitePreprocess({ script: true }),
     }),
   ],
   cacheDir: "./.vite-vitest",
   test: {
     environment: "jsdom",
+    include: ["__tests__/**/*.test.ts"],
     globals: true,
-    setupFiles: ["./src/__tests__/setup.ts"],
+    setupFiles: ["./__tests__/setup.ts"],
   },
   resolve: {
     conditions: ["browser"],

@@ -1,8 +1,8 @@
 import { render, waitFor } from "@testing-library/svelte";
 import { Drawfn, type Scene } from "drawfn";
 import { describe, expect, it, vi } from "vitest";
-import Canvas from "../Canvas.svelte";
-import DrawfnCanvas from "../DrawfnCanvas.svelte";
+import Canvas from "../src/Canvas.svelte";
+import DrawfnCanvas from "../src/DrawfnCanvas.svelte";
 
 function createScene(): Scene {
   return {

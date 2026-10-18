@@ -47,7 +47,10 @@ export function useDrawfn(options?: UseDrawfnOptions): UseDrawfnResult {
   const canvasRef = useRef<HTMLCanvasElement>(null!);
   const drawfnRef = useRef<Drawfn | null>(null);
   const lastLoadedSceneRef = useRef<string | null>(null);
-  const [isReady, setIsReady] = useState(false);
+  const [instance, setInstance] = useState<Drawfn | null>(null);
+  const retainedSceneRef = useRef<Scene>();
+  const integrationRef = useRef(options);
+  integrationRef.current = options;
   const onSceneChangeRef = useRef(options?.onSceneChange);
 
   useEffect(() => {
@@ -61,6 +64,8 @@ export function useDrawfn(options?: UseDrawfnOptions): UseDrawfnResult {
       canvas: canvasRef.current,
       overlayRoot: options?.overlayRoot,
       getImageBitmap: options?.getImageBitmap,
+      onNodeClick: (...args) => integrationRef.current?.onNodeClick?.(...args),
+      getNodePreview: options?.getNodePreview ? (id) => integrationRef.current?.getNodePreview?.(id) ?? Promise.resolve({}) : undefined,
     });
     drawfnRef.current = drawfn;
 
@@ -68,22 +73,24 @@ export function useDrawfn(options?: UseDrawfnOptions): UseDrawfnResult {
       onSceneChangeRef.current?.(meta.scene, meta);
     });
 
-    const sceneKey = serializeScene(options?.scene);
-    if (options?.scene && !scenesAreEqual(drawfn.getScene(), options.scene)) {
+    const initialScene = options?.scene ?? retainedSceneRef.current;
+    const sceneKey = serializeScene(initialScene);
+    if (initialScene && !scenesAreEqual(drawfn.getScene(), initialScene)) {
       lastLoadedSceneRef.current = sceneKey;
-      drawfn.load(options.scene);
+      drawfn.load(initialScene);
     }
 
-    setIsReady(true);
+    setInstance(drawfn);
 
     return () => {
       unsubscribeSceneChanged?.();
+      retainedSceneRef.current = drawfn.getScene();
       drawfn.destroy();
       drawfnRef.current = null;
       lastLoadedSceneRef.current = null;
-      setIsReady(false);
+      setInstance(null);
     };
-  }, [options?.overlayRoot, options?.getImageBitmap]);
+  }, [options?.overlayRoot, options?.getImageBitmap, Boolean(options?.getNodePreview)]);
 
   useEffect(() => {
     if (!drawfnRef.current || !options?.scene) {
@@ -140,8 +147,8 @@ export function useDrawfn(options?: UseDrawfnOptions): UseDrawfnResult {
 
   return {
     canvasRef,
-    drawfn: drawfnRef.current,
-    isReady,
+    drawfn: instance,
+    isReady: instance !== null,
     setTool,
     getScene,
     undo,

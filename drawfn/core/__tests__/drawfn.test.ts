@@ -81,7 +81,7 @@ describe('Drawfn', () => {
     });
 
     drawfn.update(id, { x: 50, y: 60 });
-    
+
     const element = drawfn.getElementById(id);
     expect(element?.x).toBe(50);
     expect(element?.y).toBe(60);
@@ -90,7 +90,7 @@ describe('Drawfn', () => {
   it('should set and get camera', () => {
     drawfn.setCamera({ x: 100, y: 200, zoom: 1.5 });
     const camera = drawfn.getCamera();
-    
+
     expect(camera.x).toBe(100);
     expect(camera.y).toBe(200);
     expect(camera.zoom).toBe(1.5);

@@ -25,7 +25,7 @@ function App() {
       <button onClick={() => drawfn?.setTool('rectangle')}>Rectangle</button>
       <button onClick={() => drawfn?.undo()}>Undo</button>
       <button onClick={() => drawfn?.redo()}>Redo</button>
-      
+
       <DrawfnCanvas
         width={1200}
         height={800}
@@ -54,7 +54,7 @@ function App() {
       <button onClick={() => setTool('select')}>Select</button>
       <button onClick={undo}>Undo</button>
       <button onClick={redo}>Redo</button>
-      
+
       <Canvas ref={canvasRef} width={1200} height={800} />
     </div>
   );

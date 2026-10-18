@@ -23,6 +23,7 @@ export class TextTool extends BaseTool {
   }
 
   handlePointerDown(e: PointerEvent, context: ToolContext): void {
+    e.preventDefault();
     this.commitText();
 
     const canvas = e.target as HTMLCanvasElement;
@@ -77,15 +78,17 @@ export class TextTool extends BaseTool {
     const scene = context.getScene();
     const textarea = document.createElement("textarea");
     const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? rect.width / canvas.width : 1;
+    const scaleY = rect.height > 0 ? rect.height / canvas.height : 1;
     const screenPoint = canvasToScreen({ x: element.x, y: element.y }, scene.camera);
 
     Object.assign(textarea.style, {
       position: "fixed",
-      left: `${screenPoint.x + rect.left}px`,
-      top: `${screenPoint.y + rect.top}px`,
-      width: `${element.w * scene.camera.zoom}px`,
-      minHeight: `${element.h * scene.camera.zoom}px`,
-      font: `${element.fontSize * scene.camera.zoom}px ${element.fontFamily}`,
+      left: `${screenPoint.x * scaleX + rect.left}px`,
+      top: `${screenPoint.y * scaleY + rect.top}px`,
+      width: `${element.w * scene.camera.zoom * scaleX}px`,
+      minHeight: `${element.h * scene.camera.zoom * scaleY}px`,
+      font: `${element.fontSize * scene.camera.zoom * scaleY}px ${element.fontFamily}`,
       color: element.fill,
       background: "transparent",
       border: "2px solid #3b82f6",
@@ -96,7 +99,6 @@ export class TextTool extends BaseTool {
     });
 
     textarea.value = element.text;
-    textarea.focus();
 
     this.activeTextarea = textarea;
     this.overlayRoot.appendChild(textarea);
@@ -120,9 +122,10 @@ export class TextTool extends BaseTool {
     };
 
     textarea.addEventListener("blur", blurHandler);
+    textarea.focus();
 
     this.activeSession.outsideClickTimer = window.setTimeout(() => {
-      document.addEventListener("click", outsideClickHandler);
+      document.addEventListener("pointerdown", outsideClickHandler);
     }, 0);
   }
 
@@ -138,7 +141,7 @@ export class TextTool extends BaseTool {
       textarea.removeEventListener("blur", session.blurHandler);
     }
     if (session) {
-      document.removeEventListener("click", session.outsideClickHandler);
+      document.removeEventListener("pointerdown", session.outsideClickHandler);
       if (revertProvisional && session.mode === "create") {
         session.context.getDrawfn().discardStagedTextElement(session.element.id);
       }

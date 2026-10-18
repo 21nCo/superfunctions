@@ -95,6 +95,7 @@ const drawfn = new Drawfn({
 **History**
 - `undo()`: Undo last action
 - `redo()`: Redo last undone action
+- `getHistoryState()`: Read `{ canUndo, canRedo, depth }` for the current instance
 
 **Selection**
 - `setSelection(ids: string[])`: Set selected element IDs
@@ -115,7 +116,7 @@ const drawfn = new Drawfn({
 
 ## Examples
 
-See `example.html` for a complete vanilla JS example with toolbar and all tools.
+See `example.html` for a vanilla JS toolbar example. From the repository root, run `npm run build --workspace ./drawfn/core`, then `python3 -m http.server 8000` and open `http://localhost:8000/drawfn/core/example.html`. Its import map loads the installed workspace dependency without a bundler. Image and node insertion use the programmatic tool options documented above.
 
 For React examples, see the `@drawfn/react` package.
 
@@ -136,3 +137,25 @@ For React examples, see the `@drawfn/react` package.
 ## License
 
 MIT
+
+### Input ownership and cleanup
+
+The canvas receives focus on pointer interaction and is keyboard-focusable by default. Delete, undo/redo, and space-to-pan apply to the focused canvas; typing in another input or editor does not change drawings. Multiple instances can coexist. Call `destroy()` when unmounting; repeated calls are safe, pending image completions cannot schedule another render, and cached image bitmaps are closed.
+
+Custom `getImageBitmap` loaders transfer bitmap ownership to the renderer. Return a fresh bitmap per invocation (or a fresh clone of an application-cached bitmap); an export creates its own temporary renderer and closes its assets after rendering.
+
+### Export coordinates
+
+PNG and SVG export the current viewport by default, including its camera transform. With `fitContent: true`, exports use world-space element bounds and ignore the viewing camera. Padding is measured in world units for fitted output; `scale` changes output dimensions. PNG supports transparent backgrounds. SVG backgrounds cover the full fitted viewBox, and text/style strings are XML-escaped. Export `scale` must be finite and positive, and `padding` finite and non-negative.
+
+Image URLs embedded in SVG remain external references. PNG waits for image loading and requires browser canvas access to those images (for example, a same-origin URL, a CORS-enabled remote URL, or a host bitmap loader).
+
+### Node integration hooks
+
+`onNodeClick(nodeId, element)` runs for a primary-button click on the topmost node while the select tool is active; dragging does not invoke it. `getNodePreview(nodeId)` asynchronously fills a missing preview when a node is added or a scene is loaded. Its `description` becomes the node preview's `excerpt`. Existing previews are retained; results for removed, replaced, edited, or destroyed nodes are ignored. Current request failures emit a recoverable `NODE_PREVIEW_FAILED` error. Preview updates follow the normal update/event/history pipeline.
+
+Canvas `width`/`height` attribute changes repaint the current scene without history or scene-change events. CSS dimensions may differ from the backing bitmap: pointer coordinates, pan deltas, wheel anchors, and text overlays account for that scaling. The core does not change backing dimensions automatically.
+
+Canceled pointer gestures restore their pre-gesture content and selection without adding undo steps. Undo/redo applies to content and preserves the current camera. Pen taps produce dots; supplied pressure and taper settings apply consistently to canvas and SVG strokes.
+
+Packed acceptance scripts require `NPM_CLI` set to the absolute path of your trusted `npm/bin/npm-cli.js`. They invoke it through the current Node executable rather than searching `PATH`.

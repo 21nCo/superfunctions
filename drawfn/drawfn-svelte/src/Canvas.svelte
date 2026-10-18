@@ -12,4 +12,4 @@
   class={className}
   style={`display: block; touch-action: none; ${$$restProps.style ?? ""}`}
   {...$$restProps}
-/>
+></canvas>

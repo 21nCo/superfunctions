@@ -19,7 +19,7 @@ export class PenTool extends BaseTool {
 
     context.getDrawfn().beginGesture("add");
 
-    this.currentPoints = [[point.x, point.y, e.pressure || 0.5]];
+    this.currentPoints = [[0, 0, e.pressure || 0.5]];
 
     this.currentElement = {
       id: generateId(),
@@ -33,7 +33,7 @@ export class PenTool extends BaseTool {
       fill: "transparent",
       strokeWidth: 2,
       opacity: 1,
-      points: [],
+      points: [...this.currentPoints],
       style: {
         size: 4,
         thinning: 0.5,

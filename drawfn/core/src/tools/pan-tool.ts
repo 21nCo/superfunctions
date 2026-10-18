@@ -17,8 +17,10 @@ export class PanTool extends BaseTool {
   handlePointerMove(e: PointerEvent, context: ToolContext): void {
     if (!this.dragStart) return;
 
-    const dx = e.clientX - this.dragStart.x;
-    const dy = e.clientY - this.dragStart.y;
+    const canvas = e.target as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    const dx = (e.clientX - this.dragStart.x) * (rect.width > 0 ? canvas.width / rect.width : 1);
+    const dy = (e.clientY - this.dragStart.y) * (rect.height > 0 ? canvas.height / rect.height : 1);
 
     const camera = context.getCamera();
     context.getDrawfn().setCamera({

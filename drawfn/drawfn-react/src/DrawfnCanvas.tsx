@@ -15,6 +15,8 @@ export function DrawfnCanvas({
   onSceneChange,
   overlayRoot,
   getImageBitmap,
+  onNodeClick,
+  getNodePreview,
   onReady,
   ...canvasProps
 }: DrawfnCanvasProps) {
@@ -23,6 +25,8 @@ export function DrawfnCanvas({
     onSceneChange,
     overlayRoot,
     getImageBitmap,
+  onNodeClick,
+  getNodePreview,
   });
   const readyInstanceRef = React.useRef<UseDrawfnResult["drawfn"]>(null);
 

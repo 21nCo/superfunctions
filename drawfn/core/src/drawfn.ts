@@ -7,6 +7,7 @@ import type {
   DrawfnEvent,
   DrawfnEventMap,
   DrawfnError,
+  HistoryChangedEvent,
   DrawfnResult,
   ElementType,
   FreeDrawElement,
@@ -31,7 +32,7 @@ import {
   screenToCanvas,
 } from "./utils";
 import { ToolManager } from "./tools/tool-manager";
-import { getOBBBounds, getTupleBounds } from "./geometry";
+import { getOBBBounds, getTupleBounds, isPointInOBB } from "./geometry";
 import { getStroke } from "perfect-freehand";
 
 export type DrawfnOptions = {
@@ -153,7 +154,11 @@ function normalizeOptionalMeta(
     });
   }
 
-  return { ok: true, data: deepClone(value) };
+  try {
+    return { ok: true, data: deepClone(value) };
+  } catch {
+    return invalidScene(`${path} must be JSON-serializable.`, { path });
+  }
 }
 
 function normalizeMaybeNumber(
@@ -830,10 +835,16 @@ export class Drawfn {
     new Map();
   private rafId: number | null = null;
   private needsRender = false;
+  private destroyed = false;
+  private canvasSizeObserver?: MutationObserver;
+  private originalTabIndex: string | null = null;
   private selectedIds: Set<string> = new Set();
   private hoveredId: string | null = null;
   private activeGesture: GestureTransaction | null = null;
   private activePointerId: number | null = null;
+  private pointerStart: Point | null = null;
+  private pointerMoved = false;
+  private pointerSelection: string[] = [];
   private getImageBitmap?: (src: string) => Promise<ImageBitmap>;
 
   // Space-to-pan state
@@ -848,6 +859,8 @@ export class Drawfn {
 
   constructor(options: DrawfnOptions) {
     this.canvas = options.canvas;
+    this.originalTabIndex = this.canvas.getAttribute("tabindex");
+    if (this.originalTabIndex === null) this.canvas.tabIndex = 0;
     this.getImageBitmap = options.getImageBitmap;
     this.renderer = new Renderer(this.canvas, options.getImageBitmap, {
       onImageLoaded: (src) => {
@@ -873,6 +886,9 @@ export class Drawfn {
     this.getNodePreview = options.getNodePreview;
 
     this.setupEventListeners();
+    // Updating backing dimensions clears native canvas pixels without changing the scene.
+    this.canvasSizeObserver = new MutationObserver(() => this.scheduleRender());
+    this.canvasSizeObserver.observe(this.canvas, { attributes: true, attributeFilter: ["width", "height"] });
     this.scheduleRender();
   }
 
@@ -897,6 +913,7 @@ export class Drawfn {
     this.setSelection([]);
     this.emitHistoryChanged();
     this.emitSceneChanged("load", []);
+    for (const element of this.scene.elements) this.resolveNodePreview(element);
     this.scheduleRender();
   }
 
@@ -996,6 +1013,7 @@ export class Drawfn {
 
     const previousScene = this.getScene();
     this.scene.elements.push(normalizedElement.data);
+    this.resolveNodePreview(normalizedElement.data);
     this.emit("elementAdded", normalizedElement.data);
     if (this.activeGesture) {
       this.trackGestureMutation("add", [id]);
@@ -1007,6 +1025,21 @@ export class Drawfn {
     this.scheduleRender();
 
     return id;
+  }
+
+  private resolveNodePreview(element: Element): void {
+    if (element.type !== "node" || element.preview || !this.getNodePreview) return;
+    const loader = this.getNodePreview;
+    void Promise.resolve().then(() => loader(element.nodeId)).then(preview => {
+      // Removal, scene replacement, editing, or destruction invalidates the request.
+      if (this.destroyed || !this.scene.elements.includes(element)) return;
+      this.update(element.id, { preview: { title: preview.title, icon: preview.icon, excerpt: preview.description } });
+    }).catch(cause => {
+      if (this.destroyed || !this.scene.elements.includes(element)) return;
+      this.emit("error", createDrawfnError("NODE_PREVIEW_FAILED", `Failed to load preview for node ${element.nodeId}.`, {
+        nodeId: element.nodeId, cause: cause instanceof Error ? cause.message : String(cause),
+      }));
+    });
   }
 
   update(id: string, patch: Partial<Element>): void {
@@ -1127,7 +1160,12 @@ export class Drawfn {
   }
 
   setCamera(camera: Partial<Camera>): void {
-    this.scene.camera = { ...this.scene.camera, ...camera };
+    const normalized = normalizeCamera({ ...this.scene.camera, ...camera });
+    if (!normalized.ok) {
+      this.emit("error", normalized.error);
+      return;
+    }
+    this.scene.camera = normalized.data;
     this.emit("cameraChanged", this.scene.camera);
     this.emitSceneChanged("camera", []);
     this.scheduleRender();
@@ -1144,6 +1182,7 @@ export class Drawfn {
   undo(): void {
     const prevScene = this.history.undo(this.scene);
     if (prevScene) {
+      prevScene.camera = { ...this.scene.camera };
       this.scene = prevScene;
       this.setSelection([]);
       this.emitHistoryChanged();
@@ -1155,6 +1194,7 @@ export class Drawfn {
   redo(): void {
     const nextScene = this.history.redo(this.scene);
     if (nextScene) {
+      nextScene.camera = { ...this.scene.camera };
       this.scene = nextScene;
       this.setSelection([]);
       this.emitHistoryChanged();
@@ -1233,6 +1273,9 @@ export class Drawfn {
   }): Promise<Blob> {
     const padding = opts?.padding ?? 20;
     const scale = opts?.scale ?? 2;
+    if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(padding) || padding < 0) {
+      return this.failExport(createDrawfnError("EXPORT_RENDER_FAILED", "Export scale must be positive and padding non-negative, both finite."));
+    }
     const transparent = opts?.transparent ?? false;
     const selectedOnly = opts?.selectedOnly ?? false;
     const fitContent = opts?.fitContent ?? false;
@@ -1243,8 +1286,8 @@ export class Drawfn {
     }
     const elementsToExport = exportElements.data;
 
-    let canvasWidth = this.canvas.width;
-    let canvasHeight = this.canvas.height;
+    let canvasWidth = this.canvas.width * scale;
+    let canvasHeight = this.canvas.height * scale;
     let offsetX = 0;
     let offsetY = 0;
 
@@ -1257,8 +1300,8 @@ export class Drawfn {
     }
 
     const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = canvasWidth * (fitContent ? 1 : scale);
-    tempCanvas.height = canvasHeight * (fitContent ? 1 : scale);
+    tempCanvas.width = canvasWidth;
+    tempCanvas.height = canvasHeight;
     const ctx = tempCanvas.getContext("2d");
     if (!ctx) {
       return this.failExport(
@@ -1269,33 +1312,20 @@ export class Drawfn {
       );
     }
 
-    ctx.scale(scale, scale);
-
-    if (fitContent) {
-      ctx.translate(offsetX, offsetY);
-    }
-
-    if (!transparent) {
-      ctx.fillStyle = this.scene.background.color;
-      ctx.fillRect(
-        fitContent ? -offsetX : 0,
-        fitContent ? -offsetY : 0,
-        fitContent ? canvasWidth / scale : this.canvas.width,
-        fitContent ? canvasHeight / scale : this.canvas.height
-      );
-    }
-
     // Create temporary scene with only elements to export
     const exportScene: Scene = {
       ...this.scene,
       elements: elementsToExport,
+      camera: fitContent
+        ? { x: offsetX * scale, y: offsetY * scale, zoom: scale }
+        : { x: this.scene.camera.x * scale, y: this.scene.camera.y * scale, zoom: this.scene.camera.zoom * scale },
       background: transparent
         ? { color: "transparent" }
         : this.scene.background,
     };
 
+    const tempRenderer = new Renderer(tempCanvas, this.getImageBitmap);
     try {
-      const tempRenderer = new Renderer(tempCanvas, this.getImageBitmap);
       await tempRenderer.preloadImages(elementsToExport);
       tempRenderer.render(exportScene);
     } catch (error) {
@@ -1310,6 +1340,8 @@ export class Drawfn {
               cause: error instanceof Error ? error.message : String(error),
             });
       return this.failExport(drawfnError);
+    } finally {
+      tempRenderer.dispose();
     }
 
     return new Promise((resolve, reject) => {
@@ -1368,6 +1400,9 @@ export class Drawfn {
   }): Promise<string> {
     const padding = opts?.padding ?? 20;
     const scale = opts?.scale ?? 1;
+    if (!Number.isFinite(scale) || scale <= 0 || !Number.isFinite(padding) || padding < 0) {
+      return this.failExport(createDrawfnError("EXPORT_RENDER_FAILED", "Export scale must be positive and padding non-negative, both finite."));
+    }
     const selectedOnly = opts?.selectedOnly ?? false;
     const fitContent = opts?.fitContent ?? false;
     const exportElements = this.resolveExportElements(selectedOnly);
@@ -1385,12 +1420,14 @@ export class Drawfn {
     const viewBoxH = fitContent ? bounds.h + padding * 2 : this.canvas.height;
 
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${viewBoxW * scale}" height="${viewBoxH * scale}" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxW} ${viewBoxH}">`;
-    svg += `<rect width="100%" height="100%" fill="${this.scene.background.color}"/>`;
+    svg += `<rect x="${viewBoxX}" y="${viewBoxY}" width="${viewBoxW}" height="${viewBoxH}" fill="${this.escapeXml(this.scene.background.color)}"/>`;
 
+    if (!fitContent) svg += `<g transform="translate(${this.scene.camera.x} ${this.scene.camera.y}) scale(${this.scene.camera.zoom})">`;
     for (const element of elementsToExport) {
       svg += this.elementToSVG(element);
     }
 
+    if (!fitContent) svg += "</g>";
     svg += "</svg>";
     return svg;
   }
@@ -1403,7 +1440,7 @@ export class Drawfn {
       transform = ` transform="rotate(${(element.rotation * 180) / Math.PI} ${cx} ${cy})"`;
     }
 
-    const commonAttrs = `opacity="${element.opacity}" stroke="${element.stroke}" stroke-width="${element.strokeWidth}" fill="${element.fill}"${transform}`;
+    const commonAttrs = `opacity="${element.opacity}" stroke="${this.escapeXml(element.stroke)}" stroke-width="${element.strokeWidth}" fill="${this.escapeXml(element.fill)}"${transform}`;
 
     switch (element.type) {
       case "rectangle":
@@ -1416,7 +1453,7 @@ export class Drawfn {
 
       case "text":
         const textEl = element as any;
-        return `<text x="${element.x}" y="${element.y + textEl.fontSize}" font-family="${textEl.fontFamily}" font-size="${textEl.fontSize}" ${commonAttrs}>${this.escapeXml(textEl.text)}</text>`;
+        return `<text x="${element.x + (textEl.align === "center" ? element.w / 2 : textEl.align === "right" ? element.w : 0)}" text-anchor="${textEl.align === "center" ? "middle" : textEl.align === "right" ? "end" : "start"}" y="${element.y + textEl.fontSize}" font-family="${this.escapeXml(textEl.fontFamily)}" font-size="${textEl.fontSize}" ${commonAttrs}>${this.escapeXml(textEl.text)}</text>`;
 
       case "freedraw": {
         const freedraw = element as any;
@@ -1432,7 +1469,9 @@ export class Drawfn {
           thinning: freedraw.style?.thinning ?? 0.5,
           smoothing: freedraw.style?.smoothing ?? 0.5,
           streamline: freedraw.style?.streamline ?? 0.5,
-          simulatePressure: true,
+          simulatePressure: freedraw.points.every((point: number[]) => point[2] === undefined),
+          start: { taper: freedraw.style?.taperStart ?? 0 },
+          end: { taper: freedraw.style?.taperEnd ?? 0 },
         });
 
         let pathData = `M ${stroke[0][0] + element.x} ${stroke[0][1] + element.y}`;
@@ -1441,7 +1480,7 @@ export class Drawfn {
         }
         pathData += " Z";
 
-        return `<path d="${pathData}" fill="${element.stroke}" opacity="${element.opacity}"${transform}/>`;
+        return `<path d="${pathData}" fill="${this.escapeXml(element.stroke)}" opacity="${element.opacity}"${transform}/>`;
       }
 
       case "arrow": {
@@ -1453,7 +1492,7 @@ export class Drawfn {
           pathData += ` L ${arrow.points[i][0] + element.x} ${arrow.points[i][1] + element.y}`;
         }
 
-        let svg = `<path d="${pathData}" stroke="${element.stroke}" stroke-width="${element.strokeWidth}" fill="none" opacity="${element.opacity}"${transform}/>`;
+        let svg = `<path d="${pathData}" stroke="${this.escapeXml(element.stroke)}" stroke-width="${element.strokeWidth}" fill="none" opacity="${element.opacity}"${transform}/>`;
 
         if (arrow.head === "triangle") {
           const last = arrow.points[arrow.points.length - 1];
@@ -1471,7 +1510,7 @@ export class Drawfn {
             tip[1] - headLen * Math.sin(angle + Math.PI / 6),
           ];
 
-          svg += `<polygon points="${tip[0]},${tip[1]} ${left[0]},${left[1]} ${right[0]},${right[1]}" fill="${element.stroke}" opacity="${element.opacity}"${transform}/>`;
+          svg += `<polygon points="${tip[0]},${tip[1]} ${left[0]},${left[1]} ${right[0]},${right[1]}" fill="${this.escapeXml(element.stroke)}" opacity="${element.opacity}"${transform}/>`;
         }
 
         return svg;
@@ -1486,7 +1525,7 @@ export class Drawfn {
         const node = element as any;
         let svg = `<rect x="${element.x}" y="${element.y}" width="${element.w}" height="${element.h}" rx="8" ${commonAttrs}/>`;
         if (node.preview?.title) {
-          svg += `<text x="${element.x + 12}" y="${element.y + 24}" font-family="sans-serif" font-size="14" fill="${element.stroke}">${this.escapeXml(node.preview.title)}</text>`;
+          svg += `<text x="${element.x + 12}" y="${element.y + 24}" font-family="sans-serif" font-size="14" fill="${this.escapeXml(element.stroke)}" opacity="${element.opacity}"${transform}>${this.escapeXml(node.preview.title)}</text>`;
         }
         return svg;
       }
@@ -1526,12 +1565,16 @@ export class Drawfn {
     this.listeners.get(event)?.forEach((handler) => handler(...args));
   }
 
-  private emitHistoryChanged(): void {
-    this.emit("historyChanged", {
+  getHistoryState(): HistoryChangedEvent {
+    return {
       canUndo: this.history.canUndo(),
       canRedo: this.history.canRedo(),
       depth: this.history.depth(),
-    });
+    };
+  }
+
+  private emitHistoryChanged(): void {
+    this.emit("historyChanged", this.getHistoryState());
   }
 
   private emitSceneChanged(
@@ -1571,14 +1614,18 @@ export class Drawfn {
     this.canvas.addEventListener("pointermove", this.handlePointerMove);
     this.canvas.addEventListener("pointerup", this.handlePointerUp);
     window.addEventListener("pointerup", this.handleWindowPointerUp);
-    window.addEventListener("pointercancel", this.handleWindowPointerUp);
+    window.addEventListener("pointercancel", this.handlePointerCancel);
     this.canvas.addEventListener("wheel", this.handleWheel);
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
   }
 
   private handlePointerDown = (e: PointerEvent): void => {
+    this.canvas.focus({ preventScroll: true });
     this.activePointerId = e.pointerId;
+    this.pointerStart = { x: e.clientX, y: e.clientY };
+    this.pointerMoved = false;
+    this.pointerSelection = this.getSelectedIds();
     if (typeof this.canvas.setPointerCapture === "function") {
       try {
         this.canvas.setPointerCapture(e.pointerId);
@@ -1594,6 +1641,7 @@ export class Drawfn {
   };
 
   private handlePointerMove = (e: PointerEvent): void => {
+    if (this.pointerStart && Math.hypot(e.clientX - this.pointerStart.x, e.clientY - this.pointerStart.y) > 4) this.pointerMoved = true;
     this.emit("pointerMove", e);
     const context = this.createToolContext();
     this.toolManager.handlePointerMove(e, context);
@@ -1605,11 +1653,40 @@ export class Drawfn {
       return;
     }
 
+    const isClick = this.pointerStart !== null && !this.pointerMoved && Math.hypot(e.clientX - this.pointerStart.x, e.clientY - this.pointerStart.y) <= 4;
+    this.pointerStart = null;
     this.activePointerId = null;
     this.emit("pointerUp", e);
     const context = this.createToolContext();
     this.toolManager.handlePointerUp(e, context);
     this.completeGesture();
+    if (isClick && e.button === 0 && this.getTool() === "select" && this.onNodeClick) {
+      const point = this.screenToCanvas({ x: e.clientX, y: e.clientY });
+      const hit = [...this.scene.elements].reverse().find(element => isPointInOBB(point, element));
+      if (hit?.type === "node") this.onNodeClick(hit.nodeId, deepClone(hit));
+    }
+    this.scheduleRender();
+  };
+
+  private handlePointerCancel = (e: PointerEvent): void => {
+    if (this.activePointerId === null || e.pointerId !== this.activePointerId) return;
+    this.toolManager.handlePointerCancel(e, this.createToolContext());
+    const transaction = this.activeGesture;
+    this.activeGesture = null;
+    this.activePointerId = null;
+    this.pointerStart = null;
+    if (transaction) {
+      const interrupted = new Map(this.scene.elements.map(element => [element.id, element]));
+      transaction.snapshot.camera = { ...this.scene.camera };
+      this.scene = transaction.snapshot;
+      for (const id of transaction.changedElementIds) {
+        const restored = this.scene.elements.find(element => element.id === id);
+        if (!restored && interrupted.has(id)) this.emit("elementRemoved", id);
+        else if (restored) this.emit(interrupted.has(id) ? "elementUpdated" : "elementAdded", restored);
+      }
+      this.emitSceneChanged("update", Array.from(transaction.changedElementIds));
+    }
+    this.setSelection(this.pointerSelection.filter(id => this.scene.elements.some(element => element.id === id)));
     this.scheduleRender();
   };
 
@@ -1657,8 +1734,8 @@ export class Drawfn {
     );
 
     this.scene.camera.zoom = newZoom;
-    this.scene.camera.x = e.clientX - rect.left - point.x * newZoom;
-    this.scene.camera.y = e.clientY - rect.top - point.y * newZoom;
+    this.scene.camera.x = (e.clientX - rect.left) * (rect.width > 0 ? this.canvas.width / rect.width : 1) - point.x * newZoom;
+    this.scene.camera.y = (e.clientY - rect.top) * (rect.height > 0 ? this.canvas.height / rect.height : 1) - point.y * newZoom;
 
     this.emit("cameraChanged", this.scene.camera);
     this.emitSceneChanged("camera", []);
@@ -1673,7 +1750,8 @@ export class Drawfn {
         /^(text|search|email|url|tel|password)$/i.test(target.type)) ||
       (target instanceof HTMLElement && target.isContentEditable);
     const isDrawfnInteractionTarget =
-      target === this.canvas || target === document.body;
+      target === this.canvas;
+    if (!isDrawfnInteractionTarget) return;
 
     // Space-to-pan modality
     if (e.key === " " && !this.isSpacePressed && target === this.canvas) {
@@ -1689,7 +1767,9 @@ export class Drawfn {
       if (isTextEntryTarget || !isDrawfnInteractionTarget) {
         return;
       }
-      this.selectedIds.forEach((id) => this.remove(id));
+      this.selectedIds.forEach((id) => {
+        if (!this.scene.elements.find(element => element.id === id)?.locked) this.remove(id);
+      });
     } else if ((e.metaKey || e.ctrlKey) && e.key === "z") {
       if (!isDrawfnInteractionTarget) {
         return;
@@ -1725,11 +1805,12 @@ export class Drawfn {
   };
 
   private scheduleRender(): void {
+    if (this.destroyed) return;
     this.needsRender = true;
     if (this.rafId !== null) return;
 
     this.rafId = requestAnimationFrame(() => {
-      if (this.needsRender) {
+      if (!this.destroyed && this.needsRender) {
         // Get marquee state from select tool if active
         const marquee = this.toolManager.getMarquee();
 
@@ -1745,6 +1826,11 @@ export class Drawfn {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.renderer.dispose();
+    this.canvasSizeObserver?.disconnect();
+    if (this.originalTabIndex === null) this.canvas.removeAttribute("tabindex");
     if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);
     }
@@ -1754,7 +1840,7 @@ export class Drawfn {
     this.canvas.removeEventListener("pointermove", this.handlePointerMove);
     this.canvas.removeEventListener("pointerup", this.handlePointerUp);
     window.removeEventListener("pointerup", this.handleWindowPointerUp);
-    window.removeEventListener("pointercancel", this.handleWindowPointerUp);
+    window.removeEventListener("pointercancel", this.handlePointerCancel);
     this.canvas.removeEventListener("wheel", this.handleWheel);
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);

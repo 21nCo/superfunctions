@@ -1,11 +1,15 @@
 # @drawfn/svelte
 
-Svelte adapter for the `drawfn` drawing canvas library.
+Svelte adapter for the `drawfn` drawing canvas library. Requires Svelte 5.57.2 or later in the 5.x series and Node 18.18 or later.
+
+This package is ESM-only, matching the Svelte runtime. Use `import` or dynamic `import()` from CommonJS; `require("@drawfn/svelte")` is not supported. Core `drawfn` and `@drawfn/react` continue to provide both ESM and CommonJS entrypoints.
+
+Svelte 4 is no longer in the supported peer range: it has no patched release for the upstream SSR and DOM-clobbering advisories covered by the current Svelte 5 baseline.
 
 ## Installation
 
 ```bash
-npm install @drawfn/svelte drawfn perfect-freehand
+npm install @drawfn/svelte drawfn perfect-freehand svelte@^5.57.2
 ```
 
 ## Quick Start
@@ -15,7 +19,7 @@ npm install @drawfn/svelte drawfn perfect-freehand
 ```svelte
 <script>
   import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
-  
+
   let drawfnCanvas;
 
   function handlePen() {
@@ -40,7 +44,7 @@ npm install @drawfn/svelte drawfn perfect-freehand
 ```svelte
 <script>
   import { drawfn } from '@drawfn/svelte';
-  
+
   let instance;
   let canvas;
 
@@ -67,7 +71,7 @@ npm install @drawfn/svelte drawfn perfect-freehand
 ```svelte
 <script>
   import { drawfn, createDrawfnStore } from '@drawfn/svelte';
-  
+
   const store = createDrawfnStore();
   let canvas;
 
@@ -106,7 +110,7 @@ npm install @drawfn/svelte drawfn perfect-freehand
 ```svelte
 <script>
   import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
-  
+
   let scene = null;
 
   function handleSceneChange(newScene, meta) {
@@ -128,13 +132,13 @@ npm install @drawfn/svelte drawfn perfect-freehand
 ```svelte
 <script>
   import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
-  
+
   let drawfnCanvas;
 
   async function handleExportPNG() {
     const blob = await drawfnCanvas?.exportPNG({ scale: 2 });
     if (!blob) return;
-    
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -146,7 +150,7 @@ npm install @drawfn/svelte drawfn perfect-freehand
   async function handleExportSVG() {
     const svg = await drawfnCanvas?.exportSVG();
     if (!svg) return;
-    
+
     const blob = new Blob([svg], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -168,7 +172,7 @@ npm install @drawfn/svelte drawfn perfect-freehand
 ```svelte
 <script>
   import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
-  
+
   let drawfnCanvas;
   let currentTool = 'select';
 
@@ -197,9 +201,9 @@ npm install @drawfn/svelte drawfn perfect-freehand
       {tool.label}
     </button>
   {/each}
-  
+
   <div class="separator" />
-  
+
   <button on:click={() => drawfnCanvas?.undo()}>Undo</button>
   <button on:click={() => drawfnCanvas?.redo()}>Redo</button>
   <button on:click={() => drawfnCanvas?.clear()}>Clear</button>
@@ -340,16 +344,16 @@ Subscribe to drawfn events:
 ```svelte
 <script>
   import { drawfn } from '@drawfn/svelte';
-  
+
   let instance;
 
   function handleReady(drawfn) {
     instance = drawfn;
-    
+
     drawfn.on('elementAdded', (element) => {
       console.log('Element added:', element);
     });
-    
+
     drawfn.on('selectionChanged', (ids) => {
       console.log('Selection changed:', ids);
     });
@@ -374,7 +378,7 @@ Full TypeScript support with type definitions included.
 <script lang="ts">
   import DrawfnCanvas from '@drawfn/svelte/DrawfnCanvas.svelte';
   import type { Drawfn, Scene, SceneChangedEvent } from '@drawfn/svelte';
-  
+
   let drawfnCanvas: DrawfnCanvas;
   let scene: Scene | undefined;
 </script>

@@ -122,12 +122,15 @@
     </div>
 
     <div class="status">
-      Tool: <span id="current-tool">select</span> | 
+      Tool: <span id="current-tool">select</span> |
       Elements: <span id="element-count">0</span> |
       Zoom: <span id="zoom">100%</span>
     </div>
   </div>
 
+  <script type="importmap">
+    { "imports": { "perfect-freehand": "../../node_modules/perfect-freehand/dist/esm/index.mjs" } }
+  </script>
   <script type="module">
     import { Drawfn } from './dist/index.js';
 
@@ -150,10 +153,10 @@
         const tool = button.id;
         drawfn.setTool(tool);
         currentTool = tool;
-        
+
         document.querySelectorAll('.tool').forEach(b => b.classList.remove('active'));
         button.classList.add('active');
-        
+
         updateStatus();
       });
     });

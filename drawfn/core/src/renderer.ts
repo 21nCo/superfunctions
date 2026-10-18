@@ -31,6 +31,7 @@ export type RenderOptions = {
 };
 
 export class Renderer {
+  private disposed = false;
   private ctx: CanvasRenderingContext2D;
   private canvas: HTMLCanvasElement;
   private imageCache: Map<string, HTMLImageElement | ImageBitmap> = new Map();
@@ -60,6 +61,7 @@ export class Renderer {
   }
 
   render(scene: Scene, options: RenderOptions = {}): void {
+    if (this.disposed) return;
     const { camera, background, elements } = scene;
     const { selectedIds = new Set(), hoveredId = null } = options;
 
@@ -179,9 +181,9 @@ export class Renderer {
       thinning: element.style?.thinning ?? 0.5,
       smoothing: element.style?.smoothing ?? 0.5,
       streamline: element.style?.streamline ?? 0.5,
-      taperStart: element.style?.taperStart ?? 0,
-      taperEnd: element.style?.taperEnd ?? 0,
-      simulatePressure: true,
+      start: { taper: element.style?.taperStart ?? 0 },
+      end: { taper: element.style?.taperEnd ?? 0 },
+      simulatePressure: element.points.every(point => point[2] === undefined),
     };
 
     const points = element.points.map((p) => [p[0], p[1], p[2] ?? 0.5]);
@@ -278,7 +280,7 @@ export class Renderer {
     this.ctx.font = `${element.fontSize}px ${element.fontFamily}`;
     this.ctx.textAlign = element.align;
 
-    const x = element.x + (element.align === "center" ? element.w / 2 : 0);
+    const x = element.x + (element.align === "center" ? element.w / 2 : element.align === "right" ? element.w : 0);
     const y = element.y + element.fontSize;
 
     if (element.fill !== "transparent") {
@@ -424,6 +426,18 @@ export class Renderer {
     this.ctx.restore();
   }
 
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const asset of new Set(this.imageCache.values())) {
+      if ("close" in asset) asset.close();
+    }
+    this.imageCache.clear();
+    this.pendingImageLoads.clear();
+    this.onImageLoaded = undefined;
+    this.onImageError = undefined;
+  }
+
   async preloadImages(elements: Element[]): Promise<void> {
     const sources = Array.from(
       new Set(
@@ -454,6 +468,7 @@ export class Renderer {
   }
 
   private async loadImage(src: string): Promise<HTMLImageElement | ImageBitmap> {
+    if (this.disposed) throw new Error("Renderer has been disposed");
     const cached = this.imageCache.get(src);
     if (cached) return cached;
 
@@ -476,12 +491,16 @@ export class Renderer {
           asset = img;
         }
 
+        if (this.disposed) {
+          if ("close" in asset) asset.close();
+          return asset;
+        }
         this.imageCache.set(src, asset);
         this.onImageLoaded?.(src);
         return asset;
       } catch (error) {
         const drawfnError = this.toImageLoadError(src, error);
-        this.onImageError?.(drawfnError, src);
+        if (!this.disposed) this.onImageError?.(drawfnError, src);
         throw drawfnError;
       } finally {
         this.pendingImageLoads.delete(src);

@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { writable, type Readable } from "svelte/store";
 import type { Camera, Drawfn, ToolName } from "drawfn";
 
 export type DrawfnStore = {
@@ -12,7 +12,7 @@ export type DrawfnStore = {
   camera: Camera;
 };
 
-export function createDrawfnStore() {
+export function createDrawfnStore(): DrawfnStoreType {
   const initialState: DrawfnStore = {
     instance: null,
     isReady: false,
@@ -42,8 +42,8 @@ export function createDrawfnStore() {
         instance,
         isReady: true,
         currentTool: instance.getTool(),
-        canUndo: false,
-        canRedo: false,
+        canUndo: instance.getHistoryState().canUndo,
+        canRedo: instance.getHistoryState().canRedo,
         selectedIds: instance.getSelectedIds(),
         camera: instance.getCamera(),
         elementCount: instance.getElements().length,
@@ -87,4 +87,10 @@ export function createDrawfnStore() {
   };
 }
 
-export type DrawfnStoreType = ReturnType<typeof createDrawfnStore>;
+export type DrawfnStoreType = {
+  subscribe: Readable<DrawfnStore>["subscribe"];
+  setInstance(instance: Drawfn): void;
+  setTool(tool: ToolName, opts?: unknown): void;
+  clear(): void;
+  destroy(): void;
+};
