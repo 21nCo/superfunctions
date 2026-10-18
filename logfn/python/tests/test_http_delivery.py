@@ -149,3 +149,41 @@ async def test_logger_flush_reports_delivery_failure():
         with pytest.raises(httpx.HTTPStatusError):
             await logger.flush()
         assert len(sink.buffer) == 1
+
+
+async def test_real_http_delivery_retries_and_preserves_envelope():
+    received = []
+    handlers = set()
+    async def handle(reader, writer):
+        task = asyncio.current_task()
+        handlers.add(task)
+        try:
+            head = await reader.readuntil(b'\r\n\r\n')
+            lines = head.decode('ascii').split('\r\n')
+            headers = dict(line.split(': ', 1) for line in lines[1:] if ': ' in line)
+            body = await reader.readexactly(int(headers['Content-Length']))
+            received.append((headers, json.loads(body)))
+            status = b'503 Service Unavailable' if len(received) == 1 else b'202 Accepted'
+            writer.write(b'HTTP/1.1 ' + status + b'\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            handlers.discard(task)
+    server = await asyncio.start_server(handle, '127.0.0.1', 0)
+    port = server.sockets[0].getsockname()[1]
+    sink = SinkHttp(f'http://127.0.0.1:{port}/logs', auth_token='test-token', attempts=2, backoff_ms=0)
+    try:
+        sink([event('real request')])
+        await sink.close()
+        assert len(received) == 2
+        assert all(body == {'events': [event('real request')]} for _, body in received)
+        assert all(headers['Authorization'] == 'Bearer test-token' for headers, _ in received)
+        assert not sink.buffer
+        assert sink._client.is_closed
+    finally:
+        await sink._client.aclose()
+        server.close()
+        await server.wait_closed()
+        if handlers:
+            await asyncio.gather(*handlers)

@@ -62,3 +62,11 @@ Use `await sink.close()` to flush and close its owned HTTP client. Failed close
 leaves the sink available for retry. An injected `client` remains owned by its
 caller. Requests can be duplicated after ambiguous network errors, so ingestion
 storage should use idempotent writes where duplicates matter.
+
+Async custom sinks may return a coroutine or Future. Parent and child loggers
+share delivery tracking: `await logger.flush()` waits for their outstanding
+sink calls before running every sink's flush hook. Background delivery failures
+are reported by the next flush, after the other sinks have finished flushing.
+Cancelling a flush waiter does not cancel these accepted sink calls. Custom
+async sinks require a running event loop when logging; `SinkHttp` itself can
+also enqueue synchronously and flush later.

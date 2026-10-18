@@ -1,8 +1,9 @@
 import asyncio
 import os
+import inspect
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union, Callable
+from typing import Any, Dict, List, Optional, Union, Callable, Set
 
 from .types import (
     DEFAULT_VERSION,
@@ -22,6 +23,20 @@ def get_default_level() -> LogLevel:
     env = os.environ.get("ENV", os.environ.get("NODE_ENV", "development"))
     return "info" if env == "production" else "debug"
 
+class _DeliveryState:
+    def __init__(self) -> None:
+        self.pending: Set[asyncio.Future[Any]] = set()
+        self.error: Optional[BaseException] = None
+
+    def completed(self, task: asyncio.Future[Any]) -> None:
+        self.pending.discard(task)
+        error = asyncio.CancelledError() if task.cancelled() else task.exception()
+        if error is not None:
+            if self.error is None:
+                self.error = error
+            print(f"[logfn internal error] async sink failed: {type(error).__name__}", file=sys.stderr)
+
+
 class Logger:
     def __init__(
         self,
@@ -33,6 +48,7 @@ class Logger:
         base_context: Optional[Dict[str, Any]] = None,
         base_tags: Optional[List[str]] = None,
     ):
+        self._delivery = _DeliveryState()
         self.name = name
         self.sinks = sinks
         self.level = level or get_default_level()
@@ -102,18 +118,20 @@ class Logger:
         for sink in self.sinks:
             try:
                 res = sink(batch)
-                # If res is a coroutine and we are in a sync context, we can't await it.
-                # Sinks should generally be sync (enqueueing if async is needed).
-                # But if a sink returns a coroutine, we try to schedule it if a loop is running.
-                if asyncio.iscoroutine(res):
+                if inspect.isawaitable(res):
                     try:
-                        loop = asyncio.get_running_loop()
-                        loop.create_task(res)
+                        asyncio.get_running_loop()
                     except RuntimeError:
-                        # No running loop, can't schedule.
-                        # This implies usage error: using async sink in sync context without loop.
-                        res.close()
-                        print("[logfn internal error] Async sink returned coroutine but no event loop running", file=sys.stderr)
+                        if inspect.iscoroutine(res):
+                            res.close()
+                        error = RuntimeError("Async sink requires a running event loop")
+                        if self._delivery.error is None:
+                            self._delivery.error = error
+                        print("[logfn internal error] Async sink requires a running event loop", file=sys.stderr)
+                    else:
+                        task = asyncio.ensure_future(res)
+                        self._delivery.pending.add(task)
+                        task.add_done_callback(self._delivery.completed)
             except Exception as e:
                 print(f"[logfn internal error] sink failed: {e}", file=sys.stderr)
 
@@ -145,7 +163,7 @@ class Logger:
         if tags:
             new_tags.extend(tags)
             
-        return Logger(
+        child = Logger(
             name=new_name,
             sinks=self.sinks,
             level=new_level,
@@ -154,17 +172,35 @@ class Logger:
             base_context=new_ctx,
             base_tags=new_tags,
         )
+        child._delivery = self._delivery
+        return child
 
     async def flush(self) -> None:
-        tasks = []
-        for sink in self.sinks:
-            if hasattr(sink, "flush"):
-                res = sink.flush()
-                if asyncio.iscoroutine(res):
-                    tasks.append(res)
-        
-        if tasks:
-            await asyncio.gather(*tasks)
+        # Parent and children share delivery ownership. Shield application sink
+        # tasks so cancelling a flush waiter does not discard accepted events.
+        while self._delivery.pending:
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in tuple(self._delivery.pending)),
+                return_exceptions=True,
+            )
+
+        async def flush_sink(sink: Sink) -> None:
+            flush = getattr(sink, "flush", None)
+            if flush is not None:
+                result = flush()
+                if inspect.isawaitable(result):
+                    await result
+
+        results = await asyncio.gather(
+            *(flush_sink(sink) for sink in self.sinks), return_exceptions=True
+        )
+        error = self._delivery.error
+        self._delivery.error = None
+        for result in results:
+            if isinstance(result, BaseException) and error is None:
+                error = result
+        if error is not None:
+            raise error
 
 def create_logger(
     name: str,

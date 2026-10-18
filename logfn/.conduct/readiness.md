@@ -29,3 +29,9 @@ Concurrent explicit flush callers now wait for the active queue drain. Each requ
 The Python HTTP sink now sends the ingestion envelope, bounds batches and queued events, implements interval delivery, checks response statuses, retries transport/timeouts/408/429/5xx with bounded attempts, and retains failed or cancelled batches subject to the documented newest-events queue limit. Concurrent flush calls serialize delivery. Explicit flush and close propagate failure; a failed close remains retryable. Caller-owned HTTP clients remain open. Logger.flush no longer suppresses delivery errors.
 
 Source tests pass on Python3.9 and3.12 (18 each). A freshly built wheel installed into an isolated Python3.12 environment passes all18 tests. Strict mypy1.18.2 checks the changed sinks module on Python3.9. The HTTP cases use httpx MockTransport; these checks do not prove real-server integration, browser durability, full-package typing or generic async sink shutdown. No full readiness claim.
+
+## Python asynchronous sink ownership
+
+Parent and child loggers now share tracked async sink calls, including returned Futures. Flush waits for accepted deliveries before sink flush hooks, runs all hooks even when one fails, and reports completed background failures. Cancellation of a flush waiter leaves accepted sink tasks running. No-event-loop coroutine creation is closed and reported instead of leaked.
+
+Python3.9 and3.12 each pass23 tests; a fresh installed Python3.12 wheel also passes23. Strict mypy1.18.2 validates the changed core module. Four deterministic concurrency regressions cover parent/child delivery ownership, completed failure reporting, flush-waiter cancellation and Future-returning sinks. A real local HTTP server verifies envelope/authentication,503 retry and owned-client close. This addresses the generic async delivery join gap; remaining fullspec/browser/sharedHTTP/serialization gates above still apply.
