@@ -1,0 +1,35 @@
+.github/workflows/ci.yml
+  s_7d0a48f0aaecda::t_d2cda0a5d277ef 65-67
+authfn/docs/package.json
+  s_7d0a48f0aaecda::t_e3f4793c2867de 32-33
+package-lock.json
+  s_e1c5fc1a65c0cf::t_4599d89c941029 1698-1699
+scripts/uifn-docs-cli-resolution.test.mjs
+  s_7d0a48f0aaecda::t_76bdc4a5c8b852 13-14,37,55
+scripts/verify-uifn-phase-17.mjs
+  s_e1c5fc1a65c0cf::t_cc5b23b5acc9c8 29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7487b5f0e4b69a7507b5d2cf7fc6fad97105c1d5",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
