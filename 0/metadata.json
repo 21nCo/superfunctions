@@ -1,0 +1,56 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57W024WMQ35RZ43GZ84XX5T",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-18T16:02:28.914923Z",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "flowfn/python/flowfn/scheduler/__init__.py",
+    "flowfn/python/tests/test_scheduler.py"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "ef71424e83cb",
+  "checkpoint_transcript_start": 7327,
+  "transcript_lines_at_start": 7327,
+  "compact_transcript_start": 878,
+  "token_usage": {
+    "input_tokens": 6100,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 734336,
+    "output_tokens": 3409,
+    "api_call_count": 4
+  },
+  "session_metrics": {
+    "turn_count": 18
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-18T16:02:28.579157Z",
+    "agent_lines": 431,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 431,
+    "total_lines_changed": 431,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
