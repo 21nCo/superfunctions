@@ -83,3 +83,10 @@ The full core suite passed220 tests with typecheck/build; the final focused fram
 ## Captured body serialization
 
 Parsed body capture now uses the shared LogFn sanitizer before serialization, preserving false/zero/empty values and safely representing cycles and unsupported values. Its bound measures UTF-8 JSON bytes including truncation metadata, with previews cut at Unicode code points.224 core tests, source typecheck and build pass, including multibyte, escaped text, circular objects and false/zero cases. Hono still reads a complete cloned request body before truncation; bounded streaming capture remains open.
+
+
+## Bounded Hono stream capture
+
+Hono now reads at most8192 bytes from a cloned request branch with a100ms default configurable deadline. It does not drain the remainder to compute a total size; prefix metadata distinguishes captured bytes from total bytes. Unavailable/timed-out capture yields an omission marker, and cancellation is not awaited because the original application branch must remain consumable. Runtime transport buffering and individual source chunk allocation remain outside this helper's bound.
+
+13 framework contract tests pass, including a large multibyte body consumed intact by the actual Hono route and a stalled body that still allows the route to respond. Typecheck/build pass. Prior full224 core tests predate this change; the focused suite validates this change. Shared HTTP integration, admin, Python parity and remaining original readiness gates are still open.

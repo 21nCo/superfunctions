@@ -90,3 +90,29 @@ it('child correlation inherits parent fields without mutating the parent', () =>
   expect(events[1]).toMatchObject({ traceId: 'trace', tenantId: 'tenant' });
   expect(events[1].requestId).toBeUndefined();
 });
+
+
+it('Hono bounds captured prefixes while the route reads the complete request', async () => {
+  const { events, logger } = capture(); const app = new Hono();
+  app.use(honoLogger({ logger, includeBody: true }));
+  app.post('/', async c => c.text(await c.req.text()));
+  const body = '😀'.repeat(20000);
+  const response = await app.request('/', { method: 'POST', body });
+  expect(await response.text()).toBe(body);
+  expect(events[0].ctx?.body).toMatchObject({ _truncated: true, _capturedBytes: 8192 });
+  expect(JSON.stringify(events[0].ctx?.body).length).toBeLessThan(1000);
+});
+
+it('Hono does not hold a route indefinitely for a stalled body', async () => {
+  const { events, logger } = capture(); const app = new Hono();
+  app.use(honoLogger({ logger, includeBody: true, bodyCaptureTimeoutMs: 10 }));
+  app.post('/', c => c.text('ok'));
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({ start(c) { controller = c; } });
+  const request = new Request('http://localhost/', { method: 'POST', body, duplex: 'half' } as RequestInit);
+  try {
+    const response = await app.request(request);
+    expect(await response.text()).toBe('ok');
+    expect(events[0].ctx?.body).toEqual({ _omitted: 'body_capture_timeout' });
+  } finally { controller.close(); }
+});

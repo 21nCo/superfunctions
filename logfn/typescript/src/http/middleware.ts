@@ -25,6 +25,9 @@ export interface RequestLoggerOptions {
   /** Capture request/response body (default: false) */
   includeBody?: boolean;
 
+  /** Maximum time spent reading a Fetch request body for logs (default: 100ms). */
+  bodyCaptureTimeoutMs?: number;
+
   /** Function to extract user/tenant from request */
   captureUser?: (
     req: any
@@ -194,4 +197,43 @@ export function createRequestSampler(sample: RequestLoggerOptions["sample"]): ()
   }
   const rate = typeof sample === "number" ? sample : sample?.info ?? 1;
   return () => rate === 1 || (rate > 0 && Math.random() < rate);
+}
+
+
+/** Read only a bounded prefix from a clone; leave the application branch intact. */
+export async function captureRequestBody(request: Request, timeoutMs = 100): Promise<unknown> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("Body capture timeout must be a positive finite number");
+  }
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = 8192;
+  let bytes = 0;
+  let text = "";
+  const decoder = new TextDecoder();
+  const timeout = Symbol("timeout");
+  const deadline = new Promise<typeof timeout>(resolve => {
+    timer = setTimeout(() => resolve(timeout), timeoutMs);
+  });
+  try {
+    reader = request.clone().body?.getReader();
+    if (!reader) return undefined;
+    while (bytes < limit) {
+      const result = await Promise.race([reader.read(), deadline]);
+      if (result === timeout) return { _omitted: "body_capture_timeout" };
+      if (result.done) return truncateBody(text + decoder.decode());
+      const chunk = result.value.subarray(0, limit - bytes);
+      bytes += chunk.byteLength;
+      text += decoder.decode(chunk, { stream: true });
+    }
+    // Total size is unknown: don't drain the request just to measure it.
+    return { _truncated: true, _capturedBytes: bytes, _preview: Array.from(text).slice(0, 200).join("") };
+  } catch {
+    return { _omitted: "body_unavailable" };
+  } finally {
+    clearTimeout(timer);
+    // A tee branch's cancel promise may wait for the application branch.
+    // Awaiting it here would deadlock before the route can consume its body.
+    if (reader) void reader.cancel().catch(() => {});
+  }
 }

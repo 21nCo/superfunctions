@@ -349,6 +349,14 @@ const logger = createLogger({
 });
 ```
 
+## HTTP request logging
+
+Import `requestLogger` from `@logfn/core/http/express`, `/http/fastify`, or `/http/hono` and supply a `logger`. Request correlation fields appear at the event top level and are inherited by application logs from the request logger. Fastify exposes it as `request.logfn`, preserving the native `request.log`.
+
+`sample` applies one decision to each automatic info-level request/completion pair (`{ info: rate }` or a number from0 to1). It does not disable the attached application logger. Default secret-header redaction remains active alongside custom header names.
+
+Body capture is opt-in with `includeBody: true`. Captured values are bounded to8192 serialized UTF-8 bytes. Hono reads at most8192 bytes from a cloned stream and allows at most `bodyCaptureTimeoutMs` (default100ms) for that capture before entering the route. A truncated prefix reports `_capturedBytes`, not the unknown total body length. Unavailable or timed-out captures contain an `_omitted` reason. The route retains its original request stream; transport buffering and individual incoming chunk sizes are controlled by the runtime.
+
 ## API Reference
 
 See full TypeScript definitions in the package. All exports are fully typed.

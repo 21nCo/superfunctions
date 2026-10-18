@@ -8,7 +8,7 @@ import {
   extractCorrelationIds,
   createRequestSampler,
   redactHeaders,
-  truncateBody,
+  captureRequestBody,
 } from "./middleware.js";
 
 /**
@@ -25,6 +25,10 @@ export function requestLogger(
     captureUser,
   } = options;
   const shouldSample = createRequestSampler(options.sample);
+  const bodyTimeout = options.bodyCaptureTimeoutMs ?? 100;
+  if (!Number.isFinite(bodyTimeout) || bodyTimeout <= 0) {
+    throw new RangeError("Body capture timeout must be a positive finite number");
+  }
 
   return async (c: Context, next) => {
     const startTime = Date.now();
@@ -79,7 +83,7 @@ export function requestLogger(
         userId,
         tenantId,
         body: includeBody
-          ? truncateBody(await req.raw.clone().text())
+          ? await captureRequestBody(req.raw, bodyTimeout)
           : undefined,
       });
     }
