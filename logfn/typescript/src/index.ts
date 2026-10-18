@@ -10,6 +10,7 @@ export { createLogger, devLogger, serverLogger } from "./core/factory.js";
 export type {
   LogEvent,
   LogLevel,
+  LogCorrelation,
   LoggerOptions,
   ChildLoggerOptions,
   Sink,

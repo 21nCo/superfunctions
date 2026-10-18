@@ -96,7 +96,11 @@ export interface Sink {
 /**
  * Logger configuration options
  */
+export type LogCorrelation = Pick<LogEvent, "traceId" | "spanId" | "requestId" | "userId" | "tenantId">;
+
 export interface LoggerOptions {
+  /** Correlation fields emitted at the top level of each event. */
+  correlation?: LogCorrelation;
   /** Receives pipeline and sink failures; callback failures never escape logging. */
   onError?: ErrorHandler;
 
@@ -126,6 +130,8 @@ export interface LoggerOptions {
  * Options for creating child loggers
  */
 export interface ChildLoggerOptions {
+  /** Merge correlation fields with the parent. */
+  correlation?: LogCorrelation;
   /** Override logger name */
   name?: string;
 

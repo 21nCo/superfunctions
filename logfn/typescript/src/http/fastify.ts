@@ -18,6 +18,7 @@ declare module "fastify" {
 }
 import {
   extractCorrelationIds,
+  createRequestSampler,
   redactHeaders,
   truncateBody,
 } from "./middleware.js";
@@ -35,10 +36,13 @@ export function requestLogger(
     includeBody = false,
     captureUser,
   } = options;
+  const shouldSample = createRequestSampler(options.sample);
 
+  const sampled = new WeakMap<FastifyRequest, boolean>();
   const plugin: FastifyPluginCallback = (fastify, _opts, done) => {
     fastify.addHook("onRequest", async (request: FastifyRequest) => {
       const startTime = Date.now();
+      sampled.set(request, shouldSample());
 
       // Extract correlation IDs
       const ids = extractCorrelationIds(request.headers, header);
@@ -46,6 +50,7 @@ export function requestLogger(
       // Create child logger with correlation IDs
       const requestLogger = logger
         ? logger.child({
+            correlation: ids,
             ctx: {
               traceId: ids.traceId,
               spanId: ids.spanId,
@@ -63,7 +68,7 @@ export function requestLogger(
 
     // Body parsing has completed by preHandler.
     fastify.addHook("preHandler", async (request: FastifyRequest) => {
-      const requestLogger = request.logfn;
+      let requestLogger = request.logfn;
       if (captureUser) {
         const userInfo = captureUser(request);
         (request as any)._userId = userInfo?.userId;
@@ -71,7 +76,14 @@ export function requestLogger(
       }
       const userId = (request as any)._userId;
       const tenantId = (request as any)._tenantId;
-      if (requestLogger) {
+      if (requestLogger && (userId !== undefined || tenantId !== undefined)) {
+        requestLogger = requestLogger.child({ correlation: {
+          ...(userId !== undefined ? { userId } : {}),
+          ...(tenantId !== undefined ? { tenantId } : {}),
+        } });
+        request.logfn = requestLogger;
+      }
+      if (requestLogger && sampled.get(request)) {
         requestLogger.info("Request started", {
           method: request.method,
           url: request.url,
@@ -94,7 +106,7 @@ export function requestLogger(
         const tenantId = (request as any)._tenantId;
 
         // Log response
-        if (requestLogger) {
+        if (requestLogger && sampled.get(request)) {
           requestLogger.info("Request completed", {
             method: request.method,
             url: request.url,

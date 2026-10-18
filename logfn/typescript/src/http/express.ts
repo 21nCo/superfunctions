@@ -6,6 +6,7 @@ import type { Request, Response, NextFunction } from "express";
 import type { RequestLoggerOptions } from "./middleware.js";
 import {
   extractCorrelationIds,
+  createRequestSampler,
   redactHeaders,
   truncateBody,
 } from "./middleware.js";
@@ -21,16 +22,19 @@ export function requestLogger(options: RequestLoggerOptions = {}) {
     includeBody = false,
     captureUser,
   } = options;
+  const shouldSample = createRequestSampler(options.sample);
 
   return (req: Request, res: Response, next: NextFunction) => {
     const startTime = Date.now();
+    const sampled = shouldSample();
 
     // Extract correlation IDs
     const ids = extractCorrelationIds(req.headers, header);
 
     // Create child logger with correlation IDs
-    const requestLogger = logger
+    let requestLogger = logger
       ? logger.child({
+          correlation: ids,
           ctx: {
             traceId: ids.traceId,
             spanId: ids.spanId,
@@ -38,9 +42,6 @@ export function requestLogger(options: RequestLoggerOptions = {}) {
           },
         })
       : undefined;
-
-    // Attach logger to request
-    (req as any).log = requestLogger;
 
     // Capture user/tenant if provided
     let userId: string | undefined;
@@ -51,8 +52,16 @@ export function requestLogger(options: RequestLoggerOptions = {}) {
       tenantId = userInfo?.tenantId;
     }
 
+    if (requestLogger && (userId !== undefined || tenantId !== undefined)) {
+      requestLogger = requestLogger.child({ correlation: {
+        ...(userId !== undefined ? { userId } : {}),
+        ...(tenantId !== undefined ? { tenantId } : {}),
+      } });
+    }
+    (req as any).log = requestLogger;
+
     // Log request start
-    if (requestLogger) {
+    if (requestLogger && sampled) {
       requestLogger.info("Request started", {
         method: req.method,
         url: req.url,
@@ -65,27 +74,23 @@ export function requestLogger(options: RequestLoggerOptions = {}) {
       });
     }
 
-    // Capture response finish
-    const originalEnd = res.end;
-    res.end = function (this: Response, ...args: any[]): any {
-      const latencyMs = Date.now() - startTime;
-
-      // Log response
-      if (requestLogger) {
-        requestLogger.info("Request completed", {
-          method: req.method,
-          url: req.url,
-          path: req.path,
-          statusCode: res.statusCode,
-          contentLength: res.get("content-length"),
-          latencyMs,
-          userId,
-          tenantId,
+    let completed = false;
+    const finish = () => {
+      if (completed) return;
+      completed = true;
+      res.off("finish", finish);
+      res.off("close", finish);
+      if (requestLogger && sampled) {
+        requestLogger.info(res.writableFinished ? "Request completed" : "Request aborted", {
+          method: req.method, url: req.url, path: req.path,
+          statusCode: res.statusCode, contentLength: res.get("content-length"),
+          latencyMs: Date.now() - startTime, userId, tenantId,
+          aborted: !res.writableFinished,
         });
       }
-
-      return originalEnd.apply(this, args as any);
     };
+    res.once("finish", finish);
+    res.once("close", finish);
 
     next();
   };

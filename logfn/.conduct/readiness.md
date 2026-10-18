@@ -71,3 +71,10 @@ Traceparser now rejects nonhex/uppercase/zero IDs, malformedflags,ffversion,v00e
 ## Framework request logging
 
 Fixed default secret-header redaction being disabled by adapter/customlists. Fastify preserves native request.log, exposes typed request.logfn, registers hooks in caller scope, and captures parsed body at preHandler.213coretests/typecheck/buildpass. New ExpressactualHTTP, Fastifyinject and HonoRequest tests verify secretredaction; Fastify additionallychecks native loggerchild/body/LogFn attachment. Remaining middleware sampling/correlationtoplevel/completion/boundedbody and sharedHTTP integration gates still need verification.
+
+
+## Request correlation and sampling
+
+All three framework adapters now attach trace, span, request, user and tenant identifiers to the event envelope through inherited child correlation. Automatic info-level start/completion events use one sampling decision per request; invalid rates fail at middleware setup. Sampled-out requests retain their application logger. Express observes finish/close once, distinguishes aborted responses, and leaves response.end unchanged.
+
+The full core suite passed220 tests with typecheck/build; the final focused framework suite passed11 tests after adding parent/child correlation isolation and captured identity assertions. Existing actual Express HTTP, Fastify inject and Hono request checks cover the adapters. This does not prove all failure/streaming/body-limit cases; those and the broader sharedHTTP/admin/Python parity gates remain open.

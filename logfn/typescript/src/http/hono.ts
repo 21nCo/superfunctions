@@ -6,6 +6,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import type { RequestLoggerOptions } from "./middleware.js";
 import {
   extractCorrelationIds,
+  createRequestSampler,
   redactHeaders,
   truncateBody,
 } from "./middleware.js";
@@ -23,9 +24,11 @@ export function requestLogger(
     includeBody = false,
     captureUser,
   } = options;
+  const shouldSample = createRequestSampler(options.sample);
 
   return async (c: Context, next) => {
     const startTime = Date.now();
+    const sampled = shouldSample();
     const req = c.req;
 
     // Extract correlation IDs
@@ -37,8 +40,9 @@ export function requestLogger(
     const ids = extractCorrelationIds(headersObj, header);
 
     // Create child logger with correlation IDs
-    const requestLogger = logger
+    let requestLogger = logger
       ? logger.child({
+          correlation: ids,
           ctx: {
             traceId: ids.traceId,
             spanId: ids.spanId,
@@ -46,9 +50,6 @@ export function requestLogger(
           },
         })
       : undefined;
-
-    // Attach logger to context
-    c.set("log", requestLogger);
 
     // Capture user/tenant if provided
     let userId: string | undefined;
@@ -59,8 +60,16 @@ export function requestLogger(
       tenantId = userInfo?.tenantId;
     }
 
+    if (requestLogger && (userId !== undefined || tenantId !== undefined)) {
+      requestLogger = requestLogger.child({ correlation: {
+        ...(userId !== undefined ? { userId } : {}),
+        ...(tenantId !== undefined ? { tenantId } : {}),
+      } });
+    }
+    c.set("log", requestLogger);
+
     // Log request start
-    if (requestLogger) {
+    if (requestLogger && sampled) {
       requestLogger.info("Request started", {
         method: req.method,
         url: req.url,
@@ -80,7 +89,7 @@ export function requestLogger(
 
     // Log response
     const latencyMs = Date.now() - startTime;
-    if (requestLogger) {
+    if (requestLogger && sampled) {
       requestLogger.info("Request completed", {
         method: req.method,
         url: req.url,

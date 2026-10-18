@@ -31,6 +31,7 @@ export class Logger {
   constructor(options: LoggerOptions) {
     // Set defaults
     this.options = {
+      correlation: { ...options.correlation },
       name: options.name,
       level: options.level ?? this.defaultLevel(),
       pipeline: options.pipeline ?? [],
@@ -96,6 +97,7 @@ export class Logger {
 
     // Create base event
     let event: LogEvent = {
+      ...this.options.correlation,
       ts: this.options.now().toISOString(),
       level,
       msg,
@@ -204,6 +206,7 @@ export class Logger {
    */
   child(overrides: ChildLoggerOptions): Logger {
     const childOptions: LoggerOptions = {
+      correlation: { ...this.options.correlation, ...overrides.correlation },
       name: overrides.name ?? this.options.name,
       level: overrides.level ?? this.options.level,
       pipeline: this.options.pipeline,

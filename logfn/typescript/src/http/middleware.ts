@@ -176,3 +176,13 @@ export function truncateBody(body: any, maxSize = 8192): any {
     _preview: serialized.slice(0, 200),
   };
 }
+
+/** One decision for the automatic info-level request/response pair. */
+export function createRequestSampler(sample: RequestLoggerOptions["sample"]): () => boolean {
+  const rates = typeof sample === "number" ? [sample] : Object.values(sample ?? {});
+  if (rates.some(rate => !Number.isFinite(rate) || rate < 0 || rate > 1)) {
+    throw new RangeError("Request sample rates must be finite numbers between zero and one");
+  }
+  const rate = typeof sample === "number" ? sample : sample?.info ?? 1;
+  return () => rate === 1 || (rate > 0 && Math.random() < rate);
+}
