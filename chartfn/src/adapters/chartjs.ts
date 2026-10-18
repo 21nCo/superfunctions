@@ -14,8 +14,10 @@ import {
   Title,
   Tooltip,
   ScatterController,
+  Filler,
 } from "chart.js";
 
+import { assertChartSpec } from "../validate.js";
 import { ChartAdapter, ChartAdapterHandle, ChartSpec } from "../types.js";
 
 Chart.register(
@@ -33,6 +35,7 @@ Chart.register(
   Title,
   Tooltip,
   ScatterController,
+  Filler,
 );
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -84,10 +87,12 @@ const buildConfig = (spec: ChartSpec) => {
     const label = getSeriesName(series, `Series ${index + 1}`);
     const dataset: Record<string, unknown> = {
       label,
-      data: values,
+      data: spec.type === "scatter" || spec.options?.axes?.x?.type === "linear" ? values.map((y, x) => ({ x, y })) : values,
     };
 
-    if (spec.type === "area") {
+    const seriesType = spec.type === 'combo' ? (series.type ?? (index === 0 ? 'bar' : 'line')) : spec.type;
+    if (spec.type === 'combo') dataset.type = seriesType === 'area' ? 'line' : seriesType;
+    if (seriesType === "area") {
       dataset.fill = true;
     }
 
@@ -113,9 +118,9 @@ const buildConfig = (spec: ChartSpec) => {
               ? { position: spec.options.legend.position }
               : undefined,
       },
-      scales: {
+      scales: spec.type === "pie" || spec.type === "donut" ? {} : {
         x:
-          spec.options?.axes?.x?.type === "linear"
+          spec.options?.axes?.x?.type === "linear" || spec.type === "scatter"
             ? { type: "linear", title: { display: !!spec.options?.axes?.x?.label, text: spec.options?.axes?.x?.label } }
             : { type: "category", title: { display: !!spec.options?.axes?.x?.label, text: spec.options?.axes?.x?.label } },
         y: {
@@ -137,12 +142,24 @@ const buildConfig = (spec: ChartSpec) => {
 export const chartjsAdapter: ChartAdapter = {
   name: "chartjs",
   mount(container, spec): ChartAdapterHandle {
-    const context = (container as HTMLCanvasElement).getContext?.("2d");
+    assertChartSpec(spec);
+    const ownsCanvas = container.tagName?.toLowerCase() !== 'canvas' && !('getContext' in container);
+    const canvas = ownsCanvas ? container.ownerDocument.createElement('canvas') : container as HTMLCanvasElement;
+    if (ownsCanvas) container.appendChild(canvas);
+    const context = canvas.getContext?.("2d");
     if (!context) {
+      if (ownsCanvas) canvas.remove();
       throw new Error("Chart.js adapter requires a canvas element with 2d context");
     }
 
-    const chart = new Chart(context, buildConfig(spec) as any);
+    if (Chart.getChart?.(canvas)) throw new Error('Canvas already has a chart; dispose its handle before rendering again');
+    let chart: Chart;
+    try { chart = new Chart(context, buildConfig(spec) as any); }
+    catch (error) {
+      try { Chart.getChart?.(canvas)?.destroy(); } catch {}
+      if (ownsCanvas) canvas.remove();
+      throw error;
+    }
     let disposed = false;
 
     return {
@@ -150,8 +167,11 @@ export const chartjsAdapter: ChartAdapter = {
         if (disposed) {
           return;
         }
-        chart.data = (buildConfig(nextSpec) as any).data;
-        chart.options = (buildConfig(nextSpec) as any).options;
+        assertChartSpec(nextSpec);
+        const next = buildConfig(nextSpec) as any;
+        (chart.config as any).type = next.type;
+        chart.data = next.data;
+        chart.options = next.options;
         chart.update();
       },
       dispose() {
@@ -159,7 +179,7 @@ export const chartjsAdapter: ChartAdapter = {
           return;
         }
         disposed = true;
-        chart.destroy();
+        try { chart.destroy(); } finally { if (ownsCanvas) canvas.remove(); }
       },
     };
   },

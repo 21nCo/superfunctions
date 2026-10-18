@@ -8,7 +8,7 @@ vi.mock("chart.js", () => {
   }));
   ChartMock.register = vi.fn();
   ChartMock._instances = [];
-  ChartMock.mockImplementation(() => {
+  ChartMock.mockImplementation(function () {
     const instance = {
       update: vi.fn(),
       destroy: vi.fn(),
@@ -35,10 +35,11 @@ vi.mock("chart.js", () => {
     Title: {},
     Tooltip: {},
     ScatterController: {},
+    Filler: {},
   };
 });
 
-import { chartjsAdapter } from "../src/adapters/chartjs.js";
+import { chartjsAdapter, _private } from "../src/adapters/chartjs.js";
 import { ChartSpec } from "../src/types.js";
 import { Chart } from "chart.js";
 
@@ -87,5 +88,24 @@ describe("chartjsAdapter", () => {
     handle.dispose();
 
     expect(chartInstance.destroy).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('Chart.js chart contracts', () => {
+  it('builds scatter coordinates and radial charts without Cartesian scales', () => {
+    const scatter = _private.buildConfig({ ...spec, type: 'scatter' }) as any;
+    expect(scatter.data.datasets[0].data).toEqual([{ x: 0, y: 1 }, { x: 1, y: 2 }, { x: 2, y: 3 }]);
+    expect(scatter.options.scales.x.type).toBe('linear');
+    expect((_private.buildConfig({ ...spec, type: 'pie' }) as any).options.scales).toEqual({});
+  });
+  it('builds mixed series and updates the vendor chart type', () => {
+    const combo = _private.buildConfig({ ...spec, type: 'combo', data: { series: [{ values: [1], type: 'area' }, { values: [2] }] } }) as any;
+    expect(combo.data.datasets.map((item: any) => item.type)).toEqual(['line', 'line']);
+    expect(combo.data.datasets[0].fill).toBe(true);
+    const handle = chartjsAdapter.mount(canvas, spec);
+    handle.update({ ...spec, type: 'line' });
+    const instances = (Chart as any)._instances;
+    expect(instances[instances.length - 1].config.type).toBe('line');
   });
 });

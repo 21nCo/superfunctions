@@ -60,7 +60,10 @@
     "devfn/*",
     "packages/*",
     "filefn/examples/full-demo/*",
-    "filefn/examples/production/*"
+    "filefn/examples/production/*",
+    "chartfn",
+    "chartfn/react",
+    "chartfn/svelte"
   ],
   "scripts": {
     "build": "turbo run build",

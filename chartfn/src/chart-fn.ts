@@ -73,7 +73,7 @@ export const chartFn = (config: ChartFnConfig): ChartFnAPI => {
       logger.warn("chartfn.render.invalidSpec", {
         code: validation.error.code,
         path: validation.error.details.path,
-        type: (spec as ChartSpec).type,
+        type: spec?.type,
       });
       return validation;
     }
@@ -92,7 +92,22 @@ export const chartFn = (config: ChartFnConfig): ChartFnAPI => {
     try {
       logger.debug("chartfn.render.start", { adapter: adapterName, type: spec.type });
       const handle = adapter.mount(resolvedContainer, spec);
-      return { ok: true, result: handle };
+      let disposed = false;
+      return { ok: true, result: {
+        update(nextSpec) {
+          if (disposed) return;
+          const valid = validateChartSpec(nextSpec);
+          if (!valid.ok) throw Object.assign(new Error(valid.error.message), valid.error);
+          handle.update(nextSpec);
+        },
+        dispose() {
+          if (disposed) return;
+          disposed = true;
+          handle.dispose();
+        },
+        ...(handle.toImage ? { toImage: (imageOptions: Parameters<NonNullable<ChartAdapterHandle['toImage']>>[0]) =>
+          disposed ? Promise.resolve('') : handle.toImage!(imageOptions) } : {}),
+      } };
     } catch (error) {
       logger.error("chartfn.render.adapterError", {
         code: "ADAPTER_ERROR",

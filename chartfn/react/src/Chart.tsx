@@ -32,5 +32,6 @@ export const Chart: React.FC<ChartProps> = ({
 
   const { ref } = useChart(spec, { adapter, api: resolvedApi });
 
-  return <div ref={ref} className={className} style={style} />;
+  // React 16.8 supports hooks but predates the automatic JSX runtime.
+  return React.createElement("div", { ref, className, style });
 };

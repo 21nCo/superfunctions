@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { chartFn, ChartFnAPI, ChartFnConfig, ChartSpec } from "chartfn";
+import { chartFn, ChartFnAPI, ChartFnConfig, ChartSpec, ChartAdapterHandle } from "chartfn";
 
 export type UseChartOptions = {
   adapter?: string;
@@ -34,33 +34,39 @@ export const useChart = (
     () => ({ ok: true }),
   );
 
-  const handleRef = useRef<ReturnType<ChartFnAPI["render"]> extends { ok: true; result: infer T } ? T : unknown>();
+  const binding = useRef<{ api: ChartFnAPI; adapter?: string; handle: ChartAdapterHandle; spec: ChartSpec }>();
 
   useEffect(() => {
-    if (!api || !ref.current) {
-      return undefined;
+    const current = binding.current;
+    if (current && (current.api !== api || current.adapter !== options.adapter)) {
+      current.handle.dispose();
+      binding.current = undefined;
     }
-
-    if (handleRef.current) {
-      (handleRef.current as { update: (next: ChartSpec) => void }).update(spec);
-      return undefined;
+    if (!api || !ref.current) return;
+    if (binding.current) {
+      if (binding.current.spec === spec) return;
+      try {
+        binding.current.handle.update(spec);
+        binding.current.spec = spec;
+        setState({ ok: true });
+      } catch (error) {
+        setState({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+      return;
     }
-
     const result = api.render(ref.current, spec, options.adapter ? { adapter: options.adapter } : undefined);
     if (result.ok) {
-      handleRef.current = result.result as typeof handleRef.current;
+      binding.current = { api, adapter: options.adapter, handle: result.result, spec };
       setState({ ok: true });
     } else {
       setState({ ok: false, error: result.error.message });
     }
-
-    return () => {
-      if (handleRef.current) {
-        (handleRef.current as { dispose: () => void }).dispose();
-        handleRef.current = undefined;
-      }
-    };
   }, [api, options.adapter, spec]);
+
+  useEffect(() => () => {
+    binding.current?.handle.dispose();
+    binding.current = undefined;
+  }, []);
 
   return { ref, api, ok: state.ok, error: state.error };
 };

@@ -5,7 +5,7 @@ export const resolveContainer = (
     if (typeof document === "undefined") {
       return null;
     }
-    return document.querySelector(container);
+    try { return document.querySelector(container); } catch { return null; }
   }
 
   return container;

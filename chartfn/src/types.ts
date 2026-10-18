@@ -9,6 +9,8 @@ export type ChartType =
 
 export interface ChartSpecSeries {
   name?: string;
+  /** Rendering style for this series in a combo chart. */
+  type?: "bar" | "line" | "area";
   values: number[];
 }
 

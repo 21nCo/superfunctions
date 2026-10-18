@@ -34,7 +34,7 @@ const fail = (message: string, path?: string): ChartfnEnvelope<null> => ({
 });
 
 const isNumberArray = (value: unknown): value is number[] =>
-  Array.isArray(value) && value.every((item) => typeof item === "number");
+  Array.isArray(value) && Array.from(value).every((item) => typeof item === "number" && Number.isFinite(item));
 
 const getValuesArray = (series: unknown): number[] | null => {
   if (!isObject(series)) {
@@ -80,7 +80,23 @@ export const validateChartSpec = (spec: unknown): ChartfnEnvelope<null> => {
     );
   }
 
+  for (const field of ['dimensions', 'labels'] as const) {
+    const labels = data[field];
+    if (labels !== undefined && (!Array.isArray(labels) || !labels.every(item => typeof item === 'string'))) {
+      return fail(`ChartSpec.data.${field} must be an array of strings`, `data.${field}`);
+    }
+  }
+  if (spec.options !== undefined && (!isObject(spec.options) || Array.isArray(spec.options))) return fail('options must be an object', 'options');
+  if (spec.passthrough !== undefined && (!isObject(spec.passthrough) || Array.isArray(spec.passthrough))) return fail('passthrough must be an object', 'passthrough');
+
   for (let index = 0; index < series.length; index += 1) {
+    const entry = series[index];
+    if (isObject(entry) && entry.name !== undefined && typeof entry.name !== 'string') return fail('Series name must be a string', `data.series[${index}].name`);
+    if (isObject(entry) && entry.type !== undefined && !['bar', 'line', 'area'].includes(entry.type as string)) return fail('Series type must be bar, line or area', `data.series[${index}].type`);
+    const rawValues = isObject(entry) ? entry.values : undefined;
+    if (Array.isArray(rawValues) && rawValues.length > MAX_POINTS_PER_SERIES) {
+      return fail(`ChartSpec.data.series values exceed max points (${MAX_POINTS_PER_SERIES})`, `data.series[${index}].values`);
+    }
     const values = getValuesArray(series[index]);
     if (!values) {
       return fail(
@@ -110,3 +126,9 @@ export const validateChartSpec = (spec: unknown): ChartfnEnvelope<null> => {
 
   return { ok: true, result: null };
 };
+
+/** Throw for invalid imperative updates or direct adapter mounts. */
+export function assertChartSpec(spec: unknown): asserts spec is ChartSpec {
+  const result = validateChartSpec(spec);
+  if (!result.ok) throw Object.assign(new Error(result.error.message), result.error);
+}

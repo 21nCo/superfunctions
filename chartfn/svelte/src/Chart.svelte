@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import type { ChartFnAPI, ChartFnConfig, ChartSpec } from "chartfn";
+  import type { ChartFnAPI, ChartFnConfig, ChartSpec, ChartAdapterHandle } from "chartfn";
   import { chartFn } from "chartfn";
 
   export let spec: ChartSpec;
@@ -11,39 +11,34 @@
   export let style: string | undefined = undefined;
 
   let container: HTMLDivElement | null = null;
-  let handle: { update: (next: ChartSpec) => void; dispose: () => void } | null = null;
-  let resolvedApi: ChartFnAPI | undefined = api ?? (config ? chartFn(config) : undefined);
-
+  let mounted = false;
+  let binding: { api: ChartFnAPI; adapter?: string; handle: ChartAdapterHandle; spec: ChartSpec } | undefined;
+  let resolvedApi: ChartFnAPI | undefined;
   $: resolvedApi = api ?? (config ? chartFn(config) : undefined);
 
-  const renderChart = () => {
-    if (!resolvedApi || !container || !spec) {
+  const syncChart = (ready: boolean, element: HTMLDivElement | null, nextApi: ChartFnAPI | undefined, nextAdapter: string | undefined, nextSpec: ChartSpec) => {
+    if (!ready) return;
+    if (binding && (binding.api !== nextApi || binding.adapter !== nextAdapter)) {
+      binding.handle.dispose();
+      binding = undefined;
+    }
+    if (!nextApi || !element) return;
+    if (binding) {
+      binding.handle.update(nextSpec);
+      binding.spec = nextSpec;
       return;
     }
-
-    if (handle) {
-      handle.update(spec);
-      return;
-    }
-
-    const result = resolvedApi.render(container, spec, adapter ? { adapter } : undefined);
-    if (result.ok) {
-      handle = result.result as typeof handle;
-    }
+    const result = nextApi.render(element, nextSpec, nextAdapter ? { adapter: nextAdapter } : undefined);
+    if (result.ok) binding = { api: nextApi, adapter: nextAdapter, handle: result.result, spec: nextSpec };
   };
 
-  onMount(() => {
-    renderChart();
-  });
-
-  $: spec, renderChart();
-
+  onMount(() => { mounted = true; });
+  $: syncChart(mounted, container, resolvedApi, adapter, spec);
   onDestroy(() => {
-    if (handle) {
-      handle.dispose();
-      handle = null;
-    }
+    binding?.handle.dispose();
+    binding = undefined;
   });
+
 </script>
 
 <div bind:this={container} class={className} style={style}></div>

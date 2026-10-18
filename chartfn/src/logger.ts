@@ -20,10 +20,8 @@ const resolveLevel = (): LogLevel => {
   if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error" || raw === "silent") {
     return raw;
   }
-  if (env.NODE_ENV === "production") {
-    return "warn";
-  }
-  return "debug";
+  if (env.NODE_ENV === "development" || env.NODE_ENV === "test") return "debug";
+  return "warn";
 };
 
 const shouldLog = (level: LogLevel, target: LogLevel): boolean =>

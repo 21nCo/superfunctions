@@ -47,7 +47,7 @@ describe("handle lifecycle", () => {
     if (result.ok) {
       result.result.dispose();
       result.result.dispose();
-      expect(handle.dispose).toHaveBeenCalledTimes(2);
+      expect(handle.dispose).toHaveBeenCalledTimes(1);
     }
   });
 });
