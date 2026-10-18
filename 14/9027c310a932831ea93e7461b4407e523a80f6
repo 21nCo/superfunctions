@@ -1,0 +1,45 @@
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_efcf06cf9557b4 28,55-84
+flowfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_720fd622109597 50-51,61-63,130-140
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_a651a46afd1d1c 25-27,35-36,39-40,44
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_57f582136c145d 1,21
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_1ee2efa322e043 1,21
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_e1c5fc1a65c0cf::t_738efeb347e887 1,21,128
+flowfn/typescript/src/core/flow-fn.ts
+  s_e1c5fc1a65c0cf::t_89227c93b70203 1,37-38,71,88,150-156,162,216,275,300
+flowfn/typescript/src/instrumentation.test.ts
+  s_e1c5fc1a65c0cf::t_1f65443b2f5d40 1-86
+flowfn/typescript/src/instrumentation.ts
+  s_e1c5fc1a65c0cf::t_80b9389ca79be9 1-61
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_4930bcf41e4eaf 1,39,357
+flowfn/typescript/src/storage/telemetry-contract.ts
+  s_e1c5fc1a65c0cf::t_ec21487e6d2b47 1-43
+flowfn/typescript/src/stream/stream.ts
+  s_e1c5fc1a65c0cf::t_d3189aa8ffd83a 1,27,85,117
+flowfn/typescript/src/workflow/workflow.ts
+  s_e1c5fc1a65c0cf::t_7b7fb99b33dbb2 1,71,179,277,607,658,752
+flowfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_18c97d98a26668 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "149027c310a932831ea93e7461b4407e523a80f6",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
