@@ -3,7 +3,7 @@
   "checkpoint_id": "01M580TMJ25V80D1EERTWCSEFH",
   "strategy": "manual-commit",
   "branch": "codex/docs-datafn-20260926",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "datafn/docs/content/docs/reference/events.mdx",
     "datafn/docs/public/llms-full.txt"
@@ -15,6 +15,20 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 12,
+    "cache_creation_tokens": 6775,
+    "cache_read_tokens": 851185,
+    "output_tokens": 2293,
+    "api_call_count": 6
+  }
 }
