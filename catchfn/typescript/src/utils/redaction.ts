@@ -1,3 +1,5 @@
+import { safeSerialize } from "./serialization.js";
+
 /**
  * Data redaction utilities
  */
@@ -26,31 +28,19 @@ const CREDIT_CARD_PATTERN = /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g;
  * Redact sensitive values from an object
  */
 export function redactObject(obj: any, customPatterns: RegExp[] = []): any {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj !== "object") return obj;
-
   const patterns = [...SENSITIVE_PATTERNS, ...customPatterns];
-
-  if (Array.isArray(obj)) {
-    return obj.map((item) => redactObject(item, customPatterns));
-  }
-
-  const result: any = {};
-
-  for (const [key, value] of Object.entries(obj)) {
-    // Check if key matches sensitive pattern
-    const isSensitive = patterns.some((pattern) => pattern.test(key));
-
-    if (isSensitive) {
-      result[key] = "[REDACTED]";
-    } else if (value && typeof value === "object") {
-      result[key] = redactObject(value, customPatterns);
-    } else {
-      result[key] = value;
+  function visit(value: any, field = ""): any {
+    if (typeof value === "string") return redactString(/url|href/i.test(field) ? redactUrl(value) : value);
+    if (value === null || typeof value !== "object") return value;
+    if (Array.isArray(value)) return value.map((entry) => visit(entry, field));
+    const result: Record<string, any> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const sensitive = patterns.some((pattern) => { pattern.lastIndex = 0; return pattern.test(key); });
+      Object.defineProperty(result, key, { value: sensitive ? "[REDACTED]" : visit(entry, key), enumerable: true, writable: true, configurable: true });
     }
+    return result;
   }
-
-  return result;
+  return visit(safeSerialize(obj));
 }
 
 /**
@@ -86,11 +76,13 @@ export function redactUrl(url: string, sensitiveParams: string[] = []): string {
 
     const allSensitiveParams = [...defaultSensitiveParams, ...sensitiveParams];
 
-    allSensitiveParams.forEach((param) => {
-      if (urlObj.searchParams.has(param)) {
-        urlObj.searchParams.set(param, "[REDACTED]");
-      }
-    });
+    urlObj.username = "";
+    urlObj.password = "";
+    const names = new Set(allSensitiveParams.map((name) => name.toLowerCase()));
+    for (const param of [...urlObj.searchParams.keys()]) {
+      if (names.has(param.toLowerCase())) urlObj.searchParams.set(param, "[REDACTED]");
+    }
+    if (/token|secret|password|api[_-]?key/i.test(urlObj.hash)) urlObj.hash = "[REDACTED]";
 
     return urlObj.toString();
   } catch {

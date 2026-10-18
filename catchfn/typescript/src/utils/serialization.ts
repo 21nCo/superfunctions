@@ -1,108 +1,50 @@
-/**
- * Error and data serialization utilities
- */
-
-/**
- * Serialize an Error object
- */
-export function serializeError(error: Error): Record<string, any> {
-  return {
-    name: error.name,
-    message: error.message,
-    stack: error.stack,
-    ...Object.getOwnPropertyNames(error).reduce(
-      (acc, key) => {
-        if (key !== "name" && key !== "message" && key !== "stack") {
-          acc[key] = (error as any)[key];
-        }
-        return acc;
-      },
-      {} as Record<string, any>
-    ),
-  };
-}
-
-/**
- * Safely serialize any value, handling circular references
- */
-export function safeSerialize(value: any, maxDepth: number = 10): any {
-  const seen = new WeakSet();
-
-  function serialize(val: any, depth: number): any {
-    if (depth > maxDepth) {
-      return "[Max Depth Reached]";
-    }
-
-    if (val === null) return null;
-    if (val === undefined) return undefined;
-    if (typeof val === "string") return val;
-    if (typeof val === "number") return val;
-    if (typeof val === "boolean") return val;
-    if (typeof val === "function") return "[Function]";
-    if (typeof val === "symbol") return val.toString();
-
-    if (val instanceof Error) {
-      return serializeError(val);
-    }
-
-    if (val instanceof Date) {
-      return val.toISOString();
-    }
-
-    if (val instanceof RegExp) {
-      return val.toString();
-    }
-
-    if (typeof val === "object") {
-      if (seen.has(val)) {
-        return "[Circular Reference]";
-      }
-
-      seen.add(val);
-
-      if (Array.isArray(val)) {
-        return val.map((item) => serialize(item, depth + 1));
-      }
-
+/** JSON-safe snapshots without losing repeated (non-cyclic) references. */
+export function safeSerialize(value: any, maxDepth = 10): any {
+  if (!Number.isInteger(maxDepth) || maxDepth < 0) throw new RangeError("maxDepth must be a nonnegative integer");
+  const ancestors = new WeakSet<object>();
+  function serialize(item: any, depth: number): any {
+    if (depth > maxDepth) return "[Max Depth Reached]";
+    if (item === null || item === undefined) return item;
+    if (typeof item === "string" || typeof item === "boolean") return item;
+    if (typeof item === "number") return Number.isFinite(item) ? item : null;
+    if (typeof item === "bigint" || typeof item === "symbol") return String(item);
+    if (typeof item === "function") return "[Function]";
+    if (item instanceof Date) return Number.isFinite(item.getTime()) ? item.toISOString() : null;
+    if (item instanceof RegExp) return String(item);
+    if (ancestors.has(item)) return "[Circular Reference]";
+    ancestors.add(item);
+    try {
+      if (Array.isArray(item)) return item.map((entry) => serialize(entry, depth + 1));
       const result: Record<string, any> = {};
-      for (const key in val) {
-        if (Object.prototype.hasOwnProperty.call(val, key)) {
-          result[key] = serialize(val[key], depth + 1);
-        }
+      const keys = item instanceof Error ? [...new Set(["name", "message", "stack", ...Object.getOwnPropertyNames(item)])] : Object.keys(item);
+      for (const key of keys) {
+        let entry: any;
+        try { entry = serialize(item[key], depth + 1); } catch { entry = "[Unserializable]"; }
+        Object.defineProperty(result, key, { value: entry, enumerable: true, writable: true, configurable: true });
       }
       return result;
-    }
-
-    return String(val);
+    } finally { ancestors.delete(item); }
   }
-
   return serialize(value, 0);
 }
 
-/**
- * Estimate the size of a serialized object in bytes
- */
-export function estimateSize(obj: any): number {
-  try {
-    const str = JSON.stringify(safeSerialize(obj));
-    return new Blob([str]).size;
-  } catch {
-    return 0;
-  }
+export function serializeError(error: Error): Record<string, any> {
+  return safeSerialize(error);
 }
 
-/**
- * Truncate a string to a maximum length
- */
-export function truncateString(str: string, maxLength: number): string {
-  if (str.length <= maxLength) return str;
-  return str.substring(0, maxLength - 3) + "...";
+/** Count actual UTF-8 bytes; an unserializable value must never look empty. */
+export function estimateSize(value: any): number {
+  const json = JSON.stringify(safeSerialize(value));
+  return new TextEncoder().encode(json ?? "null").byteLength;
 }
 
-/**
- * Trim an array to a maximum size
- */
-export function trimArray<T>(arr: T[], maxSize: number): T[] {
-  if (arr.length <= maxSize) return arr;
-  return arr.slice(-maxSize);
+export function truncateString(value: string, maxLength: number): string {
+  if (!Number.isInteger(maxLength) || maxLength < 0) throw new RangeError("maxLength must be nonnegative");
+  if (value.length <= maxLength) return value;
+  return maxLength <= 3 ? value.slice(0, maxLength) : value.slice(0, maxLength - 3) + "...";
+}
+
+export function trimArray<T>(values: T[], maxSize: number): T[] {
+  if (!Number.isInteger(maxSize) || maxSize < 0) throw new RangeError("maxSize must be nonnegative");
+  return maxSize === 0 ? [] : values.slice(-maxSize);
 }

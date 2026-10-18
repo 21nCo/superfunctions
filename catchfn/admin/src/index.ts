@@ -110,10 +110,11 @@ export function createCatchFnAdminService(service: CatchFnService, scope: CatchF
         ? decodeAdminCursor<{ offset: number }>(input.cursor, context.scope).offset
         : 0;
       if (!Number.isInteger(offset) || offset < 0) throw new AdminError("invalid_argument", "The bug-report cursor is invalid.");
-      const items = await service.listBugs(limit + 1, offset);
+      const items = await service.listBugs(limit, offset);
+      const hasMore = items.length >= limit && (await service.listBugs(1, offset + limit)).length > 0;
       return {
         items: items.slice(0, limit),
-        nextCursor: items.length > limit
+        nextCursor: hasMore
           ? encodeAdminCursor(context.scope, { offset: offset + limit })
           : null,
       };

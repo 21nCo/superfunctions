@@ -33,7 +33,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@superfunctions/admin": "0.1.0",
+    "@superfunctions/admin": "0.1.5",
     "@catchfn/server": "0.0.2",
     "catchfn": "0.0.1"
   },

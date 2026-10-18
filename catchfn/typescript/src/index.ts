@@ -19,6 +19,8 @@ export type {
   BeforeSendHook,
   IgnorePattern,
   ContextCollector,
+  WatchBugReportEvent,
+  WatchBugReportClient,
 } from "./core/types.js";
 
 // Collector exports

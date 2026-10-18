@@ -1,20 +1,21 @@
-import type { Adapter } from '@superfunctions/db';
-import { CatchFnService, type CatchFnServiceConfig } from './service';
-import { createCatchFnRouter } from './router';
+import { CatchFnService, type CatchFnServiceConfig } from './service.js';
+import { createCatchFnRouter, type CatchFnRouterConfig } from './router.js';
 
-export * from './service';
-export * from './router';
+export * from './service.js';
+export * from './router.js';
 
 export interface CatchFnServerConfig extends CatchFnServiceConfig {
-  // Add any server-specific config here
+  http?: CatchFnRouterConfig;
 }
 
 export function createCatchFnServer(config: CatchFnServerConfig) {
   const service = new CatchFnService(config);
-  const router = createCatchFnRouter(service);
+  const router = createCatchFnRouter(service, config.http);
 
   return {
     service,
     router,
   };
 }
+
+export * from "./schema.js";

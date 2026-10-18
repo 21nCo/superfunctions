@@ -1,123 +1,57 @@
-/**
- * Console log collector - captures console output
- */
-
 import type { ConsoleLogEntry, ContextCollector } from "../core/types.js";
+import { safeSerialize } from "../utils/serialization.js";
 
-type ConsoleMethod = "log" | "info" | "warn" | "error" | "debug";
+type ConsoleMethod = ConsoleLogEntry["level"];
+type Listener = (level: ConsoleMethod, args: any[]) => void;
+let listeners = new Set<Listener>();
+let restore: (() => void) | undefined;
+
+function subscribe(listener: Listener): () => void {
+  if (listeners.size === 0) {
+    listeners = new Set();
+    const current = listeners;
+    const originals = new Map<ConsoleMethod, typeof console.log>();
+    const wrappers = new Map<ConsoleMethod, typeof console.log>();
+    for (const level of ["log", "info", "warn", "error", "debug"] as const) {
+      const original = console[level];
+      const wrapper = (...args: any[]) => {
+        original.apply(console, args);
+        for (const receive of current) receive(level, args);
+      };
+      originals.set(level, original);
+      wrappers.set(level, wrapper);
+      console[level] = wrapper;
+    }
+    restore = () => {
+      for (const [level, original] of originals) {
+        if (console[level] === wrappers.get(level)) console[level] = original;
+      }
+    };
+  }
+  const current = listeners;
+  current.add(listener);
+  return () => {
+    current.delete(listener);
+    if (current === listeners && current.size === 0) { restore?.(); restore = undefined; }
+  };
+}
 
 export class ConsoleCollector implements ContextCollector<ConsoleLogEntry[]> {
   private logs: ConsoleLogEntry[] = [];
-  private maxSize: number;
-  private originalMethods: Map<ConsoleMethod, (...args: any[]) => void> =
-    new Map();
-  private isActive = false;
-
-  constructor(maxSize: number = 100) {
-    this.maxSize = maxSize;
+  private unsubscribe?: () => void;
+  constructor(private maxSize = 100) {
+    if (!Number.isInteger(maxSize) || maxSize < 0) throw new RangeError("maxSize must be nonnegative");
   }
-
-  /**
-   * Start intercepting console methods
-   */
   start(): void {
-    if (this.isActive) return;
-
-    const methods: ConsoleMethod[] = ["log", "info", "warn", "error", "debug"];
-
-    methods.forEach((method) => {
-      // Store original method
-      this.originalMethods.set(method, console[method].bind(console));
-
-      // Replace with interceptor
-      console[method] = (...args: any[]) => {
-        // Call original
-        this.originalMethods.get(method)?.(...args);
-
-        // Capture
-        this.capture(method, args);
-      };
-    });
-
-    this.isActive = true;
-  }
-
-  /**
-   * Stop intercepting console methods
-   */
-  stop(): void {
-    if (!this.isActive) return;
-
-    this.originalMethods.forEach((original, method) => {
-      console[method] = original;
-    });
-
-    this.originalMethods.clear();
-    this.isActive = false;
-  }
-
-  /**
-   * Capture a console log entry
-   */
-  private capture(level: ConsoleMethod, args: any[]): void {
-    const entry: ConsoleLogEntry = {
-      level,
-      args: this.serializeArgs(args),
-      timestamp: Date.now(),
-    };
-
-    this.logs.push(entry);
-
-    // Maintain size limit
-    if (this.logs.length > this.maxSize) {
-      this.logs.shift();
-    }
-  }
-
-  /**
-   * Serialize console arguments
-   */
-  private serializeArgs(args: any[]): any[] {
-    return args.map((arg) => {
-      if (arg === null) return null;
-      if (arg === undefined) return undefined;
-      if (typeof arg === "string") return arg;
-      if (typeof arg === "number") return arg;
-      if (typeof arg === "boolean") return arg;
-      if (arg instanceof Error) {
-        return {
-          name: arg.name,
-          message: arg.message,
-          stack: arg.stack,
-        };
-      }
-      // For objects, try to stringify
-      try {
-        return JSON.parse(JSON.stringify(arg));
-      } catch {
-        return String(arg);
-      }
+    if (this.unsubscribe) return;
+    this.unsubscribe = subscribe((level, args) => {
+      if (this.maxSize === 0) return;
+      this.logs.push({ level, args: safeSerialize(args), timestamp: Date.now() });
+      if (this.logs.length > this.maxSize) this.logs.shift();
     });
   }
-
-  /**
-   * Collect all console logs
-   */
-  collect(): ConsoleLogEntry[] {
-    return [...this.logs];
-  }
-
-  /**
-   * Clear all console logs
-   */
-  clear(): void {
-    this.logs = [];
-  }
-
-  /**
-   * Get the current number of logs
-   */
-  size(): number {
-    return this.logs.length;
-  }
+  stop(): void { this.unsubscribe?.(); this.unsubscribe = undefined; }
+  collect(): ConsoleLogEntry[] { return safeSerialize(this.logs); }
+  clear(): void { this.logs = []; }
+  size(): number { return this.logs.length; }
 }

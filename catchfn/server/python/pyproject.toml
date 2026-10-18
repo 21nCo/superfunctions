@@ -1,20 +1,20 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
 name = "catchfn"
 version = "0.0.1"
-description = "Server implementation for CatchFn bug reporting"
+description = "Durable CatchFn bug reporting services"
 readme = "README.md"
-authors = [
-    { name = "21n", email = "hello@21n.co" }
-]
-requires-python = ">=3.8"
-dependencies = [
-    "sfns",
-    "pydantic"
-]
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "21n", email = "hello@21n.co"}]
+dependencies = ["superfunctions-core>=0.1.1,<0.2", "pydantic>=2.5,<3"]
+
+[project.optional-dependencies]
+sqlalchemy = ["superfunctions-sqlalchemy>=0.1.1,<0.2", "sqlalchemy>=2.0"]
+dev = ["pytest>=7.4", "pytest-asyncio>=0.21", "mypy>=1.8", "ruff>=0.8", "build>=1.2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/catchfn"]

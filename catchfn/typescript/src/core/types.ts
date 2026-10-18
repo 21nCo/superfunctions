@@ -81,16 +81,22 @@ export interface AttachmentReference {
   size: number;
   url?: string;
   dataUrl?: string;
+  kind?: "screenshot" | "file" | "link";
+  mimeType?: string;
+  annotationScene?: unknown;
 }
 
 /**
  * Bug report event - the main event sent to watchfn
  */
 export interface BugReportEvent {
+  /** Local delivery outcome; omitted from the WatchFn envelope. */
+  delivery?: "sent" | "local" | "dropped";
   id: string;
   timestamp: number;
   title: string;
   description?: string;
+  steps?: string[];
   severity: BugSeverity;
   tags?: string[];
 
@@ -129,8 +135,11 @@ export interface BugReportEvent {
  * Options for capturing a bug
  */
 export interface CaptureBugOptions {
+  includeConsoleLogs?: boolean;
+  includeNetworkLogs?: boolean;
   title: string;
   description?: string;
+  steps?: string[];
   severity?: BugSeverity;
   tags?: string[];
   user?: BugReportEvent["user"];
@@ -157,6 +166,27 @@ export type IgnorePattern = string | RegExp;
  * CatchFn configuration
  */
 export interface CatchFnConfig {
+  watch?: {client: WatchBugReportClient};
+  sessionId?: string;
+  appVersion?: string;
+  env?: string;
+  featureFlags?: Record<string, boolean | string>;
+
+  reporter?: {
+    floatingButton?: boolean;
+    hotkey?: string;
+    screenshot?: boolean;
+    maskSelectors?: string[];
+    maxInlineBytes?: number;
+  };
+  uploadAttachment?: (blob: Blob, attachment: AttachmentReference) => Promise<{url: string}>;
+  network?: {
+    allowUrls?: IgnorePattern[];
+    blockUrls?: IgnorePattern[];
+    allowedHeaders?: string[];
+    blockedHeaders?: string[];
+  };
+
   /**
    * Application name
    */
@@ -247,4 +277,23 @@ export interface CatchFnConfig {
 export interface ContextCollector<T = any> {
   collect(): T;
   clear(): void;
+}
+
+/** Canonical event carried by the shared WatchFn ingestion transport. */
+export interface WatchBugReportEvent {
+  id: string;
+  type: "bug_report";
+  timestamp: string;
+  app: {name: string; version?: string};
+  user?: BugReportEvent["user"];
+  sessionId: string;
+  context: Record<string, unknown>;
+  report: {title: string; description?: string; steps?: string[]; severity: BugSeverity; tags?: string[]};
+  attachments?: AttachmentReference[];
+  integration?: BugReportEvent["integration"];
+  replayId?: string;
+}
+export interface WatchBugReportClient {
+  capture(event: WatchBugReportEvent): Promise<{integration?: BugReportEvent["integration"]} | void>;
+  flush?(): Promise<void>;
 }

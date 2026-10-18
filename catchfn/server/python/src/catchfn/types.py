@@ -1,12 +1,15 @@
-from typing import List, Optional, Any, Dict, Union
 from enum import Enum
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 
 class BugSeverity(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+
 
 class BreadcrumbType(str, Enum):
     NAVIGATION = "navigation"
@@ -15,84 +18,112 @@ class BreadcrumbType(str, Enum):
     USER = "user"
     CUSTOM = "custom"
 
+
 class Breadcrumb(BaseModel):
     type: BreadcrumbType
     timestamp: float
-    message: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
-    category: Optional[str] = None
-    level: Optional[str] = None
+    message: str | None = None
+    data: dict[str, Any] | None = None
+    category: str | None = None
+    level: str | None = None
+
 
 class ConsoleLogEntry(BaseModel):
     level: str
-    args: List[Any]
+    args: list[Any]
     timestamp: float
+
 
 class NetworkRequest(BaseModel):
     url: str
     method: str
-    status: Optional[int] = None
-    statusText: Optional[str] = None
-    duration: Optional[float] = None
+    status: int | None = None
+    statusText: str | None = None
+    duration: float | None = None
     timestamp: float
-    requestHeaders: Optional[Dict[str, str]] = None
-    responseHeaders: Optional[Dict[str, str]] = None
+    requestHeaders: dict[str, str] | None = None
+    responseHeaders: dict[str, str] | None = None
+
 
 class DeviceInfo(BaseModel):
-    userAgent: Optional[str] = None
-    platform: Optional[str] = None
-    language: Optional[str] = None
-    screenResolution: Optional[str] = None
-    viewportSize: Optional[str] = None
-    timezone: Optional[str] = None
-    nodeVersion: Optional[str] = None
-    memoryUsage: Optional[Dict[str, float]] = None
+    userAgent: str | None = None
+    platform: str | None = None
+    language: str | None = None
+    screenResolution: str | None = None
+    viewportSize: str | None = None
+    timezone: str | None = None
+    nodeVersion: str | None = None
+    memoryUsage: dict[str, float] | None = None
+
 
 class AttachmentReference(BaseModel):
     id: str
     name: str
     type: str
-    size: int
-    url: Optional[str] = None
-    dataUrl: Optional[str] = None
+    size: int = Field(ge=0)
+    kind: str | None = None
+    mimeType: str | None = None
+    annotationScene: dict[str, Any] | None = None
+    url: str | None = None
+    dataUrl: str | None = None
+
 
 class UserContext(BaseModel):
-    id: Optional[str] = None
-    email: Optional[str] = None
-    username: Optional[str] = None
-    
-    class Config:
-        extra = "allow"
+    id: str | None = None
+    email: str | None = None
+    username: str | None = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class AppContext(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    version: str | None = None
+
 
 class BugReportEvent(BaseModel):
-    id: str
-    timestamp: float
-    title: str
-    description: Optional[str] = None
+    model_config = ConfigDict(extra="allow", allow_inf_nan=False)
+    id: str = Field(min_length=1, max_length=200)
+    timestamp: float = Field(ge=0)
+    title: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_nonempty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Bug title is required")
+        return value
+
+    description: str | None = None
+    steps: list[str] | None = None
+    app: AppContext | None = None
+    sessionId: str | None = None
+    replayId: str | None = None
     severity: BugSeverity
-    tags: Optional[List[str]] = None
+    tags: list[str] | None = Field(default=None, max_length=100)
 
     # Context
-    breadcrumbs: Optional[List[Breadcrumb]] = None
-    consoleLogs: Optional[List[ConsoleLogEntry]] = None
-    networkRequests: Optional[List[NetworkRequest]] = None
-    deviceInfo: Optional[DeviceInfo] = None
+    breadcrumbs: list[Breadcrumb] | None = None
+    consoleLogs: list[ConsoleLogEntry] | None = None
+    networkRequests: list[NetworkRequest] | None = None
+    deviceInfo: DeviceInfo | None = None
 
     # User context
-    user: Optional[UserContext] = None
+    user: UserContext | None = None
 
     # Environment
-    environment: Optional[str] = None
-    release: Optional[str] = None
+    environment: str | None = None
+    release: str | None = None
 
     # Attachments
-    attachments: Optional[List[AttachmentReference]] = None
+    attachments: list[AttachmentReference] | None = None
 
     # Integration
-    integration: Optional[Dict[str, str]] = None
+    integration: dict[str, str] | None = None
 
     # Custom metadata
-    metadata: Optional[Dict[str, Any]] = None
-    
+    metadata: dict[str, Any] | None = None
+
     # Internal
-    receivedAt: Optional[float] = None
+    receivedAt: float | None = None

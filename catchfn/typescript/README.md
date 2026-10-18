@@ -257,19 +257,45 @@ const url = redactUrl("https://api.example.com?token=secret&id=123");
 // "https://api.example.com?token=[REDACTED]&id=123"
 ```
 
-## Integration with WatchFn
-
-CatchFn is designed to integrate with [WatchFn](../watchfn) for centralized bug tracking and analysis.
+## Reporter and delivery
 
 ```typescript
-import { catchFn } from "catchfn";
-// import { watchFn } from "watchfn"; // Future integration
+import { catchFn, type WatchBugReportClient } from "catchfn";
 
+// Supply an application-owned client implementing the canonical capture contract.
+declare const client: WatchBugReportClient;
 const catcher = catchFn({
   name: "my-app",
-  // watchfnClient: watch, // Future: send events to watchfn
+  watch: { client },
+  reporter: { floatingButton: true, hotkey: "alt+b" },
 });
+await catcher.openReporter();
+// Call when the owning application/component is disposed.
+catcher.stop();
 ```
+
+The reporter provides masked screenshots, DrawFn annotation, title/description/steps,
+severity/tags and console/network consent. Use `data-catchfn-mask` on private DOM
+content; password and payment inputs are masked automatically. Additional selectors
+can be configured through `reporter.maskSelectors`. Large screenshots require an
+`uploadAttachment(blob, attachment)` callback returning an HTTP(S) URL; the default
+inline limit is 64 KiB. Screenshot bytes and annotation metadata count toward the
+final payload limit.
+
+React applications can render `CatchFnReporterButton` from `catchfn/react` with a
+`catcher` prop and optional `onReporterError` handler. The application owns SDK
+creation and cleanup.
+
+`captureBug()` awaits the injected client's `capture()` and reports `delivery` as
+`sent`, `local`, or `dropped`. Without a client it only returns the local report.
+A rejected delivery promise is surfaced to the caller. The client receives the
+canonical `type: "bug_report"` envelope with ISO timestamp, app, session, context,
+report and attachment fields. `flush()` delegates to the client's optional flush.
+
+The default WatchFn endpoint/authentication/retry implementation and shared datastore
+integration are still outstanding. This injected-client contract is not a completed
+WatchFn ingestion integration. See `../.conduct/readiness.md` for the full remaining
+acceptance gates.
 
 ## License
 

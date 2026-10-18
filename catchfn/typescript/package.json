@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
     }
   },
   "files": [
@@ -20,7 +25,7 @@
     "build": "tsup",
     "build:watch": "tsup --watch",
     "clean": "rm -rf dist",
-    "lint": "echo 'lint not configured'",
+    "lint": "npm run typecheck",
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest run --coverage",
@@ -55,6 +60,24 @@
     "@types/node": "^22.0.0",
     "tsup": "^8.5.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "3.2.7",
+    "@vitest/coverage-v8": "3.2.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "playwright": "1.64.1"
+  },
+  "dependencies": {
+    "drawfn": "0.0.2",
+    "html2canvas": "1.4.1"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   }
 }

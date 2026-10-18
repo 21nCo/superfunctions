@@ -1,231 +1,114 @@
-/**
- * Network activity collector - tracks HTTP requests
- */
+import type { NetworkRequest, ContextCollector, IgnorePattern } from "../core/types.js";
+import { redactHeaders, redactUrl } from "../utils/redaction.js";
+import { safeSerialize } from "../utils/serialization.js";
 
-import type { NetworkRequest, ContextCollector } from "../core/types.js";
+export interface NetworkCollectorOptions {
+  allowUrls?: IgnorePattern[];
+  blockUrls?: IgnorePattern[];
+  allowedHeaders?: string[];
+  blockedHeaders?: string[];
+}
+type Listener = (request: NetworkRequest) => void;
+let listeners = new Set<Listener>();
+let restore: (() => void) | undefined;
+
+function headers(value?: HeadersInit): Record<string, string> | undefined {
+  if (!value) return undefined;
+  const result: Record<string, string> = {};
+  new Headers(value).forEach((entry, key) => { result[key] = entry; });
+  return redactHeaders(result);
+}
+
+function subscribe(listener: Listener): () => void {
+  if (listeners.size === 0) {
+    listeners = new Set();
+    const current = listeners;
+    const emit = (request: NetworkRequest) => {
+      for (const receive of current) { try { receive(request); } catch { /* Capture must not change application requests. */ } }
+    };
+    const cleanups: Array<() => void> = [];
+    if (typeof globalThis.fetch === "function") {
+      const original = globalThis.fetch;
+      const wrapper: typeof fetch = async (input, init) => {
+        const request = typeof Request !== "undefined" && input instanceof Request ? input : undefined;
+        const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const base = { url: redactUrl(url), method: init?.method ?? request?.method ?? "GET", timestamp: Date.now(), requestHeaders: headers(init?.headers ?? request?.headers) };
+        try {
+          const response = await original.call(globalThis, input, init);
+          emit({ ...base, status: response.status, statusText: response.statusText, duration: Date.now() - base.timestamp, responseHeaders: headers(response.headers) });
+          return response;
+        } catch (error) {
+          emit({ ...base, duration: Date.now() - base.timestamp });
+          throw error;
+        }
+      };
+      globalThis.fetch = wrapper;
+      cleanups.push(() => { if (globalThis.fetch === wrapper) globalThis.fetch = original; });
+    }
+    if (typeof XMLHttpRequest !== "undefined") {
+      const prototype = XMLHttpRequest.prototype;
+      const originalOpen = prototype.open;
+      const originalSend = prototype.send;
+      const records = new WeakMap<XMLHttpRequest, { method: string; url: string }>();
+      const open = function(this: XMLHttpRequest, ...args: any[]) {
+        records.set(this, { method: String(args[0]), url: redactUrl(String(args[1])) });
+        return (originalOpen as any).apply(this, args);
+      } as typeof prototype.open;
+      const send = function(this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
+        const record = records.get(this);
+        const timestamp = Date.now();
+        const complete = () => {
+          if (!record) return;
+          emit({ ...record, timestamp, duration: Date.now() - timestamp, status: this.status, statusText: this.statusText });
+        };
+        this.addEventListener("loadend", complete, { once: true });
+        try { return originalSend.call(this, body); }
+        catch (error) { this.removeEventListener("loadend", complete); throw error; }
+      };
+      prototype.open = open;
+      prototype.send = send;
+      cleanups.push(() => {
+        if (prototype.open === open) prototype.open = originalOpen;
+        if (prototype.send === send) prototype.send = originalSend;
+      });
+    }
+    restore = () => { for (const cleanup of cleanups) cleanup(); };
+  }
+  const current = listeners;
+  current.add(listener);
+  return () => {
+    current.delete(listener);
+    if (current === listeners && current.size === 0) { restore?.(); restore = undefined; }
+  };
+}
+
+function matches(url: string, pattern: IgnorePattern): boolean {
+  if (typeof pattern === "string") return url.includes(pattern);
+  pattern.lastIndex = 0;
+  return pattern.test(url);
+}
 
 export class NetworkCollector implements ContextCollector<NetworkRequest[]> {
   private requests: NetworkRequest[] = [];
-  private maxSize: number;
-  private originalFetch?: typeof fetch;
-  private originalXHROpen?: typeof XMLHttpRequest.prototype.open;
-  private originalXHRSend?: typeof XMLHttpRequest.prototype.send;
-  private isActive = false;
-  private sensitiveHeaders = new Set([
-    "authorization",
-    "cookie",
-    "set-cookie",
-    "x-api-key",
-    "x-auth-token",
-  ]);
-
-  constructor(maxSize: number = 20) {
-    this.maxSize = maxSize;
+  private unsubscribe?: () => void;
+  constructor(private maxSize = 20, private options: NetworkCollectorOptions = {}) {
+    if (!Number.isInteger(maxSize) || maxSize < 0) throw new RangeError("maxSize must be nonnegative");
   }
-
-  /**
-   * Start intercepting network requests
-   */
   start(): void {
-    if (this.isActive) return;
-
-    this.interceptFetch();
-    this.interceptXHR();
-
-    this.isActive = true;
+    if (this.unsubscribe) return;
+    this.unsubscribe = subscribe((request) => {
+      if (this.maxSize === 0 || this.options.blockUrls?.some((pattern) => matches(request.url, pattern))) return;
+      if (this.options.allowUrls?.length && !this.options.allowUrls.some((pattern) => matches(request.url, pattern))) return;
+      const filter = (value?: Record<string, string>) => value && Object.fromEntries(Object.entries(value).filter(([key]) => {
+        const name = key.toLowerCase();
+        return !this.options.blockedHeaders?.some((header) => header.toLowerCase() === name) && (!this.options.allowedHeaders || this.options.allowedHeaders.some((header) => header.toLowerCase() === name));
+      }));
+      this.requests.push({ ...safeSerialize(request), requestHeaders: filter(request.requestHeaders), responseHeaders: filter(request.responseHeaders) });
+      if (this.requests.length > this.maxSize) this.requests.shift();
+    });
   }
-
-  /**
-   * Stop intercepting network requests
-   */
-  stop(): void {
-    if (!this.isActive) return;
-
-    if (this.originalFetch) {
-      globalThis.fetch = this.originalFetch;
-    }
-
-    if (this.originalXHROpen) {
-      XMLHttpRequest.prototype.open = this.originalXHROpen;
-    }
-
-    if (this.originalXHRSend) {
-      XMLHttpRequest.prototype.send = this.originalXHRSend;
-    }
-
-    this.isActive = false;
-  }
-
-  /**
-   * Intercept fetch API
-   */
-  private interceptFetch(): void {
-    if (typeof fetch === "undefined") return;
-
-    this.originalFetch = fetch;
-
-    globalThis.fetch = async (...args: Parameters<typeof fetch>) => {
-      const startTime = Date.now();
-      const url =
-        typeof args[0] === "string"
-          ? args[0]
-          : args[0] instanceof URL
-            ? args[0].href
-            : args[0].url;
-      const method = args[1]?.method || "GET";
-
-      try {
-        const response = await this.originalFetch!(...args);
-        const duration = Date.now() - startTime;
-
-        this.addRequest({
-          url,
-          method,
-          status: response.status,
-          statusText: response.statusText,
-          duration,
-          timestamp: startTime,
-          requestHeaders: this.extractHeaders(args[1]?.headers),
-          responseHeaders: this.extractHeaders(response.headers),
-        });
-
-        return response;
-      } catch (error) {
-        const duration = Date.now() - startTime;
-
-        this.addRequest({
-          url,
-          method,
-          duration,
-          timestamp: startTime,
-          requestHeaders: this.extractHeaders(args[1]?.headers),
-        });
-
-        throw error;
-      }
-    };
-  }
-
-  /**
-   * Intercept XMLHttpRequest
-   */
-  private interceptXHR(): void {
-    if (typeof XMLHttpRequest === "undefined") return;
-
-    this.originalXHROpen = XMLHttpRequest.prototype.open;
-    this.originalXHRSend = XMLHttpRequest.prototype.send;
-
-    const collector = this;
-
-    XMLHttpRequest.prototype.open = function (
-      this: XMLHttpRequest,
-      method: string,
-      url: string | URL,
-      async?: boolean,
-      username?: string | null,
-      password?: string | null
-    ) {
-      (this as any).__catchfn_method = method;
-      (this as any).__catchfn_url = String(url);
-      (this as any).__catchfn_startTime = Date.now();
-
-      return collector.originalXHROpen!.call(
-        this,
-        method,
-        url,
-        async ?? true,
-        username,
-        password
-      );
-    };
-
-    XMLHttpRequest.prototype.send = function (...args: any[]) {
-      this.addEventListener("loadend", function () {
-        const duration = Date.now() - (this as any).__catchfn_startTime;
-
-        collector.addRequest({
-          url: (this as any).__catchfn_url,
-          method: (this as any).__catchfn_method,
-          status: this.status,
-          statusText: this.statusText,
-          duration,
-          timestamp: (this as any).__catchfn_startTime,
-        });
-      });
-
-      return collector.originalXHRSend!.call(this, ...args);
-    };
-  }
-
-  /**
-   * Extract and sanitize headers
-   */
-  private extractHeaders(
-    headers?: HeadersInit | Headers
-  ): Record<string, string> | undefined {
-    if (!headers) return undefined;
-
-    const result: Record<string, string> = {};
-
-    if (headers instanceof Headers) {
-      headers.forEach((value, key) => {
-        if (!this.sensitiveHeaders.has(key.toLowerCase())) {
-          result[key] = value;
-        } else {
-          result[key] = "[REDACTED]";
-        }
-      });
-    } else if (Array.isArray(headers)) {
-      headers.forEach(([key, value]) => {
-        if (!this.sensitiveHeaders.has(key.toLowerCase())) {
-          result[key] = value;
-        } else {
-          result[key] = "[REDACTED]";
-        }
-      });
-    } else {
-      Object.entries(headers).forEach(([key, value]) => {
-        if (!this.sensitiveHeaders.has(key.toLowerCase())) {
-          result[key] = String(value);
-        } else {
-          result[key] = "[REDACTED]";
-        }
-      });
-    }
-
-    return result;
-  }
-
-  /**
-   * Add a network request
-   */
-  private addRequest(request: NetworkRequest): void {
-    this.requests.push(request);
-
-    // Maintain size limit
-    if (this.requests.length > this.maxSize) {
-      this.requests.shift();
-    }
-  }
-
-  /**
-   * Collect all network requests
-   */
-  collect(): NetworkRequest[] {
-    return [...this.requests];
-  }
-
-  /**
-   * Clear all network requests
-   */
-  clear(): void {
-    this.requests = [];
-  }
-
-  /**
-   * Get the current number of requests
-   */
-  size(): number {
-    return this.requests.length;
-  }
+  stop(): void { this.unsubscribe?.(); this.unsubscribe = undefined; }
+  collect(): NetworkRequest[] { return safeSerialize(this.requests); }
+  clear(): void { this.requests = []; }
+  size(): number { return this.requests.length; }
 }
