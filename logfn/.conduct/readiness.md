@@ -120,3 +120,10 @@ Merged shared prerequisite745ea7b3c (merge8bc518abb) and regenerated the conflic
 Clean scoped npm10 ci installs329 packages; actual module resolution points to local packages/http/dist. Shared observability/HTTP builds and LogFn typecheck/build pass.231 core,66 shared HTTP and8 observability tests pass. Fresh tarball consumer verifies shared router delivery/method handling on exactNode18.18.0,20.19.0 and22.23.3; strictNode16/NodeNext declarations and runtime audit0 pass. Reproducible script logfn/scripts/packed-http-acceptance.mjs removes its temporary consumer.
 
 Shared request-logging middleware, admin dependency/runtime integration and other original Python/browser/performance gates remain open. No full-readiness or LogFn PR claim.
+
+
+## Shared request middleware
+
+New http/shared subpath exports requestLogger as a shared HTTP Middleware with typed optional context.log. It uses existing correlation, default root, header redaction, sampling and bounded body helpers. Automatic completion records the router's final response, including configured error responses; application logs retain correlation when automatic request sampling is disabled. Framework adapters stay external consumer dependencies. Existing direct Express/Fastify/Hono adapters remain compatibility entrypoints.
+
+Three focused real-router tests, core typecheck/build pass. Fresh tarball consumer verifies middleware export, correlated start/completion and ingestion on exactNode18.18.0/20.19.0/22.23.3; strictNode16/NodeNext declarations and runtime audit0 pass. The prior full231 core tests predate this new subpath. Admin, remaining Python middleware/error parity, browser and performance gates remain open.

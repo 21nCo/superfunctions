@@ -512,3 +512,25 @@ export default { fetch: router.handler };
 ```
 
 `path` defaults to `/watch/logs`. Routing, method handling and route metadata use the shared HTTP router; LogFn retains event validation, authentication and awaited ingestion behavior.
+
+## Shared HTTP request logging
+
+Use `requestLogger` from `@logfn/core/http/shared` in a shared HTTP router's middleware list. It adds the request logger to `context.log`, preserving the same correlation fields for automatic start/completion events and application logs. `sample` controls the automatic pair; the application logger remains available. Captured bodies use the same bounded Fetch-stream capture described above.
+
+```typescript
+import { createRouter } from "@superfunctions/http";
+import { requestLogger, type LogRequestContext } from "@logfn/core/http/shared";
+
+const router = createRouter<LogRequestContext>({
+  middleware: [requestLogger({ logger })],
+  routes: [{
+    method: "GET", path: "/health",
+    handler: (_request, context) => {
+      context.log?.info("Health checked");
+      return new Response("ok");
+    },
+  }],
+});
+```
+
+Mount the router through the consumer's shared HTTP framework adapter. Completion records reflect the final response returned by the shared router, including configured error responses.

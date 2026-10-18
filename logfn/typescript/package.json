@@ -25,6 +25,10 @@
     "./http/watch": {
       "types": "./dist/http/watch.d.ts",
       "default": "./dist/http/watch.js"
+    },
+    "./http/shared": {
+      "types": "./dist/http/shared.d.ts",
+      "default": "./dist/http/shared.js"
     }
   },
   "files": [
