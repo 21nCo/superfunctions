@@ -48,3 +48,31 @@ def test_deep_values_are_bounded_and_repeated_siblings_are_not_cycles():
         cursor["child"] = {}
         cursor = cursor["child"]
     assert "[depth_limit]" in json.dumps(sanitize_value(value))
+
+
+def test_event_size_preserves_small_context_fields_and_limits_tags():
+    events = []
+    context = {"huge": "😀" * 30000, "useful": {"id": 123}, "tail": True}
+    Logger("test", [lambda batch: events.extend(batch)]).info("hello", context, tags=["tag"] * 30)
+    event = events[0]
+    assert len(json.dumps(event).encode("utf-8")) <= 65536
+    assert event["ctx"] == {"_truncated": True, "_reason": "size_limit", "useful": {"id": 123}, "tail": True}
+    assert len(event["tags"]) <= 20
+    assert len(context["huge"]) == 30000
+
+
+def test_oversized_envelope_is_bounded_without_cutting_unicode_points():
+    events = []
+    Logger("界" * 30000, [lambda batch: events.extend(batch)]).info("😀" * 30000)
+    event = events[0]
+    assert len(json.dumps(event).encode("utf-8")) <= 65536
+    assert len(json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= 65536
+    assert event["msg"] and set(event["msg"]) == {"😀"}
+    assert event["name"] and set(event["name"]) == {"界"}
+    assert event["ctx"]["_truncated"] is True
+
+
+def test_twenty_tag_limit_applies_even_when_event_is_small():
+    events = []
+    Logger("test", [lambda batch: events.extend(batch)]).info("hello", tags=[str(i) for i in range(30)])
+    assert events[0]["tags"] == [str(i) for i in range(20)]

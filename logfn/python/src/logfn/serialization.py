@@ -1,7 +1,10 @@
 """JSON-safe values shared by logging and redaction."""
+import json
 import math
 from datetime import date, datetime
-from typing import Any, Set
+from typing import Any, Set, cast
+
+from .types import LogEvent
 
 
 def sanitize_value(value: Any) -> Any:
@@ -34,3 +37,50 @@ def sanitize_value(value: Any) -> Any:
             ancestors.remove(identity)
 
     return visit(value, 0)
+
+
+MAX_EVENT_SIZE = 64 * 1024
+
+
+def _size(value: Any) -> int:
+    # Covers console JSON; conservative for compact UTF-8 HTTP JSON.
+    return len(json.dumps(value, allow_nan=False).encode("utf-8"))
+
+
+def bound_event(event: LogEvent) -> LogEvent:
+    """Preserve whole context entries within the serialized event budget."""
+    result = sanitize_value(event)
+    if "tags" in result:
+        result["tags"] = result["tags"][:20]
+    if _size(result) <= MAX_EVENT_SIZE:
+        return cast(LogEvent, result)
+    context = result.get("ctx", {})
+    result["ctx"] = {"_truncated": True, "_reason": "size_limit"}
+    required = {"ts", "level", "msg", "name", "version", "ctx"}
+    for key in list(result):
+        if _size(result) <= MAX_EVENT_SIZE:
+            break
+        if key not in required:
+            del result[key]
+    for key in ("msg", "name", "version", "ts"):
+        if _size(result) <= MAX_EVENT_SIZE:
+            break
+        value = result[key]
+        low, high = 1, len(value)
+        while low < high:
+            middle = (low + high + 1) // 2
+            result[key] = value[:middle]
+            if _size(result) <= MAX_EVENT_SIZE:
+                low = middle
+            else:
+                high = middle - 1
+        result[key] = value[:low]
+    remaining = MAX_EVENT_SIZE - _size(result)
+    for key, value in context.items():
+        if key in ("_truncated", "_reason"):
+            continue
+        cost = _size(key) + _size(value) + 4  # colon-space and comma-space
+        if cost <= remaining:
+            result["ctx"][key] = value
+            remaining -= cost
+    return cast(LogEvent, result)

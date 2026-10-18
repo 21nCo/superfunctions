@@ -76,3 +76,5 @@ also enqueue synchronously and flush later.
 Sink events are sanitized after pipeline processing: dates become ISO strings, non-finite floats become null, cycles and unsupported objects become explicit placeholders, and nesting is limited to 64 levels. Application context is not modified by this conversion.
 
 The `redact` stage applies its patterns recursively to strings inside dictionaries and lists. Its optional `keys` selects top-level context fields; all nested values within each selected field are processed. Message redaction remains active. Configure patterns for the secrets your application emits.
+
+Logger events are limited to 64 KiB in the standard escaped JSON representation, which also bounds the compact UTF-8 HTTP representation. Tags are capped at 20 entries. Oversized context retains whole entries that fit and adds `ctx._truncated`; oversized envelope text is shortened at Unicode code-point boundaries. The escaped JSON budget is conservative for non-ASCII text. Custom sinks that add fields or whitespace after delivery must enforce their own resulting wire-size limit.
