@@ -1,8 +1,13 @@
 """Base adapter protocol."""
 
-from typing import Any, Protocol, Optional
+from typing import Any, Protocol, Optional, TYPE_CHECKING
 from flowfn.queue.types import Job, JobStatus, QueueStats
 from flowfn.stream.types import Message, StreamInfo, ConsumerOptions, TrimStrategy
+
+
+if TYPE_CHECKING:
+    from flowfn.queue.dlq import DLQJob
+    from flowfn.workflow.types import WorkflowExecution
 
 
 class FlowAdapter(Protocol):
@@ -37,9 +42,9 @@ class FlowAdapter(Protocol):
         """Clean old jobs."""
         ...
 
-    async def save_dead_letter(self, record: Any) -> None: ...
+    async def save_dead_letter(self, record: "DLQJob") -> None: ...
 
-    async def get_dead_letters(self) -> list[Any]: ...
+    async def get_dead_letters(self) -> list["DLQJob"]: ...
 
     async def delete_dead_letter(self, queue: str, job_id: str) -> None: ...
 
@@ -80,11 +85,11 @@ class FlowAdapter(Protocol):
         ...
 
     # Workflow operations
-    async def save_workflow_state(self, execution_id: str, execution: Any) -> None:
+    async def save_workflow_state(self, execution_id: str, execution: "WorkflowExecution") -> None:
         """Save workflow execution state."""
         ...
 
-    async def load_workflow_state(self, execution_id: str) -> Optional[Any]:
+    async def load_workflow_state(self, execution_id: str) -> Optional["WorkflowExecution"]:
         """Load workflow execution state."""
         ...
 

@@ -1,8 +1,20 @@
 """Core FlowFn implementation."""
 
 from dataclasses import asdict
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, TYPE_CHECKING, Union
 from pydantic import BaseModel, Field
+from flowfn.adapters.base import FlowAdapter
+from flowfn.scheduler import Scheduler
+from flowfn.core.metrics import MetricsManager
+from flowfn.monitoring.health import HealthChecker, EventTracker
+
+
+if TYPE_CHECKING:
+    from flowfn.queue.queue import Queue
+    from flowfn.stream.stream import Stream
+    from flowfn.workflow.builder import WorkflowBuilder
+    from flowfn.workflow.workflow import Workflow
+    from flowfn.queue.dlq import DLQManager
 
 
 class FlowFnConfig(BaseModel):
@@ -23,14 +35,14 @@ class FlowFn:
     def __init__(self, config: FlowFnConfig):
         """Initialize FlowFn with configuration."""
         self.config = config
-        self._adapter = None
-        self._queues: dict[str, Any] = {}
-        self._streams: dict[str, Any] = {}
-        self._workflows: list[Any] = []
-        self._metrics = None
-        self._scheduler = None
-        self._health_checker = None
-        self._event_tracker = None
+        self._adapter: FlowAdapter
+        self._queues: dict[str, "Queue"] = {}
+        self._streams: dict[str, "Stream"] = {}
+        self._workflows: list["Workflow"] = []
+        self._metrics: MetricsManager
+        self._scheduler = Scheduler()
+        self._health_checker: HealthChecker
+        self._event_tracker: EventTracker
 
         self._setup_adapter()
         self._setup_monitoring()
@@ -56,7 +68,7 @@ class FlowFn:
         self._health_checker = HealthChecker()
         self._event_tracker = EventTracker()
 
-    def queue(self, name: str, options: Optional[dict[str, Any]] = None) -> Any:
+    def queue(self, name: str, options: Optional[dict[str, Any]] = None) -> "Queue":
         """Get or create a queue."""
         if name not in self._queues:
             from flowfn.queue.queue import Queue
@@ -74,7 +86,7 @@ class FlowFn:
         """List all queue names."""
         return list(self._queues.keys())
 
-    def stream(self, name: str, options: Optional[dict[str, Any]] = None) -> Any:
+    def stream(self, name: str, options: Optional[dict[str, Any]] = None) -> "Stream":
         """Get or create a stream."""
         if name not in self._streams:
             from flowfn.stream.stream import Stream
@@ -88,28 +100,28 @@ class FlowFn:
         """List all stream names."""
         return list(self._streams.keys())
 
-    def workflow(self, name: str) -> Any:
+    def workflow(self, name: str) -> "WorkflowBuilder":
         """Create a workflow builder."""
         from flowfn.workflow.builder import WorkflowBuilder
 
         return WorkflowBuilder(name, self._adapter, self._workflows.append)
 
-    async def list_workflows(self) -> list[Any]:
+    async def list_workflows(self) -> list["Workflow"]:
         """List all workflows."""
         return list(self._workflows)
 
-    def dlq(self) -> Any:
+    def dlq(self) -> "DLQManager":
         """Inspect and retry failed jobs through the same adapter."""
         from flowfn.queue.dlq import DLQManager
 
         return DLQManager(adapter=self._adapter)
 
-    def scheduler(self) -> Any:
+    def scheduler(self) -> Scheduler:
         """Get scheduler instance."""
         return self._scheduler
 
     @property
-    def metrics(self) -> Any:
+    def metrics(self) -> MetricsManager:
         """Get metrics manager."""
         return self._metrics
 
@@ -119,12 +131,13 @@ class FlowFn:
             return asdict(await self._health_checker.check())
         return {"healthy": True, "timestamp": 0, "checks": []}
 
-    def get_event_tracker(self) -> Any:
+    def get_event_tracker(self) -> EventTracker:
         """Get event tracker."""
         return self._event_tracker
 
     async def close(self) -> None:
         """Close all connections and cleanup."""
+        await self._scheduler.close()
         for workflow in self._workflows:
             await workflow.close()
 
@@ -140,7 +153,7 @@ class FlowFn:
             await self._adapter.cleanup()
 
 
-def create_flow(adapter: Any = "memory", **kwargs: Any) -> FlowFn:
+def create_flow(adapter: Union[str, FlowAdapter] = "memory", **kwargs: Any) -> FlowFn:
     """Create a FlowFn instance with simplified configuration."""
     config = FlowFnConfig(adapter=adapter, **kwargs)
     return FlowFn(config)

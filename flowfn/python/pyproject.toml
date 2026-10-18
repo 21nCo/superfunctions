@@ -28,6 +28,7 @@ classifiers = [
 
 dependencies = [
     "pydantic>=2.0.0",
+    "croniter>=2.0.0,<7",
     "typing-extensions>=4.0.0",
 ]
 
@@ -45,6 +46,7 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "types-croniter",
 ]
 all = [
     "flowfn[redis,postgres]",
@@ -53,6 +55,9 @@ all = [
 [project.urls]
 Repository = "https://github.com/21nCo/super-functions"
 Issues = "https://github.com/21nCo/super-functions/issues"
+
+[tool.setuptools.package-data]
+flowfn = ["py.typed"]
 
 [tool.setuptools.packages.find]
 where = ["."]

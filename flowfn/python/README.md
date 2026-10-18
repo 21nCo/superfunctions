@@ -131,3 +131,19 @@ Terminal failures are recorded in the adapter's dead-letter store. `await flow.d
 `remove_on_complete` and `remove_on_fail` accept `True` for immediate removal, `False` to retain jobs, or a nonnegative integer to keep that many newest terminal jobs of the corresponding status. Failed-job removal does not erase its dead letter. Dependency outcomes remain available while existing nonterminal jobs need them, then are released. A newly added dependency on a previously removed job cannot recover its old outcome.
 
 Custom adapters must implement dead-letter save/list/delete and atomic `retry_dead_letter` operations in addition to normal job transitions. The memory adapter keeps all state only for the lifetime of the adapter.
+
+## Scheduling
+
+`flow.scheduler()` returns a process-local scheduler. Register schedules inside a running asyncio loop; callbacks are async functions receiving the configured `data` (or `None`). Cron expressions have five fields and accept an IANA timezone; repeat intervals are milliseconds.
+
+```python
+scheduler = flow.scheduler()
+scheduler.schedule('weekly-report', '0 9 * * MON', report,
+                   timezone_name='America/New_York', data={'type': 'weekly'})
+scheduler.repeat('health-check', 5000, check_health, limit=10)
+await scheduler.pause('weekly-report')
+await scheduler.resume('weekly-report')
+await scheduler.cancel('weekly-report')
+```
+
+`await scheduler.list()` returns detached snapshots with next run time, attempted run count and the latest callback error. Callback failures count toward the optional run limit and do not stop subsequent scheduled runs. Invocations of the same schedule never overlap; missed repeat intervals are skipped. `start_date` must be timezone-aware. Pausing prevents new invocations; an already running callback continues. Closing the scheduler or FlowFn cancels and awaits its callbacks. Schedule definitions and execution state are not durable or shared between processes; distributed scheduler ownership and restart recovery remain unimplemented.

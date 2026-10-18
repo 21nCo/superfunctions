@@ -6,6 +6,7 @@ from typing import Any, Optional, Callable, Awaitable
 import time
 
 from flowfn.queue.types import Job, JobOptions
+from flowfn.adapters.base import FlowAdapter
 
 
 @dataclass
@@ -37,7 +38,7 @@ class DLQManager:
         max_retries: int = 3,
         queue_name: str = "dlq",
         on_dlq: Optional[DLQCallback] = None,
-        adapter: Any = None,
+        adapter: Optional[FlowAdapter] = None,
     ):
         if max_retries < 1:
             raise ValueError("max_retries must be positive")
@@ -48,7 +49,7 @@ class DLQManager:
             from flowfn.adapters.memory import MemoryAdapter
 
             adapter = MemoryAdapter()
-        self._adapter = adapter
+        self._adapter: FlowAdapter = adapter
 
     async def move_to_dlq(
         self, job: Job, reason: str, original_queue: Optional[str] = None
