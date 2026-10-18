@@ -11,6 +11,7 @@ from flowfn.workflow.types import (
 from flowfn.adapters.base import FlowAdapter
 import asyncio
 from flowfn.core.lifecycle import Admissions
+from flowfn.core.telemetry import OperationObserver
 import uuid
 import time
 import hashlib
@@ -25,6 +26,7 @@ class Workflow:
     def __init__(self, name: str, adapter: FlowAdapter, steps: list[dict[str, Any]], *, version: str = "1", lease_ms: int = 30000):
         if not version or lease_ms < 100:
             raise ValueError("Nonempty version and lease >= 100 milliseconds required")
+        self._observer = OperationObserver()
         self.name = name
         self._adapter = adapter
         def freeze(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -300,7 +302,7 @@ class Workflow:
 
         await self._log_event(execution.id, "step.started", {"step": step_name})
 
-        await handler(context)
+        await self._observer.run("flowfn.workflow.step", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution.id, "flowfn.step.name": step_name}, lambda: handler(context))
 
         # Update execution context
         execution.context = context.state
@@ -321,7 +323,7 @@ class Workflow:
         async def invoke(index: int, handler: Any) -> None:
             child = f"{path}/{index}"
             if child not in execution.state.get("completed_steps", []):
-                await handler(context)
+                await self._observer.run("flowfn.workflow.step", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution.id, "flowfn.step.name": child}, lambda: handler(context))
                 execution.state.setdefault("completed_steps", []).append(child)
                 execution.context = context.state
                 await self._persist(execution)
@@ -375,7 +377,7 @@ class Workflow:
             await self._persist(execution)
 
         # Execute
-        await execute_handler(context)
+        await self._observer.run("flowfn.workflow.step", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution.id, "flowfn.step.name": step["name"]}, lambda: execute_handler(context))
 
         await self._log_event(execution.id, "saga.completed", {"saga": saga_name})
 
@@ -392,7 +394,7 @@ class Workflow:
             execution = self._executions[execution_id]
             execution.state["sagas"].remove(saga["path"])
             try:
-                await saga["compensate"](context)
+                await self._observer.run("flowfn.workflow.compensate", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution_id, "flowfn.step.name": saga["name"]}, lambda: saga["compensate"](context))
                 await self._log_event(execution_id, "saga.compensated", {"saga": saga["name"]})
             except Exception as error:
                 await self._log_event(execution_id, "saga.compensation_failed", {"saga": saga["name"], "error": str(error)})

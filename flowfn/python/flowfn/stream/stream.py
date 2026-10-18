@@ -15,6 +15,7 @@ from flowfn.adapters.base import FlowAdapter
 import asyncio
 from flowfn.core.lifecycle import Admissions
 from flowfn.core.metrics import MetricsManager
+from flowfn.core.telemetry import OperationObserver
 import uuid
 import time
 
@@ -22,9 +23,10 @@ import time
 class Stream:
     """Stream for pub/sub messaging."""
 
-    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None):
+    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None, observer: Optional[OperationObserver] = None):
         self.name = name
         self._metrics = metrics
+        self._observer = observer or OperationObserver()
         self._adapter = adapter
         self._options = options or {}
         retention = StreamOptions.model_validate(self._options)
@@ -71,6 +73,11 @@ class Stream:
             results.append(msg_id)
         return results
 
+    def _observe_handler(self, handler: MessageHandler) -> MessageHandler:
+        async def observed(message: Message) -> None:
+            await self._observer.run("flowfn.stream.message", {"flowfn.stream.name": self.name, "flowfn.message.id": message.id}, lambda: handler(message))
+        return observed
+
     def subscribe(
         self, handler: Optional[MessageHandler] = None, opts: Optional[SubscribeOptions] = None
     ) -> Any:
@@ -80,7 +87,7 @@ class Stream:
 
         async def register(func: MessageHandler) -> Any:
             await self._apply_retention()
-            subscription = await self._adapter.subscribe(self.name, func)
+            subscription = await self._adapter.subscribe(self.name, self._observe_handler(func))
             self._subscriptions.append(subscription)
             return subscription
 
@@ -110,7 +117,7 @@ class Stream:
         """Create a consumer."""
         if self._closed:
             raise RuntimeError("Stream is closed")
-        consumer = Consumer(self.name, consumer_id, opts, self._adapter, self._messages, self._apply_retention)
+        consumer = Consumer(self.name, consumer_id, opts, self._adapter, self._messages, self._apply_retention, self._observe_handler)
         self._consumers.append(consumer)
         return consumer
 
@@ -159,7 +166,7 @@ class Stream:
         )
 
         for message in messages:
-            await handler(message)
+            await self._observe_handler(handler)(message)
 
         return len(messages)
 
@@ -197,6 +204,7 @@ class Consumer:
         adapter: FlowAdapter,
         messages: dict[str, Message],
         retention: Optional[Callable[[], Awaitable[None]]] = None,
+        observe_handler: Optional[Callable[[MessageHandler], MessageHandler]] = None,
     ):
         self.stream = stream
         self.consumer_id = consumer_id
@@ -204,6 +212,7 @@ class Consumer:
         self._adapter = adapter
         self._messages = messages
         self._retention = retention
+        self._observe_handler = observe_handler
         self._subscription: Any = None
         self._paused = False
         self._closed = False
@@ -217,7 +226,7 @@ class Consumer:
             if self._retention is not None:
                 await self._retention()
             self._subscription = await self._adapter.consume(
-                self.stream, self.opts.group_id, self.consumer_id, handler, self.opts
+                self.stream, self.opts.group_id, self.consumer_id, self._observe_handler(handler) if self._observe_handler else handler, self.opts
             )
             if self._paused:
                 await self._subscription.pause()

@@ -16,6 +16,7 @@ from flowfn.adapters.base import FlowAdapter
 import asyncio
 from flowfn.core.lifecycle import Admissions
 from flowfn.core.metrics import MetricsManager
+from flowfn.core.telemetry import OperationObserver
 import uuid
 import time
 import math
@@ -24,9 +25,10 @@ import math
 class Queue:
     """Queue for background job processing."""
 
-    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None):
+    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None, observer: Optional[OperationObserver] = None):
         self.name = name
         self._metrics = metrics
+        self._observer = observer or OperationObserver()
         self._adapter = adapter
         self._options = options or {}
         self._processing = False
@@ -145,6 +147,10 @@ class Queue:
 
     async def _process_job(self, job: Job, handler: JobHandler) -> None:
         """Process a single job."""
+        original_handler = handler
+        async def observed_handler(current: Job) -> Any:
+            return await self._observer.run("flowfn.job.execute", {"flowfn.queue.name": self.name, "flowfn.job.id": current.id}, lambda: original_handler(current))
+        handler = observed_handler
         job.processed_on = self._now()
         lost = self._adapter.lease_loss_event(self.name,job)
         ownership_lost = False

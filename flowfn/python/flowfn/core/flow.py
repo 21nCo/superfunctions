@@ -3,10 +3,11 @@
 import asyncio
 import math
 from dataclasses import asdict
-from typing import Any, Optional, TYPE_CHECKING, Union
+from typing import Any, Optional, TYPE_CHECKING, Union, cast
 from pydantic import BaseModel, Field
 from flowfn.adapters.base import FlowAdapter
 from flowfn.scheduler import Scheduler
+from flowfn.core.telemetry import OperationObserver, ObservedAdapter
 from flowfn.core.metrics import MetricsManager
 from flowfn.monitoring.health import HealthChecker, EventTracker
 
@@ -47,7 +48,10 @@ class FlowFn:
         self._health_checker: HealthChecker
         self._event_tracker: EventTracker
 
+        self._observer = OperationObserver(config.telemetry, config.on_error)
         self._setup_adapter()
+        if self._observer.tracer is not None or config.on_error is not None:
+            self._adapter = cast(FlowAdapter, ObservedAdapter(self._adapter, self._observer))
         self._scheduler = Scheduler(self._adapter)
         self._setup_monitoring()
 
@@ -86,7 +90,7 @@ class FlowFn:
                 **(self.config.default_queue_options or {}),
                 **(options or {}),
             }
-            self._queues[name] = Queue(name, self._adapter, queue_options, metrics=self._metrics)
+            self._queues[name] = Queue(name, self._adapter, queue_options, metrics=self._metrics, observer=self._observer)
 
         return self._queues[name]
 
@@ -101,7 +105,7 @@ class FlowFn:
             from flowfn.stream.stream import Stream
 
             stream_options = {**(self.config.default_stream_options or {}), **(options or {})}
-            self._streams[name] = Stream(name, self._adapter, stream_options, metrics=self._metrics)
+            self._streams[name] = Stream(name, self._adapter, stream_options, metrics=self._metrics, observer=self._observer)
 
         return self._streams[name]
 
@@ -153,6 +157,7 @@ class FlowFn:
 
     def _register_workflow(self, workflow: "Workflow") -> None:
         self._require_open()
+        workflow._observer = self._observer
         self._workflows.append(workflow)
 
     async def close(self, timeout: float = 30.0) -> None:

@@ -33,6 +33,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+telemetry = ["opentelemetry-api>=1.20.0,<2"]
+monitoring = ["psutil>=5.9.0"]
 redis = [
     "redis>=5.0.0",
 ]
@@ -47,9 +49,10 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0.0",
     "types-croniter",
+    "opentelemetry-sdk>=1.20.0,<2",
 ]
 all = [
-    "flowfn[redis,postgres]",
+    "flowfn[redis,postgres,telemetry,monitoring]",
 ]
 
 [project.urls]
