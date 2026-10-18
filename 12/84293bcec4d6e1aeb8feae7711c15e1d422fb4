@@ -1,0 +1,103 @@
+.github/workflows/ci.yml
+  s_7d0a48f0aaecda::t_c35ab3311bf9a3 65-67
+authfn/docs/package.json
+  s_7d0a48f0aaecda::t_84afd77ce98800 35-36
+botfn/.gitignore
+  s_7d0a48f0aaecda::t_38ac15f6ec0e16 43
+botfn/AGENTS.md
+  s_7d0a48f0aaecda::t_8fad55d0e56ea4 1,3,5,7-10,12,15-24,27,29,31-36,38,40,42,44,46-49
+botfn/README.md
+  s_7d0a48f0aaecda::t_dc611df9c28f9e 1,3,5,7,9-19,21,23,25,28-29,31-32,34-38,41-42
+botfn/persistence/wrangler.toml
+  s_7d0a48f0aaecda::t_9786b0be35c1eb 3-5
+datafn/docs/app/layout.tsx
+  s_7d0a48f0aaecda::t_11037f98a7ea9a 7-14
+datafn/docs/content/docs/ai-resources/claude.mdx
+  s_7d0a48f0aaecda::t_b54823c1d111b2 40
+datafn/docs/content/docs/ai-resources/codex.mdx
+  s_7d0a48f0aaecda::t_8a7f97d95e29d5 47
+datafn/docs/content/docs/ai-resources/cursor.mdx
+  s_7d0a48f0aaecda::t_093487b199aaf6 40,50,53
+datafn/docs/content/docs/ai-resources/index.mdx
+  s_7d0a48f0aaecda::t_815d7e96578add 16,35-37,40
+datafn/docs/content/docs/ai-resources/llms-txt.mdx
+  s_7d0a48f0aaecda::t_4e36f8ed0a439b 15,21,31,44,73,79
+datafn/docs/content/docs/ai-resources/mcp.mdx
+  s_7d0a48f0aaecda::t_633cb95c855915 33
+datafn/docs/content/docs/ai-resources/skills.mdx
+  s_7d0a48f0aaecda::t_e678dce02cf580 54,108
+datafn/docs/content/docs/documentation/index.mdx
+  s_7d0a48f0aaecda::t_b4beb5e024e2e6 190
+datafn/docs/content/docs/documentation/server/administration.mdx
+  s_7d0a48f0aaecda::t_75238fd7048fa9 1-28
+datafn/docs/content/docs/documentation/server/meta.json
+  s_7d0a48f0aaecda::t_c0c226d555cbca 3
+datafn/docs/content/docs/reference/changelog.mdx
+  s_7d0a48f0aaecda::t_0d68a80ce041e4 16
+datafn/docs/content/docs/reference/events.mdx
+  s_7d0a48f0aaecda::t_044ea3cc9a0c90 2-3,8,10,15-25,29,31-39,41,43,45,47,49,51,54,56-64,66,68,71-73
+datafn/docs/public/llms-full.txt
+  s_7d0a48f0aaecda::t_d514832a6f9e1b 16,52,114,157,199,235,245,248,313,324,330,340,353,382,388,398,427,505,555,609,622,633,652-654,657,664,745,883,981,1167,1174,1215,1527,1629,1675,1724,1744,1779,2013,2161,2297,2386,2569,2704,2894,3023,3085,3293,3623,3894,4019,4148,4426,4537,5195,5382,5517,5815,6004,6116,6337,6511,6711,6854,7051,7225,7341,7501,7634,7761,7885,7963,8115,8273,8452,8634,8787,9014,9166,9369,9508,9711,9887,10151,10450,10601,10738,11024,11183,11330,11528,11690,11866,11922,12163,12318,12454,12591-12780,12784,12841,12851-12852,12942-12943,12967-12968,12989-13121,13125,13235-13236,13476,13595,13841,13999,14135,14146-14147,14159,14166-14167,14197,14286,14416,14533,14627,14635-14637,14713,14722,14867,14879,14883-14884,14899,14924,14927-14930,14933-14941,14943-14946,14950-14952,15021,15033,15039-15175,15179,15297-15329,15333,15553,15688,15857,15999,16479,16741,16890,17023,17197,17421,17572,17647,17769,17894,18033,18190,18276,18380,18500,18614,18758,18925,19067,19226,19370,19492,19753,19837,19942,20054,20151,20256,20372,20479,20585,20722,20883,20991,21132,21266,21413,21580,21735,21895,22038,22189,22340,22485,22618,22736,22841,22998,23169,23350,23508,23619,23629-23632,23706,24030,24130,24188,24242,24392,24520,24703,24800,24937,25030,25201,25279,25299,25309-25314,25329,25340-25344,25416,25523,25625,25685-25715,25719,25777-25839,25843,26011,26208,26354,26587,26695,26727,26729,26738,26760-26764,26822,26824-26825,26828,26830,26835-26845,26849,26851-26859,26861,26863,26865,26867,26869,26871,26874,26876-26884,26886,26888,26891-26893,26900,27129,27309,27427,27549-27626,27630,27699
+datafn/docs/public/llms.txt
+  s_7d0a48f0aaecda::t_51cde49ea6a8c1 9-14,18-28,32-40,44-58,62-145,149-151,155-163,167-182,186-219
+datafn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_404ce960b3b5f3 12
+devfn/cli/SECURITY.md
+  s_7d0a48f0aaecda::t_1d4e304755eb87 19
+devfn/core/test/startup-fixture.test.ts
+  s_7d0a48f0aaecda::t_233447e4bd7c29 94-97,123
+devfn/ports/src/proxy-state.ts
+  s_7d0a48f0aaecda::t_a82cafb7a8c8d2 11-12,18-56,95-97
+devfn/proxy/README.md
+  s_7d0a48f0aaecda::t_94ab6bfc1432b1 10
+devfn/proxy/src/index.ts
+  s_7d0a48f0aaecda::t_be634263adf9c5 12,56-57,195-235,239,250,312-321,339-343,352,355-357,529-531,553-556,559-565,571,579-647,710-726,728-729,735-737,758,816-818,840-841,852-853,855,866,870-871,873-877,880-881,885-891,895,897-899
+devfn/proxy/test/proxy.test.ts
+  s_7d0a48f0aaecda::t_70dd89e7c5b2f1 1-2,6,17-18,20,27-28,32,180-516,576-793,833-860
+hostfn/docs/app/layout.tsx
+  s_7d0a48f0aaecda::t_c852a1bd954bf7 7-11,14-16
+hostfn/docs/content/docs/documentation/advanced/administration.mdx
+  s_7d0a48f0aaecda::t_838c52c85f4f39 1-41
+hostfn/docs/content/docs/documentation/advanced/meta.json
+  s_7d0a48f0aaecda::t_f8867278d15d0f 3
+hostfn/docs/content/docs/documentation/index.mdx
+  s_7d0a48f0aaecda::t_0e15e965e3992d 17
+hostfn/docs/content/docs/index.mdx
+  s_7d0a48f0aaecda::t_907959413e0b31 8-9
+package-lock.json
+  s_7d0a48f0aaecda::t_395b7addf2c459 1699,1701-1702,1711,41186,41726,54439,54515,68666-68675
+scripts/cloudflare-docs/deploy.mjs
+  s_7d0a48f0aaecda::t_a089fe0bb0c09d 71,88-94
+scripts/generate-uifn-phase-17.mjs
+  s_7d0a48f0aaecda::t_f43707200ca423 575,578-612
+scripts/uifn-docs-cli-resolution.test.mjs
+  s_7d0a48f0aaecda::t_a4799881151021 1-61
+scripts/verify-uifn-phase-17.mjs
+  s_7d0a48f0aaecda::t_b012dd7624de55 29
+uifn/docs/generated/delivery.md
+  s_7d0a48f0aaecda::t_adfe1409af5c10 3-24
+uifn/docs/generated/docs-coverage.json
+  s_7d0a48f0aaecda::t_c56890b431c38e 11
+uifn/docs/generated/site/delivery.html
+  s_7d0a48f0aaecda::t_2adbb14b035bfa 1-6
+uifn/docs/generated/site/index.html
+  s_7d0a48f0aaecda::t_bd3b1e83fcc72b 1
+uifn/storybook/generated/story-inventory.json
+  s_7d0a48f0aaecda::t_3ed2daa49c38f2 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1284293bcec4d6e1aeb8feae7711c15e1d422fb4",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
