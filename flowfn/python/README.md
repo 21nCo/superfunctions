@@ -206,3 +206,5 @@ Redis stream attempts store a separate token alongside the pending entry. Deploy
 ### Global shutdown
 
 `await flow.close(timeout=30.0)` stops new admission immediately and closes resources concurrently before closing their adapter. Enqueues, stream publications, and workflow startup already admitted finish their storage transitions before cleanup. Workflow startup that races shutdown does not begin a new handler. All close callers share one cleanup operation. If the wait exceeds the timeout (seconds), `TimeoutError` is raised while cleanup continues; call `close()` again to await it. Cancelling one close waiter does not cancel cleanup. A handler that suppresses cancellation can outlive the deadline, so the adapter remains open until that work finishes rather than closing beneath it.
+
+Workflow shutdown cancels persisted execution state only while the local attempt still owns an unexpired lease. A stale runtime stops its local task without cancelling a replacement worker's execution. Explicit `cancel_execution()` remains an administrative cancellation operation.

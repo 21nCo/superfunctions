@@ -103,7 +103,7 @@ class FlowAdapter(Protocol):
         ...
 
     async def transition_workflow_state(self, execution_id: str, operation: str, payload: dict[str, Any]) -> Optional["WorkflowExecution"]:
-        """Atomically claim, renew or cancel workflow ownership."""
+        """Atomically transition ownership; cancel_owned requires a matching unexpired token."""
         ...
 
     async def list_workflow_states(self, workflow_id: str) -> list["WorkflowExecution"]:

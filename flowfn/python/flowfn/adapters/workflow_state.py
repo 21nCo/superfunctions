@@ -52,9 +52,11 @@ def transition(current: Optional[WorkflowExecution], operation: str, payload: di
             return None
         current.lease_expires_at = now + payload['lease_ms']
         return current
-    if operation == 'cancel':
+    if operation in ('cancel','cancel_owned'):
         if current.workflow_id != payload['workflow_id']:
             raise ValueError('Execution belongs to another workflow')
+        if operation == 'cancel_owned' and (payload.get('token') is None or current.lease_token != payload['token'] or (current.lease_expires_at or 0) <= now):
+            return None
         if current.status == ExecutionStatus.RUNNING:
             current.status = ExecutionStatus.CANCELLED
             current.completed_at = now

@@ -103,7 +103,7 @@ class Workflow:
             )
 
             if self._closed:
-                await self.cancel_execution(execution_id)
+                await self._cancel_owned(execution_id)
             else:
                 self._start(execution)
             return execution
@@ -126,7 +126,7 @@ class Workflow:
             self._executions[execution_id] = execution
             await self._log_event(execution_id, "execution.resumed", {})
             if self._closed:
-                await self.cancel_execution(execution_id)
+                await self._cancel_owned(execution_id)
             else:
                 self._start(execution)
             return execution
@@ -419,18 +419,35 @@ class Workflow:
                 task.cancel()
                 await asyncio.gather(task,return_exceptions=True)
 
+    async def _cancel_owned(self, execution_id: str) -> None:
+        execution = self._executions[execution_id]
+        try:
+            await self._adapter.transition_workflow_state(execution_id,"cancel_owned",{
+                "workflow_id":self.name,"token":execution.lease_token,
+            })
+        finally:
+            # Local shutdown must stop its own task even if storage is unavailable
+            # or another process has already reclaimed the persisted execution.
+            self._lease_lost.add(execution_id)
+            execution.status = ExecutionStatus.CANCELLED
+            task = self._tasks.get(execution_id)
+            if task is not None and task is not asyncio.current_task():
+                task.cancel()
+
     async def close(self) -> None:
-        """Cancel and await owned executions before adapter cleanup."""
+        """Stop local tasks and cancel only their still-owned persisted executions."""
         self._closed = True
         await self._admissions.drain()
         tasks = list(self._tasks.values())
         heartbeats = list(self._heartbeats.values())
-        for execution_id in list(self._tasks):
-            await self.cancel_execution(execution_id)
+        results = await asyncio.gather(*(self._cancel_owned(identity) for identity in list(self._tasks)),return_exceptions=True)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         if heartbeats:
             await asyncio.gather(*heartbeats, return_exceptions=True)
+        failures = [item for item in results if isinstance(item,BaseException)]
+        if failures:
+            raise RuntimeError('Workflow shutdown persistence failed') from failures[0]
 
     async def retry_execution(self, execution_id: str) -> WorkflowExecution:
         """Retry a failed execution."""
