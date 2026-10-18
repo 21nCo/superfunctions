@@ -31,6 +31,8 @@ export class StreamImpl<T = any> implements Stream<T> {
     for (const value of [options.maxLength, options.retention])
       if (value !== undefined && (!Number.isFinite(value) || value < 0))
         throw new Error("Stream retention must be nonnegative");
+    if (options.maxLength !== undefined && !Number.isInteger(options.maxLength))
+      throw new Error("Stream maxLength must be an integer");
   }
   private open() {
     if (this.closed) throw new Error("Stream is closed");
@@ -51,18 +53,12 @@ export class StreamImpl<T = any> implements Stream<T> {
     const id = await this.adapter.publish(this.name, message);
     this.count++;
     this.record?.("stream.throughput", 1);
-    if (
-      this.options.maxLength !== undefined ||
-      this.options.retention !== undefined
-    )
-      await this.trim({
-        maxLength: this.options.maxLength,
-        maxAgeSeconds:
-          this.options.retention === undefined
-            ? undefined
-            : this.options.retention / 1000,
-      });
+    await this.applyRetention();
     return id;
+  }
+  private async applyRetention(): Promise<void> {
+    if (this.options.maxLength === undefined && this.options.retention === undefined) return;
+    await this.trim({ maxLength: this.options.maxLength, maxAgeSeconds: this.options.retention === undefined ? undefined : this.options.retention / 1000 });
   }
   async publishBatch(
     messages: Array<{ data: T; options?: PublishOptions }>,
@@ -76,6 +72,8 @@ export class StreamImpl<T = any> implements Stream<T> {
     handler: MessageHandler<T>,
     options?: SubscribeOptions,
   ): Promise<Subscription> {
+    this.open();
+    await this.applyRetention();
     this.open();
     const inner = await this.adapter.subscribe(
       this.name,
@@ -105,11 +103,17 @@ export class StreamImpl<T = any> implements Stream<T> {
       closed = false,
       paused = false;
     let closingConsumer: Promise<void> | undefined;
+    let subscribing = false;
     const consumer: Consumer<T> = {
       subscribe: async (handler) => {
         this.open();
-        if (closed || subscription)
+        if (closed || subscription || subscribing)
           throw new Error("Consumer is closed or already subscribed");
+        subscribing = true;
+        try {
+        await this.applyRetention();
+        this.open();
+        if (closed) throw new Error("Consumer is closed");
         subscription = await this.adapter.consume(
           this.name,
           options.groupId,
@@ -131,6 +135,7 @@ export class StreamImpl<T = any> implements Stream<T> {
             throw new Error("Adapter does not support consumer pause");
           await subscription.pause();
         }
+        } finally { subscribing = false; }
       },
       pause: async () => {
         if (closed) throw new Error("Consumer is closed");
@@ -161,6 +166,7 @@ export class StreamImpl<T = any> implements Stream<T> {
     return consumer;
   }
   async getInfo(): Promise<StreamInfo> {
+    await this.applyRetention();
     const info = await this.adapter.getStreamInfo(this.name);
     this.count = info.length;
     return { ...info, name: this.name };
@@ -179,6 +185,7 @@ export class StreamImpl<T = any> implements Stream<T> {
   ): Promise<Message<T>[]> {
     if (!this.adapter.getMessages)
       throw new Error("Adapter does not support retained stream reads");
+    await this.applyRetention();
     return (await this.adapter.getMessages(this.name, start, end, count)).map(
       (message) => ({ ...message, stream: this.name }),
     );

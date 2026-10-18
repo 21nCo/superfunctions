@@ -65,6 +65,20 @@ effects or storage requests already issued. Redis connections are disconnected
 when cleanup fails or times out. PostgreSQL connections belong to the caller, who
 must close their own pool after closing the flow.
 
+### Stream retention and ownership
+
+Configured `maxLength` and millisecond `retention` policies run after publishing,
+before history reads, and before subscription acquisition. An idle stream's next
+read therefore removes expired history without requiring another publish. Redis
+age trimming uses its server clock. Retention configuration remains local to the
+stream instance; applications must supply the policy when reopening a stream.
+
+Redis consumer deliveries carry an atomic attempt token. Acknowledgment, requeue,
+and unsubscribe cannot change a replacement delivery, even when consumers reuse a
+name. A delivery past its visibility timeout cannot acknowledge until it is
+reclaimed as a new attempt. Handlers should finish within the configured lease;
+consumer lease renewal remains outstanding.
+
 ### Errors and tracing
 
 `createFlow({ adapter, onError(error, context) { ... } })` reports failed adapter

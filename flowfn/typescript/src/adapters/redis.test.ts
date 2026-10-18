@@ -299,6 +299,16 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
       expect(((await redis.xpending(`${prefix}stream:expired`, 'group')) as any)[0]).toBe(1);
       await subscription.unsubscribe();
     });
+    it('uses Redis server time for age retention despite producer clock skew', async () => {
+      const stream = new StreamImpl<number>('retention-clock', adapter);
+      await stream.publish(1);
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3600000);
+      try {
+        expect(await stream.trim({ maxAgeSeconds: 60 })).toBe(0);
+        clock.mockReturnValue(0);
+        expect(await stream.trim({ maxAgeSeconds: 0 })).toBe(1);
+      } finally { clock.mockRestore(); await stream.close(); }
+    });
     it("roundtrips full workflow checkpoints and trims retained stream data", async () => {
       const checkpoint: any = {
         id: "execution",

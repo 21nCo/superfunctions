@@ -510,13 +510,12 @@ return messages
       );
     }
     if (strategy.maxAgeSeconds !== undefined) {
-      const expired = await this.redis.xrange(
-        key,
-        "-",
-        `${Math.max(0, Math.floor(Date.now() - strategy.maxAgeSeconds * 1000))}-18446744073709551615`,
-      );
-      if (expired.length)
-        removed += await this.redis.xdel(key, ...expired.map((row) => row[0]));
+      removed += Number(await this.redis.eval(`
+local time=redis.call('TIME')
+local cutoff=math.floor(tonumber(time[1])*1000+tonumber(time[2])/1000-tonumber(ARGV[1])*1000)
+if cutoff<0 then return 0 end
+return redis.call('XTRIM',KEYS[1],'MINID',string.format('%.0f',cutoff+1)..'-0')
+`, 1, key, strategy.maxAgeSeconds));
     }
     return removed;
   }

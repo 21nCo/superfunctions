@@ -57,10 +57,13 @@ it('does not miss workflow cancellation while an inbox read is pending', async (
 it('unsubscribes acquisitions that finish after stream shutdown', async () => {
   const adapter = new MemoryAdapter();
   let release!: (value: { unsubscribe: () => Promise<void> }) => void;
-  adapter.subscribe = () => new Promise(resolve => { release = resolve; });
+  let entered!: () => void;
+  const acquiring = new Promise<void>(resolve => { entered = resolve; });
+  adapter.subscribe = () => new Promise(resolve => { release = resolve; entered(); });
   const flow = createFlow({ adapter });
   const stream = flow.stream('late');
   const pending = stream.subscribe(async () => {});
+  await acquiring;
   await stream.close({ timeout: 20 });
   const unsubscribe = vi.fn(async () => {});
   release({ unsubscribe });

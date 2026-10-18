@@ -155,3 +155,32 @@ it("delays automatic commits by the requested interval and removes timers on cle
   await stream.close();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it('applies age retention on reads without another publish and rejects fractional length before writes', async () => {
+  const storage = adapter();
+  expect(() => new StreamImpl('invalid', storage, { maxLength: 1.5 })).toThrow('integer');
+  expect(await storage.getMessages('invalid', '-', '+')).toEqual([]);
+  const stream = new StreamImpl('idle', storage, { retention: 50 });
+  await stream.publish(1);
+  await vi.advanceTimersByTimeAsync(50);
+  expect(await stream.getMessages('-', '+')).toEqual([]);
+  expect((await stream.getInfo()).length).toBe(0);
+  await stream.close();
+});
+it('admits only one concurrent consumer subscription and releases late acquisition after close', async () => {
+  const storage = adapter();
+  let resolve!: (value: { unsubscribe: () => Promise<void> }) => void;
+  const acquire = vi.spyOn(storage, 'consume').mockImplementation(() => new Promise(done => { resolve = done; }));
+  const stream = new StreamImpl('admission', storage);
+  const consumer = stream.createConsumer('one', { groupId: 'group' });
+  const first = consumer.subscribe(async () => {});
+  await expect(consumer.subscribe(async () => {})).rejects.toThrow('already subscribed');
+  await Promise.resolve();
+  expect(acquire).toHaveBeenCalledTimes(1);
+  await consumer.close();
+  const unsubscribe = vi.fn(async () => {});
+  resolve({ unsubscribe });
+  await expect(first).rejects.toThrow('closed');
+  expect(unsubscribe).toHaveBeenCalledTimes(1);
+  await stream.close();
+});
