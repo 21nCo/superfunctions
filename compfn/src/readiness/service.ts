@@ -122,6 +122,7 @@ export function createReadinessService(config: ReadinessServiceConfig) {
       };
       if (frameworkId) {
         const fwRes = await config.getFramework(frameworkId);
+        if (!fwRes.ok) return fwRes;
         if (fwRes.ok) {
           result.requirementIds = requirementIdsForControl(fwRes.result, controlId);
         }
@@ -143,7 +144,8 @@ export function createReadinessService(config: ReadinessServiceConfig) {
     };
     if (frameworkId) {
       const fwRes = await config.getFramework(frameworkId);
-      if (fwRes.ok) {
+      if (!fwRes.ok) return fwRes;
+        if (fwRes.ok) {
         result.requirementIds = requirementIdsForControl(fwRes.result, controlId);
       }
     }

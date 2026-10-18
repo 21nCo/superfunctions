@@ -52,3 +52,10 @@ describe("CompFn schema", () => {
     await db.close();
   });
 });
+
+it('does not accept invalid adapter schema validation without an error message', async () => {
+  const db = memoryAdapter();
+  const result = await createSchemaIfSupported({...db,createSchema:undefined,validateSchema:async()=>({valid:false,errors:[]})});
+  expect(result.success).toBe(false);
+  expect(result.errors?.[0]).toContain('controls');
+});

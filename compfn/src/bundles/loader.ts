@@ -3,6 +3,7 @@
  * Bundles contain framework definitions and optional control definitions.
  */
 
+import { validateCreateControlInput, validateCreateFrameworkInput } from "../validation.js";
 import type { CompFnAPI } from "../api.js";
 import type { CreateFrameworkInput } from "../framework.js";
 import type { CreateControlInput } from "../control.js";
@@ -10,7 +11,7 @@ import type { CompfnEnvelope } from "../types.js";
 
 export interface FrameworkBundle {
   framework: CreateFrameworkInput;
-  controls?: CreateControlInput[];
+  controls?: Array<CreateControlInput & { /** Bundle-local reference, not a database ID. */ id?: string }>;
 }
 
 export interface BundleLoadResult {
@@ -21,7 +22,7 @@ export interface BundleLoadResult {
 /**
  * Load a framework bundle into compfn.
  * Creates all controls first (if present in bundle), then creates the framework.
- * 
+ *
  * @param api - The compfn API instance
  * @param bundle - The framework bundle to load
  * @param options - Optional configuration
@@ -31,37 +32,40 @@ export async function loadBundle(
   api: CompFnAPI,
   bundle: FrameworkBundle,
   options?: {
-    /**
-     * If true, use control IDs from bundle as-is when creating controls.
-     * If false or undefined, let compfn generate IDs.
-     */
+    /** @deprecated Mapping now always resolves explicit bundle IDs or legacy name slugs.
+     * Every load creates a new framework and new controls with service-generated IDs. */
     useStableControlIds?: boolean;
   }
 ): Promise<CompfnEnvelope<BundleLoadResult>> {
+  if (!bundle || typeof bundle !== "object" || (bundle.controls !== undefined && !Array.isArray(bundle.controls))) {
+    return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid framework bundle", details: {} } };
+  }
+  const frameworkValidation = validateCreateFrameworkInput(bundle.framework);
+  if (!frameworkValidation.ok) return frameworkValidation;
+  const localIds = new Set<string>();
+  for (const control of bundle.controls ?? []) {
+    const validated = validateCreateControlInput(control);
+    if (!validated.ok) return validated;
+    const id = control.id ?? generateStableControlId(control.name);
+    if (typeof id !== "string" || !id.trim() || localIds.has(id)) {
+      return { ok: false, error: { code: "VALIDATION_FAILED", message: "Invalid or duplicate bundle control reference", details: { id } } };
+    }
+    localIds.add(id);
+  }
   const createdControls: Array<{ id: string; name: string }> = [];
   const controlIdMap = new Map<string, string>(); // bundle id -> created id
 
   // Step 1: Create controls from bundle (if any)
   if (bundle.controls && bundle.controls.length > 0) {
     for (const controlInput of bundle.controls) {
-      // Generate stable ID from control name if needed
-      const stableId = options?.useStableControlIds
-        ? generateStableControlId(controlInput.name)
-        : undefined;
-
-      // Check if control already exists (by stable ID if provided)
-      let existingControl;
-      if (stableId) {
-        existingControl = await api.controls.get(stableId);
-        if (existingControl.ok) {
-          controlIdMap.set(stableId, stableId);
-          createdControls.push({ id: stableId, name: existingControl.result.name });
-          continue; // Skip creating if exists
-        }
+      const stableId = controlInput.id ?? generateStableControlId(controlInput.name);
+      if (controlIdMap.has(stableId)) {
+        return { ok: false, error: { code: "VALIDATION_FAILED", message: "Duplicate bundle control reference", details: { id: stableId } } };
       }
 
       // Create the control
-      const controlResult = await api.controls.create(controlInput);
+      const { id: _bundleId, ...input } = controlInput;
+      const controlResult = await api.controls.create(input);
       if (!controlResult.ok) {
         return controlResult as CompfnEnvelope<BundleLoadResult>;
       }
@@ -76,7 +80,7 @@ export async function loadBundle(
 
   // Step 2: Update framework requirements with created control IDs if needed
   let frameworkInput = bundle.framework;
-  if (options?.useStableControlIds && controlIdMap.size > 0) {
+  if (controlIdMap.size > 0) {
     frameworkInput = {
       ...bundle.framework,
       requirements: bundle.framework.requirements.map((req) => ({

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * Evidence service: create, get, list (immutable; no update/delete).
  * Validates controlId exists, type in EvidenceType, payload size ≤ evidencePayloadMaxBytes.
@@ -19,7 +20,7 @@ export interface EvidenceServiceConfig {
   namespace?: string;
   evidencePayloadMaxBytes?: number;
   /** Check that a control exists (e.g. controls.get(id).then(r => r.ok)) */
-  existsControl: (controlId: string) => Promise<boolean>;
+  existsControl: (controlId: string) => Promise<CompfnEnvelope<boolean>>;
   /** Get framework by id to resolve requirement controlIds (for list by frameworkId) */
   getFramework: (frameworkId: string) => Promise<{ requirements: { controlIds: string[] }[] } | null>;
   logger?: Logger;
@@ -30,7 +31,7 @@ function defaultNamespace(): string {
 }
 
 function generateId(): string {
-  return crypto.randomUUID();
+  return randomUUID();
 }
 
 function now(): number {
@@ -80,7 +81,8 @@ export function createEvidenceService(config: EvidenceServiceConfig) {
       const value = validation.value;
 
       const controlExists = await config.existsControl(value.controlId);
-      if (!controlExists) {
+      if (!controlExists.ok) return controlExists;
+      if (!controlExists.result) {
         return {
           ok: false,
           error: {
@@ -92,7 +94,14 @@ export function createEvidenceService(config: EvidenceServiceConfig) {
       }
 
       if (value.payload != null) {
-        const payloadBytes = new TextEncoder().encode(JSON.stringify(value.payload)).length;
+        let payloadJson: string;
+        try {
+          payloadJson = JSON.stringify(value.payload);
+          if (payloadJson === undefined) throw new Error("Payload must be JSON serializable");
+        } catch {
+          return { ok: false, error: { code: "VALIDATION_FAILED", message: "Payload must be JSON serializable", details: { path: "payload" } } };
+        }
+        const payloadBytes = new TextEncoder().encode(payloadJson).length;
         if (payloadBytes > maxPayloadBytes) {
           return {
             ok: false,
@@ -232,7 +241,8 @@ export function createEvidenceService(config: EvidenceServiceConfig) {
           where: withConnector,
           orderBy: [{ field: "createdAt", direction: "desc" as const }],
         });
-        const rows = await config.database.findMany(params);
+        const rows = await config.database.findMany({ ...params, limit: 1001 });
+        if (rows.length > 1000) return { ok: false, error: { code: "VALIDATION_FAILED", message: "List exceeds 1000 records; narrow the query", details: { limit: 1000 } } };
         const evidence = rows.map((r: Record<string, unknown>) => rowToEvidence(r));
         return { ok: true, result: evidence };
       } catch (err) {

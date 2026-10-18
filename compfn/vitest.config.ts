@@ -4,6 +4,7 @@ import { resolve } from "path";
 export default defineConfig({
   test: {
     globals: false,
+    include: ["src/__tests__/**/*.test.ts"],
     environment: "node",
   },
   resolve: {

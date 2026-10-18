@@ -29,16 +29,17 @@ export function compFn(config: CompFnConfig): CompFnAPI {
   const frameworks = createFrameworksService({
     database,
     namespace: config.namespace,
-    existsControl: (controlId) => controls.get(controlId).then((r) => r.ok),
+    existsControl: (controlId) => controls.get(controlId).then((r) => r.ok ? { ok: true, result: true } : r.error.code === "CONTROL_NOT_FOUND" ? { ok: true, result: false } : r),
   });
 
   const evidence = createEvidenceService({
     database,
     namespace: config.namespace,
     evidencePayloadMaxBytes: config.evidencePayloadMaxBytes,
-    existsControl: (controlId) => controls.get(controlId).then((r) => r.ok),
+    existsControl: (controlId) => controls.get(controlId).then((r) => r.ok ? { ok: true, result: true } : r.error.code === "CONTROL_NOT_FOUND" ? { ok: true, result: false } : r),
     getFramework: async (frameworkId) => {
       const r = await frameworks.get(frameworkId);
+      if (!r.ok && r.error.code !== "FRAMEWORK_NOT_FOUND") throw new Error(r.error.message);
       return r.ok ? r.result : null;
     },
     logger: config.logger,
@@ -47,7 +48,7 @@ export function compFn(config: CompFnConfig): CompFnAPI {
   const checks = createChecksService({
     database,
     namespace: config.namespace,
-    existsControl: (controlId) => controls.get(controlId).then((r) => r.ok),
+    existsControl: (controlId) => controls.get(controlId).then((r) => r.ok ? { ok: true, result: true } : r.error.code === "CONTROL_NOT_FOUND" ? { ok: true, result: false } : r),
     getAdapter: (adapterName) => config.adapters?.[adapterName],
     systemActorId: config.systemActorId,
     evidenceCreate: (input) => evidence.create(input),

@@ -1,10 +1,14 @@
 import type { CompFnAPI, CompfnEnvelope } from "compfn";
 import { AdminError, type AdminOperationContext, type AdminOperationResult, type AdminScope } from "@superfunctions/admin";
+import { createCompFnPaginator } from "./pagination.js";
 import type { CompFnAdminService } from "./index.js";
 
 type JsonRecord = Record<string, unknown>;
 
-export type CompFnDomainAdminServiceOptions =
+export type CompFnDomainAdminServiceOptions = {
+  /** Share a random secret of at least 32 bytes across replicas; omit for instance-local cursors. */
+  cursorSecret?: Uint8Array;
+} & (
   | {
       /** A single CompFn instance may only be exposed with its exact workspace binding. */
       compfn: CompFnAPI;
@@ -16,14 +20,7 @@ export type CompFnDomainAdminServiceOptions =
       resolveCompfn: (context: AdminOperationContext) => CompFnAPI | Promise<CompFnAPI>;
       compfn?: never;
       scope?: never;
-    };
-
-function object(value: unknown, name: string): JsonRecord {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new AdminError("invalid_argument", `${name} must be an object.`);
-  }
-  return value as JsonRecord;
-}
+    });
 
 function string(value: unknown, name: string): string {
   if (typeof value !== "string" || value.length === 0) {
@@ -44,16 +41,12 @@ function unwrap<T>(value: CompfnEnvelope<T>): T {
   throw new AdminError(code, value.error.message, { details: value.error.details });
 }
 
-function list(values: object[]): AdminOperationResult<JsonRecord> {
-  return { ok: true, data: { items: values.map((value) => ({ ...value })), nextCursor: null } };
-}
-
 function item(value: object): AdminOperationResult<JsonRecord> {
-  return { ok: true, data: { item: { ...value } } };
+  return { ok: true, data: { item: JSON.parse(JSON.stringify(value)) } };
 }
 
 function accepted(value: object): AdminOperationResult<JsonRecord> {
-  return { ok: true, data: { accepted: true, item: { ...value } } };
+  return { ok: true, data: { accepted: true, item: JSON.parse(JSON.stringify(value)) } };
 }
 
 /** Delegates every operation to the configured CompFn API and its namespaced database services. */
@@ -76,27 +69,28 @@ export function createCompFnDomainAdminService(
     }
     return options.compfn;
   };
+  const paginate = createCompFnPaginator(options.cursorSecret);
   return {
-    async listFrameworks(_input, context) {
-      return list(unwrap(await (await compfnFor(context)).frameworks.list()));
+    async listFrameworks(input, context) {
+      return paginate("frameworks", input, context, async () => unwrap(await (await compfnFor(context)).frameworks.list()));
     },
     async getFramework(input, context) {
       return item(unwrap(await (await compfnFor(context)).frameworks.get(string(input.id, "id"))));
     },
     async listControls(input, context) {
-      return list(unwrap(await (await compfnFor(context)).controls.list(object(input.filter ?? {}, "filter"))));
+      return paginate("controls", input, context, async (filter) => unwrap(await (await compfnFor(context)).controls.list({ category: filter.category as string | undefined, tags: filter.tags as string[] | undefined })));
     },
     async getControl(input, context) {
       return item(unwrap(await (await compfnFor(context)).controls.get(string(input.id, "id"))));
     },
-    async listChecks(_input, context) {
-      return list(unwrap(await (await compfnFor(context)).checks.list()));
+    async listChecks(input, context) {
+      return paginate("checks", input, context, async () => unwrap(await (await compfnFor(context)).checks.list()));
     },
     async getCheck(input, context) {
       return item(unwrap(await (await compfnFor(context)).checks.get(string(input.id, "id"))));
     },
     async listEvidence(input, context) {
-      return list(unwrap(await (await compfnFor(context)).evidence.list(object(input.filter ?? {}, "filter"))));
+      return paginate("evidence", input, context, async (filter) => unwrap(await (await compfnFor(context)).evidence.list({ frameworkId: filter.frameworkId as string | undefined, controlId: filter.controlId as string | undefined, type: filter.type as NonNullable<Parameters<CompFnAPI["evidence"]["list"]>[0]>["type"], since: filter.since as number | undefined })));
     },
     async getEvidence(input, context) {
       return item(unwrap(await (await compfnFor(context)).evidence.get(string(input.id, "id"))));

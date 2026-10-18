@@ -1,4 +1,4 @@
-import { loadConfig } from "../config.js";
+import { withConfig } from "../config.js";
 import { compFn } from "compfn";
 
 export async function attestCommand(options: {
@@ -7,8 +7,7 @@ export async function attestCommand(options: {
   outcome?: "pass" | "fail";
   config?: string;
 }): Promise<void> {
-  try {
-    const config = await loadConfig(options.config);
+  return withConfig(options.config, async (config) => {
     const api = compFn(config);
 
     const outcome = options.outcome ?? "pass";
@@ -22,13 +21,11 @@ export async function attestCommand(options: {
 
     if (!evidenceResult.ok) {
       console.error(`Error creating attestation: ${evidenceResult.error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     console.log(`Attestation created: ${evidenceResult.result.id}`);
-    process.exit(0);
-  } catch (error) {
-    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
+    return;
+  });
 }

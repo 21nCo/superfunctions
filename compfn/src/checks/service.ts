@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * Checks service: CRUD and run. run(id) loads check, resolves adapter, executes runCheck,
  * persists one evidence record, returns RunCheckResult. CHECK_NOT_FOUND / ADAPTER_NOT_FOUND / ADAPTER_ERROR as specified.
@@ -18,7 +19,7 @@ export interface ChecksServiceConfig {
   database: Adapter;
   namespace?: string;
   /** Check that a control exists */
-  existsControl: (controlId: string) => Promise<boolean>;
+  existsControl: (controlId: string) => Promise<CompfnEnvelope<boolean>>;
   /** Resolve adapter by name (from config.adapters[adapterName]) */
   getAdapter: (adapterName: string) => EvidenceAdapter | undefined;
   /** Default actor for automated check runs */
@@ -33,7 +34,7 @@ function defaultNamespace(): string {
 }
 
 function generateId(): string {
-  return crypto.randomUUID();
+  return randomUUID();
 }
 
 function now(): number {
@@ -78,7 +79,8 @@ export function createChecksService(config: ChecksServiceConfig) {
       const value = validation.value;
 
       const controlExists = await config.existsControl(value.controlId);
-      if (!controlExists) {
+      if (!controlExists.ok) return controlExists;
+      if (!controlExists.result) {
         return {
           ok: false,
           error: {
@@ -159,7 +161,8 @@ export function createChecksService(config: ChecksServiceConfig) {
           where: [],
           orderBy: [{ field: "updatedAt", direction: "desc" as const }],
         });
-        const rows = await config.database.findMany(params);
+        const rows = await config.database.findMany({ ...params, limit: 1001 });
+        if (rows.length > 1000) return { ok: false, error: { code: "VALIDATION_FAILED", message: "List exceeds 1000 records; narrow the query", details: { limit: 1000 } } };
         const checks = rows.map((r: Record<string, unknown>) => rowToCheck(r));
         return { ok: true, result: checks };
       } catch (err) {
@@ -277,6 +280,10 @@ export function createChecksService(config: ChecksServiceConfig) {
             details: { adapterName: check.adapterName },
           },
         };
+      }
+
+      if (!adapterEvidence || typeof adapterEvidence !== "object") {
+        return { ok: false, error: { code: "ADAPTER_ERROR", message: "Adapter returned invalid evidence", details: { adapterName: check.adapterName } } };
       }
 
       const timestamp = adapterEvidence.timestamp ?? now();

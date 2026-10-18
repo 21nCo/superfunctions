@@ -9,14 +9,16 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./bundles/soc2-type2.json": "./bundles/soc2-type2.json"
   },
   "bin": {
     "compfn": "./cli/dist/index.js"
   },
   "files": [
     "dist",
-    "cli/dist"
+    "cli/dist",
+    "bundles"
   ],
   "scripts": {
     "build": "npm run build:core && npm run build:cli",
@@ -24,7 +26,8 @@
     "build:cli": "tsc -p cli/tsconfig.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p cli/tsconfig.json",
-    "clean": "rm -rf dist cli/dist"
+    "clean": "rm -rf dist cli/dist",
+    "lint": "npm run typecheck"
   },
   "keywords": [
     "compliance",
@@ -39,19 +42,24 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/21nCo/super-functions.git",
-    "directory": "superfunctions/compfn"
+    "directory": "compfn"
   },
   "dependencies": {
-    "@superfunctions/db": "0.1.4",
+    "@superfunctions/db": "0.3.0",
     "commander": "^4.1.1",
-    "hono": "^4.11.9"
+    "@superfunctions/http": "0.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "4.1.11",
+    "better-sqlite3": "^12.5.0",
+    "drizzle-orm": "^0.45.4"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

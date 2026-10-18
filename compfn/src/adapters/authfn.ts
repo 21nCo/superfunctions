@@ -56,7 +56,7 @@ export function createAuthfnAdapter(config: AuthfnAdapterConfig): EvidenceAdapte
           };
         }
         // Default: getMfaStatus
-        if (client.getMfaStatus) {
+        if (method === "getMfaStatus" && client.getMfaStatus) {
           const mfaResult = await client.getMfaStatus(opts);
           const outcome = mfaResult.enforced === true ? "pass" : mfaResult.enforced === false ? "fail" : "unknown";
           return {
@@ -70,7 +70,7 @@ export function createAuthfnAdapter(config: AuthfnAdapterConfig): EvidenceAdapte
           type: "automated_authfn",
           outcome: "unknown",
           timestamp: Date.now(),
-          payload: { reason: "no client method available", method },
+          payload: { reason: "requested client method unavailable or unsupported", method },
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

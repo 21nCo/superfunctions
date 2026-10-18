@@ -1,5 +1,5 @@
 import { writeFileSync } from "fs";
-import { loadConfig } from "../config.js";
+import { withConfig } from "../config.js";
 import { compFn } from "compfn";
 
 export async function exportCommand(options: {
@@ -7,8 +7,7 @@ export async function exportCommand(options: {
   output?: string;
   config?: string;
 }): Promise<void> {
-  try {
-    const config = await loadConfig(options.config);
+  return withConfig(options.config, async (config) => {
     const api = compFn(config);
 
     const exportResult = await api.export.auditorPack({
@@ -17,7 +16,8 @@ export async function exportCommand(options: {
 
     if (!exportResult.ok) {
       console.error(`Error exporting auditor pack: ${exportResult.error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     const json = JSON.stringify(exportResult.result, null, 2);
@@ -29,9 +29,6 @@ export async function exportCommand(options: {
       console.log(json);
     }
 
-    process.exit(0);
-  } catch (error) {
-    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
+    return;
+  });
 }

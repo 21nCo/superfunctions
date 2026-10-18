@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * Tests for framework bundle loading (BUNDLE-001 / PHASE_08).
  * Verifies that framework bundles can be loaded and created successfully.
@@ -233,4 +234,34 @@ describe("Bundle loading (TV-BUNDLE-001)", () => {
     expect(fw.result.requirements[1].requirementId).toBe("R2");
     expect(fw.result.requirements[2].requirementId).toBe("R3");
   });
+});
+
+
+it("loads every reference in the shipped SOC 2 bundle and keeps repeated loads independent", async () => {
+  const bundle = JSON.parse(readFileSync(new URL("../../bundles/soc2-type2.json", import.meta.url), "utf8"));
+  const db = memoryAdapter();
+  await db.initialize();
+  const api = compFn({ database: db });
+  const first = await loadBundle(api, bundle);
+  const second = await loadBundle(api, bundle, { useStableControlIds: true });
+  for (const loaded of [first, second]) {
+    if (!loaded.ok) throw new Error(JSON.stringify(loaded.error));
+    expect(loaded.result.controls).toHaveLength(43);
+    const framework = await api.frameworks.get(loaded.result.framework.id);
+    if (!framework.ok) throw new Error(framework.error.message);
+    expect(framework.result.requirements).toHaveLength(17);
+    const createdIds = new Set(loaded.result.controls.map(c => c.id));
+    for (const requirement of framework.result.requirements) {
+      for (const id of requirement.controlIds) expect(createdIds.has(id)).toBe(true);
+    }
+  }
+  if (first.ok && second.ok) expect(first.result.framework.id).not.toBe(second.result.framework.id);
+});
+
+it("rejects duplicate bundle references before creating any controls", async () => {
+  const db = memoryAdapter();
+  const api = compFn({database:db});
+  const control = {id:'duplicate',name:'name',description:'d',category:'c'};
+  expect(await loadBundle(api,{framework:{name:'f',requirements:[]},controls:[control,control]})).toMatchObject({ok:false,error:{code:'VALIDATION_FAILED'}});
+  expect(await api.controls.list()).toMatchObject({ok:true,result:[]});
 });

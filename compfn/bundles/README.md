@@ -24,15 +24,15 @@ A comprehensive SOC 2 Type II framework bundle based on Trust Services Criteria 
 ### Option 1: Using the `loadBundle` Helper (Recommended)
 
 ```typescript
-import { compFn, loadBundle } from "@superfunctions/compfn";
-import soc2Bundle from "./bundles/soc2-type2.json";
+import { compFn, loadBundle } from "compfn";
+import soc2Bundle from "compfn/bundles/soc2-type2.json";
 
 // Initialize compfn
 const api = compFn({ database: adapter });
 
 // Load the bundle (creates controls and framework)
 const result = await loadBundle(api, soc2Bundle, {
-  useStableControlIds: true // Use kebab-case IDs derived from control names
+  useStableControlIds: true // Legacy option; bundle references are always mapped
 });
 
 if (result.ok) {
@@ -46,8 +46,8 @@ if (result.ok) {
 You can also manually create controls and then the framework:
 
 ```typescript
-import { compFn } from "@superfunctions/compfn";
-import soc2Bundle from "./bundles/soc2-type2.json";
+import { compFn } from "compfn";
+import soc2Bundle from "compfn/bundles/soc2-type2.json";
 
 const api = compFn({ database: adapter });
 
@@ -57,7 +57,7 @@ for (const control of soc2Bundle.controls) {
   const result = await api.controls.create(control);
   if (result.ok) {
     // Map bundle control ID to created control ID
-    const stableId = control.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const stableId = control.id ?? control.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     controlIdMap.set(stableId, result.result.id);
   }
 }
@@ -83,8 +83,8 @@ if (fwResult.ok) {
 If you already have controls in your system, you can load just the framework and map to your existing control IDs:
 
 ```typescript
-import { compFn } from "@superfunctions/compfn";
-import soc2Bundle from "./bundles/soc2-type2.json";
+import { compFn } from "compfn";
+import soc2Bundle from "compfn/bundles/soc2-type2.json";
 
 const api = compFn({ database: adapter });
 
@@ -121,6 +121,7 @@ interface FrameworkBundle {
     }>;
   };
   controls?: Array<{        // Optional pre-defined controls
+    id?: string; // Bundle-local reference, not the database ID
     name: string;
     description: string;
     category: string;
@@ -131,13 +132,13 @@ interface FrameworkBundle {
 
 ## Control ID Mapping
 
-When using bundles with controls, the `controlIds` in framework requirements reference controls by a stable ID derived from the control name using kebab-case conversion:
+When using bundles with controls, requirement `controlIds` reference each control's explicit bundle-local `id`. Legacy controls without `id` use a slug derived from their name:
 
 - "RBAC Enabled" → `rbac-enabled`
 - "MFA Enforced" → `mfa-enforced`
 - "Quarterly Access Reviews" → `quarterly-access-reviews`
 
-The `loadBundle` helper with `useStableControlIds: true` automatically handles this mapping.
+`loadBundle` always remaps these references to service-generated IDs. The legacy `useStableControlIds` option is accepted but no longer needed. Each call creates new controls and a framework; repeated calls do not upsert or deduplicate.
 
 ## Customizing Bundles
 

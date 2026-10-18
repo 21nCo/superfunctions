@@ -6,7 +6,7 @@ import { createCompFnRouter } from "../http/routes.js";
 
 describe("HTTP API (TV-HTTP-001)", () => {
   let api: ReturnType<typeof compFn>;
-  let app: ReturnType<typeof createCompFnRouter>;
+  let app: { request(path: string, init?: RequestInit): Promise<Response> };
 
   beforeAll(async () => {
     const db = memoryAdapter();
@@ -14,7 +14,8 @@ describe("HTTP API (TV-HTTP-001)", () => {
     const result = await createSchemaIfSupported(db, { namespace: "compfn" });
     if (!result.success) throw new Error(result.errors?.join("; "));
     api = compFn({ database: db, namespace: "compfn" });
-    app = createCompFnRouter(api);
+    const router = createCompFnRouter(api);
+    app = { request: (path, init) => router.handle(new Request(new URL(path, "http://compfn.local"), init)) };
   });
 
   describe("TV-HTTP-001 (HTTP envelope)", () => {
@@ -349,5 +350,25 @@ describe("HTTP API (TV-HTTP-001)", () => {
       expect(json.result.frameworks).toBeDefined();
       expect(json.result.evidence).toBeDefined();
     });
+  });
+});
+
+describe('shared HTTP request boundaries', () => {
+  const request = (body: string, maxBodyBytes = 1024) => {
+    const api = compFn({ database: memoryAdapter() });
+    const router = createCompFnRouter(api, { maxBodyBytes });
+    return router.handle(new Request('http://compfn.local/controls', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+    }));
+  };
+  it('returns a JSON error envelope for malformed JSON', async () => {
+    const response = await request('{');
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: 'VALIDATION_FAILED' } });
+  });
+  it('bounds streamed request bodies before service execution', async () => {
+    const response = await request(JSON.stringify({ name: 'large body' }), 4);
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ ok: false, error: { code: 'PAYLOAD_TOO_LARGE' } });
   });
 });

@@ -11,7 +11,7 @@ const program = new Command();
 program
   .name("compfn")
   .description("CompFn CLI: compliance automation tool")
-  .version("0.1.0");
+  .version("0.1.2");
 
 program
   .command("init")
@@ -43,4 +43,4 @@ program
   .option("-c, --config <path>", "Path to config file")
   .action(attestCommand);
 
-program.parse(process.argv);
+await program.parseAsync(process.argv);

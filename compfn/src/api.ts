@@ -45,7 +45,7 @@ export interface CompFnAPI {
   evidence: {
     create(input: CreateEvidenceInput): Promise<CompfnEnvelope<Evidence>>;
     get(id: string): Promise<CompfnEnvelope<Evidence>>;
-    list(filters: {
+    list(filters?: {
       controlId?: string;
       frameworkId?: string;
       type?: EvidenceType;
@@ -66,7 +66,7 @@ export interface CompFnAPI {
     forFramework(frameworkId: string): Promise<CompfnEnvelope<FrameworkReadiness>>;
   };
   export: {
-    auditorPack(options: {
+    auditorPack(options?: {
       frameworkId?: string;
       since?: number;
     }): Promise<CompfnEnvelope<AuditorPack>>;

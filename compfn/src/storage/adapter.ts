@@ -18,7 +18,7 @@ export function getSchemaForAdapter(options: CompfnSchemaOptions = {}): TableSch
 
 /**
  * Create or migrate schema using the provided adapter.
- * Adapter must support createSchema (e.g. drizzle/kysely); memory adapter may only validate.
+ * Calls createSchema where provided, otherwise validateSchema. Drizzle migrations are host-owned.
  */
 export async function createSchemaIfSupported(
   database: Adapter,
@@ -32,8 +32,8 @@ export async function createSchemaIfSupported(
     const tables = Object.values(schema);
     for (const table of tables) {
       const result = await database.validateSchema(table);
-      if (!result.valid && result.errors?.length) {
-        return { success: false, errors: result.errors };
+      if (!result.valid) {
+        return { success: false, errors: result.errors?.length ? result.errors : [`Schema validation failed for ${table.modelName}`] };
       }
     }
     return { success: true };

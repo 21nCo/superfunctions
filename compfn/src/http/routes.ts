@@ -1,144 +1,90 @@
-import { Hono } from "hono";
+import { createRouter, RouterError, type Route } from "@superfunctions/http";
 import type { CompFnAPI } from "../api.js";
 import type { CompfnErrorCode } from "../errors.js";
-import type { StatusCode } from "hono/utils/http-status";
+import type { CompfnEnvelope } from "../errors.js";
 
-export function createCompFnRouter(api: CompFnAPI) {
-  const app = new Hono();
+/** Returns the shared Web Request router; consumers choose their HTTP adapter. */
+export function createCompFnRouter(api: CompFnAPI, options: { maxBodyBytes?: number } = {}) {
+  const routes: Route[] = [];
 
-  app.post("/controls", async (c) => {
-    const body = await c.req.json();
+  routes.push({ method: "POST", path: "/controls", handler: async (_request, ctx) => {
+    const body = await ctx.json();
     const result = await api.controls.create(body);
-    if (result.ok) {
-      c.status(201);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 201);
+  } });
 
-  app.get("/controls", async (c) => {
-    const category = c.req.query("category");
-    const tags = c.req.query("tags");
+  routes.push({ method: "GET", path: "/controls", handler: async (_request, ctx) => {
+    const category = (ctx.query.get("category") ?? undefined);
+    const tags = (ctx.query.get("tags") ?? undefined);
     const filters: { category?: string; tags?: string[] } = {};
     if (category) filters.category = category;
     if (tags) filters.tags = tags.split(",");
-    
+
     const result = await api.controls.list(filters);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.get("/controls/:id", async (c) => {
-    const id = c.req.param("id");
+  routes.push({ method: "GET", path: "/controls/:id", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
     const result = await api.controls.get(id);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.patch("/controls/:id", async (c) => {
-    const id = c.req.param("id");
-    const body = await c.req.json();
+  routes.push({ method: "PATCH", path: "/controls/:id", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
+    const body = await ctx.json();
     const result = await api.controls.update(id, body);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.delete("/controls/:id", async (c) => {
-    const id = c.req.param("id");
+  routes.push({ method: "DELETE", path: "/controls/:id", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
     const result = await api.controls.delete(id);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: undefined });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.post("/frameworks", async (c) => {
-    const body = await c.req.json();
+  routes.push({ method: "POST", path: "/frameworks", handler: async (_request, ctx) => {
+    const body = await ctx.json();
     const result = await api.frameworks.create(body);
-    if (result.ok) {
-      c.status(201);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 201);
+  } });
 
-  app.get("/frameworks", async (c) => {
+  routes.push({ method: "GET", path: "/frameworks", handler: async (_request, ctx) => {
     const result = await api.frameworks.list();
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.get("/frameworks/:id", async (c) => {
-    const id = c.req.param("id");
+  routes.push({ method: "GET", path: "/frameworks/:id", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
     const result = await api.frameworks.get(id);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.patch("/frameworks/:id", async (c) => {
-    const id = c.req.param("id");
-    const body = await c.req.json();
+  routes.push({ method: "PATCH", path: "/frameworks/:id", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
+    const body = await ctx.json();
     const result = await api.frameworks.update(id, body);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.delete("/frameworks/:id", async (c) => {
-    const id = c.req.param("id");
+  routes.push({ method: "DELETE", path: "/frameworks/:id", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
     const result = await api.frameworks.delete(id);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: undefined });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.post("/evidence", async (c) => {
-    const body = await c.req.json();
+  routes.push({ method: "POST", path: "/evidence", handler: async (_request, ctx) => {
+    const body = await ctx.json();
     const result = await api.evidence.create(body);
-    if (result.ok) {
-      c.status(201);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 201);
+  } });
 
-  app.get("/evidence", async (c) => {
-    const controlId = c.req.query("controlId");
-    const frameworkId = c.req.query("frameworkId");
-    const type = c.req.query("type");
-    const since = c.req.query("since");
-    
+  routes.push({ method: "GET", path: "/evidence", handler: async (_request, ctx) => {
+    const controlId = (ctx.query.get("controlId") ?? undefined);
+    const frameworkId = (ctx.query.get("frameworkId") ?? undefined);
+    const type = (ctx.query.get("type") ?? undefined);
+    const since = (ctx.query.get("since") ?? undefined);
+
     const filters: {
       controlId?: string;
       frameworkId?: string;
@@ -149,116 +95,81 @@ export function createCompFnRouter(api: CompFnAPI) {
     if (frameworkId) filters.frameworkId = frameworkId;
     if (type) filters.type = type as any;
     if (since) filters.since = parseInt(since, 10);
-    
+
     const result = await api.evidence.list(filters);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.get("/evidence/:id", async (c) => {
-    const id = c.req.param("id");
+  routes.push({ method: "GET", path: "/evidence/:id", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
     const result = await api.evidence.get(id);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.post("/checks", async (c) => {
-    const body = await c.req.json();
+  routes.push({ method: "POST", path: "/checks", handler: async (_request, ctx) => {
+    const body = await ctx.json();
     const result = await api.checks.create(body);
-    if (result.ok) {
-      c.status(201);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 201);
+  } });
 
-  app.get("/checks", async (c) => {
+  routes.push({ method: "GET", path: "/checks", handler: async (_request, ctx) => {
     const result = await api.checks.list();
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.get("/checks/:id", async (c) => {
-    const id = c.req.param("id");
+  routes.push({ method: "GET", path: "/checks/:id", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
     const result = await api.checks.get(id);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.post("/checks/:id/run", async (c) => {
-    const id = c.req.param("id");
+  routes.push({ method: "POST", path: "/checks/:id/run", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
     const result = await api.checks.run(id);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.delete("/checks/:id", async (c) => {
-    const id = c.req.param("id");
+  routes.push({ method: "DELETE", path: "/checks/:id", handler: async (_request, ctx) => {
+    const id = ctx.params["id"];
     const result = await api.checks.delete(id);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: undefined });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.get("/readiness/control/:controlId", async (c) => {
-    const controlId = c.req.param("controlId");
-    const frameworkId = c.req.query("frameworkId");
+  routes.push({ method: "GET", path: "/readiness/control/:controlId", handler: async (_request, ctx) => {
+    const controlId = ctx.params["controlId"];
+    const frameworkId = (ctx.query.get("frameworkId") ?? undefined);
     const result = await api.readiness.forControl(controlId, frameworkId);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.get("/readiness/framework/:frameworkId", async (c) => {
-    const frameworkId = c.req.param("frameworkId");
+  routes.push({ method: "GET", path: "/readiness/framework/:frameworkId", handler: async (_request, ctx) => {
+    const frameworkId = ctx.params["frameworkId"];
     const result = await api.readiness.forFramework(frameworkId);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  app.post("/export/auditor-pack", async (c) => {
-    const body = await c.req.json();
+  routes.push({ method: "POST", path: "/export/auditor-pack", handler: async (_request, ctx) => {
+    const body = await ctx.json();
     const result = await api.export.auditorPack(body);
-    if (result.ok) {
-      c.status(200);
-      return c.json({ ok: true, result: result.result });
-    }
-    c.status(getStatusCode(result.error.code) as StatusCode);
-    return c.json({ ok: false, error: result.error });
-  });
+    return envelopeResponse(result, 200);
+  } });
 
-  return app;
+  return createRouter({
+    routes,
+    maxBodyBytes: options.maxBodyBytes ?? 1024 * 1024,
+    onError(error) {
+      const status = error instanceof RouterError ? error.statusCode : error instanceof SyntaxError ? 400 : 500;
+      return Response.json({ ok: false, error: {
+        code: status === 413 ? "PAYLOAD_TOO_LARGE" : status < 500 ? "VALIDATION_FAILED" : "STORAGE_ERROR",
+        message: status >= 500 ? "Request failed" : error.message,
+        details: {},
+      } }, { status });
+    },
+  });
+}
+
+function envelopeResponse<T>(result: CompfnEnvelope<T>, successStatus: number): Response {
+  return Response.json(result, { status: result.ok ? successStatus : getStatusCode(result.error.code) });
 }
 
 function getStatusCode(code: CompfnErrorCode): number {

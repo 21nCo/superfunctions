@@ -82,6 +82,7 @@ export function createExportService(config: ExportServiceConfig) {
         for (const cid of controlIdSet) {
           const r = await config.getControl(cid);
           if (r.ok) controls.push(r.result);
+          else if (r.error.code !== "CONTROL_NOT_FOUND") return r;
         }
       } else {
         const r = await config.listControls();

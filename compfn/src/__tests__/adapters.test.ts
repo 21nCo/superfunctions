@@ -4,7 +4,7 @@
  * adapters creates evidence with correct type.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 import { compFn, createSecfnAdapter, createAuthfnAdapter } from "../index.js";
 import { createSchemaIfSupported } from "../storage/adapter.js";
@@ -176,5 +176,32 @@ describe("Adapters (TV-ADAPT-*)", () => {
       expect(evRes.result.controlId).toBe(c.id);
       expect(evRes.result.outcome).toBe("pass");
     });
+  });
+});
+
+
+describe("requested adapter method isolation", () => {
+  it.each([
+    ["authfn", "getSessionPolicy"], ["authfn", "getUserInfo"], ["authfn", "typo"],
+    ["secfn", "getSecretScanSummary"], ["secfn", "getSecurityEvents"], ["secfn", "typo"],
+  ])("%s %s cannot pass by invoking a different method", async (name, method) => {
+    const defaultCheck = vi.fn(async () => ({ enforced: true, enabled: true }));
+    const adapter = name === "authfn"
+      ? createAuthfnAdapter({ client: { getMfaStatus: defaultCheck } })
+      : createSecfnAdapter({ client: { getRbacStatus: defaultCheck } });
+    const db = memoryAdapter();
+    await db.initialize();
+    const api = compFn({ database: db, adapters: { [name]: adapter } });
+    const control = await api.controls.create({ name: "Requested policy", description: "Test", category: "security" });
+    if (!control.ok) throw new Error(control.error.message);
+    const check = await api.checks.create({ name: "Unsupported policy", controlId: control.result.id, adapterName: name, adapterMethod: method });
+    if (!check.ok) throw new Error(check.error.message);
+    const run = await api.checks.run(check.result.id);
+    expect(run).toMatchObject({ ok: true, result: { outcome: "unknown" } });
+    expect(defaultCheck).not.toHaveBeenCalled();
+    const readiness = await api.readiness.forControl(control.result.id);
+    expect(readiness.ok).toBe(true);
+    if (readiness.ok) expect(readiness.result.status).not.toBe("compliant");
+    await db.close();
   });
 });

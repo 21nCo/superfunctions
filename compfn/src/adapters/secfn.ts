@@ -57,7 +57,7 @@ export function createSecfnAdapter(config: SecfnAdapterConfig): EvidenceAdapter 
           };
         }
         // Default: getRbacStatus
-        if (client.getRbacStatus) {
+        if (method === "getRbacStatus" && client.getRbacStatus) {
           const rbacResult = await client.getRbacStatus(opts);
           const outcome = rbacResult.enabled === true ? "pass" : rbacResult.enabled === false ? "fail" : "unknown";
           return {
@@ -71,7 +71,7 @@ export function createSecfnAdapter(config: SecfnAdapterConfig): EvidenceAdapter 
           type: "automated_secfn",
           outcome: "unknown",
           timestamp: Date.now(),
-          payload: { reason: "no client method available", method },
+          payload: { reason: "requested client method unavailable or unsupported", method },
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

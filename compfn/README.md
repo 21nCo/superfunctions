@@ -1,4 +1,4 @@
-# @superfunctions/compfn
+# compfn
 
 Self-hosted compliance function for managing controls, frameworks, evidence, checks, and audit-ready exports.
 
@@ -11,16 +11,18 @@ CompFn is a compliance automation tool that:
 - Produces **audit-ready reports**
 - Keeps all evidence on your own infrastructure (no mandatory SaaS)
 
+Runtime support: Node.js 20 or newer. The SDK and admin package are ESM; CommonJS applications can use dynamic `import()`.
+
 ## Installation
 
 ```bash
-npm install @superfunctions/compfn
+npm install compfn
 ```
 
 ## Quick Start
 
 ```typescript
-import { compFn } from "@superfunctions/compfn";
+import { compFn } from "compfn";
 import { memoryAdapter } from "@superfunctions/db/adapters";
 
 const db = memoryAdapter();
@@ -72,18 +74,18 @@ All methods return a `CompfnEnvelope<T>`:
 
 ## HTTP API
 
-CompFn provides an optional HTTP server that exposes all core functionality via REST endpoints.
+CompFn exposes REST routes through the shared `@superfunctions/http` router. Use its Web Request handler directly, or choose a framework adapter from `@superfunctions/http-*` in your application. The default request-body limit is 1 MiB; pass `{ maxBodyBytes }` as the second router argument to configure it.
 
 ### Setup
 
 ```typescript
-import { compFn, createCompFnRouter } from "@superfunctions/compfn";
+import { compFn, createCompFnRouter } from "compfn";
 import { serve } from "@hono/node-server";
 
 const api = compFn({ database: db, namespace: "compfn" });
-const app = createCompFnRouter(api);
+const router = createCompFnRouter(api);
 
-serve({ fetch: app.fetch, port: 3000 });
+serve({ fetch: router.handler, port: 3000 });
 console.log("CompFn HTTP API running on http://localhost:3000");
 ```
 
@@ -436,6 +438,9 @@ Create a `compfn.config.json` file:
 
 Or set the `COMPFN_CONFIG` environment variable to point to your config file.
 
+JSON memory configuration is ephemeral: each CLI process starts an empty database. For persistent operations, use `--config ./compfn.config.mjs` (also `.js`/`.cjs`) exporting a config object, promise, or async factory with a real shared `Adapter` and optional evidence adapters. The CLI calls `database.initialize()` before the command and `database.close()` afterward, including failure paths. Your initializer owns database migrations and native connection setup. JSON export goes to stdout; default diagnostics go to stderr. Failed commands exit with status 1.
+
+
 ### Commands
 
 #### `compfn init`
@@ -512,30 +517,38 @@ Attestation created: evid_789
 
 ## Evidence Adapters
 
-CompFn supports pluggable evidence adapters for integrating with superfunctions:
+CompFn supports pluggable evidence adapters for integrating with superfunctions. The included AuthFn/SecFn adapters accept host-provided bridge clients implementing `AuthfnClient` / `SecfnClient`; those interfaces are not the public SDK clients of AuthFn or SecFn. Supply methods that query your deployed service and map its result to the documented interface. Omitted methods produce unknown evidence; an unsupported method never invokes another check.
+
+Check `schedule` and `trigger` fields are persisted metadata. Invoke `checks.run(id)` from your scheduler or event handler; CompFn does not start a background scheduler. `customConfig` is passed to the selected adapter, and does not execute scripts on its own.
 
 ```typescript
-import { compFn, createSecfnAdapter } from "@superfunctions/compfn";
+import { compFn, createSecfnAdapter, createAuthfnAdapter } from "compfn";
 
 const api = compFn({
   database: db,
   adapters: {
-    secfn: createSecfnAdapter({ secfnClient }),
-    authfn: createAuthfnAdapter({ authfnClient }),
+    secfn: createSecfnAdapter({ client: secfnClient }),
+    authfn: createAuthfnAdapter({ client: authfnClient }),
   },
 });
 ```
 
 ## Framework Bundles
 
-Load pre-defined framework bundles (SOC 2, ISO 27001, etc.):
+The package ships the SOC 2 Type II bundle (43 controls, 17 requirements). Load it from the exported JSON file:
 
 ```typescript
-import { loadBundle } from "@superfunctions/compfn";
+import { loadBundle } from "compfn";
 
-const bundle = await loadBundle("soc2-type2");
-const framework = await api.frameworks.create(bundle.framework);
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const bundle = JSON.parse(readFileSync(require.resolve("compfn/bundles/soc2-type2.json"), "utf8"));
+const result = await loadBundle(api, bundle);
+if (!result.ok) throw new Error(result.error.message);
 ```
+
+Each bundle load creates new controls and a new framework. Bundle-local `id` values are remapped to service-generated database IDs; repeated loads are independent, not an upsert. Legacy bundles without explicit IDs use kebab-case control-name references.
 
 ## Configuration
 
@@ -546,7 +559,7 @@ const api = compFn({
   systemActorId: "system",        // Optional: actor ID for automated checks
   readinessWindowDays: 90,        // Optional: freshness window for compliance
   evidencePayloadMaxBytes: 524288, // Optional: 512 KiB default
-  retentionDays: 2555,            // Optional: 7 years default
+  retentionDays: 2555,            // Deployment retention policy; core never deletes evidence
   exportMaxBytes: 52428800,       // Optional: 50 MiB default
   adapters: { ... },              // Optional: evidence adapters
   logger: customLogger,           // Optional: custom logger
@@ -703,3 +716,8 @@ This allows productFn, userfn, and flowfn to build:
 ## License
 
 MIT
+
+
+Controls, frameworks and checks are ordered by `updatedAt` descending; evidence by `createdAt` descending. Core lists are bounded to 1000 records. Queries exceeding that bound return `VALIDATION_FAILED` with `details.limit = 1000`; they never silently return an incomplete audit export or readiness result. Narrow supported filters or partition the deployment's datasets. Retention and database migrations remain deployment responsibilities. `compfn init` invokes the configured adapter initializer and schema creation/validation where supported; for Drizzle, initialize your application's migrations before using CompFn. `namespace` is passed to the shared adapter and does not independently provide tenant isolation: configure the adapter's namespace support or bind separate databases.
+
+Control, framework and evidence data use schema version 1. New optional fields are additive. Removing required fields or changing their semantics requires a new schema version, a documented migration/deprecation period, and an appropriate major API release. Existing evidence without a version field is treated as version 1.

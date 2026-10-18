@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * Controls CRUD service using storage adapter.
  * All methods return CompfnEnvelope; CONTROL_NOT_FOUND when id does not exist.
@@ -20,7 +21,7 @@ function defaultNamespace(): string {
 }
 
 function generateId(): string {
-  return crypto.randomUUID();
+  return randomUUID();
 }
 
 function now(): number {
@@ -135,7 +136,7 @@ export function createControlsService(config: ControlsServiceConfig) {
           where: where.map((w) => ({ ...w, connector: "AND" as const })),
           orderBy: [{ field: "updatedAt", direction: "desc" as const }],
         });
-        let rows = await config.database.findMany(params);
+        let rows = await config.database.findMany({ ...params, ...(filters?.tags?.length ? {} : { limit: 1001 }) });
         if (filters?.tags != null && filters.tags.length > 0) {
           const tagSet = new Set(filters.tags);
           rows = rows.filter((row: Record<string, unknown>) => {
@@ -144,6 +145,7 @@ export function createControlsService(config: ControlsServiceConfig) {
             return (tags as string[]).some((t: string) => tagSet.has(t));
           });
         }
+        if (rows.length > 1000) return { ok: false, error: { code: "VALIDATION_FAILED", message: "List exceeds 1000 records; narrow the query", details: { limit: 1000 } } };
         const controls = rows.map((r: Record<string, unknown>) =>
           ensureTags(rowToControl(r), r)
         );

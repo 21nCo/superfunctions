@@ -19,7 +19,8 @@
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "lint": "npm run typecheck"
   },
   "keywords": [
     "compfn",
@@ -34,10 +35,13 @@
   },
   "dependencies": {
     "compfn": "0.1.2",
-    "@superfunctions/admin": "0.1.0"
+    "@superfunctions/admin": "0.1.5"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
-    "vitest": "^3.2.4"
+    "vitest": "4.1.11"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

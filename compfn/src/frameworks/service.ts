@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * Frameworks CRUD service with requirement/controlId validation (FW-001, FW-002, LIMIT-001).
  * All methods return CompfnEnvelope; FRAMEWORK_NOT_FOUND when id does not exist;
@@ -22,7 +23,7 @@ export interface FrameworksServiceConfig {
   database: Adapter;
   namespace?: string;
   /** Check that a control exists by id (e.g. from controls.get(id).then(r => r.ok)) */
-  existsControl: (controlId: string) => Promise<boolean>;
+  existsControl: (controlId: string) => Promise<CompfnEnvelope<boolean>>;
 }
 
 function defaultNamespace(): string {
@@ -30,7 +31,7 @@ function defaultNamespace(): string {
 }
 
 function generateId(): string {
-  return crypto.randomUUID();
+  return randomUUID();
 }
 
 function now(): number {
@@ -58,13 +59,14 @@ function rowToFramework(row: Record<string, unknown>): Framework {
 
 async function validateControlIdsExist(
   requirements: FrameworkRequirement[],
-  existsControl: (id: string) => Promise<boolean>
+  existsControl: (id: string) => Promise<CompfnEnvelope<boolean>>
 ): Promise<{ ok: true } | { ok: false; error: CompfnError }> {
   const missing: { requirementId?: string; controlId?: string }[] = [];
   for (const req of requirements) {
     for (const controlId of req.controlIds) {
       const exists = await existsControl(controlId);
-      if (!exists) {
+      if (!exists.ok) return exists;
+      if (!exists.result) {
         missing.push({ requirementId: req.requirementId, controlId });
       }
     }
@@ -175,7 +177,8 @@ export function createFrameworksService(config: FrameworksServiceConfig) {
           where: [],
           orderBy: [{ field: "updatedAt", direction: "desc" as const }],
         });
-        const rows = await config.database.findMany(params);
+        const rows = await config.database.findMany({ ...params, limit: 1001 });
+        if (rows.length > 1000) return { ok: false, error: { code: "VALIDATION_FAILED", message: "List exceeds 1000 records; narrow the query", details: { limit: 1000 } } };
         const frameworks = rows.map((r: Record<string, unknown>) => rowToFramework(r));
         return { ok: true, result: frameworks };
       } catch (err) {

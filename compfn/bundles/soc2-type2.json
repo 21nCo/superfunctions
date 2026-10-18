@@ -7,87 +7,152 @@
       {
         "requirementId": "CC6.1",
         "name": "Logical and Physical Access Controls",
-        "controlIds": ["rbac-enabled", "mfa-enforced", "access-reviews-quarterly"]
+        "controlIds": [
+          "rbac-enabled",
+          "mfa-enforced",
+          "access-reviews-quarterly"
+        ]
       },
       {
         "requirementId": "CC6.2",
         "name": "Prior to Issuing System Credentials",
-        "controlIds": ["user-provisioning-approved", "background-checks"]
+        "controlIds": [
+          "user-provisioning-approved",
+          "background-checks"
+        ]
       },
       {
         "requirementId": "CC6.3",
         "name": "Removes Access",
-        "controlIds": ["access-revocation-timely", "offboarding-checklist"]
+        "controlIds": [
+          "access-revocation-timely",
+          "offboarding-checklist"
+        ]
       },
       {
         "requirementId": "CC6.6",
         "name": "Restricts Access",
-        "controlIds": ["rbac-enabled", "least-privilege"]
+        "controlIds": [
+          "rbac-enabled",
+          "least-privilege"
+        ]
       },
       {
         "requirementId": "CC6.7",
         "name": "Restricts Access to Data",
-        "controlIds": ["data-classification", "encryption-at-rest", "encryption-in-transit"]
+        "controlIds": [
+          "data-classification",
+          "encryption-at-rest",
+          "encryption-in-transit"
+        ]
       },
       {
         "requirementId": "CC6.8",
         "name": "Manages Credentials",
-        "controlIds": ["password-policy", "secrets-vault", "credential-rotation"]
+        "controlIds": [
+          "password-policy",
+          "secrets-vault",
+          "credential-rotation"
+        ]
       },
       {
         "requirementId": "CC7.1",
         "name": "Detects Security Events",
-        "controlIds": ["security-monitoring", "intrusion-detection", "log-aggregation"]
+        "controlIds": [
+          "security-monitoring",
+          "intrusion-detection",
+          "log-aggregation"
+        ]
       },
       {
         "requirementId": "CC7.2",
         "name": "Responds to Security Incidents",
-        "controlIds": ["incident-response-plan", "incident-response-team", "incident-postmortem"]
+        "controlIds": [
+          "incident-response-plan",
+          "incident-response-team",
+          "incident-postmortem"
+        ]
       },
       {
         "requirementId": "CC7.3",
         "name": "Evaluates Security Events",
-        "controlIds": ["security-monitoring", "log-review-weekly", "alert-triage"]
+        "controlIds": [
+          "security-monitoring",
+          "log-review-weekly",
+          "alert-triage"
+        ]
       },
       {
         "requirementId": "CC7.4",
         "name": "Responds to Identified Security Incidents",
-        "controlIds": ["incident-response-plan", "incident-communication", "incident-remediation"]
+        "controlIds": [
+          "incident-response-plan",
+          "incident-communication",
+          "incident-remediation"
+        ]
       },
       {
         "requirementId": "CC7.5",
         "name": "Identifies and Develops Response to Incidents",
-        "controlIds": ["incident-playbooks", "incident-escalation", "incident-documentation"]
+        "controlIds": [
+          "incident-playbooks",
+          "incident-escalation",
+          "incident-documentation"
+        ]
       },
       {
         "requirementId": "CC8.1",
         "name": "Change Management",
-        "controlIds": ["change-approval", "change-testing", "change-rollback-plan"]
+        "controlIds": [
+          "change-approval",
+          "change-testing",
+          "change-rollback-plan"
+        ]
       },
       {
         "requirementId": "A1.1",
         "name": "Availability and Capacity Management",
-        "controlIds": ["capacity-planning", "performance-monitoring", "sla-monitoring"]
+        "controlIds": [
+          "capacity-planning",
+          "performance-monitoring",
+          "sla-monitoring"
+        ]
       },
       {
         "requirementId": "A1.2",
         "name": "System Availability Monitoring",
-        "controlIds": ["uptime-monitoring", "health-checks", "failover-testing"]
+        "controlIds": [
+          "uptime-monitoring",
+          "health-checks",
+          "failover-testing"
+        ]
       },
       {
         "requirementId": "A1.3",
         "name": "Recovery and Backup",
-        "controlIds": ["backup-daily", "backup-testing-quarterly", "disaster-recovery-plan"]
+        "controlIds": [
+          "backup-daily",
+          "backup-testing-quarterly",
+          "disaster-recovery-plan"
+        ]
       },
       {
         "requirementId": "C1.1",
         "name": "Confidential Information",
-        "controlIds": ["data-classification", "confidentiality-agreements", "encryption-at-rest"]
+        "controlIds": [
+          "data-classification",
+          "confidentiality-agreements",
+          "encryption-at-rest"
+        ]
       },
       {
         "requirementId": "C1.2",
         "name": "Disposes of Confidential Information",
-        "controlIds": ["secure-disposal", "data-retention-policy", "data-deletion-verification"]
+        "controlIds": [
+          "secure-disposal",
+          "data-retention-policy",
+          "data-deletion-verification"
+        ]
       }
     ]
   },
@@ -96,259 +161,433 @@
       "name": "RBAC Enabled",
       "description": "Role-Based Access Control is implemented and enforced across all systems.",
       "category": "access-control",
-      "tags": ["soc2", "security", "rbac"]
+      "tags": [
+        "soc2",
+        "security",
+        "rbac"
+      ],
+      "id": "rbac-enabled"
     },
     {
       "name": "MFA Enforced",
       "description": "Multi-Factor Authentication is required for all user accounts.",
       "category": "access-control",
-      "tags": ["soc2", "security", "mfa"]
+      "tags": [
+        "soc2",
+        "security",
+        "mfa"
+      ],
+      "id": "mfa-enforced"
     },
     {
       "name": "Quarterly Access Reviews",
       "description": "Access rights are reviewed quarterly to ensure least privilege.",
       "category": "access-control",
-      "tags": ["soc2", "access-review"]
+      "tags": [
+        "soc2",
+        "access-review"
+      ],
+      "id": "access-reviews-quarterly"
     },
     {
       "name": "User Provisioning Approved",
       "description": "User account creation requires manager approval.",
       "category": "access-control",
-      "tags": ["soc2", "provisioning"]
+      "tags": [
+        "soc2",
+        "provisioning"
+      ],
+      "id": "user-provisioning-approved"
     },
     {
       "name": "Background Checks",
       "description": "Background checks are performed for all employees prior to system access.",
       "category": "hr-security",
-      "tags": ["soc2", "hr"]
+      "tags": [
+        "soc2",
+        "hr"
+      ],
+      "id": "background-checks"
     },
     {
       "name": "Timely Access Revocation",
       "description": "Access is revoked within 24 hours of termination or role change.",
       "category": "access-control",
-      "tags": ["soc2", "offboarding"]
+      "tags": [
+        "soc2",
+        "offboarding"
+      ],
+      "id": "access-revocation-timely"
     },
     {
       "name": "Offboarding Checklist",
       "description": "Comprehensive offboarding checklist ensures all access is removed.",
       "category": "hr-security",
-      "tags": ["soc2", "offboarding"]
+      "tags": [
+        "soc2",
+        "offboarding"
+      ],
+      "id": "offboarding-checklist"
     },
     {
       "name": "Least Privilege",
       "description": "Users are granted minimum necessary permissions.",
       "category": "access-control",
-      "tags": ["soc2", "security"]
+      "tags": [
+        "soc2",
+        "security"
+      ],
+      "id": "least-privilege"
     },
     {
       "name": "Data Classification",
       "description": "Data is classified by sensitivity level.",
       "category": "data-protection",
-      "tags": ["soc2", "confidentiality"]
+      "tags": [
+        "soc2",
+        "confidentiality"
+      ],
+      "id": "data-classification"
     },
     {
       "name": "Encryption at Rest",
       "description": "Sensitive data is encrypted when stored.",
       "category": "data-protection",
-      "tags": ["soc2", "encryption"]
+      "tags": [
+        "soc2",
+        "encryption"
+      ],
+      "id": "encryption-at-rest"
     },
     {
       "name": "Encryption in Transit",
       "description": "Data is encrypted during transmission using TLS 1.2+.",
       "category": "data-protection",
-      "tags": ["soc2", "encryption"]
+      "tags": [
+        "soc2",
+        "encryption"
+      ],
+      "id": "encryption-in-transit"
     },
     {
       "name": "Password Policy",
       "description": "Strong password requirements are enforced (12+ chars, complexity).",
       "category": "access-control",
-      "tags": ["soc2", "passwords"]
+      "tags": [
+        "soc2",
+        "passwords"
+      ],
+      "id": "password-policy"
     },
     {
       "name": "Secrets Vault",
       "description": "Secrets are stored in a centralized vault (e.g., secfn).",
       "category": "secrets-management",
-      "tags": ["soc2", "secrets"]
+      "tags": [
+        "soc2",
+        "secrets"
+      ],
+      "id": "secrets-vault"
     },
     {
       "name": "Credential Rotation",
       "description": "Credentials are rotated at least every 90 days.",
       "category": "secrets-management",
-      "tags": ["soc2", "secrets"]
+      "tags": [
+        "soc2",
+        "secrets"
+      ],
+      "id": "credential-rotation"
     },
     {
       "name": "Security Monitoring",
       "description": "Security events are monitored continuously.",
       "category": "monitoring",
-      "tags": ["soc2", "security"]
+      "tags": [
+        "soc2",
+        "security"
+      ],
+      "id": "security-monitoring"
     },
     {
       "name": "Intrusion Detection",
       "description": "IDS/IPS systems detect and prevent intrusions.",
       "category": "monitoring",
-      "tags": ["soc2", "security"]
+      "tags": [
+        "soc2",
+        "security"
+      ],
+      "id": "intrusion-detection"
     },
     {
       "name": "Log Aggregation",
       "description": "Logs are aggregated centrally for analysis.",
       "category": "monitoring",
-      "tags": ["soc2", "logging"]
+      "tags": [
+        "soc2",
+        "logging"
+      ],
+      "id": "log-aggregation"
     },
     {
       "name": "Incident Response Plan",
       "description": "Documented incident response plan is maintained and tested.",
       "category": "incident-response",
-      "tags": ["soc2", "incident"]
+      "tags": [
+        "soc2",
+        "incident"
+      ],
+      "id": "incident-response-plan"
     },
     {
       "name": "Incident Response Team",
       "description": "Dedicated incident response team is designated.",
       "category": "incident-response",
-      "tags": ["soc2", "incident"]
+      "tags": [
+        "soc2",
+        "incident"
+      ],
+      "id": "incident-response-team"
     },
     {
       "name": "Incident Postmortem",
       "description": "Postmortems are conducted for all major incidents.",
       "category": "incident-response",
-      "tags": ["soc2", "incident"]
+      "tags": [
+        "soc2",
+        "incident"
+      ],
+      "id": "incident-postmortem"
     },
     {
       "name": "Weekly Log Review",
       "description": "Security logs are reviewed weekly by security team.",
       "category": "monitoring",
-      "tags": ["soc2", "logging"]
+      "tags": [
+        "soc2",
+        "logging"
+      ],
+      "id": "log-review-weekly"
     },
     {
       "name": "Alert Triage",
       "description": "Security alerts are triaged within 1 hour.",
       "category": "monitoring",
-      "tags": ["soc2", "security"]
+      "tags": [
+        "soc2",
+        "security"
+      ],
+      "id": "alert-triage"
     },
     {
       "name": "Incident Communication",
       "description": "Stakeholders are notified of incidents per communication plan.",
       "category": "incident-response",
-      "tags": ["soc2", "incident"]
+      "tags": [
+        "soc2",
+        "incident"
+      ],
+      "id": "incident-communication"
     },
     {
       "name": "Incident Remediation",
       "description": "Incidents are remediated according to severity SLAs.",
       "category": "incident-response",
-      "tags": ["soc2", "incident"]
+      "tags": [
+        "soc2",
+        "incident"
+      ],
+      "id": "incident-remediation"
     },
     {
       "name": "Incident Playbooks",
       "description": "Runbooks exist for common incident scenarios.",
       "category": "incident-response",
-      "tags": ["soc2", "incident"]
+      "tags": [
+        "soc2",
+        "incident"
+      ],
+      "id": "incident-playbooks"
     },
     {
       "name": "Incident Escalation",
       "description": "Clear escalation paths are defined and followed.",
       "category": "incident-response",
-      "tags": ["soc2", "incident"]
+      "tags": [
+        "soc2",
+        "incident"
+      ],
+      "id": "incident-escalation"
     },
     {
       "name": "Incident Documentation",
       "description": "All incidents are documented in ticketing system.",
       "category": "incident-response",
-      "tags": ["soc2", "incident"]
+      "tags": [
+        "soc2",
+        "incident"
+      ],
+      "id": "incident-documentation"
     },
     {
       "name": "Change Approval",
       "description": "Production changes require approval from change board.",
       "category": "change-management",
-      "tags": ["soc2", "change"]
+      "tags": [
+        "soc2",
+        "change"
+      ],
+      "id": "change-approval"
     },
     {
       "name": "Change Testing",
       "description": "Changes are tested in non-production environment.",
       "category": "change-management",
-      "tags": ["soc2", "change"]
+      "tags": [
+        "soc2",
+        "change"
+      ],
+      "id": "change-testing"
     },
     {
       "name": "Change Rollback Plan",
       "description": "Rollback procedures exist for all production changes.",
       "category": "change-management",
-      "tags": ["soc2", "change"]
+      "tags": [
+        "soc2",
+        "change"
+      ],
+      "id": "change-rollback-plan"
     },
     {
       "name": "Capacity Planning",
       "description": "System capacity is reviewed quarterly and planned.",
       "category": "availability",
-      "tags": ["soc2", "capacity"]
+      "tags": [
+        "soc2",
+        "capacity"
+      ],
+      "id": "capacity-planning"
     },
     {
       "name": "Performance Monitoring",
       "description": "System performance metrics are monitored continuously.",
       "category": "availability",
-      "tags": ["soc2", "monitoring"]
+      "tags": [
+        "soc2",
+        "monitoring"
+      ],
+      "id": "performance-monitoring"
     },
     {
       "name": "SLA Monitoring",
       "description": "Service Level Agreements are monitored and reported.",
       "category": "availability",
-      "tags": ["soc2", "sla"]
+      "tags": [
+        "soc2",
+        "sla"
+      ],
+      "id": "sla-monitoring"
     },
     {
       "name": "Uptime Monitoring",
       "description": "System uptime is monitored and alerted.",
       "category": "availability",
-      "tags": ["soc2", "monitoring"]
+      "tags": [
+        "soc2",
+        "monitoring"
+      ],
+      "id": "uptime-monitoring"
     },
     {
       "name": "Health Checks",
       "description": "Automated health checks run on all services.",
       "category": "availability",
-      "tags": ["soc2", "monitoring"]
+      "tags": [
+        "soc2",
+        "monitoring"
+      ],
+      "id": "health-checks"
     },
     {
       "name": "Failover Testing",
       "description": "Failover procedures are tested quarterly.",
       "category": "availability",
-      "tags": ["soc2", "disaster-recovery"]
+      "tags": [
+        "soc2",
+        "disaster-recovery"
+      ],
+      "id": "failover-testing"
     },
     {
       "name": "Daily Backups",
       "description": "Critical data is backed up daily.",
       "category": "backup",
-      "tags": ["soc2", "backup"]
+      "tags": [
+        "soc2",
+        "backup"
+      ],
+      "id": "backup-daily"
     },
     {
       "name": "Quarterly Backup Testing",
       "description": "Backup restoration is tested quarterly.",
       "category": "backup",
-      "tags": ["soc2", "backup"]
+      "tags": [
+        "soc2",
+        "backup"
+      ],
+      "id": "backup-testing-quarterly"
     },
     {
       "name": "Disaster Recovery Plan",
       "description": "Documented disaster recovery plan is maintained and tested annually.",
       "category": "disaster-recovery",
-      "tags": ["soc2", "disaster-recovery"]
+      "tags": [
+        "soc2",
+        "disaster-recovery"
+      ],
+      "id": "disaster-recovery-plan"
     },
     {
       "name": "Confidentiality Agreements",
       "description": "All personnel sign confidentiality agreements.",
       "category": "confidentiality",
-      "tags": ["soc2", "hr"]
+      "tags": [
+        "soc2",
+        "hr"
+      ],
+      "id": "confidentiality-agreements"
     },
     {
       "name": "Secure Disposal",
       "description": "Media and data are securely destroyed per policy.",
       "category": "data-protection",
-      "tags": ["soc2", "disposal"]
+      "tags": [
+        "soc2",
+        "disposal"
+      ],
+      "id": "secure-disposal"
     },
     {
       "name": "Data Retention Policy",
       "description": "Data retention periods are defined and enforced.",
       "category": "data-protection",
-      "tags": ["soc2", "retention"]
+      "tags": [
+        "soc2",
+        "retention"
+      ],
+      "id": "data-retention-policy"
     },
     {
       "name": "Data Deletion Verification",
       "description": "Data deletion is verified and logged.",
       "category": "data-protection",
-      "tags": ["soc2", "disposal"]
+      "tags": [
+        "soc2",
+        "disposal"
+      ],
+      "id": "data-deletion-verification"
     }
   ]
 }

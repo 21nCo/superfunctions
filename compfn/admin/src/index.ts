@@ -44,10 +44,10 @@ export const compFnAdminResources = [
     icon: "compfn:frameworks",
     risk: "standard",
     idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
+    displayFields: ["id", "name", "version", "updatedAt"],
+    searchableFields: ["id", "name", "description", "version"],
+    filterableFields: ["id", "name", "version"],
+    sortableFields: ["createdAt", "updatedAt", "name", "version", "id"],
     sensitiveFields: [],
   },
   {
@@ -57,10 +57,10 @@ export const compFnAdminResources = [
     icon: "compfn:controls",
     risk: "standard",
     idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
+    displayFields: ["id", "name", "category", "updatedAt"],
+    searchableFields: ["id", "name", "description", "category"],
+    filterableFields: ["id", "category", "tags"],
+    sortableFields: ["createdAt", "updatedAt", "name", "category", "id"],
     sensitiveFields: [],
   },
   {
@@ -70,10 +70,10 @@ export const compFnAdminResources = [
     icon: "compfn:checks",
     risk: "standard",
     idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
+    displayFields: ["id", "name", "controlId", "adapterName", "updatedAt"],
+    searchableFields: ["id", "name", "controlId", "adapterName"],
+    filterableFields: ["id", "controlId", "adapterName"],
+    sortableFields: ["createdAt", "updatedAt", "name", "id"],
     sensitiveFields: [],
   },
   {
@@ -83,10 +83,10 @@ export const compFnAdminResources = [
     icon: "compfn:evidence",
     risk: "sensitive",
     idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
+    displayFields: ["id", "controlId", "type", "outcome", "timestamp"],
+    searchableFields: ["id", "controlId", "actorId", "type", "sourceId"],
+    filterableFields: ["id", "controlId", "frameworkId", "type", "since", "outcome", "actorId"],
+    sortableFields: ["createdAt", "timestamp", "type", "outcome", "id"],
     sensitiveFields: [
       "secret",
       "token",
@@ -193,13 +193,13 @@ export const compFnAdminResources = [
     label: "Reports",
     description: "Inspect and operate reports in CompFn.",
     icon: "compfn:reports",
-    risk: "standard",
+    risk: "sensitive",
     idField: "id",
-    displayFields: ["id", "name", "status", "updatedAt"],
-    searchableFields: ["id", "name", "status"],
-    filterableFields: ["status", "createdAt", "updatedAt"],
-    sortableFields: ["createdAt", "updatedAt", "name"],
-    sensitiveFields: [],
+    displayFields: ["exportedAt", "frameworkId"],
+    searchableFields: [],
+    filterableFields: [],
+    sortableFields: [],
+    sensitiveFields: ["value"],
   },
 ] as const satisfies readonly CompFnAdminResourceDefinition[];
 export const compFnAdminActions = [
@@ -582,6 +582,8 @@ export const compFnAdminCapability = defineAdminCapability({
 });
 
 export interface CompFnAdminListInput {
+  search?: string;
+  sort?: Array<{ field: string; direction: "asc" | "desc" }>;
   filter?: Record<string, unknown>;
   limit?: number;
   cursor?: string;

@@ -1,9 +1,8 @@
-import { loadConfig } from "../config.js";
+import { withConfig } from "../config.js";
 import { compFn } from "compfn";
 
 export async function runChecksCommand(options: { checkId?: string; config?: string }): Promise<void> {
-  try {
-    const config = await loadConfig(options.config);
+  return withConfig(options.config, async (config) => {
     const api = compFn(config);
 
     let checksToRun: string[] = [];
@@ -14,14 +13,15 @@ export async function runChecksCommand(options: { checkId?: string; config?: str
       const listResult = await api.checks.list();
       if (!listResult.ok) {
         console.error(`Error listing checks: ${listResult.error.message}`);
-        process.exit(1);
+        process.exitCode = 1;
+      return;
       }
       checksToRun = listResult.result.map((check) => check.id);
     }
 
     if (checksToRun.length === 0) {
       console.log("No checks to run.");
-      process.exit(0);
+      return;
     }
 
     let passCount = 0;
@@ -48,9 +48,6 @@ export async function runChecksCommand(options: { checkId?: string; config?: str
 
     const total = checksToRun.length;
     console.log(`Ran ${total} check${total !== 1 ? "s" : ""}: ${passCount} pass, ${failCount} fail${unknownCount > 0 ? `, ${unknownCount} unknown` : ""}`);
-    process.exit(0);
-  } catch (error) {
-    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
+    if (failCount > 0) process.exitCode = 1;
+  });
 }
