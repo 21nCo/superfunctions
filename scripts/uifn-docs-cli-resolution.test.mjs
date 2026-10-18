@@ -10,6 +10,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const guide = readFileSync(path.join(root, 'uifn/docs/generated/delivery.md'), 'utf8');
 const resolver = guide.split('\n').find((line) => line.startsWith('UIFN_CLI='));
 const invocation = guide.split('\n').find((line) => line.startsWith('node "$UIFN_CLI" add'));
+// The documented commands are POSIX shell snippets.
+const skip = process.platform === 'win32' ? 'documented commands require a POSIX shell' : false;
 const packageManifest = JSON.parse(readFileSync(path.join(root, 'uifn/registry/package.json'), 'utf8'));
 
 function withFixture(run) {
@@ -32,7 +34,7 @@ function installLayout(directory) {
 }
 
 for (const placement of ['local', 'hoisted']) {
-  test(`documented CLI command resolves a ${placement} installation`, () => withFixture((fixture) => {
+  test(`documented CLI command resolves a ${placement} installation`, { skip }, () => withFixture((fixture) => {
     const consumer = path.join(fixture, 'packages/app');
     mkdirSync(consumer, { recursive: true });
     installLayout(placement === 'local' ? consumer : fixture);
@@ -50,7 +52,7 @@ for (const placement of ['local', 'hoisted']) {
   }));
 }
 
-test('missing installation fails resolution without a download or global CLI', () => withFixture((fixture) => {
+test('missing installation fails resolution without a download or global CLI', { skip }, () => withFixture((fixture) => {
   const result = spawnSync('/bin/sh', ['-c', `${resolver} && ${invocation}`], { cwd: fixture, encoding: 'utf8' });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /MODULE_NOT_FOUND/);
