@@ -3,7 +3,7 @@
   "checkpoint_id": "01M580Z0TY4Z8W535F55PPFR3Z",
   "strategy": "manual-commit",
   "branch": "codex/flowfn-readiness-20261016",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "flowfn/typescript/README.md",
     "flowfn/typescript/scripts/workflow-cancel-worker.mjs",
@@ -20,6 +20,20 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 8523,
+    "cache_read_tokens": 602475,
+    "output_tokens": 2664,
+    "api_call_count": 4
+  }
 }
