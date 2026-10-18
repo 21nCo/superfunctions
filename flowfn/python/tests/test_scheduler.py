@@ -102,3 +102,26 @@ async def test_future_start_and_slow_callbacks_do_not_overlap():
     await asyncio.wait_for(done.wait(), 1)
     assert maximum == 1
     await scheduler.close()
+
+
+async def test_persistent_registration_validates_and_snapshots_payload():
+    from flowfn.adapters.memory import MemoryAdapter
+    scheduler=Scheduler(MemoryAdapter())
+    seen=[]
+    done=asyncio.Event()
+
+    async def callback(data):
+        seen.append(list(data))
+        data.append(99)
+        if len(seen)==2:
+            done.set()
+
+    with pytest.raises(TypeError):
+        scheduler.repeat('payload',5,callback,data=object())
+    payload=[1]
+    scheduler.repeat('payload',5,callback,data=payload,limit=2)
+    payload.append(2)
+    await scheduler.ready()
+    await asyncio.wait_for(done.wait(),1)
+    assert seen==[[1],[1]]
+    await scheduler.close()

@@ -92,6 +92,11 @@ class Scheduler:
             raise RuntimeError("Scheduler is closed")
         if not name or name in self._jobs:
             raise ValueError("Schedule name must be nonempty and unique")
+        signature = ""
+        if self._adapter is not None:
+            definition = json.loads(json.dumps(dict(definition,data=data,limit=limit),sort_keys=True,allow_nan=False))
+            signature = hashlib.sha256(json.dumps(definition,sort_keys=True).encode()).hexdigest()
+            data = definition['data']
         loop = asyncio.get_running_loop()
         job = ScheduledJob(name, next_run())
         event = asyncio.Event()
@@ -100,8 +105,6 @@ class Scheduler:
         if self._adapter is None:
             self._tasks[name] = loop.create_task(self._run(job, event, handler, next_run, data, limit))
         else:
-            definition = dict(definition, data=data, limit=limit)
-            signature = hashlib.sha256(json.dumps(definition,sort_keys=True,allow_nan=False).encode()).hexdigest()
             self._registrations[name] = loop.create_future()
             self._tasks[name] = loop.create_task(self._run_persistent(job,handler,next_run,data,limit,definition,signature))
         return replace(job)
@@ -213,7 +216,7 @@ class Scheduler:
                         delay = due-datetime.now(timezone.utc).timestamp()
                         if delay <= 0:
                             try:
-                                await handler(data)
+                                await handler(json.loads(json.dumps(data)))
                                 owner.state['last_error'] = None
                             except Exception as exc:
                                 owner.state['last_error'] = str(exc)
@@ -242,6 +245,7 @@ class Scheduler:
                 registration.set_exception(exc)
             else:
                 job.last_error = str(exc)
+                asyncio.get_running_loop().call_exception_handler({'message':'Persistent schedule stopped','exception':exc,'schedule':job.name})
         finally:
             if heartbeat is not None:
                 heartbeat.cancel()
