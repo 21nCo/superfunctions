@@ -1,5 +1,6 @@
 import { applyTransaction, Transaction } from "./transaction";
 import type {
+  ChangedRange,
   EditorCommand,
   EditorListener,
   EditorProjector,
@@ -14,6 +15,7 @@ import { createEditorState } from "./state";
 
 export interface EditorController {
   getState(): EditorState;
+  validateMarkdown(markdown: string): void;
   dispatch(transaction: Transaction): StateChange;
   subscribe(listener: EditorListener): () => void;
   can(command: string): boolean;
@@ -36,13 +38,41 @@ export interface CreateEditorInput {
   readonly sidecar?: MdfnSidecar;
 }
 
+export function smallestSourceChange(previous: string, next: string): { from: number; to: number; insert: string } | undefined {
+  if (previous === next) return undefined;
+  let from = 0;
+  const shared = Math.min(previous.length, next.length);
+  while (from < shared && previous.charCodeAt(from) === next.charCodeAt(from)) from += 1;
+  let previousTo = previous.length;
+  let nextTo = next.length;
+  while (previousTo > from && nextTo > from && previous.charCodeAt(previousTo - 1) === next.charCodeAt(nextTo - 1)) {
+    previousTo -= 1;
+    nextTo -= 1;
+  }
+  return { from, to: previousTo, insert: next.slice(from, nextTo) };
+}
+
+interface HistoryEntry {
+  readonly state: EditorState;
+  readonly changedRanges: readonly ChangedRange[];
+}
+
+function invertChangedRanges(ranges: readonly ChangedRange[]): readonly ChangedRange[] {
+  return Object.freeze([...ranges].reverse().map((range) => Object.freeze({
+    from: range.from,
+    to: range.from + range.insertedLength,
+    insertedLength: range.to - range.from,
+  })));
+}
+
 export function createEditor(input: CreateEditorInput): EditorController {
   const extensions = resolveExtensions(input.extensions ?? []);
   let state = createEditorState({ markdown: input.markdown, projector: input.projector, schemaHash: extensions.schemaHash, selection: input.selection, sidecar: input.sidecar });
   const listeners = new Set<EditorListener>();
-  const undoStack: EditorState[] = [];
-  const redoStack: EditorState[] = [];
+  const undoStack: HistoryEntry[] = [];
+  const redoStack: HistoryEntry[] = [];
   const historyLimit = Math.max(1, input.historyLimit ?? 100);
+  let savedRevision = { sourceHash: state.sourceHash, sidecar: JSON.stringify(state.sidecar) };
   let destroyed = false;
 
   const assertAlive = (): void => {
@@ -53,14 +83,15 @@ export function createEditor(input: CreateEditorInput): EditorController {
     for (const listener of [...listeners]) listener(change);
   };
 
-  const restore = (next: EditorState, source: string): boolean => {
+  const restore = (next: EditorState, source: string, changedRanges: readonly ChangedRange[]): boolean => {
     const previous = state;
-    state = Object.freeze({ ...next, version: previous.version + 1 });
+    const dirty = next.sourceHash !== savedRevision.sourceHash || JSON.stringify(next.sidecar) !== savedRevision.sidecar;
+    state = Object.freeze({ ...next, dirty, version: previous.version + 1 });
     notify({
       previous,
       current: state,
-      changedRanges: [{ from: 0, to: previous.markdown.length, insertedLength: state.markdown.length }],
-      documentChanged: true,
+      changedRanges,
+      documentChanged: previous.markdown !== state.markdown,
       selectionChanged: previous.selection !== state.selection,
       sidecarChanged: previous.sidecar !== state.sidecar,
       source,
@@ -75,14 +106,23 @@ export function createEditor(input: CreateEditorInput): EditorController {
       assertAlive();
       return state;
     },
+    validateMarkdown(markdown) {
+      assertAlive();
+      input.projector.parse(markdown);
+    },
     dispatch(transaction) {
       assertAlive();
       const change = applyTransaction(state, transaction, input.projector);
       if (change.current !== state) {
-        if ((change.documentChanged || change.sidecarChanged) && transaction.metadata.addToHistory !== false) {
-          undoStack.push(state);
-          if (undoStack.length > historyLimit) undoStack.shift();
-          redoStack.length = 0;
+        if (change.documentChanged || change.sidecarChanged) {
+          if (transaction.metadata.addToHistory !== false) {
+            undoStack.push({ state, changedRanges: invertChangedRanges(change.changedRanges) });
+            if (undoStack.length > historyLimit) undoStack.shift();
+            redoStack.length = 0;
+          } else {
+            undoStack.length = 0;
+            redoStack.length = 0;
+          }
         }
         state = change.current;
         notify(change);
@@ -121,20 +161,21 @@ export function createEditor(input: CreateEditorInput): EditorController {
       assertAlive();
       const previous = undoStack.pop();
       if (!previous) return false;
-      redoStack.push(state);
-      return restore(previous, "history:undo");
+      redoStack.push({ state, changedRanges: invertChangedRanges(previous.changedRanges) });
+      return restore(previous.state, "history:undo", previous.changedRanges);
     },
     redo() {
       assertAlive();
       const next = redoStack.pop();
       if (!next) return false;
-      undoStack.push(state);
-      return restore(next, "history:redo");
+      undoStack.push({ state, changedRanges: invertChangedRanges(next.changedRanges) });
+      return restore(next.state, "history:redo", next.changedRanges);
     },
     markSaved() {
       assertAlive();
       if (!state.dirty) return;
       const previous = state;
+      savedRevision = { sourceHash: state.sourceHash, sidecar: JSON.stringify(state.sidecar) };
       state = Object.freeze({ ...state, dirty: false, version: previous.version + 1 });
       notify({
         previous,
@@ -157,9 +198,20 @@ export function createEditor(input: CreateEditorInput): EditorController {
     },
   };
   const pluginCleanups: Array<() => void> = [];
-  for (const plugin of extensions.plugins) {
-    const cleanup = plugin.setup({ getState: controller.getState, dispatch: (transaction) => controller.dispatch(transaction as Transaction), subscribe: controller.subscribe });
-    if (cleanup) pluginCleanups.push(cleanup);
+  try {
+    for (const plugin of extensions.plugins) {
+      const cleanup = plugin.setup({ getState: controller.getState, dispatch: (transaction) => controller.dispatch(transaction as Transaction), subscribe: controller.subscribe });
+      if (cleanup) pluginCleanups.push(cleanup);
+    }
+  } catch (error) {
+    destroyed = true;
+    for (const cleanup of pluginCleanups.splice(0).reverse()) {
+      try { cleanup(); } catch { /* Preserve the plugin setup failure after best-effort unwind. */ }
+    }
+    listeners.clear();
+    undoStack.length = 0;
+    redoStack.length = 0;
+    throw error;
   }
   return controller;
 }

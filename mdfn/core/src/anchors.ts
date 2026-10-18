@@ -1,4 +1,5 @@
 import type { ChangedRange, MdfnSelection, MdfnSidecar, SidecarAnchor, TextSelection } from "./types";
+import { immutableValue } from "./immutable";
 
 function mapPosition(position: number, range: ChangedRange, affinity: "before" | "after"): number {
   const removed = range.to - range.from;
@@ -25,7 +26,7 @@ function mapTextSelection(selection: TextSelection, range: ChangedRange): TextSe
 export function mapSelection(selection: MdfnSelection, ranges: readonly ChangedRange[]): MdfnSelection {
   if (!selection || ranges.length === 0) return selection;
   if (selection.kind === "node") return null;
-  return ranges.reduce<TextSelection>((current, range) => mapTextSelection(current, range), selection);
+  return immutableValue(ranges.reduce<TextSelection>((current, range) => mapTextSelection(current, range), selection));
 }
 
 export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]): SidecarAnchor {
@@ -33,15 +34,23 @@ export function mapAnchor(anchor: SidecarAnchor, ranges: readonly ChangedRange[]
     const affinity = current.affinity ?? "after";
     const from = mapPosition(current.from, range, affinity === "before" ? "before" : "after");
     const to = mapPosition(current.to, range, affinity === "after" ? "after" : "before");
-    return { ...current, from: Math.min(from, to), to: Math.max(from, to) };
+    const start = Math.min(from, to);
+    const end = Math.max(from, to);
+    return start === current.from && end === current.to ? current : { ...current, from: start, to: end };
   }, anchor);
 }
 
 export function mapSidecar(sidecar: MdfnSidecar | undefined, ranges: readonly ChangedRange[]): MdfnSidecar | undefined {
   if (!sidecar || ranges.length === 0) return sidecar;
-  return {
-    ...sidecar,
-    comments: sidecar.comments?.map((thread) => ({ ...thread, anchor: mapAnchor(thread.anchor, ranges) })),
-    suggestions: sidecar.suggestions?.map((suggestion) => ({ ...suggestion, anchor: mapAnchor(suggestion.anchor, ranges) })),
+  let changed = false;
+  const mapEntry = <T extends { readonly anchor: SidecarAnchor }>(entry: T): T => {
+    const anchor = mapAnchor(entry.anchor, ranges);
+    if (anchor === entry.anchor) return entry;
+    changed = true;
+    return { ...entry, anchor };
   };
+  const comments = sidecar.comments?.map(mapEntry);
+  const suggestions = sidecar.suggestions?.map(mapEntry);
+  if (!changed) return immutableValue(sidecar);
+  return immutableValue({ ...sidecar, ...(comments ? { comments } : {}), ...(suggestions ? { suggestions } : {}) });
 }

@@ -69,5 +69,10 @@
     "initFunction": "memoryFn",
     "schemaVersion": 1,
     "namespace": "memoryfn"
+  },
+  "peerDependenciesMeta": {
+    "secfn": {
+      "optional": true
+    }
   }
 }
