@@ -1,0 +1,20 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57ZS9CYXZEC4WP1EYAYVHJH",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "flowfn/typescript/src/adapters/redis.test.ts",
+    "flowfn/typescript/src/adapters/redis.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
