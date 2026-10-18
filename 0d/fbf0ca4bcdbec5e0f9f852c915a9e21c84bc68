@@ -1,0 +1,48 @@
+flowfn/typescript/src/core/flow-fn.ts
+  s_e1c5fc1a65c0cf::t_e0bbee88cf7d2f 155
+  s_e1c5fc1a65c0cf::t_477788f96d7972 13,59,81,328
+flowfn/typescript/docs/workflow-ownership.md
+  s_e1c5fc1a65c0cf::t_039ce8d23cb7f4 42
+flowfn/typescript/src/storage/scheduler-contract.ts
+  s_e1c5fc1a65c0cf::t_b1fc46afe9bfcd 1-38
+flowfn/typescript/src/storage/workflow-crash-contract.ts
+  s_e1c5fc1a65c0cf::t_761d5ae031fe82 8,12-13,28-29,36-41,43-47
+flowfn/typescript/docs/durable-scheduling.md
+  s_e1c5fc1a65c0cf::t_039ce8d23cb7f4 1-46
+flowfn/typescript/src/core/scheduler.ts
+  s_e1c5fc1a65c0cf::t_039ce8d23cb7f4 3-4
+flowfn/typescript/scripts/scheduler-crash-worker.mjs
+  s_e1c5fc1a65c0cf::t_761d5ae031fe82 1-20
+flowfn/typescript/src/adapters/postgres/postgres.test.ts
+  s_e1c5fc1a65c0cf::t_b1fc46afe9bfcd 13,20
+  s_e1c5fc1a65c0cf::t_761d5ae031fe82 19
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_b1fc46afe9bfcd 6,20
+  s_e1c5fc1a65c0cf::t_761d5ae031fe82 19
+flowfn/typescript/src/storage/workflow-control.test.ts
+  s_e1c5fc1a65c0cf::t_b1fc46afe9bfcd 4-5
+flowfn/typescript/src/core/durable-scheduler.ts
+  s_e1c5fc1a65c0cf::t_e0bbee88cf7d2f 1-10,13-39,41-61,63-65,67-70,72-73,75-76,78-79,81-100,106-108,110-123,125-128,130,134-164,166-168
+  s_e1c5fc1a65c0cf::t_cc4990210b644e 12,62
+  s_e1c5fc1a65c0cf::t_039ce8d23cb7f4 40
+  s_e1c5fc1a65c0cf::t_59287fe3170696 71,101-105,124
+  s_e1c5fc1a65c0cf::t_63d2ae4bd692e2 11,66,74,77,80,109,129,131-133,165
+flowfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_7f8d3354da56d2 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0dfbf0ca4bcdbec5e0f9f852c915a9e21c84bc68",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
