@@ -1,21 +1,21 @@
 logfn/.conduct/readiness.md
-  s_e1c5fc1a65c0cf::t_94ceb662e268d5 74-80
+  s_e1c5fc1a65c0cf::t_850a4ae0661afc 74-80
 logfn/typescript/src/core/logger.ts
-  s_ce12272281eb3b::t_1fe1f7882710c8 34,100,209
+  s_ce12272281eb3b::t_c9313537b7867b 34,100,209
 logfn/typescript/src/http/express.ts
-  s_e1c5fc1a65c0cf::t_171577d098331e 9,25,29,35,37,55-62,64,77-88,92-93
+  s_e1c5fc1a65c0cf::t_aa14a148fa5ca6 9,25,29,35,37,55-62,64,77-88,92-93
 logfn/typescript/src/http/fastify.ts
-  s_e1c5fc1a65c0cf::t_8dad334cb518b4 21,39,41,45,53,71,79-86,109
+  s_e1c5fc1a65c0cf::t_4aa37fd8ef589b 21,39,41,45,53,71,79-86,109
 logfn/typescript/src/http/framework-contracts.test.ts
-  s_e1c5fc1a65c0cf::t_278b321d367d85 1,10,17-21,26,37,51,54-92
+  s_e1c5fc1a65c0cf::t_b44ba444c14011 1,10,17-21,26,37,51,54-92
 logfn/typescript/src/http/hono.ts
-  s_e1c5fc1a65c0cf::t_16edb38bb43401 9,27,31,43,45,63-70,72,92
+  s_e1c5fc1a65c0cf::t_7983d86ab09cc3 9,27,31,43,45,63-70,72,92
 logfn/typescript/src/http/middleware.ts
-  s_ce12272281eb3b::t_cded88f22b641c 179-188
+  s_ce12272281eb3b::t_6a6545816c0722 179-188
 logfn/typescript/src/index.ts
-  s_ce12272281eb3b::t_de07ab8ca68a0d 13
+  s_ce12272281eb3b::t_a2f1d2a6b71792 13
 logfn/typescript/src/types.ts
-  s_ce12272281eb3b::t_c4ea709d87521b 99-100,102-103,133-134
+  s_ce12272281eb3b::t_2bef189c1e2db6 99-100,102-103,133-134
 ---
 {
   "schema_version": "authorship/3.0.0",
