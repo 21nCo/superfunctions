@@ -1,0 +1,38 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57X2EYGWQ8HZK4SYZEEGZJT",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "flowfn/typescript/docs/durable-scheduling.md",
+    "flowfn/typescript/docs/workflow-ownership.md",
+    "flowfn/typescript/scripts/scheduler-crash-worker.mjs",
+    "flowfn/typescript/src/adapters/postgres/postgres.test.ts",
+    "flowfn/typescript/src/adapters/redis.test.ts",
+    "flowfn/typescript/src/core/durable-scheduler.ts",
+    "flowfn/typescript/src/core/flow-fn.ts",
+    "flowfn/typescript/src/core/scheduler.ts",
+    "flowfn/typescript/src/index.ts",
+    "flowfn/typescript/src/storage/scheduler-contract.ts",
+    "flowfn/typescript/src/storage/workflow-control.test.ts",
+    "flowfn/typescript/src/storage/workflow-crash-contract.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 26006,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 2764544,
+    "output_tokens": 10392,
+    "api_call_count": 23,
+    "subagent_tokens_complete": false
+  }
+}
