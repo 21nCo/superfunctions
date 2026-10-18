@@ -37,7 +37,7 @@ class MetricsCollector:
             success=success
         )
         self.metrics.append(entry)
-    
+
     def get_metrics(
         self,
         options: Optional[Dict[str, Any]] = None
@@ -58,7 +58,7 @@ class MetricsCollector:
                 byProvider=[],
                 cacheHitRate=None
             )
-        
+
         total_requests = len(filtered_metrics)
         successes = sum(1 for m in filtered_metrics if m.success)
         success_rate = (successes / total_requests * 100) if total_requests > 0 else 0.0
@@ -78,7 +78,7 @@ class MetricsCollector:
             byProvider=by_provider,
             cacheHitRate=None  # Set by BrowseFn main class
         )
-    
+
     def _filter_by_time_range(
         self,
         metrics: List[MetricEntry],
@@ -100,7 +100,7 @@ class MetricsCollector:
         cutoff_time = now - cutoff_ms
 
         return [m for m in metrics if m.timestamp >= cutoff_time]
-    
+
     def _calculate_by_provider(
         self,
         metrics: List[MetricEntry]
@@ -130,9 +130,9 @@ class MetricsCollector:
                 failures=failures,
                 avgResponseTime=avg_time
             ))
-        
+
         return result
-    
+
     def clear(self) -> None:
         """Clear all metrics"""
         self.metrics.clear()

@@ -17,7 +17,8 @@ try {
   execFileSync(
     process.platform === 'win32' ? 'npx.cmd' : 'npx',
     [
-      'jscpd',
+      '--yes',
+      'jscpd@5.4.1',
       'browsefn/typescript/src',
       'browsefn/python/browsefn',
       '--min-lines',

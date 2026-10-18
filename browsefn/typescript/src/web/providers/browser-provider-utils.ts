@@ -123,3 +123,51 @@ export async function isProviderModuleAvailable(
     return false;
   }
 }
+
+/** Keep the browser alive through extraction and preserve the primary failure. */
+export async function useBrowser<T>(browser: { close(): Promise<void> }, operation: () => Promise<T>): Promise<T> {
+  let failed = false;
+  try {
+    return await operation();
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    try { await browser.close(); } catch (error) { if (!failed) throw error; }
+  }
+}
+
+export function parseBrowserProxy(value?: string): { server: string; username?: string; password?: string } | undefined {
+  if (!value) return undefined;
+  const url = new URL(value.includes('://') ? value : `http://${value}`);
+  if (!['http:', 'https:', 'socks4:', 'socks5:'].includes(url.protocol) || !url.hostname) {
+    throw new Error('Unsupported browser proxy URL');
+  }
+  return {
+    server: `${url.protocol}//${url.host}`,
+    ...(url.username || url.password ? {
+      username: decodeURIComponent(url.username), password: decodeURIComponent(url.password),
+    } : {}),
+  };
+}
+
+/** Common public extraction operations for browser runtimes. */
+export abstract class BrowserProviderBase<Page extends BrowserPageLike> {
+  abstract name: string;
+  capabilities: ProviderCapabilities = BROWSER_PROVIDER_CAPABILITIES;
+
+  protected abstract withPage<T>(
+    url: string, options: GetPageOptions,
+    callback: (page: Page, resolvedUrl: string, startedAt: number) => Promise<T>
+  ): Promise<T>;
+
+  async getPage(url: string, options: GetPageOptions = {}): Promise<PageResult> {
+    return this.withPage(url, options, (page, sanitizedUrl, startedAt) =>
+      buildBrowserPageResult({ page, options, sanitizedUrl, provider: this.name, startedAt })
+    );
+  }
+
+  async scrape<T>(url: string, options: GetPageOptions & { script: (page: unknown) => Promise<T> | T }): Promise<T> {
+    return this.withPage(url, options, async page => options.script(page));
+  }
+}

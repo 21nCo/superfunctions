@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -11,9 +11,11 @@ from browsefn.images.browser import ImageBrowser
 from browsefn.images.providers.unsplash import UnsplashProvider
 
 
-JPEG_BYTES = bytes.fromhex(
-    "ffd8ffe000104a46494600010100000100010000ffc00011080001000103012200021101031101ffda0008010100003f00ffd9"
-)
+from io import BytesIO
+from PIL import Image
+_buffer = BytesIO()
+Image.new("RGB", (1, 1), "red").save(_buffer, format="JPEG")
+JPEG_BYTES = _buffer.getvalue()
 
 
 class FakeImageProvider:
@@ -40,18 +42,6 @@ class FakeImageProvider:
 
     async def is_available(self) -> bool:
         return True
-
-
-def _mock_httpx_client():
-    mock_response = MagicMock()
-    mock_response.content = JPEG_BYTES
-    mock_response.raise_for_status.return_value = None
-
-    mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value=mock_response)
-    mock_client.__aenter__.return_value = mock_client
-    mock_client.__aexit__.return_value = None
-    return mock_client
 
 
 @pytest.mark.asyncio
@@ -83,7 +73,7 @@ async def test_image_download_writes_real_file_and_metadata(tmp_path: Path):
     browser = ImageBrowser()
     browser.register_provider("unsplash", FakeImageProvider())
 
-    with patch("httpx.AsyncClient", return_value=_mock_httpx_client()):
+    with patch("browsefn.images.browser.fetch_image_bytes", new=AsyncMock(return_value=JPEG_BYTES)):
         result = await browser.download(
             "https://images.example.com/a.jpg",
             ImageDownloadOptions(
@@ -133,7 +123,7 @@ async def test_image_download_batch_preserves_order_and_reports_progress(tmp_pat
     browser.register_provider("unsplash", FakeImageProvider())
     progress_calls = []
 
-    with patch("httpx.AsyncClient", return_value=_mock_httpx_client()):
+    with patch("browsefn.images.browser.fetch_image_bytes", new=AsyncMock(return_value=JPEG_BYTES)):
         results = await browser.download_batch(
             [
                 "https://images.example.com/a.jpg",
@@ -155,7 +145,7 @@ async def test_image_download_batch_preserves_order_and_reports_progress(tmp_pat
 async def test_provider_download_writes_real_file(tmp_path: Path):
     provider = UnsplashProvider()
 
-    with patch("httpx.AsyncClient", return_value=_mock_httpx_client()):
+    with patch("browsefn.images.providers._shared.fetch_image_bytes", new=AsyncMock(return_value=JPEG_BYTES)):
         result = await provider.download(
             "https://images.example.com/a.jpg",
             ImageDownloadOptions(destination=str(tmp_path), filename="provider.jpg"),

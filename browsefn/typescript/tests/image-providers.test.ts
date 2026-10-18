@@ -95,6 +95,7 @@ describe('Image providers', () => {
     expect(result.perPage).toBe(20);
     expect(result.nextPage).toBe(3);
     expect(result.results[0].source.provider).toBe('pixabay');
+    expect(result.results[0].downloads).toEqual({ small: 'https://pixabay.example.com/preview.jpg', medium: 'https://pixabay.example.com/web.jpg', large: 'https://pixabay.example.com/large.jpg', original: undefined });
   });
 
   it('maps Pexels pagination and provider ids canonically', async () => {

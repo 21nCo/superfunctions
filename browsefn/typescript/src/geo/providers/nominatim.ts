@@ -24,6 +24,19 @@ interface NominatimSearchResult {
   address?: Record<string, string>;
 }
 
+/** Spherical-cap rectangles split at the antimeridian. */
+export function radiusViewboxes(lat: number, lng: number, radius: number): number[][] {
+  if (![lat, lng, radius].every(Number.isFinite) || Math.abs(lat) > 90 || Math.abs(lng) > 180 || radius < 0) throw new RangeError('Invalid center or radius');
+  const angle = Math.min(radius / 6371000, Math.PI), latitude = lat * Math.PI / 180, degrees = 180 / Math.PI;
+  const south = Math.max(-90, (latitude-angle)*degrees), north = Math.min(90, (latitude+angle)*degrees);
+  if (south <= -90 || north >= 90) return [[-180, south, 180, north]];
+  const offset = Math.asin(Math.min(1, Math.sin(angle)/Math.cos(latitude)))*degrees;
+  const west = lng-offset, east = lng+offset;
+  if (west < -180) return [[west+360, south, 180, north], [-180, south, east, north]];
+  if (east > 180) return [[west, south, 180, north], [-180, south, east-360, north]];
+  return [[west, south, east, north]];
+}
+
 export class NominatimProvider implements GeoProvider {
   name = 'nominatim';
 
@@ -64,7 +77,21 @@ export class NominatimProvider implements GeoProvider {
     address: string,
     options: GeocodeOptions = {}
   ): Promise<ReverseGeocodeResult[]> {
-    const results = await this.fetchSearch(address, options.limit);
+    const bounds = options.bounds;
+    const boxes = bounds
+      ? bounds.sw.lng > bounds.ne.lng
+        ? [[bounds.sw.lng, bounds.sw.lat, 180, bounds.ne.lat], [-180, bounds.sw.lat, bounds.ne.lng, bounds.ne.lat]]
+        : [[bounds.sw.lng, bounds.sw.lat, bounds.ne.lng, bounds.ne.lat]]
+      : [undefined];
+    const results: NominatimSearchResult[] = [];
+    const seen = new Set<string>();
+    for (const box of boxes) {
+      for (const result of await this.fetchSearch(address, options.limit, box, options.components)) {
+        const identity = JSON.stringify([result.place_id, result.lat, result.lon]);
+        if (!seen.has(identity)) { seen.add(identity); results.push(result); }
+      }
+    }
+    results.splice(options.limit ?? 5);
     return results.map((result) => ({
       location: {
         lat: parseFloat(result.lat),
@@ -77,7 +104,17 @@ export class NominatimProvider implements GeoProvider {
   }
 
   async search(options: GeoSearchOptions): Promise<GeoPlace[]> {
-    const results = await this.fetchSearch(options.query, options.limit);
+    const boxes = options.center && options.radius !== undefined
+      ? radiusViewboxes(options.center.lat, options.center.lng, options.radius) : [undefined];
+    const results: NominatimSearchResult[] = [];
+    const seen = new Set<string>();
+    for (const box of boxes) {
+      for (const result of await this.fetchSearch(options.query, options.limit ?? 20, box)) {
+        const identity = JSON.stringify([result.place_id, result.lat, result.lon]);
+        if (!seen.has(identity)) { seen.add(identity); results.push(result); }
+      }
+    }
+    results.splice(options.limit ?? 20);
     return results.map((result) => ({
       id: result.place_id?.toString() || '',
       name:
@@ -112,7 +149,9 @@ export class NominatimProvider implements GeoProvider {
 
   private async fetchSearch(
     query: string,
-    limit = 5
+    limit = 5,
+    box?: number[],
+    components?: GeocodeOptions['components']
   ): Promise<NominatimSearchResult[]> {
     const endpoint = this.config.endpoint || 'https://nominatim.openstreetmap.org';
     const params = new URLSearchParams({
@@ -121,6 +160,16 @@ export class NominatimProvider implements GeoProvider {
       addressdetails: '1',
       limit: String(limit),
     });
+
+    if (components?.country) params.set('countrycodes', components.country);
+    if (components?.locality || components?.postalCode) {
+      // Structured address components cannot be combined with Nominatim's q.
+      params.delete('q');
+      params.set('street', query);
+      if (components.locality) params.set('city', components.locality);
+      if (components.postalCode) params.set('postalcode', components.postalCode);
+    }
+    if (box) { params.set('bounded', '1'); params.set('viewbox', box.join(',')); }
 
     const response = await fetch(`${endpoint}/search?${params}`, {
       headers: { 'User-Agent': this.config.userAgent },

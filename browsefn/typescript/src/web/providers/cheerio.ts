@@ -3,13 +3,14 @@
  */
 
 import * as cheerio from 'cheerio';
+import { ProxyAgent, fetch as proxyFetch } from 'undici';
 import type { WebProvider, GetPageOptions, PageResult, ProviderCapabilities } from '../../core/types.js';
 import { extractMetadata, extractLinks, extractImages, applySelectors, htmlToText, htmlToMarkdown } from '../../utils/html-utils.js';
 import { sanitizeUrl } from '../../utils/validation.js';
 
 export class CheerioProvider implements WebProvider {
   name = 'cheerio';
-  
+
   capabilities: ProviderCapabilities = {
     formats: ['html', 'markdown', 'text', 'json'],
     javascript: false,
@@ -17,6 +18,7 @@ export class CheerioProvider implements WebProvider {
     cookies: false,
     headers: true,
     selectors: true,
+    proxy: true,
     scriptExecution: false
   };
 
@@ -25,31 +27,31 @@ export class CheerioProvider implements WebProvider {
   async getPage(url: string, options: GetPageOptions = {}): Promise<PageResult> {
     const startTime = Date.now();
     const sanitizedUrl = sanitizeUrl(url);
-    
-    // Fetch HTML
-    const response = await fetch(sanitizedUrl, {
-      headers: options.headers,
-      signal: AbortSignal.timeout(options.timeout || this.config.timeout || 10000)
-    });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
+    const agent = options.proxy ? new ProxyAgent(options.proxy) : undefined;
+    let html: string, resolvedUrl: string;
+    try {
+      const requestOptions = { headers: options.headers, signal: AbortSignal.timeout(options.timeout || this.config.timeout || 10000) };
+      const response = agent
+        ? await proxyFetch(sanitizedUrl, { ...requestOptions, dispatcher: agent })
+        : await fetch(sanitizedUrl, requestOptions);
+      if (!response.ok) { await response.body?.cancel(); throw new Error(`HTTP ${response.status}: ${response.statusText}`); }
+      resolvedUrl = response.url || sanitizedUrl;
+      html = await response.text();
+    } finally { await agent?.close(); }
 
-    let html = await response.text();
-    
     // Apply selectors
     if (options.selectors) {
       html = applySelectors(html, options.selectors);
     }
-    
+
     // Extract metadata
-    const metadata = extractMetadata(html, sanitizedUrl);
-    
+    const metadata = extractMetadata(html, resolvedUrl);
+
     // Convert to requested format
     let content = html;
     const format = options.format || 'html';
-    
+
     if (format === 'markdown') {
       content = htmlToMarkdown(html);
     } else if (format === 'text') {
@@ -59,18 +61,18 @@ export class CheerioProvider implements WebProvider {
       const jsonData = {
         title: metadata.title,
         body: $('body').text().trim(),
-        links: extractLinks(html, sanitizedUrl),
-        images: extractImages(html, sanitizedUrl)
+        links: extractLinks(html, resolvedUrl),
+        images: extractImages(html, resolvedUrl)
       };
       content = JSON.stringify(jsonData, null, 2);
     }
-    
+
     // Extract links and images if needed
-    const links = options.includeLinks ? extractLinks(html, sanitizedUrl) : undefined;
-    const images = options.includeImages ? extractImages(html, sanitizedUrl) : undefined;
-    
+    const links = options.includeLinks ? extractLinks(html, resolvedUrl) : undefined;
+    const images = options.includeImages ? extractImages(html, resolvedUrl) : undefined;
+
     return {
-      url: sanitizedUrl,
+      url: resolvedUrl,
       content,
       metadata,
       links,

@@ -90,3 +90,21 @@ async def test_provider_manager_lists_available_providers_only():
     manager = ProviderManager(providers)
 
     assert await manager.list_available() == ["p1", "p3"]
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('policy,allowed', [(None, True), ([], False), (['TIMEOUT'], True), (['RATE_LIMIT'], False)])
+async def test_fallback_policy_matches_canonical_and_legacy_codes(policy, allowed):
+    manager = ProviderManager({'a': MockProvider('a'), 'b': MockProvider('b')}, 'a', ['b'], policy)
+    calls = []
+    async def execute(provider, name):
+        calls.append(name)
+        if name == 'a':
+            raise BrowseFnError('UPSTREAM_TIMEOUT', 'timeout', provider=name)
+        return 'ok'
+    if allowed:
+        assert await manager.execute_with_fallback('a', execute) == 'ok'
+        assert calls == ['a', 'b']
+    else:
+        with pytest.raises(BrowseFnError):
+            await manager.execute_with_fallback('a', execute)
+        assert calls == ['a']

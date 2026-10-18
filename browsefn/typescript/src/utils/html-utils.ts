@@ -3,6 +3,7 @@
  */
 
 import * as cheerio from 'cheerio';
+import TurndownService from 'turndown';
 import type { PageMetadata } from '../core/types.js';
 
 /**
@@ -10,51 +11,21 @@ import type { PageMetadata } from '../core/types.js';
  */
 export function htmlToText(html: string): string {
   const $ = cheerio.load(html);
-  
+
   // Remove script and style tags
   $('script, style, noscript').remove();
-  
+
   // Get text content
   return $('body').text().trim().replace(/\s+/g, ' ');
 }
 
-/**
- * Convert HTML to markdown (basic implementation)
- */
+/** Preserve document order, nested lists, links, emphasis and fenced code. */
 export function htmlToMarkdown(html: string): string {
-  const $ = cheerio.load(html);
-  
-  // Remove script and style tags
-  $('script, style, noscript').remove();
-  
-  let markdown = '';
-  
-  // Process headings
-  for (let i = 1; i <= 6; i++) {
-    $(`h${i}`).each((_, el) => {
-      const text = $(el).text().trim();
-      markdown += `${'#'.repeat(i)} ${text}\n\n`;
-    });
-  }
-  
-  // Process paragraphs
-  $('p').each((_, el) => {
-    const text = $(el).text().trim();
-    if (text) {
-      markdown += `${text}\n\n`;
-    }
-  });
-  
-  // Process links
-  $('a').each((_, el) => {
-    const href = $(el).attr('href');
-    const text = $(el).text().trim();
-    if (href && text) {
-      markdown += `[${text}](${href}) `;
-    }
-  });
-  
-  return markdown.trim();
+  const converter = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
+  converter.remove(['script', 'style', 'noscript']);
+  // Preserve tables as HTML rather than silently discarding their structure.
+  converter.keep(['table']);
+  return converter.turndown(html);
 }
 
 /**
@@ -62,9 +33,9 @@ export function htmlToMarkdown(html: string): string {
  */
 export function extractMetadata(html: string, url: string): PageMetadata {
   const $ = cheerio.load(html);
-  
+
   const metadata: PageMetadata = { url };
-  
+
   // Basic metadata
   metadata.title = $('title').text().trim() || $('meta[property="og:title"]').attr('content');
   metadata.description = $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content');
@@ -75,20 +46,20 @@ export function extractMetadata(html: string, url: string): PageMetadata {
   metadata.siteName = $('meta[property="og:site_name"]').attr('content');
   metadata.locale = $('meta[property="og:locale"]').attr('content') || $('html').attr('lang');
   metadata.type = $('meta[property="og:type"]').attr('content');
-  
+
   // Published date
   const publishedStr = $('meta[property="article:published_time"]').attr('content');
   if (publishedStr) {
     metadata.published = new Date(publishedStr);
   }
-  
+
   // Open Graph
   const ogTitle = $('meta[property="og:title"]').attr('content');
   const ogDescription = $('meta[property="og:description"]').attr('content');
   const ogImage = $('meta[property="og:image"]').attr('content');
   const ogType = $('meta[property="og:type"]').attr('content');
   const ogUrl = $('meta[property="og:url"]').attr('content');
-  
+
   if (ogTitle || ogDescription || ogImage || ogType || ogUrl) {
     metadata.openGraph = {
       title: ogTitle,
@@ -98,14 +69,14 @@ export function extractMetadata(html: string, url: string): PageMetadata {
       url: ogUrl
     };
   }
-  
+
   // Twitter Card
   const twitterCard = $('meta[name="twitter:card"]').attr('content');
   const twitterSite = $('meta[name="twitter:site"]').attr('content');
   const twitterTitle = $('meta[name="twitter:title"]').attr('content');
   const twitterDescription = $('meta[name="twitter:description"]').attr('content');
   const twitterImage = $('meta[name="twitter:image"]').attr('content');
-  
+
   if (twitterCard || twitterSite || twitterTitle || twitterDescription || twitterImage) {
     metadata.twitter = {
       card: twitterCard,
@@ -115,7 +86,7 @@ export function extractMetadata(html: string, url: string): PageMetadata {
       image: twitterImage
     };
   }
-  
+
   // JSON-LD
   const jsonLdScripts = $('script[type="application/ld+json"]');
   const jsonLd: any[] = [];
@@ -130,7 +101,7 @@ export function extractMetadata(html: string, url: string): PageMetadata {
   if (jsonLd.length > 0) {
     metadata.jsonLd = jsonLd;
   }
-  
+
   return metadata;
 }
 
@@ -140,7 +111,7 @@ export function extractMetadata(html: string, url: string): PageMetadata {
 export function extractLinks(html: string, baseUrl: string): string[] {
   const $ = cheerio.load(html);
   const links: string[] = [];
-  
+
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
     if (href) {
@@ -152,7 +123,7 @@ export function extractLinks(html: string, baseUrl: string): string[] {
       }
     }
   });
-  
+
   return Array.from(new Set(links));
 }
 
@@ -162,7 +133,7 @@ export function extractLinks(html: string, baseUrl: string): string[] {
 export function extractImages(html: string, baseUrl: string): string[] {
   const $ = cheerio.load(html);
   const images: string[] = [];
-  
+
   $('img[src]').each((_, el) => {
     const src = $(el).attr('src');
     if (src) {
@@ -174,7 +145,7 @@ export function extractImages(html: string, baseUrl: string): string[] {
       }
     }
   });
-  
+
   return Array.from(new Set(images));
 }
 
@@ -186,24 +157,24 @@ export function applySelectors(
   selectors?: { include?: string[]; exclude?: string[] }
 ): string {
   if (!selectors) return html;
-  
+
   const $ = cheerio.load(html);
-  
+
   // Apply exclude selectors
   if (selectors.exclude) {
     selectors.exclude.forEach(selector => {
       $(selector).remove();
     });
   }
-  
+
   // Apply include selectors
   if (selectors.include && selectors.include.length > 0) {
     const includedHtml = selectors.include
-      .map(selector => $(selector).html())
+      .flatMap(selector => $(selector).toArray().map(element => $.html(element)))
       .filter(Boolean)
       .join('\n');
     return includedHtml;
   }
-  
+
   return $.html();
 }

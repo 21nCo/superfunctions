@@ -4,23 +4,25 @@
 
 import type {
   GetPageOptions,
-  ProviderCapabilities,
   WebProvider,
 } from '../../core/types.js';
 import { sanitizeUrl } from '../../utils/validation.js';
 import {
-  BROWSER_PROVIDER_CAPABILITIES,
-  buildBrowserPageResult,
+  BrowserProviderBase,
   isProviderModuleAvailable,
+  useBrowser,
+  parseBrowserProxy,
 } from './browser-provider-utils.js';
 
 type PuppeteerPage = {
+  authenticate(credentials: { username: string; password: string }): Promise<void>;
   setExtraHTTPHeaders(headers: Record<string, string>): Promise<void>;
   setCookie(...cookies: NonNullable<GetPageOptions['cookies']>): Promise<void>;
   setViewport(viewport: { width: number; height: number; isMobile?: boolean }): Promise<void>;
   goto(url: string, options: { waitUntil: string; timeout: number }): Promise<unknown>;
   setJavaScriptEnabled(enabled: boolean): Promise<void>;
   content(): Promise<string>;
+  url(): string;
   screenshot(options: {
     fullPage?: boolean;
     type?: 'png' | 'jpeg';
@@ -42,10 +44,8 @@ type PuppeteerModule = {
   }): Promise<PuppeteerBrowser>;
 };
 
-export class PuppeteerProvider implements WebProvider {
+export class PuppeteerProvider extends BrowserProviderBase<PuppeteerPage> implements WebProvider {
   name = 'puppeteer';
-
-  capabilities: ProviderCapabilities = BROWSER_PROVIDER_CAPABILITIES;
 
   private puppeteer?: PuppeteerModule;
 
@@ -56,32 +56,13 @@ export class PuppeteerProvider implements WebProvider {
       args?: string[];
       timeout?: number;
     } = {}
-  ) {}
-
-  async getPage(url: string, options: GetPageOptions = {}) {
-    return this.withPage(url, options, (page, sanitizedUrl, startedAt) =>
-      buildBrowserPageResult({
-        page,
-        options,
-        sanitizedUrl,
-        provider: this.name,
-        startedAt,
-      })
-    );
-  }
-
-  async scrape<T>(
-    url: string,
-    options: GetPageOptions & { script: (page: unknown) => Promise<T> | T }
-  ): Promise<T> {
-    return this.withPage(url, options, async (page) => options.script(page));
-  }
+  ) { super(); }
 
   async isAvailable(): Promise<boolean> {
     return isProviderModuleAvailable(() => this.loadPuppeteer());
   }
 
-  private async withPage<T>(
+  protected async withPage<T>(
     url: string,
     options: GetPageOptions,
     callback: (page: PuppeteerPage, sanitizedUrl: string, startedAt: number) => Promise<T>
@@ -90,14 +71,19 @@ export class PuppeteerProvider implements WebProvider {
     const startedAt = Date.now();
     const sanitizedUrl = sanitizeUrl(url);
 
+    const proxy = parseBrowserProxy(options.proxy);
     const browser = await puppeteer.launch({
       headless: this.config.headless ?? true,
       executablePath: this.config.executablePath,
-      args: this.config.args || ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: [...(this.config.args || []), ...(proxy ? [`--proxy-server=${proxy.server}`] : [])],
     });
 
-    try {
+    return useBrowser(browser, async () => {
       const page = await browser.newPage();
+
+      if (proxy?.username !== undefined) {
+        await page.authenticate({ username: proxy.username, password: proxy.password ?? '' });
+      }
 
       if (options.headers) {
         await page.setExtraHTTPHeaders(options.headers);
@@ -111,6 +97,10 @@ export class PuppeteerProvider implements WebProvider {
         await page.setViewport({ width: 375, height: 667, isMobile: true });
       }
 
+      if (options.javascript === false) {
+        await page.setJavaScriptEnabled(false);
+      }
+
       const waitUntil =
         options.waitFor === 'networkidle' ? 'networkidle2' : options.waitFor || 'load';
       await page.goto(sanitizedUrl, {
@@ -118,14 +108,8 @@ export class PuppeteerProvider implements WebProvider {
         timeout: options.timeout || this.config.timeout || 30_000,
       });
 
-      if (options.javascript === false) {
-        await page.setJavaScriptEnabled(false);
-      }
-
-      return callback(page, sanitizedUrl, startedAt);
-    } finally {
-      await browser.close();
-    }
+      return await callback(page, page.url(), startedAt);
+    });
   }
   private async loadPuppeteer(): Promise<PuppeteerModule> {
     if (!this.puppeteer) {

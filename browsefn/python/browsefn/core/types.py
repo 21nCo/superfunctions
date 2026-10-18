@@ -50,6 +50,11 @@ class RateLimitConfig(BaseModel):
     window: int  # milliseconds
 
 class CacheConfig(BaseModel):
+    name: str = "browsefn"
+    directory: Optional[str] = None
+    database: Any = None
+    backend: Any = None
+    key_generator: Any = Field(None, alias="keyGenerator")
     enabled: bool
     ttl: Optional[int] = None
     storage: Optional[str] = None
@@ -82,11 +87,11 @@ class ProviderConfig(BaseModel):
 
 class RetryConfig(BaseModel):
     enabled: bool
-    max_attempts: int = Field(alias="maxAttempts")
-    delay: int
+    max_attempts: int = Field(alias="maxAttempts", ge=1, strict=True)
+    delay: int = Field(ge=0, strict=True)
     backoff: Literal['linear', 'exponential']
     retry_on: Optional[List[int]] = Field(None, alias="retryOn")
-    # on_retry omitted as it's a function
+    on_retry: Any = Field(None, alias="onRetry", exclude=True)
 
 # ===== Events =====
 
@@ -133,6 +138,7 @@ class RateLimitStatus(BaseModel):
 # ===== Web Scraping Types =====
 
 class WebConfig(BaseModel):
+    user_agents: Optional[List[str]] = Field(None, alias="userAgents")
     default_provider: Optional[str] = Field(None, alias="defaultProvider")
     providers: Optional[Dict[str, ProviderConfig]] = None
     fallback_chain: Optional[List[str]] = Field(None, alias="fallbackChain")
@@ -154,8 +160,8 @@ class CacheOptions(BaseModel):
     key: Optional[str] = None
 
 class RetryOptions(BaseModel):
-    count: int
-    delay: int
+    count: int = Field(ge=0, strict=True)
+    delay: int = Field(ge=0, strict=True)
 
 class Cookie(BaseModel):
     name: str
@@ -331,6 +337,9 @@ class Watermark(BaseModel):
     opacity: Optional[float] = None
 
 class ImageDownloadOptions(BaseModel):
+    allow_private_hosts: bool = Field(False, alias="allowPrivateHosts")
+    max_redirects: int = Field(5, alias="maxRedirects", ge=0, strict=True)
+    max_payload_bytes: int = Field(20 * 1024 * 1024, alias="maxPayloadBytes", gt=0, strict=True)
     provider: Optional[str] = None
     destination: Optional[str] = None
     filename: Optional[str] = None
@@ -369,13 +378,13 @@ class DownloadResult(BaseModel):
 @runtime_checkable
 class ImageProvider(Protocol):
     name: str
-    
+
     async def search(self, query: str, options: ImageSearchOptions) -> ImageSearchResult:
         ...
-    
+
     async def download(self, url: str, options: ImageDownloadOptions) -> DownloadResult:
         ...
-    
+
     async def is_available(self) -> bool:
         ...
 
@@ -475,10 +484,10 @@ class GeoProvider(Protocol):
 
     async def geocode(self, address: str, options: GeocodeOptions) -> List[ReverseGeocodeResult]:
         ...
-        
+
     async def search(self, options: GeoSearchOptions) -> List[GeoPlace]:
         ...
-        
+
     async def get_place_details(self, place_id: str, fields: Optional[List[str]] = None) -> GeoPlace:
         ...
 

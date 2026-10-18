@@ -17,6 +17,7 @@ from browsefn.core.types import (
     GeoSearchOptions,
     GetPageOptions,
     ImageDownloadOptions,
+    ImageResult,
     ImageSearchOptions,
     Metrics,
     MetadataOptions,
@@ -81,7 +82,7 @@ class _WebProxy(_ServiceProxy):
         self._get_service().register_provider(name, provider)
 
     async def get_page(self, url: str, options: Optional[Any] = None) -> Any:
-        options_model = _coerce_model(GetPageOptions, options)
+        options_model = self._get_service().prepare_options(_coerce_model(GetPageOptions, options))
         provider = self._resolve_operation_provider(options_model.provider, "web")
         cache_enabled = self._owner._cache_enabled(options_model.cache)
         return await self._owner._execute_operation(
@@ -90,7 +91,7 @@ class _WebProxy(_ServiceProxy):
             cache_enabled=cache_enabled,
             cache_method="GET",
             cache_url=url,
-            cache_options={"provider": provider, "format": options_model.format},
+            cache_options={**options_model.model_dump(), "provider": provider},
             fn=lambda: self._get_service().get_page(url, options_model),
         )
 
@@ -125,11 +126,11 @@ class _ImagesProxy(_ServiceProxy):
             cache_enabled=self._owner._cache_enabled(options_model.cache),
             cache_method="GET",
             cache_url=f"image-search:{query}",
-            cache_options={"provider": provider, "query": query},
+            cache_options={**options_model.model_dump(), "provider": provider, "query": query},
             fn=lambda: self._get_service().search(query, options_model),
         )
 
-    async def download(self, url: str, options: Optional[Any] = None) -> Any:
+    async def download(self, url: str | ImageResult, options: Optional[Any] = None) -> Any:
         options_model = _coerce_model(ImageDownloadOptions, options)
         provider = self._resolve_operation_provider(options_model.provider, "images")
         return await self._owner._execute_operation(
@@ -137,7 +138,7 @@ class _ImagesProxy(_ServiceProxy):
             provider=provider,
             cache_enabled=False,
             cache_method="GET",
-            cache_url=url,
+            cache_url=url if isinstance(url, str) else url.url,
             cache_options={"provider": provider, "filename": options_model.filename},
             fn=lambda: self._get_service().download(url, options_model),
         )
@@ -173,7 +174,7 @@ class _GeoProxy(_ServiceProxy):
             cache_enabled=self._owner._cache_enabled(options_model.cache),
             cache_method="GET",
             cache_url=address,
-            cache_options={"provider": provider, "limit": options_model.limit},
+            cache_options={**options_model.model_dump(), "provider": provider},
             fn=lambda: self._get_service().geocode(address, options_model),
         )
 
@@ -186,7 +187,7 @@ class _GeoProxy(_ServiceProxy):
             cache_enabled=self._owner._cache_enabled(options_model.cache),
             cache_method="GET",
             cache_url=options_model.query,
-            cache_options={"provider": provider, "limit": options_model.limit},
+            cache_options={**options_model.model_dump(), "provider": provider},
             fn=lambda: self._get_service().search(options_model),
         )
 
@@ -236,6 +237,9 @@ class BrowseFn:
             self.retry_middleware = RetryMiddleware(retry_config)
 
         self.logger = Logger()
+        for service_config in (self.config.web, self.config.images, self.config.geo):
+            if service_config:
+                self.logger.register_secrets(service_config.model_dump())
         self.metrics_collector = MetricsCollector()
         self.event_handlers: Dict[BrowseFnEvent, Set[Callable[[Any], None]]] = {}
 
@@ -332,66 +336,71 @@ class BrowseFn:
         fn: Callable[[], Awaitable[T]],
     ) -> T:
         timestamp = perf_counter() * 1000
-        self.logger.info("request", {"operation": operation, "provider": provider, "url": cache_url})
-        self.emit("request", EventData(timestamp=timestamp, provider=provider, url=cache_url))
+        release_secrets = self.logger.register_secrets(cache_options)
+        try:
+            self.logger.info("request", {"operation": operation, "provider": provider, "url": cache_url})
+            self.emit("request", EventData(timestamp=timestamp, provider=provider, url=cache_url))
 
-        if cache_enabled and self.cache_manager:
-            cached = await self.cache_manager.get(cache_method, cache_url, cache_options)
-            if cached is not None:
-                self.logger.info("cache.hit", {"operation": operation, "provider": provider, "url": cache_url})
-                self.emit("cache.hit", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url))
-                self.metrics_collector.record_request(provider, 0.0, True)
-                self.logger.info("response", {"operation": operation, "provider": provider, "cached": True})
-                self.emit("response", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url, duration=0.0))
-                return cached
+            if cache_enabled and self.cache_manager:
+                cached = await self.cache_manager.get(cache_method, cache_url, cache_options)
+                if cached is not None:
+                    self.logger.info("cache.hit", {"operation": operation, "provider": provider, "url": cache_url})
+                    self.emit("cache.hit", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url))
+                    self.metrics_collector.record_request(provider, 0.0, True)
+                    self.logger.info("response", {"operation": operation, "provider": provider, "cached": True})
+                    self.emit("response", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url, duration=0.0))
+                    return cached
 
-            self.logger.info("cache.miss", {"operation": operation, "provider": provider, "url": cache_url})
-            self.emit("cache.miss", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url))
+                self.logger.info("cache.miss", {"operation": operation, "provider": provider, "url": cache_url})
+                self.emit("cache.miss", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url))
 
-        if self.rate_limiter:
+            if self.rate_limiter:
+                try:
+                    await self.rate_limiter.enforce(provider)
+                except BrowseFnError as error:
+                    self.logger.warn("rateLimit", {"operation": operation, "provider": provider, "error": error.message})
+                    self.emit("rateLimit", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url))
+                    raise
+
+            start = perf_counter()
             try:
-                await self.rate_limiter.enforce(provider)
-            except BrowseFnError as error:
-                self.logger.warn("rateLimit", {"operation": operation, "provider": provider, "error": error.message})
-                self.emit("rateLimit", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url))
+                per_call_retry = operation == "web.get_page" and cache_options and cache_options.get("retry") is not None
+                if self.retry_middleware and not per_call_retry:
+                    result = await self.retry_middleware.execute(fn, {"provider": provider, "operation": operation})
+                else:
+                    result = await fn()
+            except Exception as error:
+                duration = (perf_counter() - start) * 1000
+                self.metrics_collector.record_request(provider, duration, False)
+                error_message = error.message if isinstance(error, BrowseFnError) else str(error)
+                self.logger.error(
+                    "error",
+                    {"operation": operation, "provider": provider, "error": error_message, "durationMs": duration},
+                )
+                self.emit("error", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url, duration=duration))
                 raise
 
-        start = perf_counter()
-        try:
-            if self.retry_middleware:
-                result = await self.retry_middleware.execute(fn, {"provider": provider, "operation": operation})
-            else:
-                result = await fn()
-        except Exception as error:
             duration = (perf_counter() - start) * 1000
-            self.metrics_collector.record_request(provider, duration, False)
-            error_message = error.message if isinstance(error, BrowseFnError) else str(error)
-            self.logger.error(
-                "error",
-                {"operation": operation, "provider": provider, "error": error_message, "durationMs": duration},
+            if cache_enabled and self.cache_manager:
+                await self.cache_manager.set(cache_method, cache_url, result, cache_options)
+
+            self.metrics_collector.record_request(provider, duration, True)
+            self.logger.info(
+                "response",
+                {"operation": operation, "provider": getattr(result, "provider", provider), "durationMs": duration},
             )
-            self.emit("error", EventData(timestamp=perf_counter() * 1000, provider=provider, url=cache_url, duration=duration))
-            raise
-
-        duration = (perf_counter() - start) * 1000
-        if cache_enabled and self.cache_manager:
-            await self.cache_manager.set(cache_method, cache_url, result, cache_options)
-
-        self.metrics_collector.record_request(provider, duration, True)
-        self.logger.info(
-            "response",
-            {"operation": operation, "provider": getattr(result, "provider", provider), "durationMs": duration},
-        )
-        self.emit(
-            "response",
-            EventData(
-                timestamp=perf_counter() * 1000,
-                provider=getattr(result, "provider", provider),
-                url=cache_url,
-                duration=duration,
-            ),
-        )
-        return result
+            self.emit(
+                "response",
+                EventData(
+                    timestamp=perf_counter() * 1000,
+                    provider=getattr(result, "provider", provider),
+                    url=cache_url,
+                    duration=duration,
+                ),
+            )
+            return result
+        finally:
+            release_secrets()
 
     def on(self, event: BrowseFnEvent, handler: Callable[[Any], None]) -> None:
         if event not in self.event_handlers:

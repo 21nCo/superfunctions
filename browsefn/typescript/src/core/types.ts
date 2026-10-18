@@ -35,6 +35,11 @@ export interface RateLimitConfig {
 }
 
 export interface CacheConfig {
+  /** Persistent-cache identity; separate identities never share entries. */
+  name?: string;
+  directory?: string;
+  database?: import("@superfunctions/db").Adapter;
+  indexedDB?: IDBFactory;
   enabled: boolean;
   ttl?: number;
   defaultTTL?: number;
@@ -54,7 +59,7 @@ export interface RetryConfig {
 
 // ===== Events =====
 
-export type BrowseFnEvent = 
+export type BrowseFnEvent =
   | 'request'
   | 'response'
   | 'error'
@@ -119,6 +124,8 @@ export interface RateLimitStatus {
 // ===== Web Scraping Types =====
 
 export interface WebConfig {
+  /** Round-robin target User-Agent values; explicit request headers take precedence. */
+  userAgents?: string[];
   defaultProvider?: string;
   providers?: Record<string, ProviderConfig>;
   fallbackChain?: string[];

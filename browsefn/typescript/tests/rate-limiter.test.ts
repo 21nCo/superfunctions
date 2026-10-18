@@ -107,3 +107,30 @@ describe("RateLimiter", () => {
     expect(status.retryAfterMs).toBeGreaterThan(0);
   });
 });
+
+it('enforces an aggregate quota across providers and their individual limits', async () => {
+  const limiter = new RateLimiter({ requests: 2, window: 10_000 }, { a: { requests: 5, window: 10_000 }, b: { requests: 5, window: 10_000 } });
+  const results = await Promise.all(['a', 'b', 'a', 'b', 'c'].map(provider => limiter.checkLimit(provider)));
+  expect(results.filter(Boolean)).toHaveLength(2);
+  expect(limiter.getStatus('never-used').remaining).toBe(0);
+});
+
+it('does not charge the global window for a provider denial', async () => {
+  const limiter = new RateLimiter({ requests: 3, window: 10_000 }, { a: { requests: 1, window: 10_000 } });
+  expect(await limiter.checkLimit('a')).toBe(true);
+  expect(await limiter.checkLimit('a')).toBe(false);
+  expect(await limiter.checkLimit('b')).toBe(true);
+  expect(await limiter.checkLimit('b')).toBe(true);
+  expect(await limiter.checkLimit('b')).toBe(false);
+  await limiter.reset('a');
+  expect(await limiter.checkLimit('a')).toBe(false);
+});
+
+it('allows a provider window to expire independently of the global quota', async () => {
+  const limiter = new RateLimiter({ requests: 2, window: 10_000 }, { a: { requests: 1, window: 30 } });
+  expect(await limiter.checkLimit('a')).toBe(true);
+  expect(await limiter.checkLimit('a')).toBe(false);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(await limiter.checkLimit('a')).toBe(true);
+  expect(await limiter.checkLimit('b')).toBe(false);
+});

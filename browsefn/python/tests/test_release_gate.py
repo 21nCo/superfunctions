@@ -21,7 +21,7 @@ def test_release_gate_dry_run_lists_the_full_repo_root_command_set():
 
     assert payload["ok"] is True
     assert payload["dryRun"] is True
-    assert payload["releaseGate"] == "browsefn/.conduct/release-gate.md"
+    assert payload["releaseGate"] == "browsefn/README.md"
     assert payload["commands"][:5] == [
         "npm --prefix browsefn/typescript run build",
         "npm --prefix browsefn/typescript run typecheck",
@@ -33,12 +33,12 @@ def test_release_gate_dry_run_lists_the_full_repo_root_command_set():
 
 
 def test_release_gate_document_matches_the_operator_command_list():
-    release_gate = (ROOT / "browsefn" / ".conduct" / "release-gate.md").read_text()
+    release_gate = (ROOT / "browsefn" / "README.md").read_text()
 
     assert "npm --prefix browsefn/typescript run build" in release_gate
     assert "npm --prefix browsefn/typescript run typecheck" in release_gate
     assert "npm --prefix browsefn/typescript run test -- --run" in release_gate
     assert "python3 -m compileall browsefn/python/browsefn browsefn/python/tests" in release_gate
     assert "python3 -m pytest browsefn/python/tests -q" in release_gate
-    assert "npx jscpd browsefn/typescript/src browsefn/python/browsefn --min-lines 5 --min-tokens 50 --reporters console" in release_gate
+    assert "npx --yes jscpd@5.4.1 browsefn/typescript/src browsefn/python/browsefn --min-lines 5 --min-tokens 50 --reporters console" in release_gate
     assert "node browsefn/scripts/verify-release.mjs" in release_gate

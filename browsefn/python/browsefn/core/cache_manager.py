@@ -1,6 +1,11 @@
 """Cache manager for storing and retrieving responses."""
 
+from browsefn.middleware.logging import Logger
+
 import json
+import hashlib
+import math
+import copy
 from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -21,7 +26,7 @@ from browsefn.utils.url_utils import normalize_url
 class CacheEntry(BaseModel):
     data: Any
     timestamp: float
-    ttl: int
+    ttl: float
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
@@ -46,6 +51,21 @@ class CacheManager:
                 f"Unsupported cache storage: {self.storage}",
             )
 
+        ttl = config.ttl if config.ttl is not None else 3600000
+        if not math.isfinite(ttl) or ttl <= 0:
+            raise BrowseFnError("INVALID_ARGUMENT", "Cache ttl must be greater than 0.")
+        if config.max_size is not None and (isinstance(config.max_size, bool) or config.max_size <= 0):
+            raise BrowseFnError("INVALID_ARGUMENT", "Cache maxSize must be a positive integer.")
+        if not config.name.strip():
+            raise BrowseFnError("INVALID_ARGUMENT", "Cache name must not be empty.")
+        self._store = None
+        from browsefn.core.cache_storage import FileCacheStore, DatabaseCacheStore, BridgeCacheStore
+        if config.enabled and self.storage == 'file':
+            self._store = FileCacheStore(config)
+        elif config.enabled and self.storage == 'database':
+            self._store = DatabaseCacheStore(config)
+        elif config.enabled and self.storage == 'indexeddb':
+            self._store = BridgeCacheStore(config)
         self.cache: "OrderedDict[str, CacheEntry]" = OrderedDict()
         self.hits = 0
         self.misses = 0
@@ -78,91 +98,90 @@ class CacheManager:
         normalized_url = normalize_url(url)
         normalized_options = self._normalize_options(options)
         options_str = json.dumps(normalized_options, sort_keys=True, default=str) if options else ""
-        return f"{method}:{normalized_url}:{options_str}"
+        return f"{method}:{normalized_url}:{hashlib.sha256(options_str.encode()).hexdigest()}"
+
+    async def _run(self, operation):
+        if self._store is not None:
+            return await self._store.run(operation)
+        return operation(self.cache)
+
+    def _prune(self, entries):
+        now = datetime.now().timestamp() * 1000
+        for key, entry in list(entries.items()):
+            if now - entry.timestamp >= entry.ttl:
+                del entries[key]
 
     async def get(self, method: str, url: str, options: Any = None) -> Optional[Any]:
-        """Get cached value if it exists and has not expired."""
-        if not self.config.enabled:
+        if not self.config.enabled or Logger.has_url_credentials(url):
             return None
-
         key = self._generate_key(method, url, options)
-        entry = self.cache.get(key)
-
-        if not entry:
+        def operation(entries):
+            self._prune(entries)
+            entry = entries.get(key)
+            if entry is not None:
+                entries.move_to_end(key)
+            return entry
+        entry = await self._run(operation)
+        if entry is None:
             self.misses += 1
             return None
-
-        now = datetime.now().timestamp() * 1000  # milliseconds
-        if now - entry.timestamp > entry.ttl:
-            del self.cache[key]
-            self.misses += 1
-            return None
-
-        self.cache.move_to_end(key)
         self.hits += 1
-        return entry.data
+        return copy.deepcopy(entry.data)
 
     async def set(self, method: str, url: str, data: Any, options: Any = None) -> None:
-        """Set cached value with TTL."""
-        if not self.config.enabled:
+        if not self.config.enabled or Logger.has_url_credentials(url):
             return
-
         key = self._generate_key(method, url, options)
-        ttl = self.config.ttl or 3600000  # 1 hour default in milliseconds
-
-        if self.config.max_size and len(self.cache) >= self.config.max_size:
-            self.cache.popitem(last=False)
-
-        self.cache[key] = CacheEntry(
-            data=data,
-            timestamp=datetime.now().timestamp() * 1000,
-            ttl=ttl
-        )
-        self.cache.move_to_end(key)
+        data = copy.deepcopy(data)
+        ttl = self.config.ttl if self.config.ttl is not None else 3600000
+        if isinstance(options, dict) and isinstance(options.get('cache'), dict):
+            ttl = options['cache'].get('ttl', ttl)
+        if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or ttl <= 0:
+            raise BrowseFnError("INVALID_ARGUMENT", "Cache ttl must be greater than 0.")
+        def operation(entries):
+            self._prune(entries)
+            entries.pop(key, None)
+            while self.config.max_size and len(entries) >= self.config.max_size:
+                entries.popitem(last=False)
+            entries[key] = CacheEntry(data=data, timestamp=datetime.now().timestamp() * 1000, ttl=ttl)
+        await self._run(operation)
 
     async def invalidate(self, url_or_pattern: str) -> None:
-        """Invalidate cache entries matching URL or pattern."""
-        keys_to_delete = [
-            key for key in self.cache.keys()
-            if url_or_pattern in key
-        ]
-        
-        for key in keys_to_delete:
-            del self.cache[key]
-    
+        def operation(entries):
+            for key in list(entries):
+                if url_or_pattern in key:
+                    del entries[key]
+        await self._run(operation)
+
     async def clear(self) -> None:
-        """Clear all cache entries and stats."""
-        self.cache.clear()
-        self.hits = 0
-        self.misses = 0
+        await self._run(lambda entries: entries.clear())
+        self.hits = self.misses = 0
 
     async def get_stats(self) -> CacheStats:
-        """Get cache statistics."""
+        def operation(entries):
+            self._prune(entries)
+            return len(entries)
+        size = await self._run(operation)
         total = self.hits + self.misses
-        hit_rate = (self.hits / total * 100) if total > 0 else 0.0
-
-        return CacheStats(
-            hits=self.hits,
-            misses=self.misses,
-            hit_rate=hit_rate,
-            size=len(self.cache)
-        )
+        return CacheStats(hits=self.hits, misses=self.misses, hit_rate=self.hits / total * 100 if total else 0, size=size)
 
     def has(self, method: str, url: str, options: Any = None) -> bool:
-        """Check if a normalized key exists and is still valid."""
         if not self.config.enabled:
             return False
+        if self._store is not None:
+            raise RuntimeError("Persistent cache presence requires await cache.has_async(...)")
+        self._prune(self.cache)
+        return self._generate_key(method, url, options) in self.cache
 
-        key = self._generate_key(method, url, options)
-        entry = self.cache.get(key)
-
-        if not entry:
+    async def has_async(self, method: str, url: str, options: Any = None) -> bool:
+        if not self.config.enabled:
             return False
+        def operation(entries):
+            self._prune(entries)
+            return self._generate_key(method, url, options) in entries
+        return await self._run(operation)
 
-        now = datetime.now().timestamp() * 1000
-        if now - entry.timestamp > entry.ttl:
-            del self.cache[key]
-            return False
-
-        self.cache.move_to_end(key)
-        return True
+    @staticmethod
+    def database_schema():
+        from browsefn.core.cache_storage import database_schema
+        return database_schema()

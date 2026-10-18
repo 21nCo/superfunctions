@@ -64,10 +64,10 @@ export class PixabayProvider implements ImageProvider {
       license: 'free',
       tags: hit.tags.split(', '),
       downloads: {
-        small: hit.webformatURL,
-        medium: hit.largeImageURL,
+        small: hit.previewURL,
+        medium: hit.webformatURL,
         large: hit.largeImageURL,
-        original: hit.largeImageURL
+        original: hit.imageURL
       }
     }));
 

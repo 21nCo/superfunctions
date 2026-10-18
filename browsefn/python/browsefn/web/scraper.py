@@ -13,6 +13,7 @@ from browsefn.core.provider_registry import (
 )
 from browsefn.core.types import (
     GetPageOptions,
+    RetryConfig,
     MetadataOptions,
     MetadataResult,
     PageMetadata,
@@ -20,6 +21,7 @@ from browsefn.core.types import (
     WebConfig,
     WebProvider,
 )
+from browsefn.middleware.retry import RetryMiddleware
 from browsefn.utils.validation import validate_page_options, validate_url
 
 
@@ -30,11 +32,15 @@ class WebScraper:
 
     def __init__(self, config: Optional[WebConfig] = None):
         self.config = config or WebConfig()
+        self._user_agent_index = 0
+        if any(not value.strip() or "\r" in value or "\n" in value for value in self.config.user_agents or []):
+            raise BrowseFnError("INVALID_ARGUMENT", "userAgents must contain non-empty valid header values.")
         self.providers: Dict[str, WebProvider] = {}
         self.provider_manager = ProviderManager(
             self.providers,
             self._normalize_provider_id(self.config.default_provider),
             [self._normalize_provider_id(name) for name in (self.config.fallback_chain or []) if self._normalize_provider_id(name)],
+            self.config.fallback_on_errors,
         )
 
     def _normalize_provider_id(self, name: Optional[str]) -> Optional[str]:
@@ -80,9 +86,17 @@ class WebScraper:
         if not self.provider_manager.default_provider:
             self.provider_manager.default_provider = canonical_name
 
+    def prepare_options(self, options: GetPageOptions) -> GetPageOptions:
+        agents = self.config.user_agents or []
+        if not agents or any(key.lower() == "user-agent" for key in options.headers or {}):
+            return options
+        value = agents[self._user_agent_index % len(agents)]
+        self._user_agent_index += 1
+        return options.model_copy(update={"headers": {**(options.headers or {}), "User-Agent": value}})
+
     async def get_page(self, url: str, options: Optional[GetPageOptions] = None) -> PageResult:
         validate_url(url)
-        options = options or GetPageOptions()
+        options = self.prepare_options(options or GetPageOptions())
         validate_page_options(options)
         requested_provider = self._normalize_provider_id(options.provider)
 
@@ -92,7 +106,11 @@ class WebScraper:
             result.provider = provider_name
             return result
 
-        return await self.provider_manager.execute_with_fallback(requested_provider, executor)
+        async def execute():
+            return await self.provider_manager.execute_with_fallback(requested_provider, executor)
+        if options.retry:
+            return await RetryMiddleware(RetryConfig(enabled=True, maxAttempts=options.retry.count + 1, delay=options.retry.delay, backoff="linear")).execute(execute)
+        return await execute()
 
     async def get_multiple_metadata(
         self,

@@ -48,7 +48,7 @@ if (dryRun) {
       dryRun: true,
       readyForNucleus: false,
       commands: commandList,
-      releaseGate: 'browsefn/.conduct/release-gate.md',
+      releaseGate: 'browsefn/README.md',
     })
   );
   process.exit(0);
@@ -79,7 +79,7 @@ console.log(
     ok: true,
     readyForNucleus: true,
     commands: commandList,
-    releaseGate: 'browsefn/.conduct/release-gate.md',
+    releaseGate: 'browsefn/README.md',
     summary: 'BrowseFn release gate passed and is ready for external consumption in nucleus.',
   })
 );

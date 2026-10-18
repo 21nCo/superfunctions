@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-import httpx
 
 from browsefn.core.types import (
     DownloadResult,
@@ -13,7 +12,9 @@ from browsefn.core.types import (
     ImageResult,
     ImageSearchResult,
 )
-from browsefn.images._download_utils import resolve_download_path
+from browsefn.images._transform import transform_image
+from browsefn.images._selection import ImageSelection
+from browsefn.images._download_utils import resolve_download_path, fetch_image_bytes, write_image
 
 
 def passes_dimension_filters(
@@ -55,8 +56,11 @@ def build_search_result(
     )
 
 
-async def download_image(url: str, options: ImageDownloadOptions) -> DownloadResult:
+async def download_image(url: str | ImageResult, options: ImageDownloadOptions) -> DownloadResult:
     try:
+        from browsefn.utils.validation import validate_download_options
+        validate_download_options(options)
+        url, options = ImageSelection().resolve(url, options)
         path = resolve_download_path(url, options, default_name="image.jpg")
         if path.exists() and options.overwrite is False:
             return DownloadResult(
@@ -64,19 +68,9 @@ async def download_image(url: str, options: ImageDownloadOptions) -> DownloadRes
                 error="Destination file already exists and overwrite is disabled.",
             )
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            path.write_bytes(response.content)
-            content_type = ""
-            if hasattr(response, "headers") and response.headers:
-                content_type = response.headers.get("content-type", "")
-            format_hint = path.suffix.lstrip(".") or content_type.split("/", 1)[-1].split(";", 1)[0] or None
-            return DownloadResult(
-                success=True,
-                path=str(path),
-                size=len(response.content),
-                format=format_hint,
-            )
+        content = await fetch_image_bytes(url, options)
+        content, metadata = await transform_image(content, options)
+        write_image(path, content, options.overwrite)
+        return DownloadResult(success=True, path=str(path), size=len(content), format=metadata.format, width=metadata.width, height=metadata.height, metadata=metadata if options.metadata else None)
     except Exception as error:
         return DownloadResult(success=False, error=str(error))

@@ -2,7 +2,7 @@
  * Retry middleware.
  */
 
-import { BrowseFnError, isBrowseFnError } from '../core/errors.js';
+import { BrowseFnError, isBrowseFnError, getUpstreamStatus } from '../core/errors.js';
 import type { RetryConfig } from '../core/types.js';
 
 interface RetryExecutionContext {
@@ -18,7 +18,9 @@ interface RetryExecutionContext {
 }
 
 export class RetryMiddleware {
-  constructor(private readonly config: RetryConfig) {}
+  constructor(private readonly config: RetryConfig) {
+    if (!Number.isInteger(config.maxAttempts) || config.maxAttempts < 1 || !Number.isFinite(config.delay) || config.delay < 0) throw new BrowseFnError({ code: 'INVALID_ARGUMENT', message: 'Retry requires positive maxAttempts and a non-negative finite delay.' });
+  }
 
   async execute<T>(
     fn: () => Promise<T>,
@@ -70,6 +72,8 @@ export class RetryMiddleware {
   }
 
   private getErrorStatusCode(error: Error): number | undefined {
+    const upstream = getUpstreamStatus(error);
+    if (upstream !== undefined) return upstream;
     if (isBrowseFnError(error)) {
       if (error.code === 'RATE_LIMITED') {
         return 429;
@@ -82,17 +86,7 @@ export class RetryMiddleware {
       }
     }
 
-    const candidate = (error as Error & { statusCode?: unknown; status?: unknown; code?: unknown });
-    if (typeof candidate.statusCode === 'number') {
-      return candidate.statusCode;
-    }
-    if (typeof candidate.status === 'number') {
-      return candidate.status;
-    }
-    if (typeof candidate.code === 'number') {
-      return candidate.code;
-    }
-    return undefined;
+    return getUpstreamStatus(error);
   }
 
   private calculateDelay(attempt: number, error: Error): number {

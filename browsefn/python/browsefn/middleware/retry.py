@@ -3,7 +3,7 @@
 import asyncio
 from typing import Callable, Awaitable, TypeVar, Optional, Dict, Any
 
-from browsefn.core.errors import BrowseFnError
+from browsefn.core.errors import BrowseFnError, upstream_status
 from browsefn.core.types import RetryConfig
 
 T = TypeVar('T')
@@ -39,7 +39,12 @@ class RetryMiddleware:
                 if attempt == max_attempts:
                     break
 
-                delay = self._calculate_delay(attempt)
+                if self.config.on_retry:
+                    import inspect
+                    callback_result = self.config.on_retry(attempt, error)
+                    if inspect.isawaitable(callback_result):
+                        await callback_result
+                delay = max(self._calculate_delay(attempt), getattr(error, "retry_after_ms", None) or 0)
                 await asyncio.sleep(delay / 1000)  # Convert ms to seconds
 
         raise self._finalize_error(last_error, context)
@@ -55,15 +60,10 @@ class RetryMiddleware:
         return error_code in self.config.retry_on
 
     def _retry_code(self, error: Exception) -> Optional[int]:
-        status_code = getattr(error, "status_code", None)
-        if isinstance(status_code, int):
-            return status_code
-
-        code = getattr(error, "code", None)
-        if isinstance(code, int):
-            return code
-
-        return None
+        status = upstream_status(error)
+        if status is not None:
+            return status
+        return {"RATE_LIMITED": 429, "UPSTREAM_TIMEOUT": 504, "UPSTREAM_NOT_FOUND": 404}.get(getattr(error, "code", None))
 
     def _finalize_error(
         self,
