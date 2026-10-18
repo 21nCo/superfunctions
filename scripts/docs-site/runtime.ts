@@ -401,11 +401,14 @@ function collectionDirectory(
   collection: DocsCollection,
   config: DocsConfig,
 ): string {
-  if (collection === "docs") return config.content.docsDir ?? "content/docs";
-  if (collection === "pages") return config.content.pagesDir ?? "content/pages";
-  if (collection === "blog") return config.content.blogDir ?? "content/blog";
-  if (collection === "api") return config.content.apiDir ?? "content/api";
-  return config.content.assetsDir ?? "static";
+  const directory = collection === "docs" ? config.content.docsDir ?? "content/docs"
+    : collection === "pages" ? config.content.pagesDir ?? "content/pages"
+    : collection === "blog" ? config.content.blogDir ?? "content/blog"
+    : collection === "api" ? config.content.apiDir ?? "content/api"
+    : config.content.assetsDir ?? "static";
+  // Collection directories are relative to content.root, as in the filesystem provider.
+  const root = normalizeProviderPath(config.content.root ?? ".").replace(/^\.\/?/, "").replace(/\/+$/, "");
+  return normalizeProviderPath(root ? `${root}/${directory}` : directory);
 }
 
 function createMarkdownEntry(

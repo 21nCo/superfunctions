@@ -7,8 +7,8 @@ description: Use FileFn documentation as assistant context without assuming unim
 
 FileFn provides generated documentation context at its configured publication URLs:
 
-- [Short index](https://filefn.com/docs/llms.txt)
-- [Full context](https://filefn.com/docs/llms-full.txt)
+- [Short index](/docs/llms.txt)
+- [Full context](/docs/llms-full.txt)
 
 See [LLM artifacts](./llms-txt) for generation and local verification. A successful local build does not establish live hosting.
 

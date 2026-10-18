@@ -39,12 +39,13 @@ export default defineBackgroundHandler({
 Port handler:
 
 ```ts
-import { defineBackgroundPortHandler } from "@extfn/core";
+import { defineBackgroundPortHandler, type RuntimePort } from "@extfn/core";
 
 export default defineBackgroundPortHandler({
   channel: "demo-stream",
   async onMessage(_runtime, payload, _envelope, port) {
-    await port.send({ echo: payload });
+    // Handler parameters are untyped; narrow the port before sending.
+    await (port as RuntimePort).send({ echo: payload });
   },
 });
 ```
@@ -105,13 +106,13 @@ Mount modes:
 
 ## Svelte content mounts
 
-The Svelte adapter stays thin. Mount from the content entrypoint and keep DOM policy in your extension config.
+The Svelte adapter stays thin: the content entrypoint finds its anchors and mounts the component. Use the same selector that the matching `contentScripts` entry declares.
 
 ```ts
 import { mountSvelteContent } from "@extfn/svelte";
 import Badge from "./Badge.svelte";
 
-for (const anchor of document.querySelectorAll("[data-extfn-anchor]")) {
+for (const anchor of document.querySelectorAll("[data-extfn-twitter-anchor]")) {
   const host = document.createElement("div");
   anchor.append(host);
   mountSvelteContent(Badge, host, {

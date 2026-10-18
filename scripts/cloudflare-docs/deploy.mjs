@@ -46,6 +46,10 @@ for (const productId of products) {
 
   if (!skipBuild) {
     buildDocs(product, docsDir, environment);
+    if (product.kind === "sveltekit-cloudflare" && !dryRun) {
+      // Exercise the generated SvelteKit server before uploading it.
+      run(process.execPath, [path.join(repoRoot, "scripts/docs-site/check-built-site.mjs")], { cwd: docsDir });
+    }
   }
 
   if (product.kind === "next-static") {

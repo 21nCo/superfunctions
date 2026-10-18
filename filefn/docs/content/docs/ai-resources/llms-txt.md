@@ -25,8 +25,9 @@ npm exec -- turbo run build --filter=@filefn/docs
 After prerequisites are built, from `filefn/docs`:
 
 ```sh
-npm run generate:llms
 npm run check:llms
+# Regenerate only after an intentional content change:
+npm run generate:llms
 ```
 
 The generator loads the consumer's published DocsFn configuration and filesystem provider, builds a manifest, and writes `static/llms.txt` and `static/llms-full.txt`. The FileFn generator selects non-draft `docs:` pages and builds both text artifacts using the configured canonical URL; Blog posts are not included. `check:llms` compares content without writing.

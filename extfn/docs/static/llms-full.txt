@@ -22,7 +22,7 @@ npm exec extfn scan -- --config extfn.config.ts --format sarif
 npm exec extfn package -- --config extfn.config.ts --target firefox-mv3
 ```
 
-Global output flags are `--json`, `--quiet`, `--verbose`, and `--color`. Scan is strict by default: error-severity findings cause a nonzero exit. `--no-strict` preserves findings while allowing success; `package --no-scan` skips scanning. Use these opt-outs deliberately and review the reports before distribution. The [full CLI reference](/docs/reference/cli) lists every option and output path.
+Global output flags are `--json`, `--quiet`, `--verbose`, and `--color`. Scan is strict by default: error-severity findings cause a nonzero exit. `--no-strict` preserves findings while allowing success; `package --no-scan` skips scanning. Use these opt-outs deliberately and review the reports before distribution. The [full CLI reference](/docs/reference/cli) lists every option and its default output path.
 
 ---
 
@@ -114,7 +114,7 @@ Development emits an unpacked extension at `dist/<target>-dev`; production build
 > Code-first browser extension development for Chromium and Firefox.
 
 
-ExtFn provides code-first configuration, runtime helpers, a Vite build pipeline, a CLI, and a thin Svelte adapter for browser extensions. It supports Chromium MV3 and Firefox MV3 targets, background service workers, popup and options pages, Chromium side panels, and multiple anchored content modules.
+ExtFn provides code-first configuration, runtime helpers, a Vite build pipeline, a CLI, and a thin Svelte adapter for browser extensions. It supports Chromium MV3 and Firefox MV3 targets, Chromium background service workers, Firefox background scripts, popup and options pages, Chromium side panels, and multiple anchored content modules.
 
 The [getting-started guide](/docs/getting-started) walks through a config and the CLI. Read [runtime](/docs/runtime) for browser APIs and messaging, [content and background](/docs/content-and-background) for handler discovery and mounts, and [scan and package](/docs/scan-and-package) before distributing an extension.
 
@@ -271,6 +271,7 @@ Options:
 Behavior:
 
 - Always rebuilds the selected targets before scanning or creating archives, even when build output already exists.
+- Writes archives to `dist/packages` unless `--out-dir` or `EXTFN_PACKAGE_OUT_DIR` is set.
 - Runs `scan` by default before emitting archives.
 - Chromium archives use `.zip`.
 - Firefox archives use `.xpi`.
@@ -513,12 +514,13 @@ export default defineBackgroundHandler({
 Port handler:
 
 ```ts
-import { defineBackgroundPortHandler } from "@extfn/core";
+import { defineBackgroundPortHandler, type RuntimePort } from "@extfn/core";
 
 export default defineBackgroundPortHandler({
   channel: "demo-stream",
   async onMessage(_runtime, payload, _envelope, port) {
-    await port.send({ echo: payload });
+    // Handler parameters are untyped; narrow the port before sending.
+    await (port as RuntimePort).send({ echo: payload });
   },
 });
 ```
@@ -579,13 +581,13 @@ Mount modes:
 
 ## Svelte content mounts
 
-The Svelte adapter stays thin. Mount from the content entrypoint and keep DOM policy in your extension config.
+The Svelte adapter stays thin: the content entrypoint finds its anchors and mounts the component. Use the same selector that the matching `contentScripts` entry declares.
 
 ```ts
 import { mountSvelteContent } from "@extfn/svelte";
 import Badge from "./Badge.svelte";
 
-for (const anchor of document.querySelectorAll("[data-extfn-anchor]")) {
+for (const anchor of document.querySelectorAll("[data-extfn-twitter-anchor]")) {
   const host = document.createElement("div");
   anchor.append(host);
   mountSvelteContent(Badge, host, {
@@ -761,7 +763,7 @@ const tabs = await runtime.browser.call("tabs.query", { active: true, currentWin
 
 Use `runtime.browser.call(...)` for Promise-first calls, `runtime.browser.namespace(...)` for a specific API namespace, and `runtime.browser.raw` only when raw behavior is needed. Branch on `runtime.capabilities` for side panel, offscreen, and scripting support. The runtime does not grant browser permissions; declare and justify them in extension config and generated manifests.
 
-Use `runtime.rpc`, `runtime.events`, and `runtime.ports` to communicate across extension contexts. Define background handlers in the service worker and avoid putting domain authority in a content script. The [source runtime exports](https://github.com/21nCo/super-functions/blob/dev/extfn/core/src/index.ts) and [messaging example](https://github.com/21nCo/super-functions/tree/dev/extfn/examples/vanilla-messaging-demo) show the concrete APIs.
+Use `runtime.rpc`, `runtime.events`, and `runtime.ports` for coordination within the current runtime. They do not currently bridge separate extension contexts; use the browser messaging APIs for cross-context communication. Define background handlers in the service worker and avoid putting domain authority in a content script. The [source runtime exports](https://github.com/21nCo/super-functions/blob/dev/extfn/core/src/index.ts) and [messaging example](https://github.com/21nCo/super-functions/tree/dev/extfn/examples/vanilla-messaging-demo) show the concrete APIs.
 
 ---
 
