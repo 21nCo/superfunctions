@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57X9BVZCPX3J4JFCG4XZ3KM",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "flowfn/typescript/docs/workflow-ownership.md",
+    "flowfn/typescript/scripts/workflow-crash-worker.mjs",
+    "flowfn/typescript/src/storage/workflow-crash-contract.ts",
+    "flowfn/typescript/src/workflow/types.ts",
+    "flowfn/typescript/src/workflow/workflow.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 17902,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 2616576,
+    "output_tokens": 8895,
+    "api_call_count": 21
+  }
+}
