@@ -97,6 +97,9 @@ export interface Sink {
  * Logger configuration options
  */
 export interface LoggerOptions {
+  /** Receives pipeline and sink failures; callback failures never escape logging. */
+  onError?: ErrorHandler;
+
   /** Logger/component name (required) */
   name: string;
 

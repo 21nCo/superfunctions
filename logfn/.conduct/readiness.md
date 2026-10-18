@@ -47,3 +47,7 @@ TypeScript parent/child loggers share async sink tracking; flush joins delivery 
 ## Server preset and signal shutdown
 
 The server preset now installs its HTTP sink when url is supplied. Signal handlers no longer enqueue a success event after final flush, and failed delivery exits1 instead of0.179coretests/typecheck/build pass. New tests cover actualHTTPpresetdelivery, both signals, repeated-handler suppression, listenercleanup and failureexitstatus. Separate real Node subprocess probes send actual SIGTERM/SIGINT and verify both queued events reach a file before exit0. Other fullspec requirements remain open.
+
+## Error callback API
+
+LoggerOptions now exposes the previously documented onError callback, inherited by children. Pipeline, synchronous/asynchronous sink delivery and flush failures report through it; throwing or synchronous recursive callbacks do not escape logging. Explicitflush still rejects.183coretests/typecheck/buildpass, including four new callback regressions. Browser/offline/sharedHTTP/admin/Pythonparity/fullcontract gates remain.

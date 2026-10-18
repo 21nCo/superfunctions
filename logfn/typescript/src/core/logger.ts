@@ -17,10 +17,11 @@ import { validateAndSerialize } from "../validation.js";
  */
 export class Logger {
   private readonly options: Required<
-    Omit<LoggerOptions, "baseContext" | "baseTags">
+    Omit<LoggerOptions, "baseContext" | "baseTags" | "onError">
   > & {
     baseContext?: Record<string, unknown>;
     baseTags?: string[];
+    onError?: ErrorHandler;
   };
   private readonly errorHandler: ErrorHandler;
   private delivery: { pending: Set<Promise<void>>; failure?: { reason: unknown } } = {
@@ -37,11 +38,22 @@ export class Logger {
       now: options.now ?? (() => new Date()),
       baseContext: options.baseContext,
       baseTags: options.baseTags,
+      onError: options.onError,
     };
 
     // Internal error handler - logs to console.error but doesn't throw
+    let reporting = false;
     this.errorHandler = (error, context) => {
-      console.error("[logfn internal error]", context, error);
+      if (reporting) return;
+      reporting = true;
+      try {
+        if (options.onError) options.onError(error, context);
+        else console.error("[logfn internal error]", context, error);
+      } catch {
+        // Failure reporting must never interrupt application logging.
+      } finally {
+        reporting = false;
+      }
     };
 
     if (this.options.sinks.length === 0) {
@@ -197,6 +209,7 @@ export class Logger {
       pipeline: this.options.pipeline,
       sinks: this.options.sinks,
       now: this.options.now,
+      onError: this.options.onError,
       baseContext: {
         ...this.options.baseContext,
         ...overrides.ctx,
@@ -217,7 +230,10 @@ export class Logger {
       await Promise.all([...this.delivery.pending]);
     }
     const results = await Promise.allSettled(
-      this.options.sinks.map(sink => Promise.resolve().then(() => sink.flush?.()))
+      this.options.sinks.map(sink => Promise.resolve().then(() => sink.flush?.()).catch(error => {
+        this.errorHandler(error as Error, { sink: sink.name || "unknown" });
+        throw error;
+      }))
     );
     const failure = this.delivery.failure;
     this.delivery.failure = undefined;

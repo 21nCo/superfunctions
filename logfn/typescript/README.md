@@ -424,3 +424,9 @@ HTTP endpoint. Call `await logger.flush()` before normal shutdown. The opt-in
 logs the received signal, drains accepted events, then exits with status 0 on
 success or 1 on delivery failure. It does not enqueue another event after the
 final flush. Its returned cleanup function removes both signal listeners.
+
+Pass `onError(error, { stage?, sink? })` to `createLogger` to receive pipeline,
+sink delivery and flush failures. Child loggers inherit the callback. Logging
+calls contain callback exceptions and suppress synchronous recursive error
+reporting; an explicit `flush()` still rejects when delivery fails. Without a
+callback, failures go to the internal console error channel.
