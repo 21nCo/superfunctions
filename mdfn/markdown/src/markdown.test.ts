@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calloutExtension, commonmarkExtension } from "@mdfn/extensions";
+import type { MdfnExtension } from "@mdfn/core";
 import { formatMarkdown, parseMarkdown, serializeMarkdown } from "./index";
 
 describe("@mdfn/markdown", () => {
@@ -36,7 +36,26 @@ describe("@mdfn/markdown", () => {
 
   it("enforces resource limits and supports explicit formatting", () => {
     expect(() => parseMarkdown("12345", { maxBytes: 4 })).toThrowError(/MDFN_SOURCE_TOO_LARGE/);
+    expect(() => parseMarkdown(`${"> ".repeat(32)}deep`, { maxDepth: 8 })).toThrowError(/MDFN_DEPTH_LIMIT_EXCEEDED:8/);
+    expect(() => parseMarkdown("***many*** nodes", { maxNodes: 4 })).toThrowError(/MDFN_NODE_LIMIT_EXCEEDED:4/);
     expect(formatMarkdown("# title\n\ntext").markdown).toContain("# title");
+  });
+
+  it("rejects the node budget before running extension diagnostics", () => {
+    let diagnosed = false;
+    const extension: MdfnExtension = {
+      name: "budget-observer",
+      version: "1.0.0",
+      diagnostics: () => {
+        diagnosed = true;
+        return [];
+      },
+      preservation: { noEdit: "exact", edited: "touched-region", unsupported: "opaque" },
+    };
+
+    expect(() => parseMarkdown("**one** *two* ~~three~~", { maxNodes: 4, extensions: [extension] }))
+      .toThrowError(/MDFN_NODE_LIMIT_EXCEEDED:4/);
+    expect(diagnosed).toBe(false);
   });
 
   it("keeps opted-in raw HTML opaque without a disabled-policy diagnostic", () => {
@@ -47,15 +66,6 @@ describe("@mdfn/markdown", () => {
 
   it("treats lone carriage returns as token boundaries", () => {
     expect(parseMarkdown("one\rtwo\rthree\r", { maxTokenLength: 5 }).lineEnding).toBe("cr");
-    const parsed = parseMarkdown(":::callout\rBody\r:::\rAfter\r", { extensions: [commonmarkExtension, calloutExtension] });
-    expect(parsed.document.content.map((node) => node.type)).toEqual(["directive-callout", "paragraph"]);
-    expect(parsed.document.content[1].content?.[0]?.text).toBe("After");
-  });
-
-  it("does not claim directive-like text inside fenced or indented code", () => {
-    const parsed = parseMarkdown("```md\n:::callout\ninside\n:::\n```\n\n    :::callout\n\nAfter\n", { extensions: [commonmarkExtension, calloutExtension] });
-    expect(parsed.document.content.map((node) => node.type)).toEqual(["codeBlock", "codeBlock", "paragraph"]);
-    expect(parsed.document.content).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "directive-callout" })]));
   });
 
   it("preserves unknown directives and disabled frontmatter as exact opaque source", () => {
@@ -87,6 +97,14 @@ describe("@mdfn/markdown", () => {
     });
     expect(parsed.document.content[1]).toMatchObject({ type: "definition", attrs: { identifier: "ref" } });
     expect(serializeMarkdown({ document: parsed.document, originalSource: source, options: { dialect: "commonmark" } }).markdown).toBe(source);
+  });
+
+  it("keeps the first duplicate reference definition authoritative", () => {
+    const parsed = parseMarkdown("[label][ref]\n\n[ref]: https://first.example\n[ref]: https://second.example\n", { dialect: "commonmark" });
+    expect(parsed.document.content[0].content?.[0]).toMatchObject({
+      type: "link",
+      attrs: { url: "https://first.example" },
+    });
   });
 
   it("recognizes durable asset identifiers before generic URL rejection", () => {

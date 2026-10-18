@@ -32,7 +32,7 @@ export interface Adapter {
   count(params: CountParams): Promise<number>;
 
   // Transaction support
-  transaction<R>(callback: (trx: TransactionAdapter) => Promise<R>): Promise<R>;
+  transaction<R>(callback: (trx: TransactionAdapter) => Promise<R>, options?: { isolationLevel: TransactionIsolation }): Promise<R>;
 
   // Lifecycle management
   initialize(): Promise<void>;
@@ -216,6 +216,8 @@ export interface FieldSchema {
    * Defaults are derived from `dateValueType`.
    */
   dateStorageType?: DateFieldStorageType;
+  /** Explicit JSON representation. Native preserves driver behavior; json-text serializes JSON into TEXT columns. */
+  jsonStorageType?: "native" | "json-text";
   references?: {
     model: string;
     field: string;
@@ -399,7 +401,7 @@ export interface AdapterImplementation {
   deleteMany(params: DeleteManyParams): Promise<number>;
   upsert<T = any>(params: UpsertParams): Promise<T>;
   count(params: CountParams): Promise<number>;
-  transaction<R>(callback: (trx: TransactionAdapter) => Promise<R>): Promise<R>;
+  transaction<R>(callback: (trx: TransactionAdapter) => Promise<R>, options?: { isolationLevel: TransactionIsolation }): Promise<R>;
   initialize(): Promise<void>;
   isHealthy(): Promise<HealthStatus>;
   close(): Promise<void>;
