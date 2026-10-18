@@ -20,3 +20,36 @@ async def test_workflow_discovery_reads_adapter_and_enforces_definition_scope():
         await workflow.cancel_execution('other')
     assert (await adapter.load_workflow_state('other')).status == ExecutionStatus.COMPLETED
     await flow.close()
+
+
+async def test_event_history_survives_new_instance_and_records_compensation_failure():
+    import asyncio
+    adapter = MemoryAdapter()
+    flow = create_flow(adapter)
+
+    async def execute(context):
+        context.set('reserved',True)
+
+    async def compensate(context):
+        raise ValueError('refund unavailable')
+
+    async def fail(context):
+        raise ValueError('shipping failed')
+
+    workflow = flow.workflow('orders').saga('reserve',execute,compensate).step('ship',fail).build()
+    execution = await workflow.execute({})
+    for _ in range(100):
+        if execution.status == ExecutionStatus.FAILED:
+            break
+        await asyncio.sleep(.01)
+    assert execution.status == ExecutionStatus.FAILED
+    fresh = flow.workflow('orders').build()
+    history = await fresh.get_execution_history(execution.id)
+    failure = next(event for event in history if event.type == 'saga.compensation_failed')
+    assert failure.data == {'saga':'reserve','error':'refund unavailable'}
+    assert history[-1].type == 'execution.failed'
+    restored = await adapter.load_workflow_state(execution.id)
+    restored.state.clear()
+    assert (await adapter.load_workflow_state(execution.id)).state['events']
+    assert (await fresh.get_metrics())['failed'] == 1
+    await flow.close()

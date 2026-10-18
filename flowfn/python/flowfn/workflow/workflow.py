@@ -22,7 +22,6 @@ class Workflow:
         self._adapter = adapter
         self._steps = list(steps)
         self._executions: dict[str, WorkflowExecution] = {}
-        self._events: dict[str, list[WorkflowEvent]] = {}
         self._saga_stacks: dict[str, list[dict[str, Any]]] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._closed = False
@@ -235,8 +234,9 @@ class Workflow:
             saga = stack.pop()
             try:
                 await saga["compensate"](context)
+                await self._log_event(execution_id, "saga.compensated", {"saga": saga["name"]})
             except Exception as error:
-                print(f"Compensation failed for {saga['name']}: {error}")
+                await self._log_event(execution_id, "saga.compensation_failed", {"saga": saga["name"], "error": str(error)})
 
     async def get_execution(self, execution_id: str) -> WorkflowExecution:
         """Get execution by ID."""
@@ -309,7 +309,8 @@ class Workflow:
 
     async def get_execution_history(self, execution_id: str) -> list[WorkflowEvent]:
         """Get execution event history."""
-        return self._events.get(execution_id, [])
+        execution = await self.get_execution(execution_id)
+        return [WorkflowEvent.model_validate(event) for event in execution.state.get("events", [])]
 
     async def get_metrics(self) -> dict[str, Any]:
         """Get workflow metrics."""
@@ -338,9 +339,6 @@ class Workflow:
         self, execution_id: str, event_type: str, data: Optional[dict[str, Any]] = None
     ) -> None:
         """Log workflow event."""
-        if execution_id not in self._events:
-            self._events[execution_id] = []
-
         event = WorkflowEvent(
             id=str(uuid.uuid4()),
             execution_id=execution_id,
@@ -349,7 +347,9 @@ class Workflow:
             data=data,
         )
 
-        self._events[execution_id].append(event)
+        execution = await self.get_execution(execution_id)
+        execution.state.setdefault("events", []).append(event.model_dump(mode="json"))
+        await self._adapter.save_workflow_state(execution_id, execution)
 
     def _now(self) -> int:
         """Get current timestamp in ms."""

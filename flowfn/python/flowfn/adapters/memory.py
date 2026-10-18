@@ -354,11 +354,11 @@ class MemoryAdapter:
     # Workflow operations
     async def save_workflow_state(self, execution_id: str, execution: Any) -> None:
         """Save workflow state."""
-        self._workflow_states[execution_id] = execution
+        self._workflow_states[execution_id] = deepcopy(execution)
 
     async def load_workflow_state(self, execution_id: str) -> Optional[Any]:
         """Load workflow state."""
-        return self._workflow_states.get(execution_id)
+        return deepcopy(self._workflow_states.get(execution_id))
 
     async def list_workflow_states(self, workflow_id: str) -> list[Any]:
         return [deepcopy(item) for item in self._workflow_states.values() if item.workflow_id == workflow_id]

@@ -175,3 +175,5 @@ Both durable adapters share queue dependency, deduplication, retention, DLQ, bac
 For real local integration tests, point `FLOWFN_REDIS_URL` and `FLOWFN_POSTGRES_URL` at disposable services and run `pytest tests/test_durable_adapters.py`. Tests create unique namespaces and delete their records on teardown. Without those variables, integration cases are explicitly skipped.
 
 Workflow execution discovery reads the adapter's persisted states, so a fresh workflow instance can list executions created by another instance. Lookup/cancellation rejects executions belonging to a different workflow name. Custom adapters must implement `list_workflow_states(workflow_id)` alongside save/load. Listing persisted snapshots does not automatically resume their handlers.
+
+Workflow event history is persisted inside execution snapshots, including compensation failures, and metrics use persisted executions. History survives reconstruction of the workflow object. Event histories and execution snapshots currently have no automatic retention policy; applications with unbounded workflow volume need a retention mechanism before production deployment.
