@@ -1,0 +1,35 @@
+flowfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_6de76ee995b6d7 1-29
+flowfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_bb2c60c264f1e0 39,46,49,80-127
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_0f42c58442b0f0 1-45
+flowfn/typescript/src/adapters/postgres/schema.ts
+  s_e1c5fc1a65c0cf::t_a8270c4db3ab24 3,15
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_834dee4854ef63 14
+flowfn/typescript/src/core/flow-fn.ts
+  s_e1c5fc1a65c0cf::t_697c2d1938523d 21
+flowfn/typescript/src/queue/queue.ts
+  s_e1c5fc1a65c0cf::t_6a63142984af91 14
+flowfn/typescript/src/queue/worker.ts
+  s_e1c5fc1a65c0cf::t_577b9093035dd1 3
+flowfn/typescript/tsup.config.ts
+  s_e1c5fc1a65c0cf::t_3c93d2106f931e 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62599820de2a465b1daef87dea74fa120f7ff985",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
