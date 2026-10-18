@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { watchLogsHandler } from "./watch.js";
+import { watchLogsHandler as createHandler, type WatchLogsHandlerOptions } from "./watch.js";
+const watchLogsHandler = (options: WatchLogsHandlerOptions = {}) => createHandler({ ingest: () => {}, ...options });
 
 describe("WatchFn Ingest Handler", () => {
   const createValidEvent = () => ({

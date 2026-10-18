@@ -3,7 +3,7 @@
  */
 
 import type { LogEvent, SerializationResult } from "./types.js";
-import { MAX_EVENT_SIZE, MAX_TAGS } from "./types.js";
+import { MAX_EVENT_SIZE, MAX_TAGS, LOG_LEVEL_VALUES } from "./types.js";
 
 /**
  * Checks if a value is serializable to JSON
@@ -145,7 +145,7 @@ export function validateAndSerialize(event: LogEvent): SerializationResult {
  * Validates a log event schema
  */
 export function isValidLogEvent(event: unknown): event is LogEvent {
-  if (!event || typeof event !== "object") {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
     return false;
   }
 
@@ -153,7 +153,13 @@ export function isValidLogEvent(event: unknown): event is LogEvent {
 
   // Required fields
   if (!e.ts || typeof e.ts !== "string") return false;
-  if (!e.level || typeof e.level !== "string") return false;
+  if (typeof e.level !== "string" || !Object.hasOwn(LOG_LEVEL_VALUES, e.level)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(e.ts) || !Number.isFinite(Date.parse(e.ts))) return false;
+  if (e.ctx !== undefined && (e.ctx === null || typeof e.ctx !== "object" || Array.isArray(e.ctx))) return false;
+  if (e.tags !== undefined && (!Array.isArray(e.tags) || e.tags.length > MAX_TAGS || e.tags.some(tag => typeof tag !== "string"))) return false;
+  for (const key of ["traceId", "spanId", "requestId", "userId", "tenantId"] as const) {
+    if (e[key] !== undefined && typeof e[key] !== "string") return false;
+  }
   if (!e.msg || typeof e.msg !== "string") return false;
   if (!e.name || typeof e.name !== "string") return false;
   if (!e.version || typeof e.version !== "string") return false;

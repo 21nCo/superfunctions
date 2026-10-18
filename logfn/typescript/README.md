@@ -237,11 +237,24 @@ const handler = watchLogsHandler({
     value: process.env.API_KEY,
   },
   maxBatch: 500,
+  ingest: async (events, request) => {
+    // Resolve only after your configured WatchFn/store durably accepts this batch.
+    await logStore.appendBatch(events);
+  },
 });
 
 // Use with your HTTP framework
 // POST /watch/logs
 ```
+
+The handler returns 202 only after `ingest` resolves. An absent destination or a
+rejected write returns 503 without exposing storage error details. Consumers may
+retry failed requests: use stable event identifiers or transactional/idempotent
+writes if your destination can partially commit. Authentication callbacks may be
+asynchronous. Only POST is accepted; `maxBodyBytes` defaults to 8 MiB and is enforced
+while reading the request stream. Invalid events reject the entire batch before
+calling the destination. Deployments upgrading the previous placeholder handler
+must configure `ingest`; it no longer acknowledges discarded events.
 
 ## Log Event Schema
 
