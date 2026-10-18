@@ -50,6 +50,7 @@ class Workflow:
         self.version = version
         self.lease_ms = lease_ms
         self._lease_lost: set[str] = set()
+        self._lease_deadlines: dict[str, float] = {}
         self._state_locks: dict[str, asyncio.Lock] = {}
         self._heartbeats: dict[str, asyncio.Task[None]] = {}
         self._sagas: dict[str, dict[str, Any]] = {}
@@ -109,12 +110,17 @@ class Workflow:
             return execution
 
     async def _claim(self, execution_id: str) -> WorkflowExecution:
+        requested = time.monotonic()
         claimed = await self._adapter.transition_workflow_state(execution_id, "claim", {
             "workflow_id": self.name, "version": self.version,
             "definition_hash": self.definition_hash, "lease_ms": self.lease_ms,
         })
         if claimed is None:
             raise WorkflowLeaseError("Execution missing, terminal, or owned by another worker")
+        deadline = requested + self.lease_ms / 1000
+        if time.monotonic() >= deadline:
+            raise WorkflowLeaseError("Workflow claim reply arrived after its local lease deadline")
+        self._lease_deadlines[execution_id] = deadline
         return claimed
 
     async def resume_execution(self, execution_id: str) -> WorkflowExecution:
@@ -122,6 +128,8 @@ class Workflow:
         async with self._admissions.track():
             if self._closed:
                 raise RuntimeError("Workflow is closed")
+            if execution_id in self._tasks and not self._tasks[execution_id].done():
+                raise WorkflowLeaseError("Execution already has an active local runtime")
             execution = await self._claim(execution_id)
             self._executions[execution_id] = execution
             await self._log_event(execution_id, "execution.resumed", {})
@@ -133,6 +141,8 @@ class Workflow:
 
     def _start(self, execution: WorkflowExecution) -> None:
         execution_id = execution.id
+        if time.monotonic() >= self._lease_deadlines[execution_id]:
+            raise WorkflowLeaseError("Workflow lease expired before handler startup")
         self._lease_lost.discard(execution_id)
         self._saga_stacks[execution_id] = [dict(self._sagas[path], path=path) for path in execution.state.get("sagas", [])]
         task = asyncio.create_task(self._run_execution(execution))
@@ -142,28 +152,45 @@ class Workflow:
 
         def finished(done: asyncio.Task[None]) -> None:
             heartbeat.cancel()
-            self._heartbeats.pop(execution_id, None)
-            self._tasks.pop(execution_id, None)
-            self._saga_stacks.pop(execution_id, None)
+            if self._tasks.get(execution_id) is done:
+                self._heartbeats.pop(execution_id, None)
+                self._tasks.pop(execution_id, None)
+                self._saga_stacks.pop(execution_id, None)
+                self._lease_deadlines.pop(execution_id, None)
             if not done.cancelled() and done.exception() is not None:
                 done.get_loop().call_exception_handler({"message": "Workflow execution failed", "exception": done.exception(), "task": done})
 
         task.add_done_callback(finished)
 
     async def _renew(self, execution: WorkflowExecution) -> None:
+        duration = self.lease_ms / 1000
+        delay = duration / 3
+        deadline = self._lease_deadlines[execution.id]
         while execution.status == ExecutionStatus.RUNNING:
-            await asyncio.sleep(self.lease_ms / 3000)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(delay,remaining))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            requested = time.monotonic()
             try:
-                renewed = await self._adapter.transition_workflow_state(execution.id,"renew",{"token":execution.lease_token,"lease_ms":self.lease_ms})
-                if renewed is not None:
-                    continue
+                renewed = await asyncio.wait_for(self._adapter.transition_workflow_state(
+                    execution.id,"renew",{"token":execution.lease_token,"lease_ms":self.lease_ms}),remaining)
             except Exception:
-                pass
+                delay = min(.05,duration / 6)
+                continue
+            if renewed is None:
+                break
+            deadline = requested + duration
+            self._lease_deadlines[execution.id] = deadline
+            delay = duration / 3
+        if execution.status == ExecutionStatus.RUNNING:
             self._lease_lost.add(execution.id)
             task = self._tasks.get(execution.id)
             if task is not None:
                 task.cancel()
-            return
 
     async def _persist(self, execution: WorkflowExecution) -> None:
         async with self._state_locks.setdefault(execution.id, asyncio.Lock()):
