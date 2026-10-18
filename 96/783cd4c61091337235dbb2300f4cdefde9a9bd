@@ -1,0 +1,21 @@
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_db1491737d5594 249,254,270-301
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_5efce3f99b3b1f 334-335,351,353-364,368-369,403-434,456
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "96783cd4c61091337235dbb2300f4cdefde9a9bd",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
