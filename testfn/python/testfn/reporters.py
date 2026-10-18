@@ -1,6 +1,10 @@
 import json
-from typing import List
-from .types import TestRun, TestCase, TestResult, ResultStatus
+import os
+import tempfile
+from pathlib import Path
+
+from .types import ResultStatus, TestCase, TestResult, TestRun
+
 
 class Reporter:
     def on_test_start(self, test: TestCase) -> None:
@@ -11,6 +15,7 @@ class Reporter:
 
     def on_run_complete(self, run: TestRun) -> None:
         pass
+
 
 class ConsoleReporter(Reporter):
     def on_test_start(self, test: TestCase) -> None:
@@ -30,11 +35,20 @@ class ConsoleReporter(Reporter):
         print(f"Skipped: {run.summary.skipped}")
         print(f"Duration: {run.summary.duration/1000:.2f}s")
 
+
 class JsonReporter(Reporter):
     def __init__(self, output_path: str = "report.json"):
         self.output_path = output_path
 
     def on_run_complete(self, run: TestRun) -> None:
-        with open(self.output_path, "w") as f:
-            json.dump(run.model_dump(), f, indent=2)
+        destination = Path(self.output_path)
+        fd, temporary = tempfile.mkstemp(
+            prefix=".testfn-report-", dir=destination.parent
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(run.model_dump(mode="json"), stream, indent=2)
+            os.replace(temporary, destination)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
         print(f"Report saved to {self.output_path}")

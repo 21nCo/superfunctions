@@ -32,22 +32,22 @@ async function main() {
       console.log(`Passed: ${results.summary.passed}`);
       console.log(`Failed: ${results.summary.failed}`);
       console.log(`Duration: ${(results.summary.duration / 1000).toFixed(2)}s`);
-      
+
       const byBrowser = new Map<string, { passed: number; failed: number }>();
-      
+
       for (const result of results.results) {
         const browser = result.metadata?.browser as string || 'unknown';
         const stats = byBrowser.get(browser) || { passed: 0, failed: 0 };
-        
+
         if (result.status === 'passed') {
           stats.passed++;
         } else if (result.status === 'failed') {
           stats.failed++;
         }
-        
+
         byBrowser.set(browser, stats);
       }
-      
+
       console.log('\nResults by browser:');
       for (const [browser, stats] of byBrowser.entries()) {
         const total = stats.passed + stats.failed;

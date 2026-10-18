@@ -1,9 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { PNG } from "pngjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   TestRunner,
+  getArtifactId,
   TestStorage,
   VisualTester,
   type TestCase,
@@ -28,7 +30,10 @@ import {
 
 const temporaryDirectories: string[] = [];
 
-function context(projectId: string, overrides: Partial<AdminOperationContext> = {}): AdminOperationContext {
+function context(
+  projectId: string,
+  overrides: Partial<AdminOperationContext> = {},
+): AdminOperationContext {
   return {
     scope: {
       installationId: "installation_1",
@@ -51,18 +56,26 @@ function testAdapter(projectId: string): TestFrameworkAdapter {
     name: `memory-${projectId}`,
     supports: () => true,
     async discover(): Promise<TestCase[]> {
-      return [{ id: `test-${projectId}`, file: `${projectId}.test.ts`, name: "scope test" }];
+      return [
+        {
+          id: `test-${projectId}`,
+          file: `${projectId}.test.ts`,
+          name: "scope test",
+        },
+      ];
     },
     async run(tests: TestCase[]): Promise<TestResult[]> {
       return tests.map((test) => ({
         id: test.id,
         status: "passed",
         duration: 12,
-        artifacts: [{
-          type: "log",
-          path: `/private/${projectId}.log`,
-          buffer: Buffer.from("operator secret"),
-        }],
+        artifacts: [
+          {
+            type: "log",
+            path: `/private/${projectId}.log`,
+            buffer: Buffer.from("operator secret"),
+          },
+        ],
       }));
     },
   };
@@ -71,12 +84,22 @@ function testAdapter(projectId: string): TestFrameworkAdapter {
 function domainBinding(projectId: string): TestFnDomainAdminBinding {
   const root = mkdtempSync(join(tmpdir(), `testfn-admin-${projectId}-`));
   temporaryDirectories.push(root);
-  const runner = new TestRunner({ framework: "vitest", parallel: 1, reporters: [] });
+  const runner = new TestRunner({
+    framework: "vitest",
+    parallel: 1,
+    reporters: [],
+  });
   runner.setAdapter(testAdapter(projectId));
   return {
     runner,
-    storage: new TestStorage({ type: "indexeddb", dbName: `testfn-admin-${projectId}-${crypto.randomUUID()}` }),
-    visual: new VisualTester({ baselineDir: join(root, "baselines"), diffDir: join(root, "diffs") }),
+    storage: new TestStorage({
+      type: "indexeddb",
+      dbName: `testfn-admin-${projectId}-${crypto.randomUUID()}`,
+    }),
+    visual: new VisualTester({
+      baselineDir: join(root, "baselines"),
+      diffDir: join(root, "diffs"),
+    }),
     environment: { platform: "test", ci: true },
   };
 }
@@ -90,7 +113,10 @@ function dispatcher(bindings: Map<string, TestFnDomainAdminBinding>) {
     },
   });
   return createAdminDispatcher({
-    registry: createAdminRegistry({ adapters: [adapter], enabledModules: ["testfn"] }),
+    registry: createAdminRegistry({
+      adapters: [adapter],
+      enabledModules: ["testfn"],
+    }),
     audit: new MemoryAdminAuditSink(),
     idempotency: new MemoryAdminIdempotencyStore(),
     confirmation: { verify: ({ token }) => token === "confirmed" },
@@ -113,38 +139,75 @@ describe("@testfn/admin", () => {
       "visual-baselines",
     ]);
     expect(testFnAdminCapability.operations).toHaveLength(12);
-    expect(testFnAdminCapability.operations.every((operation) => operation.minimumScope === "project")).toBe(true);
-    expect(testFnAdminCapability.operations.some((operation) => operation.id.includes("suites"))).toBe(false);
-    expect(testFnAdminCapability.operations.some((operation) => operation.id.includes("schedules"))).toBe(false);
-    expect(testFnAdminCapability.operations.some((operation) => operation.id.includes("agents"))).toBe(false);
-    expect(testFnAdminCapability.operations.some((operation) => operation.id.includes("environments"))).toBe(false);
+    expect(
+      testFnAdminCapability.operations.every(
+        (operation) => operation.minimumScope === "project",
+      ),
+    ).toBe(true);
+    expect(
+      testFnAdminCapability.operations.some((operation) =>
+        operation.id.includes("suites"),
+      ),
+    ).toBe(false);
+    expect(
+      testFnAdminCapability.operations.some((operation) =>
+        operation.id.includes("schedules"),
+      ),
+    ).toBe(false);
+    expect(
+      testFnAdminCapability.operations.some((operation) =>
+        operation.id.includes("agents"),
+      ),
+    ).toBe(false);
+    expect(
+      testFnAdminCapability.operations.some((operation) =>
+        operation.id.includes("environments"),
+      ),
+    ).toBe(false);
 
-    expect(testFnAdminCapability.operations.find(
-      (operation) => operation.id === "testfn.runs.start",
-    )?.safety).toMatchObject({ classification: "write", idempotent: false, audit: "required" });
-    expect(testFnAdminCapability.operations.find(
-      (operation) => operation.id === "testfn.visual-baselines.update",
-    )?.safety).toMatchObject({
+    expect(
+      testFnAdminCapability.operations.find(
+        (operation) => operation.id === "testfn.runs.start",
+      )?.safety,
+    ).toMatchObject({
+      classification: "write",
+      idempotent: false,
+      audit: "required",
+    });
+    expect(
+      testFnAdminCapability.operations.find(
+        (operation) => operation.id === "testfn.visual-baselines.update",
+      )?.safety,
+    ).toMatchObject({
       classification: "destructive",
       requiresConfirmation: true,
       confirmation: { risk: "critical", method: "mfa" },
     });
-    expect(testFnAdminCapability.operations.find(
-      (operation) => operation.id === "testfn.visual-diffs.compare",
-    )?.redaction?.inputFields).toContain("screenshotBase64");
+    expect(
+      testFnAdminCapability.operations.find(
+        (operation) => operation.id === "testfn.visual-diffs.compare",
+      )?.redaction?.inputFields,
+    ).toContain("screenshotBase64");
   });
 
   it("preserves the receiver for class-style administration services", async () => {
     const binding = domainBinding("project_1");
-    const service = createTestFnDomainAdminService({ resolve: async () => binding });
+    const service = createTestFnDomainAdminService({
+      resolve: async () => binding,
+    });
     const original = service.listRuns;
     service.listRuns = async function (input, operationContext) {
       expect(this).toBe(service);
       return original.call(this, input, operationContext);
     };
 
-    await expect(createTestFnAdminAdapter(service).invoke("testfn.runs.list", {}, context("project_1")))
-      .resolves.toMatchObject({ data: { items: [] } });
+    await expect(
+      createTestFnAdminAdapter(service).invoke(
+        "testfn.runs.list",
+        {},
+        context("project_1"),
+      ),
+    ).resolves.toMatchObject({ data: { items: [] } });
   });
 
   it("runs, persists, reads, and analyzes through real TestFn APIs without crossing projects", async () => {
@@ -154,7 +217,9 @@ describe("@testfn/admin", () => {
     ]);
     const dispatch = dispatcher(bindings);
 
-    const started = await dispatch.dispatch<{ item: { id: string; results: Array<{ id: string }> } }>({
+    const started = await dispatch.dispatch<{
+      item: { id: string; results: Array<{ id: string }> };
+    }>({
       operationId: "testfn.runs.start",
       input: {},
       context: context("project_1"),
@@ -173,7 +238,9 @@ describe("@testfn/admin", () => {
 
     const artifact = await dispatch.dispatch({
       operationId: "testfn.artifacts.get",
-      input: { id: `${started.data.item.id}-test-project_1-log` },
+      input: {
+        id: getArtifactId(started.data.item.id, "test-project_1", "log"),
+      },
       context: context("project_1"),
     });
     expect(artifact).toMatchObject({
@@ -193,10 +260,14 @@ describe("@testfn/admin", () => {
       input: { limit: 25 },
       context: context("project_2"),
     });
-    expect(runsOne.ok && runsOne.data.items.map((run) => run.id)).toContain(started.data.item.id);
+    expect(runsOne.ok && runsOne.data.items.map((run) => run.id)).toContain(
+      started.data.item.id,
+    );
     expect(runsTwo.ok && runsTwo.data.items).toEqual([]);
 
-    const metrics = await dispatch.dispatch<{ item: { id: string; successRate: number } }>({
+    const metrics = await dispatch.dispatch<{
+      item: { id: string; successRate: number };
+    }>({
       operationId: "testfn.analytics.metrics",
       input: { id: started.data.item.id },
       context: context("project_1"),
@@ -209,10 +280,12 @@ describe("@testfn/admin", () => {
 
   it("rejects a domain object reused across project scopes", async () => {
     const shared = domainBinding("shared");
-    const dispatch = dispatcher(new Map([
-      ["project_1", shared],
-      ["project_2", shared],
-    ]));
+    const dispatch = dispatcher(
+      new Map([
+        ["project_1", shared],
+        ["project_2", shared],
+      ]),
+    );
 
     await dispatch.dispatch({
       operationId: "testfn.runs.list",
@@ -231,8 +304,11 @@ describe("@testfn/admin", () => {
   });
 
   it("updates and compares a real scope-owned visual baseline", async () => {
-    const dispatch = dispatcher(new Map([["project_1", domainBinding("project_1")]]));
-    const screenshotBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const dispatch = dispatcher(
+      new Map([["project_1", domainBinding("project_1")]]),
+    );
+    const screenshotBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
     const updated = await dispatch.dispatch({
       operationId: "testfn.visual-baselines.update",
@@ -262,14 +338,76 @@ describe("@testfn/admin", () => {
     });
   });
 
+  it("does not let compare-only actors replace baselines through automatic update configuration", async () => {
+    const binding = domainBinding("project_1");
+    const root = mkdtempSync(join(tmpdir(), "testfn-admin-autoupdate-"));
+    temporaryDirectories.push(root);
+    const baselineDir = join(root, "baselines");
+    binding.visual = new VisualTester({
+      baselineDir,
+      diffDir: join(root, "diffs"),
+      updateBaselines: true,
+    });
+    const original = new PNG({ width: 2, height: 2 });
+    original.data.fill(255);
+    const originalBytes = PNG.sync.write(original);
+    await binding.visual.updateBaseline(
+      "home",
+      await binding.visual.captureScreenshot("home", originalBytes),
+    );
+    const changed = new PNG({ width: 2, height: 2 });
+    for (let index = 3; index < changed.data.length; index += 4)
+      changed.data[index] = 255;
+    const changedBytes = PNG.sync.write(changed);
+    const dispatch = dispatcher(new Map([["project_1", binding]]));
+    const actor = {
+      id: "comparer",
+      type: "user" as const,
+      permissions: ["testfn.visual-diffs.compare"],
+    };
+    const result = await dispatch.dispatch({
+      operationId: "testfn.visual-diffs.compare",
+      input: { id: "home", screenshotBase64: changedBytes.toString("base64") },
+      context: context("project_1", {
+        actor,
+        idempotencyKey: "compare-no-baseline-update",
+      }),
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      data: { item: { passed: false, pixelDiffCount: 4 } },
+    });
+    expect(readFileSync(join(baselineDir, "home.png"))).toEqual(originalBytes);
+    const denied = await dispatch.dispatch({
+      operationId: "testfn.visual-baselines.update",
+      input: {
+        id: "home",
+        screenshotBase64: changedBytes.toString("base64"),
+        reason: "not authorized",
+      },
+      context: context("project_1", {
+        actor,
+        idempotencyKey: "forbidden-update",
+        confirmationToken: "confirmed",
+      }),
+    });
+    expect(denied).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(readFileSync(join(baselineDir, "home.png"))).toEqual(originalBytes);
+  });
+
   it("requires confirmation for retention cleanup", async () => {
-    const dispatch = dispatcher(new Map([["project_1", domainBinding("project_1")]]));
+    const dispatch = dispatcher(
+      new Map([["project_1", domainBinding("project_1")]]),
+    );
     const denied = await dispatch.dispatch({
       operationId: "testfn.runs.cleanup",
       input: { id: "expired", reason: "retention policy" },
       context: context("project_1", { idempotencyKey: "cleanup_1" }),
     });
-    expect(denied).toMatchObject({ ok: false, error: { code: "precondition_failed" } });
+    expect(denied).toMatchObject({
+      ok: false,
+      error: { code: "precondition_failed" },
+    });
 
     const accepted = await dispatch.dispatch({
       operationId: "testfn.runs.cleanup",
@@ -281,4 +419,27 @@ describe("@testfn/admin", () => {
     });
     expect(accepted).toMatchObject({ ok: true, data: { accepted: true } });
   });
+});
+
+it("rejects conflicting deprecated organization and installation aliases", async () => {
+  const binding = domainBinding("project_1");
+  const dispatch = dispatcher(new Map([["project_1", binding]]));
+  const first = context("project_1");
+  first.scope.organizationId = "installation_1";
+  const second = context("project_1");
+  second.scope.organizationId = "different-installation";
+  expect(
+    await dispatch.dispatch({
+      operationId: "testfn.runs.list",
+      input: {},
+      context: first,
+    }),
+  ).toMatchObject({ ok: true });
+  expect(
+    await dispatch.dispatch({
+      operationId: "testfn.runs.list",
+      input: {},
+      context: second,
+    }),
+  ).toMatchObject({ ok: false, error: { code: "invalid_argument" } });
 });

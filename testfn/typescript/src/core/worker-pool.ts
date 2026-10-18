@@ -1,135 +1,124 @@
-import type { TestCase, TestResult, RunOptions, TestFrameworkAdapter } from '../types.js';
-
-interface WorkerTask {
-  test: TestCase;
-  resolve: (result: TestResult) => void;
-  reject: (error: Error) => void;
-}
+import type {
+  TestCase,
+  TestResult,
+  RunOptions,
+  TestFrameworkAdapter,
+} from "../types.js";
 
 export class WorkerPool {
-  private queue: WorkerTask[] = [];
-  private activeWorkers: number = 0;
-  private maxWorkers: number;
-
-  constructor(maxWorkers: number = 4) {
-    this.maxWorkers = Math.max(1, maxWorkers);
+  private active?: Promise<TestResult[]>;
+  constructor(private maxWorkers = 4) {
+    if (!Number.isInteger(maxWorkers) || maxWorkers < 1)
+      throw new Error("parallel must be a positive integer");
   }
-
   async executeTests(
     tests: TestCase[],
     adapter: TestFrameworkAdapter,
-    options: RunOptions
+    options: RunOptions,
   ): Promise<TestResult[]> {
-    const results: TestResult[] = [];
-    let completedCount = 0;
-
-    const promises = tests.map(test => {
-      return new Promise<TestResult>((resolve, reject) => {
-        this.queue.push({ test, resolve, reject });
-      }).then(result => {
-        results.push(result);
-        completedCount++;
-        
-        if (options.onProgress) {
-          options.onProgress({
-            completed: completedCount,
-            total: tests.length,
-            current: test
-          });
-        }
-        
-        return result;
-      });
-    });
-
-    this.processQueue(adapter, options);
-
-    await Promise.all(promises);
-    return results;
-  }
-
-  private async processQueue(
-    adapter: TestFrameworkAdapter,
-    options: RunOptions
-  ): Promise<void> {
-    while (this.queue.length > 0 || this.activeWorkers > 0) {
-      if (this.queue.length === 0 || this.activeWorkers >= this.maxWorkers) {
-        await new Promise(resolve => setTimeout(resolve, 10));
-        continue;
-      }
-
-      const task = this.queue.shift();
-      if (!task) continue;
-
-      this.activeWorkers++;
-
-      this.executeTest(adapter, task, options)
-        .then(result => {
-          task.resolve(result);
-        })
-        .catch(error => {
-          task.reject(error);
-        })
-        .finally(() => {
-          this.activeWorkers--;
-        });
-    }
-  }
-
-  private async executeTest(
-    adapter: TestFrameworkAdapter,
-    task: WorkerTask,
-    options: RunOptions
-  ): Promise<TestResult> {
-    const { test } = task;
-    let lastError: Error | undefined;
+    if (this.active) throw new Error("Worker pool is already running");
     const retries = options.retries ?? 0;
-
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        const results = await adapter.run([test], {
-          ...options,
-          onProgress: undefined
-        });
-
-        const result = results[0];
-        
-        if (result.status === 'passed' || attempt === retries) {
-          return result;
+    if (!Number.isInteger(retries) || retries < 0)
+      throw new Error("retries must be a nonnegative integer");
+    if (
+      options.timeout !== undefined &&
+      (!Number.isFinite(options.timeout) || options.timeout <= 0)
+    )
+      throw new Error("timeout must be positive");
+    let next = 0,
+      completed = 0;
+    const grouped: TestResult[][] = new Array(tests.length);
+    const worker = async () => {
+      while (next < tests.length) {
+        const index = next++,
+          test = tests[index];
+        if (options.signal?.aborted) {
+          grouped[index] = [
+            {
+              id: test.id,
+              status: "skipped",
+              duration: 0,
+              metadata: { cancelled: true },
+            },
+          ];
+          await options.onTestComplete?.(grouped[index][0]);
+          completed++;
+          options.onProgress?.({
+            completed,
+            total: tests.length,
+            current: test,
+          });
+          continue;
         }
-
-        lastError = result.error ? new Error(result.error.message) : undefined;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        
-        if (attempt === retries) {
-          return {
-            id: test.id,
-            status: 'failed',
-            duration: 0,
-            error: {
-              message: lastError.message,
-              stack: lastError.stack
-            }
-          };
+        await options.onTestStart?.(test);
+        for (let attempt = 0; attempt <= retries; attempt++) {
+          try {
+            const results = await adapter.run([test], {
+              ...options,
+              onProgress: undefined,
+              onTestStart: undefined,
+              onTestComplete: undefined,
+            });
+            if (!results.length)
+              throw new Error(
+                "Adapter returned no results for a discovered test",
+              );
+            if (
+              results.some(
+                (result) =>
+                  !result ||
+                  typeof result.id !== "string" ||
+                  !["passed", "failed", "skipped", "timeout"].includes(
+                    result.status,
+                  ) ||
+                  !Number.isFinite(result.duration) ||
+                  result.duration < 0,
+              )
+            )
+              throw new Error("Adapter returned an invalid test result");
+            grouped[index] = results.map((result) => ({
+              ...result,
+              metadata: { ...result.metadata, attempts: attempt + 1 },
+            }));
+          } catch (error) {
+            grouped[index] = [
+              {
+                id: test.id,
+                status: "failed",
+                duration: 0,
+                error: { message: String(error) },
+              },
+            ];
+          }
+          if (
+            options.signal?.aborted ||
+            !grouped[index].some(
+              (result) =>
+                result.status === "failed" || result.status === "timeout",
+            )
+          )
+            break;
         }
-      }
-    }
-
-    return {
-      id: test.id,
-      status: 'failed',
-      duration: 0,
-      error: {
-        message: lastError?.message || 'Test failed after retries',
-        stack: lastError?.stack
+        for (const result of grouped[index])
+          await options.onTestComplete?.(result);
+        completed++;
+        options.onProgress?.({ completed, total: tests.length, current: test });
       }
     };
-  }
-
-  async shutdown(): Promise<void> {
-    while (this.activeWorkers > 0) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+    this.active = Promise.allSettled(
+      Array.from({ length: Math.min(this.maxWorkers, tests.length) }, worker),
+    ).then((settled) => {
+      const failed = settled.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+      return grouped.flat();
+    });
+    try {
+      return await this.active;
+    } finally {
+      this.active = undefined;
     }
+  }
+  async shutdown(): Promise<void> {
+    await this.active;
   }
 }

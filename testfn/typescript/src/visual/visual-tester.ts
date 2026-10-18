@@ -1,130 +1,303 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { PNG } from 'pngjs';
-import pixelmatch from 'pixelmatch';
-import type { Screenshot, ComparisonResult, VisualTestConfig } from '../types.js';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  rmSync,
+} from "node:fs";
+import { resolve, relative, isAbsolute, dirname, join } from "node:path";
+import { createHash } from "node:crypto";
+import { PNG } from "pngjs";
+import pixelmatch from "pixelmatch";
+import type {
+  Screenshot,
+  ComparisonResult,
+  VisualTestConfig,
+  CaptureOptions,
+  PageLike,
+} from "../types.js";
+import { BaselineManager, environmentKey } from "./baseline-manager.js";
+import {
+  decodeImage,
+  structuralSimilarity,
+  sideBySide,
+  comparisonHtml,
+  pngWithMetadata,
+} from "./images.js";
 
 export class VisualTester {
-  private config: Required<VisualTestConfig>;
-
+  private config: VisualTestConfig & {
+    diffDir: string;
+    threshold: number;
+    ssimThreshold: number;
+  };
+  readonly baselines: BaselineManager;
   constructor(config: VisualTestConfig) {
+    const scope = config.environment
+      ? createHash("sha256")
+          .update(environmentKey(config.environment))
+          .digest("hex")
+      : "";
     this.config = {
-      baselineDir: config.baselineDir,
-      diffDir: config.diffDir,
+      ...config,
+      baselineDir: join(config.baselineDir, scope),
+      diffDir: join(config.diffDir ?? `${config.baselineDir}-diffs`, scope),
       threshold: config.threshold ?? 0.1,
-      updateBaselines: config.updateBaselines ?? false,
-      fullPage: config.fullPage ?? false
+      ssimThreshold: config.ssimThreshold ?? 0.99,
     };
-
-    this.ensureDirectory(this.config.baselineDir);
-    this.ensureDirectory(this.config.diffDir);
+    for (const value of [this.config.threshold, this.config.ssimThreshold])
+      if (!Number.isFinite(value) || value < 0 || value > 1)
+        throw new Error("threshold must be between 0 and 1");
+    if (
+      config.algorithm !== undefined &&
+      !["pixel", "ssim"].includes(config.algorithm)
+    )
+      throw new Error("Unsupported visual comparison algorithm");
+    mkdirSync(this.config.baselineDir, { recursive: true });
+    mkdirSync(this.config.diffDir, { recursive: true });
+    this.baselines = new BaselineManager(
+      join(this.config.baselineDir, ".approvals"),
+    );
   }
-
-  async captureScreenshot(name: string, buffer: Buffer): Promise<Screenshot> {
-    const png = PNG.sync.read(buffer);
-    
+  async captureScreenshot(name: string, buffer: Buffer): Promise<Screenshot>;
+  async captureScreenshot(
+    page: PageLike,
+    name: string,
+    options?: CaptureOptions,
+  ): Promise<Screenshot>;
+  async captureScreenshot(
+    source: string | PageLike,
+    value: string | Buffer,
+    options: CaptureOptions = {},
+  ): Promise<Screenshot> {
+    const name = typeof source === "string" ? source : (value as string);
+    const buffer =
+      typeof source === "string"
+        ? (value as Buffer)
+        : Buffer.from(
+            await source.screenshot({
+              type: "png",
+              fullPage: options.fullPage ?? this.config.fullPage ?? false,
+            }),
+          );
+    const png = decodeImage(buffer);
     return {
       name,
       buffer,
       width: png.width,
       height: png.height,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      metadata: { environment: options.environment ?? this.config.environment },
     };
   }
-
-  async compareScreenshot(current: Screenshot, name: string): Promise<ComparisonResult> {
-    const baselinePath = join(this.config.baselineDir, `${name}.png`);
-    
-    if (!existsSync(baselinePath)) {
-      if (this.config.updateBaselines) {
-        writeFileSync(baselinePath, current.buffer);
-        return {
-          passed: true,
-          similarity: 1,
-          pixelDiffCount: 0,
-          diffPercentage: 0
-        };
-      }
-      
-      throw new Error(`No baseline found for ${name}. Run with updateBaselines=true to create.`);
-    }
-
-    const baselineBuffer = readFileSync(baselinePath);
-    const baseline = PNG.sync.read(baselineBuffer);
-    const currentPng = PNG.sync.read(current.buffer);
-
-    if (baseline.width !== currentPng.width || baseline.height !== currentPng.height) {
+  async compareScreenshot(
+    current: Screenshot,
+    baseline: string | Screenshot,
+    options: { updateBaselines?: boolean } = {},
+  ): Promise<ComparisonResult> {
+    const name = typeof baseline === "string" ? baseline : current.name;
+    this.imagePath(this.config.diffDir, name, "-diff.png");
+    if (
+      typeof baseline === "string" &&
+      (options.updateBaselines ?? this.config.updateBaselines)
+    ) {
+      await this.updateBaseline(name, current);
+      this.clearComparison(name);
+      // Approval-required captures are proposals, never an automatically passing baseline change.
       return {
-        passed: false,
-        similarity: 0,
-        pixelDiffCount: baseline.width * baseline.height,
-        diffPercentage: 100
+        passed: !this.config.approvalRequired,
+        similarity: this.config.approvalRequired ? 0 : 1,
+        pixelDiffCount: 0,
+        diffPercentage: 0,
       };
     }
-
-    const diff = new PNG({ width: baseline.width, height: baseline.height });
-    const pixelDiffCount = pixelmatch(
-      baseline.data,
-      currentPng.data,
-      diff.data,
-      baseline.width,
-      baseline.height,
-      { threshold: this.config.threshold }
-    );
-
-    const totalPixels = baseline.width * baseline.height;
-    const diffPercentage = (pixelDiffCount / totalPixels) * 100;
-    const similarity = 1 - (pixelDiffCount / totalPixels);
-
-    if (pixelDiffCount > 0) {
-      const diffPath = join(this.config.diffDir, `${name}-diff.png`);
-      writeFileSync(diffPath, PNG.sync.write(diff));
+    let previous: Screenshot;
+    if (typeof baseline !== "string") previous = baseline;
+    else if (this.config.approvalRequired) {
+      const approved = await this.baselines.retrieve(name);
+      if (!approved) {
+        await this.baselines.store(name, current);
+        throw new Error(
+          `No approved baseline for ${name}; approve the pending capture first`,
+        );
+      }
+      previous = approved;
+    } else {
+      const path = this.imagePath(this.config.baselineDir, name, ".png");
+      if (!existsSync(path))
+        throw new Error(
+          `No baseline found for ${name}. Run with updateBaselines=true to create.`,
+        );
+      previous = await this.captureScreenshot(name, readFileSync(path));
     }
-
-    return {
-      passed: diffPercentage < this.config.threshold * 100,
-      similarity,
-      pixelDiffCount,
-      diffPercentage,
-      diffImage: pixelDiffCount > 0 ? PNG.sync.write(diff) : undefined
+    this.clearComparison(name);
+    const a = decodeImage(previous.buffer),
+      b = decodeImage(current.buffer);
+    const sameSize = a.width === b.width && a.height === b.height;
+    let count: number, diffImage: Buffer | undefined;
+    let regions: ComparisonResult["regions"];
+    if (sameSize) {
+      const diff = new PNG({ width: a.width, height: a.height });
+      count = pixelmatch(a.data, b.data, diff.data, a.width, a.height, {
+        threshold: this.config.threshold,
+        diffMask: true,
+      });
+      if (count) {
+        let left = a.width,
+          top = a.height,
+          right = 0,
+          bottom = 0;
+        for (let y = 0; y < a.height; y++)
+          for (let x = 0; x < a.width; x++)
+            if (diff.data[(y * a.width + x) * 4 + 3]) {
+              left = Math.min(left, x);
+              top = Math.min(top, y);
+              right = Math.max(right, x);
+              bottom = Math.max(bottom, y);
+            }
+        regions = [
+          {
+            x: left,
+            y: top,
+            width: right - left + 1,
+            height: bottom - top + 1,
+            severity: count / (a.width * a.height) > 0.1 ? "major" : "minor",
+          },
+        ];
+        diffImage = PNG.sync.write(diff);
+      }
+    } else {
+      count = Math.max(a.width * a.height, b.width * b.height);
+      diffImage = sideBySide(previous.buffer, current.buffer);
+    }
+    const percentage = sameSize ? (count / (a.width * a.height)) * 100 : 100;
+    const ssim = structuralSimilarity(previous.buffer, current.buffer);
+    const result: ComparisonResult = {
+      passed:
+        sameSize &&
+        (this.config.algorithm === "ssim"
+          ? ssim >= this.config.ssimThreshold
+          : percentage <= this.config.threshold * 100),
+      similarity:
+        this.config.algorithm === "ssim" ? ssim : 1 - percentage / 100,
+      ssim,
+      pixelDiffCount: count,
+      diffPercentage: percentage,
+      ...(regions ? { regions } : {}),
     };
-  }
-
-  async updateBaseline(name: string, screenshot: Screenshot): Promise<void> {
-    const baselinePath = join(this.config.baselineDir, `${name}.png`);
-    writeFileSync(baselinePath, screenshot.buffer);
-  }
-
-  async getDiff(name: string): Promise<Buffer | null> {
-    const diffPath = join(this.config.diffDir, `${name}-diff.png`);
-    if (!existsSync(diffPath)) {
-      return null;
+    if (diffImage) {
+      result.diffImage = pngWithMetadata(diffImage, {
+        name,
+        timestamp: current.timestamp,
+        ...result,
+      });
+      this.write(name, "-diff.png", result.diffImage);
     }
-    return readFileSync(diffPath);
-  }
-
-  private ensureDirectory(dir: string): void {
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-  }
-
-  pixelDiff(img1: Buffer, img2: Buffer, threshold: number = 0.1): number {
-    const png1 = PNG.sync.read(img1);
-    const png2 = PNG.sync.read(img2);
-
-    if (png1.width !== png2.width || png1.height !== png2.height) {
-      return png1.width * png1.height;
-    }
-
-    const diff = new PNG({ width: png1.width, height: png1.height });
-    return pixelmatch(
-      png1.data,
-      png2.data,
-      diff.data,
-      png1.width,
-      png1.height,
-      { threshold }
+    this.write(
+      name,
+      "-comparison.png",
+      pngWithMetadata(sideBySide(previous.buffer, current.buffer), {
+        name,
+        timestamp: current.timestamp,
+        similarity: result.similarity,
+      }),
     );
+    this.write(
+      name,
+      "-comparison.html",
+      comparisonHtml(name, previous, current),
+    );
+    if (this.config.approvalRequired && !result.passed)
+      await this.baselines.store(name, current);
+    return result;
   }
+  async updateBaseline(name: string, screenshot: Screenshot): Promise<void> {
+    this.imagePath(this.config.baselineDir, name, ".png");
+    decodeImage(screenshot.buffer);
+    if (this.config.approvalRequired) {
+      await this.baselines.store(name, screenshot);
+      return;
+    }
+    const path = this.imagePath(this.config.baselineDir, name, ".png");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, screenshot.buffer);
+  }
+  async getDiff(name: string): Promise<Buffer | null> {
+    const path = this.imagePath(this.config.diffDir, name, "-diff.png");
+    return existsSync(path) ? readFileSync(path) : null;
+  }
+  async getComparison(
+    name: string,
+  ): Promise<{ image: Buffer; html: string } | null> {
+    const path = this.imagePath(this.config.diffDir, name, "-comparison.png");
+    return existsSync(path)
+      ? {
+          image: readFileSync(path),
+          html: readFileSync(
+            this.imagePath(this.config.diffDir, name, "-comparison.html"),
+            "utf8",
+          ),
+        }
+      : null;
+  }
+  private write(name: string, suffix: string, value: Buffer | string): void {
+    const path = this.imagePath(this.config.diffDir, name, suffix);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, value);
+  }
+  private clearComparison(name: string): void {
+    for (const suffix of ["-diff.png", "-comparison.png", "-comparison.html"])
+      rmSync(this.imagePath(this.config.diffDir, name, suffix), {
+        force: true,
+      });
+  }
+  private imagePath(directory: string, name: string, suffix: string): string {
+    if (!name || name.includes("\0") || isAbsolute(name))
+      throw new Error("Screenshot name must be a relative path");
+    const root = resolve(directory),
+      path = resolve(root, `${name}${suffix}`),
+      local = relative(root, path);
+    if (
+      local === ".." ||
+      local.startsWith("../") ||
+      local.startsWith("..\\") ||
+      isAbsolute(local)
+    )
+      throw new Error("Screenshot name escapes its directory");
+    return path;
+  }
+  pixelDiff(img1: Buffer, img2: Buffer, threshold = 0.1): number {
+    const a = decodeImage(img1),
+      b = decodeImage(img2);
+    if (a.width !== b.width || a.height !== b.height)
+      return Math.max(a.width * a.height, b.width * b.height);
+    return pixelmatch(a.data, b.data, null, a.width, a.height, { threshold });
+  }
+}
+
+/** Framework-neutral screenshot assertion; runner-provided configuration travels to child processes via env. */
+export async function visualTest(
+  page: PageLike,
+  name: string,
+  config?: VisualTestConfig,
+): Promise<ComparisonResult> {
+  const resolved: VisualTestConfig =
+    config ??
+    (process.env.TESTFN_VISUAL_CONFIG
+      ? JSON.parse(process.env.TESTFN_VISUAL_CONFIG)
+      : undefined);
+  if (!resolved || typeof resolved.baselineDir !== "string")
+    throw new Error(
+      "visualTest requires configuration or TESTFN_VISUAL_CONFIG",
+    );
+  const tester = new VisualTester(resolved);
+  const result = await tester.compareScreenshot(
+    await tester.captureScreenshot(page, name),
+    name,
+  );
+  if (!result.passed)
+    throw new Error(
+      `Visual comparison failed for ${name}: ${result.diffPercentage.toFixed(2)}% changed, similarity ${result.similarity.toFixed(4)}`,
+    );
+  return result;
 }

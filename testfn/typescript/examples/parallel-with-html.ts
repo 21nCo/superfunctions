@@ -39,10 +39,10 @@ async function main() {
 
   try {
     const results = await runner.run();
-    
+
     console.log('\n✅ Test run completed successfully');
     console.log('💡 Open test-report.html in your browser to view the dashboard');
-    
+
     process.exit(results.summary.failed > 0 ? 1 : 0);
   } catch (error) {
     console.error('\n❌ Test execution failed:', error);

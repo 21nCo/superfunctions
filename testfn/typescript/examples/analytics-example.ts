@@ -32,7 +32,7 @@ async function main() {
   console.log(`  P50 Duration: ${metrics.p50Duration.toFixed(0)}ms`);
   console.log(`  P95 Duration: ${metrics.p95Duration.toFixed(0)}ms`);
   console.log(`  P99 Duration: ${metrics.p99Duration.toFixed(0)}ms`);
-  
+
   if (Object.keys(metrics.failuresByType).length > 0) {
     console.log('\n  Failures by Type:');
     for (const [type, count] of Object.entries(metrics.failuresByType)) {
@@ -41,10 +41,10 @@ async function main() {
   }
 
   console.log('\n=== Flaky Test Detection ===\n');
-  
+
   for (const result of results.results) {
     const flakyAnalysis = await analytics.detectFlaky(result.id, 10);
-    
+
     if (flakyAnalysis.flakyScore > 0.4) {
       console.log(`Test: ${result.id}`);
       console.log(`  Flaky Score: ${flakyAnalysis.flakyScore.toFixed(2)}`);

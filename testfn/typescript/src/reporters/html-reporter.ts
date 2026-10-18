@@ -1,12 +1,17 @@
-import { writeFileSync } from 'fs';
-import type { TestResult, TestRunSummary, Reporter } from '../types.js';
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import type { TestResult, TestRunSummary, Reporter } from "../types.js";
 
 export class HtmlReporter implements Reporter {
   private outputPath: string;
   private results: TestResult[] = [];
 
-  constructor(outputPath: string = './testfn-report.html') {
+  constructor(outputPath: string = "./testfn-report.html") {
     this.outputPath = outputPath;
+  }
+
+  onRunStart(): void {
+    this.results = [];
   }
 
   onTestComplete(result: TestResult): void {
@@ -15,21 +20,28 @@ export class HtmlReporter implements Reporter {
 
   onRunComplete(summary: TestRunSummary): void {
     const html = this.generateHtml(summary, this.results);
-    
-    try {
-      writeFileSync(this.outputPath, html, 'utf-8');
-      console.log(`\n📊 HTML report generated: ${this.outputPath}`);
-    } catch (error) {
-      console.error('Failed to write HTML report:', error);
-    }
+
+    mkdirSync(dirname(this.outputPath), { recursive: true });
+    writeFileSync(this.outputPath, html, "utf-8");
   }
 
   private generateHtml(summary: TestRunSummary, results: TestResult[]): string {
-    const passRate = summary.total > 0 ? (summary.passed / summary.total * 100).toFixed(1) : '0';
-    const failRate = summary.total > 0 ? (summary.failed / summary.total * 100).toFixed(1) : '0';
-    
-    const statusColor = summary.failed === 0 ? '#10b981' : '#ef4444';
-    const statusText = summary.failed === 0 ? '✓ All Tests Passed' : `✗ ${summary.failed} Test${summary.failed > 1 ? 's' : ''} Failed`;
+    const passRate =
+      summary.total > 0
+        ? ((summary.passed / summary.total) * 100).toFixed(1)
+        : "0";
+    const failRate =
+      summary.total > 0
+        ? ((summary.failed / summary.total) * 100).toFixed(1)
+        : "0";
+
+    const statusColor = summary.failed === 0 ? "#10b981" : "#ef4444";
+    const statusText =
+      summary.total === 0
+        ? "No tests executed"
+        : summary.failed === 0
+          ? "✓ All Tests Passed"
+          : `✗ ${summary.failed} Test${summary.failed > 1 ? "s" : ""} Failed`;
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -39,7 +51,7 @@ export class HtmlReporter implements Reporter {
   <title>TestFn Report</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { 
+    body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #f9fafb;
       padding: 2rem;
@@ -212,51 +224,63 @@ export class HtmlReporter implements Reporter {
         <div class="bar failed" style="height: ${failRate}%">
           <span class="bar-label">Failed<br>${summary.failed}</span>
         </div>
-        ${summary.skipped > 0 ? `<div class="bar" style="height: ${(summary.skipped / summary.total * 100)}%; background: linear-gradient(to top, #f59e0b, #fbbf24);">
+        ${
+          summary.skipped > 0
+            ? `<div class="bar" style="height: ${(summary.skipped / summary.total) * 100}%; background: linear-gradient(to top, #f59e0b, #fbbf24);">
           <span class="bar-label">Skipped<br>${summary.skipped}</span>
-        </div>` : ''}
+        </div>`
+            : ""
+        }
       </div>
     </div>
 
     <div class="results">
       <h3>Test Results (${results.length})</h3>
       <div class="filter-tabs">
-        <button class="filter-tab active" onclick="filterTests('all')">All (${results.length})</button>
-        <button class="filter-tab" onclick="filterTests('passed')">Passed (${summary.passed})</button>
-        <button class="filter-tab" onclick="filterTests('failed')">Failed (${summary.failed})</button>
-        ${summary.skipped > 0 ? `<button class="filter-tab" onclick="filterTests('skipped')">Skipped (${summary.skipped})</button>` : ''}
+        <button class="filter-tab active" onclick="filterTests('all', event)">All (${results.length})</button>
+        <button class="filter-tab" onclick="filterTests('passed', event)">Passed (${summary.passed})</button>
+        <button class="filter-tab" onclick="filterTests('failed', event)">Failed (${summary.failed})</button>
+        ${summary.skipped > 0 ? `<button class="filter-tab" onclick="filterTests('skipped', event)">Skipped (${summary.skipped})</button>` : ""}
       </div>
       <div id="test-list">
-        ${results.map(result => `
+        ${results
+          .map(
+            (result) => `
           <div class="test-item" data-status="${result.status}">
             <div class="test-icon ${result.status}">
-              ${result.status === 'passed' ? '✓' : result.status === 'failed' ? '✗' : '○'}
+              ${result.status === "passed" ? "✓" : result.status === "failed" ? "✗" : "○"}
             </div>
             <div class="test-details">
               <div class="test-name">${this.escapeHtml(result.id)}</div>
               <div class="test-meta">Duration: ${result.duration}ms</div>
-              ${result.error ? `
+              ${
+                result.error
+                  ? `
                 <div class="test-error">
                   <strong>Error:</strong> ${this.escapeHtml(result.error.message)}
-                  ${result.error.stack ? `<pre style="margin-top: 0.5rem; white-space: pre-wrap;">${this.escapeHtml(result.error.stack.split('\n').slice(0, 5).join('\n'))}</pre>` : ''}
+                  ${result.error.stack ? `<pre style="margin-top: 0.5rem; white-space: pre-wrap;">${this.escapeHtml(result.error.stack.split("\n").slice(0, 5).join("\n"))}</pre>` : ""}
                 </div>
-              ` : ''}
+              `
+                  : ""
+              }
             </div>
           </div>
-        `).join('')}
+        `,
+          )
+          .join("")}
       </div>
     </div>
   </div>
 
   <script>
-    function filterTests(status) {
+    function filterTests(status, event) {
       const tabs = document.querySelectorAll('.filter-tab');
       tabs.forEach(tab => tab.classList.remove('active'));
       event.target.classList.add('active');
 
       const items = document.querySelectorAll('.test-item');
       items.forEach(item => {
-        if (status === 'all' || item.dataset.status === status) {
+        if (status === 'all' || item.dataset.status === status || (status === 'failed' && item.dataset.status === 'timeout')) {
           item.style.display = 'flex';
         } else {
           item.style.display = 'none';
@@ -270,12 +294,12 @@ export class HtmlReporter implements Reporter {
 
   private escapeHtml(text: string): string {
     const map: Record<string, string> = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#039;'
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;",
     };
-    return text.replace(/[&<>"']/g, m => map[m]);
+    return text.replace(/[&<>"']/g, (m) => map[m]);
   }
 }
