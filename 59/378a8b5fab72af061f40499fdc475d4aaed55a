@@ -1,23 +1,25 @@
 flowfn/typescript/README.md
-  s_e1c5fc1a65c0cf::t_b6b137c9178201 79-84
+  s_e1c5fc1a65c0cf::t_dc5216cf079350 79-84
 flowfn/typescript/src/adapters/postgres/index.ts
-  s_e1c5fc1a65c0cf::t_4d42c3fcdb01ad 1,540-541,548-550,575,577-578,580-587,590-591,594,599,604,621-622,626,654-655
+  s_e1c5fc1a65c0cf::t_298b753ac4a669 1,540-541,548-550,575,577-578,580-587,590-591,594,599,604,621-622,626,654-655
 flowfn/typescript/src/adapters/postgres/postgres.test.ts
-  s_e1c5fc1a65c0cf::t_8f9373cc742122 1,23-25
+  s_e1c5fc1a65c0cf::t_4e204956f224e8 1,23-25
 flowfn/typescript/src/adapters/redis.test.ts
-  s_e1c5fc1a65c0cf::t_b033d341930014 1,23-25
+  s_e1c5fc1a65c0cf::t_73d1eacb34e436 1,23-25
 flowfn/typescript/src/adapters/redis.ts
-  s_e1c5fc1a65c0cf::t_74e35dff36d25b 1,352-353,357,365,367,369-381,384-386,391,396,413-414,421,424,454,477-478
+  s_e1c5fc1a65c0cf::t_d6d9076d2417cc 1,352-353,357,365,367,369-381,384-386,391,396,413-414,421,424,454,477-478
 flowfn/typescript/src/storage/stream-lease-contract.ts
-  s_e1c5fc1a65c0cf::t_02301d9196b5c7 1-73
+  s_e1c5fc1a65c0cf::t_8035a58b584650 1-73
 flowfn/typescript/src/stream/delivery-lease.test.ts
-  s_e1c5fc1a65c0cf::t_9648c487b1210d 1-44
+  s_e1c5fc1a65c0cf::t_8149c3260d9640 1-44
 flowfn/typescript/src/stream/delivery-lease.ts
-  s_e1c5fc1a65c0cf::t_43106612f0c4c6 1-41
+  s_e1c5fc1a65c0cf::t_654cd36e2cca70 1-41
 flowfn/typescript/src/stream/lifecycle.test.ts
-  s_e1c5fc1a65c0cf::t_496d590f50eb4b 187-219
+  s_e1c5fc1a65c0cf::t_e09fb63a7a4588 187-219
 flowfn/typescript/src/stream/memory-groups.ts
-  s_e1c5fc1a65c0cf::t_bc62c538e468e7 24,108,121-122,132,137,140,155-156,194,210,228
+  s_e1c5fc1a65c0cf::t_27fcd1fb52fdd3 24,108,121-122,132,137,140,155-156,194,210,228
+flowfn/typescript/src/stream/types.ts
+  s_e1c5fc1a65c0cf::t_b3d37b48ecd356 41-42,72
 ---
 {
   "schema_version": "authorship/3.0.0",
