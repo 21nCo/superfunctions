@@ -468,3 +468,9 @@ const sink = sinkHttp({
 The acceptance script `logfn/scripts/browser-offline-acceptance.mjs` checks failed
 delivery, Chrome process restart, recovery, and deletion after acknowledgement.
 Build first; set `PLAYWRIGHT_MODULE` and `CHROME_PATH` when needed.
+
+Trace-context parsing rejects malformed hexadecimal fields, zero trace/span IDs,
+invalid version/flag fields, and extra fields on version00. Additive future
+versions preserve the known trace/span fields. `withRequestIds()` fills missing
+IDs while preserving supplied IDs. Format rules follow the
+[W3C Trace Context specification](https://www.w3.org/TR/trace-context/#traceparent-header-field-values).
