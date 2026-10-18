@@ -1,0 +1,40 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M57ZM6KZ863AXXBXT5CHMK8B",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "flowfn/typescript/README.md",
+    "flowfn/typescript/scripts/packed-consumer-acceptance.mjs",
+    "flowfn/typescript/src/adapters/base.ts",
+    "flowfn/typescript/src/adapters/postgres/index.ts",
+    "flowfn/typescript/src/adapters/postgres/postgres.test.ts",
+    "flowfn/typescript/src/adapters/redis.test.ts",
+    "flowfn/typescript/src/adapters/redis.ts",
+    "flowfn/typescript/src/core/durable-scheduler.ts",
+    "flowfn/typescript/src/core/flow-fn.ts",
+    "flowfn/typescript/src/core/scheduler.ts",
+    "flowfn/typescript/src/core/shutdown.test.ts",
+    "flowfn/typescript/src/core/shutdown.ts",
+    "flowfn/typescript/src/index.ts",
+    "flowfn/typescript/src/queue/queue.ts",
+    "flowfn/typescript/src/queue/types.ts",
+    "flowfn/typescript/src/queue/worker-pool.ts",
+    "flowfn/typescript/src/queue/worker.ts",
+    "flowfn/typescript/src/storage/shutdown-contract.ts",
+    "flowfn/typescript/src/stream/stream.ts",
+    "flowfn/typescript/src/stream/types.ts",
+    "flowfn/typescript/src/workflow/types.ts",
+    "flowfn/typescript/src/workflow/workflow.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
