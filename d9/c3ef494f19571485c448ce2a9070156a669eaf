@@ -1,0 +1,47 @@
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_86b19e5a2cafb3 161,165,172,174,190-196
+flowfn/python/benchmarks/native_queues.py
+  s_e1c5fc1a65c0cf::t_38e595d480b394 1-94
+flowfn/python/flowfn/adapters/base.py
+  s_e1c5fc1a65c0cf::t_0009acbc2745f4 31
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_96f2f05d5f1946 68-72,107,123,149-150
+flowfn/python/flowfn/adapters/memory.py
+  s_e1c5fc1a65c0cf::t_c356b6353ca1da 79-81
+flowfn/python/flowfn/adapters/native_queues.py
+  s_e1c5fc1a65c0cf::t_a74a583ef2a8c0 1-101
+flowfn/python/flowfn/adapters/postgres.py
+  s_e1c5fc1a65c0cf::t_5b9ca781226ad9 11-12,64-68,70-71,74-92
+flowfn/python/flowfn/adapters/postgres_queue_functions.py
+  s_e1c5fc1a65c0cf::t_d054c5e1a73d5a 1-119
+flowfn/python/flowfn/adapters/postgres_queues.py
+  s_e1c5fc1a65c0cf::t_1a36556a1dd191 1-238
+flowfn/python/flowfn/adapters/redis.py
+  s_e1c5fc1a65c0cf::t_3f5300d1617510 3-4,46-50,52-53,56-74
+flowfn/python/flowfn/adapters/redis_queue_scripts.py
+  s_e1c5fc1a65c0cf::t_5eb8a98bdda2a9 1-170
+flowfn/python/flowfn/adapters/redis_queues.py
+  s_e1c5fc1a65c0cf::t_cfcf95f6d9837a 1-296
+flowfn/python/tests/test_durable_adapters.py
+  s_e1c5fc1a65c0cf::t_6d87208b7e0b4b 43-45
+flowfn/python/tests/test_native_queues.py
+  s_e1c5fc1a65c0cf::t_2e7bf386a5388e 1-189
+flowfn/python/tests/test_queue_lease_cancellation.py
+  s_e1c5fc1a65c0cf::t_11789ec8c1d937 42,46-48,50-52,59-60,88-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9c3ef494f19571485c448ce2a9070156a669eaf",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
