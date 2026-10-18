@@ -40,11 +40,11 @@ class FlowFn:
         self._streams: dict[str, "Stream"] = {}
         self._workflows: list["Workflow"] = []
         self._metrics: MetricsManager
-        self._scheduler = Scheduler()
         self._health_checker: HealthChecker
         self._event_tracker: EventTracker
 
         self._setup_adapter()
+        self._scheduler = Scheduler(self._adapter)
         self._setup_monitoring()
 
     def _setup_adapter(self) -> None:

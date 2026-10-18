@@ -134,19 +134,20 @@ Custom adapters must implement dead-letter save/list/delete and atomic `retry_de
 
 ## Scheduling
 
-`flow.scheduler()` returns a process-local scheduler. Register schedules inside a running asyncio loop; callbacks are async functions receiving the configured `data` (or `None`). Cron expressions have five fields and accept an IANA timezone; repeat intervals are milliseconds.
+`flow.scheduler()` uses the FlowFn adapter to persist schedules and coordinate owners. `Scheduler()` without an adapter remains process-local. Register schedules inside a running asyncio loop; callbacks are async functions receiving the configured `data` (or `None`). Cron expressions have five fields and accept an IANA timezone; repeat intervals are milliseconds.
 
 ```python
 scheduler = flow.scheduler()
 scheduler.schedule('weekly-report', '0 9 * * MON', report,
                    timezone_name='America/New_York', data={'type': 'weekly'})
 scheduler.repeat('health-check', 5000, check_health, limit=10)
+await scheduler.ready()  # definitions are now durably registered
 await scheduler.pause('weekly-report')
 await scheduler.resume('weekly-report')
 await scheduler.cancel('weekly-report')
 ```
 
-`await scheduler.list()` returns detached snapshots with next run time, attempted run count and the latest callback error. Callback failures count toward the optional run limit and do not stop subsequent scheduled runs. Invocations of the same schedule never overlap; missed repeat intervals are skipped. `start_date` must be timezone-aware. Pausing prevents new invocations; an already running callback continues. Closing the scheduler or FlowFn cancels and awaits its callbacks. Schedule definitions and execution state are not durable or shared between processes; distributed scheduler ownership and restart recovery remain unimplemented.
+`await scheduler.list()` returns detached snapshots with next run time, attempted run count and the latest callback error. Callback failures count toward the optional run limit and do not stop subsequent scheduled runs. Invocations of the same schedule never overlap; missed repeat intervals are skipped. `start_date` must be timezone-aware. Pausing prevents new invocations; an already running callback continues. Closing the scheduler or FlowFn cancels and awaits its callbacks. With a durable adapter, definitions, run counts, pause state and next-run timestamps survive process termination. Register the same names/configuration and callback code after restart; call `ready()` to validate registration. Multiple processes may register an identical schedule; storage leases admit one owner. A changed configuration under the same name is rejected. Closing a scheduler releases ownership while preserving its schedules; `cancel(name)` persistently cancels that schedule. An interrupted callback can be retried, so callbacks must tolerate repeated external side effects.
 
 ## Redis adapter
 
@@ -161,7 +162,7 @@ Redis 6.2 or newer is required. Independent clients share queue transitions, dep
 
 Consumer groups use pending-message recovery with lease heartbeats and ownership-checked acknowledgements. Closing a consumer leaves its unacknowledged deliveries recoverable after `reclaim_after_ms` (default 30 seconds). Handlers must tolerate redelivery after failures or network partitions. Trimming preserves entries still unread or pending in any group, so requested retention bounds may be exceeded until groups acknowledge those messages. Plain subscriptions deliver publications after registration without durable group state.
 
-Active queue jobs receive renewable leases; abandoned jobs become eligible for another claim after lease expiry, and stale completion writes are rejected. Handlers must be idempotent because a partitioned worker can continue external side effects after losing its lease. Workflow snapshots persist, but hosts must restore workflow definitions and resume orchestration. Distributed scheduler ownership, scalable queue storage remain readiness gates; Redis support does not imply those features are complete.
+Active queue jobs receive renewable leases; abandoned jobs become eligible for another claim after lease expiry, and stale completion writes are rejected. Handlers must be idempotent because a partitioned worker can continue external side effects after losing its lease. Workflow snapshots persist, but hosts must restore workflow definitions and resume orchestration. Scalable queue storage remains a readiness gate.
 
 Custom Redis backoff functions must be supplied on every producer and worker adapter as `backoff_strategies={job_name: callback}`. Only serializable options are stored; each worker restores the callable by job name before claiming work. Missing registration fails without claiming the job.
 
@@ -177,3 +178,12 @@ For real local integration tests, point `FLOWFN_REDIS_URL` and `FLOWFN_POSTGRES_
 Workflow execution discovery reads the adapter's persisted states, so a fresh workflow instance can list executions created by another instance. Lookup/cancellation rejects executions belonging to a different workflow name. Custom adapters must implement `list_workflow_states(workflow_id)` alongside save/load. Listing persisted snapshots does not automatically resume their handlers.
 
 Workflow event history is persisted inside execution snapshots, including compensation failures, and metrics use persisted executions. History survives reconstruction of the workflow object. Event histories and execution snapshots currently have no automatic retention policy; applications with unbounded workflow volume need a retention mechanism before production deployment.
+
+
+## Workflow ownership and restart recovery
+
+Use `.version('v1')` on the workflow builder and increment it whenever handler semantics change. A structural fingerprint also checks step names/types, parallel layout, delays and nested branches. `await workflow.resume_execution(execution_id)` claims an abandoned running execution after its lease expires; it rejects a different version/structure, an active owner, or a terminal execution. `.lease(milliseconds)` configures renewal/expiry (default 30 seconds). Lease clocks and atomic transitions belong to the storage adapter.
+
+Completed sequential and parallel child steps are checkpointed by path. Branch decisions, delay deadlines, context and pending saga compensation paths are persisted. Recovery skips completed paths and resumes an interrupted compensation phase. Handlers and compensators must be idempotent: a crash between an external side effect and its checkpoint may cause that operation to repeat. Checkpoints cannot make external services transactional. Old owners cannot overwrite a takeover or cancellation. Remote cancellation invalidates ownership; its worker stops when renewal observes the cancellation. Closing FlowFn explicitly cancels its running workflows; a process crash leaves them eligible for recovery.
+
+Custom adapters must implement atomic `transition_workflow_state` create/save/claim/renew/release/cancel/schedule-control operations in addition to snapshot storage and listing. See the shared transition implementation for ownership/version invariants. Recovery requires the application to register the matching handler definitions; Python functions are not serialized into storage.

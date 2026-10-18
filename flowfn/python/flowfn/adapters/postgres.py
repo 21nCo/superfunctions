@@ -69,13 +69,26 @@ class PostgresAdapter(DurableQueues):
                 return result
 
     async def save_workflow_state(self, execution_id: str, execution: WorkflowExecution) -> None:
-        pool = await self._database()
-        await pool.execute('INSERT INTO flowfn_py_workflows VALUES($1,$2,$3) ON CONFLICT(namespace,id) DO UPDATE SET payload=EXCLUDED.payload', self.namespace, execution_id, execution.model_dump_json())
+        await self.transition_workflow_state(execution_id, "save", {"execution": execution})
 
     async def load_workflow_state(self, execution_id: str) -> Optional[WorkflowExecution]:
         pool = await self._database()
         raw = await pool.fetchval('SELECT payload FROM flowfn_py_workflows WHERE namespace=$1 AND id=$2', self.namespace, execution_id)
         return WorkflowExecution.model_validate_json(raw) if raw else None
+
+    async def transition_workflow_state(self, execution_id: str, operation: str, payload: dict[str, Any]) -> Optional[WorkflowExecution]:
+        from flowfn.adapters.workflow_state import transition
+        pool = await self._database()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1,1))",json.dumps([self.namespace,execution_id]))
+                raw = await connection.fetchval('SELECT payload FROM flowfn_py_workflows WHERE namespace=$1 AND id=$2 FOR UPDATE',self.namespace,execution_id)
+                current = WorkflowExecution.model_validate_json(raw) if raw else None
+                now = await connection.fetchval("SELECT (EXTRACT(EPOCH FROM clock_timestamp())*1000)::bigint")
+                result = transition(current,operation,payload,now)
+                if result is not None:
+                    await connection.execute('INSERT INTO flowfn_py_workflows VALUES($1,$2,$3) ON CONFLICT(namespace,id) DO UPDATE SET payload=EXCLUDED.payload',self.namespace,execution_id,result.model_dump_json())
+                return result
 
     async def list_workflow_states(self, workflow_id: str) -> list[WorkflowExecution]:
         pool = await self._database()

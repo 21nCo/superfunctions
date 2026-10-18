@@ -68,12 +68,33 @@ class RedisAdapter(DurableQueues):
 
     async def save_workflow_state(self, execution_id: str, execution: WorkflowExecution) -> None:
         self._check_open()
-        await self.client.set(self.prefix + ':workflow:' + quote(execution_id, safe=''), execution.model_dump_json())
+        await self.transition_workflow_state(execution_id, "save", {"execution": execution})
 
     async def load_workflow_state(self, execution_id: str) -> Optional[WorkflowExecution]:
         self._check_open()
         value = await self.client.get(self.prefix + ':workflow:' + quote(execution_id, safe=''))
         return WorkflowExecution.model_validate_json(value) if value else None
+
+    async def transition_workflow_state(self, execution_id: str, operation: str, payload: dict[str, Any]) -> Optional[WorkflowExecution]:
+        from flowfn.adapters.workflow_state import transition
+        self._check_open()
+        key = self.prefix + ':workflow:' + quote(execution_id, safe='')
+        while True:
+            async with self.client.pipeline(transaction=True) as pipe:
+                try:
+                    await pipe.watch(key)
+                    raw = await pipe.get(key)
+                    current = WorkflowExecution.model_validate_json(raw) if raw else None
+                    seconds, micros = await pipe.time()
+                    result = transition(current, operation, payload, seconds * 1000 + micros // 1000)
+                    if result is None:
+                        return None
+                    pipe.multi()  # type: ignore[no-untyped-call]
+                    pipe.set(key, result.model_dump_json())
+                    await pipe.execute()
+                    return result
+                except WatchError:
+                    await asyncio.sleep(0)
 
     async def list_workflow_states(self, workflow_id: str) -> list[WorkflowExecution]:
         self._check_open()

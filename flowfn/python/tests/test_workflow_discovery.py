@@ -53,3 +53,87 @@ async def test_event_history_survives_new_instance_and_records_compensation_fail
     assert (await adapter.load_workflow_state(execution.id)).state['events']
     assert (await fresh.get_metrics())['failed'] == 1
     await flow.close()
+
+
+async def test_nested_branch_and_saga_restore_from_abandoned_owner():
+    import asyncio
+    adapter=MemoryAdapter()
+    flow=create_flow(adapter)
+    entered=asyncio.Event()
+    compensated=[]
+
+    async def reserve(ctx):
+        ctx.set('reservation','kept')
+
+    async def compensate(ctx):
+        compensated.append(ctx.get('reservation'))
+
+    async def hold(ctx):
+        entered.set()
+        await asyncio.Event().wait()
+
+    branch=flow.workflow('branch').saga('reserve',reserve,compensate).step('hold',hold)
+    original=flow.workflow('nested').lease(100).branch(lambda ctx:True,then_workflow=branch).build()
+    execution=await original.execute({})
+    await entered.wait()
+    original._lease_lost.add(execution.id)
+    task=original._tasks[execution.id]
+    task.cancel()
+    await asyncio.gather(task,return_exceptions=True)
+    await asyncio.sleep(.15)
+
+    async def do_not_replay(ctx):
+        raise AssertionError('Completed saga replayed')
+
+    async def fail(ctx):
+        raise ValueError('finish failed')
+
+    restored_branch=flow.workflow('branch').saga('reserve',do_not_replay,compensate).step('hold',fail)
+    restored=flow.workflow('nested').lease(100).branch(lambda ctx:False,then_workflow=restored_branch).build()
+    resumed=await restored.resume_execution(execution.id)
+    for _ in range(100):
+        if resumed.status==ExecutionStatus.FAILED:
+            break
+        await asyncio.sleep(.01)
+    assert resumed.status==ExecutionStatus.FAILED and resumed.error=='finish failed'
+    assert compensated==['kept']
+    await flow.close()
+
+
+async def test_crashed_compensation_resumes_compensation_phase():
+    import asyncio
+    adapter=MemoryAdapter()
+    flow=create_flow(adapter)
+    entered=asyncio.Event()
+    calls=[]
+
+    async def reserve(ctx):
+        pass
+    async def compensate(ctx):
+        entered.set()
+        await asyncio.Event().wait()
+    async def fail(ctx):
+        raise ValueError('original failure')
+
+    original=flow.workflow('compensation').lease(100).saga('reserve',reserve,compensate).step('fail',fail).build()
+    execution=await original.execute({})
+    await entered.wait()
+    original._lease_lost.add(execution.id)
+    task=original._tasks[execution.id]
+    task.cancel()
+    await asyncio.gather(task,return_exceptions=True)
+    await asyncio.sleep(.15)
+
+    async def recovered_compensation(ctx):
+        calls.append('compensated')
+    async def do_not_execute(ctx):
+        raise AssertionError('Forward phase replayed')
+
+    restored=flow.workflow('compensation').lease(100).saga('reserve',do_not_execute,recovered_compensation).step('fail',do_not_execute).build()
+    resumed=await restored.resume_execution(execution.id)
+    for _ in range(100):
+        if resumed.status==ExecutionStatus.FAILED:
+            break
+        await asyncio.sleep(.01)
+    assert resumed.error=='original failure' and calls==['compensated']
+    await flow.close()

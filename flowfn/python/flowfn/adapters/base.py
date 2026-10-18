@@ -93,6 +93,10 @@ class FlowAdapter(Protocol):
         """Load workflow execution state."""
         ...
 
+    async def transition_workflow_state(self, execution_id: str, operation: str, payload: dict[str, Any]) -> Optional["WorkflowExecution"]:
+        """Atomically claim, renew or cancel workflow ownership."""
+        ...
+
     async def list_workflow_states(self, workflow_id: str) -> list["WorkflowExecution"]:
         """List persisted executions for one workflow definition."""
         ...

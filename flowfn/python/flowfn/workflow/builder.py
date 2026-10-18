@@ -15,6 +15,20 @@ class WorkflowBuilder:
         self.name = name
         self._adapter = adapter
         self._steps: list[dict[str, Any]] = []
+        self._version = "1"
+        self._lease_ms = 30000
+
+    def version(self, version: str) -> "WorkflowBuilder":
+        if not version:
+            raise ValueError("Workflow version must be nonempty")
+        self._version = version
+        return self
+
+    def lease(self, milliseconds: int) -> "WorkflowBuilder":
+        if milliseconds < 100:
+            raise ValueError("Workflow lease must be at least 100 milliseconds")
+        self._lease_ms = milliseconds
+        return self
 
     def step(self, name: str, handler: StepHandler) -> "WorkflowBuilder":
         """Add a sequential step."""
@@ -54,7 +68,7 @@ class WorkflowBuilder:
         """Build the workflow."""
         from flowfn.workflow.workflow import Workflow
 
-        workflow = Workflow(self.name, self._adapter, self._steps)
+        workflow = Workflow(self.name, self._adapter, self._steps, version=self._version, lease_ms=self._lease_ms)
         if self._on_build is not None:
             self._on_build(workflow)
         return workflow

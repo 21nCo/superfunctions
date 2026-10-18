@@ -20,6 +20,10 @@ class WorkflowExecution(BaseModel):
     id: str
     workflow_id: str
     input: Any
+    definition_version: str = "1"
+    definition_hash: str = ""
+    lease_token: Optional[str] = None
+    lease_expires_at: Optional[int] = None
     status: ExecutionStatus
     context: dict[str, Any] = Field(default_factory=dict)
     result: Optional[Any] = None

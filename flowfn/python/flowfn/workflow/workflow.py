@@ -12,19 +12,63 @@ from flowfn.adapters.base import FlowAdapter
 import asyncio
 import uuid
 import time
+import hashlib
+import json
+from copy import copy
+from flowfn.adapters.workflow_state import WorkflowLeaseError
 
 
 class Workflow:
     """Workflow execution engine."""
 
-    def __init__(self, name: str, adapter: FlowAdapter, steps: list[dict[str, Any]]):
+    def __init__(self, name: str, adapter: FlowAdapter, steps: list[dict[str, Any]], *, version: str = "1", lease_ms: int = 30000):
+        if not version or lease_ms < 100:
+            raise ValueError("Nonempty version and lease >= 100 milliseconds required")
         self.name = name
         self._adapter = adapter
-        self._steps = list(steps)
+        def freeze(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            frozen = []
+            for original in items:
+                item = dict(original)
+                if item['type'] == 'parallel':
+                    item['steps'] = list(item['steps'])
+                if item['type'] == 'branch':
+                    for direction in ('then','else'):
+                        if item.get(direction) is not None:
+                            nested = copy(item[direction])
+                            nested._steps = freeze(nested._steps)
+                            item[direction] = nested
+                frozen.append(item)
+            return frozen
+        self._steps = freeze(steps)
         self._executions: dict[str, WorkflowExecution] = {}
         self._saga_stacks: dict[str, list[dict[str, Any]]] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._closed = False
+        self.version = version
+        self.lease_ms = lease_ms
+        self._lease_lost: set[str] = set()
+        self._state_locks: dict[str, asyncio.Lock] = {}
+        self._heartbeats: dict[str, asyncio.Task[None]] = {}
+        self._sagas: dict[str, dict[str, Any]] = {}
+
+        def describe(steps: list[dict[str, Any]], prefix: str = "") -> list[Any]:
+            result = []
+            for index, step in enumerate(steps):
+                path = f"{prefix}/{index}"
+                item = {key: value for key, value in step.items() if key in ("type", "name", "duration")}
+                if step["type"] == "parallel":
+                    item["count"] = len(step["steps"])
+                if step["type"] == "saga":
+                    self._sagas[path] = step
+                if step["type"] == "branch":
+                    for branch in ("then", "else"):
+                        nested = step.get(branch)
+                        item[branch] = describe(nested._steps, path + "/" + branch) if nested else []
+                result.append(item)
+            return result
+
+        self.definition_hash = hashlib.sha256(json.dumps(describe(self._steps),sort_keys=True).encode()).hexdigest()
 
     async def execute(self, input_data: Any) -> WorkflowExecution:
         """Execute the workflow."""
@@ -37,6 +81,8 @@ class Workflow:
             id=execution_id,
             workflow_id=self.name,
             input=input_data,
+            definition_version=self.version,
+            definition_hash=self.definition_hash,
             status=ExecutionStatus.RUNNING,
             started_at=now,
             created_at=now,
@@ -44,45 +90,92 @@ class Workflow:
         )
 
         self._executions[execution_id] = execution
-        await self._adapter.save_workflow_state(execution_id, execution)
+        await self._persist(execution)
+        execution = await self._claim(execution_id)
+        self._executions[execution_id] = execution
 
         # Log start event
         await self._log_event(
             execution_id, "execution.started", {"workflow": self.name, "input": input_data}
         )
 
-        # Start execution in background
-        self._saga_stacks[execution_id] = []
+        self._start(execution)
+        return execution
+
+    async def _claim(self, execution_id: str) -> WorkflowExecution:
+        claimed = await self._adapter.transition_workflow_state(execution_id, "claim", {
+            "workflow_id": self.name, "version": self.version,
+            "definition_hash": self.definition_hash, "lease_ms": self.lease_ms,
+        })
+        if claimed is None:
+            raise WorkflowLeaseError("Execution missing, terminal, or owned by another worker")
+        return claimed
+
+    async def resume_execution(self, execution_id: str) -> WorkflowExecution:
+        """Claim an abandoned execution and resume its incomplete steps."""
+        if self._closed:
+            raise RuntimeError("Workflow is closed")
+        execution = await self._claim(execution_id)
+        self._executions[execution_id] = execution
+        await self._log_event(execution_id, "execution.resumed", {})
+        self._start(execution)
+        return execution
+
+    def _start(self, execution: WorkflowExecution) -> None:
+        execution_id = execution.id
+        self._lease_lost.discard(execution_id)
+        self._saga_stacks[execution_id] = [dict(self._sagas[path], path=path) for path in execution.state.get("sagas", [])]
         task = asyncio.create_task(self._run_execution(execution))
         self._tasks[execution_id] = task
+        heartbeat = asyncio.create_task(self._renew(execution))
+        self._heartbeats[execution_id] = heartbeat
 
         def finished(done: asyncio.Task[None]) -> None:
+            heartbeat.cancel()
+            self._heartbeats.pop(execution_id, None)
             self._tasks.pop(execution_id, None)
             self._saga_stacks.pop(execution_id, None)
             if not done.cancelled() and done.exception() is not None:
-                done.get_loop().call_exception_handler(
-                    {
-                        "message": "Workflow execution persistence failed",
-                        "exception": done.exception(),
-                        "task": done,
-                    }
-                )
+                done.get_loop().call_exception_handler({"message": "Workflow execution failed", "exception": done.exception(), "task": done})
 
         task.add_done_callback(finished)
 
-        return execution
+    async def _renew(self, execution: WorkflowExecution) -> None:
+        while execution.status == ExecutionStatus.RUNNING:
+            await asyncio.sleep(self.lease_ms / 3000)
+            try:
+                renewed = await self._adapter.transition_workflow_state(execution.id,"renew",{"token":execution.lease_token,"lease_ms":self.lease_ms})
+                if renewed is not None:
+                    continue
+            except Exception:
+                pass
+            self._lease_lost.add(execution.id)
+            task = self._tasks.get(execution.id)
+            if task is not None:
+                task.cancel()
+            return
+
+    async def _persist(self, execution: WorkflowExecution) -> None:
+        async with self._state_locks.setdefault(execution.id, asyncio.Lock()):
+            await self._adapter.save_workflow_state(execution.id, execution)
 
     async def _run_execution(self, execution: WorkflowExecution) -> None:
         """Run workflow execution."""
         context = WorkflowContext(execution.input, execution.context)
 
         try:
+            if execution.state.get("compensating"):
+                await self._run_compensations(context, execution.id)
+                execution.status = ExecutionStatus.FAILED
+                execution.completed_at = self._now()
+                await self._log_event(execution.id, "execution.failed", {"error": execution.error})
+                return
             # Execute all steps
-            for step in self._steps:
+            for index, step in enumerate(self._steps):
                 if execution.status == ExecutionStatus.CANCELLED:
                     break
 
-                await self._execute_step(step, context, execution)
+                await self._execute_step(step, context, execution, f"/{index}")
 
             if execution.status == ExecutionStatus.CANCELLED:
                 return
@@ -98,7 +191,13 @@ class Workflow:
                 {"duration": execution.completed_at - execution.started_at},
             )
 
+        except WorkflowLeaseError:
+            self._lease_lost.add(execution.id)
+            raise
+
         except asyncio.CancelledError:
+            if execution.id in self._lease_lost:
+                raise
             execution.status = ExecutionStatus.CANCELLED
             execution.completed_at = self._now()
             execution.updated_at = self._now()
@@ -107,6 +206,9 @@ class Workflow:
         except Exception as error:
             if execution.status == ExecutionStatus.CANCELLED:
                 return
+            execution.error = str(error)
+            execution.state["compensating"] = True
+            await self._persist(execution)
             # Compensate only this execution.
             await self._run_compensations(context, execution.id)
 
@@ -121,28 +223,36 @@ class Workflow:
         finally:
             self._saga_stacks.pop(execution.id, None)
             execution.context = context.state
-            await self._adapter.save_workflow_state(execution.id, execution)
+            if execution.id not in self._lease_lost:
+                await self._persist(execution)
 
     async def _execute_step(
-        self, step: dict[str, Any], context: WorkflowContext, execution: WorkflowExecution
+        self, step: dict[str, Any], context: WorkflowContext, execution: WorkflowExecution, path: str
     ) -> None:
-        """Execute a single step."""
+        """Execute a single step, checkpointing its durable path."""
+        if path in execution.state.get("completed_steps", []):
+            return
         step_type = step["type"]
 
         if step_type == "step":
             await self._execute_regular_step(step, context, execution)
 
         elif step_type == "parallel":
-            await self._execute_parallel_steps(step, context, execution)
+            await self._execute_parallel_steps(step, context, execution, path)
 
         elif step_type == "branch":
-            await self._execute_branch(step, context, execution)
+            await self._execute_branch(step, context, execution, path)
 
         elif step_type == "saga":
-            await self._execute_saga(step, context, execution)
+            await self._execute_saga(step, context, execution, path)
 
         elif step_type == "delay":
-            await self._execute_delay(step)
+            deadline = execution.state.setdefault("delays", {}).setdefault(path, self._now() + step["duration"])
+            await self._persist(execution)
+            await asyncio.sleep(max(0, deadline-self._now()) / 1000)
+        execution.state.setdefault("completed_steps", []).append(path)
+        execution.context = context.state
+        await self._persist(execution)
 
     async def _execute_regular_step(
         self, step: dict[str, Any], context: WorkflowContext, execution: WorkflowExecution
@@ -158,12 +268,12 @@ class Workflow:
         # Update execution context
         execution.context = context.state
         execution.updated_at = self._now()
-        await self._adapter.save_workflow_state(execution.id, execution)
+        await self._persist(execution)
 
         await self._log_event(execution.id, "step.completed", {"step": step_name})
 
     async def _execute_parallel_steps(
-        self, step: dict[str, Any], context: WorkflowContext, execution: WorkflowExecution
+        self, step: dict[str, Any], context: WorkflowContext, execution: WorkflowExecution, path: str
     ) -> None:
         """Execute parallel steps."""
         handlers = step["steps"]
@@ -171,10 +281,15 @@ class Workflow:
         await self._log_event(execution.id, "parallel.started", {"count": len(handlers)})
 
         # Run all in parallel
-        async def invoke(handler: Any) -> None:
-            await handler(context)
+        async def invoke(index: int, handler: Any) -> None:
+            child = f"{path}/{index}"
+            if child not in execution.state.get("completed_steps", []):
+                await handler(context)
+                execution.state.setdefault("completed_steps", []).append(child)
+                execution.context = context.state
+                await self._persist(execution)
 
-        tasks = [asyncio.create_task(invoke(handler)) for handler in handlers]
+        tasks = [asyncio.create_task(invoke(index, handler)) for index, handler in enumerate(handlers)]
         try:
             await asyncio.gather(*tasks)
         except BaseException:
@@ -186,24 +301,28 @@ class Workflow:
         await self._log_event(execution.id, "parallel.completed", {"count": len(handlers)})
 
     async def _execute_branch(
-        self, step: dict[str, Any], context: WorkflowContext, execution: WorkflowExecution
+        self, step: dict[str, Any], context: WorkflowContext, execution: WorkflowExecution, path: str
     ) -> None:
         """Execute conditional branch."""
         condition = step["condition"]
         then_workflow = step.get("then")
         else_workflow = step.get("else")
 
-        if condition(context):
+        decisions = execution.state.setdefault("branches", {})
+        if path not in decisions:
+            decisions[path] = bool(condition(context))
+            await self._persist(execution)
+        if decisions[path]:
             if then_workflow:
-                for then_step in then_workflow._steps:
-                    await self._execute_step(then_step, context, execution)
+                for index, then_step in enumerate(then_workflow._steps):
+                    await self._execute_step(then_step, context, execution, f"{path}/then/{index}")
         else:
             if else_workflow:
-                for else_step in else_workflow._steps:
-                    await self._execute_step(else_step, context, execution)
+                for index, else_step in enumerate(else_workflow._steps):
+                    await self._execute_step(else_step, context, execution, f"{path}/else/{index}")
 
     async def _execute_saga(
-        self, step: dict[str, Any], context: WorkflowContext, execution: WorkflowExecution
+        self, step: dict[str, Any], context: WorkflowContext, execution: WorkflowExecution, path: str
     ) -> None:
         """Execute saga step."""
         saga_name = step["name"]
@@ -213,9 +332,10 @@ class Workflow:
         await self._log_event(execution.id, "saga.started", {"saga": saga_name})
 
         # Add to saga stack
-        self._saga_stacks[execution.id].append(
-            {"name": saga_name, "compensate": compensate_handler}
-        )
+        if path not in execution.state.setdefault("sagas", []):
+            execution.state["sagas"].append(path)
+            self._saga_stacks[execution.id].append({"name": saga_name, "compensate": compensate_handler, "path": path})
+            await self._persist(execution)
 
         # Execute
         await execute_handler(context)
@@ -232,6 +352,8 @@ class Workflow:
         stack = self._saga_stacks.get(execution_id, [])
         while stack:
             saga = stack.pop()
+            execution = self._executions[execution_id]
+            execution.state["sagas"].remove(saga["path"])
             try:
                 await saga["compensate"](context)
                 await self._log_event(execution_id, "saga.compensated", {"saga": saga["name"]})
@@ -273,29 +395,31 @@ class Workflow:
         return executions[start:end]
 
     async def cancel_execution(self, execution_id: str) -> None:
-        """Cancel a running execution."""
-        execution = await self.get_execution(execution_id)
-
-        if execution.status not in [ExecutionStatus.COMPLETED, ExecutionStatus.FAILED]:
-            execution.status = ExecutionStatus.CANCELLED
-            execution.completed_at = self._now()
-            execution.updated_at = self._now()
-
-            await self._adapter.save_workflow_state(execution_id, execution)
+        await self.get_execution(execution_id)
+        cancelled = await self._adapter.transition_workflow_state(execution_id,"cancel",{"workflow_id":self.name})
+        if cancelled is None:
+            raise ValueError(f"Execution not found: {execution_id}")
+        if cancelled.status == ExecutionStatus.CANCELLED:
+            current = self._executions.get(execution_id)
+            if current is not None:
+                current.status = ExecutionStatus.CANCELLED
+            self._lease_lost.add(execution_id)
             task = self._tasks.get(execution_id)
             if task is not None and task is not asyncio.current_task():
                 task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-            await self._log_event(execution_id, "execution.cancelled", {})
+                await asyncio.gather(task,return_exceptions=True)
 
     async def close(self) -> None:
         """Cancel and await owned executions before adapter cleanup."""
         self._closed = True
         tasks = list(self._tasks.values())
+        heartbeats = list(self._heartbeats.values())
         for execution_id in list(self._tasks):
             await self.cancel_execution(execution_id)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        if heartbeats:
+            await asyncio.gather(*heartbeats, return_exceptions=True)
 
     async def retry_execution(self, execution_id: str) -> WorkflowExecution:
         """Retry a failed execution."""
@@ -349,7 +473,7 @@ class Workflow:
 
         execution = await self.get_execution(execution_id)
         execution.state.setdefault("events", []).append(event.model_dump(mode="json"))
-        await self._adapter.save_workflow_state(execution_id, execution)
+        await self._persist(execution)
 
     def _now(self) -> int:
         """Get current timestamp in ms."""

@@ -354,11 +354,19 @@ class MemoryAdapter:
     # Workflow operations
     async def save_workflow_state(self, execution_id: str, execution: Any) -> None:
         """Save workflow state."""
-        self._workflow_states[execution_id] = deepcopy(execution)
+        await self.transition_workflow_state(execution_id, "save", {"execution": execution})
 
     async def load_workflow_state(self, execution_id: str) -> Optional[Any]:
         """Load workflow state."""
         return deepcopy(self._workflow_states.get(execution_id))
+
+    async def transition_workflow_state(self, execution_id: str, operation: str, payload: dict[str, Any]) -> Any:
+        from flowfn.adapters.workflow_state import transition
+        current = deepcopy(self._workflow_states.get(execution_id))
+        result = transition(current, operation, payload, self._now())
+        if result is not None:
+            self._workflow_states[execution_id] = deepcopy(result)
+        return result
 
     async def list_workflow_states(self, workflow_id: str) -> list[Any]:
         return [deepcopy(item) for item in self._workflow_states.values() if item.workflow_id == workflow_id]
