@@ -1,0 +1,111 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_530405cd79ec75 14,16,27,29,41,43,72,74
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_535b602432f011 18,20,82,84
+package-lock.json
+  s_7d0a48f0aaecda::t_b8c4717374e3c5 32478-32481,43861,44401,52057-52063,57114,57190,59584-59955
+reviewfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_2428386b6da495 1-13
+reviewfn/docs/README.md
+  s_7d0a48f0aaecda::t_8e3f181eaf94bb 1-20
+reviewfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_c3273dab32bf54 1-19
+reviewfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_9bc1b4832f6915 1-10
+reviewfn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_660870cdc4e825 1-13
+reviewfn/docs/content/docs/operations-and-limits.md
+  s_7d0a48f0aaecda::t_5bc20bc8326f9c 1-12
+reviewfn/docs/content/docs/packages.md
+  s_7d0a48f0aaecda::t_9f3f83f2a5439e 1-15
+reviewfn/docs/content/docs/publication.md
+  s_7d0a48f0aaecda::t_aaae53ed2d7fdf 1-17
+reviewfn/docs/content/docs/reference/configuration.md
+  s_7d0a48f0aaecda::t_02c2cc9575dd8a 1-26
+reviewfn/docs/content/docs/reference/evaluation.md
+  s_7d0a48f0aaecda::t_eee512868de292 1-18
+reviewfn/docs/content/docs/reference/github-action.md
+  s_7d0a48f0aaecda::t_05d872d47f9318 1-25
+reviewfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_f320b28daead0f 1-14
+reviewfn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_9cdd732b9ff33d 1-4
+reviewfn/docs/content/docs/reference/report-schema.md
+  s_7d0a48f0aaecda::t_16c6c86b733955 1-18
+reviewfn/docs/content/docs/reference/security.md
+  s_7d0a48f0aaecda::t_9ab7c44c27992f 1-31
+reviewfn/docs/content/docs/security.md
+  s_7d0a48f0aaecda::t_a8c028d884c90a 1-12
+reviewfn/docs/content/docs/workflow.md
+  s_7d0a48f0aaecda::t_263ae9285182f6 1-12
+reviewfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_47bf946b141eee 1-36
+reviewfn/docs/github-action.md
+  s_7d0a48f0aaecda::t_d9a1db5bc7c2d6 5,7
+reviewfn/docs/package.json
+  s_7d0a48f0aaecda::t_6185518c78b3a6 1-41
+reviewfn/docs/report-schema.md
+  s_7d0a48f0aaecda::t_6ade67a642b109 7
+reviewfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_64df4c3c7a2a13 1-26
+reviewfn/docs/scripts/sync-references.mjs
+  s_7d0a48f0aaecda::t_bb8990468eccbc 1-32
+reviewfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_cdd783c5d62a24 1-82
+reviewfn/docs/src/app.html
+  s_7d0a48f0aaecda::t_92d51f71533a6f 1-11
+reviewfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_c809a687ac92e0 1-5
+reviewfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_a9f40ed9ca23d6 1-14
+reviewfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_b4dd7d6febee79 1-12
+reviewfn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_f91ff3afd58186 1-13
+reviewfn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_2febf7927bddec 1-86
+reviewfn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_31dbd5c1d191e7 1-28
+reviewfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_7035b609fb769d 1-25
+reviewfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_1f747e7451fe05 1-41
+reviewfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_8821d76529f34a 1-7
+reviewfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_e09263e3cff11d 1-7
+reviewfn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_14aaea6c267423 1-8
+reviewfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_fe6194c006626b 1-289
+reviewfn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_7db6c6bba750a3 1-19
+reviewfn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_4ad5fe89a8e584 1-26
+reviewfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_eb28c2362bf293 1-59
+reviewfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_9ab70b29f68486 1-20
+reviewfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_2df42d33f62504 1-12
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_2cca86305eccee 14-23
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_a04ca3f364ae89 59,61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a25da5fe35085f047202783d06ae4d6dc40d07ea",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
