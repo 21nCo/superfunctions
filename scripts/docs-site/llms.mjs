@@ -90,12 +90,16 @@ const sourceBaseUrl = "https://github.com/21nCo/super-functions/blob/dev";
  * The source directory comes from the site's configured `content.root` and `content.docsDir`.
  * @param {string} text
  * @param {import("@docsfn/core").DocsManifest} manifest
- * @param {{content: {root: string, docsDir?: string}}} config loaded site config with an absolute `content.root`
+ * @param {string | {content: {root: string, docsDir?: string}}} site loaded site config with an absolute
+ *   `content.root`, or a product id whose site uses the conventional `<product>/docs/content/docs` layout
  * @param {string | undefined} canonicalUrl
  */
-export function withSourceLinks(text, manifest, config, canonicalUrl) {
+export function withSourceLinks(text, manifest, site, canonicalUrl) {
   if (canonicalUrl) return text;
-  const docsDir = resolve(config.content.root, config.content.docsDir ?? "content/docs");
+  const content = typeof site === "string"
+    ? { root: resolve(repositoryRoot, site, "docs"), docsDir: undefined }
+    : site.content;
+  const docsDir = resolve(content.root, content.docsDir ?? "content/docs");
   const relativeDocsDir = relative(repositoryRoot, docsDir);
   if (!relativeDocsDir || relativeDocsDir === ".." || relativeDocsDir.startsWith(`..${sep}`) || isAbsolute(relativeDocsDir)) {
     throw new Error(`Docs directory is outside the repository: ${docsDir}`);

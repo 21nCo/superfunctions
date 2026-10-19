@@ -63,6 +63,11 @@ describe("source links for unhosted sites", () => {
       .toThrow(/outside the repository/);
   });
 
+  it("accepts a product id for the conventional site layout", () => {
+    expect(withSourceLinks("[Guide](/docs/guide#setup)", manifest, "devfn", undefined))
+      .toBe("[Guide](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/guide/index.md#setup)");
+  });
+
   it("leaves text unchanged when a public origin is configured", () => {
     expect(withSourceLinks("[Guide](/docs/guide)", manifest, site("content/docs"), "https://clifn.com")).toBe("[Guide](/docs/guide)");
   });
