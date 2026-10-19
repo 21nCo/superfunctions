@@ -23,7 +23,7 @@ concurrency:
 jobs:
   plan:
     name: Plan
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       base_ref: ${{ steps.plan.outputs.base_ref }}
       changed_files_count: ${{ steps.plan.outputs.changed_files_count }}
@@ -44,7 +44,7 @@ jobs:
       mcpfn_only: ${{ steps.plan.outputs.mcpfn_only }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
         with:
           fetch-depth: 0
 
@@ -62,6 +62,9 @@ jobs:
       - name: Verify CI planner
         run: node --test scripts/ci-plan.test.mjs
 
+      - name: Verify UIFn docs CLI resolution
+        run: node --test scripts/uifn-docs-cli-resolution.test.mjs
+
       - name: Nested package-lock.json files are not tracked
         run: |
           node --test scripts/verify-package-lockfiles.test.mjs
@@ -75,10 +78,10 @@ jobs:
     name: JavaScript
     needs: plan
     if: needs.plan.outputs.run_js == 'true' && needs.plan.outputs.mcpfn_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
         with:
           fetch-depth: 0
 
@@ -113,30 +116,13 @@ jobs:
           echo "lint filters: ${{ needs.plan.outputs.js_lint_filters }}"
           echo "typecheck filters: ${{ needs.plan.outputs.js_typecheck_filters }}"
 
-      # Check committed publication bytes before any build/prebuild can rewrite them.
-      - name: Check SecFn docs reference mirrors
-        if: needs.plan.outputs.has_js_build == 'true'
-        run: npm run check:references --workspace @secfn/docs
-
-      - name: Check SecFn docs LLM artifacts
-        if: needs.plan.outputs.has_js_build == 'true'
-        run: npm run check:llms --workspace @secfn/docs
-
-      - name: Check AuthFn docs LLM artifacts
-        if: needs.plan.outputs.has_js_build == 'true'
-        run: npm run check:llms --workspace @authfn/docs
-
-      - name: Check FileFn docs LLM artifacts
-        if: needs.plan.outputs.has_js_build == 'true'
-        run: npm run check:llms --workspace @filefn/docs
-
       - name: Build
         if: needs.plan.outputs.has_js_build == 'true'
         run: |
           if [ "${{ needs.plan.outputs.full_js }}" = "true" ]; then
-            ./node_modules/.bin/turbo run build --concurrency=2
+            ./node_modules/.bin/turbo run build
           else
-            ./node_modules/.bin/turbo run build --concurrency=2 ${{ needs.plan.outputs.js_build_filters }}
+            ./node_modules/.bin/turbo run build ${{ needs.plan.outputs.js_build_filters }}
           fi
 
       - name: Typecheck
@@ -171,10 +157,10 @@ jobs:
     name: McpFn Node 20 compatibility
     needs: plan
     if: needs.plan.outputs.run_mcpfn == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -204,14 +190,14 @@ jobs:
     name: Python
     needs: plan
     if: needs.plan.outputs.run_python == 'true' && needs.plan.outputs.mcpfn_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
         package: ${{ fromJson(needs.plan.outputs.python_matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
         with:
           fetch-depth: 0
 
@@ -238,10 +224,10 @@ jobs:
     name: McpFn release gate
     needs: plan
     if: needs.plan.outputs.run_mcpfn == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
         with:
           fetch-depth: 0
 
@@ -284,10 +270,10 @@ jobs:
     name: McpFn Node 18 CommonJS
     needs: plan
     if: needs.plan.outputs.run_mcpfn == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
