@@ -21,7 +21,39 @@
     ],
     "types": [
       "svelte",
-      "vite/client"
-    ]
+      "vite/client",
+      "node"
+    ],
+    "paths": {
+      "@site/docs-search": [
+        "../../scripts/docs-site/Search.svelte"
+      ],
+      "$lib": [
+        "./src/lib"
+      ],
+      "$lib/*": [
+        "./src/lib/*"
+      ],
+      "@docsfn/core": [
+        "./node_modules/@docsfn/core",
+        "../../node_modules/@docsfn/core"
+      ],
+      "@docsfn/sveltekit": [
+        "./node_modules/@docsfn/sveltekit",
+        "../../node_modules/@docsfn/sveltekit"
+      ],
+      "@sveltejs/kit": [
+        "./node_modules/@sveltejs/kit",
+        "../../node_modules/@sveltejs/kit"
+      ],
+      "gray-matter": [
+        "./node_modules/gray-matter",
+        "../../node_modules/gray-matter"
+      ],
+      "vite": [
+        "./node_modules/vite",
+        "../../node_modules/vite"
+      ]
+    }
   }
 }

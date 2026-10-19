@@ -43,6 +43,7 @@
     "sendfn/*",
     "langfn/typescript",
     "memoryfn/typescript",
+    "memoryfn/docs",
     "secfn/core",
     "secfn/server",
     "secfn/runtime"
