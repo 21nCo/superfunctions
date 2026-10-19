@@ -166,7 +166,7 @@ export function langFnHandler(router: WebRouter): RequestHandler {
 
 The `langfn` TypeScript package provides model calls, prompts, structured output, tools, chains, state graphs, agents, memory, RAG, observability, evaluation, HTTP routes, and MCP adapters. Start with [getting started](/docs/getting-started) and use the [provider matrix](/docs/reference/compatibility) when choosing a model.
 
-This site describes the current `origin/dev` TypeScript source, an unpublished adoption targeting package version `0.1.0`. The root LangFn README still lists Python and `@langfn/admin`, but neither package is present in this checkout. Its linked `SPEC.md` is also absent. Do not infer those surfaces from the root README or assume a same-version registry artifact includes these dev changes. Verify the actual installed artifact before adoption.
+This site describes the current `dev` branch TypeScript source, an unpublished adoption targeting package version `0.1.0`. The root LangFn README still lists Python and `@langfn/admin`, but neither package is present in this checkout. Its linked `SPEC.md` is also absent. Do not infer those surfaces from the root README or assume a same-version registry artifact includes these dev changes. Verify the actual installed artifact before adoption.
 
 ---
 
@@ -190,6 +190,8 @@ The adapter can produce a manifest and serve supported transports. Treat model a
 
 `langfn/memory` exports buffer and summary memory helpers. `langfn/rag` exports base retrieval contracts, OpenAI embedding support, in-memory and DB vector-store adapters, and a MemoryFn bridge. Select storage according to your durability and authorization requirements; an in-memory helper is process-local.
 
+`DbVectorStore` defaults to `mode: "reference"`, an application-side scan that pages through at most `maxScan` (512) rows and reranks them in process. That default is not a production retrieval backend. For production use, construct it with `mode: "production"` and an `indexedSearch` callback backed by adapter-native vector search, or use the MemoryFn bridge; in production mode a store without `indexedSearch` throws `NonProductionBackendError` on search.
+
 The first-party provider matrix lists OpenAI as the embeddings adapter for this release line. The bridge calls an injected `search(query, { k, filter })` or `retrieve(query, options)` interface; it does not directly implement MemoryFn’s `{ q, tenantId, containerTags }` search contract. Supply a host adapter that maps the query/options, injects trusted tenant and container-tag scope, and converts results to LangFn documents. The bridge itself neither passes nor enforces that authorization scope. Keep application authorization and deletion state at the host boundary, and do not treat retrieval tags as membership authority.
 
 Inspect [memory exports](https://github.com/21nCo/super-functions/blob/dev/langfn/typescript/src/memory/index.ts) and [RAG exports](https://github.com/21nCo/super-functions/blob/dev/langfn/typescript/src/rag/index.ts) before selecting an adapter. The current source does not expose a shared `getSchema` CLI discovery contract; hosts provision adapter tables explicitly.
@@ -206,7 +208,7 @@ The current TypeScript source includes first-party chat adapters for OpenAI, Ant
 
 Provider `timeout` is a total response deadline, including streaming bodies, in milliseconds. Set `0` only when intentionally disabling it. Cancellation remains independent. For Google tool continuations, persist the returned assistant `message`, including `providerData`, before appending tool results; streamed chat emits a `message` event for the same purpose. `stream` is the prompt-only convenience method.
 
-The Google TypeScript adoption includes native SSE and signed tool continuation, but live Gemini qualification is a separate release gate. Python has not been migrated into this `origin/dev` worktree. Use the [source model exports](https://github.com/21nCo/super-functions/blob/dev/langfn/typescript/src/models/index.ts) for concrete constructors and options.
+The Google TypeScript adoption includes native SSE and signed tool continuation, but live Gemini qualification is a separate release gate. Python is not part of this TypeScript source tree. Use the [source model exports](https://github.com/21nCo/super-functions/blob/dev/langfn/typescript/src/models/index.ts) for concrete constructors and options.
 
 ## Construct a real provider
 
@@ -261,7 +263,7 @@ for await (const event of model.stream({
 }
 ```
 
-`stream` takes a prompt, not a conversation. Event types also carry usage, tool, and completion information; do not assume every event is a text delta. To get LangFn's tracing, policy, and orchestration layer, pass the provider to `new LangFn({ model })` from `langfn`.
+`stream` takes a prompt, not a conversation. Event types also carry usage, tool, and completion information; do not assume every event is a text delta. Wrapping the provider in `new LangFn({ model })` from `langfn` adds the client API with tool policy, caching, and retry configuration. Tracing stays off unless you also pass `observability: { enabled: true, traceStorage }` (or a `tracer`); see [Observability and evaluation](/docs/observability-and-evaluation). Composition lives in the `langfn/orchestration`, `langfn/graph`, and `langfn/agents` subpaths described in [Workflows and agents](/docs/workflows).
 
 ---
 
@@ -271,7 +273,7 @@ for await (const event of model.stream({
 > Capture scoped traces, usage, feedback, and measured outcomes.
 
 
-`langfn/observability` exports tracer, storage, cost meter, exporter, redaction, and span contracts. `langfn/evaluation` exports datasets, metrics, and evaluator helpers. Use them to measure configured model behavior and keep trace data scoped to the trusted tenant and actor.
+`langfn/observability` exports tracer, storage, cost meter, exporter, redaction, and span contracts. `langfn/evaluation` exports datasets, metrics, and evaluator helpers. Use them to measure configured model behavior and keep trace data scoped to the trusted tenant and actor. `Evaluator.evaluate()` calls `lang.complete(item.input)` without request metadata, so traces recorded during an evaluation run carry no tenant or user scope; treat them as local, unowned measurements and keep them out of scoped HTTP trace views.
 
 `TraceStorage.saveFeedback` normalizes top-level tenant/user fields or nested `scope` and rejects conflicts. `LangFn.feedback()` accepts nested `scope` only; HTTP `/feedback` derives scope from the authenticated actor and does not accept caller-supplied tenant/user scope. Cached completions create a fresh scoped trace, so feedback can refer to each returned trace ID. For SQL-backed custom trace stores, include tenant and user columns and query predicates. A local evaluator result only describes the frozen dataset, model, prompt, context, and budget used for that run.
 
@@ -285,7 +287,7 @@ The [release gate](/docs/reference/release-gate) details HTTP scope and trace-st
 > Source availability, release checks, and external proof boundaries.
 
 
-The root README describes a dual-language SDK and an admin package, but the current `origin/dev` tree contains only `langfn/typescript`. The TypeScript adoption is unpublished and its Python Google adapter has not received these changes. Verify the built or packed source and separately inspect any registry artifact before relying on a feature. There is no shared `getSchema` CLI discovery contract for adapter tables.
+The [LangFn README](https://github.com/21nCo/super-functions/blob/dev/langfn/README.md) describes a dual-language SDK and an `@langfn/admin` package, but `langfn/typescript` is the only implementation package in this tree; `langfn/docs` is this site and `COMPATIBILITY.md` and `RELEASE_GATE.md` are metadata. The TypeScript adoption is unpublished and its Python Google adapter has not received these changes. Verify the built or packed source and separately inspect any registry artifact before relying on a feature. There is no shared `getSchema` CLI discovery contract for adapter tables.
 
 Run `npm run gate:langfn-release` from the repository root for TypeScript build, type checking, the full TypeScript test suite, and built import checks. The gate does not run a duplication check. Live Gemini qualification remains separate. Green static docs checks do not establish a provider's live behavior, database migration, hosted HTTP security, or release readiness.
 
@@ -346,7 +348,7 @@ The dev adoption targets the TypeScript package. Its Google adapter now supports
 - [Provider compatibility](/docs/reference/compatibility)
 - [Release gate](/docs/reference/release-gate)
 
-The source pages mirror the current `origin/dev` Markdown documents. The root README has references to packages and files absent from this checkout; the [operations page](/docs/operations-and-limits) explains the boundary.
+The source pages mirror the current `dev` branch Markdown documents. The root README has references to packages and files absent from this checkout; the [operations page](/docs/operations-and-limits) explains the boundary.
 
 ---
 
@@ -393,7 +395,7 @@ HTTP trace listing and feedback require an authenticated actor. Trace records pe
 
 Custom stores serving scoped HTTP access must advertise `supportsScope: true`, apply tenant/user predicates before pagination, and implement `findOne(traceId, scope)` for feedback ownership checks. A store that cannot meet that contract is rejected explicitly. Feedback records also carry top-level tenant/user fields for scoped idempotency.
 
-Provider `timeout` is a total response deadline, including streaming bodies, in milliseconds. Set it to `0` to disable it or increase it for long generations; cancellation remains independent. The built-in graph checkpoint store retains at most 1000 entries (oldest evicted), atomically consumes checkpoints before resuming nodes, and uses UUIDs. Use an injected durable store for recovery across processes. Custom stores must implement atomic `take(id)` for resumption; save/load-only stores fail before node execution. After consumption, failures require application reconciliation, not replay of the old checkpoint. This is at-most-once checkpoint admission, not an exactly-once guarantee for external effects.
+Provider `timeout` is a total response deadline, including streaming bodies, in milliseconds. Set it to `0` to disable it or increase it for long generations; cancellation remains independent. The built-in graph checkpoint store retains at most 1000 entries (oldest evicted), atomically consumes checkpoints before resuming nodes, and issues opaque `chk_`-prefixed identifiers built from a random UUID. Treat checkpoint IDs as opaque strings rather than parsing them as raw UUIDs. Use an injected durable store for recovery across processes. Custom stores must implement atomic `take(id)` for resumption; save/load-only stores fail before node execution. After consumption, failures require application reconciliation, not replay of the old checkpoint. This is at-most-once checkpoint admission, not an exactly-once guarantee for external effects.
 
 `api_call` allows public IPv4 literals by default. Hostnames and IPv6 literals require an explicit `allowedHosts` entry, because portable fetch cannot validate and pin a resolved address in both Node and Workers. Allowlisted hosts are trusted network exceptions, including all addresses they resolve to; do not populate the allowlist from model or request input. `allowPrivateNetwork: true` is a broader explicit opt-in. Redirects are rejected, and only HTTP(S) URLs without embedded credentials are accepted. Deployments needing dynamic hostname access should use an egress proxy that validates and pins destinations.
 
@@ -498,11 +500,13 @@ const textLength = new Tool<{ text: string }, { length: number }>({
       required: ["text"], additionalProperties: false,
     },
     parse(value) {
-      if (typeof value !== "object" || value === null || !("text" in value)
-          || typeof value.text !== "string" || Object.keys(value).length !== 1) {
+      if (typeof value !== "object" || value === null || Array.isArray(value)
+          || Object.keys(value).length !== 1 || !Object.hasOwn(value, "text")) {
         throw new Error("Expected only a text string");
       }
-      return { text: value.text };
+      const { text } = value as { text: unknown };
+      if (typeof text !== "string") throw new Error("Expected only a text string");
+      return { text };
     },
   },
   execute: ({ text }) => ({ length: text.length }),

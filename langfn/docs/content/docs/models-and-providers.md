@@ -7,7 +7,7 @@ The current TypeScript source includes first-party chat adapters for OpenAI, Ant
 
 Provider `timeout` is a total response deadline, including streaming bodies, in milliseconds. Set `0` only when intentionally disabling it. Cancellation remains independent. For Google tool continuations, persist the returned assistant `message`, including `providerData`, before appending tool results; streamed chat emits a `message` event for the same purpose. `stream` is the prompt-only convenience method.
 
-The Google TypeScript adoption includes native SSE and signed tool continuation, but live Gemini qualification is a separate release gate. Python has not been migrated into this `origin/dev` worktree. Use the [source model exports](https://github.com/21nCo/super-functions/blob/dev/langfn/typescript/src/models/index.ts) for concrete constructors and options.
+The Google TypeScript adoption includes native SSE and signed tool continuation, but live Gemini qualification is a separate release gate. Python is not part of this TypeScript source tree. Use the [source model exports](https://github.com/21nCo/super-functions/blob/dev/langfn/typescript/src/models/index.ts) for concrete constructors and options.
 
 ## Construct a real provider
 
@@ -62,4 +62,4 @@ for await (const event of model.stream({
 }
 ```
 
-`stream` takes a prompt, not a conversation. Event types also carry usage, tool, and completion information; do not assume every event is a text delta. To get LangFn's tracing, policy, and orchestration layer, pass the provider to `new LangFn({ model })` from `langfn`.
+`stream` takes a prompt, not a conversation. Event types also carry usage, tool, and completion information; do not assume every event is a text delta. Wrapping the provider in `new LangFn({ model })` from `langfn` adds the client API with tool policy, caching, and retry configuration. Tracing stays off unless you also pass `observability: { enabled: true, traceStorage }` (or a `tracer`); see [Observability and evaluation](/docs/observability-and-evaluation). Composition lives in the `langfn/orchestration`, `langfn/graph`, and `langfn/agents` subpaths described in [Workflows and agents](/docs/workflows).

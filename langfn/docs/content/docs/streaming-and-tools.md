@@ -25,11 +25,13 @@ const textLength = new Tool<{ text: string }, { length: number }>({
       required: ["text"], additionalProperties: false,
     },
     parse(value) {
-      if (typeof value !== "object" || value === null || !("text" in value)
-          || typeof value.text !== "string" || Object.keys(value).length !== 1) {
+      if (typeof value !== "object" || value === null || Array.isArray(value)
+          || Object.keys(value).length !== 1 || !Object.hasOwn(value, "text")) {
         throw new Error("Expected only a text string");
       }
-      return { text: value.text };
+      const { text } = value as { text: unknown };
+      if (typeof text !== "string") throw new Error("Expected only a text string");
+      return { text };
     },
   },
   execute: ({ text }) => ({ length: text.length }),

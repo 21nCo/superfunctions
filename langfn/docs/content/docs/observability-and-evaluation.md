@@ -3,7 +3,7 @@ title: Observability and evaluation
 description: Capture scoped traces, usage, feedback, and measured outcomes.
 ---
 
-`langfn/observability` exports tracer, storage, cost meter, exporter, redaction, and span contracts. `langfn/evaluation` exports datasets, metrics, and evaluator helpers. Use them to measure configured model behavior and keep trace data scoped to the trusted tenant and actor.
+`langfn/observability` exports tracer, storage, cost meter, exporter, redaction, and span contracts. `langfn/evaluation` exports datasets, metrics, and evaluator helpers. Use them to measure configured model behavior and keep trace data scoped to the trusted tenant and actor. `Evaluator.evaluate()` calls `lang.complete(item.input)` without request metadata, so traces recorded during an evaluation run carry no tenant or user scope; treat them as local, unowned measurements and keep them out of scoped HTTP trace views.
 
 `TraceStorage.saveFeedback` normalizes top-level tenant/user fields or nested `scope` and rejects conflicts. `LangFn.feedback()` accepts nested `scope` only; HTTP `/feedback` derives scope from the authenticated actor and does not accept caller-supplied tenant/user scope. Cached completions create a fresh scoped trace, so feedback can refer to each returned trace ID. For SQL-backed custom trace stores, include tenant and user columns and query predicates. A local evaluator result only describes the frozen dataset, model, prompt, context, and budget used for that run.
 
