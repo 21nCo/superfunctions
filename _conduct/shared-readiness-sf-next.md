@@ -44,3 +44,9 @@ The follow-up default npm10 clean scoped ci on Node22 installed576 packages succ
 Focused regressions reproduce the original JSON property loss, false sidecar-change notifications, tab-fence truncation, dependency-order clone failure and external-reference profile failure. Final shared checks: MCP **263 tests**, Markdown core **28**, Markdown parser **11**, extensions **7**, ContentFn conversion **14**. Builds and changed-package typechecks pass. Edge-profile coverage resolves embedded external resources with the code-generation-free validator. Cache coverage verifies repeat compilation is avoided and mutated schema graphs are rejected. Fresh packed ESM/CJS MCP/admin consumers pass on exact Node18.18 and20.19; HTTP/admin smoke passes20.19 and production audit reports zero vulnerabilities.
 
 Logs: `/tmp/sf-shared-mcp-full.log`, `/tmp/sf-shared-followup-markdown.log`, `/tmp/sf-shared-core-final.log`, `/tmp/sf-shared-followup-packed.log`.
+
+## Hono HTTP dependency correction — 2026-10-20
+
+The Hono adapter imports observation header helpers from shared HTTP 0.3.1, but its exact 0.1.3 peer and ^0.1.0 development dependency installed an older nested HTTP package without those exports. Its peer now requires ^0.3.1 and development validation uses exact 0.3.1. Standard lock regeneration removed only the stale Hono-local HTTP node and updated the two constraints.
+
+Clean scoped npm10.8.2 installation on Node20.20.0 installed 186 packages successfully (unrelated DevFn workspace Node22 engine warnings remain). Observability, HTTP, and Hono builds pass. Tests pass: observability 8, HTTP 66, and Hono 11. Logs: `/tmp/shared-hono-lock.log`, `/tmp/shared-hono-ci.log`, `/tmp/shared-hono-tests.log`. This corrects dependency resolution; no source, public API, other adapter constraints, or production deployment changed.
