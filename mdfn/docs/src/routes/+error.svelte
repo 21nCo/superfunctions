@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-  <title>{$page.status} — MdFn docs</title>
+  <title>{$page.status} — MDFN docs</title>
 </svelte:head>
 
 <main class="docsfn-layout">
