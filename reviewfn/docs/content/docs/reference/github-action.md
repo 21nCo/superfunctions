@@ -7,7 +7,7 @@ The bundled composite is the credential-free review stage. It installs the pinne
 
 Use `pull_request` opened/synchronize/reopened or a maintainer-authorized dispatch. Checkout the exact head with full history and `persist-credentials: false`. Pin the Action to a reviewed commit. The review job needs only `contents: read`; it must not contain `GITHUB_TOKEN` in its environment or credentials cached in the checkout. Input values are transported through environment variables to quoted argv, and versions/commit IDs are validated before invoking the installed CLI entrypoint with `node`.
 
-Upload the caller-owned output directory with `actions/upload-artifact@v4` and a unique PR/head/run name. Include report JSON, rendered Markdown and its artifacts directory. Publish in a separate trusted job with `pull-requests: write`, `issues: write`, and `checks: write`, without checking out PR code. Pin/install the published CLI there, download only the artifact from the corresponding review job, and run:
+Upload the caller-owned output directory with `actions/upload-artifact` and a unique PR/head/run name; pin that action, and `actions/download-artifact` in the publisher job, to reviewed commit SHAs as well. Include report JSON, rendered Markdown and its artifacts directory. Publish in a separate trusted job with `pull-requests: write`, `issues: write`, and `checks: write`, without checking out PR code. Pin/install the published CLI there, download only the artifact from the corresponding review job, and run:
 
 ```sh
 reviewfn publish --input "$REPORT" --repository "$REPOSITORY" \

@@ -16,7 +16,11 @@ const generatedFooter = "For programmatic access, prefer the MCP server\nor the 
 if (!artifacts.llmsFullTxt.includes(generatedFooter)) {
   throw new Error("Unexpected DocsFn llms-full footer; review the generated artifact before publishing");
 }
-artifacts.llmsFullTxt = artifacts.llmsFullTxt.replace(generatedFooter, "For a page index, see /docs/llms.txt.");
+// Standalone copies of llms-full.txt need an absolute page-index pointer.
+const pageIndexUrl = canonicalUrl
+  ? new URL("/docs/llms.txt", canonicalUrl).href
+  : "https://github.com/21nCo/super-functions/blob/dev/reviewfn/docs/static/llms.txt";
+artifacts.llmsFullTxt = artifacts.llmsFullTxt.replace(generatedFooter, `For a page index, see ${pageIndexUrl}.`);
 artifacts.llmsTxt = withSourceLinks(artifacts.llmsTxt, manifest, "reviewfn", canonicalUrl);
 artifacts.llmsFullTxt = withSourceLinks(artifacts.llmsFullTxt, manifest, "reviewfn", canonicalUrl);
 writeLlmsArtifacts(resolve(cwd, "static"), artifacts);

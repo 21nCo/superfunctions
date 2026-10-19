@@ -12,6 +12,6 @@ reviewfn publish --input "$REPORT" --repository "$REPOSITORY" \
   --pull-request "$PR_NUMBER" --head "$EXPECTED_HEAD" --profile requirements
 ```
 
-Derive those values from trusted workflow metadata, not the report artifact. The publisher needs GitHub write permissions for PR comments and checks and must not execute PR code. Use one repository/PR/profile concurrency group. Publication rechecks the current head before writes, maintains a single profile summary, and updates the same run's check idempotently. A head change during a GitHub write can leave a clearly labeled older-head comment; the next run replaces it.
+The action's `report` output names the artifact directory, not a file: set `REPORT` to the `report.json` file inside the downloaded artifact. Derive the other values from trusted workflow metadata, not the report artifact. The publisher needs GitHub write permissions for PR comments and checks and must not execute PR code. Use one repository/PR/profile concurrency group. Publication rechecks the current head before writes, maintains a single profile summary, and updates the same run's check idempotently. A head change during a GitHub write can leave a clearly labeled older-head comment; the next run replaces it.
 
 Checks remain neutral regardless of verdict. Version 0.1 does not support a `gate` output mode. The [full GitHub Action guide](/docs/reference/github-action) gives permissions, pinning, retries, lease recovery, and publisher-login details.
