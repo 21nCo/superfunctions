@@ -1,0 +1,27 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_8ac6dd0f2369ac 15,24,34,61
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_f8fe581da0a747 19,79
+package-lock.json
+  s_7d0a48f0aaecda::t_cf2696ca7517a5 54,6914-7284,32678-32681
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_fc95c4598777ba 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_400241a54c5978 60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "94161da33e19d8f52a460c62dd95b2f03a780e57",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
