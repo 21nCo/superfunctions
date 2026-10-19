@@ -1,0 +1,56 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59D84BRNA8M9MZRNQQH256H",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-19T06:23:17.25801Z",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "clifn/core/README.md",
+    "clifn/docs/.gitignore",
+    "clifn/docs/content/docs/automation.md",
+    "clifn/docs/content/docs/cli-builder.md",
+    "clifn/docs/content/docs/configuration.md",
+    "clifn/docs/content/docs/credentials-and-client.md",
+    "clifn/docs/content/docs/interaction-and-stdio.md",
+    "clifn/docs/content/docs/reference/core-readme.md",
+    "clifn/docs/content/docs/reference/index.md",
+    "clifn/docs/src/app.css"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "2818015989fe",
+  "checkpoint_transcript_start": 9871,
+  "transcript_lines_at_start": 9871,
+  "compact_transcript_start": 1184,
+  "session_metrics": {
+    "turn_count": 39
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-19T06:23:14.887098Z",
+    "agent_lines": 703,
+    "agent_removed": 16,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 703,
+    "total_lines_changed": 719,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}

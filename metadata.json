@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59D84BRNA8M9MZRNQQH256H",
+  "strategy": "manual-commit",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "clifn/core/README.md",
+    "clifn/docs/.gitignore",
+    "clifn/docs/content/docs/automation.md",
+    "clifn/docs/content/docs/cli-builder.md",
+    "clifn/docs/content/docs/configuration.md",
+    "clifn/docs/content/docs/credentials-and-client.md",
+    "clifn/docs/content/docs/interaction-and-stdio.md",
+    "clifn/docs/content/docs/reference/core-readme.md",
+    "clifn/docs/content/docs/reference/index.md",
+    "clifn/docs/src/app.css"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
