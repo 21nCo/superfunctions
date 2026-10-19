@@ -21,6 +21,16 @@ export const docsProducts = {
       live: "clifn.com",
     },
   },
+  langfn: {
+    packageName: "@langfn/docs",
+    docsDir: "langfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "langfn.com",
+    hosts: {
+      dev: "langfn.21n.site",
+      live: "langfn.com",
+    },
+  },
   devfn: {
     packageName: "@devfn/docs",
     docsDir: "devfn/docs",
