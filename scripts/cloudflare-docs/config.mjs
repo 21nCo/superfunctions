@@ -4,14 +4,40 @@ import { fileURLToPath } from "node:url";
 
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+// Dev docs live in the 21n-dev Cloudflare account on the shared 21n.site zone,
+// under each product's landing hostname (e.g. authfn.21n.site/docs*).
+// Live docs stay on each product's own zone in the production account.
+export const devAccountId = "c801efc2879825babdb9b2534199c4dd";
+export const devZoneName = "21n.site";
+
 export const docsProducts = {
+  devfn: {
+    packageName: "@devfn/docs",
+    docsDir: "devfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "devfn.com",
+    hosts: {
+      dev: "devfn.21n.site",
+      live: "devfn.com",
+    },
+  },
+  extfn: {
+    packageName: "@extfn/docs",
+    docsDir: "extfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "extfn.com",
+    hosts: {
+      dev: "extfn.21n.site",
+      live: "extfn.com",
+    },
+  },
   datafn: {
     packageName: "@datafn/docs",
     docsDir: "datafn/docs",
     kind: "next-static",
     zoneName: "datafn.dev",
     hosts: {
-      dev: "dev.datafn.dev",
+      dev: "datafn.21n.site",
       live: "datafn.dev",
     },
     routeAliases: {
@@ -24,18 +50,8 @@ export const docsProducts = {
     kind: "sveltekit-cloudflare",
     zoneName: "filefn.com",
     hosts: {
-      dev: "dev.filefn.com",
+      dev: "filefn.21n.site",
       live: "filefn.com",
-    },
-  },
-  memoryfn: {
-    packageName: "@memoryfn/docs",
-    docsDir: "memoryfn/docs",
-    kind: "sveltekit-cloudflare",
-    zoneName: "memoryfn.com",
-    hosts: {
-      dev: "dev.memoryfn.com",
-      live: "memoryfn.com",
     },
   },
   searchfn: {
@@ -44,7 +60,7 @@ export const docsProducts = {
     kind: "next-static",
     zoneName: "searchfn.com",
     hosts: {
-      dev: "dev.searchfn.com",
+      dev: "searchfn.21n.site",
       live: "searchfn.com",
     },
     routeAliases: {
@@ -57,7 +73,7 @@ export const docsProducts = {
     kind: "sveltekit-cloudflare",
     zoneName: "authfn.com",
     hosts: {
-      dev: "dev.authfn.com",
+      dev: "authfn.21n.site",
       live: "authfn.com",
     },
   },
@@ -112,10 +128,14 @@ export function routeDefinition(productId, environment) {
   const product = docsProducts[productId];
   return {
     product: productId,
-    zoneName: product.zoneName,
+    zoneName: zoneNameFor(productId, environment),
     pattern: `${product.hosts[environment]}/docs*`,
     script: workerName(productId, environment),
   };
+}
+
+export function zoneNameFor(productId, environment) {
+  return environment === "dev" ? devZoneName : docsProducts[productId].zoneName;
 }
 
 export function routesFor(environment, products) {
