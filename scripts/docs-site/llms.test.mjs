@@ -2,9 +2,10 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildManifest, loadDocsConfig } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
-import { loadLlmsSiteSource } from "./llms.mjs";
+import { loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
 
 describe("LLM consumer content roots", () => {
   it.each(["default", "relative", "absolute"])("reads %s roots independently of the invocation directory", async (layout) => {
@@ -31,5 +32,33 @@ describe("LLM consumer content roots", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe("source links for unhosted sites", () => {
+  const manifest = { pages: {
+    a: { id: "docs:guide/index.md", path: "/docs/guide" },
+    b: { id: "pages:about.md", path: "/docs/about" },
+  } };
+  const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const site = (docsDir) => ({ content: { root: join(repositoryRoot, "clifn/docs"), docsDir } });
+
+  it("rewrites known docs pages to their GitHub sources and keeps queries and anchors", () => {
+    expect(withSourceLinks("[Guide](/docs/guide?tab=ts#setup) [About](/docs/about)", manifest, site("content/docs"), undefined))
+      .toBe("[Guide](https://github.com/21nCo/super-functions/blob/dev/clifn/docs/content/docs/guide/index.md?tab=ts#setup) [About](/docs/about)");
+  });
+
+  it("derives the source directory from the configured docs directory", () => {
+    expect(withSourceLinks("[Guide](/docs/guide)", manifest, site("guides"), undefined))
+      .toBe("[Guide](https://github.com/21nCo/super-functions/blob/dev/clifn/docs/guides/guide/index.md)");
+  });
+
+  it("rejects a docs directory outside the repository", () => {
+    expect(() => withSourceLinks("[Guide](/docs/guide)", manifest, { content: { root: tmpdir(), docsDir: "docs" } }, undefined))
+      .toThrow(/outside the repository/);
+  });
+
+  it("leaves text unchanged when a public origin is configured", () => {
+    expect(withSourceLinks("[Guide](/docs/guide)", manifest, site("content/docs"), "https://clifn.com")).toBe("[Guide](/docs/guide)");
   });
 });
