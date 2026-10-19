@@ -98,3 +98,11 @@ Campaigns are evaluated client-side for performance:
 
 ## License
 MIT
+
+## Feedback delivery boundary
+
+`submitFeedback()` now rejects with `FeedbackDeliveryError` when no `feedbackService` is configured. Setting `endpoint` or `apiKey` alone does not configure feedback delivery. The previous console-only success behavior has been removed. The feedback widget awaits the same operation and keeps its existing failure state on rejection.
+
+Provide an application service implementing `FeedbackService.submit(submission, context)`. It receives the original submission and `{ source: 'in_app', user }`, using the current identity or `null` after reset. It must resolve with `{ id: '<stored-feedback-id>', accepted: true }` only after its backing service accepts the submission. Void, missing/empty IDs, and negative acknowledgments are rejected; exceptions propagate to the caller. Submission content is no longer logged by the feedback engine.
+
+This injected interface is a temporary compatibility boundary. It does not implement the specified dedicated UserFn HTTP/DB service, authentication, persistence, offline retries, board/voting, or external-source ingestion. Applications must provide those guarantees behind the service; the SDK cannot independently verify a receipt. The internal feedback board placeholder now rejects instead of returning a misleading empty list.

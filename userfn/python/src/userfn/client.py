@@ -1,6 +1,7 @@
 from typing import Optional, List, Any
-from .types import UserFnOptions, FlagValue, UserTraits, Campaign, Survey
+from .types import UserFnOptions, FlagValue, UserTraits, Campaign, Survey, FeedbackSubmission
 from .core.identity import IdentityManager
+from .core.feedback import FeedbackEngine
 from .core.flags import FlagEvaluator
 from .core.segments import SegmentEvaluator
 from .core.messaging import MessagingEngine
@@ -9,6 +10,7 @@ class UserFnClient:
     def __init__(self, options: UserFnOptions):
         self.options = options
         self.identity = IdentityManager()
+        self.feedback = FeedbackEngine(options.feedback_service, self.identity.get_user)
         self.segments = SegmentEvaluator()
         self.flags = FlagEvaluator([], self.segments)
         self.messaging = MessagingEngine(self.segments)
@@ -46,3 +48,6 @@ class UserFnClient:
 
     def set_campaigns(self, campaigns):
         self.messaging.set_campaigns(campaigns)
+
+    async def submit_feedback(self, feedback: FeedbackSubmission) -> None:
+        await self.feedback.submit(feedback)

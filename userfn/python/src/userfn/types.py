@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union, Literal
+from typing import Any, Dict, List, Optional, Union, Literal, Protocol
 
 UserTraits = Dict[str, Any]
 
@@ -69,6 +69,7 @@ class UserFnOptions:
     endpoint: Optional[str] = None
     bootstrap_flags: Optional[Dict[str, FlagValue]] = None
     refresh_interval: Optional[int] = None
+    feedback_service: Optional["FeedbackService"] = None
 
 EventProperties = Dict[str, Any]
 
@@ -169,3 +170,19 @@ class SurveyResponse:
     survey_id: str
     answers: List[SurveyResponseAnswer]
     submitted_at: int
+
+
+@dataclass
+class FeedbackReceipt:
+    id: str
+    accepted: bool
+
+@dataclass
+class FeedbackContext:
+    source: Literal['in_app']
+    user: Optional[UserIdentity]
+
+class FeedbackService(Protocol):
+    async def submit(self, feedback: FeedbackSubmission, context: FeedbackContext) -> FeedbackReceipt:
+        """Return acceptance only after the backing service accepts the submission."""
+        ...

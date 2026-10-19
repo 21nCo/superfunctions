@@ -1,17 +1,26 @@
-import { FeedbackSubmission, FeedbackItem } from '../types';
+import type { FeedbackSubmission, FeedbackItem, FeedbackService, UserIdentity } from '../types';
+
+export class FeedbackDeliveryError extends Error {
+  constructor(message: string) { super(message); this.name = 'FeedbackDeliveryError'; }
+}
 
 export class FeedbackEngine {
-  constructor() {}
+  constructor(private service?: FeedbackService, private getUser: () => UserIdentity | null = () => null) {}
 
   async submit(feedback: FeedbackSubmission): Promise<void> {
-    // TODO: Send to userfn service
-    console.log('[UserFn] Submitting feedback:', feedback);
-    // In a real implementation, this would be a fetch() call
-    return Promise.resolve();
+    if (!feedback || typeof feedback.title !== 'string' || !feedback.title.trim() ||
+        typeof feedback.body !== 'string' || !feedback.body.trim() ||
+        !['bug', 'feature', 'general'].includes(feedback.category)) {
+      throw new TypeError('Feedback requires a title, body, and valid category');
+    }
+    if (!this.service) throw new FeedbackDeliveryError('Feedback service is not configured');
+    const receipt = await this.service.submit(feedback, { source: 'in_app', user: this.getUser() });
+    if (!receipt || receipt.accepted !== true || typeof receipt.id !== 'string' || !receipt.id.trim()) {
+      throw new FeedbackDeliveryError('Feedback service did not acknowledge acceptance');
+    }
   }
 
-  // Placeholder for fetching board items
   async getFeedbackBoard(): Promise<FeedbackItem[]> {
-    return Promise.resolve([]);
+    throw new FeedbackDeliveryError('Feedback board service is not implemented');
   }
 }

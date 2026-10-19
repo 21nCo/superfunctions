@@ -114,3 +114,11 @@ pytest
 ## License
 
 MIT
+
+## Feedback delivery boundary
+
+Use `await client.submit_feedback(FeedbackSubmission(...))`. Configure `UserFnOptions(feedback_service=service)` with an async `submit(submission, context)` method returning `FeedbackReceipt(id='stored-id', accepted=True)` after the backing service accepts the submission. The context contains `source='in_app'` and the current identity, or `None` after reset.
+
+Missing configuration, invalid input, or a missing/negative/empty receipt raises an error; service exceptions propagate. `endpoint` and `api_key` alone do not configure this operation. The Python SDK previously had no feedback submission method.
+
+This is a temporary injected service contract, not the specified HTTP/DB backend or proof of persistence. Authentication, durable storage, retries, feedback board/voting, and source integrations remain implementation requirements. Callers must not synthesize acceptance before their backing service accepts the submission.

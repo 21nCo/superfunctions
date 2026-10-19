@@ -24,7 +24,7 @@ export class UserFnClient {
     this.flags = new FlagEvaluator([], this.segments);
     this.messaging = new MessagingEngine(this.segments);
     this.surveys = new SurveyEngine(this.segments);
-    this.feedback = new FeedbackEngine();
+    this.feedback = new FeedbackEngine(options.feedbackService, () => this.identity.getUser());
     
     if (typeof window !== 'undefined') {
       this.renderer = new VanillaRenderer();
@@ -128,3 +128,5 @@ export class UserFnClient {
 
 export * from './types';
 export * from './operator';
+
+export { FeedbackDeliveryError } from './core/feedback';
