@@ -1,0 +1,29 @@
+watchfn/.conduct/deployment-comparison-readiness.md
+  s_e1c5fc1a65c0cf::t_2ed152bc59355a 1-11
+watchfn/SPEC.md
+  s_e1c5fc1a65c0cf::t_aa9e06d8d623e2 1523
+watchfn/typescript/src/analysis/deployment-comparison.ts
+  s_e1c5fc1a65c0cf::t_ddaae36fa558a9 1-84
+watchfn/typescript/src/core/watch-fn.ts
+  s_e1c5fc1a65c0cf::t_1004935b369a9c 1,219-220
+watchfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_7601beb511933d 92-93
+watchfn/typescript/tests/analysis/deployment-comparison.test.ts
+  s_e1c5fc1a65c0cf::t_e57876b22fabed 1-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b967eaaf307f4bc3012580aebce26098164cb47b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
