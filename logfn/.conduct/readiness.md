@@ -136,3 +136,12 @@ Aligned LogFn admin to shared admin 0.1.5 and its Node >=20 runtime floor, remov
 Six LogFn admin tests pass, including real dispatcher validation/permissions, namespace rejection before delivery, spoofed actor replacement, audit-context redaction and failed flush acknowledgment.234 core and109 shared admin tests pass after the dependency change. Added usage documentation distinguishing dispatcher authorization from trusted adapter calls and emission acknowledgment from durable flush.
 
 Packed admin consumers and full WatchFn host composition are not yet validated. Python middleware/error parity, browser/performance and other original readiness gates remain open. This checkpoint was completed with only the main agent active.
+
+
+## Packed admin boundary (2026-10-20)
+
+Fresh independent tarballs for MCP/shared admin/LogFn core/admin pass strict Node16/NodeNext declarations, ESM dispatcher emission and flush, dynamic CJS imports and runtime audit with zero findings on exact Node20.0.0 and22.23.3. The reproducible packed-admin-acceptance.mjs helper removes its temporary consumer.
+
+The first packed flush failed the dispatcher's idempotency-key precondition. This exposed a weakness in the preceding failure test: a negative result alone did not prove the rejecting sink ran. Corrected source test supplies an idempotency store/key and asserts the sink flush was called; all six admin tests pass. Documentation now states the key/store requirement. This supersedes the earlier unsupported implication that the previous negative test proved sink failure propagation.
+
+Actual WatchFn host composition, Python middleware/error parity and original browser/performance gates remain open; no full readiness claim.

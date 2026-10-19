@@ -1,5 +1,5 @@
-import { expect, it } from 'vitest';
-import { createAdminCapabilityAdapter, createAdminDispatcher, createAdminRegistry, defineAdminCapability, MemoryAdminAuditSink } from '@superfunctions/admin';
+import { expect, it, vi } from 'vitest';
+import { createAdminCapabilityAdapter, createAdminDispatcher, createAdminRegistry, defineAdminCapability, MemoryAdminAuditSink, MemoryAdminIdempotencyStore } from '@superfunctions/admin';
 import { Logger, type LogEvent, type Sink } from '@logfn/core';
 import { createLogFnAdminAdapter, createLogFnAdminService } from '../index.js';
 const scope = { installationId: 'install', workspaceId: 'workspace', projectId: 'project', environmentId: 'environment', namespace: 'tenant' };
@@ -8,7 +8,7 @@ function setup(sink: Sink) {
   const owner = createAdminCapabilityAdapter(defineAdminCapability({ schemaVersion: '1.0', id: 'watchfn', displayName: 'WatchFn', version: '1.0.0', description: 'Test owner', category: 'observability', availability: 'optional-product', scopeLevels: ['organization', 'workspace', 'project', 'environment'], dependencies: [], navigation: [], resources: [], operations: [] }), {});
   const adapter = createLogFnAdminAdapter(createLogFnAdminService(new Logger({ name: 'admin', sinks: [sink], onError: () => {} }), scope));
   const audit = new MemoryAdminAuditSink();
-  return { audit, dispatcher: createAdminDispatcher({ registry: createAdminRegistry({ adapters: [owner, adapter], enabledModules: ['watchfn', 'logfn'] }), audit }) };
+  return { audit, dispatcher: createAdminDispatcher({ registry: createAdminRegistry({ adapters: [owner, adapter], enabledModules: ['watchfn', 'logfn'] }), audit, idempotency: new MemoryAdminIdempotencyStore() }) };
 }
 it('dispatcher rejects invalid input, absent permission and cross-scope writes before delivery', async () => {
   const events: LogEvent[] = []; const { dispatcher } = setup(batch => { events.push(...batch); });
@@ -25,8 +25,9 @@ it('protects actor attribution from supplied context and redacts audit context',
   expect(JSON.stringify(audit.events)).not.toContain('secret-value');
 });
 it('does not acknowledge successful flush when the sink rejects', async () => {
-  const sink = Object.assign(() => {}, { flush: async () => { throw new Error('private storage error'); } });
+  const flush = vi.fn(async () => { throw new Error('private storage error'); });
+  const sink = Object.assign(() => {}, { flush });
   const { dispatcher } = setup(sink);
-  const result = await dispatcher.dispatch({ operationId: 'logfn.sinks.flush', input: {}, context });
-  expect(result.ok).toBe(false); expect(JSON.stringify(result)).not.toContain('private storage error');
+  const result = await dispatcher.dispatch({ operationId: 'logfn.sinks.flush', input: {}, context: { ...context, idempotencyKey: 'flush-1' } });
+  expect(flush).toHaveBeenCalledOnce(); expect(result.ok).toBe(false); expect(JSON.stringify(result)).not.toContain('private storage error');
 });

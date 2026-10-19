@@ -7,6 +7,6 @@ Bind `createLogFnAdminService(logger, scope)` to an installation, workspace, pro
 Dispatch external requests through `createAdminDispatcher`, with authenticated actor context, permissions and an audit sink. Direct adapter/service calls are trusted internal APIs; they do not replace the dispatcher's schema validation and permission checks. Service-level scope checks still apply.
 
 - `logfn.events.emit` uses the configured logger's level, pipeline and sinks. Actor and scope attribution override supplied context. Its acknowledgment means the logger method was invoked, not that a remote sink persisted the event.
-- `logfn.sinks.flush` waits for accepted asynchronous sink work and flush hooks. A sink failure rejects the operation; it does not return `flushed: true`.
+- `logfn.sinks.flush` waits for accepted asynchronous sink work and flush hooks. Dispatch requires an idempotency key and an idempotency store. A sink failure rejects the operation; it does not return `flushed: true`.
 
 Audit input redacts the supplied `context` object. Applications remain responsible for redacting sensitive message text through their logger pipeline and for configuring suitable audit retention.
