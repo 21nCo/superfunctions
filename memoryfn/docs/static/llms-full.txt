@@ -31,7 +31,7 @@ The factory rejects unsupported provider values and missing API keys at initiali
 
 Without an LLM, `add()` stores supplied content as one memory. With an LLM, it extracts facts, embeds them, checks for vector duplicates, and may resolve updates or relationships. The deduplication threshold is 0.95. Extracted tags are descriptive metadata; they never replace caller scope.
 
-Multi-fact extraction is **not an atomic batch**. A failure may occur after some facts have been inserted. Reconcile before replaying an entire batch, or use explicit single-memory writes for confirmed user memory until the application has an ingestion job with recovery. A conflicting fact requires adapter transactions for its new row, revision changes, and relationships. See [operations and limits](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/operations-and-limits.md) for unsupported configuration fields.
+Multi-fact extraction is **not an atomic batch**. A failure may occur after some facts have been inserted. Reconcile before replaying an entire batch, or use explicit single-memory writes for confirmed user memory until the application has an ingestion job with recovery. A conflicting fact requires adapter transactions for its new row, revision changes, and relationships; without `transaction()`, `add()` throws `MEMORY_TRANSACTION_REQUIRED` before writing that fact. See [operations and limits](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/operations-and-limits.md) for unsupported configuration fields.
 
 ---
 
@@ -98,7 +98,7 @@ const router = createMemoryRouter(memory, {
 });
 ```
 
-The router matches the exact paths it sees. If the host mounts it under a prefix such as `/api`, the host must strip that prefix before calling `handle`; the router has no mount-prefix option. It exposes `POST /v1/memories` with `content`, optional `containerTags`, and optional `metadata`; and `POST /v1/memories/search` with `q`, optional tags, filters, limit, and threshold. Body tags add constraints to the trusted host tags. Inputs are strict: a body `tenantId` is rejected, as are unknown fields. The limit is 1–100 and threshold is -1 to 1. Missing authorization returns 401; schema-invalid JSON returns 400. Malformed JSON fails before schema validation and currently reaches the shared router’s 500 handler. The default body cap is one MiB.
+The router matches the exact paths it sees. If the host mounts it under a prefix such as `/api`, the host must strip that prefix before calling `handle`; the router has no mount-prefix option. It exposes `POST /v1/memories` with `content`, optional `containerTags`, and optional `metadata`; and `POST /v1/memories/search` with `q`, optional `containerTags`, filters, limit, and threshold. Body tags add constraints to the trusted host tags. Inputs are strict: a body `tenantId` is rejected, as are unknown fields. The limit is 1–100 and threshold is -1 to 1. Missing authorization returns 401; schema-invalid JSON returns 400. Malformed JSON fails before schema validation and currently reaches the shared router’s 500 handler. The default body cap is one MiB.
 
 The router does not supply membership checks or a token verifier. The application must implement those in `authorize` and recheck current permission and deletion state before returning search results. The [source router](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/src/http/router.ts) is the precise endpoint contract.
 
@@ -112,7 +112,7 @@ The router does not supply membership checks or a token verifier. The applicatio
 
 MemoryFn's TypeScript package, `@memoryfn/core`, stores tenant-scoped memories, searches them by embedding, updates them with revisions, and forgets them with tombstones. It also offers an authorized HTTP router and a scoped stdio MCP adapter.
 
-These pages describe the **current `origin/dev` source**. Its README calls this an unpublished candidate: the same numbered registry release does not contain all the changes here. Test the package from this source or a packed build before adopting these contracts in a deployed consumer.
+These pages describe the **current `dev` branch** of [21nCo/super-functions](https://github.com/21nCo/super-functions). The package [README](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/README.md) calls this an unpublished candidate: the same numbered registry release does not contain all the changes here. Test the package from this source or a packed build before adopting these contracts in a deployed consumer.
 
 ## Choose a path
 
@@ -175,7 +175,7 @@ try {
 
 `add_memory` accepts required `content` and optional `tags`, and returns a structured summary of created, updated, and deduplicated counts. `search_memories` accepts required `query`, optional `limit` (1–100; default 5), and optional tags. It returns only result content plus count metadata. The adapter also exposes `manifest()` and `connect(transport)` for host integration.
 
-The scope is captured at construction. Instantiate per authorized scope and make the host revoke access when that authority ends; the adapter does not infer a later permission change. Semantic search still requires an embedder. The [MCP source](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/src/mcp/server.ts) defines the tool schemas and output shapes.
+The adapter keeps a reference to the scope object and reads it on every tool call, so do not mutate the `tenantId` or `containerTags` you pass after construction. Instantiate per authorized scope and make the host revoke access when that authority ends; the adapter does not infer a later permission change. Semantic search still requires an embedder. The [MCP source](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/src/mcp/server.ts) defines the tool schemas and output shapes.
 
 ---
 
@@ -185,7 +185,7 @@ The scope is captured at construction. Instantiate per authorized scope and make
 > Supported configuration, migration responsibility, tests, and proof boundaries.
 
 
-This site describes the `origin/dev` source, an unpublished candidate. A green local build is workspace evidence, not proof that the same-version registry package or a hosted deployment has these changes.
+This site describes the source on the `dev` branch, an unpublished candidate. A green local build is workspace evidence, not proof that the same-version registry package or a hosted deployment has these changes.
 
 ## Configuration boundaries
 
@@ -242,20 +242,20 @@ The [source factory](https://github.com/21nCo/super-functions/blob/dev/memoryfn/
 
 
 - [Public API](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/reference/api.md) maps the current package exports and operation inputs.
-- [Storage and lifecycle guide](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/reference/storage-lifecycle.md) carries the detailed source README for the dev adoption.
+- [Storage and lifecycle source guide](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/reference/storage-lifecycle.md) gives the detailed storage, migration, scope and lifecycle contract of the TypeScript source.
 - [Package overview](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/reference/package-overview.md) carries the top-level source README.
 
-For a published release, inspect its actual package artifact. The same-version registry release does not yet identify all `origin/dev` changes documented here.
+For a published release, inspect its actual package artifact. The same-version registry release does not yet identify all `dev` branch changes documented here.
 
 ---
 
 <!-- page:docs:reference/package-overview.md path:/docs/reference/package-overview -->
 # Package overview
 
-> Source-aligned MemoryFn guidance from origin/dev.
+> Overview of the MemoryFn TypeScript package, its scoped storage and lifecycle contract, and its release status.
 
 
-The TypeScript package `@memoryfn/core` provides scoped memory storage, embedding-based retrieval, revisioned updates and forgetting. This worktree adopts the implementation from next and hardens its storage and lifecycle for hosted consumers.
+The TypeScript package `@memoryfn/core` provides scoped memory storage, embedding-based retrieval, revisioned updates and forgetting. This guide documents its storage and lifecycle contract for hosted consumers.
 
 ```ts
 import { memoryfn } from '@memoryfn/core';
@@ -267,7 +267,7 @@ await memory.close();
 
 Use injected Postgres storage for durable data and configure an embedder for semantic retrieval. The process-local adapter is intended for tests and explicit ephemeral use. SQLite requires a supplied adapter.
 
-Read [TypeScript storage, migrations and lifecycle](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/README.md). Application membership, sharing and authoritative deletion state remain the consumer's responsibility. This is an unpublished candidate; the registry version does not identify these local changes. Admin and Python packages have not been adopted into this dev worktree.
+Read [TypeScript storage, migrations and lifecycle](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/README.md). Application membership, sharing and authoritative deletion state remain the consumer's responsibility. This is an unpublished candidate; the registry version does not identify these changes. The admin and Python packages are not part of this contract.
 
 Semantic search requires a configured embedder and fails with `MEMORY_EMBEDDER_REQUIRED` otherwise. The built-in PostgreSQL schema uses 1536 dimensions; the factory requests that dimension and rejects conflicting configuration, including injected `PostgresAdapter` instances.
 
@@ -276,10 +276,10 @@ Semantic search requires a configured embedder and fails with `MEMORY_EMBEDDER_R
 <!-- page:docs:reference/storage-lifecycle.md path:/docs/reference/storage-lifecycle -->
 # Storage and lifecycle source guide
 
-> Source-aligned MemoryFn guidance from origin/dev.
+> Detailed storage, migration, scope and lifecycle contract of the MemoryFn TypeScript source.
 
 
-This dev adoption is based on next `b21477fc9a32ae425c38a2de810b5a8705fc711f` with explicit scope and lifecycle changes. It is an unpublished candidate; the same-version registry package does not contain these changes.
+The source on `dev` adds explicit scope and lifecycle changes to the earlier implementation. It is an unpublished candidate; the same-version registry package does not contain these changes.
 
 ## PostgreSQL and ownership
 
@@ -394,7 +394,7 @@ for (const entry of result.results) {
 }
 ```
 
-The PostgreSQL adapter filters to the explicit tenant, all supplied tags, active rows, and latest revisions. `filters` perform exact JSONB metadata containment. `threshold` is a cosine similarity floor, and the adapter orders by vector distance. The returned metadata reports `totalFound` and `returned` for that storage query; it is not a count of all tenant memories.
+The PostgreSQL adapter filters to the explicit tenant, all supplied tags, active rows, and latest revisions. `filters` use JSONB containment (`@>`) on metadata: scalar values match exactly, but array and object values match any stored value that contains them as a subset. `threshold` is a cosine similarity floor, and the adapter orders by vector distance. The returned metadata reports `totalFound` and `returned` for that storage query; it is not a count of all tenant memories.
 
 The input type still advertises `rerank`, relationship traversal, hybrid ranking, token limits, and `onlyLatest`. The current `search()` pipeline does not implement those options. Do not rely on them until code and tests establish their behavior. The host must intersect every result with its current permissions and authoritative deletion state.
 
@@ -431,7 +431,7 @@ Use an injected adapter when the host controls request or Worker lifetimes, pool
 
 PostgreSQL storage fixes embedding dimensions at 1536. The factory requests that dimension and rejects a conflicting embedder configuration, including with an injected `PostgresAdapter`.
 
-The `StorageAdapter` contract includes scoped insert, search, get, compare-and-update, delete, optional close, and optional transaction. Immutable-ID tombstones and scope checks are required for equivalent behavior. A conflict resolution that changes several records requires `transaction()`; an adapter without it rejects that conflict before writing.
+The `StorageAdapter` contract requires scoped `insertMemories()`, `insertRelationships()`, `searchVectors()`, `getMemory()`, `updateMemory()` (compare-and-update), and `deleteMemory()`; `close()` and `transaction()` are optional. Immutable-ID tombstones and scope checks are required for equivalent behavior. A conflict resolution that changes several records requires `transaction()`; an adapter without it rejects that conflict before writing.
 
 `kind: "sqlite"` requires an explicit adapter. The factory does not create SQLite storage. `qdrant` is present in a legacy type union but has no factory implementation. Review the [source lifecycle guide](https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/content/docs/reference/storage-lifecycle.md) and [adapter interface](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/src/storage/adapter.ts) before implementing a custom store.
 
