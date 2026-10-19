@@ -1,5 +1,6 @@
 import { createRouteContext, PayloadTooLargeError } from "@superfunctions/http";
 import { WatchFn } from "../core/watch-fn";
+import { QueryValidationError } from "../query/query-engine";
 
 export class HttpHandlers {
   private watch: WatchFn;
@@ -45,9 +46,28 @@ export class HttpHandlers {
   }
 
   async query(request: Request) {
-      // Placeholder for query endpoint
-      return new Response(JSON.stringify({ results: [] }), {
-        headers: { "Content-Type": "application/json" },
-      });
+    const reply = (body: unknown, status: number) => new Response(JSON.stringify(body), {
+      status, headers: { "Content-Type": "application/json" },
+    });
+    if (!this.watch.authorizeIngest(request)) return reply({ error: "Unauthorized" }, 401);
+    let body: unknown;
+    try {
+      body = await createRouteContext(request, {}, { maxBodyBytes: 64 * 1024 }).json();
+    } catch (error) {
+      const tooLarge = error instanceof PayloadTooLargeError;
+      return reply({ error: tooLarge ? "Request body too large" : "Invalid JSON" }, tooLarge ? 413 : 400);
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return reply({ error: "Invalid query" }, 400);
+    }
+    try {
+      // QueryEngine owns semantic validation for both programmatic and HTTP calls.
+      const results = await this.watch.query(body);
+      return reply({ results }, 200);
+    } catch (error) {
+      return error instanceof QueryValidationError
+        ? reply({ error: "Invalid query" }, 400)
+        : reply({ error: "Query unavailable" }, 503);
+    }
   }
 }
