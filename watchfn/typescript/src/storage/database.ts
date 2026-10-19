@@ -1,30 +1,67 @@
+import { randomUUID } from "node:crypto";
+import { wrapWithSchema, type Adapter } from "@superfunctions/db";
 import { StorageAdapter } from "./types";
+import { getWatchFnSchema } from "./schema";
+export { getWatchFnSchema } from "./schema";
 
+/** @deprecated Compatibility bridge; new applications should supply a shared DB Adapter. */
 export interface DatabaseAdapter {
   insertEvent(event: any): Promise<void>;
   queryEvents(params: any): Promise<any[]>;
 }
 
-export class DatabaseStorage implements StorageAdapter {
-  private db: DatabaseAdapter;
+export type WatchFnDatabase = Adapter | DatabaseAdapter;
+interface StoredEvent { id: string; payload: Record<string, unknown> }
 
-  constructor(db: DatabaseAdapter) {
-    this.db = db;
+export class DatabaseStorage implements StorageAdapter {
+  private readonly db?: Adapter;
+  private readonly legacy?: DatabaseAdapter;
+
+  constructor(database: WatchFnDatabase, private readonly tableName = "watchfn_events") {
+    const schema = getWatchFnSchema(tableName);
+    if (database && "create" in database && typeof database.create === "function" &&
+        "findMany" in database && typeof database.findMany === "function") {
+      this.db = wrapWithSchema(database as Adapter, schema);
+    } else if (database && "insertEvent" in database && typeof database.insertEvent === "function" &&
+        "queryEvents" in database && typeof database.queryEvents === "function") {
+      this.legacy = database as DatabaseAdapter;
+    } else {
+      throw new TypeError("Database must be a shared DB Adapter or legacy insertEvent/queryEvents adapter");
+    }
   }
 
-  async add(event: any) {
-    await this.db.insertEvent(event);
+  getSchema() { return getWatchFnSchema(this.tableName); }
+
+  async add(event: any): Promise<void> {
+    if (this.legacy) {
+      await this.legacy.insertEvent(event);
+      return;
+    }
+    // Snapshot JSON before handing it to an asynchronous backend. Storage identity
+    // is distinct from producer IDs; duplicate event IDs remain separate arrivals.
+    const payload = JSON.parse(JSON.stringify(event));
+    await this.db!.create({ model: this.tableName, data: { id: randomUUID(), payload } });
   }
 
   async query(filter: (event: any) => boolean): Promise<any[]> {
-    // This is inefficient as it fetches all then filters in memory if the DB adapter 
-    // doesn't support structured filtering. 
-    // Ideally, query logic should be pushed down.
-    // For now, we assume queryEvents accepts params similar to our QueryOptions.
-    return await this.db.queryEvents({}); 
+    return (await this.getAll()).filter(filter);
   }
-  
-  async executeQuery(options: any) {
-      return await this.db.queryEvents(options);
+
+  async getAll(): Promise<any[]> {
+    if (this.legacy) return this.legacy.queryEvents({});
+    const events: Record<string, unknown>[] = [];
+    const pageSize = 1000;
+    // Explicit pages avoid silent truncation by adapter default result limits.
+    for (let offset = 0; ; offset += pageSize) {
+      const rows = await this.db!.findMany<StoredEvent>({ model: this.tableName, where: [],
+        orderBy: [{ field: "id", direction: "asc" }], limit: pageSize, offset });
+      events.push(...rows.map(row => row.payload));
+      if (rows.length < pageSize) return events;
+    }
+  }
+
+  async executeQuery(options: any): Promise<any[]> {
+    // QueryEngine applies its canonical filters/sort/limit after loading events.
+    return this.legacy ? this.legacy.queryEvents(options) : this.getAll();
   }
 }

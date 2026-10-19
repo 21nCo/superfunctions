@@ -1,3 +1,4 @@
+import type { WatchFnDatabase } from "../storage/database";
 import { z } from "zod";
 
 export const WatchFnConfigSchema = z.object({
@@ -13,7 +14,7 @@ export const WatchFnConfigSchema = z.object({
     }),
   ]).optional().default("memory"),
   
-  database: z.any().optional(),
+  database: z.custom<WatchFnDatabase>().optional(),
   
   apm: z.object({
     enabled: z.boolean().default(true),
