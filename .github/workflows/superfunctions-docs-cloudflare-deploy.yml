@@ -11,8 +11,9 @@ on:
       - superfunctions-docs-live-*
       - superfunctions-docs-datafn-live-*
       - superfunctions-docs-extfn-live-*
-      - superfunctions-docs-mailfn-live-*
+      - superfunctions-docs-reviewfn-live-*
       - superfunctions-docs-memoryfn-live-*
+      - superfunctions-docs-mailfn-live-*
       - superfunctions-docs-mdfn-live-*
       - superfunctions-docs-clifn-live-*
       - superfunctions-docs-botfn-live-*
@@ -23,8 +24,9 @@ on:
       - superfunctions-docs-authfn-live-*
       - superfunctions-datafn-docs-live-*
       - superfunctions-extfn-docs-live-*
-      - superfunctions-mailfn-docs-live-*
+      - superfunctions-reviewfn-docs-live-*
       - superfunctions-memoryfn-docs-live-*
+      - superfunctions-mailfn-docs-live-*
       - superfunctions-mdfn-docs-live-*
       - superfunctions-clifn-docs-live-*
       - superfunctions-botfn-docs-live-*
@@ -36,8 +38,9 @@ on:
     paths:
       - datafn/docs/**
       - extfn/docs/**
-      - mailfn/docs/**
+      - reviewfn/docs/**
       - memoryfn/docs/**
+      - mailfn/docs/**
       - mdfn/docs/**
       - clifn/docs/**
       - botfn/docs/**
@@ -66,8 +69,9 @@ on:
           - all
           - datafn
           - extfn
-          - mailfn
+          - reviewfn
           - memoryfn
+          - mailfn
           - mdfn
           - clifn
           - botfn

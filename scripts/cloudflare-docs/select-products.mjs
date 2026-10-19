@@ -56,8 +56,9 @@ function productsFromChangedFiles() {
     if (/^(apifn\/docsfn|docsfn)\//.test(file)) return existingProductIds();
     if (/^datafn\/docs\//.test(file)) selectExisting("datafn");
     if (/^extfn\/docs\//.test(file)) selectExisting("extfn");
-    if (/^mailfn\/docs\//.test(file)) selectExisting("mailfn");
+    if (/^reviewfn\/docs\//.test(file)) selectExisting("reviewfn");
     if (/^memoryfn\/docs\//.test(file)) selectExisting("memoryfn");
+    if (/^mailfn\/docs\//.test(file)) selectExisting("mailfn");
     if (/^mdfn\/docs\//.test(file)) selectExisting("mdfn");
     if (/^clifn\/docs\//.test(file)) selectExisting("clifn");
     if (/^botfn\/docs\//.test(file)) selectExisting("botfn");
