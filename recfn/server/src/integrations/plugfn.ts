@@ -7,10 +7,8 @@ import {
 import type { MetricsEmitter } from './watchfn.js';
 import { emitWebhookDelivery } from '../observability/metrics.js';
 
-export interface PlugFnWebhookDeps {
+export interface PlugFnWebhookDeps extends WebhookDelivererDeps {
   store: RecFnStore;
-  fetch?: typeof globalThis.fetch;
-  maxRetries?: number;
   metrics?: MetricsEmitter;
 }
 
@@ -29,10 +27,7 @@ export async function deliverWebhookEvent(
   const matching = webhooks.filter((wh) => wh.events.includes(eventType));
   if (matching.length === 0) return;
 
-  const deliverDeps: WebhookDelivererDeps = {
-    fetch: deps.fetch,
-    maxRetries: deps.maxRetries,
-  };
+  const { store: _store, metrics: _metrics, ...deliverDeps } = deps;
 
   const results = await Promise.allSettled(
     matching.map((wh) =>

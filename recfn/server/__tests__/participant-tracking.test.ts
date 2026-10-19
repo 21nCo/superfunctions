@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { Resolver } from 'node:dns/promises';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PlatformAdapter, Participant } from '@recfn/core';
 import {
   createMemoryStore,
@@ -11,6 +12,12 @@ import {
 } from '../src/index.js';
 import type { RecFnStore } from '../src/store/types.js';
 import { req, json } from './helpers.js';
+
+const { transport } = vi.hoisted(() => ({ transport: vi.fn() }));
+vi.mock('undici', async () => ({
+  ...await vi.importActual<typeof import('undici')>('undici'), fetch: transport,
+}));
+afterEach(() => vi.restoreAllMocks());
 
 const API_KEYS: Record<string, { namespace: string; apiKey: string }> = {
   'sk-valid-key': { namespace: 'ns_test', apiKey: 'sk-valid-key' },
@@ -146,9 +153,9 @@ describe('Participant tracking (TV-PAR-002, TV-PAR-003)', () => {
   });
 
   it('fires participant.joined and participant.left webhooks (TV-PAR-003)', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-    const originalFetch = globalThis.fetch;
-    vi.stubGlobal('fetch', fetchMock);
+    const fetchMock = transport.mockReset().mockResolvedValue({ ok: true, status: 200 });
+    const resolve4 = vi.spyOn(Resolver.prototype, 'resolve4').mockResolvedValue(['93.184.216.34']);
+    vi.spyOn(Resolver.prototype, 'resolve6').mockResolvedValue([]);
 
     const bot = await store.createBot({
       meetingUrl: 'https://zoom.us/j/123',
@@ -203,7 +210,7 @@ describe('Participant tracking (TV-PAR-002, TV-PAR-003)', () => {
     };
     triggerJoin(alice);
 
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.waitFor(() => expect(fetchMock.mock.calls.some(c => JSON.parse(c[1].body).event === 'participant.joined')).toBe(true));
 
     const joinedCalls = fetchMock.mock.calls.filter(
       (c: [string, { body: string }]) =>
@@ -218,7 +225,7 @@ describe('Participant tracking (TV-PAR-002, TV-PAR-003)', () => {
     expect(joinedPayload.data.participant.consent).toBe('pending');
 
     triggerLeave('par_alice');
-    await new Promise((r) => setTimeout(r, 50));
+    await vi.waitFor(() => expect(fetchMock.mock.calls.some(c => JSON.parse(c[1].body).event === 'participant.left')).toBe(true));
 
     const leftCalls = fetchMock.mock.calls.filter(
       (c: [string, { body: string }]) =>
@@ -230,7 +237,8 @@ describe('Participant tracking (TV-PAR-002, TV-PAR-003)', () => {
     expect(leftPayload.data.botId).toBe(bot.id);
     expect(leftPayload.data.participantId).toBe('par_alice');
 
-    vi.stubGlobal('fetch', originalFetch);
+    expect(resolve4).toHaveBeenCalledWith('my-app.com');
+    expect(fetchMock.mock.calls[0][1].dispatcher).toBeDefined();
   });
 
   it('updates participant leftAt when they leave', async () => {

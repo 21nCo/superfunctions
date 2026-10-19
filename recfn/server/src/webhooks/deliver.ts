@@ -1,14 +1,12 @@
-import { deliverWebhook as deliverWithSharedPackage } from '@superfunctions/webhooks';
+import { deliverWebhook as deliverWithSharedPackage, type WebhookDeliveryOptions } from '@superfunctions/webhooks';
 import type { WebhookPayload } from './events.js';
 
 const RECFN_SIGNATURE_HEADER = 'X-RecFn-Signature';
 
 const DEFAULT_RETRY_ATTEMPTS = 3;
 
-export interface WebhookDelivererDeps {
-  fetch?: typeof globalThis.fetch;
-  maxRetries?: number;
-}
+/** Delivery policy uses the shared validated, DNS-pinned transport. */
+export type WebhookDelivererDeps = WebhookDeliveryOptions;
 
 export interface WebhookTarget {
   url: string;
@@ -34,9 +32,9 @@ export async function deliverWebhook(
       signatureHeader: RECFN_SIGNATURE_HEADER,
     },
     {
-      fetch: deps.fetch,
+      ...deps,
       maxRetries,
-      initialDelayMs: 1000,
+      initialDelayMs: deps.initialDelayMs ?? 1000,
     }
   );
 

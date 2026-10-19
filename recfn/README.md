@@ -60,6 +60,10 @@ const worker = createBotWorker({
 while (await worker.processNext()) {}
 ```
 
+## Webhook delivery options
+
+Webhook delivery uses the shared validated, DNS-pinned Undici transport. The obsolete `fetch` injection option has been removed from `WebhookDelivererDeps` and `PlugFnWebhookDeps`. Migrate callers to `resolveHostname`, `maxRetries`, `initialDelayMs`, `maxDelayMs`, and `perAttemptTimeoutMs` as needed. Custom resolver results still pass public-address validation; redirects are not followed automatically. Tests should mock the transport boundary rather than replace delivery through a runtime option.
+
 ## Observability
 
 - **Logging**: Pass a `Logger` (e.g. `MemoryLogger` or logfn) for structured logs.

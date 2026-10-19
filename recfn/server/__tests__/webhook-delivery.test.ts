@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   createMemoryStore,
@@ -9,6 +10,12 @@ import {
 } from '../src/index.js';
 import type { RecFnStore } from '../src/store/types.js';
 import type { PlatformAdapter, Participant } from '@recfn/core';
+
+const { transport } = vi.hoisted(() => ({ transport: vi.fn() }));
+vi.mock('undici', async () => ({
+  ...await vi.importActual<typeof import('undici')>('undici'), fetch: transport,
+}));
+const resolvePublicHostname = vi.fn(async () => ['93.184.216.34']);
 
 function createMockPlatformAdapter(): PlatformAdapter {
   const participantJoinCbs: ((p: Participant) => void)[] = [];
@@ -55,7 +62,9 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
     store = createMemoryStore();
     queue = new MemoryQueueAdapter();
     logger = new MemoryLogger();
-    fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    transport.mockReset().mockResolvedValue({ ok: true, status: 200 });
+    resolvePublicHostname.mockClear();
+    fetchMock = transport;
   });
 
   it('delivers bot.joined event to configured webhook (TV-WH-002)', async () => {
@@ -88,7 +97,7 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
     const webhookDeliverer = {
       deliver: (ns: string, ev: string, payload: Record<string, unknown>) =>
         import('../src/integrations/plugfn.js').then(({ deliverWebhookEvent }) =>
-          deliverWebhookEvent(ns, ev, payload, { store, fetch: fetchMock }),
+          deliverWebhookEvent(ns, ev, payload, { store, resolveHostname: resolvePublicHostname }),
         ),
     };
 
@@ -105,8 +114,7 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
       'joined',
     );
 
-    await new Promise((r) => setTimeout(r, 20));
-    expect(fetchMock).toHaveBeenCalled();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const call = fetchMock.mock.calls[0];
     expect(call[0]).toBe('https://my-app.com/hooks/recfn');
     expect(call[1].method).toBe('POST');
@@ -117,7 +125,10 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
     expect(body.data.botId).toBe(bot.id);
     expect(body.data.meetingUrl).toBe('https://zoom.us/j/123');
     expect(body.data.platform).toBe('zoom');
-    expect(call[1].headers['X-RecFn-Signature']).toBeDefined();
+    expect(call[1].headers['X-RecFn-Signature']).toBe(createHmac('sha256', 'whsec_test').update(call[1].body).digest('hex'));
+    expect(resolvePublicHostname).toHaveBeenCalledWith('my-app.com', expect.any(AbortSignal));
+    expect(call[1].dispatcher).toBeDefined();
+    expect(call[1].redirect).toBe('manual');
   });
 
   it('does not include X-RecFn-Signature when webhook has no secret (TV-WH-004 negative)', async () => {
@@ -149,7 +160,7 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
     const webhookDeliverer = {
       deliver: (ns: string, ev: string, payload: Record<string, unknown>) =>
         import('../src/integrations/plugfn.js').then(({ deliverWebhookEvent }) =>
-          deliverWebhookEvent(ns, ev, payload, { store, fetch: fetchMock }),
+          deliverWebhookEvent(ns, ev, payload, { store, resolveHostname: resolvePublicHostname }),
         ),
     };
 
@@ -166,8 +177,7 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
       'joined',
     );
 
-    await new Promise((r) => setTimeout(r, 20));
-    expect(fetchMock).toHaveBeenCalled();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const call = fetchMock.mock.calls[0];
     expect(call[1].headers['X-RecFn-Signature']).toBeUndefined();
   });
@@ -199,7 +209,7 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
     );
 
     let attempt = 0;
-    const failingFetch = vi.fn().mockImplementation(() => {
+    const failingFetch = transport.mockImplementation(() => {
       attempt++;
       if (attempt < 2) {
         return Promise.resolve({ ok: false, status: 500 });
@@ -212,7 +222,8 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
         import('../src/integrations/plugfn.js').then(({ deliverWebhookEvent }) =>
           deliverWebhookEvent(ns, ev, payload, {
             store,
-            fetch: failingFetch,
+            resolveHostname: resolvePublicHostname,
+            initialDelayMs: 0,
             maxRetries: 3,
           }),
         ),
@@ -231,7 +242,7 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
       'joined',
     );
 
-    await new Promise((r) => setTimeout(r, 2500));
+    await vi.waitFor(() => expect(failingFetch).toHaveBeenCalledTimes(2));
     expect(failingFetch).toHaveBeenCalledTimes(2);
   });
 
@@ -271,7 +282,7 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
     const webhookDeliverer = {
       deliver: (ns: string, ev: string, payload: Record<string, unknown>) =>
         import('../src/integrations/plugfn.js').then(({ deliverWebhookEvent }) =>
-          deliverWebhookEvent(ns, ev, payload, { store, fetch: fetchMock }),
+          deliverWebhookEvent(ns, ev, payload, { store, resolveHostname: resolvePublicHostname }),
         ),
     };
 
@@ -306,11 +317,45 @@ describe('Webhook delivery (TV-WH-002, TV-WH-003, TV-WH-005)', () => {
       'left',
     );
 
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     const eventIds = fetchMock.mock.calls.map((c) => JSON.parse(c[1].body).eventId);
     expect(eventIds.length).toBe(3);
     expect(eventIds.every((id) => typeof id === 'string' && id.startsWith('evt_'))).toBe(true);
     const uniqueIds = new Set(eventIds);
     expect(uniqueIds.size).toBe(2);
   });
+});
+
+it('rejects literal and DNS-resolved private targets before calling the transport', async () => {
+  const { deliverWebhook } = await import('../src/webhooks/deliver.js');
+  const payload = { event: 'bot.joined' as const, eventId: 'evt_security', timestamp: new Date().toISOString(), data: {} };
+  transport.mockClear();
+  for (const url of ['http://127.0.0.1/hook', 'http://[::1]/hook', 'https://private.example/hook']) {
+    await expect(deliverWebhook({ url }, payload, { resolveHostname: async () => ['93.184.216.34', '10.0.0.1'] })).rejects.toThrow(/non-public/);
+  }
+  expect(transport).not.toHaveBeenCalled();
+});
+
+it('passes delivery policy through the shared transport', async () => {
+  const { deliverWebhook } = await import('../src/webhooks/deliver.js');
+  transport.mockReset().mockResolvedValue({ ok: true, status: 200 });
+  await expect(deliverWebhook({ url: 'https://my-app.com/hook' }, { event: 'bot.joined', eventId: 'evt_policy', timestamp: new Date().toISOString(), data: {} }, { resolveHostname: resolvePublicHostname, maxRetries: 1 })).resolves.toEqual({ ok: true, attempt: 1 });
+});
+
+
+it('bounds DNS validation and aborts the resolver before transport', async () => {
+  const { deliverWebhook } = await import('../src/webhooks/deliver.js');
+  transport.mockClear();
+  let resolverSignal: AbortSignal | undefined;
+  await expect(deliverWebhook({ url: 'https://slow.example/hook' }, {
+    event: 'bot.joined', eventId: 'evt_timeout', timestamp: new Date().toISOString(), data: {},
+  }, {
+    perAttemptTimeoutMs: 10,
+    resolveHostname: async (_hostname, signal) => {
+      resolverSignal = signal;
+      return new Promise<readonly string[]>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+  })).rejects.toThrow(/timed out/);
+  expect(resolverSignal?.aborted).toBe(true);
+  expect(transport).not.toHaveBeenCalled();
 });
