@@ -1,6 +1,10 @@
-import { QueryOptions, QueryResult } from "./types";
+import { QueryOptions, QueryResult, AggregateOptions, Aggregation } from "./types";
 import { StorageAdapter } from "../storage/types";
 import { TimeRangeParser, AbsoluteTimeRange } from "./time-range";
+
+export class QueryValidationError extends Error {
+  constructor(message: string) { super(message); this.name = "QueryValidationError"; }
+}
 
 export class QueryEngine {
   private storage: StorageAdapter;
@@ -9,14 +13,38 @@ export class QueryEngine {
     this.storage = storage;
   }
 
+  async aggregate(options: AggregateOptions): Promise<QueryResult> {
+    if (!this.isRecord(options)) throw new QueryValidationError("Aggregation options must be an object");
+    const { aggregation, field, percentile, ...query } = options;
+    const shorthand = typeof aggregation === "string" && /^p(?:\d+(?:\.\d+)?)$/.test(aggregation);
+    const config: Aggregation = {
+      operation: shorthand ? "percentile" : aggregation as Aggregation["operation"],
+      field: field ?? (aggregation === "count" ? undefined : "value"),
+      percentile: shorthand ? Number(aggregation.slice(1)) : percentile,
+    };
+    return this.executeInternal({ ...query, aggregations: { value: config } }, field === undefined && aggregation !== "count");
+  }
+
   async execute(options: QueryOptions): Promise<QueryResult> {
+    return this.executeInternal(options);
+  }
+
+  private async executeInternal(options: QueryOptions, scalarMetric = false): Promise<QueryResult> {
+    this.validateOptions(options);
     const start = Date.now();
-    const range = options.timeRange === undefined ? undefined : this.parseRange(options.timeRange);
+    let range: AbsoluteTimeRange | undefined;
+    try { range = options.timeRange === undefined ? undefined : this.parseRange(options.timeRange); }
+    catch (error) { throw new QueryValidationError(error instanceof Error ? error.message : "Invalid time range"); }
+    const grouping = this.grouping(options.groupBy);
+    let aggregations = options.aggregations;
     let data: any[] = [];
     
     // Check if storage has specialized query capabilities
     if ("executeQuery" in this.storage && typeof (this.storage as any).executeQuery === "function") {
-        data = await (this.storage as any).executeQuery(options);
+        // Storage must return raw matching events, not pre-limited or aggregated rows.
+        data = await (this.storage as any).executeQuery({
+          ...(scalarMetric ? {} : { metric: options.metric }), where: options.where, timeRange: options.timeRange,
+        });
     } else {
         // Fallback to in-memory filtering (fetching all might be bad for DB, but fine for memory)
         data = (this.storage.getAll ? await this.storage.getAll() : []) || [];
@@ -24,7 +52,14 @@ export class QueryEngine {
 
     // 1. Filter by metric
     if (options.metric) {
-      data = data.filter((e) => e.name === options.metric || e.type === options.metric);
+      const exact = data.filter((e) => e.name === options.metric || e.type === options.metric);
+      if (scalarMetric && exact.length === 0 && options.metric.includes(".")) {
+        const at = options.metric.lastIndexOf(".");
+        const name = options.metric.slice(0, at);
+        const field = options.metric.slice(at + 1);
+        data = data.filter((event) => event.name === name || event.type === name);
+        aggregations = { value: { ...aggregations!.value, field } };
+      } else data = exact;
     }
 
     // 2. Filter by where clause
@@ -40,17 +75,14 @@ export class QueryEngine {
       });
     }
 
-    // 4. Aggregations (simplified)
-    if (options.aggregations) {
-        // TODO: Implement aggregations
-    }
+    if (aggregations) data = this.aggregateRows(data, aggregations, grouping);
 
     // 5. Sorting
     if (options.orderBy) {
       const { field, direction } = options.orderBy;
       data = [...data].sort((a, b) => {
-        const valA = this.getFieldValue(a, field);
-        const valB = this.getFieldValue(b, field);
+        const valA = aggregations && Object.prototype.hasOwnProperty.call(a, field) ? a[field] : this.getFieldValue(a, field);
+        const valB = aggregations && Object.prototype.hasOwnProperty.call(b, field) ? b[field] : this.getFieldValue(b, field);
         if (valA < valB) return direction === "asc" ? -1 : 1;
         if (valA > valB) return direction === "asc" ? 1 : -1;
         return 0;
@@ -58,7 +90,7 @@ export class QueryEngine {
     }
 
     // 6. Limit
-    if (options.limit) {
+    if (options.limit !== undefined) {
       data = data.slice(0, options.limit);
     }
 
@@ -69,6 +101,135 @@ export class QueryEngine {
         timeMs: Date.now() - start,
       },
     };
+  }
+
+  private isRecord(value: unknown): value is Record<string, any> {
+    return value !== null && typeof value === "object" && !Array.isArray(value) &&
+      (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+  }
+
+  private field(value: unknown): asserts value is string {
+    if (typeof value !== "string" || !value.trim() || value.split(".").some(part =>
+      !part || ["__proto__", "constructor", "prototype"].includes(part))) {
+      throw new QueryValidationError("Invalid query field");
+    }
+  }
+
+  private validateOptions(options: QueryOptions): void {
+    if (!this.isRecord(options)) throw new QueryValidationError("Query options must be an object");
+    if (options.metric !== undefined && (typeof options.metric !== "string" || !options.metric.trim())) throw new QueryValidationError("Invalid metric");
+    if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 0)) throw new QueryValidationError("Limit must be a nonnegative integer");
+    if (options.orderBy !== undefined) {
+      if (!this.isRecord(options.orderBy) || !["asc", "desc"].includes(options.orderBy.direction)) throw new QueryValidationError("Invalid order direction");
+      this.field(options.orderBy.field);
+    }
+    if (options.where !== undefined) {
+      if (!this.isRecord(options.where)) throw new QueryValidationError("Where must be an object");
+      for (const [field, filter] of Object.entries(options.where)) {
+        this.field(field);
+        if (filter !== null && typeof filter === "object") {
+          if (!this.isRecord(filter) || !Object.keys(filter).length) throw new QueryValidationError("Invalid filter");
+          for (const [op, value] of Object.entries(filter)) {
+            if (!["eq", "neq", "gt", "gte", "lt", "lte", "contains", "exists"].includes(op)) throw new QueryValidationError("Unknown filter operator");
+            if (["gt", "gte", "lt", "lte"].includes(op) && (typeof value !== "number" || !Number.isFinite(value))) throw new QueryValidationError("Ordered filter requires a finite number");
+            if (op === "exists" && typeof value !== "boolean") throw new QueryValidationError("Exists requires a boolean");
+            if (op === "contains" && typeof value !== "string") throw new QueryValidationError("Contains requires a string");
+          }
+        }
+      }
+    }
+    const groups = this.grouping(options.groupBy);
+    if (groups.length && !options.aggregations) throw new QueryValidationError("Grouping requires an aggregation");
+    if (options.aggregations !== undefined) {
+      if (!this.isRecord(options.aggregations) || !Object.keys(options.aggregations).length) throw new QueryValidationError("Aggregations must be a nonempty object");
+      for (const [name, aggregation] of Object.entries(options.aggregations)) {
+        this.field(name);
+        if (groups.some(group => group.key === name)) throw new QueryValidationError("Aggregation name collides with group field");
+        if (!this.isRecord(aggregation) || !["count", "sum", "avg", "min", "max", "count_distinct", "percentile"].includes(aggregation.operation)) {
+          throw new QueryValidationError("Unsupported aggregation operation (rate requires an explicit metric ratio contract)");
+        }
+        if (aggregation.operation !== "count" || aggregation.field !== undefined) this.field(aggregation.field);
+        if (aggregation.operation === "percentile" && (typeof aggregation.percentile !== "number" || !Number.isFinite(aggregation.percentile) || aggregation.percentile < 0 || aggregation.percentile > 100)) throw new QueryValidationError("Percentile must be between 0 and 100");
+      }
+    }
+  }
+
+  private grouping(value: QueryOptions["groupBy"]): Array<{ key: string; interval?: number }> {
+    if (value === undefined) return [];
+    const fields = Array.isArray(value) ? value : [value];
+    if (!fields.length) throw new QueryValidationError("Grouping must not be empty");
+    const result = fields.map(field => {
+      if (typeof field === "string") { this.field(field); return { key: field }; }
+      if (!this.isRecord(field) || Object.keys(field).length !== 1 || typeof field.interval !== "string") throw new QueryValidationError("Invalid time grouping");
+      const match = /^(\d+)(ms|s|m|h|d|w)$/.exec(field.interval);
+      if (!match) throw new QueryValidationError("Invalid group interval");
+      const unit: Record<string, number> = { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000, w: 604800000 };
+      const interval = Number(match[1]) * unit[match[2]];
+      if (!Number.isSafeInteger(interval) || interval <= 0) throw new QueryValidationError("Invalid group interval");
+      return { key: "timestamp", interval };
+    });
+    if (new Set(result.map(group => group.key)).size !== result.length) throw new QueryValidationError("Duplicate group field");
+    return result;
+  }
+
+  private aggregateRows(events: any[], configs: Record<string, Aggregation>, grouping: Array<{ key: string; interval?: number }>): any[] {
+    const groups = new Map<string, { labels: Record<string, any>; events: any[] }>();
+    if (!grouping.length) groups.set("[]", { labels: {}, events: [] });
+    for (const event of events) {
+      const labels: Record<string, any> = {};
+      let valid = true;
+      for (const group of grouping) {
+        let value = this.getFieldValue(event, group.key);
+        if (group.interval) {
+          const timestamp = this.timestamp(event.timestamp === undefined ? event.ts : event.timestamp);
+          if (!Number.isFinite(timestamp)) { valid = false; break; }
+          value = Math.floor(timestamp / group.interval) * group.interval;
+        }
+        if (value === undefined) value = null;
+        if (value !== null && !["string", "number", "boolean"].includes(typeof value) || typeof value === "number" && !Number.isFinite(value)) throw new QueryValidationError("Group fields must be finite scalar values");
+        Object.defineProperty(labels, group.key, { value, enumerable: true });
+      }
+      if (!valid) continue;
+      const key = JSON.stringify(Object.values(labels));
+      if (!groups.has(key)) groups.set(key, { labels, events: [] });
+      groups.get(key)!.events.push(event);
+    }
+    return [...groups.values()].map(group => {
+      const row = { ...group.labels };
+      for (const [name, config] of Object.entries(configs)) {
+        Object.defineProperty(row, name, { value: this.aggregateValue(group.events, config), enumerable: true });
+      }
+      return row;
+    });
+  }
+
+  private aggregateValue(events: any[], config: Aggregation): number | null {
+    if (config.operation === "count") return events.length;
+    const raw = events.map(event => this.getFieldValue(event, config.field!));
+    if (config.operation === "count_distinct") {
+      const values = raw.filter(value => value !== undefined && value !== null);
+      if (values.some(value => !["string", "number", "boolean"].includes(typeof value) || typeof value === "number" && !Number.isFinite(value))) throw new QueryValidationError("Distinct fields must be finite scalar values");
+      return new Set(values).size;
+    }
+    const values = raw.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    if (!values.length) return config.operation === "sum" ? 0 : null;
+    let value: number;
+    switch (config.operation) {
+      case "sum": value = values.reduce((sum, current) => sum + current, 0); break;
+      case "avg": value = values.reduce((mean, current) => mean + current / values.length, 0); break;
+      case "min": value = values.reduce((min, current) => Math.min(min, current)); break;
+      case "max": value = values.reduce((max, current) => Math.max(max, current)); break;
+      case "percentile": {
+        const sorted = [...values].sort((a, b) => a - b);
+        const index = config.percentile! / 100 * (sorted.length - 1);
+        const low = Math.floor(index), high = Math.ceil(index), weight = index - low;
+        value = sorted[low] * (1 - weight) + sorted[high] * weight;
+        break;
+      }
+      default: throw new QueryValidationError("Unsupported aggregation");
+    }
+    if (!Number.isFinite(value)) throw new QueryValidationError("Aggregation exceeds finite numeric range");
+    return value;
   }
 
   private matches(event: any, filters: any): boolean {

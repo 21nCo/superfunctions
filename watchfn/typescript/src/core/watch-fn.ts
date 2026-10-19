@@ -8,6 +8,7 @@ import { HttpInterceptor } from "../collectors/apm/http-interceptor";
 import { Tracer } from "../trace/tracer";
 import { AlertManager } from "../alerts/alert-manager";
 import { QueryEngine } from "../query/query-engine";
+import type { AggregateOptions } from "../query/types";
 import { SystemMetricsCollector } from "../collectors/infra/system-metrics";
 import { ProcessMetricsCollector } from "../collectors/infra/process-metrics";
 import { SyntheticScheduler } from "../synthetics/scheduler";
@@ -143,11 +144,12 @@ export class WatchFn implements WatchFnInstance {
           const result = await this.queryEngine.execute(params);
           return result.data;
       }
-      return [];
+      throw new Error("WatchFn storage is unavailable");
   }
   
-  async aggregate(params: any): Promise<any> {
-      return {};
+  async aggregate(params: AggregateOptions): Promise<any[]> {
+      if (!this.queryEngine) throw new Error("WatchFn storage is unavailable");
+      return (await this.queryEngine.aggregate(params)).data;
   }
   
   async compareDeploymentMetrics(params: any): Promise<any> {
