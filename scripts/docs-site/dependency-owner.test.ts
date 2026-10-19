@@ -8,7 +8,9 @@ import { pathToFileURL } from "node:url";
 import { docsSiteCorePlugin } from "./vite";
 
 it("uses actual consumer-owned provider-fs and Vitest subpath exports through real Vite resolution", async () => {
-  const consumerPackage = resolve(process.cwd(), "package.json");
+  const consumerPackage = process.env.DOCS_SITE_DIR
+    ? resolve(process.env.DOCS_SITE_DIR, "package.json")
+    : resolve(process.env.npm_package_json ?? resolve(process.cwd(), "package.json"));
   const consumerRequire = createRequire(consumerPackage);
   // Native public-subpath resolution is independent of the Vite plugin under test.
   // ^3.2.4 legitimately selects newer3.x patches in a genuine standalone install.

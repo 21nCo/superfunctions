@@ -11,7 +11,7 @@ description: Map DevFn's eight packages to their responsibilities.
 | `@devfn/ports` | Lock-protected machine port leases, reconciliation, and reports. |
 | `@devfn/processes` | Native process supervision, logs, readiness, and ownership. |
 | `@devfn/compose` | Worktree-scoped Docker Compose infrastructure. |
-| `@devfn/proxy` | Shared Caddy route control for `.localhost` names. |
+| `@devfn/proxy` | Shared Caddy route control for `.localhost` and registered development-domain names. |
 | `@devfn/testing` | Deterministic fixtures and fake listeners. |
 
 The packages expose separate public entry points. Use the CLI for the supported end-to-end workflow; lower-level packages are for integrations that preserve DevFn's identity, trust, and ownership contracts. Detailed source guides are under [reference](/docs/reference).

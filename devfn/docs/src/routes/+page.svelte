@@ -14,7 +14,7 @@
     { title: "Trusted manifests", text: "Review and trust the exact manifest digest before lifecycle actions." },
     { title: "Native processes", text: "Run application processes with readiness, logs, and ownership checks." },
     { title: "Port leases", text: "Allocate machine-local ports with worktree identity." },
-    { title: "Stable routes", text: "Expose concrete .localhost URLs through a shared Caddy registry." },
+    { title: "Stable routes", text: "Expose .localhost and registered development-domain URLs through a shared Caddy registry." },
   ];
 
   const quickLinks = [

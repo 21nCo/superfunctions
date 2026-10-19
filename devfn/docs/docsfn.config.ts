@@ -1,7 +1,7 @@
 import type { DocsConfig } from "@docsfn/core";
 
 const deploymentOrigin = process.env.CLOUDFLARE_DOCS_DEPLOY === "1"
-  ? process.env.CLOUDFLARE_DOCS_PUBLIC_ORIGIN
+  ? process.env.CLOUDFLARE_DOCS_PUBLIC_ORIGIN || undefined
   : undefined;
 
 const config: DocsConfig = {

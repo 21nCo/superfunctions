@@ -4,7 +4,7 @@ The new per-function sites supply their config and Vite raw-content globs to `cr
 
 `Search.svelte` uses DocsFn's search runtime with a native modal dialog. It supports the visible trigger, Ctrl/Cmd+K, Escape, keyboard-focusable result links, loading state, and errors without the published UI dialog's SSR limitation.
 
-Each site resolves the shared module's DocsFn imports through the scoped Vite resolver so it uses the versions pinned by that site. Run `npm run build` in the affected `<function>/docs` directory. After changing shared code, build all consumers and verify desktop search (including a result navigation and Escape) plus the mobile Menu drawer. Keep the responsive open-drawer override when using the current published theme.
+Each site resolves the shared module's DocsFn imports through the scoped Vite resolver so it uses the versions pinned by that site. In a workspace checkout, build the affected site from the repository root with `npm exec -- turbo run build --filter=<consumer-package>` so its `^build` prerequisites are prepared; `npm run build` in `<function>/docs` alone is enough only for a standalone install. After changing shared code, build all consumers and verify desktop search (including a result navigation and Escape) plus the mobile Menu drawer. Keep the responsive open-drawer override when using the current published theme.
 
 Each new-site PR includes this shared directory at the same repository path so it can land independently. All factory wrappers reference this one canonical directory. After merge, edit it directly rather than duplicating provider logic in individual sites.
 

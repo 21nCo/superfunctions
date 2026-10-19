@@ -4,7 +4,7 @@ import { resolve, dirname } from "node:path";
 import { readFileSync } from "node:fs";
 import { docsSiteCorePlugin } from "./vite";
 
-const hint = "Run DocsFn site tests from a consuming docs workspace, for example npm test --workspace @devfn/docs (or set DOCS_SITE_DIR)";
+const hint = "Run DocsFn site tests from a consuming docs workspace, for example npm test --workspace @extfn/docs (or set DOCS_SITE_DIR)";
 const sitePackagePath = process.env.DOCS_SITE_DIR
   ? resolve(process.env.DOCS_SITE_DIR, "package.json")
   : resolve(process.env.npm_package_json ?? resolve(process.cwd(), "package.json"));
@@ -26,5 +26,5 @@ export default {
   plugins: [docsSiteCorePlugin(pathToFileURL(sitePackagePath).href)],
   resolve: { alias: { $lib: resolve(dirname(sitePackagePath), "src/lib") } },
   esbuild: { tsconfigRaw: JSON.stringify({ compilerOptions: { target: "ES2022", verbatimModuleSyntax: true } }) },
-  test: { root: fileURLToPath(new URL(".", import.meta.url)), include: ["runtime.test.ts", "page.test.ts", "blog.test.ts", "llms.test.mjs", "vite.test.mjs", "dependency-owner.test.ts"] },
+  test: { root: fileURLToPath(new URL(".", import.meta.url)), include: ["runtime.test.ts", "page.test.ts", "blog.test.ts", "llms.test.mjs", "vite.test.mjs", "dependency-owner.test.ts", "origin.test.mjs"] },
 } satisfies ViteUserConfig;

@@ -10,7 +10,7 @@ const config: DocsConfig = {
     title: "filefn",
     description: "Self-hosted file uploads, storage, and processing for any stack. Multipart uploads, signed URLs, share links, OPFS offline, image/audio/video processing, and a typed SDK on every runtime.",
     basePath: "/docs",
-    canonicalUrl: deploymentOrigin ?? "https://filefn.com",
+    canonicalUrl: deploymentOrigin || "https://filefn.com",
     showFooter: false,
     editLink: {
       pattern: "https://github.com/21nCo/super-functions/edit/dev/filefn/docs/{path}",

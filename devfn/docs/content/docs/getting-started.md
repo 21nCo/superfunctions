@@ -16,6 +16,6 @@ npx @devfn/cli logs app
 npx @devfn/cli down
 ```
 
-Profiles containing public processes or ports also require `--allow-public` on every start. `up --json` emits one lifecycle receipt with state, instance and invocation IDs, allocations, managed resources, and resolved URLs. Read-only commands return structured command data in JSON mode; failures use stable `DEVFN_*` codes and exit nonzero.
+Profiles containing public processes or ports also require `--allow-public` on every start. `up --json` emits one lifecycle receipt with state, instance and invocation IDs, allocations, managed resources, and resolved URLs. Read-only commands return structured command data in JSON mode; failures use stable `DEVFN_*` codes and exit nonzero. `devfn restart` checks the profile, registered domains, and replacement ports before stopping a ready instance, then starts it again from the current working tree; if that start fails, the previous processes are not relaunched.
 
 Runtime files default to `.devfn/` with owner-only permissions. If the manifest configures `environmentOutputs`, inspect and back up any pre-existing target file before starting: DevFn overwrites configured outputs and cannot restore their former contents. See the [migration guide](/docs/migration).

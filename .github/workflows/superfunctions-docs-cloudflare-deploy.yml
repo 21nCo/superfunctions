@@ -10,22 +10,26 @@ on:
     tags:
       - superfunctions-docs-live-*
       - superfunctions-docs-datafn-live-*
+      - superfunctions-docs-extfn-live-*
       - superfunctions-docs-devfn-live-*
       - superfunctions-docs-filefn-live-*
       - superfunctions-docs-searchfn-live-*
       - superfunctions-docs-authfn-live-*
       - superfunctions-datafn-docs-live-*
+      - superfunctions-extfn-docs-live-*
       - superfunctions-devfn-docs-live-*
       - superfunctions-filefn-docs-live-*
       - superfunctions-searchfn-docs-live-*
       - superfunctions-authfn-docs-live-*
     paths:
       - datafn/docs/**
+      - extfn/docs/**
       - devfn/docs/**
       - filefn/docs/**
       - searchfn/docs/**
       - authfn/docs/**
       - docsfn/**
+      - apifn/docsfn/**
       - packages/docs-theme/**
       - scripts/cloudflare-docs/**
       - scripts/docs-site/**
@@ -43,6 +47,7 @@ on:
         options:
           - all
           - datafn
+          - extfn
           - devfn
           - filefn
           - searchfn
@@ -58,12 +63,12 @@ on:
 
 jobs:
   detect:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       environment: ${{ steps.detect.outputs.environment }}
       products: ${{ steps.detect.outputs.products }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
         with:
           fetch-depth: 0
 
@@ -87,7 +92,7 @@ jobs:
           cat /tmp/docs-deploy-detect.out >> "$GITHUB_OUTPUT"
 
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: detect
     if: needs.detect.outputs.products != '[]'
     environment: ${{ needs.detect.outputs.environment }}
@@ -99,7 +104,7 @@ jobs:
       matrix:
         product: ${{ fromJson(needs.detect.outputs.products) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
 
       - uses: actions/setup-node@v4
         with:
@@ -112,8 +117,31 @@ jobs:
       - name: Ensure Rollup native package
         run: node scripts/ci-install-rollup-native.mjs
 
-      - name: Deploy docs Worker
+      # Dev docs deploy to the 21n-dev Cloudflare account.
+      - name: Check 21n-dev Cloudflare credentials
+        if: needs.detect.outputs.environment == 'dev'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEV_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_DEV_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_DEV_API_TOKEN secret or CLOUDFLARE_DEV_ACCOUNT_ID variable is missing; refusing to deploy dev docs."
+            exit 1
+          fi
+
+      - name: Deploy docs Worker (dev)
+        if: needs.detect.outputs.environment == 'dev'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEV_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_DEV_ACCOUNT_ID }}
+          DOCS_PRODUCT: ${{ matrix.product }}
+        run: node scripts/cloudflare-docs/deploy.mjs dev --products="$DOCS_PRODUCT"
+
+      # Live docs deploy to the production account (unchanged).
+      - name: Deploy docs Worker (live)
+        if: needs.detect.outputs.environment == 'live'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: node scripts/cloudflare-docs/deploy.mjs ${{ needs.detect.outputs.environment }} --products=${{ matrix.product }}
+          DOCS_PRODUCT: ${{ matrix.product }}
+        run: node scripts/cloudflare-docs/deploy.mjs live --products="$DOCS_PRODUCT"
