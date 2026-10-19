@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import {
+  devAccountId,
   docsProducts,
   hasDocsPackage,
   normalizeEnvironment,
@@ -15,6 +16,19 @@ const environment = normalizeEnvironment(process.argv[2] ?? "dev");
 if (!environment) {
   console.error("Usage: node scripts/cloudflare-docs/deploy.mjs <dev|live> [--products=datafn,searchfn,authfn|all] [--dry-run] [--skip-build]");
   process.exit(1);
+}
+
+// Dev docs are pinned to the 21n-dev account (written into the generated
+// wrangler config). Refuse to run if the CI-provided account differs, so the
+// token and the pinned target can never point at different accounts.
+if (environment === "dev") {
+  const envAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+  if (envAccountId && envAccountId !== devAccountId) {
+    console.error(
+      `CLOUDFLARE_ACCOUNT_ID does not match the pinned 21n-dev account (${devAccountId}); refusing to deploy dev docs.`,
+    );
+    process.exit(1);
+  }
 }
 
 const products = parseProducts(getArgValue("products") ?? "all", { existingOnly: false });
@@ -32,6 +46,10 @@ for (const productId of products) {
 
   if (!skipBuild) {
     buildDocs(product, docsDir, environment);
+    if (product.kind === "sveltekit-cloudflare" && !dryRun) {
+      // Exercise the generated SvelteKit server before uploading it.
+      run(process.execPath, [path.join(repoRoot, "scripts/docs-site/check-built-site.mjs")], { cwd: docsDir });
+    }
   }
 
   if (product.kind === "next-static") {
@@ -53,6 +71,8 @@ function buildDocs(product, docsDir, environment) {
     env: {
       CLOUDFLARE_DOCS_DEPLOY: "1",
       CLOUDFLARE_DOCS_ASSETS_ORIGIN: assetsOrigin,
+      CLOUDFLARE_DOCS_PUBLIC_ORIGIN: `https://${product.hosts[environment]}`,
+      NEXT_PUBLIC_SITE_URL: `https://${product.hosts[environment]}`,
       NODE_ENV: "production",
       NEXT_TELEMETRY_DISABLED: "1",
     },
@@ -68,6 +88,13 @@ function deployNextStatic(productId, docsDir, name) {
   fs.rmSync(stageDir, { recursive: true, force: true });
   fs.mkdirSync(stageDir, { recursive: true });
   copyDir(outDir, stageDir);
+
+  for (const name of ["llms.txt", "llms-full.txt"]) {
+    const source = path.join(outDir, name);
+    assertFile(source, `Missing generated docs artifact: ${source}`);
+    fs.mkdirSync(path.join(stageDir, "docs"), { recursive: true });
+    fs.copyFileSync(source, path.join(stageDir, "docs", name));
+  }
 
   const nextAssets = path.join(outDir, "_next");
   if (fs.existsSync(nextAssets)) {
@@ -114,6 +141,7 @@ function writeWranglerConfig(docsDir, options) {
       directory: options.assetsDirectory,
     },
   };
+  if (environment === "dev") config.account_id = devAccountId;
   if (options.main) config.main = options.main;
   if (options.compatibilityFlags) config.compatibility_flags = options.compatibilityFlags;
 

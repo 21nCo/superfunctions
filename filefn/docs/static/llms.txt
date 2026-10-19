@@ -20,13 +20,13 @@
 - [Cloudflare R2 adapter](https://filefn.com/docs/adapters/storage-r2): createS3Storage configured for Cloudflare R2 — egress-free production storage with full S3 multipart compatibility.
 - [S3 adapter](https://filefn.com/docs/adapters/storage-s3): createS3Storage — production-grade storage on AWS S3 with signed URLs and multipart uploads.
 - [Administration](https://filefn.com/docs/admin): Bind FileFn's scoped Super Console capability to an authorized principal.
-- [AI Resources](https://filefn.com/docs/ai-resources): Machine-readable FileFn documentation and assistant setup.
-- [Claude](https://filefn.com/docs/ai-resources/claude): Use the FileFn documentation indexes with Claude.
-- [Codex](https://filefn.com/docs/ai-resources/codex): Ground FileFn changes in the generated docs and source.
-- [Cursor](https://filefn.com/docs/ai-resources/cursor): Give Cursor access to current FileFn documentation.
-- [llms.txt](https://filefn.com/docs/ai-resources/llms-txt): Use the generated FileFn documentation indexes with an AI assistant.
-- [MCP availability](https://filefn.com/docs/ai-resources/mcp): Current machine-readable FileFn docs and MCP endpoint status.
-- [Skills availability](https://filefn.com/docs/ai-resources/skills): FileFn guides available for assistant workflows.
+- [AI Resources](https://filefn.com/docs/ai-resources): Use FileFn documentation as assistant context without assuming unimplemented integrations.
+- [Claude](https://filefn.com/docs/ai-resources/claude): Ground Claude in reviewed FileFn source and generated documentation context.
+- [Codex](https://filefn.com/docs/ai-resources/codex): Provide FileFn source and generated documentation context to coding agents.
+- [Cursor](https://filefn.com/docs/ai-resources/cursor): Use FileFn documentation and project rules as Cursor context.
+- [llms.txt](https://filefn.com/docs/ai-resources/llms-txt): The two generated FileFn documentation context files and their native docs routes.
+- [MCP integration boundaries](https://filefn.com/docs/ai-resources/mcp): The current FileFn docs site does not implement an MCP server.
+- [Application-owned recipes](https://filefn.com/docs/ai-resources/skills): Create and review local FileFn assistant recipes; no bundled executable skill endpoint is supplied.
 - [API Reference](https://filefn.com/docs/api): HTTP endpoints exposed by filefn — annotated OpenAPI spec covering uploads, downloads, share links, grants, processing, and capabilities.
 - [Core Concepts](https://filefn.com/docs/core-concepts): How filefn is wired — upload sessions, multipart, policies, render intents, the canonical envelope/error model, share links, grants, dedup, offline, events, and security.
 - [Architecture](https://filefn.com/docs/core-concepts/architecture): How filefn separates upload sessions, files, share links, grants, processing, and adapters into composable subsystems.

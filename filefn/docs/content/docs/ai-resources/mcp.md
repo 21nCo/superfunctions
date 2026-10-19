@@ -1,10 +1,12 @@
 ---
-title: MCP availability
-description: Current machine-readable FileFn docs and MCP endpoint status.
+title: MCP integration boundaries
+description: The current FileFn docs site does not implement an MCP server.
 ---
 
-# MCP availability
+# MCP integration boundaries
 
-This DocsFn site does not expose an MCP server or `/mcp` route. Do not register the retired `docs.filefn.dev/mcp` address in an assistant.
+This FileFn docs site does not implement a `/mcp` endpoint. It does not publish `search_docs`, `fetch_page`, `get_route`, `get_error`, or executable skill tools. Changing a hostname in an editor configuration would not create those services.
 
-For machine-readable documentation, use [llms.txt](./llms-txt) or the [search index](/docs/search.json). To build an MCP integration, host an MCP server separately and point its tools at these resources; the docs site does not supply search or fetch MCP tools itself.
+Use the generated [LLM context files](./llms-txt) or native documentation pages instead. The native `/docs/search.json` route supplies a search index, not a ready-made MCP tool protocol.
+
+If your application provides a separate MCP service, use that application's verified endpoint and tool schema. Its operator owns authentication, authorization, request limits, data exposure, and deployment. Do not assume public documentation content authorizes tools to access or mutate your FileFn data.

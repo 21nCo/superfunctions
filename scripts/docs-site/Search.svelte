@@ -1,17 +1,12 @@
 <script lang="ts">
   import { createDocsSearchRuntime, type DocsSearchRuntimeResultItem } from "@docsfn/core/search-runtime";
-  import { tick } from "svelte";
 
-  let resultList: HTMLUListElement;
-  let moreButton = $state<HTMLButtonElement>();
   let dialog: HTMLDialogElement;
   let input: HTMLInputElement;
   let query = $state("");
   let results = $state<DocsSearchRuntimeResultItem[]>([]);
   let pending = $state(false);
   let failure = $state("");
-  let visibleLimit = $state(10);
-  let hasMore = $state(false);
   let requestId = 0;
   const runtime = createDocsSearchRuntime({
     loadArtifact: async () => {
@@ -33,31 +28,15 @@
     }
   }
 
-  async function search(reset = true) {
+  async function search() {
     const current = ++requestId;
-    const limit = visibleLimit;
-    const previousCount = results.length;
     failure = "";
-    if (reset) {
-      results = [];
-      hasMore = false;
-    }
+    results = [];
     pending = Boolean(query.trim());
     if (!pending) return;
     try {
-      const found = await runtime.query({ query, scope: "all", limit: limit + 1 });
-      if (current === requestId) {
-        const moveFocus = !reset && moreButton?.ownerDocument.activeElement === moreButton;
-        hasMore = found.length > limit;
-        results = found.slice(0, limit);
-        if (moveFocus && !hasMore) {
-          await tick();
-          if (current === requestId) {
-            const links = resultList.querySelectorAll("a");
-            links[Math.min(previousCount, links.length - 1)]?.focus();
-          }
-        }
-      }
+      const found = await runtime.query({ query, scope: "all", limit: 10 });
+      if (current === requestId) results = found;
     } catch {
       if (current === requestId) failure = "Search is unavailable. Please try again.";
     } finally {
@@ -76,15 +55,14 @@
     <button type="button" onclick={() => dialog.close()} aria-label="Close search">Close</button>
   </div>
   <label for="docs-search-query">Search terms</label>
-  <input id="docs-search-query" bind:this={input} value={query} oninput={(event) => { query = event.currentTarget.value; visibleLimit = 10; void search(); }} type="search" autocomplete="off" placeholder="Search documentation…" />
+  <input id="docs-search-query" bind:this={input} value={query} oninput={(event) => { query = event.currentTarget.value; void search(); }} type="search" autocomplete="off" placeholder="Search documentation…" />
   <p role="status">{failure ? "" : pending ? "Searching…" : query.trim() ? `${results.length} results` : "Enter a term to search."}</p>
   {#if failure}<p role="alert">{failure}</p>{/if}
-  <ul bind:this={resultList}>
+  <ul>
     {#each results as result (`${result.id}:${result.path}`)}
       <li><a href={result.path} onclick={() => dialog.close()}>{result.title}</a></li>
     {/each}
   </ul>
-  {#if hasMore}<button bind:this={moreButton} type="button" onclick={() => { visibleLimit += 10; void search(false); }}>Show more results</button>{/if}
 </dialog>
 
 <style>

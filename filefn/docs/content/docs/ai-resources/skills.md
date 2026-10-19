@@ -1,10 +1,18 @@
 ---
-title: Skills availability
-description: FileFn guides available for assistant workflows.
+title: Application-owned recipes
+description: Create and review local FileFn assistant recipes; no bundled executable skill endpoint is supplied.
 ---
 
-# Skills availability
+# Application-owned recipes
 
-This docs site does not publish a `/skills/` catalog or a `list_skills` MCP tool. Use the [quickstarts](/docs/quickstart), [adapter guides](/docs/adapters), and [recipes](/docs/recipes) as source material when writing an assistant workflow for a project.
+The docs site does not publish executable FileFn skills, a `/skills/` endpoint, or `list_skills`/`run_skill` tools. Write recipes for your own assistant's documented skill format and review them as application code.
 
-Check package APIs and run the project's tests before applying generated configuration. The [LLM indexes](./llms-txt) provide a page list and full text for retrieval.
+A useful recipe can:
+
+1. Inspect installed FileFn versions and existing server configuration.
+2. Read the relevant [documentation](https://filefn.com/docs) or [LLM context files](/docs/ai-resources/llms-txt).
+3. Propose a narrowly scoped configuration or processor change.
+4. Run the project's tests and type checks.
+5. Obtain separate authorization before operating live storage or infrastructure.
+
+FileFn policy checks and tenant authorization still apply. Assistant instructions are not credentials and do not bypass server-owned access control. Skill installation, discovery, and execution are specific to your assistant and are not implemented by this docs build.

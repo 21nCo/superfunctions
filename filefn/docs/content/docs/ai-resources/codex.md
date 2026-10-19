@@ -1,10 +1,19 @@
 ---
 title: Codex
-description: Ground FileFn changes in the generated docs and source.
+description: Provide FileFn source and generated documentation context to coding agents.
 ---
 
 # Codex
 
-Use [`llms.txt`](/docs/llms.txt) to find the relevant page, then read that page or [`llms-full.txt`](/docs/llms-full.txt) before changing a FileFn integration. The [search index](/docs/search.json) provides structured page metadata for clients that implement their own retrieval.
+Give your agent the [short index or full context](./llms-txt) through its supported URL or file context interface. Prefer inspected installed versions and repository source over guessed APIs.
 
-The docs site does not expose MCP tools, a raw-page endpoint, or a separate OpenAPI action endpoint. Use the [API reference](/docs/api) and repository contracts when building tools. Check the installed package version and run local tests against generated code.
+Suggested repository instructions:
+
+```md
+Use https://filefn.com/docs and the generated LLM context files for FileFn guidance.
+Inspect the actual installed public exports before writing examples.
+Preserve policy, tenant, quota, and authorization checks.
+Run local tests before proposing changes; ask before operating live infrastructure.
+```
+
+The native `/docs/search.json` route is a search index, not a `?q=` query API or MCP service. This docs site has no `/docs/<slug>/raw`, `/mcp`, `/skills/`, `/api/filefn.json`, or `llms-rich.json` route contract. Do not register tool wrappers against invented endpoints. Any independent tool service must define and verify its own schema, authentication, authorization, and deployment.

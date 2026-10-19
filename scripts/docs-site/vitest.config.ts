@@ -1,10 +1,10 @@
-import { defineConfig } from "vitest/config";
+import type { ViteUserConfig } from "vitest/config";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { readFileSync } from "node:fs";
 import { docsSiteCorePlugin } from "./vite";
 
-const hint = "Run DocsFn site tests from a consuming docs workspace, for example npm test --workspace @filefn/docs (or set DOCS_SITE_DIR)";
+const hint = "Run DocsFn site tests from a consuming docs workspace, for example npm test --workspace @extfn/docs (or set DOCS_SITE_DIR)";
 const sitePackagePath = process.env.DOCS_SITE_DIR
   ? resolve(process.env.DOCS_SITE_DIR, "package.json")
   : resolve(process.env.npm_package_json ?? resolve(process.cwd(), "package.json"));
@@ -22,7 +22,9 @@ if (!sitePackage || typeof sitePackage !== "object" || !("name" in sitePackage) 
   throw new Error(hint);
 }
 
-export default defineConfig({
+export default {
   plugins: [docsSiteCorePlugin(pathToFileURL(sitePackagePath).href)],
-  test: { root: fileURLToPath(new URL(".", import.meta.url)), include: ["runtime.test.ts", "page.test.ts", "llms.test.mjs", "selector.test.mjs"] },
-});
+  resolve: { alias: { $lib: resolve(dirname(sitePackagePath), "src/lib") } },
+  esbuild: { tsconfigRaw: JSON.stringify({ compilerOptions: { target: "ES2022", verbatimModuleSyntax: true } }) },
+  test: { root: fileURLToPath(new URL(".", import.meta.url)), include: ["runtime.test.ts", "page.test.ts", "blog.test.ts", "llms.test.mjs", "vite.test.mjs", "dependency-owner.test.ts", "origin.test.mjs"] },
+} satisfies ViteUserConfig;

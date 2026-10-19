@@ -1,10 +1,21 @@
 ---
 title: Cursor
-description: Give Cursor access to current FileFn documentation.
+description: Use FileFn documentation and project rules as Cursor context.
 ---
 
 # Cursor
 
-Add `https://filefn.com/docs` as a docs source in Cursor, or copy the generated [`llms.txt`](/docs/llms.txt) index into your project context. Use the [quickstart](/docs/quickstart) and [adapter guides](/docs/adapters) for the specific stack you are editing.
+Supply the [LLM context files](./llms-txt) using the context interface supported by your Cursor version. Example project rules:
 
-The docs site currently has no MCP endpoint to add to `.cursor/mcp.json`. See [MCP availability](./mcp).
+```md
+# FileFn
+
+Documentation: https://filefn.com/docs
+
+- Confirm installed @filefn/server and @filefn/client public contracts.
+- Preserve policy checks, tenant context, and server-side authorization.
+- Use CAS-capable stores.atomicKv when the FileFn server requires strict shared rate limits.
+- Run the project's type checks and tests; do not infer live readiness from a local build.
+```
+
+This site does not implement a FileFn MCP service, expose executable skills, or guarantee editor-specific automatic discovery. [MCP integration](./mcp) and [recipes](./skills) require separate application ownership.

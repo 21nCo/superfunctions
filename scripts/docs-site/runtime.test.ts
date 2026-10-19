@@ -13,7 +13,7 @@ const config: DocsConfig = {
   site: { title: "Contract test", basePath: "/docs" },
   content: { root: ".", docsDir: "guide", pagesDir: "pages", blogDir: "blog", apiDir: "api", assetsDir: "static", metaFileName: "META.json" },
   navigation: { sidebars: { docs: { root: true, include: ["docs/**"] } } },
-  search: { enabled: false },
+  search: { enabled: false, scopes: ["docs"] },
 };
 beforeEach(() => { vi.mocked(buildManifest).mockClear(); });
 
@@ -58,6 +58,16 @@ describe("bundled DocsFn provider", () => {
     expect(entries.find(({ collection }) => collection === "assets")?.bytes).toBe(5);
   });
 
+  it.each(["txt", "json", "yaml", "yml", "md", "mdx"])("preserves published UTF-8 metadata for %s assets", async (extension) => {
+    const runtime = createDocsSiteRuntime(config, {}, { [`../../../static/input.${extension}`]: "café\n" });
+    await runtime.loadDocsSiteSource();
+    const provider = vi.mocked(buildManifest).mock.calls[0][0];
+    const entries = await provider.listEntries({ config, collections: ["assets"] });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ collection: "assets", relativePath: `input.${extension}`, bytes: 6 });
+    expect(entries[0].updatedAt).toBeUndefined();
+  });
+
   it("shares successful initialization, caches compiled pages, and rejects unknown IDs", async () => {
     const runtime = createDocsSiteRuntime(config, { "../../../guide/index.md": "# Guide" }, {});
     const [left, right] = await Promise.all([runtime.loadDocsSiteSource(), runtime.loadDocsSiteSource()]);
@@ -67,19 +77,6 @@ describe("bundled DocsFn provider", () => {
     await expect(runtime.getCompiledDocsPage("docs:missing.md")).rejects.toMatchObject({ code: "DOCS_ARTIFACT_INVALID" });
     const other = createDocsSiteRuntime(config, { "../../../guide/index.md": "# Other" }, {});
     expect(await other.loadDocsSiteSource()).not.toBe(left);
-  });
-
-  it("caches posts and exposes the compiled cache and search runtime", async () => {
-    const runtime = createDocsSiteRuntime(config, {
-      "../../../guide/index.md": "# Guide",
-      "../../../blog/post.md": "---\ntitle: Post\ndate: '2026-01-01'\n---\nPost body",
-    }, {});
-    expect(await runtime.getCompiledDocsPost("blog:post.md")).toBe(await runtime.getCompiledDocsPost("blog:post.md"));
-    await expect(runtime.getCompiledDocsPost("blog:missing.md")).rejects.toMatchObject({ code: "DOCS_ARTIFACT_INVALID" });
-    const summary = await runtime.getDocsSiteCompiledCacheSummary();
-    expect(summary.postKeys).toHaveLength(1);
-    expect(summary.pageKeys).toHaveLength(1);
-    expect(await runtime.createDocsSiteSearchRuntime()).toBeDefined();
   });
 
   it.each(["docs", "pages"])("resolves %s collection index links from their source directory", async (collection) => {

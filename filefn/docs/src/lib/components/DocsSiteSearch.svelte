@@ -1,5 +1,17 @@
 <script lang="ts">
-  import Search from "@site/docs-search";
+  import DocsSearch from "@site/docs-search";
+
+  async function loadSearchArtifact() {
+    const response = await fetch("/docs/search.json");
+    if (!response.ok) {
+      throw new Error(`search artifact request failed: ${response.status}`);
+    }
+    return response.json();
+  }
 </script>
 
-<Search />
+<DocsSearch
+  {loadSearchArtifact}
+  placeholder="Search documentation..."
+  scopes={["all", "docs", "api", "blog"]}
+/>

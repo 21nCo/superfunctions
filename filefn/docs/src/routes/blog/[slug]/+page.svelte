@@ -1,5 +1,5 @@
 <script lang="ts">
-  import DocsContent from "@docsfn/svelte/DocsContent.svelte";
+  import DocsContent from "@site/docs-content";
   import type { PageData } from "./$types";
 
   interface Props {

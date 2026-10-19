@@ -1,10 +1,21 @@
 ---
 title: AI Resources
-description: Machine-readable FileFn documentation and assistant setup.
+description: Use FileFn documentation as assistant context without assuming unimplemented integrations.
 ---
 
 # AI Resources
 
-The docs build publishes [llms.txt](./llms-txt) and llms-full.txt at `/docs/llms.txt` and `/docs/llms-full.txt`. The full file contains the authored documentation in one text resource. Assistants can also use the [docs search index](/docs/search.json) to find page titles and paths.
+FileFn provides generated documentation context at its configured publication URLs:
 
-Start with the small index, then open the relevant [guide](/docs/getting-started) or [reference](/docs/reference). The site does not currently publish an MCP endpoint or downloadable skill catalog; the [MCP](./mcp) and [Skills](./skills) pages describe that availability boundary.
+- [Short index](/docs/llms.txt)
+- [Full context](/docs/llms-full.txt)
+
+See [LLM artifacts](./llms-txt) for generation and local verification. A successful local build does not establish live hosting.
+
+| Guide | Scope |
+| --- | --- |
+| [Claude](./claude) | Repository instructions and documentation context. |
+| [Cursor](./cursor) | Project rules and documentation context. |
+| [Codex](./codex) | Repository-aware context and review. |
+| [MCP](./mcp) | Boundaries for an independently implemented integration. |
+| [Skills](./skills) | Application-owned recipes, not bundled executable tools. |
