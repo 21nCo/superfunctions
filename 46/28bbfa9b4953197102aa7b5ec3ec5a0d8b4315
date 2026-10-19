@@ -1,585 +1,585 @@
 .github/workflows/apifn-api-check.yml
-  s_cb0a23fc57336c::t_908edc708af52a 108,119
+  s_cb0a23fc57336c::t_f136d860ba51b1 108,119
 .github/workflows/ci.yml
-  s_cb0a23fc57336c::t_536c972e6f6773 26,47,81,84,160,163,193,200,227,230,273,276
+  s_cb0a23fc57336c::t_dde9043f8b3b47 26,47,81,84,160,163,193,200,227,230,273,276
 .github/workflows/mailfn-release.yml
-  s_cb0a23fc57336c::t_7277d7f78531e4 23,25
+  s_cb0a23fc57336c::t_5c7b6abb006f04 23,25
 .github/workflows/publish-python.yml
-  s_cb0a23fc57336c::t_1a2ac223161966 34,74
+  s_cb0a23fc57336c::t_019b4564a8cc69 34,74
 .github/workflows/publish-tag.yml
-  s_cb0a23fc57336c::t_0f7ef364327a14 30,38,102
+  s_cb0a23fc57336c::t_2c71c291610149 30,38,102
 .github/workflows/pullfrog.yml
-  s_cb0a23fc57336c::t_6c5bd340cfaec5 19,25
+  s_cb0a23fc57336c::t_de14c71a66e93f 19,25
 .github/workflows/release-swift.yml
-  s_cb0a23fc57336c::t_d79a0460a10ecf 28
+  s_cb0a23fc57336c::t_5d32959e691e14 28
 .github/workflows/reviewfn-release.yml
-  s_cb0a23fc57336c::t_5435153e9a26a4 32,34
+  s_cb0a23fc57336c::t_cc23038506e27b 32,34
 .github/workflows/searchfn-client-tests.yml
-  s_cb0a23fc57336c::t_c903238f7e3b14 31,34
+  s_cb0a23fc57336c::t_bef98979cebd3a 31,34
 .github/workflows/searchfn-client-tusk-vitest.yml
-  s_cb0a23fc57336c::t_693e0cba2cde46 23,29
+  s_cb0a23fc57336c::t_420b4755b38b61 23,29
 .github/workflows/superfunctions-docs-cloudflare-deploy.yml
-  s_cb0a23fc57336c::t_61ac1cfde75343 14-19,26-31,39-44,69-74,90,95,119,131
+  s_cb0a23fc57336c::t_b2cb1370ab6640 14-19,26-31,39-44,69-74,90,95,119,131
 .github/workflows/superfunctions-docs-cloudflare-routes.yml
-  s_cb0a23fc57336c::t_4732c2635a881e 18-23,39,45,81-86
+  s_cb0a23fc57336c::t_d896219d5b7788 18-23,39,45,81-86
 .github/workflows/uifn-catalogs-cloudflare-preview.yml
-  s_cb0a23fc57336c::t_5f9971442df1ad 47,49
+  s_cb0a23fc57336c::t_a347fdaf940abd 47,49
 .github/workflows/uifn-phase-14-compat.yml
-  s_cb0a23fc57336c::t_c736fe7997aca5 16,24,70,88,153,177
+  s_cb0a23fc57336c::t_05b3fa9d75b7df 16,24,70,88,153,177
 botfn/docs/.gitignore
-  s_cb0a23fc57336c::t_f44954957d10ff 1-10
+  s_cb0a23fc57336c::t_383f1393355fe7 1-10
 botfn/docs/README.md
-  s_cb0a23fc57336c::t_f21bfdde66fe0a 1-24
+  s_cb0a23fc57336c::t_50c2468a4958d5 1-24
 botfn/docs/content/docs/admin.md
-  s_cb0a23fc57336c::t_e99192b5b2bedc 1-12
+  s_cb0a23fc57336c::t_89f14aa5899eff 1-12
 botfn/docs/content/docs/discord-bot.md
-  s_cb0a23fc57336c::t_09e5619449ec97 1-18
+  s_cb0a23fc57336c::t_027e63c19620dd 1-18
 botfn/docs/content/docs/getting-started.md
-  s_cb0a23fc57336c::t_08f72a47396531 1-26
+  s_cb0a23fc57336c::t_720b9d88c94375 1-26
 botfn/docs/content/docs/index.md
-  s_cb0a23fc57336c::t_a83d7df489d961 1-10
+  s_cb0a23fc57336c::t_d4f78b85f78731 1-10
 botfn/docs/content/docs/integrations.md
-  s_cb0a23fc57336c::t_101fad52159698 1-14
+  s_cb0a23fc57336c::t_7fa0ca27c0a7c8 1-14
 botfn/docs/content/docs/meta.json
-  s_cb0a23fc57336c::t_6801591445ad31 1-14
+  s_cb0a23fc57336c::t_687f6806adb362 1-14
 botfn/docs/content/docs/operations-and-limits.md
-  s_cb0a23fc57336c::t_8cc702c9062381 1-12
+  s_cb0a23fc57336c::t_7f0c81e81a97b3 1-12
 botfn/docs/content/docs/persistence.md
-  s_cb0a23fc57336c::t_462033117f08b5 1-29
+  s_cb0a23fc57336c::t_189b66f807134d 1-29
 botfn/docs/content/docs/reference/commands-and-routes.md
-  s_cb0a23fc57336c::t_c3f1a686a75662 1-21
+  s_cb0a23fc57336c::t_df837bbbf5e554 1-21
 botfn/docs/content/docs/reference/configuration.md
-  s_cb0a23fc57336c::t_02c0504899befe 1-14
+  s_cb0a23fc57336c::t_253d14a9aa1f3a 1-14
 botfn/docs/content/docs/reference/index.md
-  s_cb0a23fc57336c::t_8a4847c25635da 1-10
+  s_cb0a23fc57336c::t_7e16d4cfbb88dc 1-10
 botfn/docs/content/docs/reference/meta.json
-  s_cb0a23fc57336c::t_5e41c7b7a87274 1-4
+  s_cb0a23fc57336c::t_800149f7ebab03 1-4
 botfn/docs/content/docs/reference/packages.md
-  s_cb0a23fc57336c::t_8c03cbf997ffbf 1-33
+  s_cb0a23fc57336c::t_698f9c9a478f4a 1-33
 botfn/docs/content/docs/slack-bot.md
-  s_cb0a23fc57336c::t_4501d5fcbf1123 1-12
+  s_cb0a23fc57336c::t_212e08dbfac4a7 1-12
 botfn/docs/docsfn.config.ts
-  s_cb0a23fc57336c::t_5303d0b841467b 1-36
+  s_cb0a23fc57336c::t_4dd5aa9899bdc8 1-36
 botfn/docs/package.json
-  s_cb0a23fc57336c::t_d8599230366242 1-38
+  s_cb0a23fc57336c::t_2b9ae9ec960152 1-38
 botfn/docs/scripts/generate-llms.mjs
-  s_cb0a23fc57336c::t_3660c836b21e20 1-22
+  s_cb0a23fc57336c::t_c574fa2b8f490d 1-22
 botfn/docs/src/app.css
-  s_cb0a23fc57336c::t_d69be31d88f0f4 1-81
+  s_cb0a23fc57336c::t_443ca10904a584 1-81
 botfn/docs/src/app.html
-  s_cb0a23fc57336c::t_473ad1ca80e823 1-11
+  s_cb0a23fc57336c::t_b87ffef1e75330 1-11
 botfn/docs/src/lib/components/DocsSiteSearch.svelte
-  s_cb0a23fc57336c::t_ff9bd3c40ec7c4 1-5
+  s_cb0a23fc57336c::t_4dfd06dd6841e5 1-5
 botfn/docs/src/lib/server/docs-site-source.ts
-  s_cb0a23fc57336c::t_668fef12fc95e7 1-14
+  s_cb0a23fc57336c::t_30129f44684831 1-14
 botfn/docs/src/routes/+error.svelte
-  s_cb0a23fc57336c::t_0a718c4b771ebb 1-12
+  s_cb0a23fc57336c::t_71a0daf581752f 1-12
 botfn/docs/src/routes/+layout.server.ts
-  s_cb0a23fc57336c::t_d34879df3c825b 1-13
+  s_cb0a23fc57336c::t_a138f4d546c039 1-13
 botfn/docs/src/routes/+layout.svelte
-  s_cb0a23fc57336c::t_c163a66e73a47e 1-86
+  s_cb0a23fc57336c::t_9c81af1dc0fd74 1-86
 botfn/docs/src/routes/+page.svelte
-  s_cb0a23fc57336c::t_98853f78b18ba5 1-28
+  s_cb0a23fc57336c::t_85dd184179a124 1-28
 botfn/docs/src/routes/docs/[...slug]/+page.server.ts
-  s_cb0a23fc57336c::t_cd5ae887ad57ad 1-25
+  s_cb0a23fc57336c::t_9ee05551633f54 1-25
 botfn/docs/src/routes/docs/[...slug]/+page.svelte
-  s_cb0a23fc57336c::t_1e7437796967ec 1-41
+  s_cb0a23fc57336c::t_130c4a24f3ba45 1-41
 botfn/docs/src/routes/docs/llms-full.txt/+server.ts
-  s_cb0a23fc57336c::t_b914598ffbfccc 1-7
+  s_cb0a23fc57336c::t_3cabc45f627444 1-7
 botfn/docs/src/routes/docs/llms.txt/+server.ts
-  s_cb0a23fc57336c::t_5e04cfdc0aaec8 1-7
+  s_cb0a23fc57336c::t_26924d4c62afae 1-7
 botfn/docs/src/routes/docs/search.json/+server.ts
-  s_cb0a23fc57336c::t_77ffb27f22156e 1-8
+  s_cb0a23fc57336c::t_bac3fa3137dd3a 1-8
 botfn/docs/static/llms-full.txt
-  s_cb0a23fc57336c::t_b2a00abf12594b 1-267
+  s_cb0a23fc57336c::t_baf46e8d652c9c 1-267
 botfn/docs/static/llms.txt
-  s_cb0a23fc57336c::t_ae12121c735dd4 1-18
+  s_cb0a23fc57336c::t_af40f70c35e411 1-18
 botfn/docs/svelte.config.js
-  s_cb0a23fc57336c::t_9a855afc438c75 1-26
+  s_cb0a23fc57336c::t_6754342a01599c 1-26
 botfn/docs/tsconfig.json
-  s_cb0a23fc57336c::t_af0385af087fc1 1-59
+  s_cb0a23fc57336c::t_19f9d347518ed6 1-59
 botfn/docs/turbo.json
-  s_cb0a23fc57336c::t_ccff5a61c065a1 1-20
+  s_cb0a23fc57336c::t_2829e29f150232 1-20
 botfn/docs/vite.config.ts
-  s_cb0a23fc57336c::t_ac29358bda3c11 1-12
+  s_cb0a23fc57336c::t_f63864643f0513 1-12
 clifn/core/README.md
-  s_cb0a23fc57336c::t_a0795a9b7c9a61 51,121,131-132,147-148,161-165,183
+  s_cb0a23fc57336c::t_4e9d7f7500ea9a 51,121,131-132,147-148,161-165,183
 clifn/docs/.gitignore
-  s_cb0a23fc57336c::t_7e20aba61a323a 1-13
+  s_cb0a23fc57336c::t_d827db804ae5bf 1-13
 clifn/docs/README.md
-  s_cb0a23fc57336c::t_d54e5d4286ec03 1-21
+  s_cb0a23fc57336c::t_9afa3bd36c03ee 1-21
 clifn/docs/content/docs/automation.md
-  s_cb0a23fc57336c::t_e0d84efe1b41b6 1-32
+  s_cb0a23fc57336c::t_9d169c53be31a3 1-32
 clifn/docs/content/docs/cli-builder.md
-  s_cb0a23fc57336c::t_5994267b51c12b 1-36
+  s_cb0a23fc57336c::t_154a2efaa9330b 1-36
 clifn/docs/content/docs/configuration.md
-  s_cb0a23fc57336c::t_167ae1e96ad628 1-34
+  s_cb0a23fc57336c::t_c7c9cda616a7ff 1-34
 clifn/docs/content/docs/credentials-and-client.md
-  s_cb0a23fc57336c::t_cd8a2f9007be89 1-38
+  s_cb0a23fc57336c::t_f1513b70668492 1-38
 clifn/docs/content/docs/getting-started.md
-  s_cb0a23fc57336c::t_870d993b3a84ab 1-32
+  s_cb0a23fc57336c::t_c97d79f7fa91b4 1-32
 clifn/docs/content/docs/index.md
-  s_cb0a23fc57336c::t_702fd2dd04804c 1-20
+  s_cb0a23fc57336c::t_fc162e4a9efc8c 1-20
 clifn/docs/content/docs/interaction-and-stdio.md
-  s_cb0a23fc57336c::t_30512361764db0 1-25
+  s_cb0a23fc57336c::t_f289a3d78ff5e8 1-25
 clifn/docs/content/docs/meta.json
-  s_cb0a23fc57336c::t_dfc2b027cc6739 1-14
+  s_cb0a23fc57336c::t_75c920fa4d959b 1-14
 clifn/docs/content/docs/output-and-diagnostics.md
-  s_cb0a23fc57336c::t_8591964538e343 1-37
+  s_cb0a23fc57336c::t_70e04f1bbaf477 1-37
 clifn/docs/content/docs/reference/admin.md
-  s_cb0a23fc57336c::t_04bb5e904c7d77 1-8
+  s_cb0a23fc57336c::t_1dd84f77149a9b 1-8
 clifn/docs/content/docs/reference/core-readme.md
-  s_cb0a23fc57336c::t_cc9647851febc4 1-402
+  s_cb0a23fc57336c::t_38a1d8d4269981 1-402
 clifn/docs/content/docs/reference/exports.md
-  s_cb0a23fc57336c::t_96821720adb40c 1-24
+  s_cb0a23fc57336c::t_53c0a2edf621a6 1-24
 clifn/docs/content/docs/reference/index.md
-  s_cb0a23fc57336c::t_787080d8c598d0 1-10
+  s_cb0a23fc57336c::t_5452d9f91cc477 1-10
 clifn/docs/content/docs/reference/meta.json
-  s_cb0a23fc57336c::t_91c3c9aa735acd 1-9
+  s_cb0a23fc57336c::t_c945b6107238eb 1-9
 clifn/docs/docsfn.config.ts
-  s_cb0a23fc57336c::t_4873d2914427d7 1-36
+  s_cb0a23fc57336c::t_db08986b692de3 1-36
 clifn/docs/package.json
-  s_cb0a23fc57336c::t_b3fd05d4816b8f 1-38
+  s_cb0a23fc57336c::t_9c3e043847dd89 1-38
 clifn/docs/scripts/generate-llms.mjs
-  s_cb0a23fc57336c::t_284565177c2068 1-22
+  s_cb0a23fc57336c::t_b0e6f3ceb58cea 1-22
 clifn/docs/src/app.css
-  s_cb0a23fc57336c::t_9e748378b8de27 1-82
+  s_cb0a23fc57336c::t_158a82d6c90e51 1-82
 clifn/docs/src/app.html
-  s_cb0a23fc57336c::t_15b1d763405fc2 1-11
+  s_cb0a23fc57336c::t_961b2474ccc7a2 1-11
 clifn/docs/src/lib/components/DocsSiteSearch.svelte
-  s_cb0a23fc57336c::t_98666ff50b0a8b 1-5
+  s_cb0a23fc57336c::t_d7b1e8721edbc1 1-5
 clifn/docs/src/lib/server/docs-site-source.ts
-  s_cb0a23fc57336c::t_8c61237d4c3316 1-14
+  s_cb0a23fc57336c::t_974b03015962a7 1-14
 clifn/docs/src/routes/+error.svelte
-  s_cb0a23fc57336c::t_10818548b2c541 1-12
+  s_cb0a23fc57336c::t_6412c93bb673ac 1-12
 clifn/docs/src/routes/+layout.server.ts
-  s_cb0a23fc57336c::t_557ea7b9cf4006 1-13
+  s_cb0a23fc57336c::t_a5b68f7ab24bc5 1-13
 clifn/docs/src/routes/+layout.svelte
-  s_cb0a23fc57336c::t_977442f92a8d17 1-86
+  s_cb0a23fc57336c::t_1a38f257defc98 1-86
 clifn/docs/src/routes/+page.svelte
-  s_cb0a23fc57336c::t_dfc641ec38b4e0 1-29
+  s_cb0a23fc57336c::t_17f62a1c25626e 1-29
 clifn/docs/src/routes/docs/[...slug]/+page.server.ts
-  s_cb0a23fc57336c::t_114284f0117426 1-25
+  s_cb0a23fc57336c::t_af4f5f9fc95747 1-25
 clifn/docs/src/routes/docs/[...slug]/+page.svelte
-  s_cb0a23fc57336c::t_6a32f9b4912919 1-41
+  s_cb0a23fc57336c::t_9a4c4dcb99ae00 1-41
 clifn/docs/src/routes/docs/llms-full.txt/+server.ts
-  s_cb0a23fc57336c::t_3548d7525c0aa2 1-7
+  s_cb0a23fc57336c::t_30e1601064e053 1-7
 clifn/docs/src/routes/docs/llms.txt/+server.ts
-  s_cb0a23fc57336c::t_65fd00cdda2f36 1-7
+  s_cb0a23fc57336c::t_1051143c21fe20 1-7
 clifn/docs/src/routes/docs/search.json/+server.ts
-  s_cb0a23fc57336c::t_1bce6c438a217d 1-8
+  s_cb0a23fc57336c::t_08d90adbd85905 1-8
 clifn/docs/static/llms-full.txt
-  s_cb0a23fc57336c::t_0da18077bd488f 1-754
+  s_cb0a23fc57336c::t_b953b9ebf8640c 1-754
 clifn/docs/static/llms.txt
-  s_cb0a23fc57336c::t_4bcff9fea601e1 1-18
+  s_cb0a23fc57336c::t_d01fcebd62caf8 1-18
 clifn/docs/svelte.config.js
-  s_cb0a23fc57336c::t_798f7f03fe35fa 1-26
+  s_cb0a23fc57336c::t_9c9d63c28f5cfe 1-26
 clifn/docs/tsconfig.json
-  s_cb0a23fc57336c::t_76ac48d31c5ba5 1-59
+  s_cb0a23fc57336c::t_d54d5daad61bce 1-59
 clifn/docs/turbo.json
-  s_cb0a23fc57336c::t_9e5bce6e5bcec3 1-20
+  s_cb0a23fc57336c::t_029e31f65384eb 1-20
 clifn/docs/vite.config.ts
-  s_cb0a23fc57336c::t_0c1e7340e863d3 1-12
+  s_cb0a23fc57336c::t_14157e2e46d871 1-12
 langfn/docs/.gitignore
-  s_cb0a23fc57336c::t_90e6b178849a1e 1-10
+  s_cb0a23fc57336c::t_2440b2cbc59e43 1-10
 langfn/docs/README.md
-  s_cb0a23fc57336c::t_999a1e5238dec6 1-24
+  s_cb0a23fc57336c::t_934249b0c3a8de 1-24
 langfn/docs/content/docs/getting-started.md
-  s_cb0a23fc57336c::t_8a6bba117f1277 1-22
+  s_cb0a23fc57336c::t_ea1050e23eec1d 1-22
 langfn/docs/content/docs/http.md
-  s_cb0a23fc57336c::t_885a217a4df2dd 1-121
+  s_cb0a23fc57336c::t_5aeb88b9c3a03b 1-121
 langfn/docs/content/docs/index.md
-  s_cb0a23fc57336c::t_fce52f4897b49a 1-8
+  s_cb0a23fc57336c::t_1efd899eed2f2b 1-8
 langfn/docs/content/docs/mcp.md
-  s_cb0a23fc57336c::t_c6059e62428665 1-8
+  s_cb0a23fc57336c::t_4a6a8d8e77f1f8 1-8
 langfn/docs/content/docs/memory-and-rag.md
-  s_cb0a23fc57336c::t_4d489103938e32 1-12
+  s_cb0a23fc57336c::t_eecc139552be5f 1-12
 langfn/docs/content/docs/meta.json
-  s_cb0a23fc57336c::t_160287cd396764 1-4
+  s_cb0a23fc57336c::t_00457012d90551 1-4
 langfn/docs/content/docs/models-and-providers.md
-  s_cb0a23fc57336c::t_0b8f7210dade6a 1-65
+  s_cb0a23fc57336c::t_b1a667c93c1660 1-65
 langfn/docs/content/docs/observability-and-evaluation.md
-  s_cb0a23fc57336c::t_fc6c3260776e08 1-10
+  s_cb0a23fc57336c::t_4baf35f9fed649 1-10
 langfn/docs/content/docs/operations-and-limits.md
-  s_cb0a23fc57336c::t_da4889d1a199d7 1-10
+  s_cb0a23fc57336c::t_60c683bbfe65bf 1-10
 langfn/docs/content/docs/prompts-and-structured.md
-  s_cb0a23fc57336c::t_fdcae08dda99b0 1-10
+  s_cb0a23fc57336c::t_3066e2e9da178e 1-10
 langfn/docs/content/docs/reference/compatibility.md
-  s_cb0a23fc57336c::t_c3152902202cf5 1-24
+  s_cb0a23fc57336c::t_4988ba533a3d68 1-24
 langfn/docs/content/docs/reference/index.md
-  s_cb0a23fc57336c::t_061368fa5e6dd4 1-11
+  s_cb0a23fc57336c::t_3f5ad92914f881 1-11
 langfn/docs/content/docs/reference/meta.json
-  s_cb0a23fc57336c::t_74934e14ae6548 1-4
+  s_cb0a23fc57336c::t_509c0e58cf2ff7 1-4
 langfn/docs/content/docs/reference/package-exports.md
-  s_cb0a23fc57336c::t_fa4e9748e4076a 1-26
+  s_cb0a23fc57336c::t_7fb96a5d5c9f28 1-26
 langfn/docs/content/docs/reference/release-gate.md
-  s_cb0a23fc57336c::t_084fcb1d4d36e4 1-17
+  s_cb0a23fc57336c::t_1bb78a3b20da16 1-17
 langfn/docs/content/docs/reference/typescript.md
-  s_cb0a23fc57336c::t_2ea7ad112e82a7 1-65
+  s_cb0a23fc57336c::t_fe82214c183a31 1-65
 langfn/docs/content/docs/streaming-and-tools.md
-  s_cb0a23fc57336c::t_ecdc6bbafdccb9 1-58
+  s_cb0a23fc57336c::t_d53cc46bb0a1b8 1-58
 langfn/docs/content/docs/workflows.md
-  s_cb0a23fc57336c::t_9d80b4ecddd23a 1-48
+  s_cb0a23fc57336c::t_88476d3faebb31 1-48
 langfn/docs/docsfn.config.ts
-  s_cb0a23fc57336c::t_4a3f1dbf332a0a 1-40
+  s_cb0a23fc57336c::t_c35fdad2ee494e 1-40
 langfn/docs/package.json
-  s_cb0a23fc57336c::t_7d5c064db88257 1-38
+  s_cb0a23fc57336c::t_ea860704e60598 1-38
 langfn/docs/scripts/generate-llms.mjs
-  s_cb0a23fc57336c::t_11d3bad0ce24d2 1-20
+  s_cb0a23fc57336c::t_3a4cb14dfc006b 1-20
 langfn/docs/src/app.css
-  s_cb0a23fc57336c::t_6257482716dbbc 1-85
+  s_cb0a23fc57336c::t_28d07e53dd6865 1-85
 langfn/docs/src/app.html
-  s_cb0a23fc57336c::t_c0f73127219b71 1-11
+  s_cb0a23fc57336c::t_42fb32324f6e88 1-11
 langfn/docs/src/lib/components/DocsSiteSearch.svelte
-  s_cb0a23fc57336c::t_1ce8df1a6b30f3 1-5
+  s_cb0a23fc57336c::t_746aded483e0a8 1-5
 langfn/docs/src/lib/server/docs-site-source.ts
-  s_cb0a23fc57336c::t_0e3bf76dd78340 1-14
+  s_cb0a23fc57336c::t_5a2f17fe891c3a 1-14
 langfn/docs/src/routes/+error.svelte
-  s_cb0a23fc57336c::t_92cbbed2a7923a 1-12
+  s_cb0a23fc57336c::t_6b4581f1b74dac 1-12
 langfn/docs/src/routes/+layout.server.ts
-  s_cb0a23fc57336c::t_a7b69d55232888 1-13
+  s_cb0a23fc57336c::t_44081bdbf7c54e 1-13
 langfn/docs/src/routes/+layout.svelte
-  s_cb0a23fc57336c::t_bd26d3ad9fc9be 1-86
+  s_cb0a23fc57336c::t_51098a83bea600 1-86
 langfn/docs/src/routes/+page.svelte
-  s_cb0a23fc57336c::t_7670f12225111a 1-28
+  s_cb0a23fc57336c::t_098335bca20c15 1-28
 langfn/docs/src/routes/docs/[...slug]/+page.server.ts
-  s_cb0a23fc57336c::t_38dc98a7328b6a 1-25
+  s_cb0a23fc57336c::t_d6442cf7fe3d0f 1-25
 langfn/docs/src/routes/docs/[...slug]/+page.svelte
-  s_cb0a23fc57336c::t_fd628ddf2f15cf 1-41
+  s_cb0a23fc57336c::t_30defabf0f8c3f 1-41
 langfn/docs/src/routes/docs/llms-full.txt/+server.ts
-  s_cb0a23fc57336c::t_a1caaeb84e2c3f 1-7
+  s_cb0a23fc57336c::t_9b75e0cd926d8a 1-7
 langfn/docs/src/routes/docs/llms.txt/+server.ts
-  s_cb0a23fc57336c::t_12a4c63912b5ce 1-7
+  s_cb0a23fc57336c::t_4aa4511c10a8dc 1-7
 langfn/docs/src/routes/docs/search.json/+server.ts
-  s_cb0a23fc57336c::t_abefdb133a809b 1-8
+  s_cb0a23fc57336c::t_e89cb035e166c9 1-8
 langfn/docs/static/llms-full.txt
-  s_cb0a23fc57336c::t_b9b02cef762867 1-587
+  s_cb0a23fc57336c::t_c5cc02cd70179d 1-587
 langfn/docs/static/llms.txt
-  s_cb0a23fc57336c::t_c5a784fc2ce52f 1-22
+  s_cb0a23fc57336c::t_d4f553bcb23551 1-22
 langfn/docs/svelte.config.js
-  s_cb0a23fc57336c::t_f9982b680b4862 1-26
+  s_cb0a23fc57336c::t_9174927065ff58 1-26
 langfn/docs/tsconfig.json
-  s_cb0a23fc57336c::t_8ef2f16bd42212 1-59
+  s_cb0a23fc57336c::t_90d11d9f795eaf 1-59
 langfn/docs/turbo.json
-  s_cb0a23fc57336c::t_b3442d93cb5882 1-20
+  s_cb0a23fc57336c::t_f301e27c48551e 1-20
 langfn/docs/vite.config.ts
-  s_cb0a23fc57336c::t_807fc5a2f1db24 1-12
+  s_cb0a23fc57336c::t_c088316f13dbcd 1-12
 langfn/typescript/src/orchestration/chain.ts
-  s_cb0a23fc57336c::t_551952b28cde90 58-59
+  s_cb0a23fc57336c::t_4fa85df5cc1d57 58-59
 langfn/typescript/tests/chain-router.test.ts
-  s_cb0a23fc57336c::t_af86e26f36afbd 1-22
+  s_cb0a23fc57336c::t_81d5b5a3c3943a 1-22
 mdfn/collab/README.md
-  s_cb0a23fc57336c::t_800bef714fcad9 9-10,16-21
+  s_cb0a23fc57336c::t_d16f758f99473d 9-10,16-21
 mdfn/docs/.gitignore
-  s_cb0a23fc57336c::t_9c58c3076b6247 1-10
+  s_cb0a23fc57336c::t_550da166b3acf8 1-10
 mdfn/docs/README.md
-  s_cb0a23fc57336c::t_46a71686493c44 1-25
+  s_cb0a23fc57336c::t_5f59e879d5fd50 1-25
 mdfn/docs/content/docs/collaboration.md
-  s_cb0a23fc57336c::t_5896b386695cd4 1-8
+  s_cb0a23fc57336c::t_59946b1d486fb2 1-8
 mdfn/docs/content/docs/extensions.md
-  s_cb0a23fc57336c::t_cc12b8bdbc105e 1-8
+  s_cb0a23fc57336c::t_e12bdd7a64e82d 1-8
 mdfn/docs/content/docs/framework-editors.md
-  s_cb0a23fc57336c::t_fdac550799b05d 1-17
+  s_cb0a23fc57336c::t_0e52cbc25f4b9d 1-17
 mdfn/docs/content/docs/getting-started.md
-  s_cb0a23fc57336c::t_443d49c9a33e97 1-34
+  s_cb0a23fc57336c::t_41ba5875ac2a58 1-34
 mdfn/docs/content/docs/index.md
-  s_cb0a23fc57336c::t_2ed824400d6882 1-8
+  s_cb0a23fc57336c::t_2edcbc1bec9d5a 1-8
 mdfn/docs/content/docs/integrations.md
-  s_cb0a23fc57336c::t_76f602c1bad148 1-8
+  s_cb0a23fc57336c::t_cfa317ea4cca58 1-8
 mdfn/docs/content/docs/meta.json
-  s_cb0a23fc57336c::t_d4d0ed040e1126 1-17
+  s_cb0a23fc57336c::t_2b85684f91d9cc 1-17
 mdfn/docs/content/docs/reference/adapter-kit.md
-  s_cb0a23fc57336c::t_85e73947adaddf 1-8
+  s_cb0a23fc57336c::t_eafd9632da5e2d 1-8
 mdfn/docs/content/docs/reference/ai.md
-  s_cb0a23fc57336c::t_ac4a899ae75ca2 1-6
+  s_cb0a23fc57336c::t_7ff1571dbf463c 1-6
 mdfn/docs/content/docs/reference/client.md
-  s_cb0a23fc57336c::t_9673e80394e14b 1-12
+  s_cb0a23fc57336c::t_c0355658fa3873 1-12
 mdfn/docs/content/docs/reference/collab.md
-  s_cb0a23fc57336c::t_df43f7f8f5d6bd 1-27
+  s_cb0a23fc57336c::t_b3390593859a4c 1-27
 mdfn/docs/content/docs/reference/components-react.md
-  s_cb0a23fc57336c::t_35ca41b13d2ddc 1-9
+  s_cb0a23fc57336c::t_608f4091863e64 1-9
 mdfn/docs/content/docs/reference/components-solid.md
-  s_cb0a23fc57336c::t_81bf1f11bba0ee 1-8
+  s_cb0a23fc57336c::t_43ad05398d3a21 1-8
 mdfn/docs/content/docs/reference/components-svelte.md
-  s_cb0a23fc57336c::t_21f1c5994c1b6d 1-8
+  s_cb0a23fc57336c::t_c91896809f6910 1-8
 mdfn/docs/content/docs/reference/components.md
-  s_cb0a23fc57336c::t_c76fcb23827e53 1-11
+  s_cb0a23fc57336c::t_7d2652e8c18b6b 1-11
 mdfn/docs/content/docs/reference/contentfn.md
-  s_cb0a23fc57336c::t_127afe48cd1541 1-12
+  s_cb0a23fc57336c::t_a90dae3bb1161f 1-12
 mdfn/docs/content/docs/reference/core.md
-  s_cb0a23fc57336c::t_ca25dcb84da727 1-10
+  s_cb0a23fc57336c::t_631facac741c13 1-10
 mdfn/docs/content/docs/reference/dom.md
-  s_cb0a23fc57336c::t_7a6d011ad65893 1-28
+  s_cb0a23fc57336c::t_7d71f3905c6829 1-28
 mdfn/docs/content/docs/reference/examples.md
-  s_cb0a23fc57336c::t_6fc1b35abb3616 1-25
+  s_cb0a23fc57336c::t_703308309fc72d 1-25
 mdfn/docs/content/docs/reference/extensions.md
-  s_cb0a23fc57336c::t_fcfd92d58ff91e 1-8
+  s_cb0a23fc57336c::t_f7a220bf9c09a5 1-8
 mdfn/docs/content/docs/reference/facade.md
-  s_cb0a23fc57336c::t_0b8c6b82771810 1-8
+  s_cb0a23fc57336c::t_a210823d7402c5 1-8
 mdfn/docs/content/docs/reference/filefn.md
-  s_cb0a23fc57336c::t_706eaeda8b2e75 1-16
+  s_cb0a23fc57336c::t_a8f02b86540dc0 1-16
 mdfn/docs/content/docs/reference/index.md
-  s_cb0a23fc57336c::t_65cf9caf4b5ea4 1-8
+  s_cb0a23fc57336c::t_4a767b8a3899ca 1-8
 mdfn/docs/content/docs/reference/markdown.md
-  s_cb0a23fc57336c::t_e5736909389cff 1-9
+  s_cb0a23fc57336c::t_5a3cb41704f85a 1-9
 mdfn/docs/content/docs/reference/meta.json
-  s_cb0a23fc57336c::t_fb8f7859f82e75 1-32
+  s_cb0a23fc57336c::t_c4c53edb370243 1-32
 mdfn/docs/content/docs/reference/overview.md
-  s_cb0a23fc57336c::t_947714a1bdea23 1-65
+  s_cb0a23fc57336c::t_5b8b8b3b180c68 1-65
 mdfn/docs/content/docs/reference/react.md
-  s_cb0a23fc57336c::t_3a788556092aa5 1-43
+  s_cb0a23fc57336c::t_a7d3bd42b27203 1-43
 mdfn/docs/content/docs/reference/registry.md
-  s_cb0a23fc57336c::t_ba1ed7e12f8fa0 1-6
+  s_cb0a23fc57336c::t_4d0f5e9618e4b6 1-6
 mdfn/docs/content/docs/reference/render.md
-  s_cb0a23fc57336c::t_4cf46cb792f3c6 1-10
+  s_cb0a23fc57336c::t_a3dc6f1095dde1 1-10
 mdfn/docs/content/docs/reference/searchfn.md
-  s_cb0a23fc57336c::t_bd1718674fe4b1 1-6
+  s_cb0a23fc57336c::t_4274a92cba9e98 1-6
 mdfn/docs/content/docs/reference/server.md
-  s_cb0a23fc57336c::t_17b683b3806978 1-32
+  s_cb0a23fc57336c::t_3db26586590438 1-32
 mdfn/docs/content/docs/reference/solid.md
-  s_cb0a23fc57336c::t_06abc659d65f6d 1-27
+  s_cb0a23fc57336c::t_952601fd456b64 1-27
 mdfn/docs/content/docs/reference/source.md
-  s_cb0a23fc57336c::t_93c828504a517a 1-9
+  s_cb0a23fc57336c::t_791885c38e7bc1 1-9
 mdfn/docs/content/docs/reference/svelte.md
-  s_cb0a23fc57336c::t_3aa84fee556a1f 1-28
+  s_cb0a23fc57336c::t_dcff61f513e10e 1-28
 mdfn/docs/content/docs/reference/testing.md
-  s_cb0a23fc57336c::t_0f68e46491b517 1-16
+  s_cb0a23fc57336c::t_50f3cd59f1cf91 1-16
 mdfn/docs/content/docs/rendering-and-security.md
-  s_cb0a23fc57336c::t_0f9039ae69471c 1-10
+  s_cb0a23fc57336c::t_0cc5b40519ab8b 1-10
 mdfn/docs/content/docs/review-and-sidecar.md
-  s_cb0a23fc57336c::t_8d3e8ed8284185 1-8
+  s_cb0a23fc57336c::t_fd51d0efb71980 1-8
 mdfn/docs/content/docs/server-and-storage.md
-  s_cb0a23fc57336c::t_05f27105718255 1-96
+  s_cb0a23fc57336c::t_738ae67c46112e 1-96
 mdfn/docs/content/docs/source-preservation.md
-  s_cb0a23fc57336c::t_171b3c9c5f586e 1-10
+  s_cb0a23fc57336c::t_2c2452853782bf 1-10
 mdfn/docs/content/docs/verification.md
-  s_cb0a23fc57336c::t_6e2ffed5c0cf2b 1-15
+  s_cb0a23fc57336c::t_38ea3ab597d606 1-15
 mdfn/docs/docsfn.config.ts
-  s_cb0a23fc57336c::t_6176e94d4427a8 1-36
+  s_cb0a23fc57336c::t_22c82b87384314 1-36
 mdfn/docs/package.json
-  s_cb0a23fc57336c::t_2bfdde450e0a12 1-40
+  s_cb0a23fc57336c::t_80710fd8922f49 1-40
 mdfn/docs/scripts/generate-llms.mjs
-  s_cb0a23fc57336c::t_7dfdb3fce7be35 1-22
+  s_cb0a23fc57336c::t_a38960c83a9e5a 1-22
 mdfn/docs/src/app.css
-  s_cb0a23fc57336c::t_b53bcfe469de36 1-81
+  s_cb0a23fc57336c::t_97d45bc2cf35af 1-81
 mdfn/docs/src/app.html
-  s_cb0a23fc57336c::t_cd98f9b04667ad 1-11
+  s_cb0a23fc57336c::t_679afe779fac94 1-11
 mdfn/docs/src/lib/components/DocsSiteSearch.svelte
-  s_cb0a23fc57336c::t_80cc3984f68e29 1-5
+  s_cb0a23fc57336c::t_baaf90fdf60c04 1-5
 mdfn/docs/src/lib/server/docs-site-source.ts
-  s_cb0a23fc57336c::t_9332f3ed453827 1-14
+  s_cb0a23fc57336c::t_39c8f35b45d2f5 1-14
 mdfn/docs/src/routes/+error.svelte
-  s_cb0a23fc57336c::t_6d337584d6a0f0 1-12
+  s_cb0a23fc57336c::t_dffda9e26f40eb 1-12
 mdfn/docs/src/routes/+layout.server.ts
-  s_cb0a23fc57336c::t_bf1985e0444e82 1-13
+  s_cb0a23fc57336c::t_34606c7140c3b8 1-13
 mdfn/docs/src/routes/+layout.svelte
-  s_cb0a23fc57336c::t_fb8a81ca58dc1f 1-86
+  s_cb0a23fc57336c::t_ff8eb23f5188f7 1-86
 mdfn/docs/src/routes/+page.svelte
-  s_cb0a23fc57336c::t_7df9e46f4be844 1-28
+  s_cb0a23fc57336c::t_53b27787ce522c 1-28
 mdfn/docs/src/routes/docs/[...slug]/+page.server.ts
-  s_cb0a23fc57336c::t_f473bd4cfa4559 1-25
+  s_cb0a23fc57336c::t_3f9883f56c0429 1-25
 mdfn/docs/src/routes/docs/[...slug]/+page.svelte
-  s_cb0a23fc57336c::t_764ed59487423c 1-41
+  s_cb0a23fc57336c::t_54eeb3980eab7d 1-41
 mdfn/docs/src/routes/docs/llms-full.txt/+server.ts
-  s_cb0a23fc57336c::t_84f23900678bb5 1-7
+  s_cb0a23fc57336c::t_8f9b59b2288ad1 1-7
 mdfn/docs/src/routes/docs/llms.txt/+server.ts
-  s_cb0a23fc57336c::t_71078e2e06dd16 1-7
+  s_cb0a23fc57336c::t_be67175e4348fa 1-7
 mdfn/docs/src/routes/docs/search.json/+server.ts
-  s_cb0a23fc57336c::t_eaed732c6d9b2c 1-8
+  s_cb0a23fc57336c::t_749afb10da3257 1-8
 mdfn/docs/static/llms-full.txt
-  s_cb0a23fc57336c::t_682ede3eb2eada 1-837
+  s_cb0a23fc57336c::t_b013b063a31797 1-837
 mdfn/docs/static/llms.txt
-  s_cb0a23fc57336c::t_7fd7d870ed5442 1-44
+  s_cb0a23fc57336c::t_a37e98957fb31b 1-44
 mdfn/docs/svelte.config.js
-  s_cb0a23fc57336c::t_9cbb8020fc65e4 1-26
+  s_cb0a23fc57336c::t_99460cbc5cac14 1-26
 mdfn/docs/tsconfig.json
-  s_cb0a23fc57336c::t_108f5a9b00318f 1-59
+  s_cb0a23fc57336c::t_88a683b9cc02b8 1-59
 mdfn/docs/turbo.json
-  s_cb0a23fc57336c::t_b12ff61f804967 1-20
+  s_cb0a23fc57336c::t_601b9dde85815a 1-20
 mdfn/docs/vite.config.ts
-  s_cb0a23fc57336c::t_dfda5af9fbadaf 1-12
+  s_cb0a23fc57336c::t_9fda69ba444650 1-12
 mdfn/render/README.md
-  s_cb0a23fc57336c::t_ca59b8dbc35e61 3-7
+  s_cb0a23fc57336c::t_a608a4bb0ae3b0 3-7
 mdfn/server/README.md
-  s_cb0a23fc57336c::t_29e4f1f4cf9e68 10-12
+  s_cb0a23fc57336c::t_d0778cd8726310 10-12
 memoryfn/docs/.gitignore
-  s_cb0a23fc57336c::t_82e6eb9f29a74e 1-10
+  s_cb0a23fc57336c::t_6b64cbba1337f5 1-10
 memoryfn/docs/README.md
-  s_cb0a23fc57336c::t_8794468a483e88 1-25
+  s_cb0a23fc57336c::t_43a96251708278 1-25
 memoryfn/docs/content/docs/embeddings-and-extraction.md
-  s_cb0a23fc57336c::t_1b86e83b28c6a1 1-24
+  s_cb0a23fc57336c::t_eafb9502f75850 1-24
 memoryfn/docs/content/docs/getting-started.md
-  s_cb0a23fc57336c::t_4a9d1fcdc5df86 1-37
+  s_cb0a23fc57336c::t_cf91ded47c8b10 1-37
 memoryfn/docs/content/docs/http.md
-  s_cb0a23fc57336c::t_239ed157b0cee6 1-24
+  s_cb0a23fc57336c::t_0f014f6f0292f0 1-24
 memoryfn/docs/content/docs/index.md
-  s_cb0a23fc57336c::t_df2b20072cb629 1-20
+  s_cb0a23fc57336c::t_de0a6d91f9f8ca 1-20
 memoryfn/docs/content/docs/mcp.md
-  s_cb0a23fc57336c::t_e6f3a27fe54f86 1-47
+  s_cb0a23fc57336c::t_5f01cc8928ea73 1-47
 memoryfn/docs/content/docs/meta.json
-  s_cb0a23fc57336c::t_3216f7c5757eef 1-15
+  s_cb0a23fc57336c::t_f4218ae6cc5c50 1-15
 memoryfn/docs/content/docs/operations-and-limits.md
-  s_cb0a23fc57336c::t_b83997ea5a5550 1-21
+  s_cb0a23fc57336c::t_3e9253b56705e2 1-21
 memoryfn/docs/content/docs/reference/api.md
-  s_cb0a23fc57336c::t_085dde4bf716cf 1-27
+  s_cb0a23fc57336c::t_a02bc228a84bf6 1-27
 memoryfn/docs/content/docs/reference/index.md
-  s_cb0a23fc57336c::t_6ab169c7f86ee3 1-10
+  s_cb0a23fc57336c::t_942729bd5d4edc 1-10
 memoryfn/docs/content/docs/reference/meta.json
-  s_cb0a23fc57336c::t_fc5a0a11f887cb 1-9
+  s_cb0a23fc57336c::t_8a8552ebadd376 1-9
 memoryfn/docs/content/docs/reference/package-overview.md
-  s_cb0a23fc57336c::t_744857dc3f44af 1-20
+  s_cb0a23fc57336c::t_fb86f169529690 1-20
 memoryfn/docs/content/docs/reference/storage-lifecycle.md
-  s_cb0a23fc57336c::t_62d9871b1d1a14 1-64
+  s_cb0a23fc57336c::t_66d9bd57bb105a 1-64
 memoryfn/docs/content/docs/scope-and-lifecycle.md
-  s_cb0a23fc57336c::t_a6ec1ab9efb564 1-26
+  s_cb0a23fc57336c::t_5491b4418e6f0d 1-26
 memoryfn/docs/content/docs/search.md
-  s_cb0a23fc57336c::t_12dcf26eb7160e 1-25
+  s_cb0a23fc57336c::t_23eeb474612bc7 1-25
 memoryfn/docs/content/docs/storage.md
-  s_cb0a23fc57336c::t_59fd51a537eaa0 1-33
+  s_cb0a23fc57336c::t_be3b4a80e0582b 1-33
 memoryfn/docs/docsfn.config.ts
-  s_cb0a23fc57336c::t_37fe7ee7f53baa 1-36
+  s_cb0a23fc57336c::t_41bb001eca6325 1-36
 memoryfn/docs/package.json
-  s_cb0a23fc57336c::t_98b0922e311003 1-39
+  s_cb0a23fc57336c::t_263d96829f1c08 1-39
 memoryfn/docs/scripts/generate-llms.mjs
-  s_cb0a23fc57336c::t_664b978d7e4869 1-25
+  s_cb0a23fc57336c::t_e4861865af2c74 1-25
 memoryfn/docs/src/app.css
-  s_cb0a23fc57336c::t_e9d2d25e215813 1-82
+  s_cb0a23fc57336c::t_99d365cbfd5e9b 1-82
 memoryfn/docs/src/app.html
-  s_cb0a23fc57336c::t_60bd74f5367532 1-11
+  s_cb0a23fc57336c::t_2069901b7756e0 1-11
 memoryfn/docs/src/lib/components/DocsSiteSearch.svelte
-  s_cb0a23fc57336c::t_b2b2dfb37a13c5 1-5
+  s_cb0a23fc57336c::t_7456cf6c0d47ee 1-5
 memoryfn/docs/src/lib/server/docs-site-source.ts
-  s_cb0a23fc57336c::t_b94ed5c1c5e8a1 1-14
+  s_cb0a23fc57336c::t_db913a9280fc83 1-14
 memoryfn/docs/src/routes/+error.svelte
-  s_cb0a23fc57336c::t_1557e6e8ce8e2d 1-12
+  s_cb0a23fc57336c::t_203d7fb18588e8 1-12
 memoryfn/docs/src/routes/+layout.server.ts
-  s_cb0a23fc57336c::t_bc985031505cae 1-13
+  s_cb0a23fc57336c::t_81a5f775f7006a 1-13
 memoryfn/docs/src/routes/+layout.svelte
-  s_cb0a23fc57336c::t_c2cf659b62cc67 1-86
+  s_cb0a23fc57336c::t_3404142e87df58 1-86
 memoryfn/docs/src/routes/+page.svelte
-  s_cb0a23fc57336c::t_cd810e7387e449 1-28
+  s_cb0a23fc57336c::t_a4ac73c7a32c0d 1-28
 memoryfn/docs/src/routes/docs/[...slug]/+page.server.ts
-  s_cb0a23fc57336c::t_e6ac36c5a56d9a 1-25
+  s_cb0a23fc57336c::t_945876190cd416 1-25
 memoryfn/docs/src/routes/docs/[...slug]/+page.svelte
-  s_cb0a23fc57336c::t_5678d97293664d 1-41
+  s_cb0a23fc57336c::t_55e81c6bc27ddb 1-41
 memoryfn/docs/src/routes/docs/llms-full.txt/+server.ts
-  s_cb0a23fc57336c::t_f96565f1a9bacd 1-7
+  s_cb0a23fc57336c::t_cd0ffdb2a78a8b 1-7
 memoryfn/docs/src/routes/docs/llms.txt/+server.ts
-  s_cb0a23fc57336c::t_2ccbb68ed9faa6 1-7
+  s_cb0a23fc57336c::t_c8475c485283f8 1-7
 memoryfn/docs/src/routes/docs/search.json/+server.ts
-  s_cb0a23fc57336c::t_29144e43a612d7 1-8
+  s_cb0a23fc57336c::t_519aa3a9fb6d35 1-8
 memoryfn/docs/static/llms-full.txt
-  s_cb0a23fc57336c::t_f4df958117a065 1-438
+  s_cb0a23fc57336c::t_d76155ecf6a865 1-438
 memoryfn/docs/static/llms.txt
-  s_cb0a23fc57336c::t_129a8b28ee0671 1-19
+  s_cb0a23fc57336c::t_158d5337aec2db 1-19
 memoryfn/docs/svelte.config.js
-  s_cb0a23fc57336c::t_d689cb82944aa0 1-26
+  s_cb0a23fc57336c::t_409adbf2ffd5c4 1-26
 memoryfn/docs/tsconfig.json
-  s_cb0a23fc57336c::t_be005e2a18add6 1-59
+  s_cb0a23fc57336c::t_55b0d0a62a736d 1-59
 memoryfn/docs/turbo.json
-  s_cb0a23fc57336c::t_65db1207441a14 1-20
+  s_cb0a23fc57336c::t_68f45d94168170 1-20
 memoryfn/docs/vite.config.ts
-  s_cb0a23fc57336c::t_b451cd1255f26e 1-12
+  s_cb0a23fc57336c::t_97c9f76a0d8aa3 1-12
 package-lock.json
-  s_cb0a23fc57336c::t_9fc84d0a576686 51,53,4998-5485,6135-6646,7598-7621,11269-11780,16543-17055,19080-19556,19559-19562,19564-19567,19570-19574,19578-19581,19584,19587-19590,19593-19596,19599,19602-19605,19608,19611-19614,19616-19617,19620,19623-19626,19630-19634,19636-19637,19640-19643,19647,19649-19650,19653-19656,19660-19662,19665,19668-19671,19674-19677,19680,19683-19686,19690,19692-19711,19713-19714,19717,19720-19723,19727-19729,19731-19732,19735-19738,19740,19742-19748,19751-19757,19760-19763,19765-19766,19769,19772-19775,19777,19779-19782,19786,19789,19792-19796,19799-19821,19823-19824,19827-19862,19865-19869,19872-19874,19877-19902,22539-22542,26947-26950,27193-27196,27317-27320,29852-29855,31554-31557,34948-34957,35880-35896,35972-35981,37288-37297,41461-41467,42755-42761,46251-46260,49626-49638,50398-50407,50416-50425,53623-53652,57431-57943
+  s_cb0a23fc57336c::t_c1d564cfd84482 51,53,4998-5485,6135-6646,7598-7621,11269-11780,16543-17055,19080-19556,19559-19562,19564-19567,19570-19574,19578-19581,19584,19587-19590,19593-19596,19599,19602-19605,19608,19611-19614,19616-19617,19620,19623-19626,19630-19634,19636-19637,19640-19643,19647,19649-19650,19653-19656,19660-19662,19665,19668-19671,19674-19677,19680,19683-19686,19690,19692-19711,19713-19714,19717,19720-19723,19727-19729,19731-19732,19735-19738,19740,19742-19748,19751-19757,19760-19763,19765-19766,19769,19772-19775,19777,19779-19782,19786,19789,19792-19796,19799-19821,19823-19824,19827-19862,19865-19869,19872-19874,19877-19902,22539-22542,26947-26950,27193-27196,27317-27320,29852-29855,31554-31557,34948-34957,35880-35896,35972-35981,37288-37297,41461-41467,42755-42761,46251-46260,49626-49638,50398-50407,50416-50425,53623-53652,57431-57943
 package.json
-  s_cb0a23fc57336c::t_f9f5aec6779073 46,48
+  s_cb0a23fc57336c::t_31f58e0ac68f4f 46,48
 reviewfn/docs/.gitignore
-  s_cb0a23fc57336c::t_33299828868e99 1-13
+  s_cb0a23fc57336c::t_a574b8a899911c 1-13
 reviewfn/docs/README.md
-  s_cb0a23fc57336c::t_3a1aaf09221b78 1-20
+  s_cb0a23fc57336c::t_b7ff566071d20d 1-20
 reviewfn/docs/content/docs/getting-started.md
-  s_cb0a23fc57336c::t_3541f236630787 1-19
+  s_cb0a23fc57336c::t_acb25db63b7fbe 1-19
 reviewfn/docs/content/docs/index.md
-  s_cb0a23fc57336c::t_29486f7c78af2a 1-10
+  s_cb0a23fc57336c::t_d809691ae1bcbd 1-10
 reviewfn/docs/content/docs/meta.json
-  s_cb0a23fc57336c::t_d1f073b3310aeb 1-13
+  s_cb0a23fc57336c::t_37b819f5384cea 1-13
 reviewfn/docs/content/docs/operations-and-limits.md
-  s_cb0a23fc57336c::t_13ceadfb2441ab 1-12
+  s_cb0a23fc57336c::t_ed905973dcedbf 1-12
 reviewfn/docs/content/docs/packages.md
-  s_cb0a23fc57336c::t_b94b3948cb1009 1-15
+  s_cb0a23fc57336c::t_0617f360a2c878 1-15
 reviewfn/docs/content/docs/publication.md
-  s_cb0a23fc57336c::t_ab332ecb647cfa 1-17
+  s_cb0a23fc57336c::t_6e3087e6db3cd4 1-17
 reviewfn/docs/content/docs/reference/configuration.md
-  s_cb0a23fc57336c::t_ecb5a510c5f2ce 1-26
+  s_cb0a23fc57336c::t_9ea712c2f6cea9 1-26
 reviewfn/docs/content/docs/reference/evaluation.md
-  s_cb0a23fc57336c::t_faa857554042d8 1-18
+  s_cb0a23fc57336c::t_7bc95ce29b995f 1-18
 reviewfn/docs/content/docs/reference/github-action.md
-  s_cb0a23fc57336c::t_b20a36e3fe508f 1-25
+  s_cb0a23fc57336c::t_ae7dc03d9aaef0 1-25
 reviewfn/docs/content/docs/reference/index.md
-  s_cb0a23fc57336c::t_8c05073f78792e 1-14
+  s_cb0a23fc57336c::t_e42a8bb6e4954a 1-14
 reviewfn/docs/content/docs/reference/meta.json
-  s_cb0a23fc57336c::t_3a7d96cb59fa18 1-4
+  s_cb0a23fc57336c::t_ad6629eee78acc 1-4
 reviewfn/docs/content/docs/reference/report-schema.md
-  s_cb0a23fc57336c::t_8d977da4c30150 1-18
+  s_cb0a23fc57336c::t_eb1c348399c22f 1-18
 reviewfn/docs/content/docs/reference/security.md
-  s_cb0a23fc57336c::t_a81b69736a0a7c 1-31
+  s_cb0a23fc57336c::t_1f6d47848fe680 1-31
 reviewfn/docs/content/docs/security.md
-  s_cb0a23fc57336c::t_c702fc87bec4b7 1-12
+  s_cb0a23fc57336c::t_12b81af8ad113b 1-12
 reviewfn/docs/content/docs/workflow.md
-  s_cb0a23fc57336c::t_f6891c307097e5 1-12
+  s_cb0a23fc57336c::t_6b718ed8e5c7fd 1-12
 reviewfn/docs/docsfn.config.ts
-  s_cb0a23fc57336c::t_2b43dc633d68b3 1-36
+  s_cb0a23fc57336c::t_7d336e56c08966 1-36
 reviewfn/docs/github-action.md
-  s_cb0a23fc57336c::t_7eaf08f63eae40 5,7
+  s_cb0a23fc57336c::t_72038970be3f87 5,7
 reviewfn/docs/package.json
-  s_cb0a23fc57336c::t_f043c5915506e7 1-41
+  s_cb0a23fc57336c::t_83ea1354d48338 1-41
 reviewfn/docs/report-schema.md
-  s_cb0a23fc57336c::t_33354e38bcdd5c 7
+  s_cb0a23fc57336c::t_43b2ae5ebff4fc 7
 reviewfn/docs/scripts/generate-llms.mjs
-  s_cb0a23fc57336c::t_a143b18e53b42f 1-26
+  s_cb0a23fc57336c::t_e113a4fec35e78 1-26
 reviewfn/docs/scripts/sync-references.mjs
-  s_cb0a23fc57336c::t_7d7228bcc1168e 1-32
+  s_cb0a23fc57336c::t_c23f19fa10ad36 1-32
 reviewfn/docs/src/app.css
-  s_cb0a23fc57336c::t_4d114fbfbe4ab2 1-82
+  s_cb0a23fc57336c::t_8823bf0d0ac832 1-82
 reviewfn/docs/src/app.html
-  s_cb0a23fc57336c::t_920458f529405d 1-11
+  s_cb0a23fc57336c::t_19464d90e4af56 1-11
 reviewfn/docs/src/lib/components/DocsSiteSearch.svelte
-  s_cb0a23fc57336c::t_a38b5035e7c3e9 1-5
+  s_cb0a23fc57336c::t_3ace327400a050 1-5
 reviewfn/docs/src/lib/server/docs-site-source.ts
-  s_cb0a23fc57336c::t_059989e14913e2 1-14
+  s_cb0a23fc57336c::t_dd21b82b2c1d52 1-14
 reviewfn/docs/src/routes/+error.svelte
-  s_cb0a23fc57336c::t_462e4753ef1f48 1-12
+  s_cb0a23fc57336c::t_0653f569328450 1-12
 reviewfn/docs/src/routes/+layout.server.ts
-  s_cb0a23fc57336c::t_28231999b499eb 1-13
+  s_cb0a23fc57336c::t_5bb8b14966f945 1-13
 reviewfn/docs/src/routes/+layout.svelte
-  s_cb0a23fc57336c::t_0bd51f273e271c 1-86
+  s_cb0a23fc57336c::t_e6c8b74ac25bc1 1-86
 reviewfn/docs/src/routes/+page.svelte
-  s_cb0a23fc57336c::t_9e52b84f3ea24d 1-28
+  s_cb0a23fc57336c::t_61fb7d8fb5d2da 1-28
 reviewfn/docs/src/routes/docs/[...slug]/+page.server.ts
-  s_cb0a23fc57336c::t_1739a70394d60a 1-25
+  s_cb0a23fc57336c::t_98c8add171caae 1-25
 reviewfn/docs/src/routes/docs/[...slug]/+page.svelte
-  s_cb0a23fc57336c::t_4a303a45f5b299 1-41
+  s_cb0a23fc57336c::t_63bbb6055562f6 1-41
 reviewfn/docs/src/routes/docs/llms-full.txt/+server.ts
-  s_cb0a23fc57336c::t_148fb0b8708576 1-7
+  s_cb0a23fc57336c::t_f8936738dd27c7 1-7
 reviewfn/docs/src/routes/docs/llms.txt/+server.ts
-  s_cb0a23fc57336c::t_8b2fd559809169 1-7
+  s_cb0a23fc57336c::t_b8640f07a94de0 1-7
 reviewfn/docs/src/routes/docs/search.json/+server.ts
-  s_cb0a23fc57336c::t_5785d614179d3b 1-8
+  s_cb0a23fc57336c::t_b80bb71764a70a 1-8
 reviewfn/docs/static/llms-full.txt
-  s_cb0a23fc57336c::t_f385389cf09e71 1-289
+  s_cb0a23fc57336c::t_d5f5aee64f6bfc 1-289
 reviewfn/docs/static/llms.txt
-  s_cb0a23fc57336c::t_5ecf94085f6991 1-19
+  s_cb0a23fc57336c::t_b296449378d65a 1-19
 reviewfn/docs/svelte.config.js
-  s_cb0a23fc57336c::t_a1ba5724c824cc 1-26
+  s_cb0a23fc57336c::t_5213ed0ee1f4e9 1-26
 reviewfn/docs/tsconfig.json
-  s_cb0a23fc57336c::t_fe577bec9f274f 1-59
+  s_cb0a23fc57336c::t_cd87918254ff33 1-59
 reviewfn/docs/turbo.json
-  s_cb0a23fc57336c::t_06d864edc86d7c 1-20
+  s_cb0a23fc57336c::t_1b72c9857e2fa2 1-20
 reviewfn/docs/vite.config.ts
-  s_cb0a23fc57336c::t_1a865be9f36b49 1-12
+  s_cb0a23fc57336c::t_8f218a4e8b925a 1-12
 scripts/cloudflare-docs/config.mjs
-  s_cb0a23fc57336c::t_2b53cabd443c43 14-73
+  s_cb0a23fc57336c::t_1cf9504bb2f1ee 14-73
 scripts/cloudflare-docs/select-products.mjs
-  s_cb0a23fc57336c::t_46ca528a5a8b74 59-64
+  s_cb0a23fc57336c::t_d9ec0ea472c8e0 59-64
 scripts/docs-site/llms.mjs
-  s_cb0a23fc57336c::t_591ffe4c2e5719 84-90,102
+  s_cb0a23fc57336c::t_27a19483df02fd 84-90,102
 scripts/docs-site/llms.test.mjs
-  s_cb0a23fc57336c::t_f06e03c6c00ab4 48-52
+  s_cb0a23fc57336c::t_9969a3b7ad26ae 48-52
 scripts/docs-site/vitest.config.ts
-  s_cb0a23fc57336c::t_4f718ccd00571b 18
+  s_cb0a23fc57336c::t_14dabee91f1bce 18
 scripts/verify-mdfn-package-graph.mjs
-  s_cb0a23fc57336c::t_b2d1e430500afc 110-111,113
+  s_cb0a23fc57336c::t_013d69892045b5 110-111,113
 ---
 {
   "schema_version": "authorship/3.0.0",
