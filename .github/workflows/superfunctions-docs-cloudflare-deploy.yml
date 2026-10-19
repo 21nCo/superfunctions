@@ -12,12 +12,14 @@ on:
       - superfunctions-docs-datafn-live-*
       - superfunctions-docs-extfn-live-*
       - superfunctions-docs-mailfn-live-*
+      - superfunctions-docs-devfn-live-*
       - superfunctions-docs-filefn-live-*
       - superfunctions-docs-searchfn-live-*
       - superfunctions-docs-authfn-live-*
       - superfunctions-datafn-docs-live-*
       - superfunctions-extfn-docs-live-*
       - superfunctions-mailfn-docs-live-*
+      - superfunctions-devfn-docs-live-*
       - superfunctions-filefn-docs-live-*
       - superfunctions-searchfn-docs-live-*
       - superfunctions-authfn-docs-live-*
@@ -25,6 +27,7 @@ on:
       - datafn/docs/**
       - extfn/docs/**
       - mailfn/docs/**
+      - devfn/docs/**
       - filefn/docs/**
       - searchfn/docs/**
       - authfn/docs/**
@@ -49,6 +52,7 @@ on:
           - datafn
           - extfn
           - mailfn
+          - devfn
           - filefn
           - searchfn
           - authfn
