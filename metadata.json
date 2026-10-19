@@ -1,0 +1,47 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59MQ9JP58P7932CGW0NA523",
+  "strategy": "manual-commit",
+  "checkpoints_count": 3,
+  "files_touched": [
+    ".github/workflows/superfunctions-docs-cloudflare-deploy.yml",
+    ".github/workflows/superfunctions-docs-cloudflare-routes.yml",
+    "package-lock.json",
+    "reviewfn/docs/package.json",
+    "reviewfn/docs/scripts/generate-llms.mjs",
+    "reviewfn/docs/src/lib/server/docs-site-source.ts",
+    "reviewfn/docs/src/routes/+error.svelte",
+    "reviewfn/docs/src/routes/docs/llms-full.txt/+server.ts",
+    "reviewfn/docs/src/routes/docs/llms.txt/+server.ts",
+    "reviewfn/docs/src/routes/docs/search.json/+server.ts",
+    "reviewfn/docs/static/llms-full.txt",
+    "reviewfn/docs/tsconfig.json",
+    "reviewfn/docs/turbo.json",
+    "reviewfn/docs/vite.config.ts",
+    "scripts/cloudflare-docs/config.mjs",
+    "scripts/cloudflare-docs/select-products.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 2444,
+    "cache_read_tokens": 2335514,
+    "output_tokens": 1472,
+    "api_call_count": 4,
+    "subagent_tokens": {
+      "input_tokens": 148,
+      "cache_creation_tokens": 138950,
+      "cache_read_tokens": 6015298,
+      "output_tokens": 22740,
+      "api_call_count": 74
+    }
+  }
+}
