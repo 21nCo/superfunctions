@@ -57,7 +57,7 @@ try {
       expect: { isError: false, structuredTextParity: true },
     },
   ]);
-  if (results.some((result) => result.status === "failed")) {
+  if (results.some((result) => result.status !== "passed")) {
     throw new Error(JSON.stringify(results));
   }
 } finally {
