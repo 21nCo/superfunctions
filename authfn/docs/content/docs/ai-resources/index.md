@@ -1,56 +1,29 @@
 ---
 title: AI Resources
-description: First-class integrations for LLM-based coding assistants — llms.txt, an MCP server, and per-tool skill packs.
+description: Give LLM-based coding assistants current AuthFn context through the generated llms.txt files.
 ---
 
 # AI Resources
 
-authfn ships with **first-class AI assistant support** so the LLM in your editor can answer questions, generate idiomatic code, and apply correct patterns.
-
-These integrations are powered by [docsfn](https://github.com/21nCo/super-functions/tree/dev/apifn/docsfn) — the same engine that builds this documentation site — so every doc page is automatically available to your assistant.
+This site publishes generated, LLM-friendly context so an assistant can answer questions about AuthFn from the current documentation instead of guessing.
 
 ## What's available
 
 | Resource | Use it when… |
 | --- | --- |
-| [llms.txt](./llms-txt) | You want a single-file context dump for Cursor / Claude / Codex / GPTs / etc. |
-| [MCP server](./mcp) | You're using an MCP-aware assistant (Claude Desktop, Cursor with MCP, custom hosts) and want live retrieval. |
-| [Skills](./skills) | You want to teach an assistant a specific authfn pattern (sign-in flow, social OAuth, multi-region, …). |
-| [Cursor](./cursor) | You're on Cursor and want one-click setup. |
-| [Claude](./claude) | You're on Claude Desktop / Claude Code and want one-click setup. |
-| [Codex / Droid](./codex) | You're on Factory Codex / Droid (or any AGENTS.md-aware tool). |
+| [llms.txt](./llms-txt) | You want a page index or a single full-text context file for any assistant that accepts a URL or pasted context. |
+| [Cursor](./cursor) | You're on Cursor and want a project rule that points at the context file. |
+| [Claude](./claude) | You're on Claude Desktop or Claude Code. |
+| [Codex / Droid](./codex) | You use an AGENTS.md-aware tool. |
 
-## How they fit together
-
-```mermaid
-flowchart TD
-    Docs["Docs source\n(content/docs/**)"]
-    OpenAPI["OpenAPI spec\n(content/api/authfn.json)"]
-    Examples["Example apps\n(authfn/examples)"]
-
-    Docs --> LlmsTxt["llms.txt + llms-full.txt"]
-    OpenAPI --> LlmsTxt
-    Examples --> LlmsTxt
-
-    Docs --> MCP["MCP server"]
-    OpenAPI --> MCP
-    Examples --> MCP
-
-    Docs --> Skills["Skill packs"]
-
-    LlmsTxt --> Editor["Editor / Assistant"]
-    MCP --> Editor
-    Skills --> Editor
-```
-
-The same content powers all three surfaces; each is the right shape for a different consumer.
+Both files are generated from `content/docs/**` (and the configured API material) when the docs are built, so they follow the published pages. This docs site does not host an MCP server or skill packs; static context files do not authenticate an assistant or give it live access to your deployment.
 
 ## Quick start
 
-The fastest way to get going is to point your assistant at the canonical URL:
+Point your assistant at the full-text file:
 
 ```
 https://authfn.com/docs/llms-full.txt
 ```
 
-Most assistants will accept that as a context source. If your tool is MCP-aware, see [MCP](./mcp) for a richer experience that surfaces type definitions, route metadata, and example apps on demand.
+Use the [short index](https://authfn.com/docs/llms.txt) when the context budget is small, then fetch only the linked pages you need.

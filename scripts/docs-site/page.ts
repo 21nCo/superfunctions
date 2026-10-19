@@ -22,8 +22,8 @@ function buildCanonicalUrl(canonicalBase: string | undefined, path: string): str
   let end = canonicalBase.length;
   while (end > 0 && canonicalBase[end - 1] === "/") end -= 1;
   const origin = canonicalBase.slice(0, end);
-  const route = path.startsWith("/") ? path : "/" + path;
-  return origin + route;
+  const pathname = path.startsWith("/") ? path : "/" + path;
+  return origin + pathname;
 }
 
 function isRouteNotFoundError(input: unknown): input is { message: string } {
@@ -34,10 +34,6 @@ function isRouteNotFoundError(input: unknown): input is { message: string } {
   );
 }
 
-function hasNestedDocsRoutes(routes: Record<string, string>, route: string): boolean {
-  return Object.keys(routes).some((candidate) => candidate.startsWith(`${route}/`));
-}
-
 export async function loadDocsPage(input: {
   slug: string | undefined;
   source: DocsSiteSource;
@@ -46,7 +42,6 @@ export async function loadDocsPage(input: {
     compiled: CompiledContentArtifact;
     route: string;
     sourcePath: string;
-    isIndexRoute: boolean;
   }) => CompiledContentArtifact;
   options?: DocsPageOptions;
 }) {
@@ -106,20 +101,14 @@ export async function loadDocsPage(input: {
         compiled: await getCompiledDocsPage(routeEntry.page.id),
         route: routeEntry.route,
         sourcePath: routeEntry.page.id.slice(routeEntry.page.id.indexOf(":") + 1),
-        isIndexRoute: hasNestedDocsRoutes(source.manifest.routes, routeEntry.route),
       })
     : undefined;
 
   return {
-    routeEntry: routeEntry.kind === "page"
-      ? { kind: "page" as const }
-      : routeEntry,
+    routeEntry: routeEntry.kind === "page" ? { kind: "page" as const } : routeEntry,
     surface,
     sidebar,
     compiled,
-    searchDocumentCount: Array.isArray(source.searchArtifact.documents) ? source.searchArtifact.documents.length : 0,
-    searchScopes: Array.isArray(source.searchArtifact.scopes) ? source.searchArtifact.scopes.join(", ") : "none",
     siteTitle: source.siteTitle,
-    compatPreset: source.compatPreset,
   };
 }

@@ -1,26 +1,88 @@
-import { it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { build } from "vite";
+import { createServer } from "vite";
 import { docsSiteCorePlugin } from "./vite";
+function put(file, contents) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, typeof contents === "string" ? contents : JSON.stringify(contents));
+}
+function pkg(directory, name, marker) {
+  const root = path.join(directory, "node_modules", name);
+  put(path.join(root, "package.json"), { name, type: "module", exports: {
+    ".": { browser: "./lib/browser.mjs", import: "./lib/import.mjs", require: "./lib/require.cjs" },
+    "./search-runtime": { import: "./lib/search.mjs", require: "./lib/search.cjs" },
+  } });
+  for (const [file, value] of [["browser.mjs", `${marker}_BROWSER`], ["import.mjs", `${marker}_IMPORT`], ["search.mjs", `${marker}_SEARCH`]]) {
+    put(path.join(root, "lib", file), `export const marker = ${JSON.stringify(value)};`);
+  }
+  put(path.join(root, "lib/require.cjs"), `exports.marker = '${marker}_REQUIRE';`);
+  put(path.join(root, "lib/search.cjs"), `exports.marker = '${marker}_REQUIRE_SEARCH';`);
+}
 
-it("actual Vite honors retargeted consumer import/require and search subpath exports", async () => {
-  const base=mkdtempSync(join(tmpdir(),"docs-exports-"));
-  const put=(name,text)=>{const file=join(base,name);mkdirSync(dirname(file),{recursive:true});writeFileSync(file,text);};
-  try {
-    put("consumer/package.json",JSON.stringify({name:"@fixture/docs",type:"module"}));
-    put("consumer/vite.config.mjs","export default {};");
-    put("consumer/node_modules/@docsfn/core/package.json",JSON.stringify({name:"@docsfn/core",type:"module",exports:{".":{import:"./retargeted/core.mjs",require:"./retargeted/core.cjs"},"./search-runtime":{import:"./retargeted/query.mjs",require:"./retargeted/query.cjs"}}}));
-    put("consumer/node_modules/@docsfn/core/retargeted/core.mjs",'export const core="IMPORT_CORE_OK";');
-    put("consumer/node_modules/@docsfn/core/retargeted/core.cjs",'exports.core="REQUIRE_CORE_BAD";');
-    put("consumer/node_modules/@docsfn/core/retargeted/query.mjs",'export const query="IMPORT_SEARCH_OK";');
-    put("consumer/node_modules/@docsfn/core/retargeted/query.cjs",'exports.query="REQUIRE_SEARCH_BAD";');
-    put("scripts/docs-site/fixture.mjs",'import {core} from "@docsfn/core";import {query} from "@docsfn/core/search-runtime";export const result=core+query;');
-    const result=await build({configFile:false,root:join(base,"consumer"),logLevel:"silent",plugins:[docsSiteCorePlugin(pathToFileURL(join(base,"consumer/vite.config.mjs")).href)],build:{write:false,minify:false,lib:{entry:join(base,"scripts/docs-site/fixture.mjs"),formats:["es"]}}});
-    const outputs=Array.isArray(result)?result:[result];
-    const code=outputs.flatMap(output=>output.output).map(entry=>entry.code??"").join("\n");
-    expect(code).toContain("IMPORT_CORE_OK");expect(code).toContain("IMPORT_SEARCH_OK");expect(code).not.toContain("REQUIRE_CORE_BAD");expect(code).not.toContain("REQUIRE_SEARCH_BAD");
-  } finally {rmSync(base,{recursive:true,force:true,maxRetries:3,retryDelay:100});}
+describe("consumer-owned conditional dependency resolution", () => {
+  it("honors real Vite import/browser/subpath/parser conditions without borrowing root or overriding dependency owners", async () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "docs-conditional-")));
+    const site = path.join(root, "consumer", "docs");
+    const shared = path.join(root, "scripts", "docs-site", "entry.js");
+    const ownedDependency = path.join(site, "node_modules", "owned-dependency");
+    let server;
+    try {
+      put(path.join(root, "package.json"), { type: "module" });
+      put(path.join(site, "package.json"), { type: "module", dependencies: { "@docsfn/core": "0.0.5", "gray-matter": "4.0.3" } });
+      for (const name of ["@docsfn/core", "gray-matter"]) {
+        pkg(root, name, "ROOT_BAD"); pkg(site, name, "CONSUMER_OK");
+      }
+      pkg(ownedDependency, "@docsfn/core", "DEPENDENCY_OK");
+      put(path.join(ownedDependency, "entry.js"), 'export { marker } from "@docsfn/core";');
+      put(shared, 'import { marker as core } from "@docsfn/core"; import { marker as search } from "@docsfn/core/search-runtime"; import { marker as parser } from "gray-matter"; export { core, search, parser };');
+      server = await createServer({ configFile: false, root: site,
+        plugins: [docsSiteCorePlugin(pathToFileURL(path.join(site, "vite.config.ts")).href)],
+        ssr: { noExternal: true }, optimizeDeps: { noDiscovery: true },
+        server: { middlewareMode: true, fs: { allow: [root] } },
+      });
+      const loaded = await server.ssrLoadModule(shared);
+      expect([loaded.core, loaded.search, loaded.parser]).toEqual(["CONSUMER_OK_IMPORT", "CONSUMER_OK_SEARCH", "CONSUMER_OK_IMPORT"]);
+      const browser = await server.transformRequest(shared);
+      // The rewritten import must point at the consumer's copy, not the repository root's.
+      const browserImport = browser.code.match(/["']([^"']*@docsfn\/core\/lib\/browser\.mjs)["']/)?.[1];
+      expect(browserImport).toBeDefined();
+      expect(browserImport.startsWith(`/@fs${root}/node_modules/`)).toBe(false);
+      expect(browserImport).toMatch(/^(?:\/node_modules\/|\/@fs.*\/consumer\/docs\/node_modules\/)@docsfn\/core\/lib\/browser\.mjs$/);
+      const dependency = await server.ssrLoadModule(path.join(ownedDependency, "entry.js"));
+      expect(dependency.marker).toBe("DEPENDENCY_OK_IMPORT");
+    } finally { await server?.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("executes the consumer's real CommonJS parser during standalone dev SSR without parent dependencies", async () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "docs-parser-dev-")));
+    const site = path.join(root, "consumer", "docs");
+    const shared = path.join(root, "scripts", "docs-site", "parser.js");
+    const parser = path.join(site, "node_modules", "gray-matter");
+    let server;
+    try {
+      put(path.join(root, "package.json"), { type: "module" });
+      put(path.join(site, "package.json"), { type: "module", dependencies: { "@docsfn/core": "0.0.5", "gray-matter": "4.0.3" } });
+      put(path.join(parser, "package.json"), { name: "gray-matter", main: "index.cjs" });
+      put(path.join(parser, "index.cjs"), 'const path = require("node:path"); module.exports = source => ({ content: source.trim(), owner: "CONSUMER_CJS", basename: path.basename("/probe/cjs") });');
+      put(shared, 'import parser from "gray-matter"; export const parse = source => parser(source);');
+      server = await createServer({ configFile: false, root: site,
+        plugins: [docsSiteCorePlugin(pathToFileURL(path.join(site, "vite.config.ts")).href)],
+        ssr: { noExternal: true }, optimizeDeps: { noDiscovery: true },
+        server: { middlewareMode: true, fs: { allow: [root] } },
+      });
+      const loaded = await server.ssrLoadModule(shared);
+      expect(loaded.parse("  # Actual CJS  ")).toEqual({ content: "# Actual CJS", owner: "CONSUMER_CJS", basename: "cjs" });
+    } finally { await server?.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("fails fast without an explicit consumer dependency owner", () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "docs-missing-owner-")));
+    try {
+      put(path.join(root, "package.json"), { type: "module" });
+      expect(() => docsSiteCorePlugin(pathToFileURL(path.join(root, "vite.config.ts")).href)).toThrow("consumer declaring @docsfn/core");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 });

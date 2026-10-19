@@ -26,6 +26,7 @@ const commands = [
   [npm, ['--workspace', '@uifn/storybook', 'run', 'test']],
   [npm, ['--workspace', '@uifn/storybook', 'run', 'build']],
   [node, ['--test', 'scripts/verify-uifn-phase-17-contract.test.mjs']],
+  [node, ['--test', 'scripts/uifn-docs-cli-resolution.test.mjs']],
   [npm, ['--workspace', '@uifn/storybook', 'pack', '--dry-run']],
   [node, ['scripts/verify-uifn-phase-16.mjs', '--static-only']],
 ];
