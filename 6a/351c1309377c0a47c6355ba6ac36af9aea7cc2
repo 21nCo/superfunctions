@@ -1,0 +1,21 @@
+flowfn/.conduct/packed-consumer-20261020.md
+  s_e1c5fc1a65c0cf::t_497d14ec5a9bc5 1-37
+flowfn/typescript/scripts/packed-consumer-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_18c38f45d579e1 2-3,8,17,19,25-29,47,52-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6a351c1309377c0a47c6355ba6ac36af9aea7cc2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
