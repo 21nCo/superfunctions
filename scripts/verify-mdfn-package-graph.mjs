@@ -107,7 +107,10 @@ if (nodes.length !== 24 || stableNames.size !== 17) fail("MDFN_GRAPH_PACKAGE_COU
 if (byName.size !== nodes.length) fail("MDFN_GRAPH_DUPLICATE_PACKAGE");
 if (Object.keys(allowedLayers).some((layer) => !nodes.some((node) => node.layer === layer))) fail("MDFN_GRAPH_LAYER_UNUSED");
 
+// mdfn/docs is the private documentation site that consumes the packages; it is not a graph node.
+const nonGraphWorkspaces = new Set(["docs"]);
 const discovered = readdirSync(path.join(root, "mdfn"))
+  .filter((entry) => !nonGraphWorkspaces.has(entry))
   .map((entry) => path.join(root, "mdfn", entry, "package.json"))
   .filter(existsSync)
   .map((file) => JSON.parse(readFileSync(file, "utf8")).name)
