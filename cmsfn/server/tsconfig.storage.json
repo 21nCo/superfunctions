@@ -1,4 +1,4 @@
 {
   "extends": "./tsconfig.roles.json",
-  "include": ["src/storage/*.ts", "src/__tests__/storage-sqlite.test.ts"]
+  "include": ["src/storage/*.ts", "src/__tests__/storage-sqlite.test.ts", "src/__tests__/role-validation.test.ts"]
 }

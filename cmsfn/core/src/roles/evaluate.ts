@@ -4,6 +4,7 @@
  */
 
 import type { CmsfnRole, CmsfnRoleRule, CmsfnAction } from "./types.js";
+import { validateCmsfnRole, isCmsfnAction } from "./validate.js";
 import type { CmsfnPermissionInput } from "./types.js";
 
 function ruleMatches(
@@ -28,8 +29,11 @@ export function evaluatePermission(
   role: CmsfnRole,
   input: CmsfnPermissionInput
 ): boolean {
+  const validated = validateCmsfnRole(role);
+  if (!validated.ok || !input || typeof input.dataset !== "string" || !input.dataset.trim()
+    || typeof input.type !== "string" || !input.type.trim() || !isCmsfnAction(input.action)) return false;
   const { dataset, type, action } = input;
-  for (const rule of role.rules) {
+  for (const rule of validated.role.rules) {
     if (ruleMatches(rule, dataset, type, action)) {
       return true;
     }
@@ -46,6 +50,7 @@ export function evaluatePermissions(
   roles: CmsfnRole[],
   input: CmsfnPermissionInput
 ): boolean {
+  if (!Array.isArray(roles)) return false;
   for (const role of roles) {
     if (evaluatePermission(role, input)) {
       return true;

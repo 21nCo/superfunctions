@@ -3,6 +3,7 @@ export type { CmsfnEnvelope } from "./envelope.js";
 export { ok, err } from "./envelope.js";
 
 export type { CmsfnAction, CmsfnRoleRule, CmsfnRole, CmsfnPermissionInput } from "./roles/types.js";
+export { validateCmsfnRole } from "./roles/validate.js";
 export { evaluatePermission, evaluatePermissions } from "./roles/evaluate.js";
 
 export type { CmsfnDeskNode, CmsfnStudioConfig } from "./desk/types.js";

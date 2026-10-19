@@ -248,3 +248,38 @@ describe("role HTTP body boundary", () => {
     } finally { close(); }
   });
 });
+
+describe("role rule runtime contract over HTTP", () => {
+  it.each([
+    { datasets: ["prod", null], types: "*", actions: "*" },
+    { datasets: "*", types: [12], actions: "*" },
+    { datasets: "*", types: "*", actions: ["doc.read", "unknown"] },
+    { datasets: "*", types: "*", actions: ["*"] },
+    { datasets: "production", types: "*", actions: ["doc.read"] },
+  ])("rejects invalid role payloads without storing them", async rule => {
+    const db = memoryAdapter();
+    const server = createCmsfnServer(minimalConfig({ db }));
+    const { port, close } = await listen(server);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/cmsfn/roles/upsert`, {
+        method: "POST", body: JSON.stringify({ role: { id: "bad", name: "Bad", rules: [rule] } }),
+      });
+      expect(await response.json()).toMatchObject({ ok: false, error: { code: "VALIDATION_FAILED" } });
+      expect(await db.count({ model: "cmsfn_roles" })).toBe(0);
+    } finally { close(); }
+  });
+  it("denies malformed deployment-supplied roles instead of using string substring matching", async () => {
+    const server = createCmsfnServer(minimalConfig({
+      getRolesForSubject: async () => [{ id: "bad", name: "Bad", rules: [
+        { datasets: "production", types: "*", actions: "doc.publish.extra" },
+      ] }] as unknown as CmsfnRole[],
+    }));
+    const { port, close } = await listen(server);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/cmsfn/publish`, {
+        method: "POST", body: JSON.stringify({ dataset: "prod", id: "post-1" }),
+      });
+      expect(await response.json()).toMatchObject({ ok: false, error: { code: "PERMISSION_DENIED" } });
+    } finally { close(); }
+  });
+});
