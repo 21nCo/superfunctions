@@ -1,0 +1,47 @@
+docsfn/react/src/VersionSwitcher.test.tsx
+  s_c1093e7194f7e3::t_a092ed7a1b8627 14-32
+docsfn/cli/tests/migration-route-safety.test.mjs
+  s_c1093e7194f7e3::t_a321d2a1e4d53e 261-293
+docsfn/svelte/src/VersionSwitcher.test.ts
+  s_c1093e7194f7e3::t_a092ed7a1b8627 13-22
+docsfn/svelte/src/VersionSwitcher.svelte
+  s_c1093e7194f7e3::t_40565d9d5aaa1f 67-76,100
+docsfn/core/src/url-safety.ts
+  s_c1093e7194f7e3::t_57b68fae51cb82 1-11
+docsfn/cli/src/migrate-docusaurus.ts
+  s_c1093e7194f7e3::t_ab44001f78c805 1216
+  s_c1093e7194f7e3::t_f2eef623513e50 1124-1125,1127-1129,1131,1133-1139,1143-1157,1161,1163,1170-1209
+  s_c1093e7194f7e3::t_9012d4f991d3bc 1210-1211
+docsfn/core/src/markdown.ts
+  s_c1093e7194f7e3::t_d3e4082f7503a7 113
+  s_c1093e7194f7e3::t_1ab88c4aa4c3ac 814-823,826-828
+  s_c1093e7194f7e3::t_57b68fae51cb82 11
+docsfn/core/src/markdown.test.ts
+  s_c1093e7194f7e3::t_8e165c50b3d993 626-652
+  s_c1093e7194f7e3::t_158a98822755b0 621-623
+  s_c1093e7194f7e3::t_410c1d7b9a6bbc 614-620,624-625
+docsfn/core/src/security.test.ts
+  s_c1093e7194f7e3::t_410c1d7b9a6bbc 329-332,334-337
+  s_c1093e7194f7e3::t_05ec0cb314360e 333
+docsfn/react/src/VersionSwitcher.tsx
+  s_c1093e7194f7e3::t_40565d9d5aaa1f 73-82,102
+docsfn/core/src/sanitize.ts
+  s_c1093e7194f7e3::t_57b68fae51cb82 4
+  s_c1093e7194f7e3::t_d3e4082f7503a7 116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d86315421f5d5096b94abd754889dd084f191658",
+  "prompts": {},
+  "sessions": {
+    "s_c1093e7194f7e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
