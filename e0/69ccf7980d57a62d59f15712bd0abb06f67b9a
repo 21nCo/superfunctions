@@ -1,0 +1,35 @@
+mailfn/OPERATIONS.md
+  s_7d0a48f0aaecda::t_400b260ec4c673 43
+mailfn/THREAT_MODEL.md
+  s_7d0a48f0aaecda::t_9c164eda32a55a 9
+mailfn/docs/content/docs/cloudflare-runtime.md
+  s_7d0a48f0aaecda::t_3f6fb7c517543a 16
+mailfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_ffdefd9de835cd 16-18,33
+mailfn/docs/content/docs/reference/mcp.md
+  s_7d0a48f0aaecda::t_7cfcda41822c39 12
+mailfn/docs/content/docs/reference/operations.md
+  s_7d0a48f0aaecda::t_70ea964535e65d 46
+mailfn/docs/content/docs/reference/threat-model.md
+  s_7d0a48f0aaecda::t_44166c54dd9f4e 12
+mailfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_05c708b1819a71 69,135-137,152,388,438,616
+mailfn/mcp/README.md
+  s_7d0a48f0aaecda::t_c50ffe1b2b4527 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e069ccf7980d57a62d59f15712bd0abb06f67b9a",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
