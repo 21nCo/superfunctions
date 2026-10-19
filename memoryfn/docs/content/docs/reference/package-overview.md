@@ -1,9 +1,9 @@
 ---
 title: Package overview
-description: Source-aligned MemoryFn guidance from origin/dev.
+description: Overview of the MemoryFn TypeScript package, its scoped storage and lifecycle contract, and its release status.
 ---
 
-The TypeScript package `@memoryfn/core` provides scoped memory storage, embedding-based retrieval, revisioned updates and forgetting. This worktree adopts the implementation from next and hardens its storage and lifecycle for hosted consumers.
+The TypeScript package `@memoryfn/core` provides scoped memory storage, embedding-based retrieval, revisioned updates and forgetting. This guide documents its storage and lifecycle contract for hosted consumers.
 
 ```ts
 import { memoryfn } from '@memoryfn/core';
@@ -15,6 +15,6 @@ await memory.close();
 
 Use injected Postgres storage for durable data and configure an embedder for semantic retrieval. The process-local adapter is intended for tests and explicit ephemeral use. SQLite requires a supplied adapter.
 
-Read [TypeScript storage, migrations and lifecycle](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/README.md). Application membership, sharing and authoritative deletion state remain the consumer's responsibility. This is an unpublished candidate; the registry version does not identify these local changes. Admin and Python packages have not been adopted into this dev worktree.
+Read [TypeScript storage, migrations and lifecycle](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/README.md). Application membership, sharing and authoritative deletion state remain the consumer's responsibility. This is an unpublished candidate; the registry version does not identify these changes. The admin and Python packages are not part of this contract.
 
 Semantic search requires a configured embedder and fails with `MEMORY_EMBEDDER_REQUIRED` otherwise. The built-in PostgreSQL schema uses 1536 dimensions; the factory requests that dimension and rejects conflicting configuration, including injected `PostgresAdapter` instances.

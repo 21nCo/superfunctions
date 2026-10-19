@@ -3,7 +3,7 @@ title: Operations and current limits
 description: Supported configuration, migration responsibility, tests, and proof boundaries.
 ---
 
-This site describes the `origin/dev` source, an unpublished candidate. A green local build is workspace evidence, not proof that the same-version registry package or a hosted deployment has these changes.
+This site describes the source on the `dev` branch, an unpublished candidate. A green local build is workspace evidence, not proof that the same-version registry package or a hosted deployment has these changes.
 
 ## Configuration boundaries
 

@@ -17,7 +17,7 @@ if (!artifacts.llmsFullTxt.includes(generatedFooter)) {
   throw new Error("Unexpected DocsFn llms-full footer; review the generated artifact before publishing");
 }
 const indexUrl = canonicalUrl
-  ? new URL("/docs/llms.txt", canonicalUrl).href
+  ? `${canonicalUrl.replace(/\/+$/, "")}/docs/llms.txt`
   : "https://github.com/21nCo/super-functions/blob/dev/memoryfn/docs/static/llms.txt";
 artifacts.llmsFullTxt = artifacts.llmsFullTxt.replace(generatedFooter, `For a page index, see ${indexUrl}.`);
 artifacts.llmsTxt = withSourceLinks(artifacts.llmsTxt, manifest, "memoryfn", canonicalUrl);

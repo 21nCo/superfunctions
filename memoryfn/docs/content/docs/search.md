@@ -20,6 +20,6 @@ for (const entry of result.results) {
 }
 ```
 
-The PostgreSQL adapter filters to the explicit tenant, all supplied tags, active rows, and latest revisions. `filters` perform exact JSONB metadata containment. `threshold` is a cosine similarity floor, and the adapter orders by vector distance. The returned metadata reports `totalFound` and `returned` for that storage query; it is not a count of all tenant memories.
+The PostgreSQL adapter filters to the explicit tenant, all supplied tags, active rows, and latest revisions. `filters` use JSONB containment (`@>`) on metadata: scalar values match exactly, but array and object values match any stored value that contains them as a subset. `threshold` is a cosine similarity floor, and the adapter orders by vector distance. The returned metadata reports `totalFound` and `returned` for that storage query; it is not a count of all tenant memories.
 
 The input type still advertises `rerank`, relationship traversal, hybrid ranking, token limits, and `onlyLatest`. The current `search()` pipeline does not implement those options. Do not rely on them until code and tests establish their behavior. The host must intersect every result with its current permissions and authoritative deletion state.

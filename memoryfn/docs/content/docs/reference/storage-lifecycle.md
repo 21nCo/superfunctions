@@ -1,9 +1,9 @@
 ---
 title: Storage and lifecycle source guide
-description: Source-aligned MemoryFn guidance from origin/dev.
+description: Detailed storage, migration, scope and lifecycle contract of the MemoryFn TypeScript source.
 ---
 
-This dev adoption is based on next `b21477fc9a32ae425c38a2de810b5a8705fc711f` with explicit scope and lifecycle changes. It is an unpublished candidate; the same-version registry package does not contain these changes.
+The source on `dev` adds explicit scope and lifecycle changes to the earlier implementation. It is an unpublished candidate; the same-version registry package does not contain these changes.
 
 ## PostgreSQL and ownership
 

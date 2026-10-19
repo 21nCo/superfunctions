@@ -28,6 +28,6 @@ Use an injected adapter when the host controls request or Worker lifetimes, pool
 
 PostgreSQL storage fixes embedding dimensions at 1536. The factory requests that dimension and rejects a conflicting embedder configuration, including with an injected `PostgresAdapter`.
 
-The `StorageAdapter` contract includes scoped insert, search, get, compare-and-update, delete, optional close, and optional transaction. Immutable-ID tombstones and scope checks are required for equivalent behavior. A conflict resolution that changes several records requires `transaction()`; an adapter without it rejects that conflict before writing.
+The `StorageAdapter` contract requires scoped `insertMemories()`, `insertRelationships()`, `searchVectors()`, `getMemory()`, `updateMemory()` (compare-and-update), and `deleteMemory()`; `close()` and `transaction()` are optional. Immutable-ID tombstones and scope checks are required for equivalent behavior. A conflict resolution that changes several records requires `transaction()`; an adapter without it rejects that conflict before writing.
 
 `kind: "sqlite"` requires an explicit adapter. The factory does not create SQLite storage. `qdrant` is present in a legacy type union but has no factory implementation. Review the [source lifecycle guide](/docs/reference/storage-lifecycle) and [adapter interface](https://github.com/21nCo/super-functions/blob/dev/memoryfn/typescript/src/storage/adapter.ts) before implementing a custom store.

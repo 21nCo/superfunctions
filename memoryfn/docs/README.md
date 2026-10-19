@@ -9,7 +9,7 @@ npm --workspace @memoryfn/docs run dev
 npm --workspace @memoryfn/docs run build
 ```
 
-The build regenerates `static/llms.txt` and `static/llms-full.txt`. For CLI validation, first build the SearchFn workspace dependencies from the repository root (the Vite site build uses source aliases and does not require these separate builds):
+The build regenerates `static/llms.txt` and `static/llms-full.txt`. In a fresh checkout, build through Turbo from the repository root first (`npx turbo run build --filter=@memoryfn/docs...`), because `@searchfn/client` and its dependencies resolve to their built `dist` exports. For CLI validation, the same SearchFn workspace builds are needed:
 
 ```sh
 npm run build --workspace @searchfn/core
