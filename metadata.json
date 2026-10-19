@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59RV45W1DBR1G6JDJ34HP50",
+  "strategy": "manual-commit",
+  "branch": "ci/revert-blacksmith-runners",
+  "checkpoints_count": 2,
+  "files_touched": [
+    ".github/workflows/apifn-api-check.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/mailfn-release.yml",
+    ".github/workflows/publish-python.yml",
+    ".github/workflows/publish-tag.yml",
+    ".github/workflows/pullfrog.yml",
+    ".github/workflows/release-swift.yml",
+    ".github/workflows/reviewfn-release.yml",
+    ".github/workflows/searchfn-client-tests.yml",
+    ".github/workflows/searchfn-client-tusk-vitest.yml",
+    ".github/workflows/superfunctions-docs-cloudflare-deploy.yml",
+    ".github/workflows/superfunctions-docs-cloudflare-routes.yml"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 30,
+    "cache_creation_tokens": 44555,
+    "cache_read_tokens": 871988,
+    "output_tokens": 6686,
+    "api_call_count": 15
+  }
+}

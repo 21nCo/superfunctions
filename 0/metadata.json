@@ -1,0 +1,64 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59RV45W1DBR1G6JDJ34HP50",
+  "session_id": "a159b584-eb17-4948-9eec-7dbe6f7888ea",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-19T09:45:51.511547Z",
+  "branch": "ci/revert-blacksmith-runners",
+  "checkpoints_count": 2,
+  "files_touched": [
+    ".github/workflows/apifn-api-check.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/mailfn-release.yml",
+    ".github/workflows/publish-python.yml",
+    ".github/workflows/publish-tag.yml",
+    ".github/workflows/pullfrog.yml",
+    ".github/workflows/release-swift.yml",
+    ".github/workflows/reviewfn-release.yml",
+    ".github/workflows/searchfn-client-tests.yml",
+    ".github/workflows/searchfn-client-tusk-vitest.yml",
+    ".github/workflows/superfunctions-docs-cloudflare-deploy.yml",
+    ".github/workflows/superfunctions-docs-cloudflare-routes.yml"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5[1m]",
+  "turn_id": "7bbe12dc5f17",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 30,
+    "cache_creation_tokens": 44555,
+    "cache_read_tokens": 871988,
+    "output_tokens": 6686,
+    "api_call_count": 15
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-19T09:45:51.448861Z",
+    "agent_lines": 888,
+    "agent_removed": 80,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 888,
+    "total_lines_changed": 968,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
