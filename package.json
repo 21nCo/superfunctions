@@ -46,7 +46,8 @@
     "memoryfn/typescript",
     "secfn/core",
     "secfn/server",
-    "secfn/runtime"
+    "secfn/runtime",
+    "secfn/docs"
   ],
   "scripts": {
     "build": "turbo run build",

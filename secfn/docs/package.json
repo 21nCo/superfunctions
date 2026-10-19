@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --port 6016",
     "validate": "docsfn validate --root .",
-    "test": "npm run check:references && npm run check:llms && vitest run --config ../../scripts/docs-site/vitest.config.ts",
+    "test": "npm run check:llms && node --test ../../scripts/docs-site/check-built-site.test.mjs ../../scripts/docs-site/atomic-write.test.mjs && vitest run --config ../../scripts/docs-site/vitest.config.ts",
     "generate:references": "node scripts/sync-references.mjs",
     "check:references": "node scripts/sync-references.mjs --check",
     "generate:llms": "node scripts/generate-llms.mjs",
@@ -21,7 +21,8 @@
     "@docsfn/provider-fs": "0.0.2",
     "@docsfn/svelte": "0.0.3",
     "@docsfn/sveltekit": "0.0.2",
-    "gray-matter": "^4.0.3"
+    "gray-matter": "^4.0.3",
+    "@searchfn/client": "0.3.0"
   },
   "devDependencies": {
     "@docsfn/cli": "0.0.2",
