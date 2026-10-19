@@ -37,6 +37,7 @@
     "flowfn/typescript",
     "logfn/*",
     "watchfn/typescript",
+    "watchfn/agents/browser",
     "catchfn/typescript",
     "catchfn/server/typescript",
     "contentfn/core",

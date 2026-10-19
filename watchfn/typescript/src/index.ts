@@ -50,12 +50,7 @@ export {
 export * from "./storage/time-series/retention";
 export * from "./storage/events/index";
 
-// Adapters
-export * from "./adapters/express";
-export * from "./adapters/fastify";
-export * from "./adapters/hono";
-export * from "./adapters/next";
-export * from "./adapters/sveltekit";
+// Framework integrations are available through ./adapters/* subpaths.
 
 // APM
 export * from "./collectors/apm/database-tracer";

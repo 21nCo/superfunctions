@@ -44,3 +44,17 @@ Browser retries/offline delivery, Python parity, substantive query/log/trace/bus
 - Full core suite59 passes; standalone source types and CJS/ESM/declaration builds pass.
 - Production audit fails with four low-severity entries: `cookie`, `@sveltejs/kit`, `@superfunctions/http-sveltekit`, and `@watchfn/core`, stemming from SvelteKit's transitive cookie dependency. npm reports no automatic fix. The acceptance script intentionally fails this gate and prints its findings. Framework dependencies currently install eagerly; opt-in integration packaging and SvelteKit-specific remediation remain required.
 - Initial failed attempts are retained as defects found: incompatible adapter peer pins, omitted CommonJS tarball files, wrong ESM declaration mapping, Next declaration subpath/ambient failures, and the audit above. No WatchFn PR/push or production-readiness claim is made.
+
+
+## Optional integrations and shared declarations — 2026-10-20
+
+This checkpoint supersedes the earlier package installation/declaration/audit limitations above; other readiness limitations remain open.
+
+- Framework integrations are explicit optional subpaths. Core-only installation no longer installs Express, Fastify, Hono, Next or SvelteKit. README/API examples document the breaking import migration.
+- Declaration generation bundles actual shared types in one multi-entry graph, preserving WatchFn class identity between the root and each adapter. ESM and CommonJS declarations use matching shared chunks. Independent per-entry declaration bundles would duplicate private class identity and are not used.
+- The lint command uses `tsc --noEmit`; running it after build no longer overwrites bundled runtime/declaration artifacts.
+- Clean scoped npm installation, shared closure builds, core/browser builds, core typecheck and all 76 tests pass (64 core, 12 browser).
+- Fresh core tarball: ESM and synchronous CommonJS pass on Node18.18.0,20.19.0,22.23.3; strict Node16/NodeNext declarations pass for both module formats, including TypeScript5.0.4 with contemporary Node typings. Core production audit reports zero vulnerabilities. See `watchfn/scripts/packed-core-acceptance.mjs`.
+- Five isolated framework consumers pass strict Node16/NodeNext declaration emission for both module formats using the root WatchFn instance with the selected adapter. ESM and synchronous CommonJS runtime cases also pass. See `framework-packaging.md` and the reproducible adapter script.
+- Browser package is registered in npm workspaces with a real test script and conditional exports. Its fresh tarball includes CJS, ESM, both declaration formats and IIFE; fresh CJS/ESM imports pass. Browser runtime delivery evidence remains in `browser-delivery-readiness.md`.
+- Core audit success does not remediate or establish an audit result for optional framework graphs. The previously observed SvelteKit cookie advisory and all broader original specification gates remain open. No deployment or full production-readiness claim is made.

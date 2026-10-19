@@ -134,14 +134,11 @@ await contextManager.run(
 
 ```typescript
 import express from "express";
-import {
-  watchFn,
-  createExpressMiddleware,
-  createExpressRouter,
-} from "@watchfn/sdk";
+import { watchFn } from "@watchfn/core";
+import { createExpressMiddleware, createExpressRouter } from "@watchfn/core/adapters/express";
 
 const app = express();
-const watcher = watchFn("my-api");
+const watcher = watchFn({ name: "my-api" });
 
 // Add automatic request tracking
 app.use(createExpressMiddleware(watcher));
@@ -154,10 +151,11 @@ app.use("/watch", createExpressRouter(watcher));
 
 ```typescript
 import Fastify from "fastify";
-import { watchFn, registerWatchFn } from "@watchfn/sdk";
+import { watchFn } from "@watchfn/core";
+import { registerWatchFn } from "@watchfn/core/adapters/fastify";
 
 const fastify = Fastify();
-const watcher = watchFn("my-api");
+const watcher = watchFn({ name: "my-api" });
 
 // Register WatchFn with hooks
 await registerWatchFn(fastify, watcher, { prefix: "/watch" });
@@ -167,9 +165,10 @@ await registerWatchFn(fastify, watcher, { prefix: "/watch" });
 
 ```typescript
 // app/api/watch/[...path]/route.ts
-import { watchFn, createNextHandler } from "@watchfn/sdk";
+import { watchFn } from "@watchfn/core";
+import { createNextHandler } from "@watchfn/core/adapters/next";
 
-const watcher = watchFn("my-app");
+const watcher = watchFn({ name: "my-app" });
 export const { GET, POST } = createNextHandler(watcher, {
   trackRequests: true,
 });

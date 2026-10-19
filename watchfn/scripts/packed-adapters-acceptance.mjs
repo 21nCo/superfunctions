@@ -33,6 +33,13 @@ try {
     const version = JSON.parse(readFileSync(join(root,'node_modules',framework,'package.json'),'utf8')).version;
     npm(['install','--ignore-scripts','--no-audit','--no-fund',...shared,pack(`packages/http-${name}`),`${framework}@${version}`], consumer);
     for (const other of Object.values(frameworks).filter(item => item !== framework)) assert.equal(existsSync(join(consumer,'node_modules',other)),false,`${name} must not install unrelated ${other}`);
+    npm(['install','--save-dev','--ignore-scripts','--no-audit','--no-fund','@types/node@20', ...(name === 'express' ? ['@types/express@4'] : [])], consumer);
+    const helpers = { express: 'createExpressMiddleware', fastify: 'createFastifyHooks', hono: 'createHonoMiddleware', next: 'createNextHandler', sveltekit: 'createSvelteKitHandler' };
+    const typed = `import {WatchFn} from '@watchfn/core'; import {${helpers[name]}} from '@watchfn/core/adapters/${name}';
+export const watch = new WatchFn({name:'typed',storage:'memory'}); export const integration = ${helpers[name]}(watch);`;
+    for (const extension of ['mts','cts']) writeFileSync(join(consumer, `consumer.${extension}`), typed);
+    for (const mode of ['Node16','NodeNext']) execFileSync(process.execPath, [join(root,'node_modules/typescript/bin/tsc'),'--declaration','--emitDeclarationOnly','--strict','--target','ES2022','--module',mode,'--moduleResolution',mode,'consumer.mts','consumer.cts'], {cwd:consumer,encoding:'utf8',stdio:['ignore','pipe','pipe']});
+    console.log(`${name}: strict root-to-adapter declarations passed`);
     const test = `
 async function check(WatchFn, adapter, load) {
   const watch = new WatchFn({name:'packed-${name}',storage:'memory',infra:{enabled:false},auth:{enabled:true,apiKey:'local-key'}}); watch.start();

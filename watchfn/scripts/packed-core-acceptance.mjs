@@ -1,7 +1,7 @@
 /** Build the shared closure and WatchFn before running this isolated consumer check. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,14 +9,15 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const temporary = mkdtempSync(join(tmpdir(), 'watchfn-packed-'));
 const npm = (args, cwd = temporary) => execFileSync(process.env.NPM_CLI ? process.execPath : 'npm', process.env.NPM_CLI ? [process.env.NPM_CLI, ...args] : args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 try {
-  const paths = ['packages/observability', 'packages/http', 'packages/db', ...['express', 'fastify', 'hono', 'next', 'sveltekit'].map(name => `packages/http-${name}`), 'watchfn/typescript'];
+  const paths = ['packages/observability', 'packages/http', 'packages/db', 'watchfn/typescript'];
   const tarballs = paths.map(path => {
     const [pack] = JSON.parse(npm(['pack', '--json', '--ignore-scripts', '--pack-destination', temporary], join(root, path)));
     return join(temporary, pack.filename);
   });
   writeFileSync(join(temporary, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
   npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...tarballs]);
-  npm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', '@types/node@20', '@types/express@4', '@types/react@19', '@types/react-dom@19']);
+  npm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', '@types/node@18']);
+  for (const name of ['express', 'fastify', 'hono', 'next', '@sveltejs/kit']) assert.equal(existsSync(join(temporary, 'node_modules', name)), false, `Core must not install ${name}`);
   const check = `
 async function check(WatchFn) {
   const watch = new WatchFn({name:'packed',storage:'memory',infra:{enabled:false},auth:{enabled:true,apiKey:'local-key'}});
@@ -40,7 +41,13 @@ async function check(WatchFn) {
   }
   writeFileSync(join(temporary, 'consumer.mts'), `import {WatchFn} from '@watchfn/core';
 const watch = new WatchFn({name:'typed',storage:'memory'}); void watch.httpRouter;`);
-  for (const mode of ['Node16', 'NodeNext']) execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts'], { cwd: temporary, stdio: 'pipe', encoding: 'utf8' });
+  writeFileSync(join(temporary, 'consumer.cts'), `import {WatchFn} from '@watchfn/core'; const watch = new WatchFn({name:'typed',storage:'memory'}); void watch.httpRouter;`);
+  for (const mode of ['Node16', 'NodeNext']) execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts'], { cwd: temporary, stdio: 'pipe', encoding: 'utf8' });
+  // Use Node declarations contemporary with the promised compiler floor;
+  // current @types/node releases can independently require a newer compiler.
+  npm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', '@types/node@18.16.19']);
+  for (const mode of ['Node16', 'NodeNext']) npm(['exec', '--yes', '--package=typescript@5.0.4', '--', 'tsc', '--noEmit', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts']);
+  console.log('TypeScript 5.0.4 consumer declarations passed');
   let audit;
   try { audit = JSON.parse(npm(['audit', '--omit=dev', '--json'])); }
   catch (error) {
