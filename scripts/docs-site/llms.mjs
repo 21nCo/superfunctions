@@ -1,7 +1,6 @@
 import { closeSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 /**
  * Resolve DocsFn from the consumer site so each site's published package pin is honored.
  * @param {string} cwd
@@ -81,30 +80,17 @@ function replaceArtifact(target, body) {
   }
 }
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const sourceBaseUrl = "https://github.com/21nCo/super-functions/blob/dev";
-
 /**
- * Keep LLM indexes navigable before a public documentation host is assigned:
- * without a public origin, point generated `/docs/...` page links at their GitHub sources.
- * The source directory comes from the site's configured `content.root` and `content.docsDir`.
+ * Keep LLM indexes navigable before a public documentation host is assigned: without a public
+ * origin, point generated `/docs/...` page links at their GitHub sources. Sites use the default
+ * `<product>/docs/content/docs` layout.
  * @param {string} text
  * @param {import("@docsfn/core").DocsManifest} manifest
- * @param {string | {content: {root: string, docsDir?: string}}} site loaded site config with an absolute
- *   `content.root`, or a product id whose site uses the conventional `<product>/docs/content/docs` layout
+ * @param {string} product
  * @param {string | undefined} canonicalUrl
  */
-export function withSourceLinks(text, manifest, site, canonicalUrl) {
+export function withSourceLinks(text, manifest, product, canonicalUrl) {
   if (canonicalUrl) return text;
-  const content = typeof site === "string"
-    ? { root: resolve(repositoryRoot, site, "docs"), docsDir: undefined }
-    : site.content;
-  const docsDir = resolve(content.root, content.docsDir ?? "content/docs");
-  const relativeDocsDir = relative(repositoryRoot, docsDir);
-  if (!relativeDocsDir || relativeDocsDir === ".." || relativeDocsDir.startsWith(`..${sep}`) || isAbsolute(relativeDocsDir)) {
-    throw new Error(`Docs directory is outside the repository: ${docsDir}`);
-  }
-  const sourceDir = relativeDocsDir.split(sep).map(encodeURIComponent).join("/");
   const sources = new Map(Object.values(manifest.pages)
     .filter((page) => page.id.startsWith("docs:"))
     .map((page) => [new URL(page.path, "https://docs.invalid").pathname, page.id.slice("docs:".length)]));
@@ -113,7 +99,7 @@ export function withSourceLinks(text, manifest, site, canonicalUrl) {
     const source = sources.get(url.pathname);
     if (!source) return match;
     const path = source.split("/").map(encodeURIComponent).join("/");
-    return `](${sourceBaseUrl}/${sourceDir}/${path}${url.search}${url.hash})`;
+    return `](https://github.com/21nCo/super-functions/blob/dev/${product}/docs/content/docs/${path}${url.search}${url.hash})`;
   });
 }
 
