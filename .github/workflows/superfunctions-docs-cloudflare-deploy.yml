@@ -11,6 +11,7 @@ on:
       - superfunctions-docs-live-*
       - superfunctions-docs-datafn-live-*
       - superfunctions-docs-extfn-live-*
+      - superfunctions-docs-clifn-live-*
       - superfunctions-docs-botfn-live-*
       - superfunctions-docs-langfn-live-*
       - superfunctions-docs-devfn-live-*
@@ -19,6 +20,7 @@ on:
       - superfunctions-docs-authfn-live-*
       - superfunctions-datafn-docs-live-*
       - superfunctions-extfn-docs-live-*
+      - superfunctions-clifn-docs-live-*
       - superfunctions-botfn-docs-live-*
       - superfunctions-langfn-docs-live-*
       - superfunctions-devfn-docs-live-*
@@ -28,6 +30,7 @@ on:
     paths:
       - datafn/docs/**
       - extfn/docs/**
+      - clifn/docs/**
       - botfn/docs/**
       - langfn/docs/**
       - devfn/docs/**
@@ -54,6 +57,7 @@ on:
           - all
           - datafn
           - extfn
+          - clifn
           - botfn
           - langfn
           - devfn
