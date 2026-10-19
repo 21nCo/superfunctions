@@ -1,0 +1,23 @@
+_conduct/shared-readiness-sf-next.md
+  s_e1c5fc1a65c0cf::t_ff0b804b63ddbb 53-62
+packages/observability/src/index.test.ts
+  s_e1c5fc1a65c0cf::t_c4e179bac8f86f 1,239-325
+packages/observability/src/index.ts
+  s_e1c5fc1a65c0cf::t_18453f55f42313 147-149,197,590-592,609,613-618,624-625,628,633-643
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4fa0196ffdfbf2fd99ae361aa8623416f72b188b",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
