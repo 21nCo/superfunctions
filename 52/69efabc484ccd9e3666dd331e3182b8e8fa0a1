@@ -1,0 +1,21 @@
+watchfn/.conduct/framework-packaging.md
+  s_e1c5fc1a65c0cf::t_6df7e593984567 1-23
+watchfn/scripts/packed-adapters-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_e236affe177796 1-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5269efabc484ccd9e3666dd331e3182b8e8fa0a1",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
