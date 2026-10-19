@@ -11,4 +11,6 @@ export default defineConfig({
   splitting: false,
   treeshake: true,
   outDir: "dist",
+  // These shared packages are ESM-only; bundle them for Node 18 CJS consumers.
+  noExternal: ["@superfunctions/envelope", "@superfunctions/errors"],
 });

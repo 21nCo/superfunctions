@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["ES2021", "DOM", "DOM.Iterable"], "skipLibCheck": false, "noEmit": true },
+  "include": ["src/http/roles.ts", "src/__tests__/roles-boundary.test.ts"]
+}

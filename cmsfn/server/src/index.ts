@@ -40,7 +40,7 @@ export interface CmsfnServerConfig extends CmsfnStudioConfig {
   authorizeStatus?: (req: IncomingMessage) => Promise<boolean>;
   /** Required for role endpoints. When set, POST /cmsfn/roles/* are registered. */
   db?: Adapter;
-  /** If set, role CRUD endpoints require this to return true. */
+  /** Role CRUD requires explicit true; missing, false or failed authorization denies access before body parsing. */
   authorizeRoles?: (req: IncomingMessage) => Promise<boolean>;
   /** If set, used by permission checks (e.g. publish, preview token) to load roles for the request. */
   getRolesForSubject?: (req: IncomingMessage) => Promise<CmsfnRole[]>;

@@ -11,4 +11,6 @@ export default defineConfig({
   splitting: false,
   outDir: "dist",
   external: ["cmsfn"],
+  // These shared packages are ESM-only; bundle them for Node 18 CJS consumers.
+  noExternal: ["@superfunctions/http", "@superfunctions/observability"],
 });

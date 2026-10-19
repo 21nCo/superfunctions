@@ -60,7 +60,9 @@
     "devfn/*",
     "packages/*",
     "filefn/examples/full-demo/*",
-    "filefn/examples/production/*"
+    "filefn/examples/production/*",
+    "cmsfn/core",
+    "cmsfn/server"
   ],
   "scripts": {
     "build": "turbo run build",

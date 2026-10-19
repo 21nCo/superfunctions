@@ -34,6 +34,7 @@ function minimalConfig(overrides: Partial<CmsfnServerConfig> = {}): CmsfnServerC
     desk: { kind: "divider" },
     auth: { kind: "custom" },
     db: memoryAdapter(),
+    authorizeRoles: async () => true,
     ...overrides,
   };
 }
@@ -214,5 +215,36 @@ describe("PHASE_02: Roles CRUD + enforcement", () => {
         close();
       }
     });
+  });
+});
+
+describe("role HTTP body boundary", () => {
+  it("returns oversized-body envelopes over a live socket, with and without Content-Length", async () => {
+    const server = createCmsfnServer(minimalConfig());
+    const { port, close } = await listen(server);
+    try {
+      for (const chunked of [false, true]) {
+        const payload = 'x'.repeat(65537);
+        const body = chunked ? new ReadableStream({ start(controller) {
+          controller.enqueue(new TextEncoder().encode(payload));
+          controller.close();
+        } }) : payload;
+        const response = await fetch(`http://127.0.0.1:${port}/cmsfn/roles/list`, {
+          method: "POST", body, duplex: "half",
+        } as RequestInit & { duplex: "half" });
+        expect(await response.json()).toMatchObject({ ok: false, error: { code: "PAYLOAD_TOO_LARGE" } });
+      }
+    } finally { close(); }
+  });
+
+  it("denies a role endpoint when no authorizer is configured", async () => {
+    const server = createCmsfnServer(minimalConfig({ authorizeRoles: undefined }));
+    const { port, close } = await listen(server);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/cmsfn/roles/list`, {
+        method: "POST", body: '{"dataset":"prod"}',
+      });
+      expect(await response.json()).toMatchObject({ ok: false, error: { code: "PERMISSION_DENIED" } });
+    } finally { close(); }
   });
 });

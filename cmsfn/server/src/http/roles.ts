@@ -3,27 +3,62 @@
  * Deterministic validation errors; envelope responses.
  */
 
-import type { IncomingMessage, ServerResponse } from "http";
-import type { CmsfnEnvelope } from "cmsfn";
+import type { IncomingMessage } from "http";
+import { err, type CmsfnEnvelope } from "cmsfn";
+import { createRouteContext, PayloadTooLargeError } from "@superfunctions/http";
 import { rolesList, rolesUpsert, rolesDelete } from "../storage/roles.js";
 import type { RolesStorageConfig } from "../storage/roles.js";
 
 export interface RolesHandlerConfig extends RolesStorageConfig {
-  /** Optional: if provided and returns false, respond PERMISSION_DENIED. */
+  /** Must explicitly return true to allow role management; missing or failed authorization denies access. */
   authorizeRoles?: (req: IncomingMessage) => Promise<boolean>;
 }
 
-async function parseJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
-  if (!raw.trim()) return {};
+/** Role management requests are bounded independently of content uploads. */
+export const ROLE_BODY_MAX_BYTES = 64 * 1024;
+
+async function readAuthorizedBody(
+  config: RolesHandlerConfig,
+  req: IncomingMessage
+): Promise<CmsfnEnvelope<Record<string, unknown>>> {
+  // Do not attach readers or construct a body stream before authorization.
   try {
-    return JSON.parse(raw);
+    if (!config.authorizeRoles || await config.authorizeRoles(req) !== true) {
+      return err("PERMISSION_DENIED", "Permission denied");
+    }
   } catch {
-    return null;
+    return err("PERMISSION_DENIED", "Permission denied");
+  }
+
+  try {
+    // Returning this iterator leaves the socket alive so an oversized request
+    // can receive its error envelope. The shared parser owns byte accounting.
+    const iterator = req.iterator({ destroyOnReturn: false });
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const item = await iterator.next();
+        if (item.done) controller.close();
+        else controller.enqueue(typeof item.value === "string" ? Buffer.from(item.value) : item.value);
+      },
+      async cancel() { await iterator.return?.(); },
+    }, { highWaterMark: 0 });
+    const headers = new Headers();
+    if (req.headers["content-length"] !== undefined) {
+      headers.set("content-length", req.headers["content-length"]);
+    }
+    const request = new Request("http://cmsfn.local/roles", {
+      method: "POST", headers, body: stream, duplex: "half",
+    } as RequestInit & { duplex: "half" });
+    const body: unknown = await createRouteContext(request, {}, { maxBodyBytes: ROLE_BODY_MAX_BYTES }).json();
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return err("VALIDATION_FAILED", "Request body must be a JSON object");
+    }
+    return { ok: true, result: body as Record<string, unknown> };
+  } catch (error) {
+    if (error instanceof PayloadTooLargeError) {
+      return err("PAYLOAD_TOO_LARGE", "Role request exceeds 65536 bytes");
+    }
+    return err("VALIDATION_FAILED", "Invalid JSON request body");
   }
 }
 
@@ -34,13 +69,9 @@ export async function handleRolesList(
   config: RolesHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<{ roles: import("cmsfn").CmsfnRole[] }>> {
-  if (config.authorizeRoles) {
-    const allowed = await config.authorizeRoles(req);
-    if (!allowed) {
-      return { ok: false, error: { code: "PERMISSION_DENIED", message: "Permission denied", details: {} } };
-    }
-  }
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readAuthorizedBody(config, req);
+  if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const dataset = body?.dataset;
   if (typeof dataset !== "string" || dataset.trim().length === 0) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "dataset is required", details: { path: "dataset" } } };
@@ -55,13 +86,9 @@ export async function handleRolesUpsert(
   config: RolesHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<{ role: import("cmsfn").CmsfnRole }>> {
-  if (config.authorizeRoles) {
-    const allowed = await config.authorizeRoles(req);
-    if (!allowed) {
-      return { ok: false, error: { code: "PERMISSION_DENIED", message: "Permission denied", details: {} } };
-    }
-  }
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readAuthorizedBody(config, req);
+  if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const role = body?.role;
   if (role == null) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "role is required", details: { path: "role" } } };
@@ -77,13 +104,9 @@ export async function handleRolesDelete(
   config: RolesHandlerConfig,
   req: IncomingMessage
 ): Promise<CmsfnEnvelope<Record<string, never>>> {
-  if (config.authorizeRoles) {
-    const allowed = await config.authorizeRoles(req);
-    if (!allowed) {
-      return { ok: false, error: { code: "PERMISSION_DENIED", message: "Permission denied", details: {} } };
-    }
-  }
-  const body = (await parseJsonBody(req)) as Record<string, unknown>;
+  const parsed = await readAuthorizedBody(config, req);
+  if (!parsed.ok) return parsed;
+  const body = parsed.result;
   const roleId = body?.roleId;
   if (roleId === undefined || roleId === null) {
     return { ok: false, error: { code: "VALIDATION_FAILED", message: "roleId is required", details: { path: "roleId" } } };
