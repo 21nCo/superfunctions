@@ -1,0 +1,493 @@
+# DevFn
+
+> Trusted local profiles, process and Compose lifecycle, port leases, readiness, and localhost routes.
+
+This file concatenates the full text of every documentation page so it can be loaded into
+an LLM-based assistant in a single shot. For a page index, see /docs/llms.txt.
+
+# Documentation
+
+<!-- page:docs:configuration.md path:/docs/configuration -->
+# Configuration
+
+> Declare project identity, ports, processes, Compose services, and profiles.
+
+
+DevFn discovers `devfn.config.ts`, `.js`, `.mjs`, `.cjs`, or `.json` while walking upward. Each manifest has `version: 1`, a stable `project.id`, and named profiles. It may define ports, native processes, Compose services, hostname routes, prerequisites, environment outputs, and a repository-relative organization policy.
+
+JavaScript-family manifests are executable but must be self-contained; imports and `require()` are rejected. JSON is parsed as data. Both forms require digest-bound trust before loading. Repository-relative paths reject absolute paths, `..` traversal, and symlink escape. References and dependency cycles are validated before lifecycle mutation.
+
+A port can select exact, preferred, range, ephemeral, loopback/public, or contiguous-block allocation. Processes declare an adapter, command or script, dependencies, readiness, environment allowlist, and optional secret names. Compose services select a declared service, port mappings, health, and persistence. Profiles select these resources transitively and may enable the shared proxy. Hostname routes default to `.localhost`; a route can instead select a machine-registered development `domain`, a shared `host` label, and a `path` with prefix or exact matching.
+
+Before startup, DevFn generates `DEVFN_PORT_<NAME>` for each selected port (plus its configured `env` alias) and `DEVFN_URL_<NAME>` for HTTP health ports and routed targets. Profile values, node values, process `command` arguments, package scripts, and command-health arguments can refer to these and other declared keys with `{{env.NAME}}`. Missing references and cycles fail before any lease, file, process, or service mutation. Arguments are passed as literal argv without a shell. Credentials must stay out of literals and argv: URL userinfo, credential headers, credential-named flags, form fields, and JSON keys are rejected, so pass secrets through `envAllowlist` and `secretEnv`.
+
+Read the [complete configuration reference](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/configuration.md) for field shapes, adapter values, health check examples, [endpoint templates](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/configuration.md#startup-endpoint-and-template-resolution), hostname and domain routing, and policy rules. Treat examples as a starting point and verify every process command before trusting a manifest.
+
+---
+
+<!-- page:docs:getting-started.md path:/docs/getting-started -->
+# Getting started
+
+> Initialize, trust, inspect, and start a local profile.
+
+
+Install or invoke `@devfn/cli` from the repository you want to run. `init` previews detected configuration; review it before accepting generated files. The first load of any manifest needs `--trust`, even for JSON, because it can declare lifecycle commands. Trust is bound to the exact manifest digest, so an edit requires review and trust again.
+
+```sh
+npx @devfn/cli init
+# Review the preview, then write the manifest:
+npx @devfn/cli init --yes
+npx @devfn/cli doctor --trust
+npx @devfn/cli up --profile default
+npx @devfn/cli status --json
+npx @devfn/cli logs app
+npx @devfn/cli down
+```
+
+Profiles containing public processes or ports also require `--allow-public` on every start. `up --json` emits one lifecycle receipt with state, instance and invocation IDs, allocations, managed resources, and resolved URLs. Read-only commands return structured command data in JSON mode; failures use stable `DEVFN_*` codes and exit nonzero. `devfn restart` checks the profile, registered domains, and replacement ports before stopping a ready instance, then starts it again from the current working tree; if that start fails, the previous processes are not relaunched.
+
+Runtime files default to `.devfn/` with owner-only permissions. If the manifest configures `environmentOutputs`, inspect and back up any pre-existing target file before starting: DevFn overwrites configured outputs and cannot restore their former contents. See the [migration guide](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/migration.md).
+
+---
+
+<!-- page:docs:index.md path:/docs -->
+# DevFn
+
+> Trusted lifecycle orchestration for local development.
+
+
+DevFn coordinates native application processes, Docker Compose infrastructure, machine-local port leases, readiness, logs, diagnostics, and stable `.localhost` or machine-registered development-domain URLs through one command contract. It identifies each worktree instance so concurrent local environments do not silently share mutable resources.
+
+Start with [getting started](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/getting-started.md), then define a [manifest](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/configuration.md) and operate a [profile](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/lifecycle.md). Review [trust and exposure](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/security.md) before loading a manifest or opening a public port. Existing projects should follow the [migration guide](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/migration.md).
+
+DevFn does not replace HostFn deployment, browser evidence, ExtFn extension semantics, Docker Compose, Wrangler, or Xcode. It coordinates local runtimes through explicit adapters. Version 0.1 uses CLI-managed state rather than a daemon.
+
+---
+
+<!-- page:docs:lifecycle.md path:/docs/lifecycle -->
+# Lifecycle and diagnostics
+
+> Start, inspect, stop, and recover one worktree instance.
+
+
+`devfn up` plans resources in dependency order, reserves ports before mutation, starts selected native processes and Compose services, verifies readiness, registers proxy routes, and returns a machine-readable receipt. If an invocation fails, rollback targets resources created by that invocation. `status`, `logs`, and `doctor` expose live state and diagnostics; `down` stops only the exact worktree instance. `restart` validates the selected profile, registered domains, and replacement ports while the ready instance keeps running, then stops it and starts it again from the current working tree; a failed restart does not relaunch the previous processes. Status reports a ready instance as `degraded` when its declared startup inputs, Compose configuration, Caddy owner, or committed routes no longer match its receipt, and the next `up` replaces it.
+
+There is no background daemon in version 0.1. Receipts, process logs, and generated runtime outputs live under the configured runtime directory (`.devfn/` by default). Configured `environmentOutputs[].path` files can live elsewhere within the repository. Machine-wide trust records, port registry, lifecycle locks, and proxy state instead use `$XDG_STATE_HOME/devfn`, falling back to `~/.local/state/devfn`. Account for both locations when inspecting or cleaning up state. Process ownership uses a PID birth signature where the host supplies one and judges each recorded process with its whole process group, so cleanup refuses a reused PID. When a live process's identity cannot be verified, teardown reports a cleanup error, leaves the receipt `degraded`, and keeps its leases and routes until a later `down` can verify or stop it. `devfn ports gc` reconciles leases and removes the routes of instances whose recorded owners are all verified dead, such as a deleted worktree.
+
+Ordinary `down` does not delete persistent Docker volumes. It is also not a general reset command. Explicit configured environment outputs may have overwritten files that existed before adoption; inspect them before manual cleanup. The [core package](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/core.md), [process supervisor](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/processes.md), and [migration guide](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/migration.md) describe lifecycle boundaries.
+
+---
+
+<!-- page:docs:migration.md path:/docs/migration -->
+# Migrating a project
+
+> Adopt DevFn while preserving existing startup and data paths.
+
+
+Preserve existing scripts and Compose data. Run `devfn init`, inspect confirmed and proposed detections, then edit the manifest until every command, dependency, port, profile, and health check is explicit. Run `devfn doctor --trust` and resolve prerequisites and exact-port collisions before the first start.
+
+Back up any pre-existing path named by `environmentOutputs[].path`; DevFn overwrites configured outputs and does not restore previous contents. Inspect the resolved Compose configuration as well: DevFn derives the Compose project name from the project prefix and worktree owner, so a project-scoped named volume can resolve to a new, empty volume. Back up existing database contents before the first start. Start with a minimal profile, compare behavior against manual startup, then add full, OAuth, test, or docs profiles. Verify that `devfn down` preserves databases and volumes before making it the daily workflow.
+
+To roll back, run `down`, inspect the configured runtime directory and output paths, and remove only DevFn-generated files that did not replace user content. Then remove the manifest and resume the preserved scripts. The [source migration guide](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/migration.md) gives the complete checklist.
+
+---
+
+<!-- page:docs:packages.md path:/docs/packages -->
+# Packages
+
+> Map DevFn's eight packages to their responsibilities.
+
+
+| Package | Responsibility |
+| --- | --- |
+| `@devfn/cli` | `devfn` command, initialization, diagnostics, lifecycle, and JSON receipts. |
+| `@devfn/core` | Dependency plans, journals, receipts, rollback, and diagnostics. |
+| `@devfn/config` | Manifest discovery, validation, digest trust, and policy. |
+| `@devfn/ports` | Lock-protected machine port leases, reconciliation, and reports. |
+| `@devfn/processes` | Native process supervision, logs, readiness, and ownership. |
+| `@devfn/compose` | Worktree-scoped Docker Compose infrastructure. |
+| `@devfn/proxy` | Shared Caddy route control for `.localhost` and registered development-domain names. |
+| `@devfn/testing` | Deterministic fixtures and fake listeners. |
+
+The packages expose separate public entry points. Use the CLI for the supported end-to-end workflow; lower-level packages are for integrations that preserve DevFn's identity, trust, and ownership contracts. Detailed source guides are under [reference](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/index.md).
+
+---
+
+<!-- page:docs:ports-and-proxy.md path:/docs/ports-and-proxy -->
+# Ports and localhost routes
+
+> Allocate per-worktree ports and publish concrete local URLs.
+
+
+`@devfn/ports` uses machine-local locking and worktree identity to allocate and reconcile exact, preferred, ranged, ephemeral, and contiguous-block ports. `exact: true` fails closed on collision. Public port exposure needs an explicit manifest choice and `--allow-public` on each start. Inspect allocations with `devfn ports` and the full machine registry with `devfn ports report`.
+
+`@devfn/proxy` manages one lock-protected Caddy route registry with concrete hostnames and loopback targets. It validates generated configuration before reload, returns 404 for unknown hosts, and refuses to take over an unrelated Caddy admin endpoint. Caddy listens on loopback only: ports 8080 and 8443 on macOS, which appear in published URLs, and 80 and 443 on Linux, which need `net.ipv4.ip_unprivileged_port_start` at or below 80 or `cap_net_bind_service` on the Caddy binary. A service already leasing a listener port must move to another port before a proxy route is activated.
+
+Hostname templates accept `{project}` and `{instance}` and resolve to `.localhost` by default. Other development domains need explicit machine registration with `devfn domains register dev.example.test --tls internal`; the domain must already resolve only to loopback, and DevFn never edits DNS, hosts files, or trust stores. A registered route gets `<host>-<worktree>-<suffix>.<domain>` per worktree, plus `<host>.<domain>` for the primary worktree, and can match a path prefix or exact path, optionally stripping the prefix. Internal TLS uses Caddy's local CA, which clients must trust explicitly; certificate TLS uses PEM files whose DNS subject alternative names cover every generated hostname.
+
+DevFn returns HTTP URLs only for explicit hostname routes or ports named by HTTP health checks. A database or arbitrary TCP listener remains a transport allocation rather than an invented HTTP URL. The [configuration reference](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/configuration.md) covers port and hostname fields, while [ports](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/ports.md) and [proxy](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/proxy.md) document package behavior.
+
+---
+
+<!-- page:docs:processes-and-compose.md path:/docs/processes-and-compose -->
+# Processes and Compose
+
+> Run native applications and worktree-scoped infrastructure.
+
+
+Native process adapters include `command`, `npm`, `pnpm`, `turbo`, `wrangler`, `xcode`, and `extfn`. Commands run locally under supervision with declared working directory, dependency order, environment, ports, readiness, and shutdown timeout. Turbo, Wrangler, and ExtFn resolve project-local binaries without downloading missing tools; pnpm follows the repository's Corepack pin. Yarn and Bun discovery is proposed and does not create guessed processes.
+
+Compose services use Docker Compose 2.24.4 or newer. DevFn names the Compose project with a digest of the project prefix and the worktree owner, generates host-port overrides with loopback mapping by default, starts only the requested service with `--no-deps`, and preserves persistent volumes during ordinary cleanup. Services with `secretEnv` disable Docker log persistence and cannot use log-pattern readiness. Sibling Compose services on a shared network receive container-context `DEVFN_URL_*` values such as `http://web:8080`, while native processes receive loopback URLs. Ready receipts fingerprint the effective Compose service and its referenced definitions, so an edited Compose source degrades status and the next start restarts the owned service.
+
+Readiness checks may use HTTP, TCP, command, or log patterns. Local-process exposure verification needs `lsof` on macOS/Linux or `netstat` on Windows. Run `doctor` to surface missing prerequisites. See [processes](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/processes.md), [Compose](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/compose.md), and [configuration](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/configuration.md) for exact settings.
+
+---
+
+<!-- page:docs:reference/cli.md path:/docs/reference/cli -->
+# @devfn/cli
+
+> Source package guide for @devfn/cli.
+
+
+DevFn runs heterogeneous local environments through one command contract while keeping application processes native and infrastructure Compose-backed where appropriate.
+
+```bash
+npx @devfn/cli init
+npx @devfn/cli init --yes
+npx @devfn/cli doctor --trust
+npx @devfn/cli up --profile default
+npx @devfn/cli status --json
+npx @devfn/cli logs app
+npx @devfn/cli down
+npx @devfn/cli domains register dev.example.test --tls internal
+npx @devfn/cli domains list
+```
+
+Registering a domain requires it to resolve already, and only to loopback addresses (`127.0.0.1`, or `::1` where available). A reserved name such as `dev.example.test` does not resolve until you configure local DNS for it yourself; DevFn never edits resolver, hosts or trust-store configuration.
+
+Profiles that declare public processes or ports require `--allow-public` on every start.
+`devfn ports gc` reconciles leases and retires listener claims with conclusive evidence. It removes the proxy routes of an instance only when its recorded process and container owners, including those of failed or interrupted starts, are all verified dead (for example a deleted worktree); an owner whose identity cannot be read counts as running. Finally, gc collects released records.
+`devfn restart` validates the selected profile and registered domains, then reserves replacement ports before stopping a ready instance. A rejected domain, route, or port selection leaves that instance running. After those checks it stops the instance and starts it again from the current working tree. If that start fails, the previous processes are not relaunched and the error says so. Cleanup of the failed start can itself fail and leave some of its new processes or containers running; when the error reports cleanup errors, run `devfn down` again.
+
+The first load of any manifest requires `--trust` because JSON and executable manifests can both declare lifecycle commands. Trust is bound to the manifest digest, so edits require review and trust again. Lifecycle mutations return receipts in JSON mode; read-only commands return command-specific structured data, and failures use stable error codes. Runtime files are written with restrictive permissions under `.devfn/` by default.
+
+For automation, `devfn up --json` emits one lifecycle receipt object containing `state`, `instanceId`, `invocationId`, allocations, managed processes/services, and resolved URLs. Failures emit `{ "ok": false, "error": { "code": "DEVFN_*", "message": "..." } }` and exit nonzero. Treat fields not documented here as additive.
+
+DevFn v0.1 uses transactional CLI-managed state rather than a daemon. Runtime logic is platform-aware; macOS and Linux are the validated first-release hosts, while Windows process ownership is implemented but requires platform CI before it is declared supported.
+
+---
+
+<!-- page:docs:reference/compose.md path:/docs/reference/compose -->
+# @devfn/compose
+
+> Source package guide for @devfn/compose.
+
+
+Requires Docker Compose 2.24.4 or newer. Starts only declared Compose services with `--no-deps` under a project name whose readable prefix is case folded and whose digest includes the exact prefix and opaque owner bytes; case-distinct prefixes remain separate even if their readable names normalize alike. It replaces source mappings with loopback or explicitly public DevFn host-port mappings while retaining conventional container ports, and never removes persistent volumes during ordinary cleanup. Secret-bearing services disable Docker log persistence.
+
+Ready receipts fingerprint the selected effective Compose service, referenced volume/network/config/secret definitions, selected config-file contents, and noncredential environment values after Compose interpolation. Default and include-scoped env files participate when they affect that service; assignments with no effect and unrelated services do not. Ordered dotenv declarations preserve the value captured by an earlier assignment, while credential-derived config content is masked and an ordinary fallback remains part of the digest. Compose source references to inherited host variables such as `HOME` require an explicit `envAllowlist` entry, so ambient values do not silently enter a receipt. Credential-named and `secretEnv` values are excluded from the fingerprint; literal nonsecret fields retain their value even when the same bytes appear in a secret. Put credentials in `secretEnv`, not in Compose config files. Source graphs, alias expansion and local path interpolation are bounded before Compose reads them for endpoint planning. On Compose 2.24.4, a bounded source inventory supplies uninterpolated field provenance when its `--no-interpolate` option cannot open an interpolated `env_file` or bind-mount path.
+
+---
+
+<!-- page:docs:reference/config.md path:/docs/reference/config -->
+# @devfn/config
+
+> Source package guide for @devfn/config.
+
+
+Validated DevFn project manifests and organization port-policy contracts. Every manifest can declare lifecycle commands and must be reviewed and explicitly trusted before the DevFn CLI loads its exact digest; executable manifests additionally must be self-contained.
+
+---
+
+<!-- page:docs:reference/configuration.md path:/docs/reference/configuration -->
+# Configuration contract
+
+> Manifest fields, ports, processes, services, profiles, and policy.
+
+
+DevFn discovers `devfn.config.ts`, `.js`, `.mjs`, `.cjs`, or `.json` while walking upward from the current directory. JavaScript-family manifests are executable code, require digest-bound trust, and must be self-contained (no imports or `require()`). JSON is data-only.
+
+## Top-level manifest
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `version: 1` | yes | Manifest schema version. |
+| `project.id` | yes | Stable semantic project identity. |
+| `project.name` | no | Human display name. |
+| `defaultProfile` | no | Profile selected when `--profile` is omitted. Without it, a `profiles.default` entry is required. |
+| `runtimeDir` | no | Repository-relative generated-state root; defaults to `.devfn`. |
+| `ports` | no | Named `PortSpec` map. |
+| `processes` | no | Named native process map. |
+| `services` | no | Named Docker Compose service map. |
+| `profiles` | yes | Named selections of processes/services plus non-secret environment and proxy choice. |
+| `hostnames` | no | Explicit local hostname routes to named ports. |
+| `prerequisites` | no | Required command/version diagnostics, optionally profile-scoped. |
+| `environmentOutputs` | no | Repository-relative dotenv or JSON runtime files and owner-only permission modes. |
+| `policy` | no | Repository-relative organization policy JSON path. |
+
+Every repository-relative path rejects absolute paths, `..` escape, and runtime symlink escape. References to ports, processes, services, profiles, dependencies, and hostname targets must resolve during validation. An explicitly configured but missing policy is an error; only the conventional unconfigured policy path is optional.
+
+## Ports
+
+A port can specify `protocol` (`tcp` or `udp`), `preferred`, `range: [start, end]`, `exact`, `ephemeral`, `exposure` (`loopback` or `public`), conventional container `internal` port, contiguous `block` name, and exported `env` key.
+
+- `exact: true` requires `preferred` and fails closed on collision.
+- `ephemeral: true` cannot be combined with fixed preferences.
+- Requirements sharing `block` receive a contiguous allocation.
+- Public ports require `devfn up --allow-public`.
+
+## Native processes
+
+`adapter` is one of `command`, `npm`, `pnpm`, `turbo`, `wrangler`, `xcode`, or `extfn`. A process can specify `command`, package-manager `script`, repository-relative `cwd`, non-secret literal `env`, inherited `envAllowlist`, redacted `secretEnv`, named `ports`, `dependsOn`, `health`, `shutdownTimeoutMs`, and `exposure` (`local` or `public`).
+
+Turbo, Wrangler, and ExtFn resolve project-local binaries with offline npm execution; pnpm runs through Corepack so the repository's `packageManager` pin is honored. Adapters never download a missing tool during startup. `doctor` reports the missing prerequisite instead. Discovery marks Yarn and Bun as proposed and emits no guessed npm process; add an explicit command adapter after review.
+
+Local-process exposure verification requires `lsof` on macOS and Linux; Windows uses `netstat`. Run `devfn doctor` before startup to detect a missing listener-inspection tool.
+
+Sensitive-looking keys cannot be literal manifest values. Numbered keys such as `API_TOKEN2` and compact names ending in an unambiguous credential word such as `MYPASSWORD`, `GITHUBTOKEN`, `MYAPIKEY`, or `MYACCESSKEY` follow the same rule. They must be inherited by name in `envAllowlist` and repeated in `secretEnv`, which activates streaming redaction before logs are persisted. PostgreSQL `PGPASSWORD` and qualified `pg_pass`/`pg_pwd` casing variants follow this rule. URL userinfo and credential-bearing headers such as `Authorization: Bearer` are rejected in resolved literals and argv, including when assembled from templates. Curl short-option clusters and cookie assignments receive the same validation; ordinary `--cookie theme=dark` and `--cookie=theme=dark` values are allowed. Public processes require `--allow-public`.
+
+## Compose services
+
+A service uses `adapter: "compose"`, Compose `service`, optional repository-relative `file`, project-name prefix, named host-port-to-container-port mappings, dependencies, health, `persistent`, non-secret `env`, `envAllowlist`, and `secretEnv`. DevFn adds a digest of the exact project prefix and opaque owner to the Compose project name, keeping separate accepted prefixes and owners isolated.
+
+DevFn writes a generated override with loopback host mappings unless the named port explicitly selects public exposure. It starts only the requested service with `--no-deps`. Services declaring `secretEnv` use Docker's `none` logging driver and therefore cannot use log-pattern health checks. Ordinary cleanup stops/removes only invocation-owned containers and never passes a volume-deletion flag.
+
+## Health checks
+
+- HTTP: `{ type: "http", port: "app", path: "/health", expectedStatus: 200, timeoutMs: 120000 }`
+- TCP: `{ type: "tcp", port: "postgres" }`
+- Command: `{ type: "command", command: ["node", "scripts/ready.mjs"] }`
+- Log: `{ type: "log", pattern: "ready on" }`
+
+HTTP URLs are returned only for explicitly routed hostnames or ports named by HTTP health checks. Other services remain transport allocations visible through `devfn ports`; DevFn does not invent an HTTP URL for a database or arbitrary TCP listener.
+
+## Startup endpoint and template resolution
+
+`@devfn/core` exports `resolveEndpointTemplates({ config, plan, ownerId, ports, composeNetworks? })`. It is a pure resolver: `ownerId` is an opaque lifecycle owner supplied by the caller, and `ports` contains the selected profile's leased port numbers. `composeNetworks` maps selected service names to effective Docker network names. Supply it to publish Compose DNS URLs; absent network evidence omits those URLs and rejects references to them. The orchestrator reads the effective networks from `docker compose config` before creating state. It returns generated values, the profile environment, direct URLs, and resolved environment and command arguments for each selected node. The current CLI supplies its existing worktree instance ID as the owner. Callers of the resolver may use more than one owner per checkout. The resolver does not derive an owner from a path or start resources.
+
+For each selected port, DevFn generates `DEVFN_PORT_<NAME>` (uppercase, punctuation replaced by `_`) and its configured `ports.<name>.env` alias. An HTTP health port, or a selected proxy hostname target, also gets `DEVFN_URL_<NAME>` as a direct loopback endpoint for host processes and owner-only output files. For Compose services on the same Compose project network, that key instead names the sibling service and its internal port, such as `http://web:8080`; `composeUrls` exposes these container-context values separately from `directUrls`. The leased host port remains in `DEVFN_PORT_<NAME>`. A route's HTTPS setting does not change its direct HTTP upstream; an explicitly direct HTTPS health endpoint retains HTTPS. Once all nodes are ready, the receipt's public `urls` may prefer installed proxy routes. A TCP or UDP allocation without an HTTP declaration has no invented URL.
+
+Generated reserved values cannot be overridden. Profile literals establish defaults; a process or service literal with the same exact key wins for that node. Differently cased keys that collide after case folding are rejected. Selected inherited keys and platform base keys follow the same case-folded collision rule before startup, so macOS, Linux and Windows resolve the same map. Profile references resolve against generated and profile values before node overrides, so a node override does not retroactively change another profile value. The generated `DEVFN_*` namespace is reserved. `HOST` is reserved in profiles and local native processes: a local native process always receives `HOST=DEVFN_HOST=127.0.0.1`. An explicitly public native process may set or inherit `HOST` after public exposure is authorized. A Compose service may set `HOST` to its container bind address, including `0.0.0.0`. Local native node values, command argv and command-health argv may reference either generated bind key. These local process bind keys are not profile or Compose template inputs. Port environment aliases cannot use reserved keys. Colliding normalized port keys are rejected. The owner-only environment output file contains the resolved profile and generated non-secret values; node-specific values go only to that node.
+
+Use `{{env.NAME}}` to refer explicitly to a generated or previously declared environment key in a profile value, node value, process `command` argument, package-manager `script`, or command-health argument. References inside each environment map may be forward references; cycles and missing references fail before any lease, file, process, or service mutation, while a self-reference to a generated port alias resolves to its generated value. Profile values can refer to generated values; node values and argv can also refer to resolved profile and node values. Compose service environment references use the container-context URL for sibling services; Compose command-health argv runs on the host and uses host-side direct URLs. Inherited `envAllowlist` values are delivered only through the existing process or Compose secret channel and cannot be template sources. Sensitive keys must be declared in `secretEnv`; credential values must not be placed in literals or argv. Empty or NUL argv values and malformed `{{...}}` references are rejected for all selected command sources. All other characters, including `$`, backticks, semicolons, pipes and ampersands, stay literal argv data; DevFn does not invoke a shell.
+
+HTTP readiness that names a leased `port` probes its direct loopback URL at startup, status and retry, even when a `url` is also configured. The configured URL's path and query are retained; an HTTPS proxy route uses its direct HTTP upstream, while a genuinely direct HTTPS endpoint keeps HTTPS. A separate `path` is checked for credentials and validated against the configured URL origin before a leased origin is substituted, then appended by the existing URL path rule. URL-only readiness remains an explicit URL check, except that a URL aimed at a selected proxy route is rejected before startup: that route is installed only after nodes are ready. Compose interpolation receives the same resolved generated, profile and service values before `docker compose up`; Compose files must explicitly map those values into container `environment` entries when the container needs them. Each Compose service receives container-context sibling URLs only for services in the same owner-specific project with a shared effective Compose network. The default network counts when Compose assigns it; disjoint explicit networks and network namespace modes do not provide sibling DNS. Independent projects are allowed; an unreachable reference is rejected before mutation. An unmanaged pre-existing container is reused only when its effective environment matches the current Compose configuration, allowing only unchanged image defaults beyond the current keys; removed generated, profile, and service literals are rejected before startup. A native dependent can use a Compose service's leased host URL after that service becomes ready. URL userinfo and sensitive query, fragment or path assignment keys in manifest environment, argv, or effective health URLs are rejected without printing credentials, including URL forms normalized by Node's URL parser and percent-encoded values; credential argv flags such as `--token` are also rejected. Aliases `key`, `pass`, `pwd`, `auth`, `sig`, `token`, `secret`, `password`, and `credential` are sensitive at separator or camel/acronym boundaries, including qualified forms such as `db_password`, `DB_PASS`, and `DBSig`. Compact forms use the documented qualifiers in the core package README; ordinary words such as `monkey` and `compass` remain data. Pass credentials through `envAllowlist` and `secretEnv`. A ready receipt fingerprints declared startup inputs, selected port declarations, and the effective Compose service and referenced volume, network and config definitions. Compose resolves default and include-scoped interpolation and env files before fingerprinting; inherited host variables in selected Compose source require an explicit envAllowlist entry, and credential-named and secretEnv values are redacted before hashing. An effective source or env-file change degrades status and causes a safe owned restart on retry; changes discarded by Compose merge rules and byte-equivalent restoration retain the same fingerprint. Missing optional Compose env files are allowed; required files must exist. Existing v0.1 receipts without startup or port-spec fingerprints keep their prior readiness path.
+
+For native commands, package scripts and command-health argv, a colon-delimited credential pair following `--user`, `--username`, `--proxy-user`, `-u` or `-U` is rejected in split, equals and attached forms. Plain user names remain valid. Percent-encoded credential URLs and headers are also rejected; encoding does not turn them into safe non-secret literals. This inspection does not invoke a shell or alter argument bytes.
+
+Form arguments with credential-named fields and JSON bodies with credential-named keys are rejected in those same three argv sources, including nested objects, JSON-escaped keys, percent-encoded bodies, incomplete JSON bodies and shell-quoted JSON in package scripts. Ordinary non-secret JSON remains argv data. Deliver credentials through `envAllowlist` and `secretEnv` instead of embedding them in a command or readiness check.
+
+Before reusing an unmanaged Compose container with `--no-recreate`, DevFn also compares Compose's effective service config hash with the hash persisted on that container. A changed command, published port, image, or other startup setting is rejected even when the environment is unchanged. Missing or malformed hash evidence fails closed before `up`.
+
+## Profiles and hostnames
+
+Profiles select named processes/services, add non-secret environment, and opt into the shared proxy with `proxy: true`. Dependencies are included transitively and started topologically. Cycles fail before mutation.
+
+A hostname maps a route name to `target`, optional `hostname` template, `tls` (`off` or `internal`), and optional `profiles` filter. Templates accept `{project}` and `{instance}`. The route uses a stable DNS-safe component derived from an opaque owner; owners differing only by case receive distinct route names; the original owner value remains in ownership records and `DEVFN_INSTANCE_ID`. A configured static hostname receives an owner-derived label before `.localhost`, so two owners cannot publish the same route. Every resolved name must end in `.localhost` unless the route explicitly refers to a machine-registered domain.
+
+`devfn domains register dev.example.test --tls internal` records a user-owned development domain in the machine state directory, bound to the current repository identity and project. Registration requires every current name-resolution answer for the domain to be loopback, so a reserved name such as `dev.example.test` must already resolve to loopback through local DNS or a hosts-file entry; a new or changed selected route must also resolve exclusively to loopback before startup and Caddy reload. Existing routes stay installed when another instance stops, even if their DNS later becomes unavailable. DNS with no answers, mixed local/public answers, or a nonloopback answer fails closed for route activation. The command does not edit DNS, `/etc/hosts`, the OS resolver, or a trust store. `devfn domains list` and `devfn domains unregister <domain>` inspect or remove registrations; removal refuses domains with active or pending routes. A registration cannot contain or be contained by any other registration, including one owned by the same repository. Public routing and remote targets have separate contracts.
+
+A manifest can select `domain: "dev.example.test"` only after explicit machine registration. `host` optionally chooses a single DNS label shared by several path routes; otherwise the route key is used. Registered host labels can contain at most 40 characters. The worktree hostname is `<host>-<readable-worktree-name>-<stable-suffix>.<domain>`, with a 20-hex-character digest of the canonical worktree path as the suffix. The readable worktree name is shortened as needed so the whole first label fits DNS's 63-character limit; the suffix is always kept intact, so a long worktree directory name appears truncated in its hostname. The primary Git worktree also gets `<host>.<domain>` as its canonical alias. Both forms use one label under the domain, so one wildcard certificate can cover them. The suffix makes collisions between same-named worktrees extremely unlikely without depending on activation order. A registered route inherits its TLS mode from the machine registration; the manifest cannot override it. Default `.localhost` routes and their v0.1 owner-derived names remain unchanged.
+
+`path` defaults to `/`, with `match: "prefix"`; `match: "exact"` selects only that path. A prefix matches its segment boundary (`/api` and `/api/...`, not `/apix`). `stripPrefix: true` strips a non-root prefix before proxying. Exact routes precede prefixes; longer prefixes precede shorter ones. Duplicate host/path/match routes fail before Caddy reload, and a host with only selected paths returns 404 elsewhere. All upstreams remain loopback.
+
+Internal TLS uses the existing Caddy internal CA. Clients must explicitly trust that CA if they need verified HTTPS; DevFn never installs it. Selected TLS hosts redirect HTTP to HTTPS, while unknown HTTP hosts return 404. `--tls certificate --cert /absolute/cert.pem --key /absolute/key.pem` uses explicit PEM files. DevFn validates the key pair, validity dates, and DNS subject alternative name coverage of every generated hostname before publishing a route; a legacy common name alone does not count. A wildcard certificate may be needed for worktree names; a certificate for the registered base alone is insufficient. DNS-01 is rejected until a validated provider adapter is available. There is no implicit ACME, public certificate issuance, or CA installation.
+
+## Organization policy
+
+`devfn.policy.json` supports `fallbackRange`, `hostnameSuffix`, and entries with `name`, exactly one of `port`/`range`, `kind` (`protected`, `preferred`, or `excluded`), optional `project`, and `description`. `devfn ports report` combines the policy with the entire machine registry into Markdown; it is not limited to the current project or profile. `--output` must remain inside the repository.
+
+---
+
+<!-- page:docs:reference/core.md path:/docs/reference/core -->
+# @devfn/core
+
+> Source package guide for @devfn/core.
+
+
+Builds dependency-ordered lifecycle plans, reserves ports before mutation, starts Compose and native resources, verifies readiness, registers shared proxy routes, emits machine-readable receipts, and rolls back only resources created by the failing invocation. The public `resolveEndpointTemplates({ config, plan, ownerId, ports, composeNetworks?, composeReferences? })` API accepts an opaque owner chosen by its caller; see the [startup endpoint contract](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/configuration.md#startup-endpoint-and-template-resolution).
+
+**Replacement and rollback.** Ready-instance replacement checks sibling leases and route ownership, resolves the selected configuration, reserves its ports and activates its Caddy routes while the old service is still available. A failure at any of those steps leaves the old lifecycle, receipt, leases and routes unchanged. Replacement then stops the old lifecycle before it starts the new one, because both normally use the same ports and Compose project. If a later step fails, such as edited source exiting or readiness timing out, DevFn does not relaunch the old processes from the working tree, which may no longer contain the old source. Their leases and routes are released, the failed receipt and the error record that the prior invocation was stopped, and status reports `failed`. If the old lifecycle cannot be stopped, nothing new starts; its receipt becomes `degraded` and keeps its leases until `devfn down`.
+
+**Teardown and reconciliation.** Teardown (`down`, restart, replacement and failed-start cleanup) stops a recorded process and its process group only by its verified start identity, and waits until the whole group is gone (an exited member a container PID 1 never reaps counts as gone, but only when every member can be listed: an unreadable `/proc` entry or a `/proc` mounted with `hidepid` leaves the group possibly running); an exited wrapper whose group is empty, or a readable different start identity, proves it gone, while a wrapper that exited while its application still runs in its group, a live PID whose identity cannot be read, including one still running after a stop was refused because its identity could not be read at that moment, is a cleanup error that leaves the lifecycle `degraded` with its leases, routes and owner journal, and `up` then refuses to start a duplicate. Teardown also reconciles the receipt with the registry owner journal: journaled processes the receipt does not list are stopped by verified identity, journaled containers it does not list must be verified gone, and an interrupted Compose launch is stopped through its Compose project and service labels, leaving containers that ran before it. `docker compose up` runs through a gated launcher whose PID and start identity are journaled before it may run, so an unrecorded launcher never ran Compose. An interrupted launch resolves only after its launcher is stopped by verified identity and no process in its process group remains, and then only after a label scan, repeated after a settle period and re-reading the state of containers already stopped, finds nothing the launch created and nothing it started running, because the Docker daemon may still finish a request the killed launcher sent (a request delayed beyond the final scan is not observable, and a container it creates after `down` reports stopped is not tracked by DevFn); a launcher whose identity cannot be read, or whose group outlived it, keeps the launch unresolved even when Docker lists no container yet. On Windows, which has no process groups, only the launcher itself is checked. No startup environment values or `secretEnv` values are persisted for replacement.
+
+**Routing and recovery.** The machine routing lock covers ownership changes; health probes, process/Compose stops and readiness waits run under the instance lock. A down refreshes its `stopping` claim while it runs. After an interrupted down, sibling worktrees reconcile verified-dead owners once the claim expires, and the next `up` or `restart` in that worktree finishes the stop first. Legacy v0.1 ready receipts are replaced the same way. Replacement reconciles this worktree's committed and pending Caddy routes with the final selection even when the prior receipt recorded none, so routes left by an interrupted replacement are removed when the profile no longer selects a proxy; until then their target ports and listener claims stay unavailable to sibling worktrees. If route activation or a later pre-teardown step fails, DevFn restores this worktree's routes as they were before activation only when its committed or pending route state changed; a candidate Caddy rejected before any change reports its own error. Certificate routes are restored with the private certificate snapshots they were served with, captured before activation, never from their source PEM files, which may since have been removed or rotated; a replacement whose served snapshot is missing or modified is refused before anything changes. If that rollback itself fails, the error says so (`routesRestored: false`); it is never reported as routes kept. When the prior teardown was refused, the prior receipt is `degraded` and lists the failed restore among its cleanup errors. When the replacement's own registry record could not be written, the prior receipt file is left unchanged, and `status` reports the lifecycle `degraded` because its routes are no longer the ones served. The captured snapshots live only in the replacing command, and activation prunes snapshots no committed route uses, so a replacement killed between route activation and the prior teardown cannot restore them. The prior lifecycle keeps running but its routes are no longer served, and `status` reports it `degraded`; `devfn down` stops it, removes every route of this worktree, including the replacement's, and ends the interrupted invocation. A later `up` validates the certificate source files again: a removed or invalid one fails with `DEVFN_DOMAIN_CERT_INVALID` until it is fixed. Readiness, and therefore whether `up` reports `DEVFN_ALREADY_RUNNING` or replaces a lifecycle, is judged under the proxy lock so a sibling's in-flight Caddy reload is not mistaken for a dead proxy. `recoverOrphanedProxyRoutes`, used by `devfn ports gc`, removes routes left by worktrees whose recorded process and container owners are all verified dead; an interrupted start whose detached services still run keeps its routes, even after the next lifecycle marked it failed without its receipt listing them, a live owner whose start identity cannot be read keeps them too, and a ready lifecycle that died stays recoverable after earlier reconciles collected its leases. A Caddy that DevFn started but that failed to confirm its listeners is stopped, and its exit observed, before the failure returns; if its exit cannot be confirmed, the failed lifecycle keeps its listener claim. Replacement preflight renders activated sibling routes with their private certificate snapshots, as activation does.
+
+`resolveEndpointTemplates` runs before startup. Generated `DEVFN_*` keys are reserved, generated port aliases take precedence over same-key literals, and native loopback bind values are fixed; profile references resolve before node overrides, and explicit `{{env.NAME}}` references resolve in their selected consumer context. Native processes receive host-loopback `DEVFN_URL_*` values. Compose services receive sibling DNS URLs only when the caller supplies effective Compose network names for both services and they share a network in the same owner-specific project. The orchestrator obtains those names and selected raw Compose interpolation references before creating state. A reference in either a manifest template or selected Compose source to an unreachable sibling URL or native loopback URL fails before state mutation. A service without such a reference omits unreachable sibling URLs.
+
+Compose command readiness executes on the host. Its argv and `readinessEnvironment` therefore use host-loopback URLs, while `environment` retains the container URLs used for Compose interpolation. Startup, status, and retry use the same host-side values. HTTP readiness checks the configured URL and path for credentials before replacing a selected proxy origin with the directly reachable leased endpoint. It preserves the exact leased port even when an HTTPS route is probed over direct HTTP. Credential-bearing manifest values must use `envAllowlist` and `secretEnv`; they are excluded from endpoint resolutions and receipts.
+
+The host command-readiness process inherits explicitly allowlisted values, including `secretEnv` credentials, at probe time. Other readiness types do not receive those credentials. The values stay out of resolved endpoint plans and receipt fields. A changed or missing inherited credential can make command readiness fail until the host environment is restored. Inherited host values do not enter startup fingerprints; declared key names do.
+
+Template syntax and credential-bearing source values are checked before substitution. Credential names include `key`, `pass`, `pwd`, `auth`, `sig`, `token`, `secret`, `password`, and `credential` aliases, with separator or camel/acronym boundaries; compact names use documented qualifiers `api`, `app`, `auth`, `aws`, `client`, `db`, `database`, `google`, `oauth`, `pg`, `server`, `service`, `session`, `user`, `xamz`, and `xgoog`. This includes `PGPASSWORD` and qualified PostgreSQL password names. Credential-bearing headers are rejected after template expansion. Other ordinary compact words remain data. A referenced opaque owner remains literal data even when its bytes resemble template or credential syntax. Generated route hostnames and Compose project names include a digest of the exact owner bytes, so case-distinct owners have separate namespaces while receipts retain the original owner. Compose project comparison uses the same canonical name as Compose startup: its readable prefix is normalized, and a digest of the exact prefix distinguishes case and punctuation. Ready receipts fingerprint declared environment and command inputs, selected port declarations, and secret key names without hashing inherited host values. Status reports a changed startup snapshot as degraded, and `up` safely cleans up the owned lifecycle before restarting it with the selected configuration. Older receipts without a startup digest retain v0.1 readiness behavior.
+
+Native command, package script and command-health argv are also checked as vectors. `--user`, `--username`, `--proxy-user`, `-u` and `-U` accept ordinary names, but a colon-delimited credential pair is rejected in split, equals or attached forms. Percent-encoded URL and header credentials are checked before any startup mutation. The resolver inspects these forms without splitting or interpreting the argv used for execution.
+
+HTTP readiness runs against the leased upstream port before a selected Caddy route is installed. For a route that strips a path prefix, configure health with the upstream path (for example `/ready` for a published `/api/ready`); a health URL through the stripped published path fails preflight. Status treats an older receipt with stale Caddy listener ports as degraded, and the next `up` refreshes that instance's published URLs. Status is also degraded when the recorded Caddy owner has exited, a listener port stops accepting, or the committed routes differ from the receipt, for example after a replacement was interrupted between route activation and its receipt write; the next `up` replaces the lifecycle and restores matching routes.
+
+Form and query options (`--data*`, `--form*`, `--url-query`, `-d`, `-F`) also reject credential-named `name=value` and `name@file` inputs in split, equals, attached and percent-encoded forms. Ordinary field names and literal shell metacharacters remain data.
+Credential-named assignments inside attached long-option values, such as `--env=DB_PASSWORD=value` or `--build-arg=PGPASSWORD=value`, follow the same secret-channel rule. This includes encoded delimiters and name-only forwarding values; ordinary assignments such as `--env=NODE_ENV=development` remain argv data.
+Structured argv checks inspect XML element and attribute names outside quoted attribute values. A `>` inside a quoted value does not end the tag, and credential-named attributes after it are rejected before startup; ordinary quoted text remains argv data.
+
+---
+
+<!-- page:docs:reference/index.md path:/docs/reference -->
+# Reference
+
+> DevFn configuration, security, migration, and package guides.
+
+
+The reference pages mirror existing source guides:
+
+- [Configuration contract](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/configuration.md)
+- [Security contract](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/security.md)
+- [Migration guide](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/migration.md)
+- [CLI](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/cli.md), [core](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/core.md), [config](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/config.md)
+- [Ports](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/ports.md), [processes](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/processes.md), [Compose](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/compose.md), [proxy](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/proxy.md), [testing](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/testing.md)
+
+Keep source and site copies aligned when changing a public contract.
+
+---
+
+<!-- page:docs:reference/migration.md path:/docs/reference/migration -->
+# Migration guide
+
+> Adopt DevFn without losing existing scripts, outputs, or Compose data.
+
+
+1. Preserve all existing scripts and Compose data.
+2. Run `devfn init`, inspect confirmed versus proposed detections, then rerun with `--yes` only when the preview is truthful.
+3. Edit the manifest so every command, dependency, port, profile, and health check is explicit.
+4. Run `devfn doctor --trust`; address missing runtimes and exact-port conflicts.
+5. Before the first start, back up every pre-existing file targeted by `environmentOutputs[].path`; DevFn overwrites configured outputs and cannot restore prior contents.
+6. Start with a minimal profile and compare it with the existing manual startup flow.
+7. Add full, OAuth, test, or docs profiles incrementally. Public tunnels must remain explicit.
+8. Verify `devfn down` preserves databases and volumes before adopting it as the daily command.
+
+Rollback by running `devfn down`, then inspect `runtimeDir` and every `environmentOutputs[].path` in the manifest before removing generated files. The default generated location is `.devfn/`, but custom paths may live elsewhere. Preserve any target that existed before DevFn adoption; cleanup does not know whether a configured output replaced user-owned content. Finally remove the DevFn manifest and continue using the preserved original scripts. Docker volumes and source configuration are not deleted.
+
+---
+
+<!-- page:docs:reference/ports.md path:/docs/reference/ports -->
+# @devfn/ports
+
+> Source package guide for @devfn/ports.
+
+
+Machine-local, lock-protected port leases with worktree instance identity, exact/preferred/range/ephemeral allocation, stale reconciliation, listener discovery, Docker mapping discovery, and generated inventory reports. Reports enumerate the complete machine registry, including other projects and profiles, and are not a current-selection view.
+
+Selected proxy routes claim Caddy's listener ports across TCP and UDP. One rule retires a claim, whether it was abandoned by an expired command, left by an interrupted lifecycle, or kept by a failed one: neither committed nor pending proxy state contains the instance's routes, and direct evidence proves that no listener remains. Successful socket inspection is not enough because a non-dumpable owner (a setcap Caddy on Linux) hides its sockets: every claimed port must refuse TCP connections on 127.0.0.1 and, when available, ::1, and must bind for both TCP and UDP (Caddy's HTTP/3) on each of those addresses. A refused connection alone is never proof, because a firewall rule can refuse connections to a listening port. A bind that is denied, as for an unprivileged Linux user on 80 or 443, proves nothing, so that claim stays until a verified live Caddy owner's admin configuration excludes the port; a bind that fails for any other reason than an occupied address or a denial keeps the claim. A verified live owner may keep its admin listener after its last site is removed, but its live admin configuration must be readable and name no HTTP server listener on a claimed port; an absent, dead, or reused owner requires a free admin listener. Malformed route or owner state and unverified owner identity retain the claim for inspection. A healthy route or bound proxy listener keeps the ports protected while sibling worktrees start and stop.
+Recovering an interrupted `planning` or `starting` invocation fails it but keeps its listener claim (`proxyClaimRetained`) unless that rule already holds. Releasing the last claim on a listener uses the same rule, so an invocation that ends with routes still in proxy state (for example after a failed replacement rollback) or while a Caddy it started may still listen (a failed start whose Caddy exit was not confirmed) keeps its claim the same way. Another running lifecycle of that instance claiming the same ports covers the claim; another instance's claim covers it only once this instance has no routes left. Garbage collection keeps such invocations until reconciliation retires their claims.
+A TCP port targeted by another instance's committed or pending proxy route stays unavailable for TCP leases by every other instance, even after its lease ended and even when that instance already leases it, until a route transition replaces or removes that route; the routed instance itself may lease it again to repair the route. Routes carry HTTP over TCP only, so a UDP lease of the same number is not blocked by them. Each invocation journals its owners in the registry, which outlives a deleted worktree: a Compose launch is recorded with its project, service and pre-existing containers before Compose runs, then with its `docker compose up` launcher's PID and start identity before that launcher may run, and the process (PID and start identity) or container IDs right after the receipt lists them; a process command runs only after its identity is recorded, so an interrupted process launch never starts it. Ready lease owners are copied there too, so reconcile and gc of leases never erase them. `devfn ports gc` removes the routes of an instance only when it can take that instance's lifecycle lock (no command of it runs) and every recorded owner of its invocations, including failed and interrupted ones, is verified dead: a process whose PID and process group are both gone or whose readable start identity differs (a reused PID), or a container Docker reports missing; a recorded wrapper that exited while processes remain in its group may still run. A stopped invocation ended only after teardown verified every receipt and journal owner dead or stopped it by verified identity and resolved every launch; otherwise it stays `stopping` or `failed` and keeps its leases, routes and journal. A recently refreshed command, a launch with no recorded identity, a live owner, a live PID whose start identity cannot be read, an unreachable Docker endpoint, and a legacy running invocation with neither an owner journal nor a recorded owner all keep the routes; gc keeps a failed invocation while any of its recorded owners may run. Lease age and occupied target ports are never death evidence; an expired planned lease whose port is occupied becomes `externally-occupied`, not `stale`, and an active lease whose process identity cannot be read stays active. An `externally-occupied` lease keeps its invocation's listener claim only while one of that invocation's recorded owners may still run; once all are verified dead the occupant is foreign and the claim retires through the shared rule. Unreadable proxy route state fails reservation closed. Replacement preflight applies the same abandoned-claim recovery and routed-port rule before checking exact ports.
+A stopping invocation, and a replacement holding its predecessor's leases, are protected only while their command refreshes them. Five minutes after the last refresh, reconciliation and claim recovery treat them like any other lease: a lease whose owner is verified dead becomes `stale` when its port is free and `externally-occupied` when the port is occupied, and a lease whose owner is live or ambiguous stays active.
+
+**Locks.** Registry, domain and proxy mutations share a routing lock, so sibling claims cannot appear between replacement validation and route publication. Its holder is recognized under any spelling of the state directory. Every lock is taken by creating its directory, which never replaces a lock, including one an earlier release is still creating. The holder then publishes its owner record without replacing another holder's, and releases only a lock that records itself.
+
+A routing lock whose holder is verified dead is recovered once its owner record is a minute old, within a waiter's three-minute budget; other locks wait five minutes. Recovery takes the lock over in place and never removes it, so no command can create the lock meanwhile. Once a holder is recorded, its owner record is never missing, so a creator that has not yet recorded itself cannot take the lock either. Only one command at a time may take over a given dead holder's record, and it replaces that record only while it is still the one judged dead. A command killed mid-takeover is superseded once it is verified dead, however many were killed before it, within the waiting command's budget. An owner record or takeover marker (`owner.takeover.*`) that cannot be read, or is not a well-formed DevFn owner record (a non-empty token, a positive integer PID and a parseable creation time), counts as a live command's and blocks recovery of that lock; remove it by hand once no DevFn command runs.
+
+A lock without an owner record is taken only after five minutes, which is how long earlier releases also wait, and only if its creator has not recorded itself first. Such a lock is left by a creator killed before recording itself. Earlier releases still recover a stale lock by moving it aside, so one acting on an outdated judgment can hold the lock alongside a command of this release, as two earlier releases already can; stop older DevFn commands before relying on stale-lock recovery.
+
+---
+
+<!-- page:docs:reference/processes.md path:/docs/reference/processes -->
+# @devfn/processes
+
+> Source package guide for @devfn/processes.
+
+
+Native process groups, durable logs, HTTP/TCP/command/log readiness, PID-birth ownership checks, and graceful termination. It is deliberately browser- and artifact-model-neutral so ProbeFn can adopt it later without depending on DevFn orchestration.
+
+## Gated launches
+
+- `runGatedCommand` runs a command that creates outside resources only after its launcher identity has been recorded. The process wrapper never runs its command without the launch gate channel.
+- On POSIX, `gatedLauncherStatus`/`stopGatedLauncher` resolve such a launch only once the launcher and its process group are gone. On Windows they judge and stop only the launcher and its current process tree, so they cannot confirm that a descendant which left that tree is gone.
+- `runGatedCommand` redacts the values of `redactKeys` from the command's output and keeps at most `maxBuffer` bytes of each output stream, stopping the launcher's group as soon as either passes it.
+- Once the command exits, it waits at most a bounded drain for output that a process it left behind still holds open, then stops that process's group, waiting a bounded time for it to exit and forcing it if needed. A finished command therefore never waits indefinitely on a leftover process. A failed stop is reported together with the command's own outcome, never instead of it.
+
+## Process groups
+
+- Every recorded process and launcher leads its own process group (POSIX), and `processGroupStatus` judges the whole group: a leader that exited while processes remain in its group is `unverified`, not gone, and a reused leader PID (a readable different start identity) proves the group gone, because a PID is not reused while its group exists.
+- `stop` signals only a verified leader, waits until its whole group is gone (forcing members that ignore termination), and never signals a live PID whose start identity cannot be read or a leaderless group (`DEVFN_PROCESS_IDENTITY_UNVERIFIED`).
+- The group is judged again immediately before each signal. POSIX offers no way to signal a group atomically with that check, but a group ID is not reused while any member remains, so the only exposure is a group that empties and whose ID a new group leader takes in the instant between the check and the signal.
+- On Windows, which has no process groups, only the leader is judged and stopped with its process tree.
+
+## Start identities
+
+- Start identities do not depend on the caller's environment: on macOS the `ps` start time is read with `TZ=UTC0` and `LC_ALL=C`.
+- A signature recorded by an earlier release in the caller's time zone and locale is never compared as text. It is decided by the record's own UTC time (a receipt process's `startedAt`, a lock's or trust ticket's `createdAt`, a Caddy owner's `startedAt`, a port lease owner's `recordedAt`), which DevFn writes only after reading a live owner's identity:
+  - a process whose pinned UTC start is later than that time by more than two seconds is another process reusing the PID;
+  - one that started no later than that time is the recorded process;
+  - a record without a time, or a start later than it by at most two seconds (the allowance for wall-clock adjustment), is `unverified`.
+- An earlier release's active port lease has no `recordedAt`, but its `updatedAt` was written at activation, just after its owner's identity was read, and stays unchanged while the lease is active, so the registry copies it to the owner's `recordedAt` before any transition; a lease whose PID was reused is then `stale` or `externally-occupied` as in earlier releases. Only a lease that already left `active` under an earlier release has no record time, and its owner stays `unverified`.
+
+---
+
+<!-- page:docs:reference/proxy.md path:/docs/reference/proxy -->
+# @devfn/proxy
+
+> Source package guide for @devfn/proxy.
+
+
+Maintains one lock-protected, DevFn-owned Caddy route registry.
+
+- **Routes.** Generated configurations contain concrete `.localhost` or explicitly registered local-domain routes and loopback targets only, are validated before reload, and deny unknown HTTP hosts. Selected TLS hosts redirect HTTP to HTTPS; unknown hosts receive 404. If another Caddy owns the admin endpoint, DevFn refuses to replace its configuration. DevFn runs the Caddy found in an absolute `PATH` directory, never one found through a relative entry, and uses that one binary to validate, reload and run a configuration.
+- **Listeners and ports.** Caddy binds to 127.0.0.1 and adds ::1 when the host supports it; DNS answers for any other address, including another 127/8 address, are rejected because Caddy does not bind them. macOS uses unprivileged loopback ports 8080 and 8443, so its published URLs include those nonstandard ports; Linux uses 80 and 443, so its URLs omit the port. Existing v0.1 services on these ports must be stopped and assigned another exact or preferred port before activating a proxy route. A conflict identifies the owning instance and service; DevFn does not reassign or stop it.
+- **Linux privileges.** Linux requires permission to bind the privileged ports: either `net.ipv4.ip_unprivileged_port_start` at or below 80, or `cap_net_bind_service` granted to the Caddy binary with `setcap`. DevFn changes neither. A capability-bearing Caddy is non-dumpable, so same-user socket inspection cannot attribute its sockets; DevFn then accepts its recorded owner only when the PID start identity matches and the live admin configuration equals DevFn's committed configuration.
+- **Activation and readiness.** A started Caddy counts as activated only after it confirms through `--pingback` that its whole configuration, including every HTTP and HTTPS listener, started; an answering admin endpoint alone is not enough. A failed bind therefore fails activation before a ready replacement is stopped. Instance readiness also requires the committed routes to equal the receipt's routes and the recorded Caddy owner to be alive, to run the configuration rendered from the committed (or journaled pending) route state as shown by its live admin configuration, and to accept connections on its listener ports.
+- **TLS and DNS.** It never installs its internal CA in a trust store. Registered domains are bound to a repository and project in machine state. New or changed registered routes must resolve exclusively to available Caddy loopback binds, and explicit certificates must cover every route hostname through a DNS SAN. DNS verification fails closed after five seconds, so a stalled lookup cannot indefinitely hold the shared proxy lock.
+- **Snapshots and rollback.** Activated explicit certificates are kept as private immutable snapshots so sibling cleanup can reload after a source file disappears. Stopping one instance can retain another instance's established routes when its DNS is temporarily unavailable. A pending activation with invalid DNS or certificate is rolled back to the last committed routes. A failed or timed-out reload does not prove Caddy kept its previous routes: the activation's journal stays, marked uncertain (`proxy-routes.pending.uncertain`), and its routes count as possibly live until a reload of the committed routes succeeds. That reload is tried at once and by the next routing command or route preflight, which rolls the activation back rather than replaying it. The journal is marked before it is published and reloaded, so this holds even when nothing can be written after the failure, and an interrupted activation is rolled back too; only an unmarked journal, such as one an earlier release left, is replayed. Like every transition and preflight, it leaves out routes of services verified gone, whose IDs and hostnames another owner may then take, and only the routes Caddy confirmed are committed. Until it succeeds, commands that change routes fail rather than treat its routes as gone. Removing or emptying an owner that no route state names changes no routes, so it never touches Caddy or another owner's journal.
+
+---
+
+<!-- page:docs:reference/security.md path:/docs/reference/security -->
+# Security contract
+
+> Manifest trust, secret handling, local exposure, and ownership.
+
+
+- Every DevFn manifest can declare lifecycle commands, so the CLI refuses to load JSON, TypeScript, or JavaScript until the user records trust for its exact digest with `--trust`. JSON is parsed directly from the verified bytes; executable manifests run from a private copy of those same bytes and must be self-contained, with imports and `require()` rejected so dependency files cannot bypass the digest boundary.
+- Runtime children inherit a small base environment plus explicit `envAllowlist` entries. Sensitive-looking keys must also be listed in `secretEnv`; a detached wrapper redacts those effective values before native-process logs are persisted. Literal values are rejected only when their key looks sensitive, so review every manifest literal. Compose logging is disabled for services with `secretEnv` because Docker otherwise retains historical unredacted logs. Secrets are not persisted in the registry or lifecycle receipt.
+- Generated environment and state files use owner-only modes (default `0600`); their directories use `0700`. Existing files are explicitly re-permissioned after each write.
+- Local ports and proxy targets bind to loopback unless a manifest explicitly selects public exposure. Profiles containing public processes or ports require the separate `--allow-public` confirmation on every start. A public Cloudflare tunnel must never be inferred.
+- Repository-relative process, Compose, runtime, policy, and output paths are validated against lexical and symlink path escape.
+- PID ownership uses a birth signature where the host exposes one, read the same way whatever time zone or locale DevFn runs in (macOS `ps` is pinned to `TZ=UTC0 LC_ALL=C`); a signature an earlier release recorded in the caller's time zone is never compared as text, but judged by the record's own UTC time: a process that started after the record was written is a reused PID, one that started no later is the recorded owner, and a record without a time stays unverified. A process that started within two seconds after the record time, the allowance for wall-clock adjustment, is also unverified rather than reused: DevFn neither signals it nor retires its leases, routes or claims, and teardown reports a cleanup error until the PID is free or a later run can decide. An earlier release's active port lease is judged by its activation time, written just after its owner's identity was read. A recorded process is judged with its whole process group: when the recorded wrapper or launcher exited but processes remain in its group, DevFn treats it as possibly running, keeps its leases, routes, listener claims and owner journal, does not signal the leaderless group, and reports a cleanup error until it is gone. Stopping a verified process waits until its whole group is gone and forces members that ignore termination. A member that has exited but was not reaped (a zombie, as every orphan stays under a container PID 1 that does not reap) counts as gone: it runs nothing, and its PID and group ID cannot be reused until it is reaped. A member DevFn cannot list or signal counts as possibly running, so on Linux a group is proven gone only when every `/proc` entry can be read and parsed and `/proc` is not mounted with `hidepid`; otherwise it stays possibly running. Processes that leave their group (for example by `setsid`) and Windows process trees after their leader exits are outside this check. DevFn refuses to stop a reused PID, and never signals a live PID whose start identity cannot be read: `down`, restart and replacement then report a cleanup error, leave the receipt `degraded` and keep its leases, routes and owner journal until a later `down` can verify or stop it. Teardown also stops owners the registry journal records that the receipt does not list, and finds the containers of an interrupted Compose launch by its Compose project and service labels; a container that ran before the launch is left running. A process still running after its stop was refused on identity grounds is a cleanup error, not a stopped owner.
+- Compose launches: `docker compose up` runs only after its launcher's identity is journaled, and an interrupted launch is resolved only once that launcher and every process in its process group are gone, so a Compose run that outlived DevFn cannot send Docker a new request after `down` reports stopped. The Docker daemon may still finish a create or start request the killed launcher had already sent, so the label scan then repeats, re-reading the state of every container it already stopped, and resolves only after a one-second settle period in which nothing the launch created remains and nothing it started runs; after five passes it reports a cleanup error and keeps the launch journal, leases and routes. A daemon request delayed beyond that final scan is not observable to DevFn: a container it creates after `down` reports stopped is outside this guarantee and is not tracked by DevFn.
+- `down` stops only the exact worktree instance. Ordinary shutdown removes no persistent Docker volumes.
+- `.localhost` remains the default hostname suffix. Other development domains require explicit machine registration for the repository and project; a repository manifest cannot register one. Each selected alias must resolve only to loopback, and registration does not change DNS, a hosts file, or the OS resolver. Public routing needs separate validation.
+- DevFn manages only a Caddy process it started itself and refuses to overwrite an unrelated Caddy admin endpoint. Internal TLS uses Caddy's local CA without installing its trust root; clients must trust that CA explicitly. Explicit certificate mode requires a valid matching key and a DNS subjectAltName covering every selected alias before proxy reload. DNS-01 is unavailable until a validated adapter exists and is rejected rather than configured implicitly.
+- Caddy listeners and ports:
+  - Listener binding: Caddy binds only to available 127.0.0.1 and ::1 loopback interfaces. Registered DNS answers for other loopback addresses are rejected because Caddy does not bind them. If an external process occupies a listener, proxy startup fails rather than binding a public interface. DevFn runs the Caddy found in an absolute `PATH` directory, never one in a relative entry such as `.`, and validates, reloads and runs a configuration with that same binary.
+  - Platform ports: on macOS, an unprivileged process cannot bind loopback port 80 or 443, so DevFn uses HTTP 8080 and HTTPS 8443 and includes those ports in published URLs and redirects. Linux uses 80 and 443, so its URLs omit the port; binding them requires `net.ipv4.ip_unprivileged_port_start` at or below 80 or `cap_net_bind_service` on the Caddy binary. DevFn does not change system permissions.
+  - Owner verification: a setcap Caddy hides its sockets from same-user inspection, so DevFn verifies it by PID start identity and by comparing its live admin configuration with the committed one.
+  - Claim retirement: a listener claim left by an expired, interrupted, or failed lifecycle is retired only after the instance has no committed or pending routes, TCP connections are refused and both TCP and UDP binds succeed on 127.0.0.1 and ::1, and a live owner's configuration excludes the port. A refused connection alone proves nothing, because a firewall rule can refuse connections to a listening port. A denied privileged bind can be cleared only when a verified owner's configuration excludes the port; any other bind failure keeps the claim.
+  - `devfn ports gc`: removes proxy routes only for instances with no running command whose recorded process and container owners, including those of failed or interrupted invocations, are all verified dead; a live PID whose start identity cannot be read, lease age and occupied ports are not evidence.
+  - Failed start and activation: activation succeeds only after Caddy confirms that every listener started. A failed Caddy start returns only after the Caddy DevFn spawned has exited; if it cannot be stopped, its owner record, when one was written, is kept, the error names its PID, and the failed lifecycle keeps its listener claim until the listener is proven gone. A failed or timed-out reload, or a spawned Caddy that does not exit, is never taken as proof that Caddy kept its previous routes: Caddy may already serve the candidate. Its activation journal stays, marked uncertain, and every reader of pending route state counts its routes as possibly live until a reload of the committed routes succeeds. After a failed reload, that reload is tried at once and by the next routing command; a spawned Caddy that does not exit is rolled back by the next routing command. Neither replays the activation, and a route preflight first rolls a marked journal back the same way, so a rejected activation never blocks another owner's routes once Caddy reloads. The journal is marked before it is published and before Caddy reloads or starts, so this holds even when nothing can be written after the failure, and an interrupted activation is rolled back too; only an unmarked journal, such as one an earlier release left, is replayed. Like every transition, it leaves out routes of services verified gone, which own no route ID or hostname for a transition or its preflight, and only the routes Caddy confirmed are committed; a recovered journal is likewise never rewritten before Caddy confirms it. While it fails, commands that change routes fail rather than treat the routes as gone. A lifecycle that no route state names changes no routes: its teardown never touches Caddy or another owner's journal, so it is not held by that journal. A lock left by a routing operation whose holder is verified dead is recovered after one minute, within the three minutes a waiting command allows. Locks are taken by creating their directory, which never replaces an existing lock, including one an earlier release is creating; its owner record is then added without replacing another holder's, and a holder removes only a lock recording itself. A stale lock is taken over in place, never removed first, and once a holder is recorded its owner record is never missing, so neither a new command nor a creator that has not yet recorded itself can take the lock meanwhile. Only one command at a time takes over a given dead holder's record, and only while it is still the record judged dead; a command killed mid-takeover is superseded once it is verified dead, however many were killed before it, within the waiting command's budget. An owner record or takeover marker that cannot be read, or is not a well-formed DevFn owner record, counts as a live command's and needs manual removal once no DevFn command runs. Earlier releases do not follow this rule and still move a stale lock aside to recover it, so one acting on an outdated judgment can hold the lock alongside a command of this release, as two earlier releases already can; stop older DevFn commands before relying on stale-lock recovery. A lock without an owner record, left by a creator killed before recording itself, is taken only after five minutes, the time earlier releases also wait for its creator to record itself.
+  - Claims and migration: a profile with selected proxy routes claims both listener ports before service startup; existing sibling TCP or UDP leases on either port block that activation. While a proxy claim is active, other DevFn profiles cannot lease those ports. A TCP port that another instance's committed or pending route targets cannot be leased for TCP by any other instance, including one that already holds it, until that route is replaced or removed. To migrate an existing v0.1 service on a listener port, stop its profile, change its exact or preferred service port in the manifest, and restart it before enabling proxy routes. DevFn reports the owning instance and service, leaves the existing profile running, and does not move a lease automatically. Without an active proxy claim, a profile without proxy routes keeps its v0.1 exact, preferred, and stable port behavior.
+  - Certificate snapshots: activated explicit certificates are copied into owner-only machine state so an unrelated worktree can stop after the source certificate disappears; replace the source and reactivate the affected route to update it. A failed replacement restores the prior routes with the snapshots they were served with, not the current source files, and reports a failed restore instead of claiming the routes were kept. A replacement killed before the prior teardown loses that rollback copy: the prior lifecycle reports `degraded`, `devfn down` removes this worktree's routes, and the next `up` revalidates the certificate source files.
+- Volume deletion, database reset, public tunnels, and other destructive operations are outside ordinary lifecycle commands and require separate explicit tooling and confirmation.
+
+---
+
+<!-- page:docs:reference/testing.md path:/docs/reference/testing -->
+# @devfn/testing
+
+> Source package guide for @devfn/testing.
+
+
+Deterministic fixture manifests, temporary projects, and fake listeners for allocator, lifecycle, crash-recovery, and CLI contract tests.
+
+---
+
+<!-- page:docs:security.md path:/docs/security -->
+# Trust and secret handling
+
+> Review manifests, isolate secrets, and confirm public exposure.
+
+
+Every manifest can declare lifecycle commands. DevFn requires explicit trust for its exact digest before first load and after edits, including JSON manifests. Executable manifests run from a private verified copy and cannot import other files, closing a dependency escape around the digest check.
+
+Runtime children inherit a small base environment plus named `envAllowlist` entries. Sensitive-looking names must also appear in `secretEnv` so effective values are redacted before native logs persist. Credentials are also rejected in resolved literals and command argv, including URL userinfo, `Authorization` headers, credential-named flags, form fields, and JSON keys. These checks are not full secret detection; inspect all manifest literals. Compose services with `secretEnv` use Docker's `none` logging driver. Runtime directories and files default to owner-only modes.
+
+Ports and proxy targets bind to loopback unless the manifest explicitly selects public exposure; `--allow-public` is an additional confirmation on every start. DevFn does not infer a public tunnel. Development domains other than `.localhost` require machine registration that a repository manifest cannot perform, and every selected hostname must resolve only to loopback. DevFn never installs Caddy's internal CA in a trust store. `down` stops only owned instance resources and does not delete persistent volumes. Read the [full security contract](https://github.com/21nCo/super-functions/blob/dev/devfn/docs/content/docs/reference/security.md) before using DevFn with sensitive data.
+
+---

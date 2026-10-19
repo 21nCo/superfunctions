@@ -1,7 +1,6 @@
 import { closeSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 /**
  * Resolve DocsFn from the consumer site so each site's published package pin is honored.
  * @param {string} cwd
@@ -44,6 +43,13 @@ export async function buildLlmsSiteArtifacts(cwd, dependencies, options = {}) {
 }
 
 /**
+ * Keep LLM indexes navigable before a public documentation host is assigned.
+ * @param {string} text
+ * @param {import("@docsfn/core").DocsManifest} manifest
+ * @param {string} product
+ * @param {string | undefined} canonicalUrl
+ */
+/**
  * Replace one regular artifact in a trusted output directory atomically.
  * This promises per-path visibility, not a two-file transaction or power-loss durability.
  * @param {string} target
@@ -81,23 +87,12 @@ function replaceArtifact(target, body) {
   }
 }
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const sourceBaseUrl = "https://github.com/21nCo/super-functions/blob/dev";
-
 /**
- * Keep LLM indexes navigable before a public documentation host is assigned:
- * without a public origin, point generated `/docs/...` page links at their GitHub sources.
- * The source directory comes from the site's configured `content.root` and `content.docsDir`.
- * @param {string} text
- * @param {import("@docsfn/core").DocsManifest} manifest
- * @param {{content: {root: string, docsDir?: string}}} config loaded site config with an absolute `content.root`
- * @param {string | undefined} canonicalUrl
+ * Without a public origin, point generated `/docs/...` page links at their GitHub sources
+ * so committed artifacts stay usable before the site is hosted.
  */
-export function withSourceLinks(text, manifest, config, canonicalUrl) {
+export function withSourceLinks(text, manifest, product, canonicalUrl) {
   if (canonicalUrl) return text;
-  const docsDir = resolve(config.content.root, config.content.docsDir ?? "content/docs");
-  const sourceDir = relative(repositoryRoot, docsDir).split(sep).map(encodeURIComponent).join("/");
-  if (!sourceDir || sourceDir.startsWith("..")) throw new Error(`Docs directory is outside the repository: ${docsDir}`);
   const sources = new Map(Object.values(manifest.pages)
     .filter((page) => page.id.startsWith("docs:"))
     .map((page) => [new URL(page.path, "https://docs.invalid").pathname, page.id.slice("docs:".length)]));
@@ -106,7 +101,7 @@ export function withSourceLinks(text, manifest, config, canonicalUrl) {
     const source = sources.get(url.pathname);
     if (!source) return match;
     const path = source.split("/").map(encodeURIComponent).join("/");
-    return `](${sourceBaseUrl}/${sourceDir}/${path}${url.search}${url.hash})`;
+    return `](https://github.com/21nCo/super-functions/blob/dev/${product}/docs/content/docs/${path}${url.hash})`;
   });
 }
 
