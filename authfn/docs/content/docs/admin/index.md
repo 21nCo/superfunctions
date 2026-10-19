@@ -7,6 +7,8 @@ description: "@authfn/admin — admin-only routes for listing and deleting users
 
 `@authfn/admin` is a small package that mounts admin-only HTTP routes alongside your kernel. It uses the same database, the same namespace, and the same observability sink. You bring the **authorization** — a callback that decides whether a given request is allowed to perform a given admin action.
 
+The package also exports a separate [Super Console integration](/docs/admin/super-console) for scoped user and session operations and operator authentication. The routes below describe the direct admin API; a Super Console host uses the capability adapter and its own dispatcher.
+
 ```bash
 npm install @authfn/admin
 ```
@@ -116,7 +118,7 @@ createAuthFnAdmin({
 - every session for that user
 - every password credential, OAuth identity, OTP challenge, API key, 2FA enrollment / recovery code, region profile
 
-…in a single transaction. The response carries per-table counts:
+…one table at a time; the steps are not a single transaction, so a failure part-way can leave partial cleanup. Rows owned by custom plugins are not covered unless an `afterAccountDelete` hook removes them. The response carries per-table counts:
 
 ```jsonc
 {
@@ -125,7 +127,7 @@ createAuthFnAdmin({
     "deleted": true,
     "userId": "user_123",
     "primaryEmail": "ada@example.com",
-    "counts": { "sessions": 4, "password_credentials": 1, "oauth_accounts": 2, "api_keys": 3, "two_factor_enrollments": 1 }
+    "counts": { "users": 1, "sessions": 4, "passwordCredentials": 1, "oauthAccounts": 2, "apiKeys": 3, "twoFactorEnrollments": 1 }
   },
   "requestId": "..."
 }

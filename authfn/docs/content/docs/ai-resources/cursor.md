@@ -1,49 +1,21 @@
 ---
 title: Cursor
-description: One-click Cursor setup for authfn — MCP, llms.txt, and rules.
+description: Point Cursor at AuthFn's generated context with a project rule.
 ---
 
 # Cursor
 
-## Quickest path
+## Project rule
 
-Add this to `.cursor/mcp.json` in your project:
-
-```jsonc
-{
-  "mcpServers": {
-    "authfn": {
-      "command": "npx",
-      "args": ["-y", "@authfn/mcp"]
-    }
-  }
-}
-```
-
-Then add a rule at `.cursor/rules/authfn.mdc` that points Cursor at the docs:
+Add a rule at `.cursor/rules/authfn.mdc` that points Cursor at the generated context:
 
 ```text
 ---
 description: authfn — self-hosted authentication
 ---
 
-When working with `@authfn/*`, prefer the MCP tools `authfn.docs.search`, `authfn.openapi.operation`, and `authfn.skills.invoke`. For migration questions, use `authfn.skills.invoke`. For schema/code generation, use `authfn.openapi.operation`.
-
-Reference docs: https://authfn.com/docs
-```
-
-That's it. Cursor will use the MCP server for retrieval.
-
-## llms.txt fallback
-
-If you'd rather not run an MCP server, point Cursor at the static file:
-
-```text
----
-description: authfn
----
-
 When working with @authfn/*, fetch context from https://authfn.com/docs/llms-full.txt as needed.
+Reference docs: https://authfn.com/docs
 ```
 
 ## Project-specific tweaks
@@ -66,6 +38,4 @@ When generating sign-in / sign-up code, use the `client.*` helpers from `package
 
 ## Related
 
-- [MCP](./mcp)
 - [llms.txt](./llms-txt)
-- [Skills](./skills)

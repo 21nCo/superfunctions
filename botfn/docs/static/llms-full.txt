@@ -35,7 +35,7 @@ See the [admin source](https://github.com/21nCo/super-functions/blob/dev/botfn/a
 
 1. Create a Discord application and obtain its application ID, public key, and bot token. Set the interaction endpoint to the deployed Worker's `/interactions` route.
 2. Create and install a GitHub App for the repositories to expose. Provide `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, and `GITHUB_PRIVATE_KEY` to the Worker as secrets. A Linear API key is needed for Linear commands.
-3. Deploy the [persistence service](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/persistence.md) if issue-to-thread records are required. Set `PERSISTENCE_SERVICE_URL` to its actual reachable URL; the checked-in `wrangler.toml` value is only a deployment-specific setting.
+3. Deploy the [persistence service](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/persistence.md) if issue-to-thread records are required. Its tRPC endpoint has no authentication or tenant scoping, so keep it on a trusted network or add authorization before exposing it. Set `PERSISTENCE_SERVICE_URL` to its actual reachable URL; the checked-in `wrangler.toml` value is only a deployment-specific setting.
 4. Set `DISCORD_PUBLIC_KEY`, `DISCORD_CLIENT_ID`, GitHub credentials, and `LINEAR_API_KEY` as Worker secrets as applicable. Use `botfn/bot-discord/.env.example` for local command registration credentials.
 5. Run `npm --workspace @superfunctions/botfn-discord-bot run register-commands`, then `npm --workspace @superfunctions/botfn-discord-bot run deploy` from the repository root.
 
