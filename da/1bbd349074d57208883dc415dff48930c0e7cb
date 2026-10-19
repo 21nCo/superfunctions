@@ -1,0 +1,71 @@
+package-lock.json
+  s_7d0a48f0aaecda::t_28434eb11f4c25 54-55,32267-32270,60756-61127
+secfn/core/README.md
+  s_7d0a48f0aaecda::t_3f8dff6dc6c171 3
+secfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_ba798c04ba9b39 11-12
+secfn/docs/README.md
+  s_7d0a48f0aaecda::t_af6c11f926522c 3,5,8,11,13,16-21,24,26
+secfn/docs/content/docs/audit-and-rate-limits.md
+  s_7d0a48f0aaecda::t_703673e0b1a4e1 8
+secfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_ee93c82e1cd17f 8
+secfn/docs/content/docs/migrations.md
+  s_7d0a48f0aaecda::t_3003c26ad308fd 8
+secfn/docs/content/docs/operations-and-limits.md
+  s_7d0a48f0aaecda::t_ad3c61b4ab67d4 10
+secfn/docs/content/docs/reference/core.md
+  s_664f1e7a19bfc5::t_f6be65413cdd91 6
+secfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_c0c3ba05783788 12
+secfn/docs/content/docs/reference/routes.md
+  s_7d0a48f0aaecda::t_838e6697563892 6
+secfn/docs/content/docs/reference/runtime.md
+  s_664f1e7a19bfc5::t_d7e0391fd7b5c4 28-31
+secfn/docs/content/docs/reference/server.md
+  s_664f1e7a19bfc5::t_538eadb011748d 62
+secfn/docs/content/docs/runtime.md
+  s_7d0a48f0aaecda::t_4c354e018e7429 23
+secfn/docs/content/docs/server.md
+  s_7d0a48f0aaecda::t_067b675465a79f 44
+secfn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_f054188a5482d3 3-6,13
+secfn/docs/package.json
+  s_7d0a48f0aaecda::t_298aed45798ff2 11
+secfn/docs/scripts/sync-references.mjs
+  s_7d0a48f0aaecda::t_f7cccffa8e2a37 18
+secfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_c33f23565e0ac1 74-77,82
+secfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_17485c50b77cda 18,50,62,80,90,145,171,207-210,279,376,470
+secfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_00e2ec60e6bccc 10-13,19-22
+secfn/runtime/README.md
+  s_7d0a48f0aaecda::t_0b3604380091ff 25-28
+secfn/server/README.md
+  s_7d0a48f0aaecda::t_90109929e117e0 59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da1bbd349074d57208883dc415dff48930c0e7cb",
+  "prompts": {},
+  "sessions": {
+    "s_664f1e7a19bfc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cf2229e-c8fe-4b04-a5e0-6383ee13ba71",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
