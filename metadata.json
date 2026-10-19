@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59FFBM3JV33ZG51M861RQR3",
+  "strategy": "manual-commit",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "langfn/docs/content/docs/index.md",
+    "langfn/docs/content/docs/memory-and-rag.md",
+    "langfn/docs/content/docs/models-and-providers.md",
+    "langfn/docs/content/docs/observability-and-evaluation.md",
+    "langfn/docs/content/docs/operations-and-limits.md",
+    "langfn/docs/content/docs/reference/index.md",
+    "langfn/docs/content/docs/reference/release-gate.md",
+    "langfn/docs/content/docs/streaming-and-tools.md",
+    "langfn/docs/static/llms-full.txt"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
