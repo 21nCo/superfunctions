@@ -1,0 +1,173 @@
+inventory open PRs in superfunctions
+
+---
+
+provide desc of what each PR is about and also the potential sequence of merge
+
+---
+
+leave the prs where currently active or recent work is going on and suggest me the new order of merge
+
+---
+
+proceed and complete waves 1 to 3... blacksmith yes
+
+while you work - make sure you wait for all PR review bot rounds to settle and no valid code review findings are left
+
+---
+
+<task-notification>
+<task-id>boi6tf6l0</task-id>
+<tool-use-id>toolu_01H9KaujYWmacbn77aorvLDD</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/boi6tf6l0.output</output-file>
+<status>completed</status>
+<summary>Background command "Install dependencies in #213 worktree" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+continue merging waves 1-3 (check background tasks bldxfyphw and boi6tf6l0)
+
+---
+
+<task-notification>
+<task-id>bldxfyphw</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/bldxfyphw.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for wave 1 and #180 checks to settle" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bcplggrc2</task-id>
+<tool-use-id>toolu_01FXhhvsQnQCJqYfcjFwjXfp</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/bcplggrc2.output</output-file>
+<status>completed</status>
+<summary>Background command "Update todo; wait for 211/226/180/213 to settle" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+continue merging waves 1-3 (check background task btuxztuzm for #228/#213)
+
+---
+
+<task-notification>
+<task-id>bebju320v</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/bebju320v.output</output-file>
+<status>completed</status>
+<summary>Background command "Merge #213" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bix72qs24</task-id>
+<tool-use-id>toolu_01WW72no4pbvRULunpFUsAxn</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/bix72qs24.output</output-file>
+<status>completed</status>
+<summary>Background command "Set up #207 worktree and merge dev" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bwhik21y1</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/bwhik21y1.output</output-file>
+<status>completed</status>
+<summary>Background command "Remove merged worktrees and build caches; list old worktrees" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bt2l0gtw8</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/bt2l0gtw8.output</output-file>
+<status>completed</status>
+<summary>Background command "Classify old worktrees as clean and pushed" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>by7kywaso</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/by7kywaso.output</output-file>
+<status>completed</status>
+<summary>Background command "Remove four clean, pushed, idle old worktrees" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a0155d33bbefb8891</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/a0155d33bbefb8891.output</output-file>
+<status>completed</status>
+<summary>Agent "Rebase #212 devfn docs" is waiting on its own background work</summary>
+<note>This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.</note>
+<result>The clone is still running in the background; I'm waiting for its completion notification.</result>
+<usage><subagent_tokens>117542</subagent_tokens><tool_uses>38</tool_uses><duration_ms>216071</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a1cf80bd3219acca8</task-id>
+<tool-use-id>toolu_01HB1XpqCxAP9CqzbxPzWmqU</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/a1cf80bd3219acca8.output</output-file>
+<status>completed</status>
+<summary>Agent "Rebase #209 botfn docs" is waiting on its own background work</summary>
+<note>This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.</note>
+<result>The clone is still running. I'll wait for its completion notification before running the lockfile and install steps.</result>
+<usage><subagent_tokens>108808</subagent_tokens><tool_uses>32</tool_uses><duration_ms>271010</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b15vn3sbe</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/b15vn3sbe.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for #214 checks and bots" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a0155d33bbefb8891</task-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/a0155d33bbefb8891.output</output-file>
+<status>completed</status>
+<summary>Agent "Rebase #212 devfn docs" is waiting on its own background work</summary>
+<note>This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.</note>
+<result>Waiting for the npm install notification.</result>
+<usage><subagent_tokens>118702</subagent_tokens><tool_uses>39</tool_uses><duration_ms>689360</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a1cf80bd3219acca8</task-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/a1cf80bd3219acca8.output</output-file>
+<status>completed</status>
+<summary>Agent "Rebase #209 botfn docs" is waiting on its own background work</summary>
+<note>This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.</note>
+<result>The node_modules clone has finished. The lockfile update and dependency install are running in the background, and I'll wait for them to complete before going on.</result>
+<usage><subagent_tokens>109994</subagent_tokens><tool_uses>33</tool_uses><duration_ms>686383</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>b9elqka03</task-id>
+<tool-use-id>toolu_01DG8kF3yBSg3U6HSQ8ueHBv</tool-use-id>
+<output-file>/private/tmp/claude-501/-Volumes-Dev-n-superfunctions/ec9cf707-0884-40ca-b283-dbc4d0f2a4b5/tasks/b9elqka03.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for #207 checks and bots" completed (exit code 0)</summary>
+</task-notification>
