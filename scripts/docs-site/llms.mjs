@@ -43,13 +43,6 @@ export async function buildLlmsSiteArtifacts(cwd, dependencies, options = {}) {
 }
 
 /**
- * Keep LLM indexes navigable before a public documentation host is assigned.
- * @param {string} text
- * @param {import("@docsfn/core").DocsManifest} manifest
- * @param {string} product
- * @param {string | undefined} canonicalUrl
- */
-/**
  * Replace one regular artifact in a trusted output directory atomically.
  * This promises per-path visibility, not a two-file transaction or power-loss durability.
  * @param {string} target
@@ -88,8 +81,13 @@ function replaceArtifact(target, body) {
 }
 
 /**
- * Without a public origin, point generated `/docs/...` page links at their GitHub sources
- * so committed artifacts stay usable before the site is hosted.
+ * Keep LLM indexes navigable before a public documentation host is assigned: without a public
+ * origin, point generated `/docs/...` page links at their GitHub sources. Sites use the default
+ * `<product>/docs/content/docs` layout.
+ * @param {string} text
+ * @param {import("@docsfn/core").DocsManifest} manifest
+ * @param {string} product
+ * @param {string | undefined} canonicalUrl
  */
 export function withSourceLinks(text, manifest, product, canonicalUrl) {
   if (canonicalUrl) return text;
@@ -101,7 +99,7 @@ export function withSourceLinks(text, manifest, product, canonicalUrl) {
     const source = sources.get(url.pathname);
     if (!source) return match;
     const path = source.split("/").map(encodeURIComponent).join("/");
-    return `](https://github.com/21nCo/super-functions/blob/dev/${product}/docs/content/docs/${path}${url.hash})`;
+    return `](https://github.com/21nCo/super-functions/blob/dev/${product}/docs/content/docs/${path}${url.search}${url.hash})`;
   });
 }
 

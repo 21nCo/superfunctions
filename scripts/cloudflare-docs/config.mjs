@@ -21,6 +21,16 @@ export const docsProducts = {
       live: "mdfn.com",
     },
   },
+  clifn: {
+    packageName: "@clifn/docs",
+    docsDir: "clifn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "clifn.com",
+    hosts: {
+      dev: "clifn.21n.site",
+      live: "clifn.com",
+    },
+  },
   botfn: {
     packageName: "@superfunctions/botfn-docs",
     docsDir: "botfn/docs",
