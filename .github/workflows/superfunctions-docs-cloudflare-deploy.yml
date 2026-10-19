@@ -11,17 +11,20 @@ on:
       - superfunctions-docs-live-*
       - superfunctions-docs-datafn-live-*
       - superfunctions-docs-extfn-live-*
+      - superfunctions-docs-devfn-live-*
       - superfunctions-docs-filefn-live-*
       - superfunctions-docs-searchfn-live-*
       - superfunctions-docs-authfn-live-*
       - superfunctions-datafn-docs-live-*
       - superfunctions-extfn-docs-live-*
+      - superfunctions-devfn-docs-live-*
       - superfunctions-filefn-docs-live-*
       - superfunctions-searchfn-docs-live-*
       - superfunctions-authfn-docs-live-*
     paths:
       - datafn/docs/**
       - extfn/docs/**
+      - devfn/docs/**
       - filefn/docs/**
       - searchfn/docs/**
       - authfn/docs/**
@@ -45,6 +48,7 @@ on:
           - all
           - datafn
           - extfn
+          - devfn
           - filefn
           - searchfn
           - authfn

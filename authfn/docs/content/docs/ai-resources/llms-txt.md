@@ -49,4 +49,4 @@ http://localhost:6005/docs/llms-full.txt
 
 The manifest follows the configured content directories and `site.canonicalUrl` in `docsfn.config.ts`. The shared `scripts/docs-site/llms.mjs` builder passes the canonical URL and excludes Blog posts with the published `includeBlog:false` option. There is no consumer `docs:llms` script or invented `llmsTxt` configuration object.
 
-Generated sizes vary with the corpus and API schema. Prefer the short index for smaller context budgets; retrieve individual linked pages or use the separately configured [MCP server](./mcp) when appropriate. Static context files do not authenticate an assistant or establish a live MCP connection.
+Generated sizes vary with the corpus and API schema. Prefer the short index for smaller context budgets; retrieve individual linked pages when appropriate. Static context files do not authenticate an assistant or give it live access to a deployment.
