@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createObservability,
   instrumentMethods,
@@ -236,4 +236,91 @@ describe("superfunction observability", () => {
       },
     ]);
   });
+  it("restores nested parent context after rejection across child scopes", async () => {
+    const parent = createObservability();
+    const child = parent.child({ component: "child" });
+    const outer = parent.startRequest({ requestId: "outer" });
+    const inner = child.startRequest({ requestId: "inner" });
+    await parent.runWithRequest(outer, async () => {
+      await expect(child.runWithRequest(inner, async () => {
+        await Promise.resolve();
+        expect(parent.getCurrentRequest()).toBe(inner);
+        throw new Error("nested failure");
+      })).rejects.toThrow("nested failure");
+      expect(child.getCurrentRequest()).toBe(outer);
+    });
+    expect(parent.getCurrentRequest()).toBeUndefined();
+  });
+
+  it("isolates concurrent first use before the Node loader has initialized", async () => {
+    vi.resetModules();
+    const { createObservability: fresh } = await import("./index.js");
+    const observer = fresh();
+    const requests = ["one", "two"].map(requestId => observer.startRequest({ requestId }));
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    await Promise.all(requests.map((request, index) => observer.runWithRequest(request, async () => {
+      expect(observer.getCurrentRequest()).toBe(request);
+      if (index === 1) release();
+      await gate;
+      expect(observer.getCurrentRequest()).toBe(request);
+    })));
+    expect(observer.getCurrentRequest()).toBeUndefined();
+  });
+
+  it("does not silently fall back when the Node loader fails", async () => {
+    vi.resetModules();
+    vi.doMock("node:async_hooks", () => { throw new Error("loader failed"); });
+    try {
+      const { createObservability: fresh } = await import("./index.js");
+      const observer = fresh();
+      const work = vi.fn();
+      await expect(observer.runWithRequest(observer.startRequest({ requestId: "failed" }), work)).rejects.toThrow();
+      expect(work).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("node:async_hooks");
+      vi.resetModules();
+    }
+  });
+
+  it("keeps browser fallback synchronous without leaking concurrent async frames", async () => {
+    vi.stubGlobal("process", undefined);
+    try {
+      const observer = createObservability();
+      const first = observer.startRequest({ requestId: "browser-first" });
+      const second = observer.startRequest({ requestId: "browser-second" });
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const a = observer.runWithRequest(first, async () => {
+        expect(observer.getCurrentRequest()).toBe(first);
+        await gate;
+        expect(observer.getCurrentRequest()).toBeUndefined();
+      });
+      const b = observer.runWithRequest(second, async () => {
+        expect(observer.getCurrentRequest()).toBe(second);
+        release();
+        await Promise.resolve();
+        expect(observer.getCurrentRequest()).toBeUndefined();
+      });
+      await Promise.all([a, b]);
+      expect(observer.getCurrentRequest()).toBeUndefined();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("uses an injected browser context without replacing it", async () => {
+    const { createAsyncLocalRequestContext } = await import("./node.js");
+    const context = createAsyncLocalRequestContext();
+    const run = vi.spyOn(context, "run");
+    vi.stubGlobal("process", undefined);
+    try {
+      const observer = createObservability({ requestContext: context });
+      const request = observer.startRequest({ requestId: "injected" });
+      await observer.runWithRequest(request, async () => {
+        await Promise.resolve();
+        expect(observer.child({}).getCurrentRequest()).toBe(request);
+      });
+      expect(run).toHaveBeenCalledOnce();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
 });
