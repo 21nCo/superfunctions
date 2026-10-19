@@ -1,0 +1,11 @@
+is super functions using blacksmith runners now?
+
+---
+
+what does blacksmith free tier support? open source projects free? if not free - create a PR to switch back to github runners
+
+Also does namespace.so or circleCI runners support free runs for open source projects? if yes, we can use these as well
+
+---
+
+no lets keep github runners... fix any code review findings on the PR and merge it once everything is clear
