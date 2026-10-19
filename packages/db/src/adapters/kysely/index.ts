@@ -415,7 +415,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
       debug: config.debug ?? false,
       namespace: config.namespace,
       capabilities: {
-        types: { json: true, dates: true, booleans: true, bigint: true, uuid: true, enum: true },
+        types: { json: true, dates: true, booleans: config.dialect !== 'sqlite', bigint: true, uuid: true, enum: true },
         operations: { batch: true, upsert: true, streaming: false, fulltext: false, returning: config.dialect !== 'mysql', strictUpdateNotFound: true },
         transactions: { supported: true, nested: false, isolation: undefined },
         performance: { supportsJoins: true, supportsPreparedStatements: true },
