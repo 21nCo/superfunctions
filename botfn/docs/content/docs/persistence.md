@@ -5,7 +5,7 @@ description: Store issue and Discord thread relationships through tRPC.
 
 `@superfunctions/botfn-persistence-service` exposes a Hono Worker with a root health text response and tRPC procedures under `/trpc/*`. The service needs `DATABASE_URL` and a PostgreSQL schema matching `src/schema.ts`. The [source setup guide](https://github.com/21nCo/super-functions/blob/dev/botfn/persistence/SETUP.md) provides the DDL for `issues`, `discord_threads`, and the `issue_status` enum.
 
-For local development, set `DATABASE_URL` in `botfn/persistence/.dev.vars`. Set a production Worker secret for deployment. Run `npm --workspace @superfunctions/botfn-persistence-service run dev` or `npm --workspace @superfunctions/botfn-persistence-service run deploy` from the repository root. Provision and migrate the database before starting the Worker; the package does not apply schema changes on startup.
+For local development, set `DATABASE_URL` in `botfn/persistence/.dev.vars`. For deployment, set the secret with `npx wrangler secret put DATABASE_URL --config botfn/persistence/wrangler.toml`. The Worker's `wrangler.toml` enables the `nodejs_compat` compatibility flag with a 2024-09-23 compatibility date because the `postgres` driver needs Node.js APIs such as `Buffer` and `net`; keep that flag if you copy the configuration. Run `npm --workspace @superfunctions/botfn-persistence-service run dev` or `npm --workspace @superfunctions/botfn-persistence-service run deploy` from the repository root. Provision and migrate the database before starting the Worker; the package does not apply schema changes on startup.
 
 ```ts
 import { createPersistenceClient } from "@superfunctions/botfn-persistence-service/client";

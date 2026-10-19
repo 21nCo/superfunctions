@@ -13,11 +13,11 @@ description: Current BotFn package map and public entry points.
 | `@superfunctions/botfn-github-integration` | GitHub App auth, request client, and one-off requests. |
 | `@superfunctions/botfn-linear-integration` | Linear GraphQL client and issue/team helpers. |
 | `@superfunctions/botfn-shared-types` | Shared Zod schemas and TypeScript types. |
-| `@superfunctions/botfn-admin` | Optional Super Console capability, client, adapter, and operator service. |
+| `@superfunctions/botfn-admin` | Optional Super Console capability, client, adapter, and operator service; `@superfunctions/admin` is a peer dependency. |
 
-Public BotFn libraries use the controlled `@superfunctions/botfn-*` namespace.
-The old `@botfn` npm user scope belongs to an unrelated account; no compatibility
-aliases are provided. The private documentation workspace remains `@botfn/docs`
+Public BotFn libraries use only the controlled `@superfunctions/botfn-*` namespace.
+No other npm scope is a BotFn publish target, and no compatibility aliases are
+provided. The private documentation workspace is `@superfunctions/botfn-docs`
 and is not a published library.
 
 Discord core, GitHub, Linear, and shared-types packages export compiled ESM and

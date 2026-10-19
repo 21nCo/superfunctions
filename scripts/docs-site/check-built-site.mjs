@@ -38,6 +38,6 @@ assert.equal(childResponse.status, 200);
 const childHtml = await childResponse.text();
 const childTitles = [...childHtml.matchAll(/<title[^>]*>([\s\S]*?)<\/title>/g)].map((match) => match[1].trim());
 assert.equal(childTitles.length, 1);
-const expectedTitle = child.title.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-assert.equal(childTitles[0], expectedTitle, "Child title must override the layout fallback");
+const decodeHtml = (value) => value.replace(/&(amp|lt|gt|quot|#39|#x27);/g, (_, entity) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", "#x27": "'" })[entity]);
+assert.equal(decodeHtml(childTitles[0]), child.title, "Child title must override the layout fallback");
 console.log(JSON.stringify({ routes: results, child: { path: child.path, title: childTitles[0] }, searchPath, searchDocuments: artifact.documents.length }));

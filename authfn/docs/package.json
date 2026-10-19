@@ -7,7 +7,7 @@
     "dev": "vite dev --port 6005",
     "build": "vite build",
     "preview": "vite preview --port 6005",
-    "test": "npm run check:llms && node --test ../../scripts/docs-site/check-built-site.test.mjs && vitest run --config ../../scripts/docs-site/vitest.config.ts",
+    "test": "npm run check:llms && node --test ../../scripts/docs-site/check-built-site.test.mjs ../../scripts/docs-site/atomic-write.test.mjs && vitest run --config ../../scripts/docs-site/vitest.config.ts",
     "check:llms": "node scripts/generate-llms.mjs --check",
     "generate:openapi": "node scripts/generate-openapi.mjs",
     "generate:llms": "node scripts/generate-llms.mjs",
@@ -32,8 +32,8 @@
     "@authfn/two-factor": "0.1.1",
     "@docsfn/cli": "0.0.2",
     "@superfunctions/db": "0.2.0",
-    "@superfunctions/oauth-flow": "^0.1.0",
-    "@superfunctions/observability": "^0.0.1",
+    "@superfunctions/oauth-flow": "0.1.0",
+    "@superfunctions/observability": "0.0.1",
     "@sveltejs/adapter-auto": "^3.0.0",
     "@sveltejs/adapter-cloudflare": "^7.0.0",
     "@sveltejs/kit": "^2.0.0",
@@ -46,6 +46,6 @@
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0",
     "vite": "^6.4.3",
-    "vitest": "^4.1.11"
+    "vitest": "^3.2.4"
   }
 }

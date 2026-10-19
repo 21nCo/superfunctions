@@ -3,12 +3,20 @@ title: Getting started
 description: Find the BotFn package or service that fits your integration.
 ---
 
-BotFn lives under `botfn/` in the Superfunctions npm workspace. Install dependencies from the repository root, then run scripts for the package you need. The Discord and Slack bot packages each expose a Cloudflare Worker entry point. The persistence package is a separate Worker backed by PostgreSQL.
+BotFn packages live at `botfn/<pkg>` in the Superfunctions npm workspace; there is no BotFn-level `package.json` or Turborepo. Install dependencies from the repository root, then run scripts for the package you need. The Discord and Slack bot packages each run as a Cloudflare Worker, and the persistence package is a separate Worker backed by PostgreSQL. Cloudflare Workers is the only supported deployment target.
 
 ```sh
 npm install
 npm --workspace @superfunctions/botfn-discord-bot run dev
+npm --workspace @superfunctions/botfn-bot-slack run dev
 npm --workspace @superfunctions/botfn-persistence-service run dev
+```
+
+Build and test every BotFn package from the repository root with Turbo:
+
+```sh
+npx turbo run build --filter='./botfn/*'
+npx turbo run test --filter='./botfn/*'
 ```
 
 For Discord, register the four slash commands with `npm --workspace @superfunctions/botfn-discord-bot run register-commands` after providing `DISCORD_TOKEN` and `DISCORD_CLIENT_ID` in a local `.env`. Configure the Worker secrets and the persistence URL separately. See the [Discord setup](/docs/discord-bot) before deploying.

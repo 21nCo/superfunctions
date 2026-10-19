@@ -1,4 +1,3 @@
-import { basename, extname } from "node:path";
 import matter from "gray-matter";
 import {
   assertValidSourceEntries,
@@ -363,6 +362,17 @@ function collectEntriesForCollection(
   );
 }
 
+// POSIX helpers keep the runtime free of Node built-ins on edge targets.
+function basename(relativePath: string): string {
+  return relativePath.slice(relativePath.lastIndexOf("/") + 1);
+}
+
+function extname(relativePath: string): string {
+  const name = basename(relativePath);
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot) : "";
+}
+
 function createEntryForModule(
   collection: DocsCollection,
   relativePath: string,
@@ -391,11 +401,16 @@ function collectionDirectory(
   collection: DocsCollection,
   config: DocsConfig,
 ): string {
-  if (collection === "docs") return config.content.docsDir ?? "content/docs";
-  if (collection === "pages") return config.content.pagesDir ?? "content/pages";
-  if (collection === "blog") return config.content.blogDir ?? "content/blog";
-  if (collection === "api") return config.content.apiDir ?? "content/api";
-  return config.content.assetsDir ?? "static";
+  const directory = collection === "docs" ? config.content.docsDir ?? "content/docs"
+    : collection === "pages" ? config.content.pagesDir ?? "content/pages"
+    : collection === "blog" ? config.content.blogDir ?? "content/blog"
+    : collection === "api" ? config.content.apiDir ?? "content/api"
+    : config.content.assetsDir ?? "static";
+  // Collection directories are relative to content.root, as in the filesystem provider.
+  const normalizedRoot = normalizeProviderPath(config.content.root ?? ".");
+  let root = normalizedRoot === "." ? "" : normalizedRoot.replace(/^\.\//, "");
+  while (root.endsWith("/")) root = root.slice(0, -1);
+  return normalizeProviderPath(root ? `${root}/${directory}` : directory);
 }
 
 function createMarkdownEntry(

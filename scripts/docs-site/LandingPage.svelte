@@ -178,14 +178,14 @@
   .landing-card:hover,
   .landing-card:focus-visible {
     border-color: var(--docsfn-color-primary);
-    box-shadow: 0 8px 28px color-mix(in srgb, var(--docsfn-color-primary) 16%, transparent);
+    box-shadow: 0 8px 28px rgb(37 99 235 / 0.12);
     transform: translateY(-1px);
   }
 
   @media (prefers-color-scheme: dark) {
     .landing-card:hover,
     .landing-card:focus-visible {
-      box-shadow: 0 8px 28px color-mix(in srgb, var(--docsfn-color-primary) 24%, transparent);
+      box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
     }
   }
 
@@ -215,5 +215,16 @@
   .landing-card:hover .landing-card-cta,
   .landing-card:focus-visible .landing-card-cta {
     opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .landing-card {
+      transition: none;
+    }
+
+    .landing-card:hover,
+    .landing-card:focus-visible {
+      transform: none;
+    }
   }
 </style>

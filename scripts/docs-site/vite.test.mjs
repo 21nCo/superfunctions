@@ -46,8 +46,11 @@ describe("consumer-owned conditional dependency resolution", () => {
       const loaded = await server.ssrLoadModule(shared);
       expect([loaded.core, loaded.search, loaded.parser]).toEqual(["CONSUMER_OK_IMPORT", "CONSUMER_OK_SEARCH", "CONSUMER_OK_IMPORT"]);
       const browser = await server.transformRequest(shared);
-      expect(browser.code).toContain("lib/browser.mjs");
-      expect(browser.code).not.toContain("ROOT_BAD");
+      // The rewritten import must point at the consumer's copy, not the repository root's.
+      const browserImport = browser.code.match(/["']([^"']*@docsfn\/core\/lib\/browser\.mjs)["']/)?.[1];
+      expect(browserImport).toBeDefined();
+      expect(browserImport.startsWith(`/@fs${root}/node_modules/`)).toBe(false);
+      expect(browserImport).toMatch(/^(?:\/node_modules\/|\/@fs.*\/consumer\/docs\/node_modules\/)@docsfn\/core\/lib\/browser\.mjs$/);
       const dependency = await server.ssrLoadModule(path.join(ownedDependency, "entry.js"));
       expect(dependency.marker).toBe("DEPENDENCY_OK_IMPORT");
     } finally { await server?.close(); rmSync(root, { recursive: true, force: true }); }

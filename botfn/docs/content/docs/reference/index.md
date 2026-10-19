@@ -7,4 +7,4 @@ description: BotFn package and runtime contract index.
 - [Commands and routes](/docs/reference/commands-and-routes) lists the Discord, Slack, persistence, and admin operation surfaces.
 - [Configuration](/docs/reference/configuration) lists the bindings and credentials used by each service.
 
-Read the current `origin/dev` source when using a package programmatically. The existing top-level README describes paths that are no longer present in this checkout.
+Each package lives at `botfn/<pkg>` in the Superfunctions repository. Read the current source on the `dev` branch when using a package programmatically.

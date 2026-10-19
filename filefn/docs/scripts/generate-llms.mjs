@@ -17,7 +17,7 @@ const siteDescription =
   "Self-hosted file uploads, storage, and processing for TypeScript, Python, and Swift.";
 const canonicalUrl =
   (config.site && (config.site.canonicalUrl || config.site.url)) ||
-  "https://docs.filefn.dev";
+  "https://filefn.com";
 
 const pages = Object.values(manifest.pages)
   .filter((page) => (page.id ?? "").startsWith("docs:"))

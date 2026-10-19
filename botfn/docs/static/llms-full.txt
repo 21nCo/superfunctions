@@ -13,7 +13,7 @@ an LLM-based assistant in a single shot. For a page index, see /docs/llms.txt.
 > Integrate BotFn operator resources with Super Console.
 
 
-`@superfunctions/botfn-admin` exports an optional Super Console capability for project-owned bot identities and verified platform channel bindings. It has `bots` and `channels` resources with eight operations: list, get, upsert, and delete bots; list, get, connect, and disconnect channels. Use `createBotFnAdminClient(adminClient)` for typed calls and `createBotFnAdminAdapter(service)` to bind the capability to BotFn's operator service.
+`@superfunctions/botfn-admin` exports an optional Super Console capability for project-owned bot identities and verified platform channel bindings. It has `bots` and `channels` resources with eight operations: list, get, upsert, and delete bots; list, get, connect, and disconnect channels. Use `createBotFnAdminClient(adminClient)` for typed calls and `createBotFnAdminAdapter(service)` to bind the capability to BotFn's operator service. `@superfunctions/admin` is a peer dependency, so the host installs the version it shares with its other admin capabilities.
 
 `createBotFnOperatorService({ store, verifyChannel, now? })` requires a durable `BotFnOperatorStore` implementation and a `verifyChannel` callback. The included `MemoryBotFnOperatorStore` is for tests and local development. The service requires installation, workspace, and project identifiers in the operation context. It strips `credentialRef` from channel views and returns `credentialConfigured: true` instead.
 
@@ -51,12 +51,20 @@ The command handler catches persistence failures, logs them, and still reports t
 > Find the BotFn package or service that fits your integration.
 
 
-BotFn lives under `botfn/` in the Superfunctions npm workspace. Install dependencies from the repository root, then run scripts for the package you need. The Discord and Slack bot packages each expose a Cloudflare Worker entry point. The persistence package is a separate Worker backed by PostgreSQL.
+BotFn packages live at `botfn/<pkg>` in the Superfunctions npm workspace; there is no BotFn-level `package.json` or Turborepo. Install dependencies from the repository root, then run scripts for the package you need. The Discord and Slack bot packages each run as a Cloudflare Worker, and the persistence package is a separate Worker backed by PostgreSQL. Cloudflare Workers is the only supported deployment target.
 
 ```sh
 npm install
 npm --workspace @superfunctions/botfn-discord-bot run dev
+npm --workspace @superfunctions/botfn-bot-slack run dev
 npm --workspace @superfunctions/botfn-persistence-service run dev
+```
+
+Build and test every BotFn package from the repository root with Turbo:
+
+```sh
+npx turbo run build --filter='./botfn/*'
+npx turbo run test --filter='./botfn/*'
 ```
 
 For Discord, register the four slash commands with `npm --workspace @superfunctions/botfn-discord-bot run register-commands` after providing `DISCORD_TOKEN` and `DISCORD_CLIENT_ID` in a local `.env`. Configure the Worker secrets and the persistence URL separately. See the [Discord setup](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/discord-bot.md) before deploying.
@@ -77,7 +85,7 @@ BotFn contains a Discord issue-linking bot, a small Slack event receiver, shared
 
 The Discord Worker verifies signed interactions, acknowledges slash commands, then calls GitHub or Linear and optionally records issue-to-thread relationships. The Slack Worker verifies signed requests and acknowledges events; it does not yet implement command or event business actions. Start with [getting started](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/getting-started.md), then read the [Discord](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/discord-bot.md), [Slack](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/slack-bot.md), and [persistence](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/persistence.md) guides.
 
-These pages follow the current `origin/dev` package layout. The top-level BotFn README still describes an older nested monorepo layout; use the [package map](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/reference/packages.md) and actual package entry points here when integrating. Deployments, external credentials, and hosted database state require separate verification.
+Each package lives at `botfn/<pkg>` inside the Superfunctions npm workspace; BotFn is not a standalone monorepo. The Discord, Slack, and persistence services deploy to Cloudflare Workers only. The [package map](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/reference/packages.md) lists every package name and public entry point. Deployments, external credentials, and hosted database state require separate verification.
 
 ---
 
@@ -89,7 +97,7 @@ These pages follow the current `origin/dev` package layout. The top-level BotFn 
 
 `@superfunctions/botfn-discord-core` exports the Discord request verifier, interaction constants, option helper, and response update helper. `verifyDiscordRequest(request, publicKey)` consumes the raw request body, checks Ed25519 signature headers, parses JSON, and validates a basic interaction shape. Pass the returned parsed, Zod-validated `body` to downstream handlers. It is not the original raw body: unknown fields outside the schema are stripped.
 
-`@superfunctions/botfn-slack-core` exports `verifySlackRequest(request, signingSecret)`. It checks timestamp freshness and an HMAC-SHA256 signature over `v0:timestamp:raw-body`. The exported verifier is independent of the Slack Worker route.
+`@superfunctions/botfn-slack-core` exports `verifySlackRequest(request, signingSecret)` and the `SlackEvent` and `SlackSlashCommand` types. The verifier accepts only canonical decimal Unix-second timestamps that are safe integers, rejects requests more than 300 seconds from the current time in either direction, and compares an HMAC-SHA256 signature over `v0:timestamp:raw-body` in constant time. It reads a clone of the request, so the caller can still consume the original body. The package ships ESM and CommonJS builds and is independent of the Discord packages.
 
 `@superfunctions/botfn-github-integration` exports `GitHubClient`, `githubRequest`, and GitHub App token helpers. The client caches an installation token for 55 minutes; `githubRequest` is a one-off helper that fetches a token for each call. Supply App ID, installation ID, and private key. Callers own repository permission checks and must handle external API failures.
 
@@ -109,7 +117,7 @@ The Discord bot and persistence service are independent Workers. Set secrets in 
 
 The Discord app verifies signatures before handling interactions. It defers commands and edits their responses after external API calls. Persistence errors are logged and suppressed, so monitor and reconcile missing records. The GitHub helper uses installation tokens; the Linear helper uses the configured API key. Check the scope and rotation of those credentials in your host environment.
 
-The Slack Worker only verifies and acknowledges events. Its token binding is unused. The top-level BotFn README and architecture note include older path and platform examples that have no matching entry points in this checkout. Consult the [package map](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/reference/packages.md) before copying commands from those files.
+The Slack Worker only verifies and acknowledges events. Its token binding is unused, and it has no `wrangler.toml`, so deployments must supply the Worker name and compatibility date themselves. The persistence Worker depends on the `nodejs_compat` flag in its `wrangler.toml`. All three Workers target Cloudflare only; there are no other platform entry points.
 
 The persistence tRPC route does not authenticate callers or partition by tenant. Protect the service before public exposure. The admin capability has its own scoped store contract and does not automatically share the persistence schema. Do not assume that connecting an admin channel deploys or configures a Discord or Slack Worker.
 
@@ -123,7 +131,7 @@ The persistence tRPC route does not authenticate callers or partition by tenant.
 
 `@superfunctions/botfn-persistence-service` exposes a Hono Worker with a root health text response and tRPC procedures under `/trpc/*`. The service needs `DATABASE_URL` and a PostgreSQL schema matching `src/schema.ts`. The [source setup guide](https://github.com/21nCo/super-functions/blob/dev/botfn/persistence/SETUP.md) provides the DDL for `issues`, `discord_threads`, and the `issue_status` enum.
 
-For local development, set `DATABASE_URL` in `botfn/persistence/.dev.vars`. Set a production Worker secret for deployment. Run `npm --workspace @superfunctions/botfn-persistence-service run dev` or `npm --workspace @superfunctions/botfn-persistence-service run deploy` from the repository root. Provision and migrate the database before starting the Worker; the package does not apply schema changes on startup.
+For local development, set `DATABASE_URL` in `botfn/persistence/.dev.vars`. For deployment, set the secret with `npx wrangler secret put DATABASE_URL --config botfn/persistence/wrangler.toml`. The Worker's `wrangler.toml` enables the `nodejs_compat` compatibility flag with a 2024-09-23 compatibility date because the `postgres` driver needs Node.js APIs such as `Buffer` and `net`; keep that flag if you copy the configuration. Run `npm --workspace @superfunctions/botfn-persistence-service run dev` or `npm --workspace @superfunctions/botfn-persistence-service run deploy` from the repository root. Provision and migrate the database before starting the Worker; the package does not apply schema changes on startup.
 
 ```ts
 import { createPersistenceClient } from "@superfunctions/botfn-persistence-service/client";
@@ -183,9 +191,9 @@ The `/link-*` and `/create-*` entries are Discord slash command names handled in
 | --- | --- | --- |
 | Discord command registration | `DISCORD_TOKEN`, `DISCORD_CLIENT_ID` | Local `.env` for `register-commands.js`. |
 | Discord Worker | `DISCORD_PUBLIC_KEY`, `DISCORD_CLIENT_ID`, `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, `GITHUB_PRIVATE_KEY`, `PERSISTENCE_SERVICE_URL` | Linear commands also need `LINEAR_API_KEY`. |
-| Slack Worker | `SLACK_SIGNING_SECRET` | `SLACK_BOT_TOKEN` is declared but unused by the current route. |
-| Persistence Worker | `DATABASE_URL` | PostgreSQL schema must be applied separately. |
-| Admin service | `BotFnOperatorStore`, `verifyChannel` | Host supplies scope, permissions, audit, and durable storage. |
+| Slack Worker | `SLACK_SIGNING_SECRET` | `SLACK_BOT_TOKEN` is declared but unused by the current route. No `wrangler.toml`; pass the Worker name and compatibility date to Wrangler. |
+| Persistence Worker | `DATABASE_URL` | PostgreSQL schema must be applied separately. `wrangler.toml` sets `nodejs_compat` for the `postgres` driver. |
+| Admin service | `BotFnOperatorStore`, `verifyChannel` | Host supplies scope, permissions, audit, durable storage, and the `@superfunctions/admin` peer dependency. |
 
 Store private keys, signing secrets, and API tokens in the platform's secret mechanism. A URL in `wrangler.toml` is configuration, not proof that the service exists or is reachable. The [Discord guide](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/discord-bot.md) and [persistence guide](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/persistence.md) cover setup order.
 
@@ -201,7 +209,7 @@ Store private keys, signing secrets, and API tokens in the platform's secret mec
 - [Commands and routes](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/reference/commands-and-routes.md) lists the Discord, Slack, persistence, and admin operation surfaces.
 - [Configuration](https://github.com/21nCo/super-functions/blob/dev/botfn/docs/content/docs/reference/configuration.md) lists the bindings and credentials used by each service.
 
-Read the current `origin/dev` source when using a package programmatically. The existing top-level README describes paths that are no longer present in this checkout.
+Each package lives at `botfn/<pkg>` in the Superfunctions repository. Read the current source on the `dev` branch when using a package programmatically.
 
 ---
 
@@ -221,11 +229,11 @@ Read the current `origin/dev` source when using a package programmatically. The 
 | `@superfunctions/botfn-github-integration` | GitHub App auth, request client, and one-off requests. |
 | `@superfunctions/botfn-linear-integration` | Linear GraphQL client and issue/team helpers. |
 | `@superfunctions/botfn-shared-types` | Shared Zod schemas and TypeScript types. |
-| `@superfunctions/botfn-admin` | Optional Super Console capability, client, adapter, and operator service. |
+| `@superfunctions/botfn-admin` | Optional Super Console capability, client, adapter, and operator service; `@superfunctions/admin` is a peer dependency. |
 
-Public BotFn libraries use the controlled `@superfunctions/botfn-*` namespace.
-The old `@botfn` npm user scope belongs to an unrelated account; no compatibility
-aliases are provided. The private documentation workspace remains `@botfn/docs`
+Public BotFn libraries use only the controlled `@superfunctions/botfn-*` namespace.
+No other npm scope is a BotFn publish target, and no compatibility aliases are
+provided. The private documentation workspace is `@superfunctions/botfn-docs`
 and is not a published library.
 
 Discord core, GitHub, Linear, and shared-types packages export compiled ESM and
@@ -248,12 +256,12 @@ not registry publication or a running Worker.
 > Verify Slack requests and understand the current event handler.
 
 
-`@superfunctions/botfn-bot-slack` is a private Cloudflare Worker package with one route: `POST /slack/events`. It requires `SLACK_SIGNING_SECRET` and verifies Slack's `v0` HMAC signature against the raw body and request timestamp. The verifier rejects missing headers and timestamps outside a five-minute window.
+`@superfunctions/botfn-bot-slack` is a private Cloudflare Worker package with one route: `POST /slack/events`. It requires `SLACK_SIGNING_SECRET` and verifies Slack's `v0` HMAC signature with `verifySlackRequest` from `@superfunctions/botfn-slack-core`. The verifier accepts only canonical decimal Unix-second timestamps that are safe integers, rejects missing headers and timestamps more than 300 seconds from the current time in either direction, and reads a clone of the request so the original body stays available to the route.
 
 The route returns a URL verification challenge when requested. For an event body, it logs the event type and responds `OK`. There are no Slack commands, message replies, or persistence writes in this entry point yet. `SLACK_BOT_TOKEN` is declared in the binding type but is not used by this route.
 
-Use `npm --workspace @superfunctions/botfn-bot-slack run dev` for a local Worker and `npm --workspace @superfunctions/botfn-bot-slack run deploy:cloudflare` to deploy once its secrets and Slack app endpoint are configured. A local typecheck/build is `npm --workspace @superfunctions/botfn-bot-slack run build`.
+The package has no `wrangler.toml`. Its scripts pass the entry point directly: `dev` runs `wrangler dev src/index.ts` and `deploy:cloudflare` runs `wrangler deploy src/index.ts`. Because no configuration file names the Worker, supply the Worker name and compatibility date as Wrangler flags (for example `npm --workspace @superfunctions/botfn-bot-slack run deploy:cloudflare -- --name <worker> --compatibility-date <date>`) and set `SLACK_SIGNING_SECRET` with `wrangler secret put SLACK_SIGNING_SECRET --name <worker>`. Point the Slack app's event subscription at the deployed `/slack/events` URL. A local typecheck/build is `npm --workspace @superfunctions/botfn-bot-slack run build`.
 
-If you add event handling, keep signature verification before JSON parsing, handle retries and idempotency for side effects, and use the host's own authorization model. The [Worker entry](https://github.com/21nCo/super-functions/blob/dev/botfn/bot-slack/src/index.ts) and [verifier](https://github.com/21nCo/super-functions/blob/dev/botfn/slack-core/src/verify.ts) are the current contract.
+If you add event handling, keep signature verification before JSON parsing, handle retries and idempotency for side effects, and use the host's own authorization model. The [Worker entry](https://github.com/21nCo/super-functions/blob/dev/botfn/bot-slack/src/index.ts), which holds the Worker and its Slack route, and the [verifier](https://github.com/21nCo/super-functions/blob/dev/botfn/slack-core/src/verify.ts) are the current contract.
 
 ---

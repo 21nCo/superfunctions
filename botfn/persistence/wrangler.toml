@@ -1,6 +1,8 @@
 name = "botfn-persistence-service"
 main = "src/index.cloudflare.ts"
-compatibility_date = "2024-01-01"
+# postgres.js needs the Node.js compatibility layer (Buffer, net) on Workers.
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
 
 # Set DATABASE_URL as a Wrangler secret before deploying:
 # wrangler secret put DATABASE_URL
