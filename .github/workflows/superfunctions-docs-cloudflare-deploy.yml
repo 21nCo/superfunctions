@@ -10,21 +10,26 @@ on:
     tags:
       - superfunctions-docs-live-*
       - superfunctions-docs-datafn-live-*
+      - superfunctions-docs-extfn-live-*
       - superfunctions-docs-filefn-live-*
       - superfunctions-docs-searchfn-live-*
       - superfunctions-docs-authfn-live-*
       - superfunctions-datafn-docs-live-*
+      - superfunctions-extfn-docs-live-*
       - superfunctions-filefn-docs-live-*
       - superfunctions-searchfn-docs-live-*
       - superfunctions-authfn-docs-live-*
     paths:
       - datafn/docs/**
+      - extfn/docs/**
       - filefn/docs/**
       - searchfn/docs/**
       - authfn/docs/**
       - docsfn/**
+      - apifn/docsfn/**
       - packages/docs-theme/**
       - scripts/cloudflare-docs/**
+      - scripts/docs-site/**
       - package.json
       - package-lock.json
       - turbo.json
@@ -39,6 +44,7 @@ on:
         options:
           - all
           - datafn
+          - extfn
           - filefn
           - searchfn
           - authfn
@@ -53,12 +59,12 @@ on:
 
 jobs:
   detect:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       environment: ${{ steps.detect.outputs.environment }}
       products: ${{ steps.detect.outputs.products }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
         with:
           fetch-depth: 0
 
@@ -82,7 +88,7 @@ jobs:
           cat /tmp/docs-deploy-detect.out >> "$GITHUB_OUTPUT"
 
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: detect
     if: needs.detect.outputs.products != '[]'
     environment: ${{ needs.detect.outputs.environment }}
@@ -94,7 +100,7 @@ jobs:
       matrix:
         product: ${{ fromJson(needs.detect.outputs.products) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
 
       - uses: actions/setup-node@v4
         with:
