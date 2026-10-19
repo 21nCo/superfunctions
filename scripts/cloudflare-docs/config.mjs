@@ -11,14 +11,14 @@ export const devAccountId = "c801efc2879825babdb9b2534199c4dd";
 export const devZoneName = "21n.site";
 
 export const docsProducts = {
-  mcpfn: {
-    packageName: "@mcpfn/docs",
-    docsDir: "mcpfn/docs",
+  reviewfn: {
+    packageName: "@reviewfn/docs",
+    docsDir: "reviewfn/docs",
     kind: "sveltekit-cloudflare",
-    zoneName: "mcpfn.com",
+    zoneName: "reviewfn.com",
     hosts: {
-      dev: "mcpfn.21n.site",
-      live: "mcpfn.com",
+      dev: "reviewfn.21n.site",
+      live: "reviewfn.com",
     },
   },
   memoryfn: {
@@ -29,6 +29,16 @@ export const docsProducts = {
     hosts: {
       dev: "memoryfn.21n.site",
       live: "memoryfn.com",
+    },
+  },
+  mcpfn: {
+    packageName: "@mcpfn/docs",
+    docsDir: "mcpfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "mcpfn.com",
+    hosts: {
+      dev: "mcpfn.21n.site",
+      live: "mcpfn.com",
     },
   },
   mdfn: {
