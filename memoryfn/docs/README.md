@@ -1,0 +1,25 @@
+# MemoryFn documentation site
+
+This SvelteKit site uses DocsFn. Consumer guides and source-aligned references live in `content/docs`. Update the site alongside changes to `memoryfn/typescript` public contracts.
+
+From the repository root:
+
+```sh
+npm --workspace @memoryfn/docs run dev
+npm --workspace @memoryfn/docs run build
+```
+
+The build regenerates `static/llms.txt` and `static/llms-full.txt`. In a fresh checkout, build through Turbo from the repository root first (`npx turbo run build --filter=@memoryfn/docs...`), because `@searchfn/client` and its dependencies resolve to their built `dist` exports. For CLI validation, the same SearchFn workspace builds are needed:
+
+```sh
+npm run build --workspace @searchfn/core
+npm run build --workspace @searchfn/adapter-contracts
+npm run build --workspace @searchfn/adapter-memory
+npm run build --workspace @searchfn/adapter-indexeddb
+npm run build --workspace @searchfn/client
+npm exec --workspace @memoryfn/docs -- docsfn validate --root .
+```
+
+The site defaults to port 6012. Set `site.canonicalUrl` once the public docs host serves these routes.
+
+The LLM resources are served at `/docs/llms.txt` and `/docs/llms-full.txt` so they stay inside the shared docs Worker route. Until the public docs host is live, generated page links point to source files on GitHub. Those source links always target the `dev` branch, so an unmerged preview's links resolve only after the site merges to `dev`. Cloudflare builds use the selected public docs host independently of the asset/CDN host, including the full corpus footer's absolute index link.
