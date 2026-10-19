@@ -1,0 +1,17 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "f5ada998401a",
+  "strategy": "manual-commit",
+  "branch": "next",
+  "checkpoints_count": 1,
+  "files_touched": null,
+  "sessions": [
+    {
+      "metadata": "/f5/ada998401a/0/metadata.json",
+      "transcript": "/f5/ada998401a/0/full.jsonl",
+      "compact_transcript": "/f5/ada998401a/0/transcript.jsonl",
+      "content_hash": "/f5/ada998401a/0/content_hash.txt",
+      "prompt": "/f5/ada998401a/0/prompt.txt"
+    }
+  ]
+}
