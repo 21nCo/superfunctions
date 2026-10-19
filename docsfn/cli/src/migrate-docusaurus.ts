@@ -605,7 +605,9 @@ async function loadSidebarsFromText(sidebarsPath: string): Promise<unknown> {
       evaluate(resolveImport(resolvedPath, specifier), new Set(seen));
     // Sidebars are configuration data: evaluate them without Node globals such
     // as process or require. This limits ambient access; it is not a sandbox.
-    const fn = new vm.Script(
+    // The migrated project's own sidebars file is trusted local config, the
+    // same file Docusaurus itself executes.
+    const fn = new vm.Script( // NOSONAR typescript:S1523 trusted local sidebars config
       `(function (module, exports, __loadImport) {\n${transformed}\nreturn module.exports;\n})`,
       { filename: resolvedPath }
     ).runInNewContext(Object.create(null)) as (
