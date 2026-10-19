@@ -15,7 +15,7 @@ try {
   throw new Error(hint);
 }
 if (!sitePackage || typeof sitePackage !== "object" || !("name" in sitePackage) ||
-    typeof sitePackage.name !== "string" || !sitePackage.name.endsWith("/docs") ||
+    typeof sitePackage.name !== "string" || !/[/-]docs$/.test(sitePackage.name) ||
     !("dependencies" in sitePackage) || !sitePackage.dependencies ||
     typeof sitePackage.dependencies !== "object" || !("@docsfn/core" in sitePackage.dependencies) ||
     typeof sitePackage.dependencies["@docsfn/core"] !== "string") {
