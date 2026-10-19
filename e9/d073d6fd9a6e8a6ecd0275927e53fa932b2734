@@ -1,0 +1,69 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_c86e3ff372d5d4 68-69,42756-42759,52956-52977,53056-53065,53116
+package.json
+  s_e1c5fc1a65c0cf::t_6e86011ec14471 63-64
+probefn/.conduct/workspace-readiness.md
+  s_e1c5fc1a65c0cf::t_36893ddb0b7c33 1-19
+probefn/.gitignore
+  s_e1c5fc1a65c0cf::t_178a7a6352d092 10
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_fca5a0f327e5b1 36-48,52-56,69-75
+probefn/docs/agent-consumption.md
+  s_e1c5fc1a65c0cf::t_b0b53e8f2d47e0 21,42,73,100
+probefn/docs/baselines.md
+  s_e1c5fc1a65c0cf::t_05aef84f603a71 10,16,26
+probefn/docs/getting-started.md
+  s_e1c5fc1a65c0cf::t_fc2b88f0e809cc 8,16,24,30-31,39,54-57,63-64,85-86
+probefn/package.json
+  s_e1c5fc1a65c0cf::t_01488aad406212 9,11-12,19-31
+probefn/packages/analyzers/test/design.test.ts
+  s_e1c5fc1a65c0cf::t_b0f7ccf84ec259 1,264-270,370
+probefn/packages/dev-server/src/cli.ts
+  s_e1c5fc1a65c0cf::t_d4bd08ab98b0fa 277
+probefn/packages/mcp-server/package.json
+  s_e1c5fc1a65c0cf::t_34c80e282df027 19-20
+probefn/packages/mcp-server/src/schema.ts
+  s_e1c5fc1a65c0cf::t_7d203840310316 1-8
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_b1c2266ebaf6bb 526
+probefn/packages/mcp-server/src/tools/auth.ts
+  s_e1c5fc1a65c0cf::t_6854798447b4b6 1
+probefn/packages/mcp-server/src/tools/baseline.ts
+  s_e1c5fc1a65c0cf::t_89ea4f6acef616 1
+probefn/packages/mcp-server/src/tools/checkpoint.ts
+  s_e1c5fc1a65c0cf::t_07b3585a3d5a35 1
+probefn/packages/mcp-server/src/tools/design.ts
+  s_e1c5fc1a65c0cf::t_99b16481d23ac0 1
+probefn/packages/mcp-server/src/tools/page.ts
+  s_e1c5fc1a65c0cf::t_14b5cde4ee9797 1
+probefn/packages/mcp-server/src/tools/report.ts
+  s_e1c5fc1a65c0cf::t_3969de8c27f38f 1
+probefn/packages/mcp-server/src/tools/session.ts
+  s_e1c5fc1a65c0cf::t_cc522f3264543e 1
+probefn/packages/visual-baselines/package.json
+  s_e1c5fc1a65c0cf::t_42b9b524d45332 15
+probefn/packages/visual-baselines/test/compare.test.ts
+  s_e1c5fc1a65c0cf::t_34f1749658b235 288
+probefn/scripts/test-vectors.ts
+  s_e1c5fc1a65c0cf::t_1aa2db95dc89ee 58,116-118,151,157,169,179,185,191,197,203,209,215,243,283,308,321,377,390,440,453,489-490,508,512-514
+probefn/tsconfig.json
+  s_e1c5fc1a65c0cf::t_9dbfd9d1e8d820 1-16
+probefn/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_e3cdb35ba1203c 3-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e9d073d6fd9a6e8a6ecd0275927e53fa932b2734",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
