@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M5AW2VXMDEVQE186PV0NB224",
+  "strategy": "manual-commit",
+  "branch": "codex/docsfn-next-to-dev-20260829",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docsfn/examples/sveltekit-docs-site/src/app.html",
+    "docsfn/examples/sveltekit-hybrid-site/src/app.html"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 21469,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 723456,
+    "output_tokens": 2928,
+    "api_call_count": 17,
+    "subagent_tokens_complete": false
+  }
+}
