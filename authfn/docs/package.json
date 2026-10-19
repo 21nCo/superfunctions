@@ -42,10 +42,10 @@
     "@tailwindcss/vite": "^4.0.0",
     "@uifn/core": "0.0.1",
     "authfn": "0.2.0",
-    "svelte": "^5.0.0",
+    "svelte": "5.57.2",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0",
     "vite": "^6.4.3",
-    "vitest": "^3.2.4"
+    "vitest": "4.1.11"
   }
 }

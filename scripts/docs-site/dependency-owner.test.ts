@@ -13,10 +13,13 @@ it("uses actual consumer-owned provider-fs and Vitest subpath exports through re
     : resolve(process.env.npm_package_json ?? resolve(process.cwd(), "package.json"));
   const consumerRequire = createRequire(consumerPackage);
   // Native public-subpath resolution is independent of the Vite plugin under test.
-  // ^3.2.4 legitimately selects newer3.x patches in a genuine standalone install.
+  // The consumer's own Vitest declaration, not a fixed major, decides what it resolves;
+  // ranges may legitimately select newer patches in a genuine standalone install.
   const nativeVitest = JSON.parse(readFileSync(consumerRequire.resolve("vitest/package.json"), "utf8"));
+  const consumerManifest = JSON.parse(readFileSync(consumerPackage, "utf8"));
+  const declaredVitest = String(consumerManifest.devDependencies?.vitest ?? consumerManifest.dependencies?.vitest ?? "");
   expect(nativeVitest.name).toBe("vitest");
-  expect(nativeVitest.version).toMatch(/^3\./);
+  expect(nativeVitest.version.split(".")[0]).toBe(declaredVitest.replace(/^\D*/, "").split(".")[0]);
   const plugin = docsSiteCorePlugin(pathToFileURL(consumerPackage).href);
   const server = await createServer({ configFile: false, plugins: [plugin], server: { middlewareMode: true }, logLevel: "silent" });
   try {
