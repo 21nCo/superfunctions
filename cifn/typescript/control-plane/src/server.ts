@@ -42,7 +42,7 @@ if (initialApiKeys && adapterConfig.secrets.type === 'memory') {
 
 const registrationToken = process.env.CIFN_RUNNER_REGISTRATION_TOKEN!;
 if (adapterConfig.secrets.type === 'memory') {
-  adapters.secrets.setSecret('cifn.runner.registration_token', registrationToken);
+  adapters.secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', registrationToken);
 }
 
 const webhookSecret = process.env.CIFN_WEBHOOK_SECRET;
@@ -52,6 +52,8 @@ const { app } = createApp({ adapters, webhookSecret });
 const server = createControlPlaneServer(app);
 
 server.listen(PORT, () => {
-  console.log(`CiFn Control Plane listening on port ${PORT}`);
+  const address = server.address();
+  const listeningPort = address && typeof address === 'object' ? address.port : PORT;
+  console.log(`CiFn Control Plane listening on port ${listeningPort}`);
   console.log(`Adapters: queue=${adapterConfig.queue.type}, artifacts=${adapterConfig.artifacts.type}, secrets=${adapterConfig.secrets.type}, logs=${adapterConfig.logs.type}`);
 });

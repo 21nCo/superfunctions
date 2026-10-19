@@ -10,7 +10,8 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:startup": "npm run build && node scripts/verify-startup.mjs"
   },
   "keywords": [
     "ci",
