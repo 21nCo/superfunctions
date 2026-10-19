@@ -58,6 +58,20 @@ export class WatchFn implements WatchFnInstance {
     }
   }
 
+  /** Await persistence for external batches; never acknowledge stopped storage. */
+  async ingest(events: Record<string, unknown>[]): Promise<void> {
+    if (!this.isStarted || !this.storage) throw new Error("WatchFn storage is unavailable");
+    for (const event of events) await this.storage.add(event);
+  }
+
+  authorizeIngest(request: Request): boolean {
+    const auth = this.config.auth;
+    if (auth?.enabled === false) return true;
+    if (!auth?.enabled && !auth?.apiKey) return true;
+    if (!auth.apiKey) return false;
+    return request.headers.get("authorization") === `Bearer ${auth.apiKey}` || request.headers.get("x-api-key") === auth.apiKey;
+  }
+
   start() {
     if (this.isStarted) return;
     this.isStarted = true;
