@@ -1,0 +1,107 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_f4183bf2826605::t_21c765184f3dc0 15,27,40,70
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_f4183bf2826605::t_5a8e22b85bb154 19,82
+memoryfn/docs/.gitignore
+  s_f4183bf2826605::t_31ba73c3185941 1-10
+memoryfn/docs/README.md
+  s_f4183bf2826605::t_d74d7eee2e0c32 1-25
+memoryfn/docs/content/docs/embeddings-and-extraction.md
+  s_f4183bf2826605::t_4c2a328f5b96cf 1-24
+memoryfn/docs/content/docs/getting-started.md
+  s_f4183bf2826605::t_d169259a9d14af 1-37
+memoryfn/docs/content/docs/http.md
+  s_f4183bf2826605::t_eb52de97f65acc 1-24
+memoryfn/docs/content/docs/index.md
+  s_f4183bf2826605::t_a2ad58918b6313 1-20
+memoryfn/docs/content/docs/mcp.md
+  s_f4183bf2826605::t_e45762b69c6e6c 1-47
+memoryfn/docs/content/docs/meta.json
+  s_f4183bf2826605::t_be88bc765fe3a1 1-15
+memoryfn/docs/content/docs/operations-and-limits.md
+  s_f4183bf2826605::t_53bc7826ffa9c7 1-21
+memoryfn/docs/content/docs/reference/api.md
+  s_f4183bf2826605::t_7d195ee87edbb6 1-27
+memoryfn/docs/content/docs/reference/index.md
+  s_f4183bf2826605::t_f5fa7987fb839e 1-10
+memoryfn/docs/content/docs/reference/meta.json
+  s_f4183bf2826605::t_e8d36f4aef952a 1-9
+memoryfn/docs/content/docs/reference/package-overview.md
+  s_f4183bf2826605::t_225f2168cbd4a8 1-20
+memoryfn/docs/content/docs/reference/storage-lifecycle.md
+  s_f4183bf2826605::t_6b2f1276255d9f 1-64
+memoryfn/docs/content/docs/scope-and-lifecycle.md
+  s_f4183bf2826605::t_7ab3d4cdf20c93 1-26
+memoryfn/docs/content/docs/search.md
+  s_f4183bf2826605::t_11885d5b05c3b6 1-25
+memoryfn/docs/content/docs/storage.md
+  s_f4183bf2826605::t_a5b656319dc632 1-33
+memoryfn/docs/docsfn.config.ts
+  s_f4183bf2826605::t_87a21457425cd8 1-36
+memoryfn/docs/package.json
+  s_f4183bf2826605::t_64517284ebe078 1-39
+memoryfn/docs/scripts/generate-llms.mjs
+  s_f4183bf2826605::t_c86ec9b9b7da34 1-25
+memoryfn/docs/src/app.css
+  s_f4183bf2826605::t_c027604bb66186 1-82
+memoryfn/docs/src/app.html
+  s_f4183bf2826605::t_7b5d0306cc38e6 1-11
+memoryfn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_f4183bf2826605::t_88410f865bf0ea 1-5
+memoryfn/docs/src/lib/server/docs-site-source.ts
+  s_f4183bf2826605::t_a16b54d7ab0b81 1-14
+memoryfn/docs/src/routes/+error.svelte
+  s_f4183bf2826605::t_64d1f3914b5b74 1-12
+memoryfn/docs/src/routes/+layout.server.ts
+  s_f4183bf2826605::t_fe65f4e434bfe7 1-13
+memoryfn/docs/src/routes/+layout.svelte
+  s_f4183bf2826605::t_c4807188f23353 1-86
+memoryfn/docs/src/routes/+page.svelte
+  s_f4183bf2826605::t_215ddbd556f526 1-28
+memoryfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_f4183bf2826605::t_e4a93f29b2c082 1-25
+memoryfn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_f4183bf2826605::t_6ecf22f52c0d56 1-41
+memoryfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_f4183bf2826605::t_d3efc17d8f8da6 1-7
+memoryfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_f4183bf2826605::t_423f6a279c138e 1-7
+memoryfn/docs/src/routes/docs/search.json/+server.ts
+  s_f4183bf2826605::t_45abc8fd87e0f6 1-8
+memoryfn/docs/static/llms-full.txt
+  s_f4183bf2826605::t_f5db6c457709cc 1-438
+memoryfn/docs/static/llms.txt
+  s_f4183bf2826605::t_b604bf0b73ac49 1-19
+memoryfn/docs/svelte.config.js
+  s_f4183bf2826605::t_2b003067939e98 1-26
+memoryfn/docs/tsconfig.json
+  s_f4183bf2826605::t_f200906b1705ea 1-59
+memoryfn/docs/turbo.json
+  s_f4183bf2826605::t_b050f80a537196 1-20
+memoryfn/docs/vite.config.ts
+  s_f4183bf2826605::t_bfaba48a6a54ec 1-12
+package-lock.json
+  s_f4183bf2826605::t_773e8683a6ed21 52,23175-23546,29943-29946
+package.json
+  s_f4183bf2826605::t_e4bf47c7e43a4c 47
+scripts/cloudflare-docs/config.mjs
+  s_f4183bf2826605::t_d8dcedbab752ec 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_f4183bf2826605::t_3af6c9c2b3a6ab 60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8737197933cb9df1732a2c77f746436c5299c91d",
+  "prompts": {},
+  "sessions": {
+    "s_f4183bf2826605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a72d3d426776b0727",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
