@@ -66,7 +66,7 @@ export default createMailFnCloudflareHandlers({
 });
 ```
 
-Copy the package's `wrangler.example.jsonc`, provision its bindings, apply `migrations/0001_mailfn.sql`, set a 32-byte `MAILFN_SECRET_KEY`, and ensure `MAILFN_STORAGE_REGION` matches the D1/R2 deployment location. `MAILFN_ADMIN_TOKEN` protects initial `POST /v1/admin/projects`; set `MAILFN_PROJECT_ID` after bootstrap. Custom domains need the exact zone ID and name. Public-platform, production-security, billing, and support flags default off.
+Copy the package's `wrangler.example.jsonc`, provision its bindings, apply `migrations/0001_mailfn.sql`, set `MAILFN_SECRET_KEY` to 32 random bytes encoded as 64 hexadecimal characters or as base64 (the Worker refuses to start otherwise), and ensure `MAILFN_STORAGE_REGION` matches the D1/R2 deployment location. `MAILFN_ADMIN_TOKEN` protects initial `POST /v1/admin/projects`; set `MAILFN_PROJECT_ID` after bootstrap. Custom domains need the exact zone ID and name. Public-platform, production-security, billing, and support flags default off.
 
 Ingress checks recipient lifecycle, sender policy, size, and quotas before reading MIME. It commits raw MIME to R2 before the D1 row, then enqueues parsing. Queue failure leaves a reconcilable row. Webhook deliveries use a separate Queue so endpoint latency cannot block MIME parsing. Read the [Cloudflare guide](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/cloudflare.md), [operations](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/operations.md), and [threat model](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/threat-model.md) before deployment.
 
@@ -132,6 +132,9 @@ const admin = new MailFnClient({
   token: process.env.MAILFN_TOKEN!,
 });
 
+// Record the wait boundary before the inbox exists so early mail is not filtered out.
+const startedAt = new Date().toISOString();
+
 const { inbox, credential } = await admin.createInbox({
   kind: "expiring",
   expirySeconds: 3600,
@@ -146,7 +149,7 @@ const scoped = new MailFnClient({
 const result = await scoped.waitForMessages(inbox.id, {
   senderDomain: "example.com",
   subject: "Verify",
-  after: new Date().toISOString(),
+  after: startedAt,
   timeoutMs: 30_000,
 });
 
@@ -382,7 +385,7 @@ Agent-safe MCP server for focused MailFn workflows.
 MAILFN_URL=https://mail.example.com MAILFN_TOKEN=... mailfn-mcp
 ```
 
-Tools cover expiring inbox creation, message wait/list/read, OTP/link extraction, and token revocation. Tool schemas are narrow, results are redacted by default, and content or verification values require an explicit read/extract action. Give agents inbox-scoped credentials containing only the scopes needed for their task.
+Tools cover expiring inbox creation, message wait/list/read, OTP/link extraction, and inbox deletion: `mailfn_revoke_inbox` deletes the inbox and revokes all of its inbox-scoped credentials. Revoke a single token with the CLI (`mailfn token revoke <inbox-id> <token-id>`) or `client.revokeToken()`. Tool schemas are narrow, results are redacted by default, and content or verification values require an explicit read/extract action. Give agents inbox-scoped credentials containing only the scopes needed for their task.
 
 ---
 
@@ -432,7 +435,7 @@ Internal rollout succeeds only after a seven-day observation window meets all of
 - Custom-domain activation: if D1 cannot persist the active rule ID, MailFn deletes the newly created provider rule. Rule creation first reuses a matching owned rule to make retry safe.
 - Outbound failure: a newly created daily quota reservation is released when SendFn rejects before accepting the send; queued/sent provider acceptance keeps one deterministic per-draft usage record.
 
-Before runtime changes, export D1 with `wrangler d1 export`, confirm R2 object-version recovery for the target bucket, and retain the prior Worker version and Email Routing rule ID. Restore validation must compare message IDs, raw object keys, attachment hashes, credential status, and schema version in a disposable environment. Rollback restores the previous Worker route and D1 export together; never roll schema state backward while leaving a newer Worker active.
+Before runtime changes, export D1 with `wrangler d1 export`, confirm R2 object-version recovery for the target bucket, and retain the prior Worker version and Email Routing rule ID. Restore validation must compare message IDs, raw object keys, attachment hashes, credential status, and schema version in a disposable environment. Rollback restores the previous Worker route; keep the current D1 data when the schema is still compatible, because the pre-release export predates any mail and credentials written since. Restore the D1 export only for an incompatible schema change, after stopping writes and preserving or replaying every post-export write. Never roll schema state backward while leaving a newer Worker active.
 
 ## Verification and release
 
@@ -610,7 +613,7 @@ The protected assets are mailbox addresses, raw MIME, normalized bodies, attachm
 
 ## Required controls
 
-- Credentials are random bearer secrets, stored only as hashes, returned once, explicitly scoped, revocable, and optionally expiring. Token comparisons and admin-token checks are constant-time.
+- Credentials are random bearer secrets whose records store only hashes. A token is returned once, except that idempotent inbox creation may replay it from encrypted response storage when that storage is configured. Credentials are explicitly scoped, revocable, and optionally expiring. Token comparisons and admin-token checks are constant-time.
 - Project/inbox ownership is checked before resource existence is disclosed. Inbox-scoped actors cannot cross inboxes or expand delegated scopes.
 - Raw MIME is evidence, never executable input. Parsed HTML removes scripts, event handlers, dangerous URLs, and remote-image loads. Attachment filenames and content types are normalized; bytes are hashed.
 - Size, project/inbox/sender message-rate, inbox-count, attachment-size, webhook-count, domain-count, stored-byte, and outbound limits are tenant policy, not client suggestions. Ingress counts, stored bytes, and outbound sends use durable atomic reservations.

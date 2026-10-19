@@ -13,6 +13,9 @@ const admin = new MailFnClient({
   token: process.env.MAILFN_TOKEN!,
 });
 
+// Record the wait boundary before the inbox exists so early mail is not filtered out.
+const startedAt = new Date().toISOString();
+
 const { inbox, credential } = await admin.createInbox({
   kind: "expiring",
   expirySeconds: 3600,
@@ -27,7 +30,7 @@ const scoped = new MailFnClient({
 const result = await scoped.waitForMessages(inbox.id, {
   senderDomain: "example.com",
   subject: "Verify",
-  after: new Date().toISOString(),
+  after: startedAt,
   timeoutMs: 30_000,
 });
 

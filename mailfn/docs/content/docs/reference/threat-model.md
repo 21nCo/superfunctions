@@ -9,7 +9,7 @@ The protected assets are mailbox addresses, raw MIME, normalized bodies, attachm
 
 ## Required controls
 
-- Credentials are random bearer secrets, stored only as hashes, returned once, explicitly scoped, revocable, and optionally expiring. Token comparisons and admin-token checks are constant-time.
+- Credentials are random bearer secrets whose records store only hashes. A token is returned once, except that idempotent inbox creation may replay it from encrypted response storage when that storage is configured. Credentials are explicitly scoped, revocable, and optionally expiring. Token comparisons and admin-token checks are constant-time.
 - Project/inbox ownership is checked before resource existence is disclosed. Inbox-scoped actors cannot cross inboxes or expand delegated scopes.
 - Raw MIME is evidence, never executable input. Parsed HTML removes scripts, event handlers, dangerous URLs, and remote-image loads. Attachment filenames and content types are normalized; bytes are hashed.
 - Size, project/inbox/sender message-rate, inbox-count, attachment-size, webhook-count, domain-count, stored-byte, and outbound limits are tenant policy, not client suggestions. Ingress counts, stored bytes, and outbound sends use durable atomic reservations.

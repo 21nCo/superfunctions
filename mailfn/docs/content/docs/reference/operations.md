@@ -43,7 +43,7 @@ Internal rollout succeeds only after a seven-day observation window meets all of
 - Custom-domain activation: if D1 cannot persist the active rule ID, MailFn deletes the newly created provider rule. Rule creation first reuses a matching owned rule to make retry safe.
 - Outbound failure: a newly created daily quota reservation is released when SendFn rejects before accepting the send; queued/sent provider acceptance keeps one deterministic per-draft usage record.
 
-Before runtime changes, export D1 with `wrangler d1 export`, confirm R2 object-version recovery for the target bucket, and retain the prior Worker version and Email Routing rule ID. Restore validation must compare message IDs, raw object keys, attachment hashes, credential status, and schema version in a disposable environment. Rollback restores the previous Worker route and D1 export together; never roll schema state backward while leaving a newer Worker active.
+Before runtime changes, export D1 with `wrangler d1 export`, confirm R2 object-version recovery for the target bucket, and retain the prior Worker version and Email Routing rule ID. Restore validation must compare message IDs, raw object keys, attachment hashes, credential status, and schema version in a disposable environment. Rollback restores the previous Worker route; keep the current D1 data when the schema is still compatible, because the pre-release export predates any mail and credentials written since. Restore the D1 export only for an incompatible schema change, after stopping writes and preserving or replaying every post-export write. Never roll schema state backward while leaving a newer Worker active.
 
 ## Verification and release
 

@@ -13,7 +13,7 @@ export default createMailFnCloudflareHandlers({
 });
 ```
 
-Copy the package's `wrangler.example.jsonc`, provision its bindings, apply `migrations/0001_mailfn.sql`, set a 32-byte `MAILFN_SECRET_KEY`, and ensure `MAILFN_STORAGE_REGION` matches the D1/R2 deployment location. `MAILFN_ADMIN_TOKEN` protects initial `POST /v1/admin/projects`; set `MAILFN_PROJECT_ID` after bootstrap. Custom domains need the exact zone ID and name. Public-platform, production-security, billing, and support flags default off.
+Copy the package's `wrangler.example.jsonc`, provision its bindings, apply `migrations/0001_mailfn.sql`, set `MAILFN_SECRET_KEY` to 32 random bytes encoded as 64 hexadecimal characters or as base64 (the Worker refuses to start otherwise), and ensure `MAILFN_STORAGE_REGION` matches the D1/R2 deployment location. `MAILFN_ADMIN_TOKEN` protects initial `POST /v1/admin/projects`; set `MAILFN_PROJECT_ID` after bootstrap. Custom domains need the exact zone ID and name. Public-platform, production-security, billing, and support flags default off.
 
 Ingress checks recipient lifecycle, sender policy, size, and quotas before reading MIME. It commits raw MIME to R2 before the D1 row, then enqueues parsing. Queue failure leaves a reconcilable row. Webhook deliveries use a separate Queue so endpoint latency cannot block MIME parsing. Read the [Cloudflare guide](/docs/reference/cloudflare), [operations](/docs/reference/operations), and [threat model](/docs/reference/threat-model) before deployment.
 
