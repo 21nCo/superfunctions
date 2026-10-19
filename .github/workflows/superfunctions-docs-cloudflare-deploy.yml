@@ -12,6 +12,7 @@ on:
       - superfunctions-docs-datafn-live-*
       - superfunctions-docs-extfn-live-*
       - superfunctions-docs-mcpfn-live-*
+      - superfunctions-docs-mdfn-live-*
       - superfunctions-docs-clifn-live-*
       - superfunctions-docs-botfn-live-*
       - superfunctions-docs-langfn-live-*
@@ -22,6 +23,7 @@ on:
       - superfunctions-datafn-docs-live-*
       - superfunctions-extfn-docs-live-*
       - superfunctions-mcpfn-docs-live-*
+      - superfunctions-mdfn-docs-live-*
       - superfunctions-clifn-docs-live-*
       - superfunctions-botfn-docs-live-*
       - superfunctions-langfn-docs-live-*
@@ -33,6 +35,7 @@ on:
       - datafn/docs/**
       - extfn/docs/**
       - mcpfn/docs/**
+      - mdfn/docs/**
       - clifn/docs/**
       - botfn/docs/**
       - langfn/docs/**
@@ -61,6 +64,7 @@ on:
           - datafn
           - extfn
           - mcpfn
+          - mdfn
           - clifn
           - botfn
           - langfn
@@ -79,12 +83,12 @@ on:
 
 jobs:
   detect:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.detect.outputs.environment }}
       products: ${{ steps.detect.outputs.products }}
     steps:
-      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -108,7 +112,7 @@ jobs:
           cat /tmp/docs-deploy-detect.out >> "$GITHUB_OUTPUT"
 
   deploy:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     needs: detect
     if: needs.detect.outputs.products != '[]'
     environment: ${{ needs.detect.outputs.environment }}
@@ -120,7 +124,7 @@ jobs:
       matrix:
         product: ${{ fromJson(needs.detect.outputs.products) }}
     steps:
-      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: actions/setup-node@v4
         with:
