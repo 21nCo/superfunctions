@@ -9,7 +9,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json"
   },
   "keywords": [
     "queue",
@@ -35,31 +36,37 @@
     "access": "public"
   },
   "superfunctions": {
-    "initFunction": "flowFn",
+    "initFunction": "createFlow",
     "schemaVersion": 1,
     "namespace": "flowfn"
   },
   "dependencies": {
-    "uuid": "^9.0.0",
-    "zod": "^3.22.0",
+    "@superfunctions/http": "0.3.1",
+    "cron-parser": "^4.9.0",
+    "drizzle-orm": "^0.45.2",
     "eventemitter3": "^5.0.1",
-    "@superfunctions/http": "0.1.3",
-    "ioredis": "^5.3.2",
-    "drizzle-orm": "^0.29.0",
-    "cron-parser": "^4.9.0"
+    "ioredis": "^5.0.0",
+    "uuid": "^11.1.1",
+    "zod": "^3.22.0",
+    "@opentelemetry/api": "^1.9.1"
   },
   "devDependencies": {
-    "ioredis-mock": "^8.9.0",
     "@types/node": "^20.11.0",
+    "@types/pg": "^8.23.1",
     "@types/uuid": "^9.0.0",
+    "ioredis-mock": "^8.9.0",
+    "pg": "^8.23.1",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.11",
+    "@opentelemetry/sdk-trace-base": "^2.12.0",
+    "@opentelemetry/context-async-hooks": "^2.12.0",
+    "@opentelemetry/core": "^2.12.0"
   },
   "peerDependencies": {
+    "@aws-sdk/client-sqs": "^3.0.0",
     "ioredis": "^5.0.0",
-    "kafkajs": "^2.0.0",
-    "@aws-sdk/client-sqs": "^3.0.0"
+    "kafkajs": "^2.0.0"
   },
   "peerDependenciesMeta": {
     "ioredis": {
@@ -70,6 +77,67 @@
     },
     "@aws-sdk/client-sqs": {
       "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./adapters/memory": {
+      "import": {
+        "types": "./dist/adapters/memory.d.mts",
+        "default": "./dist/adapters/memory.mjs"
+      },
+      "require": {
+        "types": "./dist/adapters/memory.d.ts",
+        "default": "./dist/adapters/memory.js"
+      }
+    },
+    "./adapters/redis": {
+      "import": {
+        "types": "./dist/adapters/redis.d.mts",
+        "default": "./dist/adapters/redis.mjs"
+      },
+      "require": {
+        "types": "./dist/adapters/redis.d.ts",
+        "default": "./dist/adapters/redis.js"
+      }
+    },
+    "./adapters/postgres": {
+      "import": {
+        "types": "./dist/adapters/postgres.d.mts",
+        "default": "./dist/adapters/postgres.mjs"
+      },
+      "require": {
+        "types": "./dist/adapters/postgres.d.ts",
+        "default": "./dist/adapters/postgres.js"
+      }
+    },
+    "./package.json": "./package.json",
+    "./instrumentation": {
+      "import": {
+        "types": "./dist/instrumentation.d.mts",
+        "default": "./dist/instrumentation.mjs"
+      },
+      "require": {
+        "types": "./dist/instrumentation.d.ts",
+        "default": "./dist/instrumentation.js"
+      }
     }
   }
 }

@@ -799,3 +799,92 @@ import {
 ```
 
 Full type definitions are available in the package's `.d.ts` files.
+
+## Workflow lifecycle and recovery
+
+Build a workflow with `.build()` before execution. `flow.steps()` creates a branch builder, and `flow.listWorkflows()` lists built definitions. Each handler receives the previous step's result as its second argument; parallel results retain input order, and a branch forwards its last result. If the final result is undefined, the execution output is its state snapshot.
+
+```ts
+const workflow = flow.workflow('review')
+  .step('prepare', async ctx => { ctx.set('document', ctx.input.document); })
+  .waitForApproval('editor', { timeout: 60_000, data: ctx => ctx.get('document') })
+  .step('publish-or-reject', async (ctx, decision) => decision.approved)
+  .build();
+const execution = await workflow.execute({ document: 'draft' });
+// Poll getExecution until waiting.kind === 'approval'; authorize the reviewer in your host.
+await flow.approveWorkflow(execution.id, {
+  approved: true, reviewedBy: 'operator-123', approver: 'editor'
+});
+const result = await workflow.waitForCompletion(execution.id);
+```
+
+Approval requires an explicit boolean decision and nonempty reviewer identity. A supplied approver role must match the pending role; elapsed deadlines, duplicate decisions, and inactive executions are rejected. These SDK calls are trusted application APIs: the host must authenticate and authorize `reviewedBy`, rather than accepting an arbitrary identity from an unauthenticated request. A negative decision reaches the next handler as data; a timeout calls `onTimeout` and fails the workflow without running the continuation.
+
+`flow.signalWorkflow(executionId, event, data)` and `workflow.signalEvent(...)` deliver execution-specific events. Events arriving before a matching wait are buffered FIFO, up to 1,024 pending entries per execution. `ctx.waitForEvent` also works inside parallel handlers and supports repeated event names. `waitingFor` exposes all pending waits; `waiting` is the first. An absent timeout waits until a signal or cancellation. Zero timeout expires immediately.
+
+All duration units (`ms`, `seconds`, `minutes`, `hours`, `days`) are combined. Long delays split Node timers into safe intervals, and persisted absolute deadlines retain elapsed time on recovery. `ctx.signal` lets handlers cancel network calls. Cancellation wakes built-in sleeps and waits, prevents subsequent steps, and cannot later become completed. Arbitrary application promises cannot be forcibly stopped: compensation and `close()` wait for in-flight handlers to settle. Successfully completed ordinary steps with `.compensate(...)` and sagas roll back in reverse completion order. Parallel handlers settle before rollback begins. Every compensation is attempted even when another fails; `compensationErrors` and history retain failures. Error handlers observe failures but do not silently convert them to success.
+
+The configured adapter receives detached execution snapshots at start, step boundaries, wait transitions, and completion, including state, step journal, pending events, consumed wait results, compensation progress, and history. A workflow catalog supports listing after reconstruction. Workflow identity is stable for its namespace and name. Reconstruct the same workflow definition and call `resumeExecution(executionId)` to recover an interrupted execution; completed steps are skipped and received wait results replay. Do not change the definition between checkpoint and recovery. An interrupted application handler may execute again: use idempotency keys based on `ctx.executionId` for external effects. There is no claim of exactly-once external side effects or serialized JavaScript continuations.
+
+Use a single active owner for a workflow's persistence namespace. Adapter APIs do not provide cross-process ownership leases or transactional catalog updates. Recovery requires a persistent adapter and the saved execution ID; the memory adapter is process-local. Graceful workflow close cancels active executions; restart recovery addresses interrupted processes, rather than resuming executions deliberately cancelled on close. `waitForCompletion` propagates checkpoint-write failures. Run/step state returned to callers is detached, so modifying it does not modify live execution state.
+
+### Native provider acceptance and recovery
+
+`node flowfn/typescript/scripts/provider-acceptance.mjs` starts disposable Redis 7
+and PostgreSQL 16 Docker containers on loopback ports, runs the native adapter
+contracts, then removes the containers and verifies cleanup. It requires Docker,
+the installed workspace dependencies, and Node 20+. `NPM_CLI` may specify the
+absolute npm CLI JavaScript path. To use existing test services instead, set
+`FLOWFN_REDIS_URL` and `FLOWFN_POSTGRES_URL` when running the core test suite.
+Without these variables the native provider suites are explicitly skipped.
+
+PostgreSQL applications must call `adapter.initialize()` before use. Existing
+legacy tables are rejected instead of silently discarding fields. Stop all
+workers and call `adapter.migrateLegacySchema()` to migrate; the migration keeps
+original tables with `_legacy_v0` suffixes. Legacy consumer groups replay retained
+messages because the old format did not record acknowledgment ownership. Old
+workflow rows remain readable but cannot resume without a full execution journal.
+Back up the database before migration and inspect the retained tables before
+removing them. PostgreSQL schemas must be valid identifiers of at most 63 ASCII
+characters. Redis consumer recovery requires Redis 6.2 or newer (`XAUTOCLAIM`).
+
+Consumer groups deliver at least once. Configure `visibilityTimeout` above the
+expected processing time, or make handlers idempotent: another consumer can claim
+an expired receipt while the original handler is still running. Stale receipts
+cannot acknowledge a newer delivery. Manual acknowledgments and group cursors
+persist in Redis/PostgreSQL; memory groups exist only for the adapter lifetime.
+
+### Worker and scheduler lifecycle
+
+`worker.register(queue, handler)` registers one processor per bound queue.
+Processing starts on `await worker.run()`; registration after startup starts that
+processor immediately. Repeated `run()` is idempotent. `close()` waits for active
+handlers and removes forwarding listeners; a closed worker cannot restart.
+Queues are shared objects: a worker closing a queue also stops other processors
+registered on that same queue. Use a dedicated FlowFn instance per independently
+managed worker. Worker stalled-job settings are not implemented yet and must not
+be relied on as a recovery guarantee.
+
+Schedules require exactly one positive `every` interval or valid cron `pattern`.
+A zero `limit` schedules nothing; attempts, including failed callbacks, count
+against the limit. Failures wait until the next scheduled occurrence and appear
+as `lastError` in `list()`. Cancelling or replacing a schedule prevents future
+runs but cannot interrupt its active callback. Closing the scheduler (also done
+by `flow.close()`) waits for active callbacks and clears timers. Schedules are
+process-local and are not restored from provider storage after restart.
+
+### Observed metrics
+
+FlowFn records queue completion/failure throughput and processing duration,
+stream publication throughput and delivery latency. `getSystemMetrics()` counts
+resources registered in that FlowFn instance and workers started through the
+Worker API; it does not enumerate other processes. Workflow metrics read persisted
+execution records for the registered workflow. Queue throughput is completed or
+failed attempts per second over the last minute; stream throughput counts
+publications over the last second. Time series retain at most 1,000 samples per
+metric/tag tuple. These are bounded process-local observations, not a distributed
+telemetry collector. Stream lag sums retained messages awaiting delivery or
+acknowledgment across consumer groups, so one message can contribute once per
+group. Custom adapters without lag support return `null`; latency is `null` until
+a delivery has been observed. No fabricated zero is substituted for unavailable
+measurements.

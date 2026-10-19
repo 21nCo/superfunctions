@@ -132,7 +132,7 @@ export class BatchAccumulator<T, R = any> {
  */
 export function batch<T, R>(
   fn: (items: T[]) => Promise<R[]>,
-  options: BatchOptions
+  options: BatchOptions,
 ): (item: T) => Promise<R> {
   const accumulator = new BatchAccumulator(fn, options);
   return (item: T) => accumulator.add(item);
@@ -155,7 +155,7 @@ export function chunk<T>(array: T[], size: number): T[][] {
 export async function processBatches<T, R>(
   items: T[],
   processor: (batch: T[]) => Promise<R[]>,
-  options: { batchSize: number; delayMs?: number }
+  options: { batchSize: number; delayMs?: number },
 ): Promise<R[]> {
   const batches = chunk(items, options.batchSize);
   const results: R[] = [];
@@ -210,7 +210,7 @@ export async function batchByKey<T, R>(
   items: T[],
   keyFn: (item: T) => string,
   processor: (key: string, items: T[]) => Promise<R[]>,
-  options?: { concurrency?: number }
+  options?: { concurrency?: number },
 ): Promise<R[]> {
   const grouped = new Map<string, T[]>();
 
@@ -232,7 +232,7 @@ export async function batchByKey<T, R>(
     for (let i = 0; i < entries.length; i += options.concurrency) {
       const batch = entries.slice(i, i + options.concurrency);
       const batchResults = await Promise.all(
-        batch.map(([key, items]) => processor(key, items))
+        batch.map(([key, items]) => processor(key, items)),
       );
       results.push(...batchResults.flat());
     }

@@ -1,4 +1,4 @@
-import type { DLQJob, Job } from "@flowfn/core";
+import type { DLQJob, Job, WorkflowExecution } from "@flowfn/core";
 import { AdminError, type AdminOperationContext } from "@superfunctions/admin";
 import type {
   FlowFnAdminDeadLetter,
@@ -7,11 +7,14 @@ import type {
   FlowFnAdminService,
   FlowFnAdminWorker,
   FlowFnDomainAdminServiceOptions,
+  FlowFnAdminExecution,
+  FlowFnAdminSchedule,
 } from "./types.js";
 
 function toJson(value: unknown): unknown {
   if (value instanceof Date) return value.toISOString();
-  if (value instanceof Error) return { name: value.name, message: value.message };
+  if (value instanceof Error)
+    return { name: value.name, message: value.message };
   if (Array.isArray(value)) return value.map(toJson);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
@@ -21,21 +24,48 @@ function toJson(value: unknown): unknown {
   );
 }
 
-function page<T>(items: T[], limit = 50, offset = 0): { items: T[]; nextCursor: null } {
-  return { items: items.slice(offset, offset + limit), nextCursor: null };
+function pagination(limit = 50, offset = 0, cursor?: string) {
+  if (cursor !== undefined) {
+    if (!/^[0-9]+$/.test(cursor) || offset !== 0) throw new AdminError('invalid_argument', 'Use a valid cursor or offset, not both.');
+    offset = Number(cursor);
+  }
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 200) throw new AdminError('invalid_argument', 'Invalid pagination bounds.');
+  return { limit, offset };
+}
+function page<T>(
+  items: T[],
+  limit = 50,
+  offset = 0,
+  cursor?: string,
+): { items: T[]; nextCursor: string | null } {
+  ({ limit, offset } = pagination(limit, offset, cursor));
+  return { items: items.slice(offset, offset + limit), nextCursor: offset + limit < items.length ? String(offset + limit) : null };
 }
 
 function adminJob(queue: string, job: Job): FlowFnAdminJob {
-  return { ...(toJson(job) as Omit<FlowFnAdminJob, "queue">), queue };
+  const { lease, deduplicationId, ...publicJob } = job;
+  return { ...(toJson(publicJob) as Omit<FlowFnAdminJob, "queue">), queue };
+}
+function adminExecution(value: WorkflowExecution): FlowFnAdminExecution {
+  const fields = new Set(['id', 'workflowId', 'status', 'input', 'output', 'state', 'error', 'waiting', 'waitingFor', 'compensationErrors', 'startedAt', 'completedAt', 'createdAt', 'updatedAt']);
+  const record = Object.fromEntries(Object.entries(value).filter(([key]) => fields.has(key)));
+  return toJson(record) as FlowFnAdminExecution;
 }
 
 function adminDeadLetter(job: DLQJob): FlowFnAdminDeadLetter {
-  return { ...(toJson(job) as Omit<FlowFnAdminDeadLetter, "queue">), queue: job.originalQueue };
+  const { lease, deduplicationId, ...publicJob } = job;
+  return {
+    ...(toJson(publicJob) as Omit<FlowFnAdminDeadLetter, "queue">),
+    queue: job.originalQueue,
+  };
 }
 
 function requireIdempotency(context: AdminOperationContext): string {
   if (!context.idempotencyKey) {
-    throw new AdminError("precondition_failed", "FlowFn mutations require an idempotency key.");
+    throw new AdminError(
+      "precondition_failed",
+      "FlowFn mutations require an idempotency key.",
+    );
   }
   return context.idempotencyKey;
 }
@@ -45,56 +75,149 @@ function requireIdempotency(context: AdminOperationContext): string {
  * The binding does not reach into an adapter, Worker, DLQ, JobStorage, or
  * EventLog implementation, so those domain components retain their invariants.
  */
-export function createFlowFnDomainAdminService(options: FlowFnDomainAdminServiceOptions): FlowFnAdminService {
-  const required = ["workspaceId", "projectId", "environmentId", "namespace"] as const;
+export function createFlowFnDomainAdminService(
+  options: FlowFnDomainAdminServiceOptions,
+): FlowFnAdminService {
+  const required = [
+    "installationId",
+    "workspaceId",
+    "projectId",
+    "environmentId",
+    "namespace",
+  ] as const;
   for (const key of required) {
-    if (!options[key].trim()) throw new AdminError("invalid_argument", `FlowFn admin binding requires ${key}.`);
+    if (!options[key].trim())
+      throw new AdminError(
+        "invalid_argument",
+        `FlowFn admin binding requires ${key}.`,
+      );
   }
-  const workers = new Map<string, NonNullable<FlowFnDomainAdminServiceOptions["workers"]>[number]>();
+  const workers = new Map<
+    string,
+    NonNullable<FlowFnDomainAdminServiceOptions["workers"]>[number]
+  >();
   for (const worker of options.workers ?? []) {
-    if (!worker.id.trim()) throw new AdminError("invalid_argument", "FlowFn worker bindings require a non-empty id.");
-    if (workers.has(worker.id)) throw new AdminError("conflict", `Duplicate FlowFn worker binding: ${worker.id}.`);
+    if (!worker.id.trim())
+      throw new AdminError(
+        "invalid_argument",
+        "FlowFn worker bindings require a non-empty id.",
+      );
+    if (workers.has(worker.id))
+      throw new AdminError(
+        "conflict",
+        `Duplicate FlowFn worker binding: ${worker.id}.`,
+      );
     workers.set(worker.id, worker);
   }
 
   const assertScope = (context: AdminOperationContext): void => {
     const scope = context.scope;
     if (
+      (scope.installationId ?? scope.organizationId) !==
+        options.installationId ||
+      (scope.installationId !== undefined &&
+        scope.organizationId !== undefined &&
+        scope.installationId !== scope.organizationId) ||
+      scope.region !== options.region ||
       scope.workspaceId !== options.workspaceId ||
       scope.projectId !== options.projectId ||
       scope.environmentId !== options.environmentId ||
       scope.namespace !== options.namespace
     ) {
-      throw new AdminError("forbidden", "The active scope cannot access this FlowFn environment.");
+      throw new AdminError(
+        "forbidden",
+        "The active scope cannot access this FlowFn environment.",
+      );
     }
   };
 
   const queue = async (id: string) => {
     const names = await options.flow.listQueues();
-    if (!names.includes(id)) throw new AdminError("not_found", "The FlowFn queue was not found in the active environment.");
+    if (!names.includes(id))
+      throw new AdminError(
+        "not_found",
+        "The FlowFn queue was not found in the active environment.",
+      );
     return options.flow.queue(id);
   };
   const worker = (id: string) => {
     const value = workers.get(id);
-    if (!value) throw new AdminError("not_found", "The FlowFn worker was not found in the active environment.");
+    if (!value)
+      throw new AdminError(
+        "not_found",
+        "The FlowFn worker was not found in the active environment.",
+      );
     return value;
   };
   const deadLetter = async (id: string) => {
-    const value = (await options.dlq.getAll()).find((candidate) => candidate.id === id);
-    if (!value) throw new AdminError("not_found", "The FlowFn dead letter was not found in the active environment.");
+    const value = (await options.dlq.getAll()).find(
+      (candidate) => candidate.id === id,
+    );
+    if (!value)
+      throw new AdminError(
+        "not_found",
+        "The FlowFn dead letter was not found in the active environment.",
+      );
     return value;
   };
 
+  const workflow = async (id: string) => {
+    const value = (await options.flow.listWorkflows()).find(item => item.id === id);
+    if (!value) throw new AdminError('not_found', 'The workflow was not found in the active environment.');
+    return value;
+  };
+  const stream = async (id: string) => {
+    if (!(await options.flow.listStreams()).includes(id)) throw new AdminError('not_found', 'The stream was not found in the active environment.');
+    return options.flow.stream(id);
+  };
+  const schedule = async (id: string) => {
+    const value = (await options.flow.scheduler().list()).find(item => item.name === id);
+    if (!value) throw new AdminError('not_found', 'The schedule was not found in the active environment.');
+    return value;
+  };
   return {
+    async listWorkflows(input, context) {
+      assertScope(context);
+      return page((await options.flow.listWorkflows()).map(({ id, name }) => ({ id, name })).sort((a, b) => a.id.localeCompare(b.id)), input.limit, input.offset, input.cursor);
+    },
+    async listExecutions(input, context) {
+      assertScope(context);
+      const values = await (await workflow(input.workflowId)).listExecutions({ status: input.status });
+      return page(values.map(adminExecution), input.limit, input.offset, input.cursor);
+    },
+    async getExecution(input, context) { assertScope(context); return { item: adminExecution(await (await workflow(input.workflowId)).getExecution(input.id)) }; },
+    async cancelExecution(input, context) { assertScope(context); requireIdempotency(context); await (await workflow(input.workflowId)).cancelExecution(input.id); return { accepted: true }; },
+    async retryExecution(input, context) { assertScope(context); requireIdempotency(context); return { item: adminExecution(await (await workflow(input.workflowId)).retryExecution(input.id)) }; },
+    async signalExecution(input, context) { assertScope(context); requireIdempotency(context); await (await workflow(input.workflowId)).signalEvent(input.id, input.event, input.data); return { accepted: true }; },
+    async approveExecution(input, context) { assertScope(context); requireIdempotency(context); await (await workflow(input.workflowId)).approveExecution(input.id, { ...input.decision, reviewedBy: context.actor.id }); return { accepted: true }; },
+    async recoverWorkflow(input, context) { assertScope(context); requireIdempotency(context); return { recovered: await (await workflow(input.id)).recoverExecutions() }; },
+    async listStreams(input, context) { assertScope(context); const items = await Promise.all((await options.flow.listStreams()).sort().map(async id => ({ id, ...await options.flow.stream(id).getInfo() }))); return page(items, input.limit, input.offset, input.cursor); },
+    async getStream(input, context) { assertScope(context); return { item: { id: input.id, ...await (await stream(input.id)).getInfo() } }; },
+    async listSchedules(input, context) { assertScope(context); return page((await options.flow.scheduler().list()).sort((a, b) => a.name.localeCompare(b.name)).map(item => toJson({ ...item, id: item.name }) as FlowFnAdminSchedule), input.limit, input.offset, input.cursor); },
+    async pauseSchedule(input, context) { assertScope(context); requireIdempotency(context); await schedule(input.id); await options.flow.scheduler().pause(input.id); return { accepted: true }; },
+    async resumeSchedule(input, context) { assertScope(context); requireIdempotency(context); await schedule(input.id); await options.flow.scheduler().resume(input.id); return { accepted: true }; },
+    async cancelSchedule(input, context) { assertScope(context); requireIdempotency(context); await schedule(input.id); await options.flow.scheduler().cancel(input.id); return { accepted: true }; },
     async listQueues(input, context) {
       assertScope(context);
-      const items = await Promise.all((await options.flow.listQueues()).sort().map(async (name) => ({ id: name, name, stats: await options.flow.queue(name).getJobCounts() })));
-      return page(items, input.limit, input.offset);
+      const items = await Promise.all(
+        (await options.flow.listQueues()).sort().map(async (name) => ({
+          id: name,
+          name,
+          stats: await options.flow.queue(name).getJobCounts(),
+        })),
+      );
+      return page(items, input.limit, input.offset, input.cursor);
     },
     async getQueue(input, context) {
       assertScope(context);
       const value = await queue(input.id);
-      return { item: { id: value.name, name: value.name, stats: await value.getJobCounts() } };
+      return {
+        item: {
+          id: value.name,
+          name: value.name,
+          stats: await value.getJobCounts(),
+        },
+      };
     },
     async pauseQueue(input, context) {
       assertScope(context);
@@ -110,29 +233,60 @@ export function createFlowFnDomainAdminService(options: FlowFnDomainAdminService
     },
     async listJobs(input, context) {
       assertScope(context);
-      await queue(input.queue);
-      const jobs = input.status ? await options.jobs.getByStatus(input.queue, input.status) : await options.jobs.getAll(input.queue);
-      return page(jobs.map((job) => adminJob(input.queue, job)), input.limit, input.offset);
+      const target = await queue(input.queue);
+      const jobs = input.status
+        ? await target.getJobs(input.status)
+        : (
+            await Promise.all(
+              (
+                [
+                  "waiting",
+                  "active",
+                  "completed",
+                  "failed",
+                  "delayed",
+                  "paused",
+                ] as const
+              ).map((status) => target.getJobs(status)),
+            )
+          ).flat();
+      jobs.sort(
+        (a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id),
+      );
+      return page(
+        jobs.map((job) => adminJob(input.queue, job)),
+        input.limit,
+        input.offset,
+        input.cursor,
+      );
     },
     async getJob(input, context) {
       assertScope(context);
-      await queue(input.queue);
-      const value = await options.jobs.get(input.queue, input.id);
-      if (!value) throw new AdminError("not_found", "The FlowFn job was not found in the active environment.");
+      const value = await (await queue(input.queue)).getJob(input.id);
+      if (!value)
+        throw new AdminError(
+          "not_found",
+          "The FlowFn job was not found in the active environment.",
+        );
       return { item: adminJob(input.queue, value) };
     },
     async enqueueJob(input, context) {
       assertScope(context);
       const idempotencyKey = requireIdempotency(context);
       const target = await queue(input.queue);
-      const job = await target.add(input.name, input.data, { ...input.options, jobId: input.options?.jobId ?? idempotencyKey });
+      const job = await target.add(input.name, input.data, {
+        ...input.options,
+        jobId: input.options?.jobId ?? idempotencyKey,
+      });
       await options.jobs.save(input.queue, job);
       return { item: adminJob(input.queue, job) };
     },
     async listWorkers(input, context) {
       assertScope(context);
-      const items: FlowFnAdminWorker[] = [...workers.values()].map(({ id, queues }) => ({ id, queues: [...queues] })).sort((a, b) => a.id.localeCompare(b.id));
-      return page(items, input.limit, input.offset);
+      const items: FlowFnAdminWorker[] = [...workers.values()]
+        .map(({ id, queues }) => ({ id, queues: [...queues] }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+      return page(items, input.limit, input.offset, input.cursor);
     },
     async getWorker(input, context) {
       assertScope(context);
@@ -153,8 +307,10 @@ export function createFlowFnDomainAdminService(options: FlowFnDomainAdminService
     },
     async listDeadLetters(input, context) {
       assertScope(context);
-      const values = input.queue ? await options.dlq.getByQueue(input.queue) : await options.dlq.getAll();
-      return page(values.map(adminDeadLetter), input.limit, input.offset);
+      const values = input.queue
+        ? await options.dlq.getByQueue(input.queue)
+        : await options.dlq.getAll();
+      return page(values.map(adminDeadLetter), input.limit, input.offset, input.cursor);
     },
     async getDeadLetter(input, context) {
       assertScope(context);
@@ -164,11 +320,28 @@ export function createFlowFnDomainAdminService(options: FlowFnDomainAdminService
       assertScope(context);
       requireIdempotency(context);
       const current = await deadLetter(input.id);
-      const retried = await options.dlq.retry(input.id);
-      const target = options.flow.queue(current.originalQueue);
-      const enqueued = await target.add(retried.name, retried.data, { ...retried.opts, jobId: retried.id });
+      const target = await queue(current.originalQueue);
+      const existing = await target.getJob(current.id);
+      if (existing && existing.state !== "failed") {
+        throw new AdminError(
+          "conflict",
+          "The original job is already active or completed; redrive would duplicate work.",
+        );
+      }
+      const enqueued =
+        existing ??
+        (await target.add(current.name, current.data, {
+          ...current.opts,
+          delay: 0,
+          jobId: current.id,
+        }));
+      if (existing) await existing.retry();
       await options.jobs.save(current.originalQueue, enqueued);
-      return { accepted: true, item: adminJob(current.originalQueue, enqueued) };
+      await options.dlq.delete(input.id);
+      return {
+        accepted: true,
+        item: adminJob(current.originalQueue, enqueued),
+      };
     },
     async deleteDeadLetter(input, context) {
       assertScope(context);
@@ -180,12 +353,17 @@ export function createFlowFnDomainAdminService(options: FlowFnDomainAdminService
     async cleanDeadLetters(input, context) {
       assertScope(context);
       requireIdempotency(context);
-      return { accepted: true, removed: await options.dlq.clean(input.maxAgeMs) };
+      return {
+        accepted: true,
+        removed: await options.dlq.clean(input.maxAgeMs),
+      };
     },
     async listEvents(input, context) {
       assertScope(context);
-      const events = await options.events.getEvents(input);
-      return { items: toJson(events) as FlowFnAdminEvent[], nextCursor: null };
+      const { cursor, ...filters } = input;
+      const { limit, offset } = pagination(input.limit, input.offset, cursor);
+      const events = await options.events.getEvents({ ...filters, limit: limit + 1, offset });
+      return { items: toJson(events.slice(0, limit)) as FlowFnAdminEvent[], nextCursor: events.length > limit ? String(offset + limit) : null };
     },
   };
 }

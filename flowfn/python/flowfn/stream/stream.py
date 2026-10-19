@@ -1,6 +1,6 @@
 """Stream implementation."""
 
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, Awaitable
 from flowfn.stream.types import (
     Message,
     PublishOptions,
@@ -8,180 +8,190 @@ from flowfn.stream.types import (
     MessageHandler,
     ConsumerOptions,
     StreamInfo,
-    TrimStrategy
+    TrimStrategy,
+    StreamOptions,
 )
 from flowfn.adapters.base import FlowAdapter
+import asyncio
+from flowfn.core.lifecycle import Admissions
+from flowfn.core.metrics import MetricsManager
+from flowfn.core.telemetry import OperationObserver
+from flowfn.monitoring.health import EventTracker
 import uuid
 import time
 
 
 class Stream:
     """Stream for pub/sub messaging."""
-    
-    def __init__(
-        self,
-        name: str,
-        adapter: FlowAdapter,
-        options: Optional[dict[str, Any]] = None
-    ):
+
+    def __init__(self, name: str, adapter: FlowAdapter, options: Optional[dict[str, Any]] = None, *, metrics: Optional[MetricsManager] = None, observer: Optional[OperationObserver] = None, events: Optional[EventTracker] = None):
         self.name = name
+        self._events = events
+        self._metrics = metrics
+        self._observer = observer or OperationObserver()
         self._adapter = adapter
         self._options = options or {}
-        self._messages: dict[str, Message] = {}
-    
-    async def publish(
-        self,
-        data: Any,
-        opts: Optional[PublishOptions] = None
-    ) -> str:
-        """Publish a message."""
-        options = opts or PublishOptions()
-        
-        message = Message(
-            id=str(uuid.uuid4()),
-            stream=self.name,
-            data=data,
-            headers=options.headers,
-            timestamp=self._now(),
-            partition=options.partition,
-            key=options.key
+        retention = StreamOptions.model_validate(self._options)
+        self._retention = TrimStrategy(
+            max_length=retention.max_length,
+            max_age_seconds=retention.retention / 1000 if retention.retention is not None else None,
         )
-        
-        # Store locally
-        self._messages[message.id] = message
-        
-        # Auto-trim if needed
-        max_length = self._options.get('max_length')
-        if max_length and len(self._messages) > max_length:
-            await self.trim(TrimStrategy(max_length=max_length))
-        
-        # Publish to adapter
-        return await self._adapter.publish(self.name, message)
-    
-    async def publish_batch(
-        self,
-        messages: list[dict[str, Any]]
-    ) -> list[str]:
+        self._messages: dict[str, Message] = {}
+        self._registrations: list[asyncio.Task[Any]] = []
+        self._subscriptions: list[Any] = []
+        self._closed = False
+        self._admissions = Admissions(lambda: self._closed)
+        self._consumers: list[Consumer] = []
+
+    async def publish(self, data: Any, opts: Optional[PublishOptions] = None) -> str:
+        """Publish a message."""
+        async with self._admissions.track():
+            await self.ready()
+            options = opts or PublishOptions()
+
+            message = Message(
+                id=str(uuid.uuid4()),
+                stream=self.name,
+                data=data,
+                headers={**(options.headers or {}), **self._observer.capture_context()} or None,
+                timestamp=self._now(),
+                partition=options.partition,
+                key=options.key,
+            )
+
+            started = time.monotonic()
+            message_id = await self._adapter.publish(self.name, message)
+            if self._metrics is not None:
+                self._metrics.increment('stream.throughput',{'stream':self.name})
+                self._metrics.record('stream.latency',(time.monotonic()-started)*1000,{'stream':self.name})
+            if self._events is not None:
+                await self._events.emit("stream:message", {"stream": self.name, "message_id": message_id})
+            await self._apply_retention()
+            return message_id
+
+    async def publish_batch(self, messages: list[dict[str, Any]]) -> list[str]:
         """Publish multiple messages."""
         results = []
         for msg in messages:
-            msg_id = await self.publish(
-                msg['data'],
-                msg.get('opts')
-            )
+            msg_id = await self.publish(msg["data"], msg.get("opts"))
             results.append(msg_id)
         return results
-    
-    async def subscribe(
-        self,
-        handler: Optional[MessageHandler] = None,
-        opts: Optional[SubscribeOptions] = None
+
+    def _observe_handler(self, handler: MessageHandler) -> MessageHandler:
+        async def observed(message: Message) -> None:
+            await self._observer.run("flowfn.stream.message", {"flowfn.stream.name": self.name, "flowfn.message.id": message.id}, lambda: handler(message), carrier=message.headers, consumer=True)
+        return observed
+
+    def subscribe(
+        self, handler: Optional[MessageHandler] = None, opts: Optional[SubscribeOptions] = None
     ) -> Any:
-        """Subscribe to stream."""
-        def decorator(func: MessageHandler) -> Any:
-            actual_handler = handler or func
-            return self._adapter.subscribe(self.name, actual_handler)
-        
-        if handler:
-            return await self._adapter.subscribe(self.name, handler)
-        
+        """Register a decorator, or await subscribe(handler) for readiness."""
+        if self._closed:
+            raise RuntimeError("Stream is closed")
+
+        async def register(func: MessageHandler) -> Any:
+            await self._apply_retention()
+            subscription = await self._adapter.subscribe(self.name, self._observe_handler(func))
+            self._subscriptions.append(subscription)
+            return subscription
+
+        if handler is not None:
+            task = asyncio.create_task(register(handler))
+            self._registrations.append(task)
+            return task
+
+        def decorator(func: MessageHandler) -> MessageHandler:
+            self._registrations.append(asyncio.create_task(register(func)))
+            return func
+
         return decorator
-    
-    def create_consumer(
-        self,
-        consumer_id: str,
-        opts: ConsumerOptions
-    ) -> 'Consumer':
+
+    async def ready(self) -> None:
+        """Wait for decorator registrations before publishing or external use."""
+        if self._closed:
+            raise RuntimeError("Stream is closed")
+        registrations = list(self._registrations)
+        if registrations:
+            await asyncio.gather(*(asyncio.shield(task) for task in registrations))
+            self._registrations = [
+                task for task in self._registrations if task not in registrations
+            ]
+
+    def create_consumer(self, consumer_id: str, opts: ConsumerOptions) -> "Consumer":
         """Create a consumer."""
-        return Consumer(
-            self.name,
-            consumer_id,
-            opts,
-            self._adapter,
-            self._messages
-        )
-    
+        if self._closed:
+            raise RuntimeError("Stream is closed")
+        consumer = Consumer(self.name, consumer_id, opts, self._adapter, self._messages, self._apply_retention, self._observe_handler)
+        self._consumers.append(consumer)
+        return consumer
+
+    async def _apply_retention(self) -> None:
+        if self._retention.max_length is not None or self._retention.max_age_seconds is not None:
+            await self._adapter.trim_stream(self.name, self._retention)
+
     async def get_info(self) -> StreamInfo:
         """Get stream info."""
+        await self._apply_retention()
         info = await self._adapter.get_stream_info(self.name)
-        info.length = len(self._messages)
         return info
-    
+
     async def trim(self, strategy: TrimStrategy) -> int:
         """Trim old messages."""
-        now = self._now()
-        to_delete: list[str] = []
-        
-        if strategy.max_length:
-            # Sort by timestamp and keep newest
-            sorted_msgs = sorted(
-                self._messages.items(),
-                key=lambda x: x[1].timestamp,
-                reverse=True
-            )
-            
-            if len(sorted_msgs) > strategy.max_length:
-                to_remove = sorted_msgs[strategy.max_length:]
-                to_delete.extend([msg_id for msg_id, _ in to_remove])
-        
-        if strategy.max_age_seconds:
-            max_age = strategy.max_age_seconds * 1000
-            for msg_id, msg in self._messages.items():
-                if now - msg.timestamp > max_age:
-                    to_delete.append(msg_id)
-        
-        # Remove duplicates
-        unique_to_delete = set(to_delete)
-        for msg_id in unique_to_delete:
-            self._messages.pop(msg_id, None)
-        
-        return len(unique_to_delete)
-    
+        return await self._adapter.trim_stream(self.name, strategy)
+
     async def get_messages(
-        self,
-        start: str,
-        end: str,
-        count: Optional[int] = None
+        self, start: str, end: str, count: Optional[int] = None
     ) -> list[Message]:
         """Get messages by ID range."""
+        await self._apply_retention()
         all_messages = sorted(
-            self._messages.values(),
-            key=lambda m: m.timestamp
+            await self._adapter.get_stream_messages(self.name), key=lambda m: m.timestamp
         )
-        
+
         # Filter by range
         filtered = [m for m in all_messages if start <= m.id <= end]
-        
+
         # Apply count limit
         if count is not None and count > 0:
             filtered = filtered[:count]
-        
+
         return filtered
-    
-    async def replay(
-        self,
-        from_timestamp: int,
-        handler: MessageHandler
-    ) -> int:
+
+    async def replay(self, from_timestamp: int, handler: MessageHandler) -> int:
         """Replay messages from timestamp."""
+        await self._apply_retention()
         messages = sorted(
-            [m for m in self._messages.values() if m.timestamp >= from_timestamp],
-            key=lambda m: m.timestamp
+            [
+                m
+                for m in await self._adapter.get_stream_messages(self.name)
+                if m.timestamp >= from_timestamp
+            ],
+            key=lambda m: m.timestamp,
         )
-        
+
         for message in messages:
-            await handler(message)
-        
+            await self._observe_handler(handler)(message)
+
         return len(messages)
-    
-    def get_message_count(self) -> int:
+
+    async def get_message_count(self) -> int:
         """Get message count."""
-        return len(self._messages)
-    
+        return (await self.get_info()).length
+
     async def close(self) -> None:
-        """Close the stream."""
+        """Finish registration and unsubscribe before adapter cleanup."""
+        self._closed = True
+        await self._admissions.drain()
+        for consumer in self._consumers:
+            await consumer.close()
+        if self._registrations:
+            await asyncio.gather(*self._registrations, return_exceptions=True)
+            self._registrations.clear()
+        for subscription in self._subscriptions:
+            await subscription.unsubscribe()
+        self._subscriptions.clear()
         self._messages.clear()
-    
+
     def _now(self) -> int:
         """Get current timestamp in ms."""
         return int(time.time() * 1000)
@@ -189,53 +199,59 @@ class Stream:
 
 class Consumer:
     """Stream consumer with group support."""
-    
+
     def __init__(
         self,
         stream: str,
         consumer_id: str,
         opts: ConsumerOptions,
         adapter: FlowAdapter,
-        messages: dict[str, Message]
+        messages: dict[str, Message],
+        retention: Optional[Callable[[], Awaitable[None]]] = None,
+        observe_handler: Optional[Callable[[MessageHandler], MessageHandler]] = None,
     ):
         self.stream = stream
         self.consumer_id = consumer_id
         self.opts = opts
         self._adapter = adapter
         self._messages = messages
+        self._retention = retention
+        self._observe_handler = observe_handler
         self._subscription: Any = None
         self._paused = False
-    
+        self._closed = False
+        self._admissions = Admissions(lambda: self._closed)
+
     async def subscribe(self, handler: MessageHandler) -> None:
         """Subscribe with handler."""
-        # Replay from beginning if requested
-        if self.opts.from_beginning and self._messages:
-            sorted_messages = sorted(
-                self._messages.values(),
-                key=lambda m: m.timestamp
+        async with self._admissions.track():
+            if self._subscription is not None:
+                raise RuntimeError("Consumer is already subscribed")
+            if self._retention is not None:
+                await self._retention()
+            self._subscription = await self._adapter.consume(
+                self.stream, self.opts.group_id, self.consumer_id, self._observe_handler(handler) if self._observe_handler else handler, self.opts
             )
-            
-            for msg in sorted_messages:
-                if not self._paused:
-                    await handler(msg)
-        
-        # Subscribe to new messages
-        self._subscription = await self._adapter.consume(
-            self.stream,
-            self.opts.group_id,
-            self.consumer_id,
-            handler
-        )
-    
+            if self._paused:
+                await self._subscription.pause()
+
     async def pause(self) -> None:
         """Pause consumer."""
         self._paused = True
-    
+        if self._subscription is not None:
+            await self._subscription.pause()
+
     async def resume(self) -> None:
         """Resume consumer."""
+        if self._closed:
+            raise RuntimeError("Consumer is closed")
         self._paused = False
-    
+        if self._subscription is not None:
+            await self._subscription.resume()
+
     async def close(self) -> None:
         """Close consumer."""
+        self._closed = True
+        await self._admissions.drain()
         if self._subscription:
             await self._subscription.unsubscribe()

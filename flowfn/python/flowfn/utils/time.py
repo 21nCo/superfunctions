@@ -9,6 +9,7 @@ from dataclasses import dataclass
 @dataclass
 class Duration:
     """Duration specification."""
+
     ms: int = 0
     seconds: int = 0
     minutes: int = 0
@@ -29,17 +30,17 @@ def to_milliseconds(duration: Duration) -> int:
 def from_milliseconds(ms: int) -> Duration:
     """Convert milliseconds to duration."""
     days = ms // (24 * 60 * 60 * 1000)
-    ms %= (24 * 60 * 60 * 1000)
-    
+    ms %= 24 * 60 * 60 * 1000
+
     hours = ms // (60 * 60 * 1000)
-    ms %= (60 * 60 * 1000)
-    
+    ms %= 60 * 60 * 1000
+
     minutes = ms // (60 * 1000)
-    ms %= (60 * 1000)
-    
+    ms %= 60 * 1000
+
     seconds = ms // 1000
     ms %= 1000
-    
+
     return Duration(ms=ms, seconds=seconds, minutes=minutes, hours=hours, days=days)
 
 
@@ -56,23 +57,23 @@ def format_duration(duration: Duration) -> str:
         parts.append(f"{duration.seconds}s")
     if duration.ms > 0:
         parts.append(f"{duration.ms}ms")
-    
-    return ' '.join(parts) if parts else '0ms'
+
+    return " ".join(parts) if parts else "0ms"
 
 
 def parse_duration(duration_str: str) -> Duration:
     """Parse duration string like '1h30m'."""
     import re
-    
+
     duration = Duration()
-    
+
     # Match patterns like 1d, 2h, 30m, 45s, 100ms
-    days = re.search(r'(\d+)d', duration_str)
-    hours = re.search(r'(\d+)h', duration_str)
-    minutes = re.search(r'(\d+)m(?!s)', duration_str)
-    seconds = re.search(r'(\d+)s', duration_str)
-    ms = re.search(r'(\d+)ms', duration_str)
-    
+    days = re.search(r"(\d+)d", duration_str)
+    hours = re.search(r"(\d+)h", duration_str)
+    minutes = re.search(r"(\d+)m(?!s)", duration_str)
+    seconds = re.search(r"(\d+)s", duration_str)
+    ms = re.search(r"(\d+)ms", duration_str)
+
     if days:
         duration.days = int(days.group(1))
     if hours:
@@ -83,7 +84,7 @@ def parse_duration(duration_str: str) -> Duration:
         duration.seconds = int(seconds.group(1))
     if ms:
         duration.ms = int(ms.group(1))
-    
+
     return duration
 
 

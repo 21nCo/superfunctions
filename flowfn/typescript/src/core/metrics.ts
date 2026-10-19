@@ -1,3 +1,4 @@
+import type { Workflow } from "../workflow/types.js";
 import { FlowAdapter } from "../adapters/base.js";
 
 export interface MetricDataPoint {
@@ -25,7 +26,21 @@ export class MetricsManager {
   private metrics: Map<string, MetricDataPoint[]> = new Map();
   private maxDataPoints = 1000;
 
-  constructor(adapter: FlowAdapter) {
+  private workers = new Set<object>();
+  registerWorker(worker: object): void {
+    this.workers.add(worker);
+  }
+  unregisterWorker(worker: object): void {
+    this.workers.delete(worker);
+  }
+  constructor(
+    adapter: FlowAdapter,
+    private inventory?: {
+      queues(): number;
+      streams(): number;
+      workflows(): Workflow[];
+    },
+  ) {
     this.adapter = adapter;
   }
 
@@ -33,6 +48,7 @@ export class MetricsManager {
    * Record a metric data point
    */
   record(name: string, value: number, tags?: Record<string, string>): void {
+    if (!Number.isFinite(value)) throw new Error("Metric value must be finite");
     const key = this.getMetricKey(name, tags);
     if (!this.metrics.has(key)) {
       this.metrics.set(key, []);
@@ -42,7 +58,7 @@ export class MetricsManager {
     dataPoints.push({
       timestamp: Date.now(),
       value,
-      tags,
+      tags: tags ? { ...tags } : undefined,
     });
 
     // Trim if exceeds max
@@ -60,17 +76,19 @@ export class MetricsManager {
       tags?: Record<string, string>;
       since?: number;
       limit?: number;
-    }
+    },
   ): TimeSeriesMetrics | null {
     const key = this.getMetricKey(name, options?.tags);
     let dataPoints = this.metrics.get(key) || [];
 
-    if (options?.since) {
+    if (options?.since !== undefined) {
       dataPoints = dataPoints.filter((dp) => dp.timestamp >= options.since!);
     }
 
-    if (options?.limit) {
-      dataPoints = dataPoints.slice(-options.limit);
+    if (options?.limit !== undefined) {
+      if (!Number.isInteger(options.limit) || options.limit < 0)
+        throw new Error("Metric limit must be nonnegative");
+      dataPoints = options.limit === 0 ? [] : dataPoints.slice(-options.limit);
     }
 
     if (dataPoints.length === 0) {
@@ -81,14 +99,14 @@ export class MetricsManager {
   }
 
   private calculateAggregations(
-    dataPoints: MetricDataPoint[]
+    dataPoints: MetricDataPoint[],
   ): TimeSeriesMetrics {
     const values = dataPoints.map((dp) => dp.value).sort((a, b) => a - b);
     const sum = values.reduce((a, b) => a + b, 0);
     const count = values.length;
 
     return {
-      dataPoints,
+      dataPoints: structuredClone(dataPoints),
       min: values[0],
       max: values[count - 1],
       avg: sum / count,
@@ -106,12 +124,10 @@ export class MetricsManager {
   }
 
   private getMetricKey(name: string, tags?: Record<string, string>): string {
-    if (!tags) return name;
-    const tagStr = Object.entries(tags)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${k}:${v}`)
-      .join(",");
-    return `${name}{${tagStr}}`;
+    return JSON.stringify([
+      name,
+      Object.entries(tags ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+    ]);
   }
 
   async getQueueMetrics(name: string): Promise<any> {
@@ -129,7 +145,7 @@ export class MetricsManager {
 
     return {
       ...stats,
-      throughput: throughputMetrics?.avg || 0,
+      throughput: (throughputMetrics?.sum ?? 0) / 60,
       avgDuration: durationMetrics?.avg || 0,
       p95Duration: durationMetrics?.p95 || 0,
     };
@@ -145,24 +161,45 @@ export class MetricsManager {
 
     return {
       ...info,
-      lag: 0,
-      throughput: throughputMetrics?.avg || 0,
-      avgLatency: 0,
+      lag: (info as { lag?: number }).lag ?? null,
+      throughput: throughputMetrics?.sum ?? 0,
+      avgLatency:
+        this.getTimeSeries("stream.latency", { tags: { stream: name } })?.avg ??
+        null,
     };
   }
 
   async getWorkflowMetrics(name: string): Promise<any> {
-    const metricsData = this.getTimeSeries("workflow.executions", {
-      tags: { workflow: name },
-    });
-
+    const workflow = this.inventory
+      ?.workflows()
+      .find((workflow) => workflow.name === name || workflow.id === name);
+    if (!workflow) throw new Error(`Workflow ${name} is not registered`);
+    const executions = await workflow.listExecutions();
+    const done = executions.filter(
+      (execution) => execution.completedAt !== undefined,
+    );
+    const completed = executions.filter(
+      (execution) => execution.status === "completed",
+    ).length;
     return {
-      totalExecutions: metricsData?.count || 0,
-      running: 0,
-      completed: 0,
-      failed: 0,
-      successRate: 0,
-      avgDuration: metricsData?.avg || 0,
+      totalExecutions: executions.length,
+      running: executions.filter(
+        (execution) => execution.completedAt === undefined,
+      ).length,
+      completed,
+      failed: executions.filter((execution) => execution.status === "failed")
+        .length,
+      cancelled: executions.filter(
+        (execution) => execution.status === "cancelled",
+      ).length,
+      successRate: done.length ? (completed / done.length) * 100 : 0,
+      avgDuration: done.length
+        ? done.reduce(
+            (sum, execution) =>
+              sum + execution.completedAt! - execution.startedAt,
+            0,
+          ) / done.length
+        : 0,
     };
   }
 
@@ -173,10 +210,10 @@ export class MetricsManager {
         : 0;
 
     return {
-      queues: 0,
-      streams: 0,
-      workflows: 0,
-      workers: 0,
+      queues: this.inventory?.queues() ?? null,
+      streams: this.inventory?.streams() ?? null,
+      workflows: this.inventory?.workflows().length ?? null,
+      workers: this.workers.size,
       memoryUsage: memUsage,
     };
   }
@@ -185,9 +222,11 @@ export class MetricsManager {
    * Clear old metrics
    */
   cleanup(maxAge: number): void {
+    if (!Number.isFinite(maxAge) || maxAge < 0)
+      throw new Error("Metric age must be nonnegative");
     const now = Date.now();
     for (const [key, dataPoints] of this.metrics.entries()) {
-      const filtered = dataPoints.filter((dp) => now - dp.timestamp <= maxAge);
+      const filtered = dataPoints.filter((dp) => now - dp.timestamp < maxAge);
       if (filtered.length === 0) {
         this.metrics.delete(key);
       } else {

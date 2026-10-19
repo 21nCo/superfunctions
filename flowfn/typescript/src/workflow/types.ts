@@ -1,4 +1,6 @@
+import type { ShutdownOptions } from '../core/shutdown.js';
 export interface WorkflowContext<T = any> {
+  signal: AbortSignal;
   workflowId: string;
   executionId: string;
   input: T;
@@ -21,17 +23,48 @@ export interface Workflow<T = any> {
 
   cancelExecution(executionId: string): Promise<void>;
   retryExecution(executionId: string): Promise<WorkflowExecution>;
+  resumeExecution(executionId: string): Promise<WorkflowExecution>;
+  recoverExecutions(): Promise<number>;
+  startRecovery(options?: { interval?: number }): Promise<void>;
+  signalEvent(executionId: string, event: string, data?: any): Promise<void>;
+  approveExecution(
+    executionId: string,
+    decision: ApprovalDecision,
+  ): Promise<void>;
+  waitForCompletion(executionId: string): Promise<WorkflowExecution>;
+  close(options?: ShutdownOptions): Promise<void>;
 
   getExecutionHistory(executionId: string): Promise<WorkflowEvent[]>;
   getMetrics(): Promise<WorkflowMetrics>;
 }
 
+export interface ApprovalDecision {
+  approved: boolean;
+  reviewedBy: string;
+  approver?: string;
+  reason?: string;
+  notes?: string;
+}
+
+export interface WorkflowWait {
+  kind: "event" | "approval" | "delay";
+  key: string;
+  name?: string;
+  deadline?: number;
+  data?: any;
+}
+
 export interface WorkflowExecution {
+  revision?: number;
+  lease?: { token: string; expiresAt: number };
   id: string;
   workflowId: string;
   status: ExecutionStatus;
   input: any;
   output?: any;
+  waiting?: WorkflowWait;
+  waitingFor?: WorkflowWait[];
+  compensationErrors?: Array<{ step: string; message: string }>;
   error?: any;
   state?: Record<string, any>;
   startedAt: number;
@@ -72,7 +105,7 @@ export type StepHandler<T, R> = (
 ) => Promise<R>;
 export type ErrorHandler<T> = (
   ctx: WorkflowContext<T>,
-  error: Error
+  error: Error,
 ) => Promise<void>;
 export type CompensateHandler<T> = (ctx: WorkflowContext<T>) => Promise<void>;
 
@@ -106,6 +139,9 @@ export type Duration = {
 };
 
 export interface WorkflowBuilder<T = any> {
+  /** Bump when callback behavior changes; structural changes are detected automatically. */
+  version(version: string): WorkflowBuilder<T>;
+  ownership(options: { leaseDuration: number }): WorkflowBuilder<T>;
   input<I>(): WorkflowBuilder<I>;
 
   step<R>(name: string, handler: StepHandler<T, R>): WorkflowBuilder<T>;
@@ -116,12 +152,12 @@ export interface WorkflowBuilder<T = any> {
 
   delay(duration: Duration): WorkflowBuilder<T>;
   delayUntil(
-    condition: (ctx: WorkflowContext<T>) => number
+    condition: (ctx: WorkflowContext<T>) => number,
   ): WorkflowBuilder<T>;
 
   waitForApproval(
     approver: string,
-    options: ApprovalOptions<T>
+    options: ApprovalOptions<T>,
   ): WorkflowBuilder<T>;
   waitForEvent(event: string, options?: EventOptions): WorkflowBuilder<T>;
 

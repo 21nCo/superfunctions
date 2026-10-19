@@ -1,14 +1,16 @@
-"""Dead-Letter Queue implementation."""
+"""Dead-letter inspection and recovery backed by the configured adapter."""
 
-from typing import Any, Optional, Callable, Awaitable
-from flowfn.queue.types import Job, JobStatus
+from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Any, Optional, Callable, Awaitable
 import time
+
+from flowfn.queue.types import Job, JobOptions
+from flowfn.adapters.base import FlowAdapter
 
 
 @dataclass
 class DLQJob:
-    """Job in dead-letter queue."""
     id: str
     name: str
     data: Any
@@ -18,11 +20,11 @@ class DLQJob:
     errors: list[str] = field(default_factory=list)
     attempts_made: int = 0
     failed_reason: Optional[str] = None
+    options: JobOptions = field(default_factory=JobOptions)
 
 
 @dataclass
 class DLQStats:
-    """DLQ statistics."""
     total: int
     by_queue: dict[str, int] = field(default_factory=dict)
 
@@ -31,121 +33,92 @@ DLQCallback = Callable[[Job, str], Awaitable[None]]
 
 
 class DLQManager:
-    """Dead-letter queue manager."""
-    
     def __init__(
         self,
         max_retries: int = 3,
-        queue_name: str = 'dlq',
-        on_dlq: Optional[DLQCallback] = None
+        queue_name: str = "dlq",
+        on_dlq: Optional[DLQCallback] = None,
+        adapter: Optional[FlowAdapter] = None,
     ):
+        if max_retries < 1:
+            raise ValueError("max_retries must be positive")
         self.max_retries = max_retries
         self.queue_name = queue_name
         self.on_dlq = on_dlq
-        self._jobs: dict[str, DLQJob] = {}
-    
-    async def move_to_dlq(self, job: Job, reason: str) -> DLQJob:
-        """Move a job to the DLQ."""
-        dlq_job = DLQJob(
+        if adapter is None:
+            from flowfn.adapters.memory import MemoryAdapter
+
+            adapter = MemoryAdapter()
+        self._adapter: FlowAdapter = adapter
+
+    async def move_to_dlq(
+        self, job: Job, reason: str, original_queue: Optional[str] = None
+    ) -> DLQJob:
+        record = DLQJob(
             id=job.id,
             name=job.name,
-            data=job.data,
-            original_queue=job.name,
+            data=deepcopy(job.data),
+            original_queue=original_queue or self.queue_name,
             dlq_reason=reason,
             dlq_timestamp=self._now(),
             errors=job.stacktrace.copy(),
             attempts_made=job.attempts_made,
-            failed_reason=job.failed_reason
+            failed_reason=job.failed_reason,
+            options=job.opts.model_copy(deep=True),
         )
-        
-        self._jobs[job.id] = dlq_job
-        
-        # Call callback if provided
-        if self.on_dlq:
+        await self._adapter.save_dead_letter(record)
+        if self.on_dlq is not None:
             await self.on_dlq(job, reason)
-        
-        return dlq_job
-    
+        return record
+
     async def get_all(self) -> list[DLQJob]:
-        """Get all DLQ jobs."""
-        return list(self._jobs.values())
-    
+        return await self._adapter.get_dead_letters()
+
     async def get_by_queue(self, queue_name: str) -> list[DLQJob]:
-        """Get DLQ jobs by original queue."""
-        return [
-            job for job in self._jobs.values()
-            if job.original_queue == queue_name
+        return [job for job in await self.get_all() if job.original_queue == queue_name]
+
+    async def _resolve(self, job_id: str, original_queue: Optional[str]) -> DLQJob:
+        matches = [
+            job
+            for job in await self.get_all()
+            if job.id == job_id and (original_queue is None or job.original_queue == original_queue)
         ]
-    
-    async def retry(self, job_id: str) -> Job:
-        """Retry a DLQ job."""
-        if job_id not in self._jobs:
+        if not matches:
             raise ValueError(f"Job not found in DLQ: {job_id}")
-        
-        dlq_job = self._jobs[job_id]
-        
-        # Convert back to regular job
-        job = Job(
-            id=dlq_job.id,
-            name=dlq_job.name,
-            data=dlq_job.data,
-            timestamp=self._now()
-        )
-        job.state = JobStatus.WAITING
-        job.attempts_made = 0
-        job.failed_reason = None
-        job.stacktrace = []
-        
-        # Remove from DLQ
-        del self._jobs[job_id]
-        
-        return job
-    
+        if len(matches) != 1:
+            raise ValueError("Job ID is ambiguous; provide original_queue")
+        return matches[0]
+
+    async def retry(self, job_id: str, original_queue: Optional[str] = None) -> Job:
+        record = await self._resolve(job_id, original_queue)
+        # Adapter atomically requeues and removes the dead letter only on success.
+        return await self._adapter.retry_dead_letter(record.original_queue, record.id)
+
     async def retry_all(self, queue_name: str) -> int:
-        """Retry all jobs from a queue."""
         jobs = await self.get_by_queue(queue_name)
-        count = 0
-        
-        for dlq_job in jobs:
-            try:
-                await self.retry(dlq_job.id)
-                count += 1
-            except Exception:
-                pass
-        
-        return count
-    
-    async def delete(self, job_id: str) -> None:
-        """Delete a job from DLQ."""
-        self._jobs.pop(job_id, None)
-    
+        for job in jobs:
+            await self.retry(job.id, queue_name)
+        return len(jobs)
+
+    async def delete(self, job_id: str, original_queue: Optional[str] = None) -> None:
+        record = await self._resolve(job_id, original_queue)
+        await self._adapter.delete_dead_letter(record.original_queue, record.id)
+
     async def clean(self, max_age: int) -> int:
-        """Clean old DLQ jobs."""
-        now = self._now()
-        to_delete = []
-        
-        for job_id, job in self._jobs.items():
-            if now - job.dlq_timestamp > max_age:
-                to_delete.append(job_id)
-        
-        for job_id in to_delete:
-            del self._jobs[job_id]
-        
-        return len(to_delete)
-    
+        if max_age < 0:
+            raise ValueError("max_age must be nonnegative")
+        cutoff = self._now() - max_age
+        old = [job for job in await self.get_all() if job.dlq_timestamp <= cutoff]
+        for job in old:
+            await self._adapter.delete_dead_letter(job.original_queue, job.id)
+        return len(old)
+
     async def get_stats(self) -> DLQStats:
-        """Get DLQ statistics."""
-        by_queue: dict[str, int] = {}
-        
-        for job in self._jobs.values():
-            queue = job.original_queue
-            by_queue[queue] = by_queue.get(queue, 0) + 1
-        
-        return DLQStats(
-            total=len(self._jobs),
-            by_queue=by_queue
-        )
-    
+        jobs = await self.get_all()
+        counts: dict[str, int] = {}
+        for job in jobs:
+            counts[job.original_queue] = counts.get(job.original_queue, 0) + 1
+        return DLQStats(total=len(jobs), by_queue=counts)
+
     def _now(self) -> int:
-        """Get current timestamp in ms."""
         return int(time.time() * 1000)

@@ -41,7 +41,7 @@ export interface EventLog {
    */
   getAggregateEvents(
     aggregateId: string,
-    fromVersion?: number
+    fromVersion?: number,
   ): Promise<Event[]>;
 
   /**
@@ -54,7 +54,7 @@ export interface EventLog {
    */
   subscribe(
     handler: (event: Event) => void | Promise<void>,
-    filter?: EventFilter
+    filter?: EventFilter,
   ): () => void;
 }
 
@@ -70,7 +70,7 @@ export class MemoryEventLog implements EventLog {
   }> = [];
 
   async append(
-    event: Omit<Event, "id" | "timestamp" | "version">
+    event: Omit<Event, "id" | "timestamp" | "version">,
   ): Promise<Event> {
     const version = (this.aggregateVersions.get(event.aggregateId) || 0) + 1;
     this.aggregateVersions.set(event.aggregateId, version);
@@ -88,7 +88,7 @@ export class MemoryEventLog implements EventLog {
     for (const subscriber of this.subscribers) {
       if (this.matchesFilter(fullEvent, subscriber.filter)) {
         Promise.resolve(subscriber.handler(fullEvent)).catch((err) =>
-          console.error("Event subscriber error:", err)
+          console.error("Event subscriber error:", err),
         );
       }
     }
@@ -140,7 +140,7 @@ export class MemoryEventLog implements EventLog {
 
   async getAggregateEvents(
     aggregateId: string,
-    fromVersion?: number
+    fromVersion?: number,
   ): Promise<Event[]> {
     return this.getEvents({
       aggregateId,
@@ -154,7 +154,7 @@ export class MemoryEventLog implements EventLog {
 
   subscribe(
     handler: (event: Event) => void | Promise<void>,
-    filter?: EventFilter
+    filter?: EventFilter,
   ): () => void {
     const subscriber = { handler, filter };
     this.subscribers.push(subscriber);

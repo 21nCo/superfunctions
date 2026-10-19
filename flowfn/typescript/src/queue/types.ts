@@ -1,13 +1,17 @@
+import type { ShutdownOptions } from '../core/shutdown.js';
 export interface Queue<T = any> {
   name: string;
 
   // Adding jobs
   add(name: string, data: T, opts?: JobOptions): Promise<Job<T>>;
   addBulk(
-    jobs: Array<{ name: string; data: T; opts?: JobOptions }>
+    jobs: Array<{ name: string; data: T; opts?: JobOptions }>,
   ): Promise<Job<T>[]>;
 
+  configureLeaseSettings(options: { leaseDuration?: number; leaseRenewInterval?: number; stalledInterval?: number; maxStalledCount?: number }): void;
+
   // Processing
+  createProcessor(concurrency: number, handler: JobHandler<T>, name?: string): QueueProcessor;
   process(handler: JobHandler<T>): void;
   process(name: string, handler: JobHandler<T>): void;
   process(concurrency: number, handler: JobHandler<T>): void;
@@ -18,7 +22,7 @@ export interface Queue<T = any> {
   processBatch(
     name: string,
     options: BatchOptions,
-    handler: BatchHandler<T>
+    handler: BatchHandler<T>,
   ): void;
 
   // Management
@@ -37,9 +41,15 @@ export interface Queue<T = any> {
 
   // Events
   on(event: QueueEvent, handler: (...args: any[]) => void): void;
+  off(event: QueueEvent, handler: (...args: any[]) => void): void;
 
   // Lifecycle
-  close(): Promise<void>;
+  close(options?: ShutdownOptions): Promise<void>;
+}
+export interface QueueProcessor {
+  readonly activeJobs: number;
+  owns(jobId: string): boolean;
+  close(options?: { timeout?: number }): Promise<void>;
 }
 
 export type QueueEvent =
@@ -51,6 +61,13 @@ export type QueueEvent =
   | "active";
 
 export interface Job<T = any> {
+  readonly signal?: AbortSignal;
+  /** Producer W3C context persisted for consumer spans. */
+  traceContext?: import('../instrumentation.js').FlowTraceContext;
+  /** Persisted queue-scoped enqueue deduplication identity. */
+  deduplicationId?: string;
+  lease?: { token: string; expiresAt: number };
+  stalledCount?: number;
   id: string;
   name: string;
   data: T;
@@ -71,9 +88,11 @@ export interface Job<T = any> {
   attemptsMade: number;
   failedReason?: string;
   stacktrace?: string[];
+  logs?: string[];
+  discarded?: boolean;
 
   // Methods
-  update(data: Partial<T>): Promise<void>;
+  update(data: T extends object ? Partial<T> : T): Promise<void>;
   log(message: string): Promise<void>;
   updateProgress(progress: number): Promise<void>;
   moveToCompleted(returnValue: any): Promise<void>;
@@ -111,9 +130,18 @@ export interface BackoffOptions {
   type: "fixed" | "exponential" | "custom";
   delay: number;
   maxDelay?: number;
+  /** Name resolved against the processing queue backoffStrategies registry. */
+  strategy?: string;
 }
 
+export type BackoffStrategy = (attemptsMade: number, error: Error, job: Job) => number;
+
 export interface QueueOptions {
+  backoffStrategies?: Record<string, BackoffStrategy>;
+  stalledInterval?: number;
+  leaseDuration?: number;
+  leaseRenewInterval?: number;
+  maxStalledCount?: number;
   defaultJobOptions?: JobOptions;
   limiter?: RateLimiterOptions;
   cache?: CacheOptions;

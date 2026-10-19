@@ -84,12 +84,12 @@ export class RateLimiter {
       switch (this.options.strategy) {
         case "throw":
           throw new Error(
-            `Rate limit exceeded. Retry after ${result.retryAfter}ms`
+            `Rate limit exceeded. Retry after ${result.retryAfter}ms`,
           );
 
         case "delay":
           await new Promise((resolve) =>
-            setTimeout(resolve, result.retryAfter)
+            setTimeout(resolve, result.retryAfter),
           );
           return this.execute(fn, key);
 
@@ -201,11 +201,11 @@ export class SlidingWindowRateLimiter {
       switch (this.options.strategy || "throw") {
         case "throw":
           throw new Error(
-            `Rate limit exceeded. Retry after ${result.retryAfter}ms`
+            `Rate limit exceeded. Retry after ${result.retryAfter}ms`,
           );
         case "delay":
           await new Promise((resolve) =>
-            setTimeout(resolve, result.retryAfter)
+            setTimeout(resolve, result.retryAfter),
           );
           return this.execute(fn, key);
         case "drop":
@@ -261,7 +261,7 @@ export class TokenBucketRateLimiter {
 
   async check(
     key: string = "default",
-    cost: number = 1
+    cost: number = 1,
   ): Promise<RateLimitResult> {
     this.refill(key);
     const bucket = this.buckets.get(key)!;
@@ -279,7 +279,7 @@ export class TokenBucketRateLimiter {
       retryAfter: allowed
         ? undefined
         : Math.ceil(
-            ((cost - bucket.tokens) / this.refillRate) * this.refillInterval
+            ((cost - bucket.tokens) / this.refillRate) * this.refillInterval,
           ),
     };
   }

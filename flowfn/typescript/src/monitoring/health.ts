@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 /**
  * Monitoring and health check system for FlowFn
  */
@@ -190,6 +191,7 @@ export interface EventTracker {
    * Get events
    */
   getEvents(filter?: {
+    type?: string;
     category?: string;
     severity?: string;
     since?: number;
@@ -208,8 +210,8 @@ export class MemoryEventTracker implements EventTracker {
 
   track(event: Omit<TrackedEvent, "id" | "timestamp">): void {
     const trackedEvent: TrackedEvent = {
-      ...event,
-      id: `evt_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+      ...structuredClone(event),
+      id: `evt_${randomUUID()}`,
       timestamp: Date.now(),
     };
 
@@ -222,12 +224,14 @@ export class MemoryEventTracker implements EventTracker {
   }
 
   getEvents(filter?: {
+    type?: string;
     category?: string;
     severity?: string;
     since?: number;
     limit?: number;
   }): TrackedEvent[] {
     let filtered = [...this.events];
+    if (filter?.type !== undefined) filtered = filtered.filter(event => event.type === filter.type);
 
     if (filter?.category) {
       filtered = filtered.filter((e) => e.category === filter.category);
@@ -241,17 +245,20 @@ export class MemoryEventTracker implements EventTracker {
       filtered = filtered.filter((e) => e.timestamp >= filter.since!);
     }
 
-    if (filter?.limit) {
-      filtered = filtered.slice(-filter.limit);
+    if (filter?.limit !== undefined) {
+      if (!Number.isInteger(filter.limit) || filter.limit < 0) throw new Error("Event limit must be nonnegative");
+      filtered = filter.limit === 0 ? [] : filtered.slice(-filter.limit);
     }
 
-    return filtered;
+    return structuredClone(filtered);
   }
 
   cleanup(maxAge: number): number {
+    if (!Number.isFinite(maxAge) || maxAge < 0)
+      throw new Error("maxAge must be nonnegative and finite");
     const now = Date.now();
     const before = this.events.length;
-    this.events = this.events.filter((e) => now - e.timestamp <= maxAge);
+    this.events = this.events.filter((e) => now - e.timestamp < maxAge);
     return before - this.events.length;
   }
 

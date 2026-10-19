@@ -1,9 +1,13 @@
-import {
+import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
+import { OperationObserver } from '../instrumentation.js';
+import { randomUUID } from "node:crypto";
+import type {
   Stream,
   Message,
   PublishOptions,
   SubscribeOptions,
   MessageHandler,
+  MessageFilter,
   Subscription,
   ConsumerOptions,
   Consumer,
@@ -11,184 +15,206 @@ import {
   TrimStrategy,
   StreamOptions,
 } from "./types.js";
-import { FlowAdapter } from "../adapters/base.js";
-import { v4 as uuidv4 } from "uuid";
-
+import type { FlowAdapter } from "../adapters/base.js";
 export class StreamImpl<T = any> implements Stream<T> {
-  name: string;
-  private adapter: FlowAdapter;
-  private options: StreamOptions;
-  private messages: Map<string, Message<T>> = new Map();
-
-  constructor(name: string, adapter: FlowAdapter, options: StreamOptions = {}) {
-    this.name = name;
-    this.adapter = adapter;
-    this.options = options;
+  private subscriptions = new Set<Subscription>();
+  private consumers = new Set<Consumer<T>>();
+  private closed = false;
+  private closing?: Promise<void>;
+  private count = 0;
+  constructor(
+    public name: string,
+    private adapter: FlowAdapter,
+    private options: StreamOptions = {},
+    private record?: (metric: string, value: number) => void,
+    private observer = new OperationObserver(),
+  ) {
+    for (const value of [options.maxLength, options.retention])
+      if (value !== undefined && (!Number.isFinite(value) || value < 0))
+        throw new Error("Stream retention must be nonnegative");
+    if (options.maxLength !== undefined && !Number.isInteger(options.maxLength))
+      throw new Error("Stream maxLength must be an integer");
   }
-
-  async publish(data: T, options?: PublishOptions): Promise<string> {
+  private open() {
+    if (this.closed) throw new Error("Stream is closed");
+  }
+  async publish(data: T, options: PublishOptions = {}): Promise<string> {
+    this.open();
     const message: Message<T> = {
-      id: uuidv4(),
+      id: randomUUID(),
       stream: this.name,
-      data,
-      headers: options?.headers,
+      data: structuredClone(data),
+      headers: { ...structuredClone(options.headers), ...this.observer.capture() },
       timestamp: Date.now(),
-      partition: options?.partition,
-      key: options?.key,
+      partition: options.partition,
+      key: options.key,
       ack: async () => {},
       nack: async () => {},
     };
-
-    // Store message locally for retrieval
-    this.messages.set(message.id, message);
-
-    // Auto-trim if maxLength is set
-    if (this.options.maxLength && this.messages.size > this.options.maxLength) {
-      await this.trim({ maxLength: this.options.maxLength });
-    }
-
-    return this.adapter.publish(this.name, message);
+    const id = await this.adapter.publish(this.name, message);
+    this.count++;
+    this.record?.("stream.throughput", 1);
+    await this.applyRetention();
+    return id;
   }
-
+  private async applyRetention(): Promise<void> {
+    if (this.options.maxLength === undefined && this.options.retention === undefined) return;
+    await this.trim({ maxLength: this.options.maxLength, maxAgeSeconds: this.options.retention === undefined ? undefined : this.options.retention / 1000 });
+  }
   async publishBatch(
-    messages: Array<{ data: T; options?: PublishOptions }>
+    messages: Array<{ data: T; options?: PublishOptions }>,
   ): Promise<string[]> {
-    return Promise.all(messages.map((m) => this.publish(m.data, m.options)));
+    const ids: string[] = [];
+    for (const message of messages)
+      ids.push(await this.publish(message.data, message.options));
+    return ids;
   }
-
+  private validateFilter(filter?: MessageFilter<T>): void {
+    if (filter !== undefined && typeof filter !== 'function') throw new Error('Message filter must be a function');
+  }
+  private async deliver(message: Message<T>, handler: MessageHandler<T>, filter?: MessageFilter<T>): Promise<void> {
+    this.record?.('stream.latency', Math.max(0, Date.now() - message.timestamp));
+    const delivered = { ...message, stream: this.name };
+    await this.observer.run('flowfn.stream.process', { 'flowfn.stream': this.name, 'flowfn.message.id': message.id }, async () => {
+      if (filter && !await filter(delivered)) { await delivered.ack(); return; }
+      await handler(delivered);
+    }, message.headers ?? {});
+  }
   async subscribe(
     handler: MessageHandler<T>,
-    options?: SubscribeOptions
+    options?: SubscribeOptions<T>,
   ): Promise<Subscription> {
-    return this.adapter.subscribe(this.name, handler as any);
+    this.open();
+    this.validateFilter(options?.filter);
+    await this.applyRetention();
+    this.open();
+    const inner = await this.adapter.subscribe(
+      this.name,
+      async (message) => {
+        this.open();
+        await this.deliver(message, handler, options?.filter);
+      },
+      options,
+    );
+    if (this.closed) { await inner.unsubscribe(); throw new Error("Stream is closed"); }
+    const subscription: Subscription = {
+      unsubscribe: async () => {
+        await inner.unsubscribe();
+        this.subscriptions.delete(subscription);
+      },
+    };
+    this.subscriptions.add(subscription);
+    return subscription;
   }
-
-  createConsumer(consumerId: string, options: ConsumerOptions): Consumer<T> {
-    let subscription: Subscription | null = null;
-    let paused = false;
-
-    return {
-      subscribe: async (handler: MessageHandler<T>) => {
-        // If fromBeginning, replay existing messages first
-        if (options.fromBeginning && this.messages.size > 0) {
-          const sortedMessages = Array.from(this.messages.values()).sort(
-            (a, b) => a.timestamp - b.timestamp
-          );
-
-          for (const msg of sortedMessages) {
-            if (!paused) {
-              await handler(msg).catch(console.error);
-            }
-          }
-        }
-
+  createConsumer(id: string, options: ConsumerOptions<T>): Consumer<T> {
+    this.open();
+    this.validateFilter(options.filter);
+    let subscription: Subscription | undefined,
+      closed = false,
+      paused = false;
+    let closingConsumer: Promise<void> | undefined;
+    let subscribing = false;
+    const consumer: Consumer<T> = {
+      subscribe: async (handler) => {
+        this.open();
+        if (closed || subscription || subscribing)
+          throw new Error("Consumer is closed or already subscribed");
+        subscribing = true;
+        try {
+        await this.applyRetention();
+        this.open();
+        if (closed) throw new Error("Consumer is closed");
         subscription = await this.adapter.consume(
           this.name,
           options.groupId,
-          consumerId,
-          handler as any
+          id,
+          async (message) => {
+            this.open();
+            if (closed) throw new Error("Consumer is closed");
+            await this.deliver(message, handler, options.filter);
+          },
+          options,
         );
+        if (this.closed || closed) { await subscription.unsubscribe(); throw new Error("Consumer is closed"); }
+        if (paused) {
+          if (!subscription.pause)
+            throw new Error("Adapter does not support consumer pause");
+          await subscription.pause();
+        }
+        } finally { subscribing = false; }
       },
       pause: async () => {
+        if (closed) throw new Error("Consumer is closed");
         paused = true;
+        if (subscription) {
+          if (!subscription.pause)
+            throw new Error("Adapter does not support consumer pause");
+          await subscription.pause();
+        }
       },
       resume: async () => {
+        if (closed) throw new Error("Consumer is closed");
         paused = false;
-      },
-      close: async () => {
-        if (subscription) await subscription.unsubscribe();
-      },
-    };
-  }
-
-  async getInfo(): Promise<StreamInfo> {
-    const info = await this.adapter.getStreamInfo(this.name);
-    return {
-      ...info,
-      length: this.messages.size,
-    };
-  }
-
-  async trim(strategy: TrimStrategy): Promise<number> {
-    const now = Date.now();
-    const messagesToDelete: string[] = [];
-
-    if (strategy.maxLength) {
-      // Sort by timestamp and keep only the newest maxLength messages
-      const sortedMessages = Array.from(this.messages.entries()).sort(
-        (a, b) => b[1].timestamp - a[1].timestamp
-      );
-
-      if (sortedMessages.length > strategy.maxLength) {
-        const toRemove = sortedMessages.slice(strategy.maxLength);
-        messagesToDelete.push(...toRemove.map(([id]) => id));
-      }
-    }
-
-    if (strategy.maxAgeSeconds) {
-      const maxAge = strategy.maxAgeSeconds * 1000;
-      for (const [id, message] of this.messages.entries()) {
-        if (now - message.timestamp > maxAge) {
-          messagesToDelete.push(id);
+        if (subscription) {
+          if (!subscription.resume)
+            throw new Error("Adapter does not support consumer resume");
+          await subscription.resume();
         }
-      }
-    }
-
-    // Remove duplicates
-    const uniqueToDelete = [...new Set(messagesToDelete)];
-    for (const id of uniqueToDelete) {
-      this.messages.delete(id);
-    }
-
-    return uniqueToDelete.length;
+      },
+      close: (shutdown: ShutdownOptions = {}) => {
+        const timeout = shutdownTimeout(shutdown);
+        if (closingConsumer) return closingConsumer;
+        closed = true;
+        return closingConsumer = boundedShutdown(subscription?.unsubscribe() ?? Promise.resolve(), timeout, `Consumer ${id}`).finally(() => this.consumers.delete(consumer));
+      },
+    };
+    this.consumers.add(consumer);
+    return consumer;
   }
-
+  async getInfo(): Promise<StreamInfo> {
+    await this.applyRetention();
+    const info = await this.adapter.getStreamInfo(this.name);
+    this.count = info.length;
+    return { ...info, name: this.name };
+  }
+  async trim(strategy: TrimStrategy): Promise<number> {
+    if (!this.adapter.trimStream)
+      throw new Error("Adapter does not support retained stream trimming");
+    const removed = await this.adapter.trimStream(this.name, strategy);
+    this.count = Math.max(0, this.count - removed);
+    return removed;
+  }
   async getMessages(
     start: string,
     end: string,
-    count?: number
+    count?: number,
   ): Promise<Message<T>[]> {
-    const allMessages = Array.from(this.messages.values()).sort(
-      (a, b) => a.timestamp - b.timestamp
+    if (!this.adapter.getMessages)
+      throw new Error("Adapter does not support retained stream reads");
+    await this.applyRetention();
+    return (await this.adapter.getMessages(this.name, start, end, count)).map(
+      (message) => ({ ...message, stream: this.name }),
     );
-
-    // Filter by ID range (lexicographic comparison)
-    let filtered = allMessages.filter((m) => m.id >= start && m.id <= end);
-
-    // Apply count limit if specified
-    if (count !== undefined && count > 0) {
-      filtered = filtered.slice(0, count);
-    }
-
-    return filtered;
   }
-
-  /**
-   * Replay messages from a specific timestamp
-   */
-  async replay(
-    fromTimestamp: number,
-    handler: MessageHandler<T>
-  ): Promise<number> {
-    const messages = Array.from(this.messages.values())
-      .filter((m) => m.timestamp >= fromTimestamp)
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    for (const message of messages) {
-      await handler(message);
-    }
-
+  async replay(timestamp: number, handler: MessageHandler<T>): Promise<number> {
+    if (!Number.isFinite(timestamp))
+      throw new Error("Invalid replay timestamp");
+    const messages = (await this.getMessages("-", "+")).filter(
+      (message) => message.timestamp >= timestamp,
+    );
+    for (const message of messages) await handler(message);
     return messages.length;
   }
-
-  /**
-   * Get message count
-   */
-  getMessageCount(): number {
-    return this.messages.size;
+  getMessageCount() {
+    return this.count;
   }
-
-  async close(): Promise<void> {
-    this.messages.clear();
+  close(options: ShutdownOptions = {}): Promise<void> {
+    const timeout = shutdownTimeout(options);
+    if (this.closing) return this.closing;
+    this.closed = true;
+    return this.closing = boundedShutdown(Promise.all([
+      ...[...this.subscriptions].map(subscription => subscription.unsubscribe()),
+      ...[...this.consumers].map(consumer => consumer.close({ timeout })),
+    ]), timeout, `Stream ${this.name}`);
   }
 }

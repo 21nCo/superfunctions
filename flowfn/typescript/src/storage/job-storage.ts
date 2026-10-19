@@ -2,6 +2,7 @@
  * Storage abstraction for FlowFn job persistence
  */
 
+import { snapshotJob } from "../queue/job.js";
 import { Job, JobStatus } from "../queue/types.js";
 
 export interface JobStorage {
@@ -60,147 +61,74 @@ export interface JobStorage {
  * In-memory implementation of JobStorage
  */
 export class MemoryJobStorage implements JobStorage {
-  private jobs: Map<string, Job> = new Map();
-  private deduplicationKeys: Map<string, string> = new Map(); // key -> jobId
-
+  private jobs = new Map<string, Map<string, Job>>();
   async save(queue: string, job: Job): Promise<void> {
-    const key = `${queue}:${job.id}`;
-    this.jobs.set(key, { ...job });
-
-    // Store deduplication key if present
-    if (job.opts.deduplicationKey) {
-      const dedupKey = `${queue}:${job.opts.deduplicationKey}`;
-      this.deduplicationKeys.set(dedupKey, job.id);
+    const snapshot = snapshotJob(job);
+    let entries = this.jobs.get(queue);
+    if (!entries) {
+      entries = new Map();
+      this.jobs.set(queue, entries);
     }
+    entries.set(job.id, snapshot);
   }
-
   async get(queue: string, jobId: string): Promise<Job | null> {
-    const key = `${queue}:${jobId}`;
-    return this.jobs.get(key) || null;
+    const job = this.jobs.get(queue)?.get(jobId);
+    return job ? snapshotJob(job) : null;
   }
-
   async getByStatus(queue: string, status: JobStatus): Promise<Job[]> {
-    const result: Job[] = [];
-    const prefix = `${queue}:`;
-
-    for (const [key, job] of this.jobs.entries()) {
-      if (key.startsWith(prefix) && job.state === status) {
-        result.push(job);
-      }
-    }
-
-    return result;
+    return (await this.getAll(queue)).filter((job) => job.state === status);
   }
-
   async getAll(queue: string): Promise<Job[]> {
-    const result: Job[] = [];
-    const prefix = `${queue}:`;
-
-    for (const [key, job] of this.jobs.entries()) {
-      if (key.startsWith(prefix)) {
-        result.push(job);
-      }
-    }
-
-    return result;
+    return [...(this.jobs.get(queue)?.values() ?? [])].map(snapshotJob);
   }
-
   async updateStatus(
     queue: string,
     jobId: string,
-    status: JobStatus
+    status: JobStatus,
   ): Promise<void> {
-    const key = `${queue}:${jobId}`;
-    const job = this.jobs.get(key);
-
+    const job = await this.get(queue, jobId);
     if (job) {
       job.state = status;
-      if (status === "completed" || status === "failed") {
+      if (status === "completed" || status === "failed")
         job.finishedOn = Date.now();
-      }
+      await this.save(queue, job);
     }
   }
-
   async update(
     queue: string,
     jobId: string,
-    updates: Partial<Job>
+    updates: Partial<Job>,
   ): Promise<void> {
-    const key = `${queue}:${jobId}`;
-    const job = this.jobs.get(key);
-
-    if (job) {
-      Object.assign(job, updates);
-    }
+    const job = await this.get(queue, jobId);
+    if (job) await this.save(queue, { ...job, ...updates, id: jobId } as Job);
   }
-
   async delete(queue: string, jobId: string): Promise<void> {
-    const key = `${queue}:${jobId}`;
-    const job = this.jobs.get(key);
-
-    if (job?.opts.deduplicationKey) {
-      const dedupKey = `${queue}:${job.opts.deduplicationKey}`;
-      this.deduplicationKeys.delete(dedupKey);
-    }
-
-    this.jobs.delete(key);
+    this.jobs.get(queue)?.delete(jobId);
   }
-
   async clean(
     queue: string,
     grace: number,
-    status: JobStatus
+    status: JobStatus,
   ): Promise<number> {
-    const now = Date.now();
-    const prefix = `${queue}:`;
-    const toDelete: string[] = [];
-
-    for (const [key, job] of this.jobs.entries()) {
-      if (key.startsWith(prefix) && job.state === status) {
-        const timestamp = job.finishedOn || job.timestamp;
-        if (now - timestamp > grace) {
-          toDelete.push(key);
-        }
-      }
-    }
-
-    for (const key of toDelete) {
-      const job = this.jobs.get(key);
-      if (job?.opts.deduplicationKey) {
-        const dedupKey = `${queue}:${job.opts.deduplicationKey}`;
-        this.deduplicationKeys.delete(dedupKey);
-      }
-      this.jobs.delete(key);
-    }
-
-    return toDelete.length;
+    if (!Number.isFinite(grace) || grace < 0)
+      throw new Error("Grace must be nonnegative and finite");
+    const expired = (await this.getByStatus(queue, status)).filter(
+      (job) => Date.now() - (job.finishedOn ?? job.timestamp) >= grace,
+    );
+    for (const job of expired) await this.delete(queue, job.id);
+    return expired.length;
   }
-
   async count(queue: string, status?: JobStatus): Promise<number> {
-    const prefix = `${queue}:`;
-    let count = 0;
-
-    for (const [key, job] of this.jobs.entries()) {
-      if (key.startsWith(prefix)) {
-        if (!status || job.state === status) {
-          count++;
-        }
-      }
-    }
-
-    return count;
+    return status
+      ? (await this.getByStatus(queue, status)).length
+      : (this.jobs.get(queue)?.size ?? 0);
   }
-
   async existsByDeduplicationKey(queue: string, key: string): Promise<boolean> {
-    const dedupKey = `${queue}:${key}`;
-    return this.deduplicationKeys.has(dedupKey);
+    return (await this.getAll(queue)).some(
+      (job) => job.opts.deduplicationKey === key,
+    );
   }
-
-  /**
-   * Clear all jobs
-   */
   clear(): void {
     this.jobs.clear();
-    this.deduplicationKeys.clear();
   }
 }

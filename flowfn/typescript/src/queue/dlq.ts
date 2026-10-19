@@ -52,7 +52,11 @@ export interface DLQManager {
   /**
    * Move job to DLQ
    */
-  moveToDLQ<T>(job: Job<T>, reason: string): Promise<DLQJob<T>>;
+  moveToDLQ<T>(
+    job: Job<T>,
+    reason: string,
+    originalQueue?: string,
+  ): Promise<DLQJob<T>>;
 
   /**
    * Get all DLQ jobs
@@ -106,14 +110,18 @@ export class MemoryDLQManager implements DLQManager {
     };
   }
 
-  async moveToDLQ<T>(job: Job<T>, reason: string): Promise<DLQJob<T>> {
+  async moveToDLQ<T>(
+    job: Job<T>,
+    reason: string,
+    originalQueue?: string,
+  ): Promise<DLQJob<T>> {
     const dlqJob: DLQJob<T> = {
       ...job,
-      originalQueue: job.name,
+      originalQueue: originalQueue ?? job.name,
       dlqReason: reason,
       dlqTimestamp: Date.now(),
       errors: [...(job.stacktrace || []), job.failedReason || reason].filter(
-        Boolean
+        Boolean,
       ),
     };
 
@@ -133,7 +141,7 @@ export class MemoryDLQManager implements DLQManager {
 
   async getByQueue(queueName: string): Promise<DLQJob[]> {
     return Array.from(this.dlqJobs.values()).filter(
-      (job) => job.originalQueue === queueName
+      (job) => job.originalQueue === queueName,
     );
   }
 
@@ -181,11 +189,13 @@ export class MemoryDLQManager implements DLQManager {
   }
 
   async clean(maxAge: number): Promise<number> {
+    if (!Number.isFinite(maxAge) || maxAge < 0)
+      throw new Error("maxAge must be nonnegative and finite");
     const now = Date.now();
     const toDelete: string[] = [];
 
     for (const [id, job] of this.dlqJobs.entries()) {
-      if (now - job.dlqTimestamp > maxAge) {
+      if (now - job.dlqTimestamp >= maxAge) {
         toDelete.push(id);
       }
     }
