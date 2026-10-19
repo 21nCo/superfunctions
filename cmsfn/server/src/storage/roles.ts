@@ -5,6 +5,7 @@
  */
 
 import type { Adapter } from "@superfunctions/db";
+import { cmsfnStorageAdapter } from "./schema.js";
 import type { CmsfnEnvelope } from "cmsfn";
 import type { CmsfnRole } from "cmsfn";
 import { ok, err } from "cmsfn";
@@ -73,7 +74,7 @@ export async function rolesList(
   if (typeof input.dataset !== "string" || input.dataset.trim().length === 0) {
     return err("VALIDATION_FAILED", "dataset is required", { path: "dataset" });
   }
-  const rows = await config.db.findMany({
+  const rows = await cmsfnStorageAdapter(config.db).findMany({
     model: CMSFN_ROLES_TABLE,
     where: [],
     orderBy: [{ field: "id", direction: "asc" }],
@@ -98,19 +99,19 @@ export async function rolesUpsert(
     return err("VALIDATION_FAILED", v.message, v.path ? { path: v.path } : {});
   }
   const { role } = v;
-  const existing = await config.db.findOne({
+  const existing = await cmsfnStorageAdapter(config.db).findOne({
     model: CMSFN_ROLES_TABLE,
     where: [{ field: "id", operator: "eq", value: role.id }],
   });
   const row = { id: role.id, name: role.name, rules: role.rules };
   if (existing) {
-    await config.db.update({
+    await cmsfnStorageAdapter(config.db).update({
       model: CMSFN_ROLES_TABLE,
       where: [{ field: "id", operator: "eq", value: role.id }],
       data: row,
     });
   } else {
-    await config.db.create({
+    await cmsfnStorageAdapter(config.db).create({
       model: CMSFN_ROLES_TABLE,
       data: row,
     });
@@ -129,7 +130,7 @@ export async function rolesDelete(
   if (!v.ok) {
     return err("VALIDATION_FAILED", v.message, { path: "roleId" });
   }
-  await config.db.delete({
+  await cmsfnStorageAdapter(config.db).delete({
     model: CMSFN_ROLES_TABLE,
     where: [{ field: "id", operator: "eq", value: v.id }],
   });
@@ -143,7 +144,7 @@ export async function roleById(
   config: RolesStorageConfig,
   roleId: string
 ): Promise<CmsfnRole | null> {
-  const row = await config.db.findOne({
+  const row = await cmsfnStorageAdapter(config.db).findOne({
     model: CMSFN_ROLES_TABLE,
     where: [{ field: "id", operator: "eq", value: roleId }],
   });

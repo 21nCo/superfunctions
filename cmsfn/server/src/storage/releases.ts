@@ -5,6 +5,7 @@
  */
 
 import type { Adapter } from "@superfunctions/db";
+import { cmsfnStorageAdapter } from "./schema.js";
 import type { CmsfnEnvelope, CmsfnRelease } from "cmsfn";
 import { ok, err } from "cmsfn";
 import { randomUUID } from "node:crypto";
@@ -59,7 +60,7 @@ export async function createRelease(
     createdAt: now,
     updatedAt: now,
   };
-  await config.db.create({
+  await cmsfnStorageAdapter(config.db).create({
     model: CMSFN_RELEASES_TABLE,
     data: row,
   });
@@ -76,7 +77,7 @@ export async function listReleases(
   const dataset = typeof input.dataset === "string" ? input.dataset.trim() : "";
   if (!dataset) return err("VALIDATION_FAILED", "dataset is required", { path: "dataset" });
 
-  const rows = await config.db.findMany({
+  const rows = await cmsfnStorageAdapter(config.db).findMany({
     model: CMSFN_RELEASES_TABLE,
     where: [{ field: "dataset", operator: "eq", value: dataset }],
     orderBy: [
@@ -107,9 +108,12 @@ export async function getRelease(
   const releaseId = typeof input.releaseId === "string" ? input.releaseId.trim() : "";
   if (!dataset || !releaseId) return null;
 
-  const row = await config.db.findOne({
+  const row = await cmsfnStorageAdapter(config.db).findOne({
     model: CMSFN_RELEASES_TABLE,
-    where: [{ field: "releaseId", operator: "eq", value: releaseId }],
+    where: [
+      { field: "dataset", operator: "eq", value: dataset },
+      { field: "releaseId", operator: "eq", value: releaseId },
+    ],
   });
   if (!row || typeof row !== "object") return null;
   const r = row as ReleaseRow;
@@ -152,9 +156,12 @@ export async function addDocToRelease(
   docIds.push(docId);
   docIds.sort();
 
-  await config.db.update({
+  await cmsfnStorageAdapter(config.db).update({
     model: CMSFN_RELEASES_TABLE,
-    where: [{ field: "releaseId", operator: "eq", value: releaseId }],
+    where: [
+      { field: "dataset", operator: "eq", value: dataset },
+      { field: "releaseId", operator: "eq", value: releaseId },
+    ],
     data: { docIds, updatedAt: nowIso() },
   });
   return ok({});

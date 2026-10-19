@@ -34,6 +34,8 @@ export type {
   CmsfnServerAPI,
 } from "cmsfn";
 
+export { getCmsfnStorageSchema } from "./storage/schema.js";
+
 /** Server config: studio config plus optional status auth and roles. */
 export interface CmsfnServerConfig extends CmsfnStudioConfig {
   /** If set, called for GET /cmsfn/status; return true to allow, false to deny. */
