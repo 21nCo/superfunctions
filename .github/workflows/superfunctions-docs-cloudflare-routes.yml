@@ -26,6 +26,7 @@ on:
           - langfn
           - secfn
           - devfn
+          - sendfn
           - filefn
           - searchfn
           - authfn
@@ -93,6 +94,7 @@ jobs:
           CLOUDFLARE_ZONE_ID_LANGFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_LANGFN_COM }}
           CLOUDFLARE_ZONE_ID_SECFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_SECFN_COM }}
           CLOUDFLARE_ZONE_ID_DEVFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_DEVFN_COM }}
+          CLOUDFLARE_ZONE_ID_SENDFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_SENDFN_COM }}
           CLOUDFLARE_ZONE_ID_DATAFN_DEV: ${{ vars.CLOUDFLARE_ZONE_ID_DATAFN_DEV }}
           CLOUDFLARE_ZONE_ID_FILEFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_FILEFN_COM }}
           CLOUDFLARE_ZONE_ID_SEARCHFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_SEARCHFN_COM }}

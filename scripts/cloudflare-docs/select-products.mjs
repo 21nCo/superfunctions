@@ -67,6 +67,7 @@ function productsFromChangedFiles() {
     if (/^langfn\/docs\//.test(file)) selectExisting("langfn");
     if (/^secfn\/docs\//.test(file)) selectExisting("secfn");
     if (/^devfn\/docs\//.test(file)) selectExisting("devfn");
+    if (/^sendfn\/docs\//.test(file)) selectExisting("sendfn");
     if (/^filefn\/docs\//.test(file)) selectExisting("filefn");
     if (/^searchfn\/docs\//.test(file)) selectExisting("searchfn");
     if (/^authfn\/docs\//.test(file)) selectExisting("authfn");

@@ -111,6 +111,16 @@ export const docsProducts = {
       live: "langfn.com",
     },
   },
+  sendfn: {
+    packageName: "@sendfn/docs",
+    docsDir: "sendfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "sendfn.com",
+    hosts: {
+      dev: "sendfn.21n.site",
+      live: "sendfn.com",
+    },
+  },
   devfn: {
     packageName: "@devfn/docs",
     docsDir: "devfn/docs",

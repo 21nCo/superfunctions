@@ -22,6 +22,7 @@ on:
       - superfunctions-docs-langfn-live-*
       - superfunctions-docs-secfn-live-*
       - superfunctions-docs-devfn-live-*
+      - superfunctions-docs-sendfn-live-*
       - superfunctions-docs-filefn-live-*
       - superfunctions-docs-searchfn-live-*
       - superfunctions-docs-authfn-live-*
@@ -38,6 +39,7 @@ on:
       - superfunctions-langfn-docs-live-*
       - superfunctions-secfn-docs-live-*
       - superfunctions-devfn-docs-live-*
+      - superfunctions-sendfn-docs-live-*
       - superfunctions-filefn-docs-live-*
       - superfunctions-searchfn-docs-live-*
       - superfunctions-authfn-docs-live-*
@@ -55,6 +57,7 @@ on:
       - langfn/docs/**
       - secfn/docs/**
       - devfn/docs/**
+      - sendfn/docs/**
       - filefn/docs/**
       - searchfn/docs/**
       - authfn/docs/**
@@ -89,6 +92,7 @@ on:
           - langfn
           - secfn
           - devfn
+          - sendfn
           - filefn
           - searchfn
           - authfn
