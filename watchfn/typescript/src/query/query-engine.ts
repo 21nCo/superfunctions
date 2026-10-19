@@ -284,6 +284,10 @@ export class QueryEngine {
 
   private parseRange(value: NonNullable<QueryOptions["timeRange"]>): AbsoluteTimeRange {
     if (typeof value === "string") return this.validateRange(TimeRangeParser.parse(value));
+    if (Array.isArray(value)) {
+      if (value.length !== 2) throw new QueryValidationError("Time range tuple requires two bounds");
+      return this.validateRange({ from: this.timestamp(value[0]), to: this.timestamp(value[1]) });
+    }
     if (value.shortcut !== undefined) {
       return this.validateRange(TimeRangeParser.parse(value.shortcut));
     }

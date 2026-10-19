@@ -59,3 +59,12 @@ The result is numerator count divided by denominator count, not a percentage or 
 Five additional tests cover the SPEC mixed aggregation, global filters/time buckets, missing denominators, raw-storage query selection, malformed selectors and the public aggregate helper. This supersedes the earlier rate-rejection limitation. Other original limitations above remain open.
 
 Validation for this checkpoint:125 core and12 browser tests pass; source typecheck and all core builds pass. Both built ESM and synchronous CommonJS execute mixed request-count/error-rate queries and return count2/ratio0.5. Provider-scale aggregation and separate utility behavior remain unproven.
+
+
+## Tuple ranges and bounded time buckets
+
+The query engine accepts two-element `[from, to]` bounds using numeric epochs, Dates or ISO strings, inclusively, matching the alert-context range form in the original specification. Malformed, missing, nonfinite or reversed tuple bounds reject as QueryValidationError. This does not implement the separate logs/trace query facades that still have other outstanding contracts.
+
+TimeRangeParser.getBuckets now rejects nonfinite/reversed ranges, zero/negative/nonfinite sizes, floating-point steps that cannot advance, and excessive output before allocating. Its default maximum is100000 buckets; callers can explicitly provide a different positive integer maximum as the third argument. Duration parsing rejects zero and unsafe millisecond arithmetic. These guards prevent infinite loops and accidental unbounded allocation without changing valid bucket boundaries.
+
+Validation:47 focused query/HTTP tests and the source typecheck pass, including4 new tuple/bucket cases. Module/declaration builds pass. Calendar timezone semantics and range-edge conventions remain separate gates.

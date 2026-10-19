@@ -23,7 +23,7 @@ export type QueryGrouping = string | { interval: string };
 export interface QueryOptions {
   metric?: string;
   where?: QueryFilter;
-  timeRange?: string | TimeRange;
+  timeRange?: string | TimeRange | [string | Date | number, string | Date | number];
   groupBy?: QueryGrouping | QueryGrouping[];
   aggregations?: Record<string, Aggregation>;
   orderBy?: { field: string; direction: "asc" | "desc" };
