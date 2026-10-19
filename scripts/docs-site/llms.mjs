@@ -88,6 +88,24 @@ function replaceArtifact(target, body) {
 }
 
 /**
+ * Without a public origin, point generated `/docs/...` page links at their GitHub sources
+ * so committed artifacts stay usable before the site is hosted.
+ */
+export function withSourceLinks(text, manifest, product, canonicalUrl) {
+  if (canonicalUrl) return text;
+  const sources = new Map(Object.values(manifest.pages)
+    .filter((page) => page.id.startsWith("docs:"))
+    .map((page) => [new URL(page.path, "https://docs.invalid").pathname, page.id.slice("docs:".length)]));
+  return text.replace(/\]\((\/docs[^\s)]*)\)/g, (match, href) => {
+    const url = new URL(href, "https://docs.invalid");
+    const source = sources.get(url.pathname);
+    if (!source) return match;
+    const path = source.split("/").map(encodeURIComponent).join("/");
+    return `](https://github.com/21nCo/super-functions/blob/dev/${product}/docs/content/docs/${path}${url.hash})`;
+  });
+}
+
+/**
  * --check compares without modifying tracked artifacts.
  * @param {string} directory
  * @param {{llmsTxt: string, llmsFullTxt: string}} artifacts
