@@ -13,6 +13,7 @@ on:
       - superfunctions-docs-extfn-live-*
       - superfunctions-docs-reviewfn-live-*
       - superfunctions-docs-memoryfn-live-*
+      - superfunctions-docs-mailfn-live-*
       - superfunctions-docs-mdfn-live-*
       - superfunctions-docs-mcpfn-live-*
       - superfunctions-docs-clifn-live-*
@@ -27,6 +28,7 @@ on:
       - superfunctions-extfn-docs-live-*
       - superfunctions-reviewfn-docs-live-*
       - superfunctions-memoryfn-docs-live-*
+      - superfunctions-mailfn-docs-live-*
       - superfunctions-mdfn-docs-live-*
       - superfunctions-mcpfn-docs-live-*
       - superfunctions-clifn-docs-live-*
@@ -42,6 +44,7 @@ on:
       - extfn/docs/**
       - reviewfn/docs/**
       - memoryfn/docs/**
+      - mailfn/docs/**
       - mdfn/docs/**
       - mcpfn/docs/**
       - clifn/docs/**
@@ -74,6 +77,7 @@ on:
           - extfn
           - reviewfn
           - memoryfn
+          - mailfn
           - mdfn
           - mcpfn
           - clifn

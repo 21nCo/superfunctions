@@ -21,6 +21,16 @@ export const docsProducts = {
       live: "reviewfn.com",
     },
   },
+  mailfn: {
+    packageName: "@mailfn/docs",
+    docsDir: "mailfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "mailfn.com",
+    hosts: {
+      dev: "mailfn.21n.site",
+      live: "mailfn.com",
+    },
+  },
   memoryfn: {
     packageName: "@memoryfn/docs",
     docsDir: "memoryfn/docs",

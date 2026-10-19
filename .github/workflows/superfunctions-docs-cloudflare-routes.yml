@@ -17,6 +17,7 @@ on:
           - extfn
           - reviewfn
           - memoryfn
+          - mailfn
           - mdfn
           - mcpfn
           - clifn
@@ -82,6 +83,7 @@ jobs:
           CLOUDFLARE_ZONE_ID_EXTFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_EXTFN_COM }}
           CLOUDFLARE_ZONE_ID_REVIEWFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_REVIEWFN_COM }}
           CLOUDFLARE_ZONE_ID_MEMORYFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_MEMORYFN_COM }}
+          CLOUDFLARE_ZONE_ID_MAILFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_MAILFN_COM }}
           CLOUDFLARE_ZONE_ID_MDFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_MDFN_COM }}
           CLOUDFLARE_ZONE_ID_MCPFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_MCPFN_COM }}
           CLOUDFLARE_ZONE_ID_CLIFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_CLIFN_COM }}
