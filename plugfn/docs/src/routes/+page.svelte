@@ -4,4 +4,4 @@
   let { data }: { data: PageData } = $props();
 </script>
 
-<PlugFnLanding siteTitle={data.source.siteTitle} description={data.source.config.site.description ?? ""} />
+<PlugFnLanding siteTitle={data.source.siteTitle} description={data.source.config.site.description} />

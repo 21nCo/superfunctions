@@ -1,11 +1,16 @@
 import type { DocsConfig } from "@docsfn/core";
 
+const deploymentOrigin = process.env.CLOUDFLARE_DOCS_DEPLOY === "1"
+  ? process.env.CLOUDFLARE_DOCS_PUBLIC_ORIGIN || undefined
+  : undefined;
+
 const config: DocsConfig = {
   schemaVersion: 1,
   site: {
     title: "PlugFn",
     description: "Self-hosted provider connections, OAuth, webhooks, workflows, and sync jobs.",
     basePath: "/docs",
+    canonicalUrl: deploymentOrigin,
     showFooter: false,
     editLink: { pattern: "https://github.com/21nCo/super-functions/edit/dev/plugfn/docs/{path}" },
   },

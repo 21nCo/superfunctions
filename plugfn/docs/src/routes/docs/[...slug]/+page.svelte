@@ -24,7 +24,7 @@
 </svelte:head>
 
 {#if data.surface.canonicalPath === "/docs"}
-  <PlugFnLanding siteTitle={data.siteTitle} description={data.surface.description ?? ""} />
+  <PlugFnLanding siteTitle={data.siteTitle} description={data.surface.description} />
 {:else}
 <DocsLayout surface={data.surface} sidebar={data.sidebar}>
   <Breadcrumbs surface={data.surface} />

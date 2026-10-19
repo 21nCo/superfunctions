@@ -1,6 +1,6 @@
 <script lang="ts">
   import LandingPage from "../../../../../scripts/docs-site/LandingPage.svelte";
-  let { siteTitle, description }: { siteTitle: string; description: string } = $props();
+  let { siteTitle, description }: { siteTitle: string; description?: string } = $props();
 
   const tagline = "A shared integration runtime for products.";
 
