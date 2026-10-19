@@ -1,0 +1,56 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59D8GSF8GAXTZZ6RQPJF2S1",
+  "session_id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-19T06:23:35.575405Z",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "clifn/docs/scripts/generate-llms.mjs",
+    "scripts/docs-site/llms.mjs",
+    "scripts/docs-site/llms.test.mjs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5[1m]",
+  "turn_id": "5274af18b34b",
+  "checkpoint_transcript_start": 3805,
+  "transcript_lines_at_start": 3805,
+  "compact_transcript_start": 324,
+  "token_usage": {
+    "input_tokens": 2,
+    "cache_creation_tokens": 1034,
+    "cache_read_tokens": 459395,
+    "output_tokens": 296,
+    "api_call_count": 1
+  },
+  "session_metrics": {
+    "turn_count": 10
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-19T06:23:34.750891Z",
+    "agent_lines": 217,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 217,
+    "total_lines_changed": 217,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
