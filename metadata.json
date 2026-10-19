@@ -2,7 +2,7 @@
   "cli_version": "0.11.3",
   "checkpoint_id": "01M59GVA952EF0464BQ2Y5BCAH",
   "strategy": "manual-commit",
-  "checkpoints_count": 1,
+  "checkpoints_count": 5,
   "files_touched": [
     ".github/workflows/superfunctions-docs-cloudflare-deploy.yml",
     ".github/workflows/superfunctions-docs-cloudflare-routes.yml",
@@ -28,6 +28,27 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 12,
+    "cache_creation_tokens": 3348,
+    "cache_read_tokens": 3116233,
+    "output_tokens": 834,
+    "api_call_count": 6,
+    "subagent_tokens": {
+      "input_tokens": 280,
+      "cache_creation_tokens": 347148,
+      "cache_read_tokens": 13094132,
+      "output_tokens": 47908,
+      "api_call_count": 140
+    }
+  }
 }
