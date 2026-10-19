@@ -118,7 +118,7 @@ createAuthFnAdmin({
 - every session for that user
 - every password credential, OAuth identity, OTP challenge, API key, 2FA enrollment / recovery code, region profile
 
-…in a single transaction. The response carries per-table counts:
+…one table at a time; the steps are not a single transaction, so a failure part-way can leave partial cleanup. Rows owned by custom plugins are not covered unless an `afterAccountDelete` hook removes them. The response carries per-table counts:
 
 ```jsonc
 {
