@@ -13,14 +13,10 @@ npm install @superfunctions/http-next
 
 ```ts
 // app/auth/[...path]/route.ts
-import { toNext } from '@superfunctions/http-next';
+import { toNextHandlers } from '@superfunctions/http-next';
 import { auth } from '../_runtime';
 
-const handler = toNext(auth.router);
-export const GET = handler;
-export const POST = handler;
-export const PUT = handler;
-export const DELETE = handler;
+export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD } = toNextHandlers(auth.router);
 ```
 
 ## Reading the session in Server Components
@@ -40,12 +36,7 @@ export default async function Dashboard() {
 }
 ```
 
-`@superfunctions/http-next` exposes a helper for the fake-request pattern:
-
-```ts
-import { toNextSession } from '@superfunctions/http-next';
-const session = await toNextSession(auth, await headers());
-```
+Use `auth.provider.authenticate(request)` with the incoming headers, as above. The HTTP adapter only creates route handlers; session lookup belongs to the auth provider.
 
 ## Server Actions
 
@@ -60,7 +51,7 @@ export async function deleteMyAccount() {
     method: 'DELETE',
     headers: reqHeaders,
   });
-  const response = await auth.router.fetch(request);
+  const response = await auth.router.handle(request);
   if (!response.ok) throw new Error('delete failed');
 }
 ```
@@ -69,7 +60,8 @@ export async function deleteMyAccount() {
 
 ```ts
 // middleware.ts
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
+import { auth } from './app/auth/_runtime';
 
 export async function middleware(request: NextRequest) {
   const url = request.nextUrl;
