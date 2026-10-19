@@ -1,0 +1,41 @@
+sendfn/docs/.gitignore
+  s_7d0a48f0aaecda::t_8ad834f1082fdd 11-14
+sendfn/docs/README.md
+  s_7d0a48f0aaecda::t_a741ec05bcb109 24
+sendfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_9e26d5e76e729f 12,16,18,24
+sendfn/docs/content/docs/http-api.md
+  s_7d0a48f0aaecda::t_9a894373a9354b 6
+sendfn/docs/content/docs/persistence-and-events.md
+  s_7d0a48f0aaecda::t_21785785e6f059 8
+sendfn/docs/content/docs/python.md
+  s_7d0a48f0aaecda::t_980f705f7fa382 9-10
+sendfn/docs/content/docs/reference/python.md
+  s_7d0a48f0aaecda::t_b0b3027dfbd2c4 17,23,29,35
+sendfn/docs/content/docs/reference/typescript.md
+  s_7d0a48f0aaecda::t_24bb7ced40a167 133-136
+sendfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_dbb720ee1805fc 52,56,58,64,74,116,145-146,186,192,198,204,581-584
+sendfn/python/README.md
+  s_7d0a48f0aaecda::t_663a0e018670d0 14,20,26,32
+sendfn/typescript/README.md
+  s_7d0a48f0aaecda::t_938a2f1b671aa6 130-133
+sendfn/typescript/tests/release_gate.test.ts
+  s_7d0a48f0aaecda::t_fa7d91bbcb334d 66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8b3f8ec9599b90660492084fb68e005a76364f4c",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
