@@ -69,4 +69,4 @@ If you're **comparing tools**, the highlights below are a cheatsheet against Bet
 - [Frameworks](./frameworks) — Hono, Express, Bun, SvelteKit, Next.js, FastAPI, Flask, Starlette.
 - [Recipes](./recipes) — copy-pasteable solutions for common flows.
 - [API Reference](./api) — OpenAPI-backed endpoint documentation, generated from a server with every plugin enabled.
-- [AI resources](./ai-resources) — `llms.txt`, MCP, and Skills for coding assistants.
+- [AI resources](./ai-resources) — generated `llms.txt` context for coding assistants.

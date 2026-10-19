@@ -66,12 +66,7 @@ export const auth = authApp.createServer({
 import { auth } from "../_runtime";
 import { toNextHandlers } from "@superfunctions/http-next";
 
-const handler = toNextHandlers(auth.router).GET;
-
-export const GET = handler;
-export const POST = handler;
-export const PUT = handler;
-export const DELETE = handler;
+export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD } = toNextHandlers(auth.router);
 ```
 
 ## 4. Read the session in Server Components

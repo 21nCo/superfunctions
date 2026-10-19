@@ -16,7 +16,7 @@ This site publishes generated, LLM-friendly context so an assistant can answer q
 | [Claude](./claude) | You're on Claude Desktop or Claude Code. |
 | [Codex / Droid](./codex) | You use an AGENTS.md-aware tool. |
 
-Both files are generated from `content/docs/**` (and the configured API material) when the docs are built, so they follow the published pages. AuthFn does not ship an MCP server or hosted skill packs; static context files do not authenticate an assistant or give it live access to your deployment.
+Both files are generated from `content/docs/**` (and the configured API material) when the docs are built, so they follow the published pages. This docs site does not host an MCP server or skill packs; static context files do not authenticate an assistant or give it live access to your deployment.
 
 ## Quick start
 

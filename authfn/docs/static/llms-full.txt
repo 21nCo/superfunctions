@@ -1192,7 +1192,7 @@ The capability lists and gets users in the configured namespace, restricted to a
 | List user sessions | `authfn.sessions.read` | Read, audited |
 | Revoke session | `authfn.sessions.revoke` | Destructive, recent-auth confirmation, audited |
 
-User deletion permanently removes the user and owned authentication state. Do not expose the capability without scope, permission, confirmation, and audit enforcement. The capability always checks the namespace, but region checks are conditional on `scope.region`. Omitting the region allows operations across regions within the configured namespace. Hosts requiring region isolation must supply and authorize `scope.region` for every operation; these checks are additional to operator authorization.
+User deletion permanently removes the user and owned authentication state. Do not expose the capability without scope, permission, confirmation, and audit enforcement. The capability checks the namespace only when `scope.namespace` is supplied, and the region only when `scope.region` is supplied; hosts should pass both. Omitting the region allows operations across regions within the configured namespace. Hosts requiring region isolation must supply and authorize `scope.region` for every operation; these checks are additional to operator authorization.
 
 ## Operator authentication
 
@@ -1343,7 +1343,7 @@ This site publishes generated, LLM-friendly context so an assistant can answer q
 | [Claude](./claude) | You're on Claude Desktop or Claude Code. |
 | [Codex / Droid](./codex) | You use an AGENTS.md-aware tool. |
 
-Both files are generated from `content/docs/**` (and the configured API material) when the docs are built, so they follow the published pages. AuthFn does not ship an MCP server or hosted skill packs; static context files do not authenticate an assistant or give it live access to your deployment.
+Both files are generated from `content/docs/**` (and the configured API material) when the docs are built, so they follow the published pages. This docs site does not host an MCP server or skill packs; static context files do not authenticate an assistant or give it live access to your deployment.
 
 ## Quick start
 
@@ -4699,11 +4699,7 @@ npm install @superfunctions/http-next
 import { toNextHandlers } from '@superfunctions/http-next';
 import { auth } from '../_runtime';
 
-const handler = toNextHandlers(auth.router).GET;
-export const GET = handler;
-export const POST = handler;
-export const PUT = handler;
-export const DELETE = handler;
+export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD } = toNextHandlers(auth.router);
 ```
 
 ## Reading the session in Server Components
@@ -5109,7 +5105,7 @@ If you're **comparing tools**, the highlights below are a cheatsheet against Bet
 - [Frameworks](./frameworks) — Hono, Express, Bun, SvelteKit, Next.js, FastAPI, Flask, Starlette.
 - [Recipes](./recipes) — copy-pasteable solutions for common flows.
 - [API Reference](./api) — OpenAPI-backed endpoint documentation, generated from a server with every plugin enabled.
-- [AI resources](./ai-resources) — `llms.txt`, MCP, and Skills for coding assistants.
+- [AI resources](./ai-resources) — generated `llms.txt` context for coding assistants.
 
 ---
 
@@ -7376,12 +7372,7 @@ export const auth = authApp.createServer({
 import { auth } from "../_runtime";
 import { toNextHandlers } from "@superfunctions/http-next";
 
-const handler = toNextHandlers(auth.router).GET;
-
-export const GET = handler;
-export const POST = handler;
-export const PUT = handler;
-export const DELETE = handler;
+export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD } = toNextHandlers(auth.router);
 ```
 
 ## 4. Read the session in Server Components

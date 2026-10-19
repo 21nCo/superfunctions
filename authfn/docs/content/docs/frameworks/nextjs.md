@@ -16,11 +16,7 @@ npm install @superfunctions/http-next
 import { toNextHandlers } from '@superfunctions/http-next';
 import { auth } from '../_runtime';
 
-const handler = toNextHandlers(auth.router).GET;
-export const GET = handler;
-export const POST = handler;
-export const PUT = handler;
-export const DELETE = handler;
+export const { GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD } = toNextHandlers(auth.router);
 ```
 
 ## Reading the session in Server Components
