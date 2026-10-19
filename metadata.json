@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M5AW6N2YYGJQ1NEWHWP7NYK3",
+  "strategy": "manual-commit",
+  "branch": "codex/flowfn-readiness-20261016",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "flowfn/python/README.md",
+    "flowfn/python/flowfn/core/telemetry.py",
+    "flowfn/python/flowfn/queue/queue.py",
+    "flowfn/python/flowfn/queue/types.py",
+    "flowfn/python/flowfn/stream/stream.py",
+    "flowfn/python/flowfn/workflow/types.py",
+    "flowfn/python/flowfn/workflow/workflow.py",
+    "flowfn/python/tests/test_trace_propagation.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 18509,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 902784,
+    "output_tokens": 2286,
+    "api_call_count": 16
+  }
+}
