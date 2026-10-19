@@ -1,0 +1,54 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59ARF6C8FJ5AVJE0DQ33YWT",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-19T05:39:43.614636Z",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "authfn/docs/content/docs/ai-resources/claude.md",
+    "authfn/docs/content/docs/ai-resources/codex.md",
+    "authfn/docs/content/docs/ai-resources/cursor.md",
+    "authfn/docs/content/docs/ai-resources/index.md",
+    "authfn/docs/content/docs/ai-resources/llms-txt.md",
+    "authfn/docs/content/docs/ai-resources/meta.json",
+    "authfn/docs/static/llms-full.txt",
+    "authfn/docs/static/llms.txt"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "2818015989fe",
+  "checkpoint_transcript_start": 9871,
+  "transcript_lines_at_start": 9871,
+  "compact_transcript_start": 1184,
+  "session_metrics": {
+    "turn_count": 39
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-19T05:39:43.210473Z",
+    "agent_lines": 2245,
+    "agent_removed": 1720,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2245,
+    "total_lines_changed": 3965,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
