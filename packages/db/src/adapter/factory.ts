@@ -15,6 +15,7 @@ import type {
 import {  NamespaceManager } from '../utils/namespace.js';
 import {
   registerAdapterCodecs,
+  resolveBooleanStorage,
   transformRecordForRuntime,
   transformRecordForStorage,
   transformWhereForStorage,
@@ -49,7 +50,7 @@ function buildAdapterContext(
   libraryOptions: LibraryOptions
 ): AdapterContext {
   const namespace = libraryOptions.namespace ?? 'default';
-  const schema = libraryOptions.schema ?? {};
+  const schema = resolveBooleanStorage(libraryOptions.schema ?? {}, mergeCapabilities(config.capabilities ?? {}).types.booleans);
 
   // Create namespace manager
   const namespaceManager = new NamespaceManager({
