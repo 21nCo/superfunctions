@@ -29,6 +29,16 @@ async function check(WatchFn) {
     assert.equal((await watch.httpRouter.handler(request('local-key'))).status,202);
     assert.deepEqual(await watch.query({}),[event]);
     assert.deepEqual(await watch.query({timeRange:{from:event.ts,to:event.ts}}),[event]);
+    const queryResponse = await watch.httpRouter.handler(new Request('http://local/query',{method:'POST',headers:{authorization:'Bearer local-key'},body:JSON.stringify({metric:'packed'})}));
+    assert.equal(queryResponse.status,200);
+    assert.deepEqual((await queryResponse.json()).results,[event]);
+    assert.deepEqual(await watch.aggregate({metric:'packed',aggregation:'count'}),[{value:1}]);
+    const transaction = watch.startTransaction('packed-transaction');
+    transaction.startSpan('packed-child').finish(); transaction.finish(); transaction.finish();
+    const spans = await watch.query({metric:'trace.span'});
+    assert.equal(spans.length,2);
+    assert.equal(spans[0].properties.parentId,spans[1].properties.id);
+
   } finally { await watch.stop(); }
   console.log('packed WatchFn',process.version);
 }

@@ -260,12 +260,7 @@ export class WatchFn implements WatchFnInstance {
   
   // Transaction helper
   startTransaction(name: string) {
-      return {
-          startSpan: (spanName: string) => ({
-              finish: () => {}
-          }),
-          finish: () => {}
-      }
+      return this.tracer.startTransaction(name);
   }
 }
 

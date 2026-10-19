@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 export interface SpanContext {
   traceId: string;
   spanId: string;
@@ -24,12 +26,12 @@ export class Span {
   tags: Record<string, any> = {};
   logs: Array<{ timestamp: number; fields: Record<string, any> }> = [];
 
-  constructor(options: SpanOptions) {
-    this.id = Math.random().toString(16).slice(2, 10);
-    this.traceId = options.traceId || Math.random().toString(16).slice(2, 18); // Simple traceId generation
+  constructor(options: SpanOptions, private readonly onFinish?: (span: Span) => void) {
+    this.id = randomBytes(8).toString("hex");
+    this.traceId = options.traceId || randomBytes(16).toString("hex");
     this.parentId = options.parentId;
     this.name = options.name;
-    this.startTime = options.startTime || Date.now();
+    this.startTime = options.startTime ?? Date.now();
     this.tags = options.tags || {};
   }
 
@@ -47,8 +49,9 @@ export class Span {
   }
 
   finish(endTime: number = Date.now()) {
-    if (this.endTime) return; // Already finished
+    if (this.endTime !== undefined) return this;
     this.endTime = endTime;
+    this.onFinish?.(this);
     return this;
   }
 
@@ -69,7 +72,7 @@ export class Span {
           name: this.name,
           startTime: this.startTime,
           endTime: this.endTime,
-          duration: this.endTime ? this.endTime - this.startTime : undefined,
+          duration: this.endTime !== undefined ? this.endTime - this.startTime : undefined,
           tags: this.tags,
           logs: this.logs
       };
