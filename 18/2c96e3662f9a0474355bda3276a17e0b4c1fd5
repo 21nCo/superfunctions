@@ -1,0 +1,31 @@
+recfn/.conduct/webhook-consumer-readiness.md
+  s_e1c5fc1a65c0cf::t_b383ee855316e3 1-15
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_2f53570727d544 63-66
+recfn/server/__tests__/participant-tracking.test.ts
+  s_e1c5fc1a65c0cf::t_445b0a67d08dbd 1-2,16-21,156-158,213,228,240-241
+recfn/server/__tests__/webhook-delivery.test.ts
+  s_e1c5fc1a65c0cf::t_9543781d38448f 1,14-19,65-67,100,117,128-131,163,180,212,225-226,245,285,320,328-361
+recfn/server/src/integrations/plugfn.ts
+  s_e1c5fc1a65c0cf::t_a9f5b1c9a9c60f 10,30
+recfn/server/src/webhooks/deliver.ts
+  s_e1c5fc1a65c0cf::t_143a163b6f9aa7 1,8-9,35,37
+recfn/server/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_b6e0db94aff4b5 2-3,6-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "182c96e3662f9a0474355bda3276a17e0b4c1fd5",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
