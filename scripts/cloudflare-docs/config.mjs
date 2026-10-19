@@ -91,6 +91,16 @@ export const docsProducts = {
       live: "botfn.com",
     },
   },
+  secfn: {
+    packageName: "@secfn/docs",
+    docsDir: "secfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "secfn.com",
+    hosts: {
+      dev: "secfn.21n.site",
+      live: "secfn.com",
+    },
+  },
   langfn: {
     packageName: "@langfn/docs",
     docsDir: "langfn/docs",
