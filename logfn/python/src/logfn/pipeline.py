@@ -97,7 +97,7 @@ def with_request_ids(
             event["requestId"] = str(uuid.uuid4())
         
         if generate_trace_id and "traceId" not in event:
-            event["traceId"] = str(uuid.uuid4())
+            event["traceId"] = uuid.uuid4().hex
             
         return event
     

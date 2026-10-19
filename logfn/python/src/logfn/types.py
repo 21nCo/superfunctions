@@ -20,6 +20,14 @@ LOG_LEVEL_VALUES: Dict[LogLevel, int] = {
 
 DEFAULT_VERSION = "0"
 
+class LogCorrelation(TypedDict, total=False):
+    traceId: str
+    spanId: str
+    requestId: str
+    userId: str
+    tenantId: str
+
+
 class LogEvent(TypedDict):
     ts: str  # ISO8601 timestamp
     level: LogLevel
@@ -53,6 +61,7 @@ class Sink(Protocol):
         ...
 
 class LoggerOptions(TypedDict):
+    correlation: NotRequired[LogCorrelation]
     onError: NotRequired[ErrorHandler]
     name: str
     level: NotRequired[LogLevel]
@@ -63,6 +72,7 @@ class LoggerOptions(TypedDict):
     baseTags: NotRequired[List[str]]
 
 class ChildLoggerOptions(TypedDict):
+    correlation: NotRequired[LogCorrelation]
     name: NotRequired[str]
     level: NotRequired[LogLevel]
     ctx: NotRequired[Dict[str, Any]]

@@ -13,6 +13,7 @@ from .types import (
     LOG_LEVEL_VALUES,
     ChildLoggerOptions,
     LogEvent,
+    LogCorrelation,
     LoggerOptions,
     LogLevel,
     PipelineStage,
@@ -75,6 +76,7 @@ class Logger:
         base_context: Optional[Dict[str, Any]] = None,
         base_tags: Optional[List[str]] = None,
         on_error: Optional[ErrorHandler] = None,
+        correlation: Optional[LogCorrelation] = None,
     ):
         self._reporter = _ErrorReporter(on_error)
         self._delivery = _DeliveryState(self._reporter)
@@ -85,6 +87,7 @@ class Logger:
         self.now = now or default_now
         self.base_context = base_context or {}
         self.base_tags = base_tags or []
+        self.correlation: LogCorrelation = {**(correlation or {})}
         
         if not sinks:
             # We don't throw here to avoid breaking apps, but it's bad practice
@@ -115,6 +118,17 @@ class Logger:
             "name": self.name,
             "version": DEFAULT_VERSION,
         }
+
+        if "traceId" in self.correlation:
+            event["traceId"] = self.correlation["traceId"]
+        if "spanId" in self.correlation:
+            event["spanId"] = self.correlation["spanId"]
+        if "requestId" in self.correlation:
+            event["requestId"] = self.correlation["requestId"]
+        if "userId" in self.correlation:
+            event["userId"] = self.correlation["userId"]
+        if "tenantId" in self.correlation:
+            event["tenantId"] = self.correlation["tenantId"]
 
         # Merge context
         merged_ctx = {**self.base_context}
@@ -183,7 +197,7 @@ class Logger:
     def fatal(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
         self._log("fatal", msg, ctx, tags, **kwargs)
 
-    def child(self, name: Optional[str] = None, level: Optional[LogLevel] = None, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None) -> 'Logger':
+    def child(self, name: Optional[str] = None, level: Optional[LogLevel] = None, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, correlation: Optional[LogCorrelation] = None) -> 'Logger':
         new_name = name or self.name
         new_level = level or self.level
         new_ctx = {**self.base_context}
@@ -201,6 +215,7 @@ class Logger:
             now=self.now,
             base_context=new_ctx,
             base_tags=new_tags,
+            correlation={**self.correlation, **(correlation or {})},
         )
         child._reporter = self._reporter
         child._delivery = self._delivery
@@ -245,6 +260,7 @@ def create_logger(
     base_context: Optional[Dict[str, Any]] = None,
     base_tags: Optional[List[str]] = None,
     on_error: Optional[ErrorHandler] = None,
+    correlation: Optional[LogCorrelation] = None,
 ) -> Logger:
     return Logger(
         name=name,
@@ -254,4 +270,5 @@ def create_logger(
         base_context=base_context,
         base_tags=base_tags,
         on_error=on_error,
+        correlation=correlation,
     )

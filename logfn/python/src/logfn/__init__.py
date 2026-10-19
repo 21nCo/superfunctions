@@ -3,7 +3,7 @@ from typing import Optional, List
 from .core import Logger, create_logger
 from .pipeline import redact, enrich_context, sample, with_request_ids
 from .sinks import SinkConsole, SinkHttp
-from .types import ErrorHandler, LogLevel, LogEvent, Sink, PipelineStage
+from .types import LogCorrelation, ErrorHandler, LogLevel, LogEvent, Sink, PipelineStage
 
 def dev_logger(name: str = "app") -> Logger:
     """
@@ -34,6 +34,7 @@ def server_logger(
     )
 
 __all__ = [
+    "LogCorrelation",
     "ErrorHandler",
     "Logger",
     "create_logger",

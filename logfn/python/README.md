@@ -84,3 +84,20 @@ Logger events are limited to 64 KiB in the standard escaped JSON representation,
 Pass synchronous `on_error(error, context)` to `Logger` or `create_logger` to observe pipeline, sink delivery and flush failures. Context identifies the stage or sink, with `phase: "flush"` for flush hooks. Children inherit the same callback. Callback exceptions and synchronous recursive reports are isolated so they do not replace the logging outcome. Use a separate reporting channel rather than logging callback failures back into the same sinks.
 
 `flush()` still raises asynchronous delivery or flush failures after all sink hooks settle. Without a callback, internal reports go to stderr. The exported `ErrorHandler` type describes this callback.
+
+### Request correlation
+
+Pass `correlation` to `Logger` or `create_logger` to emit `traceId`, `spanId`,
+`requestId`, `userId`, and `tenantId` as top-level event fields. Children inherit
+these fields and can override individual values without changing their parent:
+
+```python
+request_log = logger.child(correlation={"requestId": "request-123", "userId": "user-7"})
+request_log.info("request accepted")
+```
+
+Correlation mappings are copied when creating a logger or child. Context fields
+remain separate. The `with_request_ids()` pipeline fills missing request IDs
+with UUID strings and missing trace IDs with lowercase 32-character hexadecimal
+values, preserving supplied IDs. This helper generates IDs per event; pass a
+shared request correlation mapping when multiple events belong to one request.
