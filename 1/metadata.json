@@ -1,0 +1,75 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59CA949D3SJF93TKPH4WYS2",
+  "session_id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-19T06:07:16.548898Z",
+  "checkpoints_count": 2,
+  "files_touched": [
+    ".github/workflows/superfunctions-docs-cloudflare-deploy.yml",
+    ".github/workflows/superfunctions-docs-cloudflare-routes.yml",
+    "langfn/docs/package.json",
+    "langfn/docs/scripts/generate-llms.mjs",
+    "langfn/docs/src/lib/server/docs-site-source.ts",
+    "langfn/docs/src/routes/+error.svelte",
+    "langfn/docs/src/routes/docs/llms-full.txt/+server.ts",
+    "langfn/docs/src/routes/docs/llms.txt/+server.ts",
+    "langfn/docs/tsconfig.json",
+    "langfn/docs/turbo.json",
+    "langfn/docs/vite.config.ts",
+    "package-lock.json",
+    "package.json",
+    "scripts/cloudflare-docs/config.mjs",
+    "scripts/cloudflare-docs/select-products.mjs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5[1m]",
+  "turn_id": "dd2abad20a65",
+  "checkpoint_transcript_start": 3447,
+  "transcript_lines_at_start": 3447,
+  "compact_transcript_start": 298,
+  "token_usage": {
+    "input_tokens": 28,
+    "cache_creation_tokens": 15576,
+    "cache_read_tokens": 6067829,
+    "output_tokens": 8210,
+    "api_call_count": 14,
+    "subagent_tokens": {
+      "input_tokens": 92,
+      "cache_creation_tokens": 311733,
+      "cache_read_tokens": 3985598,
+      "output_tokens": 21159,
+      "api_call_count": 44
+    }
+  },
+  "session_metrics": {
+    "turn_count": 10
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-19T06:07:11.851071Z",
+    "agent_lines": 28553,
+    "agent_removed": 21158,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 28553,
+    "total_lines_changed": 49711,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
