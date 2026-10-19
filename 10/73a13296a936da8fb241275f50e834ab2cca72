@@ -1,0 +1,29 @@
+_conduct/sqlite-boolean-codecs.md
+  s_e1c5fc1a65c0cf::t_94aedfcbc959f8 1-7
+packages/db/src/adapter/factory.ts
+  s_e1c5fc1a65c0cf::t_895a47af4a7dbe 18,53
+packages/db/src/adapter/schema-codecs.ts
+  s_e1c5fc1a65c0cf::t_57eec22ee16995 35,41-43,54-63,119-120,124,145-146,301,446-459
+packages/db/src/adapter/types.ts
+  s_e1c5fc1a65c0cf::t_4e2cb74ffd3cb3 221-222
+packages/db/src/adapters/kysely/boolean-codecs.test.ts
+  s_e1c5fc1a65c0cf::t_2398f93f4dfc3d 1-44
+packages/db/src/adapters/kysely/index.ts
+  s_e1c5fc1a65c0cf::t_75437f262fd188 418
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1073a13296a936da8fb241275f50e834ab2cca72",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
