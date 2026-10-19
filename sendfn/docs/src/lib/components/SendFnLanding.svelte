@@ -1,9 +1,9 @@
 <script lang="ts">
   import LandingPage from "../../../../../scripts/docs-site/LandingPage.svelte";
-  import type { DocsSiteSource } from "../../../../../scripts/docs-site/runtime";
 
   interface Props {
-    data: { source: DocsSiteSource };
+    // Only the client-safe layout summary reaches the landing page.
+    data: { source: { siteTitle: string; config: { site: { description?: string } } } };
   }
 
   let { data }: Props = $props();
