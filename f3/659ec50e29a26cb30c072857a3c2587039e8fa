@@ -1,0 +1,43 @@
+memoryfn/docs/README.md
+  s_7d0a48f0aaecda::t_5f499d7862266d 12
+memoryfn/docs/content/docs/embeddings-and-extraction.md
+  s_7d0a48f0aaecda::t_1aa926045f2501 24
+memoryfn/docs/content/docs/http.md
+  s_7d0a48f0aaecda::t_330e8f5454deb5 22
+memoryfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_3425bf8f277b28 8
+memoryfn/docs/content/docs/mcp.md
+  s_7d0a48f0aaecda::t_a38b33d3b59d57 47
+memoryfn/docs/content/docs/operations-and-limits.md
+  s_7d0a48f0aaecda::t_97a1fef55851ab 6
+memoryfn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_19b084d3b09b8b 7,10
+memoryfn/docs/content/docs/reference/package-overview.md
+  s_7d0a48f0aaecda::t_f447181dfefe23 3,6,18
+memoryfn/docs/content/docs/reference/storage-lifecycle.md
+  s_7d0a48f0aaecda::t_3a1aea6be2f1b6 3,6
+memoryfn/docs/content/docs/search.md
+  s_7d0a48f0aaecda::t_c277b07b644cb6 23
+memoryfn/docs/content/docs/storage.md
+  s_7d0a48f0aaecda::t_5c99fd071113b6 31
+memoryfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_f4d875994e7a76 20
+memoryfn/docs/src/app.css
+  s_7d0a48f0aaecda::t_bf552cdc948425 79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3659ec50e29a26cb30c072857a3c2587039e8fa",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
