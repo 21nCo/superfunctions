@@ -8,3 +8,7 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /.docsfn
+.dev.vars
+.dev.vars.*
+/.wrangler
+/.cloudflare-docs-wrangler.jsonc

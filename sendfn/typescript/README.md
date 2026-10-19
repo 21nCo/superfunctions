@@ -127,6 +127,10 @@ interface SendfnConfig {
   whatsappProvider?: WhatsAppProvider; // e.g., metaWhatsAppAdapter()
   email?: EmailConfig;         // Default settings (fromEmail, fromName)
   pushProviders?: Partial<Record<Platform, PushProvider>>; // APNS/FCM/custom adapters
+  awsSns?: {
+    topicArns: string[];       // SNS topics allowed to deliver SES lifecycle events
+    maxAgeMs?: number;         // Optional replay window
+  };
   push?: PushConfig;           // Legacy credentials for FCM/APNS
   options?: {
     suppressionEnabled?: boolean; // default: true

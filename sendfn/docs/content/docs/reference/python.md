@@ -14,25 +14,25 @@ pip install sendfn
 For email support (AWS SES):
 
 ```bash
-pip install sendfn[email]
+pip install 'sendfn[email]'
 ```
 
 For push notification support:
 
 ```bash
-pip install sendfn[push]
+pip install 'sendfn[push]'
 ```
 
 For email, push, and database support (`all` excludes web-framework extras):
 
 ```bash
-pip install sendfn[all]
+pip install 'sendfn[all]'
 ```
 
 For FastAPI integration:
 
 ```bash
-pip install sendfn[fastapi]
+pip install 'sendfn[fastapi]'
 ```
 
 ## Verify From Repo Root

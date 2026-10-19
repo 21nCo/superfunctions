@@ -49,19 +49,19 @@ Install the TypeScript SDK and shared adapters:
 npm install sendfn @superfunctions/db @superfunctions/http
 ```
 
-Supply a real `@superfunctions/db` adapter and at least the provider for the channel you send. The following uses the console SMS adapter for local development:
+Supply a `@superfunctions/db` adapter and at least the provider for the channel you send. The following uses the in-memory database adapter and the console SMS adapter for local development:
 
 ```ts
 import { sendfn, consoleSmsAdapter } from "sendfn";
-import type { Adapter } from "@superfunctions/db";
+import { memoryAdapter } from "@superfunctions/db/adapters";
 
-const database = /* your persistent adapter */ {} as Adapter;
+const database = memoryAdapter(); // Replace with a Drizzle, Prisma, or Kysely adapter for persistence.
 const client = sendfn({ database, smsProvider: consoleSmsAdapter() });
 
 await client.sms({ userId: "user-123", to: "+1234567890", message: "Hello" });
 ```
 
-The empty cast above is a placeholder; configure a real adapter before running the example. Console SMS logs instead of delivering. For email, use a configured provider such as `awsSesAdapter` and set `email.fromEmail`. See the [TypeScript source guide](https://github.com/21nCo/super-functions/blob/dev/sendfn/docs/content/docs/reference/typescript.md) for complete configuration and examples.
+The memory adapter loses its records when the process exits. Console SMS logs instead of delivering. For email, use a configured provider such as `awsSesAdapter` and set `email.fromEmail`. See the [TypeScript source guide](https://github.com/21nCo/super-functions/blob/dev/sendfn/docs/content/docs/reference/typescript.md) for complete configuration and examples.
 
 ---
 
@@ -71,7 +71,7 @@ The empty cast above is a placeholder; configure a real adapter before running t
 > Expose the optional router with an admin key.
 
 
-Set `enableApi: true` and supply `apiConfig.adminKey`, then mount `client.router` using a Superfunctions HTTP adapter. The router includes sends, device-token management, event queries, and an SES webhook route when SNS topics are configured. Administrative endpoints require `Authorization: Bearer <adminKey>`.
+Set `enableApi: true` and supply `apiConfig.adminKey`, then mount `client.router` using a Superfunctions HTTP adapter. The router includes sends, device-token management, event queries, and an SES webhook route when SNS topics are configured. Administrative endpoints require `Authorization: Bearer <adminKey>`; the SES webhook is the exception because it verifies the SNS signature and topic ARN instead. Parse JSON bodies sent as `text/plain` as well as `application/json`, because SNS posts notifications as `text/plain`.
 
 ```ts
 const client = sendfn({ database, enableApi: true, apiConfig: { adminKey: process.env.SENDFN_ADMIN_KEY } });
@@ -113,7 +113,7 @@ Start with [getting started](https://github.com/21nCo/super-functions/blob/dev/s
 
 SendFn records email, SMS, WhatsApp, and push transactions plus communication events. Device tokens and the suppression list are separate records. The TypeScript database adapter expects the corresponding models in the host database.
 
-The email path can block suppressed recipients, and SES lifecycle notifications can record bounces and complaints. Enable event and suppression behavior in the client options for the desired deployment policy. A database adapter must preserve the required constraints and transactional behavior; the console provider and memory adapters are development conveniences.
+The email path can block suppressed recipients, and SES lifecycle notifications can record bounces and complaints. Both are on by default; set `options.suppressionEnabled: false` or `options.eventTracking: false` to turn either off. A database adapter must preserve the required constraints and transactional behavior; the console provider and memory adapters are development conveniences.
 
 See the [TypeScript source guide](https://github.com/21nCo/super-functions/blob/dev/sendfn/docs/content/docs/reference/typescript.md) for the expected model names and the [Python guide](https://github.com/21nCo/super-functions/blob/dev/sendfn/docs/content/docs/reference/python.md) for SQLAlchemy schema helpers.
 
@@ -142,8 +142,8 @@ The package [configuration guide](https://github.com/21nCo/super-functions/blob/
 The separately versioned Python package supports email, push, and SMS. Install only the extras needed by the host:
 
 ```sh
-pip install sendfn[email]
-# or: pip install sendfn[push] sendfn[fastapi]
+pip install 'sendfn[email]'
+# or: pip install 'sendfn[push]' 'sendfn[fastapi]'
 ```
 
 For durable SQLAlchemy storage, install the database extra and a database driver:
@@ -183,25 +183,25 @@ pip install sendfn
 For email support (AWS SES):
 
 ```bash
-pip install sendfn[email]
+pip install 'sendfn[email]'
 ```
 
 For push notification support:
 
 ```bash
-pip install sendfn[push]
+pip install 'sendfn[push]'
 ```
 
 For email, push, and database support (`all` excludes web-framework extras):
 
 ```bash
-pip install sendfn[all]
+pip install 'sendfn[all]'
 ```
 
 For FastAPI integration:
 
 ```bash
-pip install sendfn[fastapi]
+pip install 'sendfn[fastapi]'
 ```
 
 ## Verify From Repo Root
@@ -578,6 +578,10 @@ interface SendfnConfig {
   whatsappProvider?: WhatsAppProvider; // e.g., metaWhatsAppAdapter()
   email?: EmailConfig;         // Default settings (fromEmail, fromName)
   pushProviders?: Partial<Record<Platform, PushProvider>>; // APNS/FCM/custom adapters
+  awsSns?: {
+    topicArns: string[];       // SNS topics allowed to deliver SES lifecycle events
+    maxAgeMs?: number;         // Optional replay window
+  };
   push?: PushConfig;           // Legacy credentials for FCM/APNS
   options?: {
     suppressionEnabled?: boolean; // default: true

@@ -63,6 +63,7 @@ describe('release gate metadata', () => {
     expect(readme).toContain("import { apnsAdapter } from 'sendfn/adapters/apns';");
     expect(readme).toContain("app.use(toExpress(client.router))");
     expect(readme).toContain("express.json({ type: ['application/json', 'text/plain'], limit: '2mb' })");
+    expect(readme.indexOf('app.use(express.json')).toBeGreaterThanOrEqual(0);
     expect(readme.indexOf('app.use(express.json')).toBeLessThan(readme.indexOf('app.use(toExpress'));
     expect(readme).not.toContain('app.use(express.raw');
     expect(readme).toContain('Present only when awsSns.topicArns is configured');

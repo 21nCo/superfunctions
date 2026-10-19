@@ -21,4 +21,4 @@ npm exec --workspace @sendfn/docs -- docsfn validate --root .
 
 Run `generate:references` after editing either source README. The workspace `test` script runs the nonwriting `check:references` and `check:llms` commands; the build's prebuild regenerates `static/llms.txt` and `static/llms-full.txt`. The site defaults to port 6021; documentation and the LLM resources (`/docs/llms.txt`, `/docs/llms-full.txt`) live under `/docs`, inside the docs Worker's `/docs*` route. `/` is a local-preview compatibility route, not a claim that the Worker owns the deployed host root.
 
-Public-origin configuration is applied only when `CLOUDFLARE_DOCS_DEPLOY=1`: `CLOUDFLARE_DOCS_PUBLIC_ORIGIN` names the public receiver (`sendfn.21n.site` for dev, `sendfn.com` for live). Without it, generated LLM page links point to the source files on GitHub.
+Public-origin configuration is applied only when `CLOUDFLARE_DOCS_DEPLOY=1`: `CLOUDFLARE_DOCS_PUBLIC_ORIGIN` names the public origin, including scheme (`https://sendfn.21n.site` for dev, `https://sendfn.com` for live). Without it, generated LLM page links point to the source files on GitHub.
