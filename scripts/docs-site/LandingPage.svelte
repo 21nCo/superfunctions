@@ -28,7 +28,7 @@
 
   <section class="landing-features" aria-label="Highlights">
     <ul class="landing-feature-grid">
-      {#each features as item}
+      {#each features as item (item.title)}
         <li class="landing-feature">
           <h2 class="landing-feature-title">{item.title}</h2>
           <p class="landing-feature-text">{item.text}</p>
@@ -40,7 +40,7 @@
   <section class="landing-links" aria-label="Quick links">
     <h2 class="landing-section-heading">Explore</h2>
     <div class="landing-cards">
-      {#each quickLinks as link}
+      {#each quickLinks as link (link.href)}
         <a class="landing-card" href={link.href}>
           <span class="landing-card-label">{link.label}</span>
           <p class="landing-card-blurb">{link.blurb}</p>
@@ -175,14 +175,16 @@
       transform 0.15s ease;
   }
 
-  .landing-card:hover {
+  .landing-card:hover,
+  .landing-card:focus-visible {
     border-color: var(--docsfn-color-primary);
     box-shadow: 0 8px 28px rgb(37 99 235 / 0.12);
     transform: translateY(-1px);
   }
 
   @media (prefers-color-scheme: dark) {
-    .landing-card:hover {
+    .landing-card:hover,
+    .landing-card:focus-visible {
       box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
     }
   }
@@ -210,7 +212,19 @@
     opacity: 0.7;
   }
 
-  .landing-card:hover .landing-card-cta {
+  .landing-card:hover .landing-card-cta,
+  .landing-card:focus-visible .landing-card-cta {
     opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .landing-card {
+      transition: none;
+    }
+
+    .landing-card:hover,
+    .landing-card:focus-visible {
+      transform: none;
+    }
   }
 </style>

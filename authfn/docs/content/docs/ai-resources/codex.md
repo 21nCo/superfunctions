@@ -23,43 +23,9 @@ When working with `@authfn/*`:
 
 Authoritative docs: https://authfn.com/docs
 For a full-text RAG file: https://authfn.com/docs/llms-full.txt
-
-If you have access to MCP tools (`authfn.docs.search`, `authfn.openapi.operation`, `authfn.skills.invoke`), prefer those.
 ```
 
-## Factory Droid MCP setup
-
-```bash
-droid mcp add authfn npx -- -y @authfn/mcp
-```
-
-Then in any droid session:
-
-```text
-@authfn how do I add a Microsoft Entra OAuth provider?
-```
-
-The droid will route the question through the authfn MCP tools.
-
-## Codex CLI setup
-
-```bash
-codex mcp add authfn npx -- -y @authfn/mcp
-```
-
-(Same pattern as Droid.)
-
-## Skill packs in CI
-
-If you run agents in CI to generate stub PRs, point them at specific skills:
-
-```bash
-droid run --skill authfn:add-2fa "Add a /settings/security page that lets users enroll in 2FA."
-```
-
-The MCP server returns the `add-2fa` playbook + relevant docs as context, so the generated PR follows the supported pattern.
 
 ## Related
 
-- [MCP](./mcp)
-- [Skills](./skills)
+- [llms.txt](./llms-txt)
