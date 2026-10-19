@@ -11,12 +11,24 @@ on:
       - superfunctions-docs-live-*
       - superfunctions-docs-datafn-live-*
       - superfunctions-docs-extfn-live-*
+      - superfunctions-docs-reviewfn-live-*
+      - superfunctions-docs-memoryfn-live-*
+      - superfunctions-docs-mdfn-live-*
+      - superfunctions-docs-clifn-live-*
+      - superfunctions-docs-botfn-live-*
+      - superfunctions-docs-langfn-live-*
       - superfunctions-docs-devfn-live-*
       - superfunctions-docs-filefn-live-*
       - superfunctions-docs-searchfn-live-*
       - superfunctions-docs-authfn-live-*
       - superfunctions-datafn-docs-live-*
       - superfunctions-extfn-docs-live-*
+      - superfunctions-reviewfn-docs-live-*
+      - superfunctions-memoryfn-docs-live-*
+      - superfunctions-mdfn-docs-live-*
+      - superfunctions-clifn-docs-live-*
+      - superfunctions-botfn-docs-live-*
+      - superfunctions-langfn-docs-live-*
       - superfunctions-devfn-docs-live-*
       - superfunctions-filefn-docs-live-*
       - superfunctions-searchfn-docs-live-*
@@ -24,6 +36,12 @@ on:
     paths:
       - datafn/docs/**
       - extfn/docs/**
+      - reviewfn/docs/**
+      - memoryfn/docs/**
+      - mdfn/docs/**
+      - clifn/docs/**
+      - botfn/docs/**
+      - langfn/docs/**
       - devfn/docs/**
       - filefn/docs/**
       - searchfn/docs/**
@@ -48,6 +66,12 @@ on:
           - all
           - datafn
           - extfn
+          - reviewfn
+          - memoryfn
+          - mdfn
+          - clifn
+          - botfn
+          - langfn
           - devfn
           - filefn
           - searchfn
@@ -63,12 +87,12 @@ on:
 
 jobs:
   detect:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.detect.outputs.environment }}
       products: ${{ steps.detect.outputs.products }}
     steps:
-      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -92,7 +116,7 @@ jobs:
           cat /tmp/docs-deploy-detect.out >> "$GITHUB_OUTPUT"
 
   deploy:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     needs: detect
     if: needs.detect.outputs.products != '[]'
     environment: ${{ needs.detect.outputs.environment }}
@@ -104,7 +128,7 @@ jobs:
       matrix:
         product: ${{ fromJson(needs.detect.outputs.products) }}
     steps:
-      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: actions/setup-node@v4
         with:

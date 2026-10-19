@@ -11,6 +11,66 @@ export const devAccountId = "c801efc2879825babdb9b2534199c4dd";
 export const devZoneName = "21n.site";
 
 export const docsProducts = {
+  reviewfn: {
+    packageName: "@reviewfn/docs",
+    docsDir: "reviewfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "reviewfn.com",
+    hosts: {
+      dev: "reviewfn.21n.site",
+      live: "reviewfn.com",
+    },
+  },
+  memoryfn: {
+    packageName: "@memoryfn/docs",
+    docsDir: "memoryfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "memoryfn.com",
+    hosts: {
+      dev: "memoryfn.21n.site",
+      live: "memoryfn.com",
+    },
+  },
+  mdfn: {
+    packageName: "@mdfn/docs",
+    docsDir: "mdfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "mdfn.com",
+    hosts: {
+      dev: "mdfn.21n.site",
+      live: "mdfn.com",
+    },
+  },
+  clifn: {
+    packageName: "@clifn/docs",
+    docsDir: "clifn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "clifn.com",
+    hosts: {
+      dev: "clifn.21n.site",
+      live: "clifn.com",
+    },
+  },
+  botfn: {
+    packageName: "@superfunctions/botfn-docs",
+    docsDir: "botfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "botfn.com",
+    hosts: {
+      dev: "botfn.21n.site",
+      live: "botfn.com",
+    },
+  },
+  langfn: {
+    packageName: "@langfn/docs",
+    docsDir: "langfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "langfn.com",
+    hosts: {
+      dev: "langfn.21n.site",
+      live: "langfn.com",
+    },
+  },
   devfn: {
     packageName: "@devfn/docs",
     docsDir: "devfn/docs",
