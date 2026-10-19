@@ -45,6 +45,11 @@ describe("source links for unhosted sites", () => {
       .toBe("[Guide](https://github.com/21nCo/super-functions/blob/dev/clifn/docs/content/docs/guide/index.md#setup) [About](/docs/about)");
   });
 
+  it("keeps query strings on rewritten source links", () => {
+    expect(withSourceLinks("[Guide](/docs/guide?tab=ts#setup)", manifest, "clifn", undefined))
+      .toBe("[Guide](https://github.com/21nCo/super-functions/blob/dev/clifn/docs/content/docs/guide/index.md?tab=ts#setup)");
+  });
+
   it("leaves text unchanged when a public origin is configured", () => {
     expect(withSourceLinks("[Guide](/docs/guide)", manifest, "clifn", "https://clifn.com")).toBe("[Guide](/docs/guide)");
   });
