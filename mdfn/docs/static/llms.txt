@@ -1,0 +1,44 @@
+# MDFN
+
+> Markdown-native authoring with source preservation, safe rendering, and collaboration.
+
+## Documentation
+
+- [Collaboration](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/collaboration.md) — Exchange authorized Yjs updates and compact exact batches.
+- [Extensions and profiles](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/extensions.md) — Resolve syntax ownership, conflicts, and migrations.
+- [Framework editors](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/framework-editors.md) — Install and mount a controller in React, Svelte, Solid, or the vanilla DOM.
+- [Getting started](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/getting-started.md) — Install MDFN, edit Markdown, observe changes, and release the controller.
+- [MDFN](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/index.md) — Markdown-native authoring with a durable source contract.
+- [Integrations](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/integrations.md) — Connect assets, search, content, and AI through explicit bridges.
+- [@mdfn/adapter-kit](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/adapter-kit.md) — Framework-neutral lifecycle and subscription bridges for MDFN framework adapters.
+- [@mdfn/ai](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/ai.md) — Range-validated AI changes returned as reviewable suggestions or dispatched as ordinary transactions.
+- [@mdfn/client](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/client.md) — Typed fetch client for documents, versions, sidecar state, and persisted collaboration updates.
+- [@mdfn/collab](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/collab.md) — Yjs-backed collaboration for canonical Markdown, sidecar data, awareness, offline queues, and compaction.
+- [@mdfn/components-react](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/components-react.md) — React editor shell, authoring controls, editorial surfaces, and toolbar rendered with UIFn components.
+- [@mdfn/components-solid](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/components-solid.md) — Solid editor shell, authoring and editorial controls, and toolbar rendered with UIFn components.
+- [@mdfn/components-svelte](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/components-svelte.md) — Svelte editor shell, authoring and editorial controls, and toolbar rendered with UIFn components.
+- [@mdfn/components](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/components.md) — Framework-neutral models for toolbars, slash commands, link, table and file controls, and outline.
+- [@mdfn/contentfn](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/contentfn.md) — Markdown as a versioned ContentFn content kind with its dialect, policies, extensions, source, and sidecar.
+- [@mdfn/core](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/core.md) — Environment-neutral document state, transactions, commands, history, extensions, migrations, and snapshots.
+- [@mdfn/dom](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/dom.md) — Mount and dispose a vanilla browser editor.
+- [MDFN framework examples](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/examples.md) — Run, build, and verify the React, Svelte, and Solid MDFN example apps.
+- [@mdfn/extensions](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/extensions.md) — Certified extension declarations for syntax ownership, conflicts, dependencies, preservation, and security.
+- [@mdfn/facade](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/facade.md) — Curated entry point for headless Markdown parsing, secure rendering, transactions, extensions, and snapshots.
+- [@mdfn/filefn](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/filefn.md) — Storage-neutral asset contracts and the FileFn client bridge for upload, resolution, rendering, and cleanup.
+- [Package reference](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/index.md) — Source guides for every MDFN package.
+- [@mdfn/markdown](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/markdown.md) — Canonical CommonMark/GFM parser and serializer with source spans, raw slices, and opaque unsupported nodes.
+- [MDFN overview](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/overview.md) — How the MDFN package graph separates layers, stable and optional packages, and their dependencies.
+- [@mdfn/react](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/react.md) — Mount a React editor and observe controller state.
+- [@mdfn/registry](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/registry.md) — In-memory, host-controlled registry for extension packages and reusable editor profiles.
+- [@mdfn/render](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/render.md) — Render HTML with explicit sanitizer, URL, and resource-limit policies, or produce an unsanitized render tree.
+- [@mdfn/searchfn](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/searchfn.md) — Convert the canonical render and extraction model into stable SearchFn index records.
+- [@mdfn/server](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/server.md) — Self-hosted document CRUD, optimistic versioning, revisions, editorial workflows, and collaboration persistence.
+- [@mdfn/solid](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/solid.md) — Mount a Solid editor and observe its reactive snapshot.
+- [@mdfn/source](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/source.md) — Code-oriented Markdown source editing with shared diagnostics and one-way controller transactions.
+- [@mdfn/svelte](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/svelte.md) — Mount a Svelte editor and subscribe with a readable store.
+- [@mdfn/testing](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/reference/testing.md) — Reusable preservation, rendering-security, extension, adapter, CommonMark, fuzz, and browser test suites.
+- [Rendering and security](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/rendering-and-security.md) — Apply a rendering policy to untrusted Markdown.
+- [Review and sidecar](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/review-and-sidecar.md) — Keep editorial data bound to canonical source.
+- [Server and storage](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/server-and-storage.md) — Mount authenticated document routes and save with optimistic concurrency.
+- [Source preservation](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/source-preservation.md) — Keep untouched Markdown bytes and unknown constructs.
+- [Verification](https://github.com/21nCo/super-functions/blob/dev/mdfn/docs/content/docs/verification.md) — Run the consumer and browser gates for an MDFN integration.
