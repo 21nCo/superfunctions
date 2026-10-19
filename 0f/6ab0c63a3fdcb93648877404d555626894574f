@@ -1,0 +1,39 @@
+mailfn/cli/README.md
+  s_7d0a48f0aaecda::t_4b1dc79b6dcd48 11-14,19,24
+mailfn/docs/README.md
+  s_7d0a48f0aaecda::t_00a590269b4bf8 3,5,8,11-13,16-18,22
+mailfn/docs/content/docs/cli-and-mcp.md
+  s_7d0a48f0aaecda::t_f68f80fd06c0b6 14-17,22
+mailfn/docs/content/docs/credentials-and-scope.md
+  s_7d0a48f0aaecda::t_00e9d55f6bf4a8 6,8
+mailfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_6a8a73f058d23d 33-37,40
+mailfn/docs/content/docs/outbound.md
+  s_7d0a48f0aaecda::t_8c69232fe05665 14
+mailfn/docs/content/docs/reference/cli.md
+  s_7d0a48f0aaecda::t_07e0d0f9b7cd91 14-17,22,27
+mailfn/docs/content/docs/reference/consumers.md
+  s_7d0a48f0aaecda::t_619b5fb5395d64 8
+mailfn/docs/content/docs/reference/operations.md
+  s_7d0a48f0aaecda::t_62e57279ce56bf 8,16
+mailfn/docs/content/docs/reference/sendfn.md
+  s_7d0a48f0aaecda::t_e9cac906b3aae3 14
+mailfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_f1fd5c359f5a8d 36-39,44,111,113,152-156,159,219,237-240,245,250,311,397,405,464
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f6ab0c63a3fdcb93648877404d555626894574f",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
