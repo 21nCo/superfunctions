@@ -1,0 +1,27 @@
+secfn/docs/content/docs/scope-and-permissions.md
+  s_7d0a48f0aaecda::t_4452b095d9c614 10
+secfn/docs/content/docs/server.md
+  s_7d0a48f0aaecda::t_50796caf6885d0 31-41,51
+secfn/server/README.md
+  s_7d0a48f0aaecda::t_d83956d7405432 46-56,66
+secfn/docs/content/docs/reference/server.md
+  s_7d0a48f0aaecda::t_d0e67fab1b430f 49-59,69
+secfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_be2de0849c9f6c 266-276,286,413,464-474,484
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5e374bd4149dd4b80beabe757e84ba78532fede",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
