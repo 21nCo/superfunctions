@@ -2,7 +2,7 @@
   "cli_version": "0.11.3",
   "checkpoint_id": "01M59D7NEAJPKW5EQGB66E4407",
   "strategy": "manual-commit",
-  "checkpoints_count": 1,
+  "checkpoints_count": 3,
   "files_touched": [
     "authfn/docs/content/docs/admin/super-console.md",
     "authfn/docs/static/llms-full.txt"
@@ -14,6 +14,27 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 24,
+    "cache_creation_tokens": 17453,
+    "cache_read_tokens": 5419852,
+    "output_tokens": 6926,
+    "api_call_count": 12,
+    "subagent_tokens": {
+      "input_tokens": 90,
+      "cache_creation_tokens": 105479,
+      "cache_read_tokens": 3544738,
+      "output_tokens": 18316,
+      "api_call_count": 45
+    }
+  }
 }
