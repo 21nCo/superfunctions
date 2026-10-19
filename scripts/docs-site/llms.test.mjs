@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildManifest, loadDocsConfig } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
-import { loadLlmsSiteSource } from "./llms.mjs";
+import { loadLlmsSiteSource, withSourceLinks } from "./llms.mjs";
 
 describe("LLM consumer content roots", () => {
   it.each(["default", "relative", "absolute"])("reads %s roots independently of the invocation directory", async (layout) => {
@@ -31,5 +31,21 @@ describe("LLM consumer content roots", () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe("source links for unhosted sites", () => {
+  const manifest = { pages: {
+    a: { id: "docs:guide/index.md", path: "/docs/guide" },
+    b: { id: "pages:about.md", path: "/docs/about" },
+  } };
+
+  it("rewrites known docs pages to their GitHub sources and keeps anchors", () => {
+    expect(withSourceLinks("[Guide](/docs/guide#setup) [About](/docs/about)", manifest, "clifn", undefined))
+      .toBe("[Guide](https://github.com/21nCo/super-functions/blob/dev/clifn/docs/content/docs/guide/index.md#setup) [About](/docs/about)");
+  });
+
+  it("leaves text unchanged when a public origin is configured", () => {
+    expect(withSourceLinks("[Guide](/docs/guide)", manifest, "clifn", "https://clifn.com")).toBe("[Guide](/docs/guide)");
   });
 });
