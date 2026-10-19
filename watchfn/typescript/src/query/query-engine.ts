@@ -35,7 +35,7 @@ export class QueryEngine {
     // Match both in-process Date timestamps and serialized ISO/epoch timestamps.
     if (range) {
       data = data.filter((event) => {
-        const timestamp = this.timestamp(event.timestamp);
+        const timestamp = this.timestamp(event.timestamp === undefined ? event.ts : event.timestamp);
         return Number.isFinite(timestamp) && TimeRangeParser.inRange(timestamp, range);
       });
     }

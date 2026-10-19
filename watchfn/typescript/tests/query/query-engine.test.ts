@@ -29,6 +29,12 @@ describe("query filtering", () => {
     }
   });
 
+  it("filters preserved LogFn ts envelopes and keeps explicit timestamp precedence", async () => {
+    const event = { name: "logfn", ts: "2026-10-20T12:00:00.000Z", msg: "ok" };
+    const { engine } = fixture([event, { ...event, timestamp: 0 }, { ...event, timestamp: null }]);
+    expect((await engine.execute({ timeRange: { from: event.ts, to: event.ts } })).data).toEqual([event]);
+  });
+
   it("supports absolute and open bounds without treating epoch zero as missing", async () => {
     const { engine } = fixture([{ timestamp: -1 }, { timestamp: 0 }, { timestamp: 1 }]);
     expect((await engine.execute({ timeRange: { from: new Date(0), to: "1970-01-01T00:00:00.000Z" } })).data).toEqual([{ timestamp: 0 }]);
