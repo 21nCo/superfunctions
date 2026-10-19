@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59DVX8RCZ5YHZBFQ5T3TFF3",
+  "strategy": "manual-commit",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".github/workflows/superfunctions-docs-cloudflare-deploy.yml",
+    ".github/workflows/superfunctions-docs-cloudflare-routes.yml",
+    "mailfn/docs/package.json",
+    "mailfn/docs/scripts/generate-llms.mjs",
+    "mailfn/docs/src/lib/server/docs-site-source.ts",
+    "mailfn/docs/src/routes/+error.svelte",
+    "mailfn/docs/src/routes/docs/llms-full.txt/+server.ts",
+    "mailfn/docs/src/routes/docs/llms.txt/+server.ts",
+    "mailfn/docs/tsconfig.json",
+    "mailfn/docs/turbo.json",
+    "mailfn/docs/vite.config.ts",
+    "package-lock.json",
+    "scripts/cloudflare-docs/config.mjs",
+    "scripts/cloudflare-docs/select-products.mjs",
+    "scripts/docs-site/llms.mjs",
+    "scripts/docs-site/llms.test.mjs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
