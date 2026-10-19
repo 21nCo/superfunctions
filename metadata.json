@@ -2,7 +2,7 @@
   "cli_version": "0.11.3",
   "checkpoint_id": "01M59F8NSTPB3SMW4MRKKNNNMQ",
   "strategy": "manual-commit",
-  "checkpoints_count": 1,
+  "checkpoints_count": 2,
   "files_touched": [
     "clifn/docs/content/docs/credentials-and-client.md",
     "clifn/docs/content/docs/interaction-and-stdio.md",
@@ -17,6 +17,27 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 4479,
+    "cache_read_tokens": 2003704,
+    "output_tokens": 1333,
+    "api_call_count": 4,
+    "subagent_tokens": {
+      "input_tokens": 32,
+      "cache_creation_tokens": 131467,
+      "cache_read_tokens": 2001193,
+      "output_tokens": 5402,
+      "api_call_count": 15
+    }
+  }
 }
