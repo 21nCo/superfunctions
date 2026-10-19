@@ -2,23 +2,23 @@
 
 This SvelteKit site uses DocsFn and documents the current TypeScript source. Consumer guides live in `content/docs`; references mirror the TypeScript README, provider matrix, and release-gate notes.
 
-From the repository root:
+Prepare repository-owned dependencies and build from the repository root:
+
+```sh
+npm exec -- turbo run build --filter=@langfn/docs
+```
+
+The site resolves its declared public SearchFn/DocsFn dependencies. It does not substitute SearchFn workspace source aliases or prepare missing public `dist` exports during an ordinary direct Vite invocation.
+
+After prerequisites are prepared, run from the repository root:
 
 ```sh
 npm --workspace @langfn/docs run dev
-npm --workspace @langfn/docs run build
-```
-
-The build regenerates `static/llms.txt` and `static/llms-full.txt`. For CLI validation, first build the SearchFn workspace dependencies from the repository root (the Vite site build uses source aliases and does not require these separate builds):
-
-```sh
-npm run build --workspace @searchfn/core
-npm run build --workspace @searchfn/adapter-contracts
-npm run build --workspace @searchfn/adapter-memory
-npm run build --workspace @searchfn/adapter-indexeddb
-npm run build --workspace @searchfn/client
+npm --workspace @langfn/docs run generate:llms
+npm --workspace @langfn/docs run check:llms
 npm exec --workspace @langfn/docs -- docsfn validate --root .
 ```
-The site defaults to port 6018. The public documentation route is `/docs`.
 
-The LLM resources are served at `/docs/llms.txt` and `/docs/llms-full.txt`.
+The native build regenerates `static/llms.txt` and `static/llms-full.txt`. The site defaults to port 6018; documentation and the LLM resources (`/docs/llms.txt`, `/docs/llms-full.txt`) live under `/docs`.
+
+Public-origin configuration is applied only when `CLOUDFLARE_DOCS_DEPLOY=1`. `CLOUDFLARE_DOCS_PUBLIC_ORIGIN` names the public receiver independently of `CLOUDFLARE_DOCS_ASSETS_ORIGIN`.
