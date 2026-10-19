@@ -32,13 +32,15 @@ export function registerAdapterCodecs<T extends object>(adapter: T, schema: Tabl
   Object.defineProperty(adapter, codecSchemaKey, { value: schema, configurable: true });
   return adapter;
 }
-function unhandledJsonSchema(adapter: object, schema: TableSchemaMap): TableSchemaMap {
+function unhandledCodecSchema(adapter: object, schema: TableSchemaMap): TableSchemaMap {
   const existing = registeredSchema(adapter);
   if (!existing) return schema;
   return Object.fromEntries(Object.entries(schema).map(([model, table]) => [model, {
     ...table, fields: Object.fromEntries(Object.entries(table.fields).map(([name, field]) => [name,
       field.type === "json" && field.jsonStorageType === "json-text" && existing[model]?.fields[name]?.jsonStorageType === "json-text"
-        ? { ...field, jsonStorageType: "native" as const } : field,
+        ? { ...field, jsonStorageType: "native" as const }
+        : field.type === "boolean" && field.booleanStorageType === "integer" && existing[model]?.fields[name]?.booleanStorageType === "integer"
+          ? { ...field, booleanStorageType: "native" as const } : field,
     ])),
   }]));
 }
@@ -47,6 +49,16 @@ function combinedCodecSchema(adapter: object, schema: TableSchemaMap): TableSche
   const combined = { ...existing };
   for (const [model, table] of Object.entries(schema)) combined[model] = { ...table, fields: { ...existing[model]?.fields, ...table.fields } };
   return combined;
+}
+
+/** Resolve declared booleans without converting arbitrary numeric or JSON values. */
+export function resolveBooleanStorage(schema: TableSchemaMap, nativeBooleans: boolean): TableSchemaMap {
+  return Object.fromEntries(Object.entries(schema).map(([model, table]) => [model, {
+    ...table, fields: Object.fromEntries(Object.entries(table.fields).map(([name, field]) => [name,
+      field.type === "boolean" && !field.booleanStorageType
+        ? { ...field, booleanStorageType: nativeBooleans ? "native" as const : "integer" as const } : field,
+    ])),
+  }]));
 }
 
 export function normalizeAdapterSchema(
@@ -104,11 +116,12 @@ export function transformWhereForStorage(
   return where.map((clause) => {
     const field = table.fields[clause.field];
     const jsonText = field?.type === "json" && field.jsonStorageType === "json-text";
-    if (!isDateField(field) && !jsonText) {
+    const integerBoolean = field?.type === "boolean" && field.booleanStorageType === "integer";
+    if (!isDateField(field) && !jsonText && !integerBoolean) {
       return clause;
     }
 
-    const convert = (value: unknown) => jsonText
+    const convert = (value: unknown) => jsonText || integerBoolean
       ? transformRecordForStorage(schema, model, { [clause.field]: value })[clause.field]
       : convertDateForStorage(value, field, `${model}.${clause.field}`);
     const value =
@@ -129,8 +142,8 @@ export function wrapWithSchema(
   adapter: Adapter,
   schemaInput: AdapterSchemaInput,
 ): Adapter {
-  const requestedSchema = normalizeAdapterSchema(schemaInput);
-  const schema = unhandledJsonSchema(adapter, requestedSchema);
+  const requestedSchema = resolveBooleanStorage(normalizeAdapterSchema(schemaInput), adapter.capabilities.types.booleans);
+  const schema = unhandledCodecSchema(adapter, requestedSchema);
 
   return registerAdapterCodecs({
     ...adapter,
@@ -285,7 +298,7 @@ function wrapTransactionWithSchema(
   adapter: TransactionAdapter,
   requestedSchema: TableSchemaMap,
 ): TransactionAdapter {
-  const schema = unhandledJsonSchema(adapter, requestedSchema);
+  const schema = unhandledCodecSchema(adapter, requestedSchema);
   return registerAdapterCodecs({
     ...adapter,
     create: async <T = any>(params: CreateParams): Promise<T> =>
@@ -427,6 +440,20 @@ function transformRecord<T>(
           }
           changed = true;
         } catch { throw new TypeError(`${model}.${fieldName} contains invalid JSON ${direction === "storage" ? "value" : "text"}`); }
+      }
+      continue;
+    }
+    if (field.type === "boolean" && field.booleanStorageType === "integer") {
+      const value = next[fieldName];
+      if (value !== null && value !== undefined) {
+        if (direction === "storage") {
+          if (typeof value !== "boolean") throw new TypeError(`${model}.${fieldName} must be a boolean`);
+          next[fieldName] = value ? 1 : 0;
+        } else {
+          if (value !== 0 && value !== 1) throw new TypeError(`${model}.${fieldName} contains invalid boolean integer`);
+          next[fieldName] = value === 1;
+        }
+        changed = true;
       }
       continue;
     }
