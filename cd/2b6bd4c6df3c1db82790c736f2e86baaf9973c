@@ -1,0 +1,1060 @@
+.github/workflows/ci.yml
+  h_bdc5b81c173ee9 26,47,65-67,81,84,123,125,160,163,193,200,227,230,273,276
+.github/workflows/mailfn-release.yml
+  h_bdc5b81c173ee9 23,25
+.github/workflows/publish-python.yml
+  h_bdc5b81c173ee9 1-99
+.github/workflows/publish-tag.yml
+  h_bdc5b81c173ee9 7-8,15-19,25,30,33-34,38,41,49-51,56-61,63,67-70,72-73,76-77,80-82,85,89-155
+.github/workflows/pullfrog.yml
+  h_bdc5b81c173ee9 19,25
+.github/workflows/release-swift.yml
+  h_bdc5b81c173ee9 1,5-19,22-26,30-32,34-56
+.github/workflows/reviewfn-release.yml
+  h_bdc5b81c173ee9 32,34
+.github/workflows/searchfn-client-tests.yml
+  h_bdc5b81c173ee9 31,34
+.github/workflows/searchfn-client-tusk-vitest.yml
+  h_bdc5b81c173ee9 23,29
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  h_bdc5b81c173ee9 13,18,24,29,47,62,67,91,103,116-138,142-143
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  h_bdc5b81c173ee9 17,32,38,44-70,73,78-79
+.github/workflows/uifn-catalogs-cloudflare-preview.yml
+  h_bdc5b81c173ee9 1-91
+.github/workflows/uifn-phase-14-compat.yml
+  h_bdc5b81c173ee9 16,24,70,88,153,177
+.gitignore
+  h_bdc5b81c173ee9 56-58
+Package.swift
+  h_bdc5b81c173ee9 137,145,155,165,175
+README.md
+  h_bdc5b81c173ee9 52-226
+apifn/README.md
+  h_bdc5b81c173ee9 20-32
+apifn/admin/package.json
+  h_bdc5b81c173ee9 36-39,43
+apifn/admin/src/__tests__/admin.test.ts
+  h_bdc5b81c173ee9 1,37
+apifn/cli/package.json
+  h_bdc5b81c173ee9 27
+apifn/collections/package.json
+  h_bdc5b81c173ee9 23
+apifn/core/package.json
+  h_bdc5b81c173ee9 3
+apifn/docsfn/README.md
+  h_bdc5b81c173ee9 12-15,65-67
+apifn/docsfn/__tests__/provider.test.ts
+  h_bdc5b81c173ee9 6-7,240-264
+apifn/docsfn/package.json
+  h_bdc5b81c173ee9 3,32-34,58
+apifn/docsfn/src/react/ApifnApiReference.tsx
+  h_bdc5b81c173ee9 62-63,110,114-115
+apifn/mock/package.json
+  h_bdc5b81c173ee9 23
+apifn/python/pyproject.toml
+  h_bdc5b81c173ee9 9
+apifn/react/README.md
+  h_bdc5b81c173ee9 128-147
+apifn/react/package.json
+  h_bdc5b81c173ee9 3,19,22,29-34
+apifn/react/tests/api-explorer.test.tsx
+  h_bdc5b81c173ee9 1-101
+apifn/react/tests/try-it.test.tsx
+  h_bdc5b81c173ee9 1-82
+apifn/react/vitest.config.ts
+  h_bdc5b81c173ee9 1-7,9-13,16-22
+apifn/snippets/package.json
+  h_bdc5b81c173ee9 23
+apifn/svelte/README.md
+  h_bdc5b81c173ee9 53-54,108-129
+apifn/svelte/package.json
+  h_bdc5b81c173ee9 3,47,50,56-60
+apifn/svelte/src/ApiExplorer.svelte
+  h_bdc5b81c173ee9 60,220
+apifn/svelte/src/EndpointViewer.svelte
+  h_bdc5b81c173ee9 41-44,83
+apifn/svelte/src/SchemaViewer.svelte
+  h_bdc5b81c173ee9 72,79
+apifn/svelte/src/TryIt.svelte
+  h_bdc5b81c173ee9 87,91,100,104,112,114,121,123,125-126,134-137
+apifn/svelte/tests/api-explorer.test.ts
+  h_bdc5b81c173ee9 1-135
+apifn/svelte/tests/try-it.test.ts
+  h_bdc5b81c173ee9 1-93
+apifn/svelte/vitest.config.ts
+  h_bdc5b81c173ee9 1-3,5-6,8-12
+authfn/core/README.md
+  h_bdc5b81c173ee9 12-31
+authfn/core/package.json
+  h_bdc5b81c173ee9 3
+authfn/core/src/__tests__/api-key-docs.test.ts
+  h_bdc5b81c173ee9 1-245
+authfn/core/src/__tests__/api-keys.test.ts
+  h_bdc5b81c173ee9 9-14,38-175
+authfn/core/src/__tests__/placement-context.test.ts
+  h_bdc5b81c173ee9 19,499-503
+authfn/core/src/core/api-keys.ts
+  h_bdc5b81c173ee9 13-14,47-65
+authfn/docs/content/docs/ai-resources/llms-txt.md
+  h_bdc5b81c173ee9 8,10-11,13,15,17,19-20,23,25-31,35,37,41,43,48,50,52
+authfn/docs/content/docs/index.md
+  h_bdc5b81c173ee9 36
+authfn/docs/content/docs/plugins/api-keys.md
+  h_bdc5b81c173ee9 3,8,10,13-14,50-52,60-62,84,87-103,105-111,115-154,161,169,174-175,179-180
+authfn/docs/content/docs/plugins/index.md
+  h_bdc5b81c173ee9 15
+authfn/docs/content/docs/recipes/cli-auth.md
+  h_bdc5b81c173ee9 40,43-49,51-60,64-66,68-69,73,75,77
+authfn/docs/docsfn.config.ts
+  h_bdc5b81c173ee9 3-6,13,33
+authfn/docs/package.json
+  h_bdc5b81c173ee9 10-11,22-23,35-36,40-41,48-49
+authfn/docs/scripts/generate-llms.mjs
+  h_bdc5b81c173ee9 11
+authfn/docs/src/lib/components/DocsSiteSearch.svelte
+  h_bdc5b81c173ee9 5
+authfn/docs/src/lib/server/docs-site-source.ts
+  h_bdc5b81c173ee9 4,7,22
+authfn/docs/src/routes/+error.svelte
+  h_bdc5b81c173ee9 1-12
+authfn/docs/src/routes/+layout.server.ts
+  h_bdc5b81c173ee9 4-5,7,9
+authfn/docs/src/routes/+page.svelte
+  h_bdc5b81c173ee9 37
+authfn/docs/src/routes/blog/+page.server.ts
+  h_bdc5b81c173ee9 1-5
+authfn/docs/src/routes/blog/+page.svelte
+  h_bdc5b81c173ee9 27
+authfn/docs/src/routes/blog/[slug]/+page.server.ts
+  h_bdc5b81c173ee9 2-3,6-8
+authfn/docs/src/routes/blog/rss.xml/+server.ts
+  h_bdc5b81c173ee9 2,5
+authfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  h_bdc5b81c173ee9 2,6-8
+authfn/docs/src/routes/docs/blog/+page.server.ts
+  h_bdc5b81c173ee9 1-5
+authfn/docs/src/routes/docs/blog/+page.svelte
+  h_bdc5b81c173ee9 1-7
+authfn/docs/src/routes/docs/blog/[...slug]/+page.server.ts
+  h_bdc5b81c173ee9 1-8
+authfn/docs/src/routes/docs/blog/[...slug]/+page.svelte
+  h_bdc5b81c173ee9 1-7
+authfn/docs/src/routes/docs/blog/rss.xml/+server.ts
+  h_bdc5b81c173ee9 1-5
+authfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  h_bdc5b81c173ee9 2,4
+authfn/docs/src/routes/docs/llms.txt/+server.ts
+  h_bdc5b81c173ee9 2,4
+authfn/docs/src/routes/docs/search.json/+server.ts
+  h_bdc5b81c173ee9 1-2
+authfn/docs/static/llms-full.txt
+  h_bdc5b81c173ee9 1463,1465-1466,1468,1470,1472,1474-1475,1478-1484,1486,1490,1492,1496,1498,1503,1505,1507,5391,5434,5439,5441,5444-5445,5481-5483,5491-5493,5515,5518-5534,5536-5542,5546-5585,5592,5600,5605-5606,5610-5611,6194,8786,8789-8795,8797-8806,8810-8812,8814-8815,8819,8821,8823
+authfn/docs/static/llms.txt
+  h_bdc5b81c173ee9 64
+authfn/docs/tsconfig.json
+  h_bdc5b81c173ee9 2,4-11,25-27
+authfn/docs/turbo.json
+  h_bdc5b81c173ee9 1-31
+authfn/docs/vite.config.ts
+  h_bdc5b81c173ee9 17
+authfn/python/pyproject.toml
+  h_bdc5b81c173ee9 30,43-44
+billfn/README.md
+  h_bdc5b81c173ee9 11,26-32,45,54
+billfn/admin/package.json
+  h_bdc5b81c173ee9 36-39,42-43
+billfn/client/package.json
+  h_bdc5b81c173ee9 3
+billfn/client/src/__tests__/client.test.ts
+  h_bdc5b81c173ee9 1-3,5,7-20,22-40,42,44-54,56,58-68
+billfn/client/src/http-client.ts
+  h_bdc5b81c173ee9 25,37
+billfn/core/package.json
+  h_bdc5b81c173ee9 30
+billfn/core/src/__tests__/billfn.test.ts
+  h_bdc5b81c173ee9 3-4
+billfn/docs/content/docs/getting-started.mdx
+  h_bdc5b81c173ee9 24-31
+billfn/docs/content/docs/index.mdx
+  h_bdc5b81c173ee9 15,97
+billfn/docs/content/docs/server/administration.mdx
+  h_bdc5b81c173ee9 1-37
+billfn/docs/content/docs/server/meta.json
+  h_bdc5b81c173ee9 3
+billfn/python/pyproject.toml
+  h_bdc5b81c173ee9 29
+billfn/svelte/package.json
+  h_bdc5b81c173ee9 19,27,32
+billfn/svelte/src/__tests__/stores.test.ts
+  h_bdc5b81c173ee9 1-59
+billfn/swift-bridge/README.md
+  h_bdc5b81c173ee9 11,14-17,19-22
+billfn/swift-bridge/package.json
+  h_bdc5b81c173ee9 6-7,10-11,14-15,17-20
+billfn/swift-bridge/tsconfig.json
+  h_bdc5b81c173ee9 7-14,16-17
+botfn/.gitignore
+  h_bdc5b81c173ee9 43
+botfn/AGENTS.md
+  h_bdc5b81c173ee9 1,3,5,7-10,12,15-24,27,29,31-36,38,40,42,44,46-49
+botfn/README.md
+  h_bdc5b81c173ee9 1,3,5,7,9-19,21,23,25,28-29,31-32,34-35,37-38,41,43,45-48,50,52-56,58-60,62-65,67-71,73-75
+botfn/admin/package.json
+  h_bdc5b81c173ee9 2,35-36,39
+botfn/admin/src/__tests__/admin.test.ts
+  h_bdc5b81c173ee9 30
+botfn/bot-discord/README.md
+  h_bdc5b81c173ee9 5-15
+botfn/bot-discord/package.json
+  h_bdc5b81c173ee9 2,5-17,24,26,31-35,43
+botfn/bot-discord/src/core.ts
+  h_bdc5b81c173ee9 8-9,17,26-27
+botfn/bot-discord/src/index.cloudflare.ts
+  h_bdc5b81c173ee9 1
+botfn/bot-discord/tests/interactions.test.ts
+  h_bdc5b81c173ee9 1-62
+botfn/bot-discord/tsconfig.json
+  h_bdc5b81c173ee9 15-17
+botfn/bot-slack/package.json
+  h_bdc5b81c173ee9 2,15
+botfn/bot-slack/src/index.ts
+  h_bdc5b81c173ee9 2
+botfn/discord-core/package.json
+  h_bdc5b81c173ee9 2,5-7,9-12,26
+botfn/discord-core/src/index.ts
+  h_bdc5b81c173ee9 1-3
+botfn/discord-core/src/verify.ts
+  h_bdc5b81c173ee9 102
+botfn/discord-core/tsconfig.json
+  h_bdc5b81c173ee9 5,13-14
+botfn/github-integration/package.json
+  h_bdc5b81c173ee9 2,5-7,9-12,23-24
+botfn/github-integration/src/api.ts
+  h_bdc5b81c173ee9 1
+botfn/github-integration/src/index.ts
+  h_bdc5b81c173ee9 1-2
+botfn/github-integration/tsconfig.json
+  h_bdc5b81c173ee9 5,13-14
+botfn/linear-integration/package.json
+  h_bdc5b81c173ee9 2,5-7,9-12,23-24
+botfn/linear-integration/src/index.ts
+  h_bdc5b81c173ee9 1
+botfn/linear-integration/tsconfig.json
+  h_bdc5b81c173ee9 3-12
+botfn/persistence/README.md
+  h_bdc5b81c173ee9 41,46-72,76
+botfn/persistence/SETUP.md
+  h_bdc5b81c173ee9 95,157,176
+botfn/persistence/package.json
+  h_bdc5b81c173ee9 2,5-21,27-28,41-42
+botfn/persistence/src/client.ts
+  h_bdc5b81c173ee9 1-2,14
+botfn/persistence/src/core.ts
+  h_bdc5b81c173ee9 6-7,9-10,89-90,106-109,117-119,399,411
+botfn/persistence/src/index.cloudflare.ts
+  h_bdc5b81c173ee9 1
+botfn/persistence/tests/persistence.test.ts
+  h_bdc5b81c173ee9 1-103
+botfn/persistence/tsconfig.json
+  h_bdc5b81c173ee9 14-16
+botfn/persistence/vitest.config.ts
+  h_bdc5b81c173ee9 2,4-8
+botfn/persistence/wrangler.toml
+  h_bdc5b81c173ee9 3-5
+botfn/shared-types/package.json
+  h_bdc5b81c173ee9 2,5-7,9-12
+botfn/shared-types/src/index.ts
+  h_bdc5b81c173ee9 1-3
+botfn/shared-types/tsconfig.json
+  h_bdc5b81c173ee9 13-14
+botfn/slack-core/package.json
+  h_bdc5b81c173ee9 2,9-16,19,24
+botfn/slack-core/src/verify.ts
+  h_bdc5b81c173ee9 25,29-30,32
+botfn/slack-core/tests/verify.test.ts
+  h_bdc5b81c173ee9 1-52
+botfn/slack-core/tsconfig.json
+  h_bdc5b81c173ee9 1-16
+botfn/slack-core/vitest.config.ts
+  h_bdc5b81c173ee9 2,4-6
+datafn/docs/app/layout.tsx
+  h_bdc5b81c173ee9 7-14
+datafn/docs/content/docs/ai-resources/claude.mdx
+  h_bdc5b81c173ee9 40
+datafn/docs/content/docs/ai-resources/codex.mdx
+  h_bdc5b81c173ee9 47
+datafn/docs/content/docs/ai-resources/cursor.mdx
+  h_bdc5b81c173ee9 40,50,53
+datafn/docs/content/docs/ai-resources/index.mdx
+  h_bdc5b81c173ee9 16,35-37,40
+datafn/docs/content/docs/ai-resources/llms-txt.mdx
+  h_bdc5b81c173ee9 15,21,31,44,73,79
+datafn/docs/content/docs/ai-resources/mcp.mdx
+  h_bdc5b81c173ee9 33
+datafn/docs/content/docs/ai-resources/skills.mdx
+  h_bdc5b81c173ee9 54,108
+datafn/docs/content/docs/documentation/index.mdx
+  h_bdc5b81c173ee9 190
+datafn/docs/content/docs/documentation/server/administration.mdx
+  h_bdc5b81c173ee9 1-28
+datafn/docs/content/docs/documentation/server/meta.json
+  h_bdc5b81c173ee9 3
+datafn/docs/content/docs/reference/changelog.mdx
+  h_bdc5b81c173ee9 16
+datafn/docs/content/docs/reference/events.mdx
+  h_bdc5b81c173ee9 2-3,8,10,15-25,29,31-39,41,43,45,47,49,51,54,56-64,66,68,71-73
+datafn/docs/public/llms-full.txt
+  h_bdc5b81c173ee9 16,52,114,157,199,235,245,248,313,324,330,340,353,382,388,398,427,505,555,609,622,633,652-654,657,664,745,883,981,1167,1174,1215,1527,1629,1675,1724,1744,1779,2013,2161,2297,2386,2569,2704,2894,3023,3085,3293,3623,3894,4019,4148,4426,4537,5195,5382,5517,5815,6004,6116,6337,6511,6711,6854,7051,7225,7341,7501,7634,7761,7885,7963,8115,8273,8452,8634,8787,9014,9166,9369,9508,9711,9887,10151,10450,10601,10738,11024,11183,11330,11528,11690,11866,11922,12163,12318,12454,12591-12780,12784,12841,12851-12852,12942-12943,12967-12968,12989-13121,13125,13235-13236,13476,13595,13841,13999,14135,14146-14147,14159,14166-14167,14197,14286,14416,14533,14627,14635-14637,14713,14722,14867,14879,14883-14884,14899,14924,14927-14930,14933-14941,14943-14946,14950-14952,15021,15033,15039-15175,15179,15297-15329,15333,15553,15688,15857,15999,16479,16741,16890,17023,17197,17421,17572,17647,17769,17894,18033,18190,18276,18380,18500,18614,18758,18925,19067,19226,19370,19492,19753,19837,19942,20054,20151,20256,20372,20479,20585,20722,20883,20991,21132,21266,21413,21580,21735,21895,22038,22189,22340,22485,22618,22736,22841,22998,23169,23350,23508,23619,23629-23632,23706,24030,24130,24188,24242,24392,24520,24703,24800,24937,25030,25201,25279,25299,25309-25314,25329,25340-25344,25416,25523,25625,25685-25715,25719,25777-25839,25843,26011,26208,26354,26587,26695,26727,26729,26738,26760-26764,26822,26824-26825,26828,26830,26835-26845,26849,26851-26859,26861,26863,26865,26867,26869,26871,26874,26876-26884,26886,26888,26891-26893,26900,27129,27309,27427,27549-27626,27630,27699
+datafn/docs/public/llms.txt
+  h_bdc5b81c173ee9 9-14,18-28,32-40,44-58,62-145,149-151,155-163,167-182,186-219
+datafn/docs/scripts/generate-llms.mjs
+  h_bdc5b81c173ee9 12
+datafn/python/pyproject.toml
+  h_bdc5b81c173ee9 9
+devfn/SPEC.md
+  h_bdc5b81c173ee9 15,23-24
+devfn/cli/README.md
+  h_bdc5b81c173ee9 13-14,17-18,20-21
+devfn/cli/SECURITY.md
+  h_bdc5b81c173ee9 8-9,11-21
+devfn/cli/src/index.ts
+  h_bdc5b81c173ee9 16,32-34,51,53,65-67,73,99-101,153-159,181-199,201,207
+devfn/cli/test/cli.test.ts
+  h_bdc5b81c173ee9 7-8,13,25-27,29-55,166-207,251,516-552
+devfn/compose/README.md
+  h_bdc5b81c173ee9 3-5
+devfn/compose/package.json
+  h_bdc5b81c173ee9 11-12
+devfn/compose/src/index.ts
+  h_bdc5b81c173ee9 2-4,8-11,15-29,63-69,73-85,92-111,116-117,120-1317,1333,1344-1346,1350-1392,1405-1410,1424,1451-1519,1531-1533,1535-1539,1547-1548,1624-1678
+devfn/compose/src/path-interpolation.ts
+  h_bdc5b81c173ee9 1-505
+devfn/compose/src/source-files.ts
+  h_bdc5b81c173ee9 1-441
+devfn/compose/test/fingerprint-contract.test.ts
+  h_bdc5b81c173ee9 1-1071
+devfn/compose/test/override.test.ts
+  h_bdc5b81c173ee9 1-2,5-7,9-64,67-440,442-444,469-504,527,556,576,580-586,609-810,815,820-824,839,852,870,892,914-1145
+devfn/compose/test/path-contract.test.ts
+  h_bdc5b81c173ee9 1-307
+devfn/compose/test/preview-budget.fixture.mts
+  h_bdc5b81c173ee9 1-38
+devfn/config/src/credentials.ts
+  h_bdc5b81c173ee9 1-69
+devfn/config/src/index.ts
+  h_bdc5b81c173ee9 2,6
+devfn/config/src/process-identity.ts
+  h_bdc5b81c173ee9 2-3,8-26,30,34-35,39-40,46-56,58-210,213-215
+devfn/config/src/schema.ts
+  h_bdc5b81c173ee9 17,51,53-65,151-168,171-175,200,225,233,247-264,272-277,370-371,373-375,377,381-387,445-447
+devfn/config/src/trust.ts
+  h_bdc5b81c173ee9 6,42-43
+devfn/config/src/types.ts
+  h_bdc5b81c173ee9 64-69,72,74-84
+devfn/config/test/config.test.ts
+  h_bdc5b81c173ee9 1,5,8,11-155,194-200,216-245,424
+devfn/config/test/domain-routes.test.ts
+  h_bdc5b81c173ee9 1-2,4-5,8-47
+devfn/config/test/process-identity.test.ts
+  h_bdc5b81c173ee9 1-90
+devfn/core/README.md
+  h_bdc5b81c173ee9 3-25
+devfn/core/src/endpoints.ts
+  h_bdc5b81c173ee9 1-1087
+devfn/core/src/identity.ts
+  h_bdc5b81c173ee9 7,15-27,29-51,58-59,64-74
+devfn/core/src/index.ts
+  h_bdc5b81c173ee9 1-3,5
+devfn/core/src/orchestrator.ts
+  h_bdc5b81c173ee9 2,7-11,13-14,17,46-151,165,167,169-181,186-258,277,287-322,330,335,342,350-451,456-462,465-476,479-487,490,493-497,507-531,534-591,595-597,602,604-607,610-633,635-656,659-673,675-688,690-776,780,794,797,800-806,817-827,834-844,911,960-966
+devfn/core/src/runtime.ts
+  h_bdc5b81c173ee9 61-68
+devfn/core/src/types.ts
+  h_bdc5b81c173ee9 19-27,57-60,65
+devfn/core/test/domain-routing.test.ts
+  h_bdc5b81c173ee9 1-731
+devfn/core/test/endpoints.test.ts
+  h_bdc5b81c173ee9 1-1754
+devfn/core/test/identity.test.ts
+  h_bdc5b81c173ee9 2-3,8,10,15-89
+devfn/core/test/orchestrator.test.ts
+  h_bdc5b81c173ee9 6,31-49
+devfn/core/test/proxy-readiness.test.ts
+  h_bdc5b81c173ee9 1-338
+devfn/core/test/registered-domain-startup.test.ts
+  h_bdc5b81c173ee9 1-257
+devfn/core/test/replacement-contract.test.ts
+  h_bdc5b81c173ee9 1-185
+devfn/core/test/startup-fixture.test.ts
+  h_bdc5b81c173ee9 1-1098
+devfn/core/test/teardown-evidence.test.ts
+  h_bdc5b81c173ee9 1-476
+devfn/core/vitest.config.ts
+  h_bdc5b81c173ee9 3-5
+devfn/docs/configuration.md
+  h_bdc5b81c173ee9 42,46,59-76,81-89
+devfn/ports/README.md
+  h_bdc5b81c173ee9 4-14
+devfn/ports/src/index.ts
+  h_bdc5b81c173ee9 1-4,6
+devfn/ports/src/listeners.ts
+  h_bdc5b81c173ee9 9-20,23-26,29,32-54,128-141,144-147,149-159
+devfn/ports/src/lock.ts
+  h_bdc5b81c173ee9 1-4,6,11,13-59,64,66-73,76-91,94-211
+devfn/ports/src/proxy-owner.ts
+  h_bdc5b81c173ee9 1-20
+devfn/ports/src/proxy-state.ts
+  h_bdc5b81c173ee9 1-109
+devfn/ports/src/registry.ts
+  h_bdc5b81c173ee9 4,8,10-14,18-283,301-315,337,354,360,366-391,395-398,417-433,439,449,478,485,496,530-533,538-609,622-656,658,667-672,684,688-693,698,705-716,718-724,726-730,735-752,756-758,760,766-767,769-774,776-782
+devfn/ports/src/types.ts
+  h_bdc5b81c173ee9 8-12,21-27,53,57-79,105-107
+devfn/ports/test/claim-evidence.test.ts
+  h_bdc5b81c173ee9 1-222
+devfn/ports/test/listeners.test.ts
+  h_bdc5b81c173ee9 1-3,6,31-67
+devfn/ports/test/lock-takeover.test.ts
+  h_bdc5b81c173ee9 1-178
+devfn/ports/test/lock.test.ts
+  h_bdc5b81c173ee9 1-444
+devfn/ports/test/registry.test.ts
+  h_bdc5b81c173ee9 1-3,6-7,10,14-18,20-411,539-541,545-639,662-843
+devfn/processes/README.md
+  h_bdc5b81c173ee9 4-26
+devfn/processes/src/adapters.ts
+  h_bdc5b81c173ee9 1,23-24
+devfn/processes/src/gated.ts
+  h_bdc5b81c173ee9 1-22,25-35,38-43,46-80,82-100,102-115,117-123,125-144,146-148
+devfn/processes/src/group.ts
+  h_bdc5b81c173ee9 1-77
+devfn/processes/src/identity.ts
+  h_bdc5b81c173ee9 1
+devfn/processes/src/index.ts
+  h_bdc5b81c173ee9 2-4
+devfn/processes/src/readiness.ts
+  h_bdc5b81c173ee9 63-95,102,164
+devfn/processes/src/supervisor.ts
+  h_bdc5b81c173ee9 1,10-11,17-19,21-27,64,71-72,90,105-110,115,120-125,127,130,133-141
+devfn/processes/src/types.ts
+  h_bdc5b81c173ee9 15-22,35
+devfn/processes/src/wrapper.ts
+  h_bdc5b81c173ee9 16-33,37,41-43,45-46,49-50,53-54,57-74
+devfn/processes/test/adapters.test.ts
+  h_bdc5b81c173ee9 16-23
+devfn/processes/test/readiness.test.ts
+  h_bdc5b81c173ee9 4,6,9-48
+devfn/processes/test/supervisor.test.ts
+  h_bdc5b81c173ee9 1,6,9,13-22,49-90
+devfn/proxy/README.md
+  h_bdc5b81c173ee9 3-10
+devfn/proxy/src/domains.ts
+  h_bdc5b81c173ee9 1-197
+devfn/proxy/src/index.ts
+  h_bdc5b81c173ee9 2-5,7-8,11-14,18,20-58,61-69,72-76,83-93,95-116,118-153,157-233,239,243,245-247,250,254-305,309-319,325,335-549,553-627,629,632-665,667-674,677-678,690-698,700,710-726,728-729,732,735-737,740-753,755-763,765-838,840-844,846-847,850-856,859-863,865-866,869-871,873-882,885-891,894-895,897-900,905
+devfn/proxy/test/activation.test.ts
+  h_bdc5b81c173ee9 1-255
+devfn/proxy/test/domain-routing.test.ts
+  h_bdc5b81c173ee9 1-362
+devfn/proxy/test/proxy.test.ts
+  h_bdc5b81c173ee9 1-2,6,10-43,48-51,67-77,84-516,576-793,829-830,832-879
+devfn/proxy/test/real-caddy.test.ts
+  h_bdc5b81c173ee9 1-176
+extfn/docs/.gitignore
+  h_bdc5b81c173ee9 1-10
+extfn/docs/README.md
+  h_bdc5b81c173ee9 1-24
+extfn/docs/cli.md
+  h_bdc5b81c173ee9 117
+extfn/docs/consumer-host-abstraction.md
+  h_bdc5b81c173ee9 76-84,89-93,96,107-108
+extfn/docs/content/docs/cli.md
+  h_bdc5b81c173ee9 1-15
+extfn/docs/content/docs/configuration.md
+  h_bdc5b81c173ee9 1-31
+extfn/docs/content/docs/content-and-background.md
+  h_bdc5b81c173ee9 1-10
+extfn/docs/content/docs/getting-started.md
+  h_bdc5b81c173ee9 1-29
+extfn/docs/content/docs/index.md
+  h_bdc5b81c173ee9 1-10
+extfn/docs/content/docs/integrations.md
+  h_bdc5b81c173ee9 1-10
+extfn/docs/content/docs/meta.json
+  h_bdc5b81c173ee9 1-4
+extfn/docs/content/docs/operations-and-limits.md
+  h_bdc5b81c173ee9 1-10
+extfn/docs/content/docs/reference/cli.md
+  h_bdc5b81c173ee9 1-147
+extfn/docs/content/docs/reference/consumer-host-abstraction.md
+  h_bdc5b81c173ee9 1-158
+extfn/docs/content/docs/reference/index.md
+  h_bdc5b81c173ee9 1-13
+extfn/docs/content/docs/reference/meta.json
+  h_bdc5b81c173ee9 1-4
+extfn/docs/content/docs/reference/multi-content-and-background-handlers.md
+  h_bdc5b81c173ee9 1-151
+extfn/docs/content/docs/reference/scan.md
+  h_bdc5b81c173ee9 1-114
+extfn/docs/content/docs/runtime.md
+  h_bdc5b81c173ee9 1-18
+extfn/docs/content/docs/scan-and-package.md
+  h_bdc5b81c173ee9 1-10
+extfn/docs/docsfn.config.ts
+  h_bdc5b81c173ee9 1-40
+extfn/docs/package.json
+  h_bdc5b81c173ee9 1-38
+extfn/docs/scan.md
+  h_bdc5b81c173ee9 86,89
+extfn/docs/scripts/generate-llms.mjs
+  h_bdc5b81c173ee9 1-20
+extfn/docs/src/app.css
+  h_bdc5b81c173ee9 1-85
+extfn/docs/src/app.html
+  h_bdc5b81c173ee9 1-11
+extfn/docs/src/lib/components/DocsSiteSearch.svelte
+  h_bdc5b81c173ee9 1-5
+extfn/docs/src/lib/server/docs-site-source.ts
+  h_bdc5b81c173ee9 1-14
+extfn/docs/src/routes/+error.svelte
+  h_bdc5b81c173ee9 1-12
+extfn/docs/src/routes/+layout.server.ts
+  h_bdc5b81c173ee9 1-10,12-13
+extfn/docs/src/routes/+layout.svelte
+  h_bdc5b81c173ee9 1-86
+extfn/docs/src/routes/+page.svelte
+  h_bdc5b81c173ee9 1-28
+extfn/docs/src/routes/docs/[...slug]/+page.server.ts
+  h_bdc5b81c173ee9 1-25
+extfn/docs/src/routes/docs/[...slug]/+page.svelte
+  h_bdc5b81c173ee9 1-41
+extfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  h_bdc5b81c173ee9 1-7
+extfn/docs/src/routes/docs/llms.txt/+server.ts
+  h_bdc5b81c173ee9 1-7
+extfn/docs/src/routes/docs/search.json/+server.ts
+  h_bdc5b81c173ee9 1-3,5-7
+extfn/docs/static/llms-full.txt
+  h_bdc5b81c173ee9 1-790
+extfn/docs/static/llms.txt
+  h_bdc5b81c173ee9 1-20
+extfn/docs/svelte.config.js
+  h_bdc5b81c173ee9 1-26
+extfn/docs/tsconfig.json
+  h_bdc5b81c173ee9 1-59
+extfn/docs/turbo.json
+  h_bdc5b81c173ee9 2-11,13-17,19
+extfn/docs/vite.config.ts
+  h_bdc5b81c173ee9 1-4,7-10
+filefn/admin/package.json
+  h_bdc5b81c173ee9 36,40-42
+filefn/admin/src/__tests__/domain.integration.test.ts
+  h_bdc5b81c173ee9 1-77
+filefn/docs/content/docs/adapters/db-drizzle.md
+  h_bdc5b81c173ee9 3,8-9,13-16,18-20,23,25,27,29,31
+filefn/docs/content/docs/adapters/db-memory.md
+  h_bdc5b81c173ee9 2-3,6,9-10,13
+filefn/docs/content/docs/adapters/db-postgres.md
+  h_bdc5b81c173ee9 2-3,6,8-9,13-16,18-19,22,24,26
+filefn/docs/content/docs/adapters/db-sqlite.md
+  h_bdc5b81c173ee9 2-3,6,8-11,15-17,19,21,24,26,28
+filefn/docs/content/docs/adapters/db.md
+  h_bdc5b81c173ee9 3,8,11-12,15,17,20-22,25-27,29,31
+filefn/docs/content/docs/adapters/index.md
+  h_bdc5b81c173ee9 30
+filefn/docs/content/docs/adapters/processors.md
+  h_bdc5b81c173ee9 3,8,10,13,16,22-23,27,33,36,41,43-45,49,55-58,60-61,65,70,72-77,81,86,88-92,96,98,100,103-111,113,116
+filefn/docs/content/docs/adapters/storage-azure.md
+  h_bdc5b81c173ee9 3,9,11-12,14
+filefn/docs/content/docs/adapters/storage-gcs.md
+  h_bdc5b81c173ee9 3,9,11,15-16,24-25
+filefn/docs/content/docs/adapters/storage-local.md
+  h_bdc5b81c173ee9 9
+filefn/docs/content/docs/adapters/storage-minio.md
+  h_bdc5b81c173ee9 11
+filefn/docs/content/docs/adapters/storage-r2.md
+  h_bdc5b81c173ee9 11,31
+filefn/docs/content/docs/adapters/storage-s3.md
+  h_bdc5b81c173ee9 3,9,27,29,31
+filefn/docs/content/docs/adapters/storage.md
+  h_bdc5b81c173ee9 41,43-45
+filefn/docs/content/docs/admin/index.md
+  h_bdc5b81c173ee9 1-32
+filefn/docs/content/docs/admin/meta.json
+  h_bdc5b81c173ee9 1-4
+filefn/docs/content/docs/ai-resources/claude.md
+  h_bdc5b81c173ee9 3,8,11,13-16,19
+filefn/docs/content/docs/ai-resources/codex.md
+  h_bdc5b81c173ee9 3,8,10,12-16,19
+filefn/docs/content/docs/ai-resources/cursor.md
+  h_bdc5b81c173ee9 3,8,11,13,15-18,21
+filefn/docs/content/docs/ai-resources/index.md
+  h_bdc5b81c173ee9 3,8,10-11,13,15-21
+filefn/docs/content/docs/ai-resources/llms-txt.md
+  h_bdc5b81c173ee9 3,8,10-13,15,17,19,21-22,25,27-30,33,35,37,39,41-43,46
+filefn/docs/content/docs/ai-resources/mcp.md
+  h_bdc5b81c173ee9 2-3,6,8,10,12
+filefn/docs/content/docs/ai-resources/skills.md
+  h_bdc5b81c173ee9 2-3,6,8,10,12-16,18
+filefn/docs/content/docs/api/index.md
+  h_bdc5b81c173ee9 8
+filefn/docs/content/docs/core-concepts/rate-limiting.md
+  h_bdc5b81c173ee9 14-15,17,65-67,69-73,75-77,79-80
+filefn/docs/content/docs/features/rate-limiting.md
+  h_bdc5b81c173ee9 16-17,19,37-41
+filefn/docs/content/docs/frameworks/bun.md
+  h_bdc5b81c173ee9 12-15,21-22,25,75-78
+filefn/docs/content/docs/frameworks/express.md
+  h_bdc5b81c173ee9 3,8,12,14-15,17-20,22,26,28
+filefn/docs/content/docs/frameworks/hono.md
+  h_bdc5b81c173ee9 15-18,22,33,73,91,114-115
+filefn/docs/content/docs/frameworks/nextjs.md
+  h_bdc5b81c173ee9 15-16,19-20
+filefn/docs/content/docs/getting-started.md
+  h_bdc5b81c173ee9 13,34
+filefn/docs/content/docs/index.md
+  h_bdc5b81c173ee9 77
+filefn/docs/content/docs/meta.json
+  h_bdc5b81c173ee9 14
+filefn/docs/content/docs/quickstart/bun.md
+  h_bdc5b81c173ee9 13,21
+filefn/docs/content/docs/quickstart/express.md
+  h_bdc5b81c173ee9 14-69,78-79,82,97-98,103
+filefn/docs/content/docs/quickstart/hono.md
+  h_bdc5b81c173ee9 14,27
+filefn/docs/content/docs/quickstart/nextjs.md
+  h_bdc5b81c173ee9 13,24
+filefn/docs/content/docs/quickstart/sveltekit.md
+  h_bdc5b81c173ee9 13,23
+filefn/docs/content/docs/recipes/cdn-integration.md
+  h_bdc5b81c173ee9 3,8,10,12,15-23,28,30
+filefn/docs/content/docs/recipes/document-uploads.md
+  h_bdc5b81c173ee9 47-49
+filefn/docs/content/docs/recipes/heic-conversion.md
+  h_bdc5b81c173ee9 12,14,17-18,25-29,57,60-62,64-65,68-70,74
+filefn/docs/content/docs/recipes/image-uploads.md
+  h_bdc5b81c173ee9 13,48-52,59,66,105,109
+filefn/docs/content/docs/recipes/tenant-isolation.md
+  h_bdc5b81c173ee9 40
+filefn/docs/content/docs/recipes/video-uploads.md
+  h_bdc5b81c173ee9 3,12,44-46
+filefn/docs/content/docs/reference/configuration.md
+  h_bdc5b81c173ee9 14,51-52,83,89,103-104,107
+filefn/docs/content/docs/reference/schema.md
+  h_bdc5b81c173ee9 138-142,145
+filefn/docs/content/docs/sdk/server.md
+  h_bdc5b81c173ee9 26,36,38,43-44,53-70,89-114
+filefn/docs/docsfn.config.ts
+  h_bdc5b81c173ee9 3-6,13,33
+filefn/docs/package.json
+  h_bdc5b81c173ee9 10-11,22-23,31-32,37-38
+filefn/docs/scripts/generate-llms.mjs
+  h_bdc5b81c173ee9 20
+filefn/docs/src/lib/components/DocsSiteSearch.svelte
+  h_bdc5b81c173ee9 5
+filefn/docs/src/lib/server/docs-site-source.ts
+  h_bdc5b81c173ee9 4,7,22
+filefn/docs/src/routes/+error.svelte
+  h_bdc5b81c173ee9 1-12
+filefn/docs/src/routes/+layout.server.ts
+  h_bdc5b81c173ee9 4-5,7,9
+filefn/docs/src/routes/blog/+page.server.ts
+  h_bdc5b81c173ee9 1-5
+filefn/docs/src/routes/blog/+page.svelte
+  h_bdc5b81c173ee9 27
+filefn/docs/src/routes/blog/[slug]/+page.server.ts
+  h_bdc5b81c173ee9 2-3,6-8
+filefn/docs/src/routes/blog/rss.xml/+server.ts
+  h_bdc5b81c173ee9 2,5
+filefn/docs/src/routes/docs/[...slug]/+page.server.ts
+  h_bdc5b81c173ee9 3,6-8
+filefn/docs/src/routes/docs/blog/+page.server.ts
+  h_bdc5b81c173ee9 1-5
+filefn/docs/src/routes/docs/blog/+page.svelte
+  h_bdc5b81c173ee9 1-7
+filefn/docs/src/routes/docs/blog/[...slug]/+page.server.ts
+  h_bdc5b81c173ee9 1-8
+filefn/docs/src/routes/docs/blog/[...slug]/+page.svelte
+  h_bdc5b81c173ee9 1-7
+filefn/docs/src/routes/docs/blog/rss.xml/+server.ts
+  h_bdc5b81c173ee9 1-5
+filefn/docs/src/routes/docs/llms-full.txt/+server.ts
+  h_bdc5b81c173ee9 2,4
+filefn/docs/src/routes/docs/llms.txt/+server.ts
+  h_bdc5b81c173ee9 2,4
+filefn/docs/src/routes/docs/search.json/+server.ts
+  h_bdc5b81c173ee9 1-2
+filefn/docs/static/llms-full.txt
+  h_bdc5b81c173ee9 87,125,142,147,150-151,154,156,159-161,164,166,168-170,180,185-186,190-193,195-197,200,202,204,206,208,213,218,221,224-225,228,233,238,241,243-244,248-251,253-254,257,259,261,266,271,274,276-279,283-285,287,289,292,294,296,306,311,313,316,319,325-326,330,336,339,344,346-348,352,358-361,363-364,368,373,375-380,384,389,391-395,399,401,403,406-414,416,419,467,469-471,500,506,508-509,511,553,559,561,565-566,574-575,624,673,745,765,794,800,818,820,822,869,871,874,877,879,882,884-888,891,893,895,897,899,901,903,908,910,913,916,918,920-921,923,925-931,934,936,938,941,944,946,948-949,951-955,957,960,962,964,967,970,972,974,976-980,983,988,990,993,996,998,1000-1001,1003,1005-1008,1011,1014,1016,1018,1021,1024,1026,1028-1031,1033,1035,1037,1039-1040,1043,1045-1048,1051,1053,1055,1057,1059-1062,1064,1069,1071,1074,1077,1079,1081,1083,1086,1088,1090,1093,1096-1098,1100-1108,1123,2410-2411,2413,2461-2463,2465-2469,2471-2473,2475-2476,4218-4219,4221,4239-4243,4582-4585,4591-4592,4595,4646-4649,4658,4663,4667,4669-4670,4672-4675,4677,4681,4683,4897-4900,4904,4915,4955,4973,4997-4998,5019-5020,5023-5024,5299,5320,5547,5555,5613-5668,5677-5678,5681,5696-5697,5702,5929,5942,6052,6063,6143,6153,6404,6409,6411,6413,6416-6418,6420-6424,6429,6431,6614-6616,6679,6681,6684-6685,6692-6696,6724,6727-6729,6731-6732,6735-6737,6741,6761,6796-6800,6807,6814,6853,6857,7115,7204,7213,7245-7247,7498,7535-7536,7567,7573,7587-7588,7591,8161-8165,8168,8624,8634,8636,8641-8642,8651-8668,8687-8712
+filefn/docs/static/llms.txt
+  h_bdc5b81c173ee9 9-14,16-17,21-29,68,85,93
+filefn/docs/tsconfig.json
+  h_bdc5b81c173ee9 2,4-11,25-27
+filefn/docs/turbo.json
+  h_bdc5b81c173ee9 1-22
+filefn/python/pyproject.toml
+  h_bdc5b81c173ee9 28
+filefn/server/package.json
+  h_bdc5b81c173ee9 3,16-18,48-50
+filefn/server/tests/services.integration.test.ts
+  h_bdc5b81c173ee9 1-94
+filefn/server/tsconfig.json
+  h_bdc5b81c173ee9 17
+hostfn/admin/package.json
+  h_bdc5b81c173ee9 37
+hostfn/admin/src/__tests__/admin.test.ts
+  h_bdc5b81c173ee9 122-185
+hostfn/cli/README.md
+  h_bdc5b81c173ee9 58-62,75-99,1102-1105,1116-1117,1119,1126-1130
+hostfn/cli/package.json
+  h_bdc5b81c173ee9 3,16-18,21,24,26-27,38-39,49
+hostfn/cli/src/__tests__/operator.test.ts
+  h_bdc5b81c173ee9 19-52
+hostfn/cli/src/commands/server/setup.ts
+  h_bdc5b81c173ee9 1,158
+hostfn/cli/src/operator.ts
+  h_bdc5b81c173ee9 1-2,216,222,277
+hostfn/cli/tsconfig.json
+  h_bdc5b81c173ee9 24
+hostfn/docs/app/layout.tsx
+  h_bdc5b81c173ee9 7-11,14-16
+hostfn/docs/content/docs/documentation/advanced/administration.mdx
+  h_bdc5b81c173ee9 1-41
+hostfn/docs/content/docs/documentation/advanced/meta.json
+  h_bdc5b81c173ee9 3
+hostfn/docs/content/docs/documentation/index.mdx
+  h_bdc5b81c173ee9 17
+hostfn/docs/content/docs/index.mdx
+  h_bdc5b81c173ee9 8-9
+package-lock.json
+  h_bdc5b81c173ee9 82,86,90-91,100,123,246,295,298-300,304,335,346,349,352-353,356-358,360-361,368-496,518-709,715,726,729,732-734,737-739,745-873,885-1027,1051-1132,1177-1185,1196-1210,1255-1263,1274-1288,1396-1410,1449-1491,1531-1573,1576,1635-1667,1687,1700-1701,1705,1707,1713-1714,1855-1871,1901-2242,4290-4332,4375-4525,4534,4544-4547,4550,4552-4555,4616-4645,4656-4670,4729-4732,4735,4737-4741,4744,4772-4774,4777,4779-4786,4791,4818,5846,5854,5878,5882,5886-5887,5891,5895-5899,5910,6394,6398,6901,6909-6910,6914,6919-6921,6925,6930-6932,6936,6949,6951,7435,7448,9348-9375,9683-9684,9688,9706-9720,10006-10365,10470,10474-10476,10507-10545,10597,10605,10607,10612-10613,10675-10731,10753-10812,10825-10912,11220,11231-11232,11234,11276-11292,11338,11623,11630,14366-14370,14372-14375,14378-14379,14382,14385-14389,14392,14395-14398,14409-14433,14436-14439,14442-14454,14457,14460,14463-14473,14477,14480-14484,14487-14498,14501-14508,14511-14514,14516,14518-14525,14528-14529,14532,14535,14538,14541,14546-14582,14764-14775,15660-15671,16628-16639,17090-17101,24473-24479,25575-25578,31492-31527,32692-32719,46894-46906,46959-46965,51508-51521,51534-51589,51984-51993,52338-52348,54653,54753-54785,54849,54868-54869,54877-54879,54917-54918,54926-54962,55273,55279,55285,55305,55345-55374,55387,55390,55416,55422-55433,55543-55554,55814,55916,55925,55935,55937,56052-56068,56786,56792-56793,59182,59188,59199,59207,59231,59233,59236,59245,59744,59978-60033,63779,64539
+packages/README.md
+  h_bdc5b81c173ee9 21,44,58-63,66,70-75
+packages/admin/README.md
+  h_bdc5b81c173ee9 123-127,171
+packages/admin/package.json
+  h_bdc5b81c173ee9 3
+packages/admin/src/audit.test.ts
+  h_bdc5b81c173ee9 1-26
+packages/admin/src/audit.ts
+  h_bdc5b81c173ee9 108,125,143-148
+packages/db/README.md
+  h_bdc5b81c173ee9 77,90-98
+packages/db/package.json
+  h_bdc5b81c173ee9 3,58,60,67-68,76-78
+packages/docs-theme/package.json
+  h_bdc5b81c173ee9 20-22,38-39
+packages/docs-theme/src/config.ts
+  h_bdc5b81c173ee9 15-18
+packages/docs-theme/src/index.ts
+  h_bdc5b81c173ee9 1-4
+packages/docs-theme/src/layout.tsx
+  h_bdc5b81c173ee9 14-17
+packages/docs-theme/tests/theme.test.mjs
+  h_bdc5b81c173ee9 1-26
+packages/docs-theme/tsconfig.json
+  h_bdc5b81c173ee9 4-5
+packages/middleware/package.json
+  h_bdc5b81c173ee9 3,21,37,46
+packages/oauth-core/README.md
+  h_bdc5b81c173ee9 59-71
+packages/oauth-core/package.json
+  h_bdc5b81c173ee9 3,28
+packages/oauth-core/vitest.config.ts
+  h_bdc5b81c173ee9 1,3-9
+packages/oauth-flow/package.json
+  h_bdc5b81c173ee9 21
+packages/oauth-flow/vitest.config.ts
+  h_bdc5b81c173ee9 1,3-9
+packages/oauth-http/README.md
+  h_bdc5b81c173ee9 51-59
+packages/oauth-http/package.json
+  h_bdc5b81c173ee9 3,21,41
+packages/oauth-http/tests/nested-user-token.test.ts
+  h_bdc5b81c173ee9 2,4
+packages/oauth-http/vitest.config.ts
+  h_bdc5b81c173ee9 1,3-9
+packages/oauth-providers/package.json
+  h_bdc5b81c173ee9 21,44
+packages/oauth-providers/vitest.config.ts
+  h_bdc5b81c173ee9 1,3-9
+packages/oauth-testing/package.json
+  h_bdc5b81c173ee9 21
+packages/oauth-testing/vitest.config.ts
+  h_bdc5b81c173ee9 1,3-9
+packages/python-core/README.md
+  h_bdc5b81c173ee9 1,6,12,15-21
+packages/python-core/pyproject.toml
+  h_bdc5b81c173ee9 6
+packages/python-fastapi/pyproject.toml
+  h_bdc5b81c173ee9 25
+packages/python-flask/pyproject.toml
+  h_bdc5b81c173ee9 25
+packages/python-sqlalchemy/README.md
+  h_bdc5b81c173ee9 9-14
+packages/python-sqlalchemy/pyproject.toml
+  h_bdc5b81c173ee9 7,26
+packages/python-sqlalchemy/superfunctions_sqlalchemy/__init__.py
+  h_bdc5b81c173ee9 18
+packages/python-sqlalchemy/superfunctions_sqlalchemy/adapter.py
+  h_bdc5b81c173ee9 57
+plugfn/CHANGELOG.md
+  h_bdc5b81c173ee9 7-12
+plugfn/admin/package.json
+  h_bdc5b81c173ee9 38
+plugfn/cli/package.json
+  h_bdc5b81c173ee9 9-13
+plugfn/client/package.json
+  h_bdc5b81c173ee9 26
+plugfn/core/README.md
+  h_bdc5b81c173ee9 112,114-118
+plugfn/core/package.json
+  h_bdc5b81c173ee9 3,15,36,38
+plugfn/docs/migrations/oauth-shared-stack.md
+  h_bdc5b81c173ee9 5-7,25,27-28,30-33
+plugfn/docs/operations/release-gates.md
+  h_bdc5b81c173ee9 20,99-123
+plugfn/providers/package.json
+  h_bdc5b81c173ee9 62,64,76,82-83
+plugfn/providers/tests/e2e/oauth-callback.test.ts
+  h_bdc5b81c173ee9 2-3
+plugfn/providers/tests/e2e/webhook-verification.test.ts
+  h_bdc5b81c173ee9 3-9
+plugfn/providers/tests/selected-lifecycle.test.ts
+  h_bdc5b81c173ee9 5
+plugfn/providers/tests/webhook-raw-body.test.ts
+  h_bdc5b81c173ee9 3-7
+plugfn/providers/tsconfig.json
+  h_bdc5b81c173ee9 23
+plugfn/python/pyproject.toml
+  h_bdc5b81c173ee9 31
+plugfn/scripts/gate-plugfn-release.mjs
+  h_bdc5b81c173ee9 82-95
+release-packages.json
+  h_bdc5b81c173ee9 164-195
+reviewfn/README.md
+  h_bdc5b81c173ee9 48-55
+scripts/assert-release-ref.mjs
+  h_bdc5b81c173ee9 1-18
+scripts/assert-release-ref.test.mjs
+  h_bdc5b81c173ee9 1-49
+scripts/ci-utils.mjs
+  h_bdc5b81c173ee9 94,131,148
+scripts/ci-utils.test.mjs
+  h_bdc5b81c173ee9 1-37
+scripts/cloudflare-docs/config.mjs
+  h_bdc5b81c173ee9 7-12,14-16,18,20-21,30,43,53,66,121,127-130
+scripts/cloudflare-docs/deploy.mjs
+  h_bdc5b81c173ee9 6,21-33,49-52,74-75,92-98,144
+scripts/cloudflare-docs/select-products.mjs
+  h_bdc5b81c173ee9 56,58
+scripts/cloudflare-docs/sync-routes.mjs
+  h_bdc5b81c173ee9 76-80
+scripts/deploy-uifn-catalogs.mjs
+  h_bdc5b81c173ee9 15-28,59
+scripts/docs-site/LandingPage.svelte
+  h_bdc5b81c173ee9 181,188,219-229
+scripts/docs-site/README.md
+  h_bdc5b81c173ee9 7,13,15,17
+scripts/docs-site/Search.svelte
+  h_bdc5b81c173ee9 15
+scripts/docs-site/atomic-write.test.mjs
+  h_bdc5b81c173ee9 1-7,9-23,25-37,39-48,50-59,61-62,64-73,75-82
+scripts/docs-site/blog.test.ts
+  h_bdc5b81c173ee9 1-98
+scripts/docs-site/blog.ts
+  h_bdc5b81c173ee9 1-8,10-11,13-29,33-69,71-87
+scripts/docs-site/check-built-site.mjs
+  h_bdc5b81c173ee9 1-43
+scripts/docs-site/check-built-site.test.mjs
+  h_bdc5b81c173ee9 1-32
+scripts/docs-site/dependency-owner.test.ts
+  h_bdc5b81c173ee9 1-49
+scripts/docs-site/layout.ts
+  h_bdc5b81c173ee9 4-8
+scripts/docs-site/llms.mjs
+  h_bdc5b81c173ee9 1-2,12-18,20,52-87,105
+scripts/docs-site/llms.test.mjs
+  h_bdc5b81c173ee9 5,7,9-11,13-33
+scripts/docs-site/origin.test.mjs
+  h_bdc5b81c173ee9 8-9,11-53,55-74
+scripts/docs-site/page.test.ts
+  h_bdc5b81c173ee9 2-3,5-93
+scripts/docs-site/page.ts
+  h_bdc5b81c173ee9 25-26
+scripts/docs-site/runtime.test.ts
+  h_bdc5b81c173ee9 16,53-56,61-70,82-83,85,88-98
+scripts/docs-site/runtime.ts
+  h_bdc5b81c173ee9 23,185,194,365-375,404-413
+scripts/docs-site/vite.test.mjs
+  h_bdc5b81c173ee9 1-88
+scripts/docs-site/vite.ts
+  h_bdc5b81c173ee9 1,5-31,34-38,42-60
+scripts/docs-site/vitest.config.ts
+  h_bdc5b81c173ee9 1,3,7,12-16,21-23,25,27-30
+scripts/generate-uifn-phase-17.mjs
+  h_bdc5b81c173ee9 575,578-612
+scripts/pack-release-package.mjs
+  h_bdc5b81c173ee9 1-41
+scripts/python_release.py
+  h_bdc5b81c173ee9 1-173
+scripts/resolve-release-tag.mjs
+  h_bdc5b81c173ee9 6-20,22-28,30-33,35-42,44,47-58
+scripts/resolve-release-tag.test.mjs
+  h_bdc5b81c173ee9 1-35
+scripts/swift-release.mjs
+  h_bdc5b81c173ee9 1-52
+scripts/swift-release.test.mjs
+  h_bdc5b81c173ee9 1-27
+scripts/test_python_release.py
+  h_bdc5b81c173ee9 1-86
+scripts/uifn-docs-cli-resolution.test.mjs
+  h_bdc5b81c173ee9 1-61
+scripts/verify-uifn-phase-17.mjs
+  h_bdc5b81c173ee9 29
+searchfn/docs/app/layout.tsx
+  h_bdc5b81c173ee9 9
+searchfn/docs/content/docs/documentation/administration.mdx
+  h_bdc5b81c173ee9 1-20
+searchfn/docs/content/docs/documentation/advanced/adapter-migration.mdx
+  h_bdc5b81c173ee9 50,52
+searchfn/docs/content/docs/documentation/deploy/cloudflare-workers.mdx
+  h_bdc5b81c173ee9 35,38-40,43,52,87,91-93
+searchfn/docs/content/docs/documentation/deploy/fly.mdx
+  h_bdc5b81c173ee9 19-27,79,83-85,92,94-96
+searchfn/docs/content/docs/documentation/deploy/railway.mdx
+  h_bdc5b81c173ee9 21,23-25,29,44,48,59,62-65
+searchfn/docs/content/docs/documentation/deploy/vercel.mdx
+  h_bdc5b81c173ee9 27,29-31,34,45
+searchfn/docs/content/docs/documentation/meta.json
+  h_bdc5b81c173ee9 11
+searchfn/docs/content/docs/documentation/python/http-mount.mdx
+  h_bdc5b81c173ee9 2-3,6,10-12,15,17
+searchfn/docs/content/docs/documentation/python/index.mdx
+  h_bdc5b81c173ee9 4,7,9,11-13,15
+searchfn/docs/content/docs/documentation/python/indexing.mdx
+  h_bdc5b81c173ee9 3,6,9,11-12,15,17
+searchfn/docs/content/docs/documentation/python/meta.json
+  h_bdc5b81c173ee9 3
+searchfn/docs/content/docs/documentation/python/search.mdx
+  h_bdc5b81c173ee9 3,6,9,11-12,15,17
+searchfn/docs/content/docs/documentation/python/setup.mdx
+  h_bdc5b81c173ee9 3,8,12,15-16,18,20,24,27,29,31,33
+searchfn/docs/content/docs/documentation/security/request-authz.mdx
+  h_bdc5b81c173ee9 121,123
+searchfn/docs/content/docs/getting-started.mdx
+  h_bdc5b81c173ee9 168
+searchfn/docs/content/docs/operations/setup.mdx
+  h_bdc5b81c173ee9 10-12,18-23,25
+searchfn/docs/content/docs/quickstart/bun.mdx
+  h_bdc5b81c173ee9 20,22,26,34,41
+searchfn/docs/content/docs/quickstart/express.mdx
+  h_bdc5b81c173ee9 9,16,20,22,26,31-32,51
+searchfn/docs/content/docs/quickstart/fastapi.mdx
+  h_bdc5b81c173ee9 3,6-7,10,14,16,19-38,41,43,45,47
+searchfn/docs/content/docs/quickstart/fastify.mdx
+  h_bdc5b81c173ee9 9,16,20,22,26,32
+searchfn/docs/content/docs/quickstart/flask.mdx
+  h_bdc5b81c173ee9 3,6-7,12-13,15,18-35,38,40,42,44
+searchfn/docs/content/docs/quickstart/hono.mdx
+  h_bdc5b81c173ee9 11,24,28,30,34,42-43,46,54,89-93,95,98
+searchfn/docs/content/docs/quickstart/nextjs.mdx
+  h_bdc5b81c173ee9 20,22,26,31,37
+searchfn/docs/content/docs/quickstart/starlette.mdx
+  h_bdc5b81c173ee9 3,6-7,14,16,18,22-30,33-36,41,43,45,47
+searchfn/docs/content/docs/quickstart/sveltekit.mdx
+  h_bdc5b81c173ee9 16,19,24,26,30,34-35,37-38,41
+searchfn/docs/content/docs/reference/adapters/postgres.mdx
+  h_bdc5b81c173ee9 22
+searchfn/docs/content/docs/reference/changelog.mdx
+  h_bdc5b81c173ee9 41
+searchfn/docs/content/docs/reference/python.mdx
+  h_bdc5b81c173ee9 2-3,6,9,11-13,18,20,22
+searchfn/docs/public/llms-full.txt
+  h_bdc5b81c173ee9 1004,1219-1243,1295,1297,1599,1603,1605-1606,1611,3352,3355-3357,3360,3369,3404,3408-3410,3565-3573,3625,3629-3631,3638,3640-3642,3946,3948-3950,3954,3969,3973,3984,3987-3990,4152,4154-4156,4159,4170,4696,4699,4702,4706-4708,4711,4713,4721,4724,4726,4728-4730,4732,4740,4743,4746,4748-4749,4752,4754,4762,4765,4768,4770-4771,4774,4776,4784,4789,4793,4796-4797,4799,4801,4805,4808,4810,4812,4814,5368,5370,6095-6097,6103-6108,6110,6401,6403,6407,6415,6422,6460,6467,6471,6473,6477,6482-6483,6502,6516,6519-6520,6523,6527,6529,6532,6534-6544,6546,6549-6551,6554,6556,6558,6560,6574,6581,6585,6587,6591,6597,6627,6630-6631,6636-6637,6639,6642,6644-6655,6657-6659,6662,6664,6666,6668,6684,6697,6701,6703,6707,6715-6716,6719,6727,6762-6766,6768,6771,6802,6804,6808,6813,6819,6891,6894-6895,6902,6904,6906,6910-6918,6921-6924,6929,6931,6933,6935,6956,6959,6964,6966,6970,6974-6975,6977-6978,6981,9398,9573,10291,10294,10297,10300,10302-10304,10309,10311,10313
+searchfn/docs/public/llms.txt
+  h_bdc5b81c173ee9 30,60-64,92,94,97,133
+searchfn/swift/README.md
+  h_bdc5b81c173ee9 115-124
+searchfn/swift/Sources/SearchFnCore/SearchFnResourceEngine.swift
+  h_bdc5b81c173ee9 42,57-63,120,134,147,159-160,180-182,198,203,255,260,272
+searchfn/swift/Sources/SearchFnCore/SearchFnScoring.swift
+  h_bdc5b81c173ee9 63-82,87,89,104
+searchfn/swift/Sources/SearchFnMemoryAdapter/SearchFnMemoryAdapter.swift
+  h_bdc5b81c173ee9 124,128-132
+searchfn/swift/Sources/SearchFnSQLiteAdapter/SearchFnSQLiteAdapter.swift
+  h_bdc5b81c173ee9 172,176-180
+searchfn/swift/Tests/SearchFnConformanceTests/SearchFnConformanceTests.swift
+  h_bdc5b81c173ee9 76,90-109
+searchfn/swift/Tests/SearchFnCoreTests/SearchFnCoreTests.swift
+  h_bdc5b81c173ee9 81-121
+searchfn/swift/Tests/SearchFnMemoryAdapterTests/SearchFnMemoryAdapterTests.swift
+  h_bdc5b81c173ee9 78-82
+searchfn/swift/Tests/SearchFnSQLiteAdapterTests/SearchFnSQLiteAdapterTests.swift
+  h_bdc5b81c173ee9 114-118
+secfn/core/package.json
+  h_bdc5b81c173ee9 3,48,59
+secfn/runtime/README.md
+  h_bdc5b81c173ee9 24-27
+secfn/runtime/package.json
+  h_bdc5b81c173ee9 33
+secfn/server/README.md
+  h_bdc5b81c173ee9 5-11,14-20
+secfn/server/package.json
+  h_bdc5b81c173ee9 40,42,45,48
+secfn/server/src/__tests__/installed-package.ts
+  h_bdc5b81c173ee9 1-27
+secfn/server/src/__tests__/package-contracts.test.ts
+  h_bdc5b81c173ee9 1-60
+secfn/server/src/__tests__/postgres-contracts.test.ts
+  h_bdc5b81c173ee9 14-15
+sendfn/python/pyproject.toml
+  h_bdc5b81c173ee9 31,47,54,67,71
+superconsole/package.json
+  h_bdc5b81c173ee9 28
+turbo.json
+  h_bdc5b81c173ee9 45-46
+uifn/catalogs/wrangler.jsonc
+  h_bdc5b81c173ee9 20
+uifn/docs/generated/delivery.md
+  h_bdc5b81c173ee9 3-24
+uifn/docs/generated/docs-coverage.json
+  h_bdc5b81c173ee9 11
+uifn/docs/generated/site/delivery.html
+  h_bdc5b81c173ee9 1-6
+uifn/docs/generated/site/index.html
+  h_bdc5b81c173ee9 1
+uifn/patterns/CHANGELOG.md
+  h_bdc5b81c173ee9 3-7
+uifn/patterns/README.md
+  h_bdc5b81c173ee9 31-46
+uifn/patterns/package.json
+  h_bdc5b81c173ee9 21,27
+uifn/patterns/src/patterns-story-runner.test.ts
+  h_bdc5b81c173ee9 3,42-43,63,67
+uifn/registry/README.md
+  h_bdc5b81c173ee9 112-126
+uifn/sf/CHANGELOG.md
+  h_bdc5b81c173ee9 3-8
+uifn/sf/README.md
+  h_bdc5b81c173ee9 28-42
+uifn/sf/package.json
+  h_bdc5b81c173ee9 21,27
+uifn/sf/src/sf-story-runner.test.ts
+  h_bdc5b81c173ee9 3,50-51,54,58
+uifn/sf/tsconfig.json
+  h_bdc5b81c173ee9 9
+uifn/storybook/generated/story-inventory.json
+  h_bdc5b81c173ee9 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd2b6bd4c6df3c1db82790c736f2e86baaf9973c",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
