@@ -1,0 +1,22 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59FEQ2FCA2C6VR7NYYY2R2N",
+  "strategy": "manual-commit",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "langfn/docs/docsfn.config.ts",
+    "langfn/docs/package.json",
+    "langfn/docs/src/app.css",
+    "langfn/docs/src/routes/docs/[...slug]/+page.server.ts",
+    "package-lock.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
