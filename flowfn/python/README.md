@@ -223,9 +223,9 @@ Workflow renewals retry transient storage errors only within the existing conser
 
 ### Optional telemetry
 
-Install `flowfn[telemetry]` and configure your application's OpenTelemetry SDK/exporter, then pass `telemetry={"enabled": True}` to `create_flow`. You can pass `tracer_provider` to avoid changing the global provider, or use `{"enabled": True, "provider": "custom", "tracer": tracer}` with a tracer implementing OpenTelemetry's `start_as_current_span` context manager. FlowFn never installs or shuts down a global provider or exporter. Disabled telemetry requires no OpenTelemetry dependency.
+Install `flowfn[telemetry]` and configure your application's OpenTelemetry SDK/exporter, then pass `telemetry={"enabled": True}` to `create_flow`. You can pass `tracer_provider` to avoid changing the global provider, or use `{"enabled": True, "provider": "custom", "tracer": tracer}` with a tracer implementing OpenTelemetry's `start_as_current_span` context manager. W3C propagation uses the optional OpenTelemetry API's trace-context propagator; custom tracers can still emit local spans without that API installed. FlowFn never installs or shuts down a global provider or exporter. Disabled telemetry requires no OpenTelemetry dependency.
 
-Spans cover job handlers, sequential/parallel/saga workflow steps and compensation, stream subscriber/consumer handlers and replay, and public asynchronous adapter operations. Nested adapter calls inherit the active handler span through Python async context. Span attributes contain resource names and IDs, never job input, workflow context, stream payloads, credentials, or adapter arguments. Application exceptions are recorded by the configured tracer and may contain application-supplied text. These are local execution spans; producer context is not serialized into durable jobs/messages.
+Spans cover job handlers, sequential/parallel/saga workflow steps and compensation, stream subscriber/consumer handlers and replay, and public asynchronous adapter operations. Nested adapter calls inherit the active handler span through Python async context. Span attributes contain resource names and IDs, never job input, workflow context, stream payloads, credentials, or adapter arguments. Application exceptions are recorded by the configured tracer and may contain application-supplied text. Producer W3C context is serialized into optional `trace_context` mappings on jobs/workflow snapshots and `traceparent`/`tracestate` stream headers. Consumer handlers extract from an empty root context, so an unrelated worker span cannot become their parent. Missing or malformed carriers start a new trace. Capture runs only when telemetry is enabled; baggage is not automatically propagated.
 
 `on_error(error, context)` receives operation failures with an operation name and resource identifiers; it works independently of tracing and may be synchronous or asynchronous. Callback/tracer exceptions do not replace application results or cause work to execute twice. Callback execution is awaited, so callbacks should return promptly. Nested failing operations can each notify the callback. Cancellation propagates without an error callback. Install `flowfn[monitoring]` to include process memory measurements.
 
@@ -244,3 +244,21 @@ The timeout cancels cooperative provider operations and reports a failed timeout
 Creation, terminal-job, publication and workflow-state notifications follow successful storage operations. Built-in adapters mark the enqueue input with a transient atomic creation receipt, so explicit-ID duplicates and deduplication races produce only the winning creation notification. The private receipt is excluded from serialized jobs; custom adapters should set the input job's `_enqueue_created` to `True` only when that enqueue inserted a new record and `False` when returning an existing job. A missing receipt suppresses creation notification. PostgreSQL's new enqueue reply function retains the previous function for existing clients; stored queue layout remains version 2.
 
 These notifications are local, best-effort observations, not a durable event delivery service: a crash or cancellation between commit and notification can lose a callback. Remote workers notify their own FlowFn instance. Listeners are awaited and should return promptly; listener exceptions are reported through `on_error` and do not undo committed work or replace its result. Workflow persisted history remains separate from this bounded local tracker.
+
+### Trace propagation validation (2026-10-20)
+
+Python 3.9 source and a fresh Python 3.12 installed wheel each pass 89 tests,
+with 94 native-provider/environment cases explicitly skipped. The wheel run
+imports FlowFn from `site-packages`, outside this checkout. Focused telemetry and
+propagation checks pass 13 tests, with four native-provider cases skipped. They
+cover producer-to-consumer queue/stream context, persisted workflow context,
+unrelated worker spans, missing/malformed/zero identifiers, and baggage exclusion.
+Strict mypy 1.18.2 on Python 3.9 passes all 47 source files. Older mypy 1.14
+reported an unchanged PostgreSQL Optional-narrowing diagnostic; running the
+Python 3.9 target against Python 3.12's newer Pydantic instead hit dependency
+syntax incompatibility. These tool configurations are not the passing gate.
+
+The Docker sockets for both available contexts were unavailable, so this
+checkpoint does not establish native Redis/PostgreSQL propagation. Original
+provider, partition, persisted policy, throughput/latency, and deployment
+requirements remain separate readiness gates.

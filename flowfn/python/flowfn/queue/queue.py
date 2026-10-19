@@ -60,6 +60,7 @@ class Queue:
                 id=job_options.job_id or str(uuid.uuid4()),
                 name=name,
                 data=data,
+                trace_context=self._observer.capture_context() or None,
                 opts=job_options,
                 timestamp=self._now(),
                 delay=job_options.delay,
@@ -159,7 +160,7 @@ class Queue:
         original_handler = handler
         async def observed_handler(current: Job) -> Any:
             await self._emit("job:active", {"job_id": current.id})
-            return await self._observer.run("flowfn.job.execute", {"flowfn.queue.name": self.name, "flowfn.job.id": current.id}, lambda: original_handler(current))
+            return await self._observer.run("flowfn.job.execute", {"flowfn.queue.name": self.name, "flowfn.job.id": current.id}, lambda: original_handler(current), carrier=current.trace_context, consumer=True)
         handler = observed_handler
         job.processed_on = self._now()
         lost = self._adapter.lease_loss_event(self.name,job)

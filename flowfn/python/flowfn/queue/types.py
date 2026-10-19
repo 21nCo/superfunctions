@@ -78,6 +78,8 @@ class Job(BaseModel):
     # Transient receipt from the atomic enqueue operation; never persisted.
     _enqueue_created: Optional[bool] = PrivateAttr(default=None)
 
+    trace_context: Optional[dict[str, str]] = None
+
     # Timing
     timestamp: int
     available_at: Optional[int] = None

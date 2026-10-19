@@ -20,6 +20,7 @@ class WorkflowExecution(BaseModel):
     id: str
     workflow_id: str
     input: Any
+    trace_context: Optional[dict[str, str]] = None
     definition_version: str = "1"
     definition_hash: str = ""
     lease_token: Optional[str] = None

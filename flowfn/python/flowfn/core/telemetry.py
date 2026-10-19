@@ -32,13 +32,52 @@ class OperationObserver:
         if not callable(getattr(self.tracer, "start_as_current_span", None)):
             raise ValueError("Telemetry tracer must implement start_as_current_span")
 
+    @staticmethod
+    def _carrier(values: Optional[dict[str, str]]) -> dict[str, str]:
+        # Never propagate baggage or arbitrary application headers.
+        return {
+            key: value
+            for key, value in (values or {}).items()
+            if key in ("traceparent", "tracestate") and isinstance(value, str) and len(value) <= 512
+        }
+
+    def capture_context(self) -> dict[str, str]:
+        if self.tracer is None:
+            return {}
+        try:
+            module = importlib.import_module("opentelemetry.trace.propagation.tracecontext")
+            carrier: dict[str, str] = {}
+            module.TraceContextTextMapPropagator().inject(carrier)
+            return self._carrier(carrier)
+        except Exception:
+            return {}
+
     async def run(
-        self, name: str, attributes: dict[str, str], operation: Callable[[], Awaitable[T]]
+        self,
+        name: str,
+        attributes: dict[str, str],
+        operation: Callable[[], Awaitable[T]],
+        *,
+        carrier: Optional[dict[str, str]] = None,
+        consumer: bool = False,
     ) -> T:
         manager: Any = None
         if self.tracer is not None:
             try:
-                candidate = self.tracer.start_as_current_span(name, attributes=attributes)
+                options: dict[str, Any] = {"attributes": attributes}
+                if consumer:
+                    try:
+                        propagation = importlib.import_module(
+                            "opentelemetry.trace.propagation.tracecontext"
+                        )
+                        context = importlib.import_module("opentelemetry.context")
+                        options["context"] = propagation.TraceContextTextMapPropagator().extract(
+                            self._carrier(carrier), context=context.Context()
+                        )
+                    except ImportError:
+                        # Custom tracers can operate without the optional OTel API.
+                        pass
+                candidate = self.tracer.start_as_current_span(name, **options)
                 candidate.__enter__()
                 manager = candidate
             except Exception:

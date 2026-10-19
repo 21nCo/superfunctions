@@ -53,7 +53,7 @@ class Stream:
                 id=str(uuid.uuid4()),
                 stream=self.name,
                 data=data,
-                headers=options.headers,
+                headers={**(options.headers or {}), **self._observer.capture_context()} or None,
                 timestamp=self._now(),
                 partition=options.partition,
                 key=options.key,
@@ -79,7 +79,7 @@ class Stream:
 
     def _observe_handler(self, handler: MessageHandler) -> MessageHandler:
         async def observed(message: Message) -> None:
-            await self._observer.run("flowfn.stream.message", {"flowfn.stream.name": self.name, "flowfn.message.id": message.id}, lambda: handler(message))
+            await self._observer.run("flowfn.stream.message", {"flowfn.stream.name": self.name, "flowfn.message.id": message.id}, lambda: handler(message), carrier=message.headers, consumer=True)
         return observed
 
     def subscribe(

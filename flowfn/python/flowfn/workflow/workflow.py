@@ -89,6 +89,7 @@ class Workflow:
                 id=execution_id,
                 workflow_id=self.name,
                 input=input_data,
+                trace_context=self._observer.capture_context() or None,
                 definition_version=self.version,
                 definition_hash=self.definition_hash,
                 status=ExecutionStatus.RUNNING,
@@ -304,7 +305,7 @@ class Workflow:
 
         await self._log_event(execution.id, "step.started", {"step": step_name})
 
-        await self._observer.run("flowfn.workflow.step", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution.id, "flowfn.step.name": step_name}, lambda: handler(context))
+        await self._observer.run("flowfn.workflow.step", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution.id, "flowfn.step.name": step_name}, lambda: handler(context), carrier=execution.trace_context, consumer=True)
 
         # Update execution context
         execution.context = context.state
@@ -325,7 +326,7 @@ class Workflow:
         async def invoke(index: int, handler: Any) -> None:
             child = f"{path}/{index}"
             if child not in execution.state.get("completed_steps", []):
-                await self._observer.run("flowfn.workflow.step", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution.id, "flowfn.step.name": child}, lambda: handler(context))
+                await self._observer.run("flowfn.workflow.step", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution.id, "flowfn.step.name": child}, lambda: handler(context), carrier=execution.trace_context, consumer=True)
                 execution.state.setdefault("completed_steps", []).append(child)
                 execution.context = context.state
                 await self._persist(execution)
@@ -379,7 +380,7 @@ class Workflow:
             await self._persist(execution)
 
         # Execute
-        await self._observer.run("flowfn.workflow.step", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution.id, "flowfn.step.name": step["name"]}, lambda: execute_handler(context))
+        await self._observer.run("flowfn.workflow.step", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution.id, "flowfn.step.name": step["name"]}, lambda: execute_handler(context), carrier=execution.trace_context, consumer=True)
 
         await self._log_event(execution.id, "saga.completed", {"saga": saga_name})
 
@@ -396,7 +397,7 @@ class Workflow:
             execution = self._executions[execution_id]
             execution.state["sagas"].remove(saga["path"])
             try:
-                await self._observer.run("flowfn.workflow.compensate", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution_id, "flowfn.step.name": saga["name"]}, lambda: saga["compensate"](context))
+                await self._observer.run("flowfn.workflow.compensate", {"flowfn.workflow.name": self.name, "flowfn.execution.id": execution_id, "flowfn.step.name": saga["name"]}, lambda: saga["compensate"](context), carrier=execution.trace_context, consumer=True)
                 await self._log_event(execution_id, "saga.compensated", {"saga": saga["name"]})
             except Exception as error:
                 await self._log_event(execution_id, "saga.compensation_failed", {"saga": saga["name"], "error": str(error)})
