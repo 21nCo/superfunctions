@@ -208,7 +208,7 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
           if (!row) throw new NotFoundError(model, where);
           return row as T;
         } else {
-          qb = qb.returning(select && select.length > 0 ? select : ['*' as any]);
+          qb = select && select.length > 0 ? qb.returning(select) : qb.returningAll();
           const result = await qb.executeTakeFirst();
           if (!result) throw new NotFoundError(model, where);
           return result as T;
@@ -255,24 +255,28 @@ export function kyselyAdapter(config: KyselyAdapterConfig): Adapter {
         return Number((result as any).numDeletedRows ?? (result as any).numAffectedRows ?? 0);
       },
 
-      async upsert<T = any>({ model, where, create, update, select }: UpsertParams): Promise<T> {
+      async upsert<T = any>({ model, where, create, update, select, conflictTarget }: UpsertParams): Promise<T> {
         const table = resolveTable(model);
 
         const hasUpdate = update && Object.keys(update).length > 0;
 
         // Kysely doesn't have native upsert; use insert...onConflict or fallback to update/insert
         if (dialect === 'postgres' || dialect === 'sqlite') {
-          const conflictColumn = where.length > 0 ? where[0].field : 'id';
+          const target = conflictTarget ?? (where.length > 0 ? where[0].field : 'id');
+          const conflictColumns = Array.isArray(target) ? target : [target];
+          if (conflictColumns.length === 0 || conflictColumns.some(column => typeof column !== 'string' || column.length === 0)) {
+            throw new TypeError('conflictTarget must contain at least one nonempty column');
+          }
           let qb = hasUpdate
             ? db.insertInto(table).values(create)
-                .onConflict((oc: any) => oc.column(conflictColumn).doUpdateSet(update))
+                .onConflict((oc: any) => oc.columns(conflictColumns).doUpdateSet(update))
             : db.insertInto(table).values(create)
-                .onConflict((oc: any) => oc.column(conflictColumn).doNothing());
+                .onConflict((oc: any) => oc.columns(conflictColumns).doNothing());
 
           if (select && select.length > 0) {
             qb = qb.returning(select);
           } else {
-            qb = qb.returning(['*' as any]);
+            qb = qb.returningAll();
           }
           const result = await qb.executeTakeFirst();
           // doNothing returns no rows on conflict; fall back to findOne
