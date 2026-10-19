@@ -179,7 +179,8 @@ jobs:
         run: node scripts/ci-install-rollup-native.mjs
 
       - name: Build compatibility targets and dependencies
-        run: ./node_modules/.bin/turbo run build --filter='@mcpfn/testing...' --filter='@mcpfn/cli...'
+        # Shared test-support imports the current core independently of published consumer pins.
+        run: ./node_modules/.bin/turbo run build --filter='@mcpfn/core...' --filter='@mcpfn/testing...' --filter='@mcpfn/cli...'
 
       - name: Check transport-neutral client, testing, and CLI on Node 20
         run: |

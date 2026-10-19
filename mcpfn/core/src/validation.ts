@@ -1,3 +1,4 @@
+import { schemaUriResolver } from "./schema-uri.js";
 import Ajv, { type ErrorObject } from "ajv";
 import addFormats from "ajv-formats";
 import uri from "fast-uri";
@@ -56,6 +57,7 @@ function isCloudflareWorker(): boolean {
 
 function createAjv(): Ajv {
   const ajv = new Ajv({
+    uriResolver: schemaUriResolver,
     allErrors: true,
     strict: false,
     allowUnionTypes: true,
