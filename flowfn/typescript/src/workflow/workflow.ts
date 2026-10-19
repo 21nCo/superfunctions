@@ -185,6 +185,7 @@ export class WorkflowBuilderImpl<T = any> implements WorkflowBuilder<T> {
 }
 
 interface Checkpoint extends WorkflowExecution {
+  traceContext?: import('../instrumentation.js').FlowTraceContext;
   definitionHash: string;
   receivedSignals: string[];
   journal: Record<
@@ -402,6 +403,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
     this.ensureOpen();
     const record: Checkpoint = {
       id: uuidv4(),
+      traceContext: this.observer.capture(),
       definitionHash: this.definitionHash,
       receivedSignals: [],
       workflowId: this.id,
@@ -439,6 +441,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
   }
   private publicRecord(record: Checkpoint): WorkflowExecution {
     const {
+      traceContext,
       journal,
       compensations,
       compensated,
@@ -614,7 +617,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         if (record.compensated.includes(key)) continue;
         const step = this.definitions.get(key)!;
         try {
-          await this.observer.run('flowfn.workflow.compensate', { 'flowfn.workflow': this.name, 'flowfn.execution.id': record.id, 'flowfn.step': step.name ?? key }, () => step.compensate?.(rollbackContext));
+          await this.observer.run('flowfn.workflow.compensate', { 'flowfn.workflow': this.name, 'flowfn.execution.id': record.id, 'flowfn.step': step.name ?? key }, () => step.compensate?.(rollbackContext), record.traceContext ?? {});
           record.compensated.push(key);
           this.event(record, "compensation.completed", { step: step.name });
         } catch (failure) {
@@ -760,7 +763,7 @@ export class WorkflowImpl<T = any> implements Workflow<T> {
         this.event(record, "step.completed", { step: step.name ?? step.type });
         await this.persist(runtime);
         this.check(runtime);
-        });
+        }, record.traceContext ?? {});
       } catch (error) {
         if (runtime.lost) throw new Error('Workflow lease lost');
         this.event(record, "step.failed", {

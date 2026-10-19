@@ -178,6 +178,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
       if (!this.adapter.createJob)
         throw new Error("Adapter must implement atomic createJob for enqueue");
       const proposed = new JobImpl(name, data, options);
+      proposed.traceContext = this.observer.capture();
       if (options.deduplicationKey !== undefined)
         proposed.deduplicationId = JSON.stringify(["key", options.deduplicationKey]);
       else if (options.preventDuplicates)
@@ -356,7 +357,7 @@ export class QueueImpl<T = any> extends EventEmitter implements Queue<T> {
         result = structuredClone(cached.value);
       else {
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const task = this.observer.run('flowfn.job.execute', { 'flowfn.queue': this.name, 'flowfn.job.id': job.id, 'flowfn.job.name': job.name }, () => handler(job));
+        const task = this.observer.run('flowfn.job.execute', { 'flowfn.queue': this.name, 'flowfn.job.id': job.id, 'flowfn.job.name': job.name }, () => handler(job), job.traceContext ?? {});
         try {
           result =
             job.opts.timeout === undefined

@@ -44,7 +44,7 @@ export class StreamImpl<T = any> implements Stream<T> {
       id: randomUUID(),
       stream: this.name,
       data: structuredClone(data),
-      headers: structuredClone(options.headers),
+      headers: { ...structuredClone(options.headers), ...this.observer.capture() },
       timestamp: Date.now(),
       partition: options.partition,
       key: options.key,
@@ -78,7 +78,7 @@ export class StreamImpl<T = any> implements Stream<T> {
     await this.observer.run('flowfn.stream.process', { 'flowfn.stream': this.name, 'flowfn.message.id': message.id }, async () => {
       if (filter && !await filter(delivered)) { await delivered.ack(); return; }
       await handler(delivered);
-    });
+    }, message.headers ?? {});
   }
   async subscribe(
     handler: MessageHandler<T>,

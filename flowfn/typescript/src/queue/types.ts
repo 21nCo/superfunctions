@@ -62,6 +62,8 @@ export type QueueEvent =
 
 export interface Job<T = any> {
   readonly signal?: AbortSignal;
+  /** Producer W3C context persisted for consumer spans. */
+  traceContext?: import('../instrumentation.js').FlowTraceContext;
   /** Persisted queue-scoped enqueue deduplication identity. */
   deduplicationId?: string;
   lease?: { token: string; expiresAt: number };

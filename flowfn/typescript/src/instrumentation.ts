@@ -1,4 +1,14 @@
-import { trace, SpanStatusCode, type Attributes, type Tracer } from '@opentelemetry/api';
+import { context, propagation, ROOT_CONTEXT, trace, SpanStatusCode, type Attributes, type Tracer } from '@opentelemetry/api';
+
+/** W3C trace fields only; application baggage is never persisted. */
+export interface FlowTraceContext { traceparent?: string; tracestate?: string }
+function traceFields(value: FlowTraceContext): FlowTraceContext {
+  const carrier: FlowTraceContext = {};
+  for (const key of ['traceparent', 'tracestate'] as const) {
+    if (typeof value[key] === 'string' && value[key]!.length <= 512) carrier[key] = value[key];
+  }
+  return carrier;
+}
 
 export interface FlowTelemetryOptions {
   enabled: boolean;
@@ -28,7 +38,16 @@ export class OperationObserver {
   constructor(private telemetry?: FlowTelemetryOptions, private onError?: (error: Error, context: FlowErrorContext) => void) {
     if (telemetry?.enabled && telemetry.provider === 'custom' && !telemetry.tracer) throw new Error('Custom telemetry requires a tracer');
   }
-  async run<T>(operation: string, attributes: Attributes, callback: () => T | Promise<T>): Promise<T> {
+  capture(): FlowTraceContext | undefined {
+    if (!(this.telemetry ? this.telemetry.enabled : registrations().size > 0)) return;
+    try {
+      const carrier: Record<string, string> = {};
+      propagation.inject(context.active(), carrier);
+      const fields = traceFields(carrier);
+      return fields.traceparent ? fields : undefined;
+    } catch { return undefined; }
+  }
+  async run<T>(operation: string, attributes: Attributes, callback: () => T | Promise<T>, carrier?: FlowTraceContext): Promise<T> {
     const active = [...registrations()];
     const enabled = this.telemetry ? this.telemetry.enabled : active.length > 0;
     const execute = async () => {
@@ -43,7 +62,13 @@ export class OperationObserver {
     const tracer = this.telemetry?.tracer ?? active.at(-1)?.tracer ?? trace.getTracer('@flowfn/core');
     let invocation: Promise<T> | undefined;
     try {
-      const result = tracer.startActiveSpan(operation, { attributes }, span => {
+      // Consumer boundaries must not inherit the worker's unrelated ambient context.
+      let parent = context.active();
+      if (carrier !== undefined) {
+        parent = ROOT_CONTEXT;
+        try { parent = propagation.extract(ROOT_CONTEXT, traceFields(carrier)); } catch { /* Invalid/custom propagation cannot block work. */ }
+      }
+      const result = context.with(parent, () => tracer.startActiveSpan(operation, { attributes }, span => {
         if (invocation) { try { span.end(); } catch {} return invocation; }
         return invocation = (async () => {
           try { return await execute(); }
@@ -52,7 +77,7 @@ export class OperationObserver {
             throw failure;
           } finally { try { span.end(); } catch { /* Exporter failures are isolated. */ } }
         })();
-      });
+      }));
       // Consume a faulty tracer's separate rejected result without replacing the operation result.
       void Promise.resolve(result).catch(() => undefined);
     } catch { /* A custom tracer can fail before or after invoking the operation. */ }

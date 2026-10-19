@@ -8,7 +8,7 @@ import type { WorkflowExecution } from '../workflow/types.js';
 
 export interface ScheduleContext { signal: AbortSignal; scheduledAt: number; occurrence: string }
 type Handler = (data: any, context: ScheduleContext) => any;
-type Definition = { name: string; generation: string; options: ScheduleOptions; paused: boolean; cancelled: boolean };
+type Definition = { traceContext?: import('../instrumentation.js').FlowTraceContext; name: string; generation: string; options: ScheduleOptions; paused: boolean; cancelled: boolean };
 type RunState = { nextRun: number; count: number; lastError?: string };
 type Binding = { handler: Handler; timer?: ReturnType<typeof setTimeout>; running?: Promise<void>; abort?: () => void };
 const canonical = (value: unknown) => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
@@ -63,7 +63,7 @@ export class DurableScheduler extends Scheduler {
     const definition = (await this.update(id, current => {
       const existing = current?.state as Definition | undefined;
       if (existing && !existing.cancelled && canonical(existing.options) === canonical(options)) return current!;
-      return this.record(id, { name, options, generation: randomUUID(), paused: false, cancelled: false });
+      return this.record(id, { name, options, traceContext: this.observer.capture(), generation: randomUUID(), paused: false, cancelled: false });
     })).state as Definition;
     const runId = `${id}:${definition.generation}`;
     if (!await this.adapter.loadWorkflowState(runId)) await this.adapter.mutateWorkflowState!(runId, { expectedRevision: null, state: this.record(runId, { count: 0, nextRun: this.nextRun(options, Math.max(Date.now(), options.startDate?.getTime() ?? 0)) }) });
@@ -128,7 +128,7 @@ export class DurableScheduler extends Scheduler {
     }, Math.min(2147483647, Math.max(1, Math.floor(this.leaseDuration / 3))));
     let error: string | undefined;
     try {
-      await this.observer.run('flowfn.schedule.execute', { 'flowfn.schedule': name, 'flowfn.occurrence': `${runId}:${state.count}` }, () => binding.handler(structuredClone(options.data), { signal: controller.signal, scheduledAt: state.nextRun, occurrence: `${runId}:${state.count}` }));
+      await this.observer.run('flowfn.schedule.execute', { 'flowfn.schedule': name, 'flowfn.occurrence': `${runId}:${state.count}` }, () => binding.handler(structuredClone(options.data), { signal: controller.signal, scheduledAt: state.nextRun, occurrence: `${runId}:${state.count}` }), definition.traceContext ?? {});
     } catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
     finally { clearInterval(timer); binding.abort = undefined; }
     if (lost) return;

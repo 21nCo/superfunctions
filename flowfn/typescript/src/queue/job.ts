@@ -10,6 +10,7 @@ export function snapshotJob(job: Job): Job {
   return JSON.parse(JSON.stringify(job));
 }
 export class JobImpl<T = any> implements Job<T> {
+  traceContext?: import('../instrumentation.js').FlowTraceContext;
   deduplicationId?: string;
   lease?: { token: string; expiresAt: number };
   stalledCount?: number;
