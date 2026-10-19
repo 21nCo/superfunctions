@@ -46,3 +46,16 @@ The same closed database is opened in a separate Python process through the shar
 Validation on Node 20.20.0: native better-sqlite3 rebuilt successfully; server build and all 4 service tests pass. The SQLite acceptance passes with isolated Python 3.10 and Python 3.12 (`CATCHFN_PYTHON=3.12`); Python 3.10 source contract suite passes all 3 tests, with existing shared-core Pydantic deprecation warnings. Python dependencies are isolated via uv, while CatchFn/shared Python modules are loaded from this checkout. This is source/built-service integration evidence, not a fresh wheel or npm tarball acceptance. No production implementation change was required.
 
 Reproduction prerequisites: built shared DB/CatchFn SDK/server packages, local native better-sqlite3 and Kysely, and uv. After an install with ignored scripts, run `npm rebuild better-sqlite3 --foreground-scripts`. The acceptance never uses memoryAdapter. It proves clean close/reopen persistence, not crash/power-loss durability, concurrent writers, or arbitrary payload/schema parity. Original WatchFn datastore delivery, BotFn bridge, historical Python 3.8 support, performance and broader accessibility gates remain open. No PR, push, release, or deployment was performed.
+
+## Publication checkpoint after shared prerequisite merge — 2026-10-19 UTC
+
+The clean CatchFn branch at `d3776b5d3` was normally merged with local shared prerequisite `d8d443a5c`, producing `bd55e4eb9`. Shared is now an ancestor. The diff against shared contains only CatchFn files, the root DrawFn workspace registration required by the reporter, and the associated CatchFn/DrawFn dependency lock closure; it contains no shared implementation changes. Local remote-tracking trees still show CatchFn present in `sf-next/next` and absent in `origin/dev`, so the destination is the sf-next repository. No remote operation was performed during this checkpoint.
+
+Exact merged-tree checks passed:
+
+- Shared observability and DB builds, CatchFn SDK/server/admin builds, SDK/admin typechecks.
+- SDK **81 tests**, TypeScript service **4 tests**, admin **3 tests**.
+- One fresh `node catchfn/server/typescript/scripts/sqlite-acceptance.mjs` run against the rebuilt shared DB: native file-backed SQLite close/reopen plus separate Python 3.10 process read/write compatibility passed.
+- `git diff --check` against shared passed. The earlier real Chrome/WebKit, packed npm consumer, and Python 3.10/3.12 wheel/native receipts above were not rerun; they describe their recorded checkpoints rather than fresh acceptance of this merged tree.
+
+No new blocking defect was discovered in this bounded check. This branch is suitable for a scoped foundations PR, not an overall readiness claim: CatchFn still delegates only to an injected `watch.client.capture` interface, lacks a built-in verified WatchFn endpoint/auth/retry integration, and its separate flat-report service is not proof of canonical WatchFn datastore persistence. BotFn issue linking, original Python 3.8 support, deployment and broader performance/accessibility gates remain open. The optional router authorization callback must be configured by the hosting application when authentication is required. No push, PR, release, or deployment was performed.
