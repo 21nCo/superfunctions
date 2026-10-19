@@ -4,7 +4,7 @@ A report records three independent axes:
 
 - execution: `queued`, `running`, `completed`, `failed`, `canceled`, or `superseded`;
 - coverage: `complete` or `incomplete`, with reasons;
-- verdict: `ready`, `changes_requested`, or `needs_verification`, absent when no valid assessment exists.
+- verdict: `ready`, `changes_requested`, or `needs_verification`, absent unless execution is `completed`; a completed run without complete coverage or requirements is `needs_verification`.
 
 Requirements contain immutable source anchors and exactly one assessment. Assessments distinguish `implemented`, `partial`, `missing`, `unverified`, and source-waived `not_applicable`. Evidence links to a context source, exact-head code anchor, diff, test receipt, or content-addressed artifact. An implemented assessment must include reviewed-head implementation evidence. Merge-base anchors can document deleted code but cannot alone establish implementation. An available source with no extracted requirements needs explicit source evidence with a nonblank `sourceExclusionReason`; ordinary citations do not establish exclusion.
 
