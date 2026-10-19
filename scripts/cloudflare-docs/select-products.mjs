@@ -56,6 +56,7 @@ function productsFromChangedFiles() {
     if (/^(apifn\/docsfn|docsfn)\//.test(file)) return existingProductIds();
     if (/^datafn\/docs\//.test(file)) selectExisting("datafn");
     if (/^extfn\/docs\//.test(file)) selectExisting("extfn");
+    if (/^mdfn\/docs\//.test(file)) selectExisting("mdfn");
     if (/^devfn\/docs\//.test(file)) selectExisting("devfn");
     if (/^filefn\/docs\//.test(file)) selectExisting("filefn");
     if (/^searchfn\/docs\//.test(file)) selectExisting("searchfn");

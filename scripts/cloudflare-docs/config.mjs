@@ -11,6 +11,16 @@ export const devAccountId = "c801efc2879825babdb9b2534199c4dd";
 export const devZoneName = "21n.site";
 
 export const docsProducts = {
+  mdfn: {
+    packageName: "@mdfn/docs",
+    docsDir: "mdfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "mdfn.com",
+    hosts: {
+      dev: "mdfn.21n.site",
+      live: "mdfn.com",
+    },
+  },
   devfn: {
     packageName: "@devfn/docs",
     docsDir: "devfn/docs",
