@@ -1,0 +1,29 @@
+watchfn/.conduct/browser-delivery-readiness.md
+  s_e1c5fc1a65c0cf::t_124cbead576910 1-19
+watchfn/agents/browser/src/index.ts
+  s_e1c5fc1a65c0cf::t_71c553a7c875e0 8-20,24-28,31-39,41,44,46-48,50,54-64,66-78,81-87,89-94,96-104,106-108,112-143,145-146
+watchfn/agents/browser/src/vitals.ts
+  s_e1c5fc1a65c0cf::t_9696dfa28496ac 3-5,11,23,34,36,38-40,42
+watchfn/agents/browser/tests/browser-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_bac11a2289ef63 1-49
+watchfn/agents/browser/tests/delivery.test.ts
+  s_e1c5fc1a65c0cf::t_85d7e76797f1a4 1-122
+watchfn/agents/browser/tests/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_b6f6013e09e900 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "021b93e8753a6c4fbc6b301b90a2fe55e745e4b5",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
