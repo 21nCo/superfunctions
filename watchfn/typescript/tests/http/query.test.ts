@@ -96,3 +96,18 @@ it("returns named aggregation rows from the shared query engine", async () => {
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ results: [{ endpoint: "/users", count: 2, mean: 15 }] });
 });
+
+it.each([{ storage: "hybrid" }, { storage: "database" }])("reports unavailable query backend as 503: %j", async config => {
+  const watch = setup(config);
+  const response = await watch.httpRouter.handle(request({}));
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ error: "Query unavailable" });
+});
+
+it("permits stored readback after collection stops", async () => {
+  const watch = setup();
+  const event = { name: "retained", properties: { value: 1 } };
+  await watch.ingest([event]); watch.stop();
+  const response = await watch.httpRouter.handle(request({ metric: "retained" }));
+  expect(response.status).toBe(200); expect(await response.json()).toEqual({ results: [event] });
+});
