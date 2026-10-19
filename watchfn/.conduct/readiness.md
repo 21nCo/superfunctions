@@ -26,3 +26,10 @@ Persistence is sequential, not atomic: a failure after earlier writes can leave 
 Allowed-origin enforcement, CORS, ingestion rate limits, key rotation/scopes, and authentication for health/query are not implemented by this checkpoint. No body-read/storage deadline is introduced. Event-specific schema/version/timestamp validation remains the responsibility of producers. The synchronous `track`/collector route still uses unawaited storage callbacks and is not covered by the HTTP acknowledgement guarantee.
 
 Browser retries/offline delivery, Python parity, substantive query/log/trace/business APIs, full LogFn/CatchFn integration, real deployment, and the original performance targets remain pending. No remote PR, push, deployment, or release was performed for this checkpoint.
+
+## Express completion and deterministic aggregation checks
+
+- Express middleware no longer replaces `res.json` or counts a JSON write and its subsequent `finish` as separate requests. It records one completion, records premature `close` with `aborted: true`, and removes its lifecycle listeners.
+- Three focused lifecycle tests pass; standalone TypeScript check passes. Full core suite: 50 tests pass.
+- The first full run exposed two existing wall-clock-dependent aggregation tests: samples crossed a minute boundary while assertions inspected only the first bucket. Their single-bucket inputs now use fixed timestamps, and a new explicit boundary test verifies both bucket averages without weakening the expected values.
+- Correction to the earlier build diagnosis: bundled shared observability top-level await is pulled through the Hono dependency closure. The source SvelteKit adapter does not introduce that await. Synchronous CommonJS import remains unverified until shared runtime initialization and packed dependency closure are fixed.
