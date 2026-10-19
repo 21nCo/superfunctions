@@ -1,0 +1,109 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_645fb5a2b85c23 15,25,36,64
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_c40769e65bc722 19,80
+clifn/core/README.md
+  s_7d0a48f0aaecda::t_7b193a136ed08e 51,121,131-132,147-148,161-165,183
+clifn/docs/.gitignore
+  s_7d0a48f0aaecda::t_d1da0315cc336b 1-13
+clifn/docs/README.md
+  s_7d0a48f0aaecda::t_d65233774dcc74 1-21
+clifn/docs/content/docs/automation.md
+  s_7d0a48f0aaecda::t_26daf09cef24a5 1-32
+clifn/docs/content/docs/cli-builder.md
+  s_7d0a48f0aaecda::t_7d48865d35d0f6 1-36
+clifn/docs/content/docs/configuration.md
+  s_7d0a48f0aaecda::t_ff448a6cd12caf 1-34
+clifn/docs/content/docs/credentials-and-client.md
+  s_7d0a48f0aaecda::t_cfadcda852e130 1-38
+clifn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_d13a7b85dd8984 1-32
+clifn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_8345f16ac33085 1-20
+clifn/docs/content/docs/interaction-and-stdio.md
+  s_7d0a48f0aaecda::t_e1832c41455dbf 1-25
+clifn/docs/content/docs/meta.json
+  s_7d0a48f0aaecda::t_d4c84fc8303541 1-14
+clifn/docs/content/docs/output-and-diagnostics.md
+  s_7d0a48f0aaecda::t_f45a84314487e0 1-37
+clifn/docs/content/docs/reference/admin.md
+  s_7d0a48f0aaecda::t_d99e7e9d4c277e 1-8
+clifn/docs/content/docs/reference/core-readme.md
+  s_7d0a48f0aaecda::t_4d946d0d55695e 1-402
+clifn/docs/content/docs/reference/exports.md
+  s_7d0a48f0aaecda::t_0ca1f6b55692bb 1-24
+clifn/docs/content/docs/reference/index.md
+  s_7d0a48f0aaecda::t_e68ea5cf401eb2 1-10
+clifn/docs/content/docs/reference/meta.json
+  s_7d0a48f0aaecda::t_527d7ef4e8066e 1-9
+clifn/docs/docsfn.config.ts
+  s_7d0a48f0aaecda::t_6643d80bfa1538 1-36
+clifn/docs/package.json
+  s_7d0a48f0aaecda::t_fd1171da4ff097 1-38
+clifn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_5127f92a2a4923 1-22
+clifn/docs/src/app.css
+  s_7d0a48f0aaecda::t_053382c851fe7a 1-82
+clifn/docs/src/app.html
+  s_7d0a48f0aaecda::t_a3b9b679074f19 1-11
+clifn/docs/src/lib/components/DocsSiteSearch.svelte
+  s_7d0a48f0aaecda::t_ecc0cdccc86a9a 1-5
+clifn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_d2c51058bcacf0 1-14
+clifn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_d3b14f3a3c9d5c 1-12
+clifn/docs/src/routes/+layout.server.ts
+  s_7d0a48f0aaecda::t_0072bba57cbc17 1-13
+clifn/docs/src/routes/+layout.svelte
+  s_7d0a48f0aaecda::t_647117eb44d1c9 1-86
+clifn/docs/src/routes/+page.svelte
+  s_7d0a48f0aaecda::t_933d95e6ed5f92 1-29
+clifn/docs/src/routes/docs/[...slug]/+page.server.ts
+  s_7d0a48f0aaecda::t_995b4810bc28bc 1-25
+clifn/docs/src/routes/docs/[...slug]/+page.svelte
+  s_7d0a48f0aaecda::t_b4acb7f7060cd8 1-41
+clifn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_05124538e5cfb9 1-7
+clifn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_13a343478e0718 1-7
+clifn/docs/src/routes/docs/search.json/+server.ts
+  s_7d0a48f0aaecda::t_cc832d7032123f 1-8
+clifn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_615e9e901cb12a 1-754
+clifn/docs/static/llms.txt
+  s_7d0a48f0aaecda::t_1b56d5b2ec0fd0 1-18
+clifn/docs/svelte.config.js
+  s_7d0a48f0aaecda::t_609ca05dce5805 1-26
+clifn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_fc56ab28189342 1-59
+clifn/docs/turbo.json
+  s_7d0a48f0aaecda::t_ccaa3e332e05c6 1-20
+clifn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_5a5f3cb7238a7d 1-12
+package-lock.json
+  s_7d0a48f0aaecda::t_e2437edf5314b7 8129-8499,25261-25264
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_131072d1730727 24-33
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_36df233267469b 60
+scripts/docs-site/llms.mjs
+  s_7d0a48f0aaecda::t_8777a507332a29 84-90,102
+scripts/docs-site/llms.test.mjs
+  s_7d0a48f0aaecda::t_fe7f7335f9a3c0 48-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "72d5e8543034147124613d3c37549b8f339f201a",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
