@@ -16,6 +16,7 @@ on:
           - datafn
           - extfn
           - mdfn
+          - botfn
           - langfn
           - devfn
           - filefn
@@ -75,6 +76,7 @@ jobs:
           CLOUDFLARE_ROUTES_TOKEN: ${{ secrets.CLOUDFLARE_ROUTES_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ZONE_ID_EXTFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_EXTFN_COM }}
           CLOUDFLARE_ZONE_ID_MDFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_MDFN_COM }}
+          CLOUDFLARE_ZONE_ID_BOTFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_BOTFN_COM }}
           CLOUDFLARE_ZONE_ID_LANGFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_LANGFN_COM }}
           CLOUDFLARE_ZONE_ID_DEVFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_DEVFN_COM }}
           CLOUDFLARE_ZONE_ID_DATAFN_DEV: ${{ vars.CLOUDFLARE_ZONE_ID_DATAFN_DEV }}
