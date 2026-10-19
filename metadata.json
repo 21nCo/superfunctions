@@ -2,7 +2,7 @@
   "cli_version": "0.11.3",
   "checkpoint_id": "01M5AY2Q31FYFXPW9TS0CDRH9Q",
   "strategy": "manual-commit",
-  "checkpoints_count": 4,
+  "checkpoints_count": 5,
   "files_touched": [
     "mailfn/OPERATIONS.md",
     "mailfn/THREAT_MODEL.md",
@@ -21,14 +21,21 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": "/0/prompt.txt"
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
   ],
   "token_usage": {
-    "input_tokens": 155876,
-    "cache_creation_tokens": 0,
-    "cache_read_tokens": 14251008,
-    "output_tokens": 34773,
-    "api_call_count": 149,
+    "input_tokens": 155902,
+    "cache_creation_tokens": 11952,
+    "cache_read_tokens": 23310318,
+    "output_tokens": 40517,
+    "api_call_count": 162,
     "subagent_tokens_complete": false
   }
 }
