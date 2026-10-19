@@ -5,7 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { processExists, processGroupStatus } from "@devfn/processes";
+import { processExists, processGroupStatus, processIdentityStatus } from "@devfn/processes";
 
 import { allocateEphemeralPort, bindProbe, connectionRefused, isPortAvailable, scanListenerState } from "./listeners.js";
 import { withFileLock, withRoutingLock } from "./lock.js";
@@ -282,6 +282,44 @@ async function journalMayRun(state: RegistryState, invocation: RegistryInvocatio
   return false;
 }
 
+const nonEmptyText = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+const malformedEvidence = (detail: string) => new PortRegistryError("DEVFN_REGISTRY_INVALID", `Registry owner evidence is malformed: ${detail}.`);
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+/** A lease is selected by these fields, so a malformed one would hide its evidence from the checks rather than fail them. */
+const servingSelectable = (item: unknown): boolean => isRecord(item) && nonEmptyText(item.invocationId) && Number.isSafeInteger(item.port) &&
+  ["planned", "active", "stale", "released", "externally-occupied"].includes(item.state as string) && ["tcp", "udp"].includes(item.protocol as string);
+
+/**
+ * Shape checks for the evidence instanceServesPort authorizes from. read()
+ * checks only the top-level arrays, so a malformed field must fail closed
+ * here rather than read as present or absent.
+ */
+function assertServingInvocation(invocation: RegistryInvocation): void {
+  if (![invocation.id, invocation.projectId, invocation.instanceId].every(nonEmptyText)) throw malformedEvidence(`invocation ${String(invocation.id)} identity`);
+  if (!["planning", "starting", "ready", "stopping", "failed", "stopped"].includes(invocation.state)) throw malformedEvidence(`invocation ${String(invocation.id)} state`);
+  if (invocation.ownerJournal !== undefined && invocation.ownerJournal !== true) throw malformedEvidence(`invocation ${String(invocation.id)} ownerJournal`);
+  if (invocation.launching !== undefined && (!Array.isArray(invocation.launching) || !invocation.launching.every(nonEmptyText))) {
+    throw malformedEvidence(`invocation ${String(invocation.id)} launching`);
+  }
+  if (invocation.composeLaunches !== undefined && !isRecord(invocation.composeLaunches)) throw malformedEvidence(`invocation ${String(invocation.id)} composeLaunches`);
+}
+
+function assertServingOwner(allocation: PortAllocation): void {
+  const { process: owner, container } = allocation;
+  if (![allocation.id, allocation.projectId, allocation.instanceId].every(nonEmptyText)) throw malformedEvidence(`lease ${String(allocation.id)} identity`);
+  const recordedAt: unknown = owner?.recordedAt === undefined ? allocation.updatedAt : owner.recordedAt;
+  if (owner !== undefined && (!isRecord(owner) || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 ||
+    (owner.birthSignature !== undefined && !nonEmptyText(owner.birthSignature)) || !(typeof recordedAt === "string" && Number.isFinite(Date.parse(recordedAt))))) {
+    throw malformedEvidence(`lease ${String(allocation.id)} process owner`);
+  }
+  if (container !== undefined && (!container || typeof container !== "object" || !nonEmptyText(container.id) ||
+    (container.name !== undefined && typeof container.name !== "string") ||
+    (container.dockerEnvironment !== undefined && (!container.dockerEnvironment || typeof container.dockerEnvironment !== "object" || Array.isArray(container.dockerEnvironment) ||
+      !Object.values(container.dockerEnvironment).every((value) => typeof value === "string"))))) {
+    throw malformedEvidence(`lease ${String(allocation.id)} container owner`);
+  }
+}
+
 function stableOffset(value: string, size: number): number {
   if (size <= 1) return 0;
   return Number.parseInt(createHash("sha256").update(value).digest("hex").slice(0, 8), 16) % size;
@@ -331,10 +369,14 @@ export class FilePortRegistry {
   }
 
   public async read(): Promise<RegistryState> {
+    return await this.readState(true);
+  }
+
+  private async readState(normalize: boolean): Promise<RegistryState> {
     try {
       const state = JSON.parse(await readFile(this.filePath, "utf8")) as RegistryState;
       if (state.version !== 1 || !Array.isArray(state.allocations) || !Array.isArray(state.invocations)) throw new Error("Unsupported registry schema");
-      recordLeaseOwnerTimes(state);
+      if (normalize) recordLeaseOwnerTimes(state);
       return state;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return structuredClone(EMPTY);
@@ -746,6 +788,46 @@ export class FilePortRegistry {
     for (const invocation of state.invocations.filter((item) => item.instanceId === instanceId)) {
       if (CLAIM_STATES.has(invocation.state) && invocation.state !== "ready" && recentlyRefreshed(invocation)) return true;
       if (await journalMayRun(state, invocation)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Affirmative evidence that a ready lifecycle of this instance serves
+   * targetPort right now: its active TCP lease on that port names a process
+   * whose identity is verified running, or a container Docker reports
+   * running. Unlike instanceMayRun this is authorization evidence, so an
+   * unverifiable identity, an unresolved launch, an owner-less legacy
+   * invocation, a lease recorded for another lifecycle or any other
+   * uncertainty is false, and malformed evidence of this instance throws
+   * DEVFN_REGISTRY_INVALID. The registry is never rewritten. Callers hold the
+   * routing lock across this check and the action it permits.
+   */
+  public async instanceServesPort(instanceId: string, targetPort: number): Promise<boolean> {
+    const state = await withRoutingLock(path.dirname(this.filePath), async () => await this.readState(false));
+    if (!state.invocations.every((item) => isRecord(item) && nonEmptyText(item.instanceId)) || !state.allocations.every(servingSelectable)) throw malformedEvidence("registry entry");
+    const invocations = state.invocations.filter((invocation) => invocation.instanceId === instanceId);
+    for (const invocation of invocations) assertServingInvocation(invocation);
+    const leases = state.allocations.filter((allocation) => invocations.some((invocation) => allocation.invocationId === invocation.id) &&
+      allocation.state === "active" && allocation.protocol === "tcp" && allocation.port === targetPort);
+    // Only these leases' owner evidence is checked, as persisted: normalization would read a malformed record time as an earlier release's absent one.
+    for (const allocation of leases) assertServingOwner(allocation);
+    for (const invocation of invocations) {
+      if (invocation.state !== "ready" || invocation.ownerJournal !== true || invocation.launching?.length || invocation.composeLaunches) continue;
+      for (const allocation of leases) {
+        if (allocation.invocationId !== invocation.id) continue;
+        // A lease joined to this invocation by id alone, but recorded for another lifecycle, is no evidence for it.
+        if (allocation.instanceId !== invocation.instanceId || allocation.projectId !== invocation.projectId) continue;
+        if (!allocation.process && !allocation.container) continue;
+        // A process recorded without a birth signature cannot be verified as the same process.
+        if (allocation.process && allocation.process.birthSignature === undefined) continue;
+        // An earlier release's owner was recorded at activation. A record is written only after a live owner's signature is read, so a later one proves nothing.
+        const recordedAt = allocation.process?.recordedAt ?? allocation.updatedAt;
+        if (allocation.process && !(Date.parse(recordedAt) <= Date.now())) continue;
+        if (allocation.process && await processIdentityStatus(allocation.process.pid, allocation.process.birthSignature, recordedAt) !== "running") continue;
+        if (allocation.container && await inspectContainerRunning(allocation.container) !== true) continue;
+        return true;
+      }
     }
     return false;
   }
