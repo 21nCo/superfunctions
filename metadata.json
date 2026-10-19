@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59J783D7ZXPVJE4BV92NPHN",
+  "strategy": "manual-commit",
+  "branch": "codex/docsfn-next-to-dev-20260829",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docsfn/cli/src/migrate-docusaurus.ts",
+    "docsfn/cli/tests/migration-route-safety.test.mjs",
+    "docsfn/core/src/markdown.test.ts",
+    "docsfn/core/src/markdown.ts",
+    "docsfn/core/src/sanitize.ts",
+    "docsfn/core/src/security.test.ts",
+    "docsfn/core/src/url-safety.ts",
+    "docsfn/react/src/VersionSwitcher.test.tsx",
+    "docsfn/react/src/VersionSwitcher.tsx",
+    "docsfn/svelte/src/VersionSwitcher.svelte",
+    "docsfn/svelte/src/VersionSwitcher.test.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ]
+}
