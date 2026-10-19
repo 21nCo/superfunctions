@@ -1,0 +1,37 @@
+authfn/docs/content/docs/admin/super-console.md
+  s_7d0a48f0aaecda::t_18278bd5057d28 21
+authfn/docs/content/docs/ai-resources/index.md
+  s_7d0a48f0aaecda::t_8127b93962ad45 19
+authfn/docs/content/docs/frameworks/nextjs.md
+  s_7d0a48f0aaecda::t_966ee3337933c8 19
+authfn/docs/content/docs/index.md
+  s_7d0a48f0aaecda::t_9810a5852fc38e 72
+authfn/docs/content/docs/quickstart/nextjs.md
+  s_7d0a48f0aaecda::t_7872b66456ac54 69
+authfn/docs/static/llms-full.txt
+  s_0817bf7a3ba0b4::t_e37e5d3a461cde 1195,1346,4702,5108,7375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d6ddb92b136817cb8c509544ff4bc996775fefb",
+  "prompts": {},
+  "sessions": {
+    "s_0817bf7a3ba0b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a1cf80bd3219acca8",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
