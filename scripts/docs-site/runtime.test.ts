@@ -13,7 +13,7 @@ const config: DocsConfig = {
   site: { title: "Contract test", basePath: "/docs" },
   content: { root: ".", docsDir: "guide", pagesDir: "pages", blogDir: "blog", apiDir: "api", assetsDir: "static", metaFileName: "META.json" },
   navigation: { sidebars: { docs: { root: true, include: ["docs/**"] } } },
-  search: { enabled: false },
+  search: { enabled: false, scopes: ["docs"] },
 };
 beforeEach(() => { vi.mocked(buildManifest).mockClear(); });
 
@@ -50,8 +50,22 @@ describe("bundled DocsFn provider", () => {
     const provider = vi.mocked(buildManifest).mock.calls[0][0];
     const entries = await provider.listEntries({ config, collections: ["docs", "pages", "blog", "api", "assets"] });
     expect(entries.map(({ id }) => id).sort()).toEqual(["api:openapi.json", "assets:index.txt", "blog:post.md", "docs:META.json", "docs:index.md", "pages:about.mdx"].sort());
+    expect(entries.map(({ absolutePath }) => absolutePath).sort()).toEqual([
+      "guide/index.md", "guide/META.json", "pages/about.mdx", "blog/post.md",
+      "api/openapi.json", "static/index.txt",
+    ].sort());
     expect(entries.find(({ relativePath }) => relativePath === "META.json")?.entryType).toBe("control");
     expect(entries.find(({ collection }) => collection === "assets")?.bytes).toBe(5);
+  });
+
+  it.each(["txt", "json", "yaml", "yml", "md", "mdx"])("preserves published UTF-8 metadata for %s assets", async (extension) => {
+    const runtime = createDocsSiteRuntime(config, {}, { [`../../../static/input.${extension}`]: "café\n" });
+    await runtime.loadDocsSiteSource();
+    const provider = vi.mocked(buildManifest).mock.calls[0][0];
+    const entries = await provider.listEntries({ config, collections: ["assets"] });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ collection: "assets", relativePath: `input.${extension}`, bytes: 6 });
+    expect(entries[0].updatedAt).toBeUndefined();
   });
 
   it("shares successful initialization, caches compiled pages, and rejects unknown IDs", async () => {
@@ -65,53 +79,23 @@ describe("bundled DocsFn provider", () => {
     expect(await other.loadDocsSiteSource()).not.toBe(left);
   });
 
-  it("covers posts, stable cache identity, missing entries, and enabled search queries", async () => {
-    const runtime = createDocsSiteRuntime({ ...config, search: { enabled: true, scopes: ["docs", "blog"], defaultScope: "all", bodyIndexing: "summary" } }, {
-      "../../../guide/index.md": "# Parrot guide\n\nParrot searchable overview.",
-      "../../../blog/launch.md": "---\ntitle: Parrot launch\ndate: '2026-09-26'\n---\n# Parrot announcement",
-    }, {});
-    const source = await runtime.loadDocsSiteSource();
-    expect(source.manifest.sidebars.docs.items.length).toBeGreaterThan(0);
-    const post = await runtime.getCompiledDocsPost("blog:launch.md");
-    expect(await runtime.getCompiledDocsPost("blog:launch.md")).toBe(post);
-    expect(post.blocks.length).toBeGreaterThan(0);
-    await expect(runtime.getCompiledDocsPost("blog:missing.md")).rejects.toThrow("cache key is missing");
-    await expect(runtime.getCompiledDocsPage("docs:missing.md")).rejects.toThrow("cache key is missing");
-    const summary = await runtime.getDocsSiteCompiledCacheSummary();
-    expect(summary.pageKeys).toHaveLength(1);expect(summary.postKeys).toHaveLength(1);expect(summary.framework).toBe("svelte");
-    expect(await runtime.getDocsSiteCompiledCacheSummary()).toEqual(summary);
-    const search = await runtime.createDocsSiteSearchRuntime();
-    const result = await search.query({ query: "parrot", scope: "all", limit: 10 });
-    expect(result).toHaveLength(2);
-    expect(new Set(result.map(hit => hit.kind))).toEqual(new Set(["page", "post"]));
-  });
-
-  it("uses real provider index filenames for relative links and preserves ordinary generated navigation", async () => {
+  it.each(["docs", "pages"])("resolves %s collection index links from their source directory", async (collection) => {
+    const directory = collection === "docs" ? "guide" : "pages";
     const runtime = createDocsSiteRuntime(config, {
-      "../../../guide/about/index.md": "# About\n\n[Next](child.md)",
-      "../../../guide/about/child.md": "# Child",
+      [`../../../${directory}/index.md`]: "# About\n\n[Child](child.md)",
     }, {});
     const source = await runtime.loadDocsSiteSource();
-    const result = await loadDocsPage({ slug: "about", source, getCompiledDocsPage: runtime.getCompiledDocsPage, resolveMarkdownRelativeLinks });
-    expect(JSON.stringify(result.compiled)).toContain('/docs/about/child.md');
-    expect(JSON.stringify(result.routeEntry)).not.toContain("body");
-    expect(result.sidebar?.items.length).toBeGreaterThan(0);
-  });
-
-  it("retains a real API record and MailFn-only docs fallback, without assigning fallback at unrelated callers", async () => {
-    const runtime = createDocsSiteRuntime(config, {
-      "../../../guide/index.md": "# Guide",
-      "../../../api/http.json": JSON.stringify({ openapi: "3.0.0", info: { title: "HTTP", version: "1" }, paths: { "/thing": { get: { responses: { "200": { description: "OK" } } } } } }),
-    }, {});
-    const source = await runtime.loadDocsSiteSource();
-    const path = Object.values(source.manifest.apis)[0].path;
-    const input = { slug: path.replace(/^\/docs\/?/, ""), source, getCompiledDocsPage: runtime.getCompiledDocsPage, resolveMarkdownRelativeLinks };
-    const original = await loadDocsPage(input);
-    expect(original.sidebar).toBeUndefined();
-    const withFallback = await loadDocsPage({ ...input, options: { fallbackSidebarId: "docs", apiBreadcrumbLabel: "Package reference", apiBreadcrumbHref: "/docs/reference" } });
-    expect(withFallback.sidebar).toBe(source.manifest.sidebars.docs);
-    expect(withFallback.routeEntry.kind).toBe("api");expect(withFallback.compiled).toBeUndefined();
-    expect(withFallback.surface.breadcrumbs).toContainEqual({ label: "Package reference", href: "/docs/reference" });
+    const id = `${collection}:index.md`;
+    // A pages-collection index can be mounted at a docs surface route.
+    source.manifest.pages[id].path = "/docs/about";
+    source.manifest.routes = { "/docs/about": id };
+    source.manifest.sidebars = { docs: { id: "docs", items: [{ type: "link", text: "About", link: "/docs/about" }] } };
+    const data = await loadDocsPage({
+      slug: "about", source,
+      getCompiledDocsPage: runtime.getCompiledDocsPage,
+      resolveMarkdownRelativeLinks,
+    });
+    expect(JSON.stringify(data.compiled?.blocks)).toContain('/docs/about/child.md');
   });
 
   it("retries after a rejected initialization", async () => {

@@ -53,9 +53,9 @@ function productsFromChangedFiles() {
       for (const productId of existingProductIds()) selectExisting(productId);
       continue;
     }
-    if (/^docsfn\//.test(file)) return existingProductIds();
+    if (/^(apifn\/docsfn|docsfn)\//.test(file)) return existingProductIds();
     if (/^datafn\/docs\//.test(file)) selectExisting("datafn");
-    if (file.startsWith("mailfn/docs/")) selectExisting("mailfn");
+    if (/^extfn\/docs\//.test(file)) selectExisting("extfn");
     if (/^filefn\/docs\//.test(file)) selectExisting("filefn");
     if (/^searchfn\/docs\//.test(file)) selectExisting("searchfn");
     if (/^authfn\/docs\//.test(file)) selectExisting("authfn");

@@ -5,37 +5,71 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { devAccountId, docsProducts } from "../cloudflare-docs/config.mjs";
+
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const consumer = process.env.DOCS_SITE_DIR ? join(process.env.DOCS_SITE_DIR,"package.json") : process.env.npm_package_json ?? join(process.cwd(),"package.json");
-const require = createRequire(consumer);const pins = JSON.parse(readFileSync(consumer,"utf8")).dependencies;
-function put(base,file,text,mode){const target=join(base,file);mkdirSync(dirname(target),{recursive:true});writeFileSync(target,text,mode?{mode}:undefined);}
-function execute(base,args,env={}){return execFileSync(process.execPath,args,{cwd:base,encoding:"utf8",env:{...process.env,...env}});}
-it.each(["mailfn","authfn","filefn"])("%s generator separates public targets from asset role, preserving defaults",product=>{
- const base=mkdtempSync(join(tmpdir(),"docs-origin-"));
- try{
-  for(const file of ["package.json","docsfn.config.ts","scripts/generate-llms.mjs"])put(base,`${product}/docs/${file}`,readFileSync(join(root,product,"docs",file)));
-  put(base,"scripts/docs-site/llms.mjs",readFileSync(join(root,"scripts/docs-site/llms.mjs")));
-  cpSync(join(root,product,"docs/content"),join(base,product,"docs/content"),{recursive:true});mkdirSync(join(base,product,"docs/static"));mkdirSync(join(base,product,"docs/node_modules/@docsfn"),{recursive:true});
-  const targetPins=JSON.parse(readFileSync(join(base,product,"docs/package.json"),"utf8")).dependencies;
-  for(const dependency of ["core","provider-fs"]){expect(targetPins[`@docsfn/${dependency}`]).toBe(pins[`@docsfn/${dependency}`]);const directory=dirname(dirname(require.resolve(`@docsfn/${dependency}`)));expect(JSON.parse(readFileSync(join(directory,"package.json"),"utf8")).name).toBe(`@docsfn/${dependency}`);symlinkSync(directory,join(base,product,"docs/node_modules/@docsfn",dependency),"dir");}
-  const fallback=product==="mailfn"?"https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/":`https://${product}.com/docs/`;
-  for(const [deploy,publicOrigin,expected] of [["0","",fallback],["1",`https://dev.${product}.com`,`https://dev.${product}.com/docs/`],["1","https://public.test","https://public.test/docs/"],["1","",fallback]]){
-   execute(base,[`${product}/docs/scripts/generate-llms.mjs`],{CLOUDFLARE_DOCS_DEPLOY:deploy,CLOUDFLARE_DOCS_PUBLIC_ORIGIN:publicOrigin,CLOUDFLARE_DOCS_ASSETS_ORIGIN:"https://assets.test",DOCS_SOURCE_REF:"dev"});
-   const outputs=["llms.txt","llms-full.txt"].map(file=>readFileSync(join(base,product,"docs/static",file),"utf8"));expect(outputs[0]).toContain(expected);
-   for(const output of outputs){expect(output).not.toContain("https://assets.test");expect(output).not.toMatch(/https:\/\/(?:authfn|filefn)\.superfunctions\.dev/);}
-  }
-  if(product==="mailfn"){
-   execute(base,[`${product}/docs/scripts/generate-llms.mjs`],{CLOUDFLARE_DOCS_DEPLOY:"0",DOCS_SOURCE_REF:"release/v1"});expect(readFileSync(join(base,product,"docs/static/llms.txt"),"utf8")).toContain("blob/release%2Fv1/mailfn/");
-  }
- }finally{rmSync(base,{recursive:true,force:true});}
+const consumerPackage = process.env.DOCS_SITE_DIR
+  ? join(process.env.DOCS_SITE_DIR, "package.json")
+  : process.env.npm_package_json ?? join(process.cwd(), "package.json");
+const require = createRequire(consumerPackage);
+const pins = JSON.parse(readFileSync(consumerPackage, "utf8")).dependencies;
+function put(base, file, text, mode) {
+  const target = join(base, file); mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, text, mode ? { mode } : undefined);
+}
+function execute(base, args, env = {}) {
+  return execFileSync(process.execPath, args, { cwd: base, encoding: "utf8", env: { ...process.env, ...env } });
+}
+
+it.each(["extfn", "authfn", "filefn"])("%s generator owns public URLs independently of asset hosts", (product) => {
+  const base = mkdtempSync(join(tmpdir(), "docs-origin-"));
+  try {
+    for (const file of ["package.json", "docsfn.config.ts", "scripts/generate-llms.mjs"]) {
+      put(base, `${product}/docs/${file}`, readFileSync(join(root, product, "docs", file)));
+    }
+    put(base, "scripts/docs-site/llms.mjs", readFileSync(join(root, "scripts/docs-site/llms.mjs")));
+    cpSync(join(root, product, "docs/content"), join(base, product, "docs/content"), { recursive: true });
+    mkdirSync(join(base, product, "docs/static"));
+    mkdirSync(join(base, product, "docs/node_modules/@docsfn"), { recursive: true });
+    const fixturePins = JSON.parse(readFileSync(join(base, product, "docs/package.json"), "utf8")).dependencies;
+    for (const dependency of ["core", "provider-fs"]) {
+      expect(fixturePins[`@docsfn/${dependency}`]).toBe(pins[`@docsfn/${dependency}`]);
+      const directory = dirname(dirname(require.resolve(`@docsfn/${dependency}`)));
+      expect(JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).name).toBe(`@docsfn/${dependency}`);
+      symlinkSync(directory, join(base, product, "docs/node_modules/@docsfn", dependency), process.platform === "win32" ? "junction" : "dir");
+    }
+    for (const [deploy, publicOrigin, expected] of [["0", "", `https://${product}.com`], ["1", `https://dev.${product}.com`, `https://dev.${product}.com`], ["1", "https://public.example.test", "https://public.example.test"], ["1", "", `https://${product}.com`]]) {
+      execute(base, [`${product}/docs/scripts/generate-llms.mjs`], {
+        CLOUDFLARE_DOCS_DEPLOY: deploy, CLOUDFLARE_DOCS_PUBLIC_ORIGIN: publicOrigin,
+        CLOUDFLARE_DOCS_ASSETS_ORIGIN: "https://assets.example.test",
+      });
+      const outputs = ["llms.txt", "llms-full.txt"].map(file => readFileSync(join(base, product, "docs/static", file), "utf8"));
+      expect(outputs[0]).toContain(expected + "/docs/");
+      for (const output of outputs) {
+        expect(output).not.toContain("https://assets.example.test");
+        expect(output).not.toMatch(/https:\/\/(?:authfn|filefn)\.superfunctions\.dev/);
+      }
+    }
+  } finally { rmSync(base, { recursive: true, force: true }); }
 });
-it.skipIf(process.platform==="win32")("executing deploy CLI forwards public origin and Node compatibility in dev/live",()=>{
- const base=mkdtempSync(join(tmpdir(),"docs-deploy-"));
- try{
-  for(const file of ["scripts/cloudflare-docs/config.mjs","scripts/cloudflare-docs/deploy.mjs"])put(base,file,readFileSync(join(root,file)));
-  for(const product of ["mailfn","authfn","filefn"]){put(base,`${product}/docs/package.json`,readFileSync(join(root,product,"docs/package.json")));put(base,`${product}/docs/.svelte-kit/cloudflare/_worker.js`,"// controlled fixture\n");}
-  put(base,"bin/npx",'#!/usr/bin/env node\nrequire("node:fs").writeFileSync(process.env.CAPTURE,JSON.stringify({public:process.env.CLOUDFLARE_DOCS_PUBLIC_ORIGIN,assets:process.env.CLOUDFLARE_DOCS_ASSETS_ORIGIN}));\n',0o755);
-  put(base,"node_modules/.bin/wrangler",'#!/usr/bin/env node\nif(!process.argv.includes("--dry-run"))process.exit(99);\n',0o755);
-  for(const product of ["mailfn","authfn","filefn"])for(const environment of ["dev","live"]){const capture=join(base,"capture.json");execute(base,["scripts/cloudflare-docs/deploy.mjs",environment,`--products=${product}`,"--dry-run"],{PATH:`${join(base,"bin")}:${process.env.PATH}`,CAPTURE:capture});const host=`https://${environment==="dev"?"dev.":""}${product}.com`;expect(JSON.parse(readFileSync(capture,"utf8"))).toEqual({public:host,assets:host});expect(JSON.parse(readFileSync(join(base,product,"docs/.cloudflare-docs-wrangler.jsonc"),"utf8")).compatibility_flags).toContain("nodejs_compat");}
- }finally{rmSync(base,{recursive:true,force:true});}
+
+it.skipIf(process.platform === "win32")("actual deploy CLI forwards public targets and Node compatibility for all consumers", () => {
+  const base = mkdtempSync(join(tmpdir(), "docs-deploy-origin-"));
+  try {
+    for (const file of ["scripts/cloudflare-docs/config.mjs", "scripts/cloudflare-docs/deploy.mjs"]) put(base, file, readFileSync(join(root, file)));
+    for (const product of ["extfn", "authfn", "filefn"]) {
+      put(base, `${product}/docs/package.json`, readFileSync(join(root, product, "docs/package.json")));
+      put(base, `${product}/docs/.svelte-kit/cloudflare/_worker.js`, "// controlled built fixture\n");
+    }
+    put(base, "bin/npx", '#!/usr/bin/env node\nrequire("node:fs").writeFileSync(process.env.BUILD_CAPTURE, JSON.stringify({public:process.env.CLOUDFLARE_DOCS_PUBLIC_ORIGIN,assets:process.env.CLOUDFLARE_DOCS_ASSETS_ORIGIN}));\n', 0o755);
+    put(base, "node_modules/.bin/wrangler", '#!/usr/bin/env node\nif (!process.argv.includes("--dry-run")) process.exit(99);\n', 0o755);
+    for (const product of ["extfn", "authfn", "filefn"]) for (const environment of ["dev", "live"]) {
+      const capture = join(base, "capture.json");
+      execute(base, ["scripts/cloudflare-docs/deploy.mjs", environment, `--products=${product}`, "--dry-run"], { PATH: `${join(base, "bin")}:${process.env.PATH}`, BUILD_CAPTURE: capture, CLOUDFLARE_ACCOUNT_ID: environment === "dev" ? devAccountId : "" });
+      const host = `https://${docsProducts[product].hosts[environment]}`;
+      expect(JSON.parse(readFileSync(capture, "utf8"))).toEqual({ public: host, assets: host });
+      const config = JSON.parse(readFileSync(join(base, product, "docs/.cloudflare-docs-wrangler.jsonc"), "utf8"));
+      expect(config.compatibility_flags).toContain("nodejs_compat");
+    }
+  } finally { rmSync(base, { recursive: true, force: true }); }
 });
