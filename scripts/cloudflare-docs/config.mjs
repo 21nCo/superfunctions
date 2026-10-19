@@ -21,6 +21,16 @@ export const docsProducts = {
       live: "reviewfn.com",
     },
   },
+  botfn: {
+    packageName: "@superfunctions/botfn-docs",
+    docsDir: "botfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "botfn.com",
+    hosts: {
+      dev: "botfn.21n.site",
+      live: "botfn.com",
+    },
+  },
   langfn: {
     packageName: "@langfn/docs",
     docsDir: "langfn/docs",
