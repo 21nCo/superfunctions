@@ -266,6 +266,7 @@ CiFn enforces the following limits to ensure reasonable resource usage and valid
 
 | Resource | Limit | Enforcement |
 |----------|-------|-------------|
+| Control-plane HTTP request envelope | 1 MiB | HTTP 413 PAYLOAD_TOO_LARGE, including streamed bodies |
 | Pipeline document size | 500 KB | Parse-time rejection |
 | Jobs per pipeline | 100 | Validation-time rejection |
 | Steps per job | 100 | Validation-time rejection |

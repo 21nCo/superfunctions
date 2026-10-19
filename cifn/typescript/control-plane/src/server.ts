@@ -1,4 +1,4 @@
-import { createServer } from 'node:http';
+import { createControlPlaneServer } from './http-server.js';
 import { createApp } from './api/routes.js';
 import { parseAdapterConfig, validateAdapterConfig } from './integrations/config.js';
 import { createQueueAdapter } from './integrations/flowfn.js';
@@ -49,41 +49,7 @@ const webhookSecret = process.env.CIFN_WEBHOOK_SECRET;
 
 const { app } = createApp({ adapters, webhookSecret });
 
-const server = createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
-
-  if (url.pathname === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true }));
-    return;
-  }
-
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (value) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
-  }
-
-  const bodyParts: Buffer[] = [];
-  for await (const chunk of req) {
-    bodyParts.push(chunk);
-  }
-  const body = Buffer.concat(bodyParts);
-
-  const request = new Request(url.toString(), {
-    method: req.method,
-    headers,
-    body: ['GET', 'HEAD'].includes(req.method ?? 'GET') ? undefined : body,
-  });
-
-  const response = await app.fetch(request);
-
-  const respHeaders: Record<string, string> = {};
-  response.headers.forEach((v, k) => { respHeaders[k] = v; });
-  res.writeHead(response.status, respHeaders);
-
-  const respBody = await response.arrayBuffer();
-  res.end(Buffer.from(respBody));
-});
+const server = createControlPlaneServer(app);
 
 server.listen(PORT, () => {
   console.log(`CiFn Control Plane listening on port ${PORT}`);

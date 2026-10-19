@@ -7,6 +7,7 @@ import {
 
 /** Canonical error code set per SPEC.md (v1). */
 export type ErrorCode =
+  | 'PAYLOAD_TOO_LARGE'
   | 'BAD_REQUEST'
   | 'UNAUTHORIZED'
   | 'RUNNER_TOKEN_INVALID'
@@ -34,6 +35,7 @@ export interface ErrorEnvelope {
 export type Envelope<T> = SuccessEnvelope<T> | ErrorEnvelope;
 
 const errorRegistry = createErrorRegistry([
+  { code: 'PAYLOAD_TOO_LARGE', httpStatus: 413, retryable: false },
   { code: 'BAD_REQUEST', httpStatus: 400, retryable: false },
   { code: 'UNAUTHORIZED', httpStatus: 401, retryable: false },
   { code: 'RUNNER_TOKEN_INVALID', httpStatus: 401, retryable: false },

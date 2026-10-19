@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "skipLibCheck": false,
+    "noEmit": true
+  },
+  "include": ["src/http-server.ts", "src/api/body.ts", "src/http-server.test.ts"],
+  "exclude": ["node_modules", "dist"]
+}

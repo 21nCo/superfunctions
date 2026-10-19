@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { readJsonBody, readBodyText, PayloadTooLargeError } from './body.js';
 import { MemoryStore, type CreateRunInput } from '../store/memory-store.js';
 import { validate } from '../pipeline/validator.js';
 import { parse, normalizeParsedPipeline } from '../pipeline/parser.js';
@@ -78,8 +79,9 @@ export function createApp(options: CreateAppOptions = {}) {
   api.post('/runs', async (c) => {
     let body: Record<string, unknown>;
     try {
-      body = await c.req.json();
-    } catch {
+      body = await readJsonBody(c.req.raw);
+    } catch (cause) {
+      if (cause instanceof PayloadTooLargeError) return c.json(error('PAYLOAD_TOO_LARGE', 'Request body too large'), 413);
       return c.json(error('BAD_REQUEST', 'Invalid or missing JSON body'), 400);
     }
 
@@ -323,8 +325,9 @@ export function createApp(options: CreateAppOptions = {}) {
   api.post('/runners/register', async (c) => {
     let body: { token?: string; labels?: string[] };
     try {
-      body = await c.req.json();
-    } catch {
+      body = await readJsonBody(c.req.raw);
+    } catch (cause) {
+      if (cause instanceof PayloadTooLargeError) return c.json(error('PAYLOAD_TOO_LARGE', 'Request body too large'), 413);
       return c.json(error('BAD_REQUEST', 'Invalid or missing JSON body'), 400);
     }
 
@@ -344,8 +347,9 @@ export function createApp(options: CreateAppOptions = {}) {
   api.post('/runners/heartbeat', async (c) => {
     let body: { runnerId?: string };
     try {
-      body = await c.req.json();
-    } catch {
+      body = await readJsonBody(c.req.raw);
+    } catch (cause) {
+      if (cause instanceof PayloadTooLargeError) return c.json(error('PAYLOAD_TOO_LARGE', 'Request body too large'), 413);
       return c.json(error('BAD_REQUEST', 'Invalid JSON'), 400);
     }
     const { runnerId } = body;
@@ -402,7 +406,13 @@ export function createApp(options: CreateAppOptions = {}) {
            return c.json(error('INTERNAL_ERROR', 'Webhook secret not configured'), 500);
       }
 
-      const rawBody = await c.req.text();
+      let rawBody: string;
+      try {
+        rawBody = await readBodyText(c.req.raw);
+      } catch (cause) {
+        if (cause instanceof PayloadTooLargeError) return c.json(error('PAYLOAD_TOO_LARGE', 'Request body too large'), 413);
+        throw cause;
+      }
       const signature = c.req.header('X-Hub-Signature-256') ?? '';
       const eventType = c.req.header('X-GitHub-Event') ?? '';
       const result = await handleWebhook(rawBody, signature, eventType, {
