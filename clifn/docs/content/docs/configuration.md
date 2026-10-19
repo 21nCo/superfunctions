@@ -27,7 +27,7 @@ The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module 
 
 ## Store project settings
 
-`createProjectConfig(path?)` provides a JSON store with `read`, `write`, `get`, and `set`. Supply a product-specific path; its default filename is Conduct-specific. Invalid JSON or a non-object shape raises `InvalidConfigError`. It is separate from the discovered module loader.
+`createProjectConfig(path?)` provides a JSON store with `read`, `write`, `get`, and `set`. Supply a product-specific path; the legacy default is `conduct.config.json` in `process.cwd()`, resolved once when the module is first loaded. Invalid JSON or a non-object shape raises `InvalidConfigError`. It is separate from the discovered module loader.
 
 ## Read environment values
 

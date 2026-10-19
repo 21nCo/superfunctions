@@ -36,7 +36,6 @@ import { createCredentialStore } from "@clifn/core/credentials";
 import { createProjectConfig } from "@clifn/core/config";
 import { createApiClient } from "@clifn/core/client";
 import { readJsonStdin, writeJsonStdout } from "@clifn/core/stdio";
-import { ui } from "@clifn/core/ui";
 
 const credentials = createCredentialStore();
 const config = createProjectConfig();

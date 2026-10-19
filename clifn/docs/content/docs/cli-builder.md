@@ -29,7 +29,7 @@ if (positionals[0] === "greet") {
 }
 ```
 
-In text mode, emit user-facing messages with `ctx.output`. In JSON mode, returned `data` is serialized to stdout. `RunnerOptions` also accepts `quiet`, `verbose`, `color`, `cwd`, `env`, `stdout`, `stderr`, `nonInteractive`, and an `onDiagnostics` listener. The context's `exec` and `scaffold` services inherit its working directory; `exec` also inherits its environment.
+In text mode, emit user-facing messages with `ctx.output`. In JSON mode, returned `data` is serialized to stdout. `RunnerOptions` accepts `mode` (`"text"` or `"json"`) along with `quiet`, `verbose`, `color`, `cwd`, `env`, `stdout`, `stderr`, `nonInteractive`, and an `onDiagnostics` listener. The context's `exec` and `scaffold` services inherit its working directory; `exec` also inherits its environment.
 
 Return `exitCode` for an expected product failure you have handled. An invalid or negative returned exit code normalizes to zero, so set explicit positive codes for failure cases. Thrown failures normalize to code 1. The runner does not print collected diagnostics automatically; use `onDiagnostics` or your own output policy to present them.
 

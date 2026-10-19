@@ -3,14 +3,18 @@ title: Prompts and JSON stdio
 description: Interactive input, terminal feedback, and machine-readable pipes.
 ---
 
-`@clifn/core/prompt` exports the named, preconfigured `prompt` object and `createPrompt()` for an injected ask function. It supports `select`, `multiSelect`, `text`, and `confirm`. Use the runner's `nonInteractive` flag to decide whether your command should prompt or require flags; the prompt API itself does not infer that policy.
+`@clifn/core/prompt` exports the named, preconfigured `prompt` object and `createPrompt()` for an injected ask function. It supports `select`, `multiSelect`, `text`, and `confirm`. Use the runner's `nonInteractive` flag to decide whether your command should prompt or require flags; the prompt API itself does not infer that policy. Invalid answers throw `PromptInputError` (code `CLIFN_PROMPT_INPUT_ERROR`): `confirm` accepts only y, yes, n, or no; `select` and `multiSelect` accept a listed choice or its 1-based number and also throw for an empty choice list.
 
 ```ts
 import { prompt } from "@clifn/core/prompt";
 import { ui } from "@clifn/core/ui";
 
-const target = await prompt.select("Target environment", ["local", "staging"]);
-if (await prompt.confirm(`Continue with ${target}?`)) {
+// Inside a runAction handler; `targetFlag` comes from your parsed options.
+const target = ctx.nonInteractive
+  ? targetFlag
+  : await prompt.select("Target environment", ["local", "staging"]);
+if (!target) throw new Error("--target is required in non-interactive mode");
+if (ctx.nonInteractive || (await prompt.confirm(`Continue with ${target}?`))) {
   ui.success(`selected ${target}`);
 }
 ```
