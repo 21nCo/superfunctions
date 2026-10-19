@@ -18,7 +18,7 @@ The capability lists and gets users in the configured namespace, restricted to a
 | List user sessions | `authfn.sessions.read` | Read, audited |
 | Revoke session | `authfn.sessions.revoke` | Destructive, recent-auth confirmation, audited |
 
-User deletion permanently removes the user and owned authentication state. Do not expose the capability without scope, permission, confirmation, and audit enforcement. The capability checks the namespace only when `scope.namespace` is supplied, and the region only when `scope.region` is supplied; hosts should pass both. Omitting the region allows operations across regions within the configured namespace. Hosts requiring region isolation must supply and authorize `scope.region` for every operation; these checks are additional to operator authorization.
+User deletion runs AuthFn's account-deletion cascade, which removes the user and the AuthFn records its enabled plugins manage. It does not remove application data outside AuthFn, and the steps are not a single transaction, so a failure part-way can leave partial cleanup. Do not expose the capability without scope, permission, confirmation, and audit enforcement. The capability checks the namespace only when `scope.namespace` is supplied, and the region only when `scope.region` is supplied; hosts should pass both. Omitting the region allows operations across regions within the configured namespace. Hosts requiring region isolation must supply and authorize `scope.region` for every operation; these checks are additional to operator authorization.
 
 ## Operator authentication
 
