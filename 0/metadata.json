@@ -1,0 +1,49 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59E04GFH4F9FH45N4NAH1QE",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-19T06:36:22.387841Z",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "authfn/docs/content/docs/admin/index.md",
+    "authfn/docs/content/docs/admin/super-console.md",
+    "authfn/docs/static/llms-full.txt"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "2818015989fe",
+  "checkpoint_transcript_start": 9871,
+  "transcript_lines_at_start": 9871,
+  "compact_transcript_start": 1184,
+  "session_metrics": {
+    "turn_count": 39
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-19T06:36:20.693349Z",
+    "agent_lines": 2130,
+    "agent_removed": 1428,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2130,
+    "total_lines_changed": 3558,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
