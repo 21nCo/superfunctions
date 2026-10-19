@@ -1141,7 +1141,7 @@ createAuthFnAdmin({
     "deleted": true,
     "userId": "user_123",
     "primaryEmail": "ada@example.com",
-    "counts": { "sessions": 4, "password_credentials": 1, "oauth_accounts": 2, "api_keys": 3, "two_factor_enrollments": 1 }
+    "counts": { "users": 1, "sessions": 4, "passwordCredentials": 1, "oauthAccounts": 2, "apiKeys": 3, "twoFactorEnrollments": 1 }
   },
   "requestId": "..."
 }
