@@ -1,0 +1,27 @@
+plugfn/core/README.md
+  s_7d0a48f0aaecda::t_4122e6cc93f8ba 8
+plugfn/docs/content/docs/connections-and-oauth.md
+  s_7d0a48f0aaecda::t_5ee5238a824989 56
+plugfn/docs/content/docs/getting-started.md
+  s_7d0a48f0aaecda::t_5c595a04ab265f 9
+plugfn/docs/getting-started.md
+  s_7d0a48f0aaecda::t_857040fa618c3d 8
+plugfn/docs/static/llms-full.txt
+  s_7d0a48f0aaecda::t_d58a8877bec68e 90,103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9faddaf2b1a578f353e81a5727364a67b88eaf3",
+  "prompts": {},
+  "sessions": {
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
