@@ -1,7 +1,7 @@
 devfn/ports/src/registry.ts
-  s_7d0a48f0aaecda::t_1c713995f19931 287-290,299,304,309-312,808,813,816,824-827
+  s_7d0a48f0aaecda::t_65d920ba67cbaa 287-290,299,304,309-312,808,813,816,824-827
 devfn/ports/test/registry.test.ts
-  s_7d0a48f0aaecda::t_b91979e94baffb 765-768,783-785,822,826-828,834-838,849
+  s_7d0a48f0aaecda::t_8e58f0d76b5ae0 765-768,783-785,822,826-828,834-838,849
 ---
 {
   "schema_version": "authorship/3.0.0",
