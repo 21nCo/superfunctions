@@ -5,7 +5,7 @@ description: Cloudflare setup, queues, reconciliation, and release gates.
 
 ## Cloudflare deployment inputs
 
-Use `@mailfn/cloudflare` and copy `wrangler.example.jsonc`. Provision one D1 database, one private R2 bucket, separate parse and webhook-delivery Queues with their own DLQs, an Email Routing Worker binding, and a scheduled retention trigger. Configure these secrets/variables:
+Use `@mailfn/cloudflare` and copy `wrangler.example.jsonc`. Provision one D1 database, one private R2 bucket, separate parse and webhook-delivery Queues with their own DLQs, and the scheduled retention trigger. Then configure a Cloudflare Email Routing rule (or catch-all) for `MAILFN_DOMAIN` that sends mail to this Worker; Email Routing is configured on the zone, not as a Wrangler binding. Configure these secrets/variables:
 
 - `MAILFN_DOMAIN`, `MAILFN_SECRET_KEY` (32 random bytes, hex or base64)
 - `MAILFN_STORAGE_REGION`, matching the provisioned D1 location and R2 jurisdiction; a deployment accepts only this region
@@ -13,7 +13,7 @@ Use `@mailfn/cloudflare` and copy `wrangler.example.jsonc`. Provision one D1 dat
 - `MAILFN_PROJECT_ID` after bootstrap
 - optional `MAILFN_CORS_ORIGINS`
 - optional Cloudflare API token, zone ID, and Worker name for custom domains
-- custom domains also require `CLOUDFLARE_ZONE_NAME`; it must exactly match the authorized zone ID
+- custom domains also require `CLOUDFLARE_ZONE_NAME`; it must exactly match the custom domain being enabled, which must be the apex of the zone identified by `CLOUDFLARE_ZONE_ID`
 - keep `MAILFN_PUBLIC_PLATFORM_ENABLED`, production approval, billing, and support false until separately approved
 - keep `MAILFN_PROTOCOL_SERVICES_ENABLED=false`; HTTP/MCP availability never authorizes public IMAP/SMTP/JMAP services
 

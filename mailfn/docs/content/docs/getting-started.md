@@ -30,6 +30,11 @@ const result = await scoped.waitForMessages(inbox.id, {
   after: new Date().toISOString(),
   timeoutMs: 30_000,
 });
+
+if (result.status === "matched") {
+  const verification = await scoped.extractVerification(inbox.id, result.messages[0].id, "otp");
+  console.log(verification.value, verification.sourceMessageId);
+}
 ```
 
-`waitForMessages` returns a normal `{ status: "timeout", retryable: true }` result on timeout. Cancellation uses `AbortSignal`. Filter by sender, subject, time, and expected count when multiple messages may arrive. On a matched result, call `extractVerification` explicitly to retrieve an OTP or link. The [client guide](/docs/reference/client) lists the rest of the API.
+`waitForMessages` returns a normal `{ status: "timeout", retryable: true }` result on timeout. Cancellation uses `AbortSignal`. Filter by sender, subject, time, and expected count when multiple messages may arrive. On a matched result, call `extractVerification` explicitly with `"otp"` or `"verification_link"` to retrieve the value. The [client guide](/docs/reference/client) lists the rest of the API.

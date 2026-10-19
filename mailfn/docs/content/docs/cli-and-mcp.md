@@ -11,12 +11,15 @@ The following shell example requires `jq`; it captures the explicitly revealed c
 set -eu
 export MAILFN_URL=https://mail.example.com
 # MAILFN_PROJECT_TOKEN must already contain a project token allowed to create inboxes.
-created=$(MAILFN_TOKEN="$MAILFN_PROJECT_TOKEN" mailfn inbox create --expires 3600 --idempotency-key run-123 --json --show-secrets)
+# Use one idempotency key per logical run; reuse it only when retrying that same run.
+run_id="run-$(date +%s)-$$"
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+created=$(MAILFN_TOKEN="$MAILFN_PROJECT_TOKEN" mailfn inbox create --expires 3600 --idempotency-key "$run_id" --json --show-secrets)
 MAILFN_TOKEN=$(printf '%s' "$created" | jq -er '.credential.token')
 export MAILFN_TOKEN
 inbox_id=$(printf '%s' "$created" | jq -er '.inbox.id')
 unset created
-waited=$(mailfn message wait "$inbox_id" --sender-domain example.com --subject Verify --timeout 30000 --json)
+waited=$(mailfn message wait "$inbox_id" --sender-domain example.com --subject Verify --after "$started_at" --timeout 30000 --json)
 message_id=$(printf '%s' "$waited" | jq -er 'select(.status == "matched") | .messages[0].id')
 mailfn message extract "$inbox_id" "$message_id"
 ```

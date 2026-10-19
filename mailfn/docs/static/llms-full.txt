@@ -33,12 +33,15 @@ The following shell example requires `jq`; it captures the explicitly revealed c
 set -eu
 export MAILFN_URL=https://mail.example.com
 # MAILFN_PROJECT_TOKEN must already contain a project token allowed to create inboxes.
-created=$(MAILFN_TOKEN="$MAILFN_PROJECT_TOKEN" mailfn inbox create --expires 3600 --idempotency-key run-123 --json --show-secrets)
+# Use one idempotency key per logical run; reuse it only when retrying that same run.
+run_id="run-$(date +%s)-$$"
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+created=$(MAILFN_TOKEN="$MAILFN_PROJECT_TOKEN" mailfn inbox create --expires 3600 --idempotency-key "$run_id" --json --show-secrets)
 MAILFN_TOKEN=$(printf '%s' "$created" | jq -er '.credential.token')
 export MAILFN_TOKEN
 inbox_id=$(printf '%s' "$created" | jq -er '.inbox.id')
 unset created
-waited=$(mailfn message wait "$inbox_id" --sender-domain example.com --subject Verify --timeout 30000 --json)
+waited=$(mailfn message wait "$inbox_id" --sender-domain example.com --subject Verify --after "$started_at" --timeout 30000 --json)
 message_id=$(printf '%s' "$waited" | jq -er 'select(.status == "matched") | .messages[0].id')
 mailfn message extract "$inbox_id" "$message_id"
 ```
@@ -105,9 +108,9 @@ The memory stores and no-op secret protector are for tests and local examples. A
 > Use one-time inbox credentials and narrow API permissions.
 
 
-Create inboxes with a project credential authorized for that action, then use the returned one-time inbox credential for the inbox's subsequent read and wait operations. Store it as a secret; do not log or display it by default. Revoke scoped tokens when a fixture or agent task ends.
+Create inboxes with a project credential authorized for that action, then use the returned one-time inbox credential for the inbox's subsequent read and wait operations. Store it as a secret; do not log or display it by default. Revoke scoped tokens when a fixture or agent task ends, using a project credential with `token:manage`; the inbox-scoped credential returned by `createInbox` cannot revoke tokens.
 
-The CLI sanitizes text and JSON output by command. It redacts credentials, webhook secrets, raw data, message bodies, and verification values by default. `--show-secrets` explicitly reveals one-time credentials; `--show-content` explicitly reveals message content. The MCP server exposes narrow tools and redacted results; give agents only inbox-scoped credentials for their task.
+The CLI sanitizes text and JSON output by command. It redacts credentials, webhook secrets, raw data, message bodies, and verification values by default. The exception is `message extract`, an explicit action whose output (the OTP or link) is printed unredacted. `--show-secrets` explicitly reveals one-time credentials; `--show-content` explicitly reveals message content. The MCP server exposes narrow tools and redacted results; give agents only inbox-scoped credentials for their task.
 
 Public-platform outbound remains denied without explicit production-security approval, and verified sender domains are required by default. Review the [threat model](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/threat-model.md) and [operations guide](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/operations.md) for bootstrap, token, domain, webhook, and retention responsibilities.
 
@@ -146,9 +149,14 @@ const result = await scoped.waitForMessages(inbox.id, {
   after: new Date().toISOString(),
   timeoutMs: 30_000,
 });
+
+if (result.status === "matched") {
+  const verification = await scoped.extractVerification(inbox.id, result.messages[0].id, "otp");
+  console.log(verification.value, verification.sourceMessageId);
+}
 ```
 
-`waitForMessages` returns a normal `{ status: "timeout", retryable: true }` result on timeout. Cancellation uses `AbortSignal`. Filter by sender, subject, time, and expected count when multiple messages may arrive. On a matched result, call `extractVerification` explicitly to retrieve an OTP or link. The [client guide](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/client.md) lists the rest of the API.
+`waitForMessages` returns a normal `{ status: "timeout", retryable: true }` result on timeout. Cancellation uses `AbortSignal`. Filter by sender, subject, time, and expected count when multiple messages may arrive. On a matched result, call `extractVerification` explicitly with `"otp"` or `"verification_link"` to retrieve the value. The [client guide](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/client.md) lists the rest of the API.
 
 ---
 
@@ -208,7 +216,7 @@ import { createSendFnAdapter } from "@mailfn/sendfn";
 const sendAdapter = createSendFnAdapter(sendfn);
 ```
 
-The adapter passes a stable draft idempotency key, reply `In-Reply-To` and `References`, attachment IDs, MailFn project/inbox metadata, and the logical sender address. The underlying SendFn implementation must honor idempotency keys. Public-platform outbound is gated by production-security approval, domain verification, scope, and daily quotas. See [SendFn adapter reference](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/sendfn.md) and [operations](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/operations.md).
+The adapter passes a stable draft idempotency key, reply `In-Reply-To` and `References`, attachment IDs, MailFn inbox/draft/thread metadata, and the logical sender address. The modern `sendEmail` payload does not include the project ID; the legacy `email` surface receives it as `userId` unless you override `userId` in the adapter options. The underlying SendFn implementation must honor idempotency keys. Public-platform outbound is gated by production-security approval, domain verification, scope, and daily quotas. See [SendFn adapter reference](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/sendfn.md) and [operations](https://github.com/21nCo/super-functions/blob/dev/mailfn/docs/content/docs/reference/operations.md).
 
 ---
 
@@ -226,17 +234,20 @@ The following shell example requires `jq`; it captures the explicitly revealed c
 set -eu
 export MAILFN_URL=https://mail.example.com
 # MAILFN_PROJECT_TOKEN must already contain a project token allowed to create inboxes.
-created=$(MAILFN_TOKEN="$MAILFN_PROJECT_TOKEN" mailfn inbox create --expires 3600 --idempotency-key run-123 --json --show-secrets)
+# Use one idempotency key per logical run; reuse it only when retrying that same run.
+run_id="run-$(date +%s)-$$"
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+created=$(MAILFN_TOKEN="$MAILFN_PROJECT_TOKEN" mailfn inbox create --expires 3600 --idempotency-key "$run_id" --json --show-secrets)
 MAILFN_TOKEN=$(printf '%s' "$created" | jq -er '.credential.token')
 export MAILFN_TOKEN
 inbox_id=$(printf '%s' "$created" | jq -er '.inbox.id')
 unset created
-waited=$(mailfn message wait "$inbox_id" --sender-domain example.com --subject Verify --timeout 30000 --json)
+waited=$(mailfn message wait "$inbox_id" --sender-domain example.com --subject Verify --after "$started_at" --timeout 30000 --json)
 message_id=$(printf '%s' "$waited" | jq -er 'select(.status == "matched") | .messages[0].id')
 mailfn message extract "$inbox_id" "$message_id"
 ```
 
-Commands cover inbox create/list/get/delete, message list/read/attachments/wait/extract, token revoke, domain create/verify, and operations. Text and `--json` output pass through the same command-aware sanitizer. Message bodies, raw data, credentials, webhook secrets, and verification values are redacted by default. `message extract` is an explicit content action; `--show-content` explicitly opts into message content and `--show-secrets` explicitly reveals one-time credentials.
+Commands cover inbox create/list/get/delete, message list/read/attachments/wait/extract, token revoke, domain create/verify, and operations. Text and `--json` output pass through the same command-aware sanitizer. Message bodies, raw data, credentials, webhook secrets, and verification values are redacted by default. `message extract` is an explicit content action; `--show-content` explicitly opts into message content and `--show-secrets` explicitly reveals one-time credentials. Pass `--link` to `message extract` for a verification link instead of an OTP. `token revoke` requires a credential with `token:manage`, which inbox-scoped credentials do not have; revoke with the project credential.
 
 ---
 
@@ -297,7 +308,7 @@ The package test command includes Node unit tests and a workerd integration suit
 
 These compile-only fixtures keep the reusable boundary honest:
 
-- `router-cloudflare.ts` models Router's Cloudflare Worker service shape and composes MailFn with SendFn without importing MailFn internals.
+- `router-cloudflare.ts` models Router's Cloudflare Worker service shape (fetch, email, queue, and scheduled handlers from `@mailfn/cloudflare`) without importing MailFn internals. It does not configure a SendFn adapter; the release gate exercises the checked-in SendFn service separately.
 - `framework-neutral.ts` proves an unrelated application can use the provider-neutral in-memory core and typed HTTP client.
 
 The MailFn release gate copies both fixtures into the clean tarball-install project and typechecks them there. They are validation inputs, not published packages and not production deployment configuration.
@@ -383,7 +394,7 @@ Tools cover expiring inbox creation, message wait/list/read, OTP/link extraction
 
 ## Cloudflare deployment inputs
 
-Use `@mailfn/cloudflare` and copy `wrangler.example.jsonc`. Provision one D1 database, one private R2 bucket, separate parse and webhook-delivery Queues with their own DLQs, an Email Routing Worker binding, and a scheduled retention trigger. Configure these secrets/variables:
+Use `@mailfn/cloudflare` and copy `wrangler.example.jsonc`. Provision one D1 database, one private R2 bucket, separate parse and webhook-delivery Queues with their own DLQs, and the scheduled retention trigger. Then configure a Cloudflare Email Routing rule (or catch-all) for `MAILFN_DOMAIN` that sends mail to this Worker; Email Routing is configured on the zone, not as a Wrangler binding. Configure these secrets/variables:
 
 - `MAILFN_DOMAIN`, `MAILFN_SECRET_KEY` (32 random bytes, hex or base64)
 - `MAILFN_STORAGE_REGION`, matching the provisioned D1 location and R2 jurisdiction; a deployment accepts only this region
@@ -391,7 +402,7 @@ Use `@mailfn/cloudflare` and copy `wrangler.example.jsonc`. Provision one D1 dat
 - `MAILFN_PROJECT_ID` after bootstrap
 - optional `MAILFN_CORS_ORIGINS`
 - optional Cloudflare API token, zone ID, and Worker name for custom domains
-- custom domains also require `CLOUDFLARE_ZONE_NAME`; it must exactly match the authorized zone ID
+- custom domains also require `CLOUDFLARE_ZONE_NAME`; it must exactly match the custom domain being enabled, which must be the apex of the zone identified by `CLOUDFLARE_ZONE_ID`
 - keep `MAILFN_PUBLIC_PLATFORM_ENABLED`, production approval, billing, and support false until separately approved
 - keep `MAILFN_PROTOCOL_SERVICES_ENABLED=false`; HTTP/MCP availability never authorizes public IMAP/SMTP/JMAP services
 
@@ -450,7 +461,7 @@ import { createSendFnAdapter } from '@mailfn/sendfn';
 const adapter = createSendFnAdapter(sendfn);
 ```
 
-The adapter prefers SendFn's modern `sendEmail` surface and supports the legacy `email` surface without embedding provider implementations in MailFn. It preserves a stable draft idempotency key, reply `In-Reply-To`/`References`, attachment IDs, MailFn project/inbox metadata, and the logical sender address. The underlying SendFn delivery implementation must honor the idempotency key. Public-platform outbound remains subject to MailFn production-security, domain, scope, and daily-quota gates.
+The adapter prefers SendFn's modern `sendEmail` surface and supports the legacy `email` surface without embedding provider implementations in MailFn. It preserves a stable draft idempotency key, reply `In-Reply-To`/`References`, attachment IDs, MailFn inbox/draft/thread metadata, and the logical sender address. The underlying SendFn delivery implementation must honor the idempotency key. Public-platform outbound remains subject to MailFn production-security, domain, scope, and daily-quota gates.
 
 ---
 

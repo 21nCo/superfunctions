@@ -5,7 +5,7 @@ description: Typechecked integration shapes used by the release gate.
 
 These compile-only fixtures keep the reusable boundary honest:
 
-- `router-cloudflare.ts` models Router's Cloudflare Worker service shape and composes MailFn with SendFn without importing MailFn internals.
+- `router-cloudflare.ts` models Router's Cloudflare Worker service shape (fetch, email, queue, and scheduled handlers from `@mailfn/cloudflare`) without importing MailFn internals. It does not configure a SendFn adapter; the release gate exercises the checked-in SendFn service separately.
 - `framework-neutral.ts` proves an unrelated application can use the provider-neutral in-memory core and typed HTTP client.
 
 The MailFn release gate copies both fixtures into the clean tarball-install project and typechecks them there. They are validation inputs, not published packages and not production deployment configuration.

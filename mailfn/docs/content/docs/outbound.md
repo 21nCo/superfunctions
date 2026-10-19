@@ -11,4 +11,4 @@ import { createSendFnAdapter } from "@mailfn/sendfn";
 const sendAdapter = createSendFnAdapter(sendfn);
 ```
 
-The adapter passes a stable draft idempotency key, reply `In-Reply-To` and `References`, attachment IDs, MailFn project/inbox metadata, and the logical sender address. The underlying SendFn implementation must honor idempotency keys. Public-platform outbound is gated by production-security approval, domain verification, scope, and daily quotas. See [SendFn adapter reference](/docs/reference/sendfn) and [operations](/docs/reference/operations).
+The adapter passes a stable draft idempotency key, reply `In-Reply-To` and `References`, attachment IDs, MailFn inbox/draft/thread metadata, and the logical sender address. The modern `sendEmail` payload does not include the project ID; the legacy `email` surface receives it as `userId` unless you override `userId` in the adapter options. The underlying SendFn implementation must honor idempotency keys. Public-platform outbound is gated by production-security approval, domain verification, scope, and daily quotas. See [SendFn adapter reference](/docs/reference/sendfn) and [operations](/docs/reference/operations).
