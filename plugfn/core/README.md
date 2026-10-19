@@ -5,7 +5,7 @@ PlugFn for TypeScript is the reference runtime for the shared PlugFn product con
 ## Install
 
 ```bash
-npm install plugfn @superfunctions/db @superfunctions/http
+npm install plugfn @superfunctions/db@0.2.0 @superfunctions/http@0.2.0
 ```
 
 ## Quick start

@@ -87,7 +87,7 @@ if (selected) {
 }
 ```
 
-Treat `expired`, `revoked`, and `error` status as unavailable until the connection is recovered or reauthorized. `PlugFnClientError` exposes `code`, `status`, `retryable`, and `details`. An ownership mismatch is an authorization failure, not a signal to retry under a different caller-supplied tenant. `GET /connections` and `GET /connections/:connectionId` return the stored connection record, which includes its encrypted credential envelope (`credentials`) but never decrypted tokens; `getConnectionStatus` returns only `id`, `provider`, and `status`. Use the status call when the browser only needs availability.
+Treat `expired`, `revoked`, and `error` status as unavailable until the connection is recovered or reauthorized. `PlugFnClientError` exposes `code`, `status`, `retryable`, and `details`. An ownership mismatch is an authorization failure, not a signal to retry under a different caller-supplied tenant. `GET /connections` and `GET /connections/:connectionId` return the stored connection record, which includes its encrypted credential envelope (`credentials`) but never decrypted tokens; `GET /connections/:connectionId/status` returns a `connection` object with only `id`, `provider`, and `status`, and the client's `getConnectionStatus` resolves to just the status string. Use the status call when the browser only needs availability.
 
 ---
 
@@ -100,7 +100,7 @@ Treat `expired`, `revoked`, and `error` status as unavailable until the connecti
 Install the runtime, provider package, and shared adapters:
 
 ```sh
-npm install plugfn @plugfn/providers @plugfn/client @superfunctions/db @superfunctions/http@0.2.0 @superfunctions/http-express@0.2.0 express
+npm install plugfn @plugfn/providers @plugfn/client @superfunctions/db@0.2.0 @superfunctions/http@0.2.0 @superfunctions/http-express@0.2.0 express
 ```
 
 Supply a durable database adapter and provision its schema before serving requests.

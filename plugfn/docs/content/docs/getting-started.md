@@ -6,7 +6,7 @@ description: Configure a TypeScript runtime and mount owned routes.
 Install the runtime, provider package, and shared adapters:
 
 ```sh
-npm install plugfn @plugfn/providers @plugfn/client @superfunctions/db @superfunctions/http@0.2.0 @superfunctions/http-express@0.2.0 express
+npm install plugfn @plugfn/providers @plugfn/client @superfunctions/db@0.2.0 @superfunctions/http@0.2.0 @superfunctions/http-express@0.2.0 express
 ```
 
 Supply a durable database adapter and provision its schema before serving requests.
