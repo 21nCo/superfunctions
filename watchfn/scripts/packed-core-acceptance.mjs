@@ -49,14 +49,14 @@ async function check(WatchFn) {
   for (const version of ['18.18.0', '20.19.0', '22']) {
     for (const file of ['smoke.mjs', 'smoke.cjs']) console.log(npm(['exec', '--yes', `--package=node@${version}`, '--', 'node', file]).trim());
   }
-  writeFileSync(join(temporary, 'consumer.mts'), `import {WatchFn} from '@watchfn/core';
-const watch = new WatchFn({name:'typed',storage:'memory'}); void watch.httpRouter;`);
-  writeFileSync(join(temporary, 'consumer.cts'), `import {WatchFn} from '@watchfn/core'; const watch = new WatchFn({name:'typed',storage:'memory'}); void watch.httpRouter;`);
-  for (const mode of ['Node16', 'NodeNext']) execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts'], { cwd: temporary, stdio: 'pipe', encoding: 'utf8' });
+  writeFileSync(join(temporary, 'consumer.mts'), `import {WatchFn, getWatchFnSchema} from '@watchfn/core';
+export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema();`);
+  writeFileSync(join(temporary, 'consumer.cts'), `import {WatchFn, getWatchFnSchema} from '@watchfn/core'; export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema();`);
+  for (const mode of ['Node16', 'NodeNext']) execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts'], { cwd: temporary, stdio: 'pipe', encoding: 'utf8' });
   // Use Node declarations contemporary with the promised compiler floor;
   // current @types/node releases can independently require a newer compiler.
   npm(['install', '--save-dev', '--ignore-scripts', '--no-audit', '--no-fund', '@types/node@18.16.19']);
-  for (const mode of ['Node16', 'NodeNext']) npm(['exec', '--yes', '--package=typescript@5.0.4', '--', 'tsc', '--noEmit', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts']);
+  for (const mode of ['Node16', 'NodeNext']) npm(['exec', '--yes', '--package=typescript@5.0.4', '--', 'tsc', '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts']);
   console.log('TypeScript 5.0.4 consumer declarations passed');
   let audit;
   try { audit = JSON.parse(npm(['audit', '--omit=dev', '--json'])); }

@@ -42,4 +42,19 @@ for (const [path, code] of declarations) {
   await mkdir(dirname(destination), { recursive: true });
   await writeFile(destination, code);
 }
+// Keep the public root self-contained. TypeScript 5.0 cannot always name
+// inferred return types re-exported through a private shared chunk. Adapters
+// already reference public root identities in the multi-entry graph above.
+for (const extension of ['ts', 'mts']) {
+  const path = join(root, `dist/index.d.${extension}`);
+  const rootBundle = await rollup({ input: path,
+    external: id => !id.startsWith('.') && !isAbsolute(id),
+    plugins: [dts({ respectExternal: true })],
+  });
+  try {
+    const { output } = await rootBundle.generate({ format: 'es' });
+    if (output.length !== 1 || output[0].type !== 'chunk') throw new Error('Expected a single public declaration entry');
+    await writeFile(path, output[0].code);
+  } finally { await rootBundle.close(); }
+}
 console.log(`Bundled declarations for ${Object.keys(input).length} entry points`);
