@@ -148,13 +148,13 @@ function buildGroups(): VectorGroup[] {
       name: 'contracts',
       vectorIds: ['TV-CONFIG-001'],
       fixtures: [],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/contracts/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'packages/contracts/test']),
     },
     {
       name: 'dev-server',
       vectorIds: ['TV-SESSION-001', 'TV-SESSION-002'],
       fixtures: ['vite-healthy', 'vite-hangs'],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/dev-server/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'packages/dev-server/test']),
     },
     {
       name: 'browser-runner',
@@ -166,7 +166,7 @@ function buildGroups(): VectorGroup[] {
         'TV-ACTION-004',
       ],
       fixtures: ['vite-healthy', 'vite-ambiguous', 'vite-overlay'],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/browser-runner/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'packages/browser-runner/test']),
     },
     {
       name: 'core',
@@ -176,43 +176,43 @@ function buildGroups(): VectorGroup[] {
         'TV-DETERMINISM-002',
       ],
       fixtures: ['vite-healthy', 'vite-auth'],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/core/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'packages/core/test']),
     },
     {
       name: 'storage',
       vectorIds: ['TV-STORAGE-001', 'TV-LIMITS-001'],
       fixtures: [],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/storage/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'packages/storage/test']),
     },
     {
       name: 'design-analyzers',
       vectorIds: ['TV-DESIGN-001', 'TV-DESIGN-002'],
       fixtures: ['vite-overflow', 'vite-token-drift'],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/analyzers/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'packages/analyzers/test']),
     },
     {
       name: 'visual-baselines',
       vectorIds: ['TV-BASELINE-001', 'TV-BASELINE-002', 'TV-BASELINE-003'],
       fixtures: ['vite-regression', 'vite-healthy'],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/visual-baselines/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'packages/visual-baselines/test']),
     },
     {
       name: 'session-reporter',
       vectorIds: ['TV-DEBUG-001', 'TV-REPORT-001', 'TV-OBS-001'],
       fixtures: ['vite-console-error', 'vite-healthy'],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/session-reporter/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'packages/session-reporter/test']),
     },
     {
       name: 'mcp-server',
       vectorIds: ['TV-MCP-001'],
       fixtures: ['vite-console-error'],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/mcp-server/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'packages/mcp-server/test']),
     },
     {
       name: 'cli',
       vectorIds: ['TV-CLI-001'],
       fixtures: ['vite-healthy'],
-      run: () => runNpm(['test', '--workspace=probefn', '--', 'apps/cli/test']),
+      run: () => runNpm(['test', '--workspace=@probefn/workspace', '--', 'apps/cli/test']),
     },
     {
       name: 'cli-runtime-flows',
@@ -487,7 +487,7 @@ async function safeStopSession(
 ): Promise<void> {
   await runCommand(
     process.platform === 'win32' ? 'npm.cmd' : 'npm',
-    ['run', '--silent', 'probefn', '--workspace=probefn', '--', 'session', 'stop', '--session', sessionId, '--json'],
+    ['run', '--silent', 'probefn', '--workspace=@probefn/workspace', '--', 'session', 'stop', '--session', sessionId, '--json'],
     repoRoot,
     envOverrides,
   ).catch(() => undefined);
@@ -510,7 +510,7 @@ async function runNpm(
   envOverrides: Record<string, string> = {},
 ): Promise<CommandResult> {
   const command = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const npmArgs = args[0] === 'probefn' ? ['run', '--silent', 'probefn', '--workspace=probefn', '--', ...args.slice(1)] : args;
+  const npmArgs = args[0] === 'probefn' ? ['run', '--silent', 'probefn', '--workspace=@probefn/workspace', '--', ...args.slice(1)] : args;
   const result = await runCommand(command, npmArgs, repoRoot, envOverrides);
   if (result.exitCode !== 0) {
     throw new Error([

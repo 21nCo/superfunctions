@@ -35,14 +35,14 @@ rejected to prevent cross-environment access.
 
 ## Workspace commands
 
-ProbeFn uses the root Superfunctions npm lock and Turbo graph. The `probefn`
+ProbeFn uses the root Superfunctions npm lock and Turbo graph. The `@probefn/workspace`
 workspace owns integration tests and their cross-package development dependencies;
 private runtime packages keep an acyclic production dependency graph. Run
-`npx turbo run test typecheck --filter=probefn` from the repository root, or
-`npm test --workspace=probefn -- packages/contracts/test` for a focused suite.
+`npx turbo run test typecheck --filter=@probefn/workspace` from the repository root, or
+`npm test --workspace=@probefn/workspace -- packages/contracts/test` for a focused suite.
 The MCP dependency must be built first (`npm run build --workspace=@mcpfn/core`)
 when invoking tests directly instead of through Turbo. Install the matching
-browser using `npm exec --workspace=probefn -- playwright install chromium`.
+browser using `npm exec --workspace=@probefn/workspace -- playwright install chromium`.
 Private runtime packages still expose TypeScript source; this is not a published
 npm package build or full browser support guarantee.
 
@@ -50,10 +50,10 @@ npm package build or full browser support guarantee.
 
 ```bash
 npm ci # from the Superfunctions repository root
-npm run test:vectors --workspace=probefn
-npm run --silent probefn --workspace=probefn -- session start --config test/fixtures/vite-healthy/probefn.config.ts --mode mixed --browser chromium --json
-npm run --silent probefn --workspace=probefn -- checkpoint create --session sess_healthy --name landing --json
-npm run --silent probefn --workspace=probefn -- audit design --session sess_healthy --checkpoint chk_landing --json
+npm run test:vectors --workspace=@probefn/workspace
+npm run --silent probefn --workspace=@probefn/workspace -- session start --config test/fixtures/vite-healthy/probefn.config.ts --mode mixed --browser chromium --json
+npm run --silent probefn --workspace=@probefn/workspace -- checkpoint create --session sess_healthy --name landing --json
+npm run --silent probefn --workspace=@probefn/workspace -- audit design --session sess_healthy --checkpoint chk_landing --json
 ```
 
 ## Docs
@@ -66,11 +66,11 @@ npm run --silent probefn --workspace=probefn -- audit design --session sess_heal
 ## Key Commands
 
 ```bash
-npm run --silent probefn --workspace=probefn -- session start --config test/fixtures/vite-healthy/probefn.config.ts --mode mixed --browser chromium --json
-npm run --silent probefn --workspace=probefn -- page find --session sess_healthy --query "Save button" --json
-npm run --silent probefn --workspace=probefn -- checkpoint create --session sess_healthy --name landing --include-trace --include-styles --json
-npm run --silent probefn --workspace=probefn -- report export --session sess_healthy --format json
-npm run --silent probefn --workspace=probefn -- run flow --session sess_console_error --file test/fixtures/vite-console-error/flows/trigger-error.yaml --json
-npm run --silent probefn --workspace=probefn -- auth profile save --session sess_auth --profile customer-admin --json
-npm run --silent probefn --workspace=probefn -- mcp serve --stdio
+npm run --silent probefn --workspace=@probefn/workspace -- session start --config test/fixtures/vite-healthy/probefn.config.ts --mode mixed --browser chromium --json
+npm run --silent probefn --workspace=@probefn/workspace -- page find --session sess_healthy --query "Save button" --json
+npm run --silent probefn --workspace=@probefn/workspace -- checkpoint create --session sess_healthy --name landing --include-trace --include-styles --json
+npm run --silent probefn --workspace=@probefn/workspace -- report export --session sess_healthy --format json
+npm run --silent probefn --workspace=@probefn/workspace -- run flow --session sess_console_error --file test/fixtures/vite-console-error/flows/trigger-error.yaml --json
+npm run --silent probefn --workspace=@probefn/workspace -- auth profile save --session sess_auth --profile customer-admin --json
+npm run --silent probefn --workspace=@probefn/workspace -- mcp serve --stdio
 ```

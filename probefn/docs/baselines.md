@@ -7,13 +7,13 @@ Probefn stores visual baselines locally and compares new checkpoints against tho
 First create a checkpoint:
 
 ```bash
-npm run --silent probefn --workspace=probefn -- checkpoint create --session sess_healthy --name landing --include-trace --include-styles --json
+npm run --silent probefn --workspace=@probefn/workspace -- checkpoint create --session sess_healthy --name landing --include-trace --include-styles --json
 ```
 
 Then record a baseline:
 
 ```bash
-npm run --silent probefn --workspace=probefn -- baseline record \
+npm run --silent probefn --workspace=@probefn/workspace -- baseline record \
   --session sess_healthy \
   --checkpoint chk_landing \
   --key home.desktop.chromium.light.1440x900.utc \
@@ -23,7 +23,7 @@ npm run --silent probefn --workspace=probefn -- baseline record \
 ## Compare Against A Baseline
 
 ```bash
-npm run --silent probefn --workspace=probefn -- baseline compare \
+npm run --silent probefn --workspace=@probefn/workspace -- baseline compare \
   --session sess_healthy \
   --checkpoint chk_landing \
   --key home.desktop.chromium.light.1440x900.utc \
