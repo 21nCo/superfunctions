@@ -50,7 +50,7 @@ export async function createFakeProvider(registeredRedirectUris: () => readonly 
   const provider: Omit<FakeProvider, "close" | "origin"> = { clientId, clientSecret, tokenRequests: [], issuedCodes: [], issuedTokens: [] };
   const server = http.createServer((request, response) => {
     void (async () => {
-      const url = new URL(request.url ?? "/", "http://provider");
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/authorize") {
         const redirectUri = url.searchParams.get("redirect_uri") ?? "";
         if (url.searchParams.get("client_id") !== clientId || !registeredRedirectUris().includes(redirectUri) ||
@@ -112,7 +112,7 @@ export async function createOAuthClientApp(options: { scheme: "http" | "https"; 
   const fail = (response: http.ServerResponse, reason: string) => { app.callbacks.push({ ok: false, reason }); response.writeHead(400).end(reason); };
   const server = http.createServer((request, response) => {
     void (async () => {
-      const url = new URL(request.url ?? "/", "http://app");
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (url.pathname === "/login") {
         const id = token(16);
         const state = `st_${token()}`;
