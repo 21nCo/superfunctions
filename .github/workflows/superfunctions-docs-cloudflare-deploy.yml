@@ -12,6 +12,7 @@ on:
       - superfunctions-docs-datafn-live-*
       - superfunctions-docs-extfn-live-*
       - superfunctions-docs-reviewfn-live-*
+      - superfunctions-docs-mdfn-live-*
       - superfunctions-docs-clifn-live-*
       - superfunctions-docs-botfn-live-*
       - superfunctions-docs-langfn-live-*
@@ -22,6 +23,7 @@ on:
       - superfunctions-datafn-docs-live-*
       - superfunctions-extfn-docs-live-*
       - superfunctions-reviewfn-docs-live-*
+      - superfunctions-mdfn-docs-live-*
       - superfunctions-clifn-docs-live-*
       - superfunctions-botfn-docs-live-*
       - superfunctions-langfn-docs-live-*
@@ -33,6 +35,7 @@ on:
       - datafn/docs/**
       - extfn/docs/**
       - reviewfn/docs/**
+      - mdfn/docs/**
       - clifn/docs/**
       - botfn/docs/**
       - langfn/docs/**
@@ -61,6 +64,7 @@ on:
           - datafn
           - extfn
           - reviewfn
+          - mdfn
           - clifn
           - botfn
           - langfn
