@@ -6,7 +6,10 @@ const config: DocsConfig = {
     title: "LangFn",
     description: "TypeScript SDK for model calls, tools, graphs, retrieval, observability, HTTP, and MCP.",
     basePath: "/docs",
-    canonicalUrl: "https://langfn.com",
+    canonicalUrl: process.env.CLOUDFLARE_DOCS_DEPLOY === "1"
+      ? process.env.CLOUDFLARE_DOCS_PUBLIC_ORIGIN || "https://langfn.com"
+      : "https://langfn.com",
+    showFooter: false,
     editLink: { pattern: "https://github.com/21nCo/super-functions/edit/dev/langfn/docs/{path}" },
   },
   compat: { preset: "none" },
@@ -27,7 +30,6 @@ const config: DocsConfig = {
     ],
     sidebars: {
       docs: { title: "Documentation", root: true, include: ["docs/**"] },
-      api: { title: "API Reference", root: true, include: ["docs/api/**"] },
     },
   },
   search: { enabled: true, scopes: ["docs"], bodyIndexing: "summary" },

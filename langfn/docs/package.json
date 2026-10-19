@@ -18,7 +18,8 @@
     "@docsfn/provider-fs": "0.0.2",
     "@docsfn/svelte": "0.0.3",
     "@docsfn/sveltekit": "0.0.2",
-    "gray-matter": "^4.0.3"
+    "gray-matter": "^4.0.3",
+    "@searchfn/client": "0.3.0"
   },
   "devDependencies": {
     "@docsfn/cli": "0.0.2",
