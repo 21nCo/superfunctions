@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/client"
-description: Source guide for client.
+description: Typed fetch client for documents, versions, sidecar state, and persisted collaboration updates.
 ---
 
 Typed fetch client for documents, versions, sidecar state, and persisted

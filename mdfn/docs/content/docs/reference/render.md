@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/render"
-description: Source guide for render.
+description: Render HTML with explicit sanitizer, URL, and resource-limit policies, or produce an unsanitized render tree.
 ---
 
 Environment-neutral HTML and render-tree output. `renderHtml` requires an explicit

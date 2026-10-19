@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/components-svelte"
-description: Source guide for components-svelte.
+description: Svelte editor shell, authoring and editorial controls, and toolbar rendered with UIFn components.
 ---
 
 Svelte editor shell, complete authoring/editorial controls, and toolbar rendered

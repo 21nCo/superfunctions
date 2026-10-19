@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/components-react"
-description: Source guide for components-react.
+description: React editor shell, authoring controls, editorial surfaces, and toolbar rendered with UIFn components.
 ---
 
 React editor shell, authoring controls, editorial surfaces, and toolbar rendered

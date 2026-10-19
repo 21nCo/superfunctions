@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/contentfn"
-description: Source guide for contentfn.
+description: Markdown as a versioned ContentFn content kind with its dialect, policies, extensions, source, and sidecar.
 ---
 
 Defines Markdown as a versioned content kind and carries its dialect, raw-HTML

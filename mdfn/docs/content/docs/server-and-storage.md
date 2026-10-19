@@ -59,20 +59,21 @@ let remote = await client.createDocument({ title: "Example", markdown: "# Hello\
 const editor = createMdfn({ markdown: remote.markdown, sidecar: remote.sidecar });
 editor.dispatch(new Transaction().replaceSource(2, 7, "Welcome"));
 const snapshot = editor.getState();
+const idempotencyKey = crypto.randomUUID();
 let canDispose = false;
 try {
   remote = await client.updateDocument(remote.id, {
     expectedVersion: remote.version,
     markdown: snapshot.markdown,
     sidecar: snapshot.sidecar,
-    idempotencyKey: crypto.randomUUID(),
+    idempotencyKey,
   });
   if (editor.getState().version === snapshot.version) editor.markSaved();
   canDispose = true;
   console.log(remote.version, remote.markdown);
 } catch (error) {
   // Save the complete draft before disposing, including on network/key-reuse errors.
-  await writeFile("mdfn-unsaved-draft.json", JSON.stringify({ documentId: remote.id, expectedVersion: remote.version, markdown: snapshot.markdown, sidecar: snapshot.sidecar }), { mode: 0o600 });
+  await writeFile("mdfn-unsaved-draft.json", JSON.stringify({ documentId: remote.id, expectedVersion: remote.version, idempotencyKey, markdown: snapshot.markdown, sidecar: snapshot.sidecar }), { mode: 0o600 });
   canDispose = true;
   if (error instanceof MdfnClientError && error.code === "MDFN_VERSION_CONFLICT") {
     const latest = await client.getDocument(remote.id);
@@ -86,7 +87,7 @@ try {
 }
 ```
 
-Use the last **server** version for `expectedVersion`, not the controller's local version. A stale update returns `MDFN_VERSION_CONFLICT` (409); retain the user's edits and reconcile with the latest document instead of blindly retrying. For a network retry of the same write, reuse its idempotency key and payload. `markSaved()` is local bookkeeping and does not persist anything.
+Use the last **server** version for `expectedVersion`, not the controller's local version. A stale update returns `MDFN_VERSION_CONFLICT` (409); retain the user's edits and reconcile with the latest document instead of blindly retrying. For a network retry of the same write, reuse the idempotency key and payload saved in the draft. `markSaved()` is local bookkeeping and does not persist anything.
 
 ## Durable deployment
 

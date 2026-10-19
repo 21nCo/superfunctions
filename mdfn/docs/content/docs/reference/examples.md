@@ -1,6 +1,6 @@
 ---
 title: MDFN framework examples
-description: Source guide for examples.
+description: Run, build, and verify the React, Svelte, and Solid MDFN example apps.
 ---
 
 These apps mount the same Markdown authoring workflow through each supported

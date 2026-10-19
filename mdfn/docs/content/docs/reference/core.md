@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/core"
-description: Source guide for core.
+description: Environment-neutral document state, transactions, commands, history, extensions, migrations, and snapshots.
 ---
 
 Environment-neutral mdfn document state, transactions, commands, history,

@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/facade"
-description: Source guide for facade.
+description: Curated entry point for headless Markdown parsing, secure rendering, transactions, extensions, and snapshots.
 ---
 
 Curated facade for headless Markdown parsing, secure rendering, transactions,

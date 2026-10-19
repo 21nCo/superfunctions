@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/testing"
-description: Source guide for testing.
+description: Reusable preservation, rendering-security, extension, adapter, CommonMark, fuzz, and browser test suites.
 ---
 
 Reusable preservation, rendering-security, extension, adapter-trace, official

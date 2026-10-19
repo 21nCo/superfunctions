@@ -1,6 +1,6 @@
 ---
 title: MDFN overview
-description: Source guide for overview.
+description: How the MDFN package graph separates layers, stable and optional packages, and their dependencies.
 ---
 
 mdfn is the Markdown-native authoring platform for Superfunctions. Markdown is
@@ -37,7 +37,7 @@ component packages render the same model with UIFn. The vanilla DOM adapter and
 all framework adapters share command, selection, undo/redo, file-drop, paste,
 and source-fallback semantics.
 
-Framework packages publish separate browser and server entry points. Packed
+The Svelte and Solid packages publish separate browser and server entry points; the React package ships one root entry that is safe to import during SSR. Packed
 consumer verification builds and executes browser and SSR applications for all
 three framework adapters and checks ESM, CJS, and extension subpath exports.
 

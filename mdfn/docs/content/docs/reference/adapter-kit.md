@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/adapter-kit"
-description: Source guide for adapter-kit.
+description: Framework-neutral lifecycle and subscription bridges for MDFN framework adapters.
 ---
 
 Framework-neutral lifecycle and subscription bridges. Framework adapters bind

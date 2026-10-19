@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/collab"
-description: Source guide for collab.
+description: Yjs-backed collaboration for canonical Markdown, sidecar data, awareness, offline queues, and compaction.
 ---
 
 Yjs-backed collaboration for canonical Markdown, validated editorial/asset

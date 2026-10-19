@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/source"
-description: Source guide for source.
+description: Code-oriented Markdown source editing with shared diagnostics and one-way controller transactions.
 ---
 
 Code-oriented Markdown source editing with shared diagnostics and one-way

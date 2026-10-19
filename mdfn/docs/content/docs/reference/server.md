@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/server"
-description: Source guide for server.
+description: Self-hosted document CRUD, optimistic versioning, revisions, editorial workflows, and collaboration persistence.
 ---
 
 Self-hosted document CRUD, canonical source validation, optimistic versioning,

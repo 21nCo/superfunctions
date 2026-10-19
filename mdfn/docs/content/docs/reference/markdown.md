@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/markdown"
-description: Source guide for markdown.
+description: Canonical CommonMark/GFM parser and serializer with source spans, raw slices, and opaque unsupported nodes.
 ---
 
 The canonical CommonMark/GFM parser and serializer for mdfn. It records source

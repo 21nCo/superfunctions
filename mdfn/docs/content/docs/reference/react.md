@@ -15,11 +15,14 @@ import { useEffect, useState } from "react";
 import { createMdfn, type EditorController } from "@mdfn/facade";
 import { MdfnEditor, useMdfn } from "@mdfn/react";
 
+// Keep the callback identity stable: MdfnEditor remounts its surfaces when it changes.
+const reportLoadError = (error: Error) => console.error(error);
+
 function EditorView({ controller }: { controller: EditorController }) {
   const snapshot = useMdfn(controller);
   return <>
     <MdfnEditor controller={controller} mode="split" ariaLabel="Document editor"
-      onLoadError={(error) => console.error(error)} />
+      onLoadError={reportLoadError} />
     <output>{snapshot.dirty ? "Unsaved changes" : "Saved"}</output>
   </>;
 }

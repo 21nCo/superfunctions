@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/components"
-description: Source guide for components.
+description: Framework-neutral models for toolbars, slash commands, link, table and file controls, and outline.
 ---
 
 Framework-neutral models for complete authoring chrome: primary, selection,

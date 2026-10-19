@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/extensions"
-description: Source guide for extensions.
+description: Certified extension declarations for syntax ownership, conflicts, dependencies, preservation, and security.
 ---
 
 Certified extension declarations and helpers. Extensions can declare syntax

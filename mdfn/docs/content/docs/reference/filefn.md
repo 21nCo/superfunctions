@@ -1,6 +1,6 @@
 ---
 title: "@mdfn/filefn"
-description: Source guide for filefn.
+description: Storage-neutral asset contracts and the FileFn client bridge for upload, resolution, rendering, and cleanup.
 ---
 
 Storage-neutral asset contracts plus the production FileFn client bridge for
