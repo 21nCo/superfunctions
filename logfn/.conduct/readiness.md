@@ -164,3 +164,14 @@ WATCHFN_ROOT=/path/to/watchfn-checkout node logfn/scripts/watchfn-integration-ac
 On Node20.20.0, all eight HTTP requests passed: MemoryStorage retains the complete event envelope (timestamp, level, message, nested context, tags and correlation fields); DatabaseStorage waits on adapter completion before 202; storage rejection returns 503 and the sink retains the event for a subsequent successful flush; invalid credentials produce one terminal 401 despite three configured attempts; corrected x-api-key credentials deliver the retained event; stopped storage returns 503 and restart permits delivery. Bearer authentication is exercised by the primary logger. Both storage failures reach the logger's error callback.
 
 The DatabaseStorage adapter is a deterministic in-process gate/failure fixture, not a database durability test. This acceptance depends on the separate WatchFn ingestion changes and bundles source rather than proving WatchFn's published package. It establishes local LogFn-to-WatchFn transport composition, not hosted deployment, transactional batch persistence, retention/query completeness or production readiness. WatchFn still needs its broader storage and runtime work; LogFn's remaining original browser/performance/Python middleware gates remain open.
+
+
+## sf-next publication checkpoint (2026-10-20)
+
+Normally merged shared prerequisite d8d443a5c, preserving all LogFn commits. Clean scoped npm ci passes. Shared observability/HTTP/MCP/admin and LogFn core/admin builds pass; full core234 and admin6 tests pass, and core lint now runs the actual non-emitting TypeScript check instead of a placeholder success.
+
+Fresh packed shared-HTTP consumers pass Node18.18/20.19/22.23, strict Node16/NodeNext declarations and production audit0. Fresh packed admin consumers pass Node20.0/22.23, declarations, dynamic CommonJS imports and audit0. The actual loopback LogFn-to-WatchFn composition again passes all8requests against the WatchFn readiness checkout, covering metadata, delayed/failing/stopped storage and authorization. This remains controlled storage/source composition, not hosted database or deployment evidence.
+
+Previous unchanged Python checkpoints include inherited correlation and failure-isolated callbacks, plus giant-integer serialization containment at3c71d7a24: Python3.12 source/fresh-wheel38tests, Python3.9 source37tests with the unavailable interpreter conversion-limit test skipped, and strict typing. Python source did not change in this merge and those matrices were not repeated.
+
+Existing root and Python .coverage files are preserved locally and now ignored, along with parallel coverage data. Generated files are not staged. Native browser history remains Chrome-only; Firefox/Safari, complete Python middleware parity, workload performance and full original SPEC acceptance remain open. No overall production-readiness claim.

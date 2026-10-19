@@ -38,7 +38,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest --watch",
-    "lint": "echo 'lint not configured'",
+    "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "bench": "vitest bench"
