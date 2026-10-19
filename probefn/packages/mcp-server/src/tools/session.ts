@@ -1,3 +1,4 @@
+import { strictObjectSchema } from '../schema.js';
 import { z } from 'zod';
 
 import type { JsonObject } from '@probefn/contracts';
@@ -7,7 +8,6 @@ import {
   jsonToolSchema,
   startSessionFromConfig,
   stopSession,
-  strictObjectSchema,
   type ToolDefinition,
 } from '../server.js';
 

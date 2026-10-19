@@ -6,12 +6,7 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
-  },
   "dependencies": {
-    "@mcpfn/core": "file:../../../mcpfn/core",
     "@modelcontextprotocol/sdk": "1.25.2",
     "@probefn/analyzers": "*",
     "@probefn/browser-runner": "*",
@@ -21,6 +16,7 @@
     "@probefn/storage": "*",
     "@probefn/visual-baselines": "*",
     "yaml": "^2.8.1",
-    "zod": "^3.24.4"
+    "zod": "^3.24.4",
+    "@mcpfn/core": "0.0.6"
   }
 }

@@ -1,26 +1,32 @@
 {
   "name": "probefn",
   "private": true,
-  "packageManager": "pnpm@10.0.0",
   "engines": {
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
-    "lint": "turbo run lint",
     "probefn": "jiti apps/cli/src/index.ts",
-    "test": "turbo run test",
+    "test": "vitest run",
     "test:vectors": "jiti scripts/test-vectors.ts",
-    "typecheck": "turbo run typecheck",
-    "spec:list": "find .conduct/specs -maxdepth 1 -type d | sort"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "jiti": "^2.4.2",
-    "turbo": "^2.0.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.4",
-    "zod": "^3.24.4"
-  }
+    "zod": "^3.24.4",
+    "@probefn/cli": "*",
+    "@probefn/analyzers": "*",
+    "@probefn/browser-runner": "*",
+    "@probefn/contracts": "*",
+    "@probefn/core": "*",
+    "@probefn/dev-server": "*",
+    "@probefn/mcp-server": "*",
+    "@probefn/session-reporter": "*",
+    "@probefn/storage": "*",
+    "@probefn/visual-baselines": "*"
+  },
+  "type": "module"
 }

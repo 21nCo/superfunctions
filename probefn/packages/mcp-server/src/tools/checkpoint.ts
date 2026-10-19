@@ -1,3 +1,4 @@
+import { strictObjectSchema } from '../schema.js';
 import { z } from 'zod';
 
 import type { JsonObject } from '@probefn/contracts';
@@ -6,7 +7,6 @@ import {
   createCheckpointFromSession,
   defineTool,
   jsonToolSchema,
-  strictObjectSchema,
   type ToolDefinition,
 } from '../server.js';
 

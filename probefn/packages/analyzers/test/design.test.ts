@@ -1,3 +1,4 @@
+import { createServer } from 'node:net';
 import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -260,6 +261,13 @@ interface SeededRun {
 }
 
 async function seedFixtureRun(input: SeedFixtureRunInput): Promise<SeededRun> {
+  const reservation = createServer();
+  await new Promise<void>((resolve, reject) => { reservation.once('error', reject); reservation.listen(0, '127.0.0.1', resolve); });
+  const address = reservation.address();
+  if (!address || typeof address === 'string') throw new Error('No fixture port');
+  const port = address.port;
+  await new Promise<void>((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()));
+  input = { ...input, command: input.command.replace(/--port \d+/, `--port ${port}`), url: `http://127.0.0.1:${port}` };
   const artifactStore = new ArtifactStore({
     repoRoot: projectRoot,
   });
@@ -359,7 +367,7 @@ async function seedFixtureRun(input: SeedFixtureRunInput): Promise<SeededRun> {
       screenshot: async () => startedBrowser.page.screenshot({ fullPage: true }),
       domSnapshot: async () => ({ html: await startedBrowser.page.content() }),
       accessibilitySnapshot: async () => ({
-        snapshot: await startedBrowser.page.locator('body').ariaSnapshot({ mode: 'ai' }),
+        snapshot: await startedBrowser.page.locator('body').ariaSnapshot(),
       }),
       layoutSnapshot: async () => captureLayoutMetadata(startedBrowser.page),
       stylesSnapshot: async () => captureStylesMetadata(startedBrowser.page),

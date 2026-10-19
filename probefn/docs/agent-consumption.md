@@ -18,7 +18,7 @@ Use CLI JSON mode when:
 Example:
 
 ```bash
-pnpm probefn page find --session sess_healthy --query "Save button" --json
+npm run --silent probefn --workspace=probefn -- page find --session sess_healthy --query "Save button" --json
 ```
 
 CLI JSON always returns the canonical envelope:
@@ -39,7 +39,7 @@ Use MCP when:
 Start the server from the repository root:
 
 ```bash
-pnpm probefn mcp serve --stdio
+npm run --silent probefn --workspace=probefn -- mcp serve --stdio
 ```
 
 ## MCP Tool Parity
@@ -70,7 +70,7 @@ That includes `probefn_run_flow`, so an agent can execute the same repo-relative
 CLI example:
 
 ```bash
-pnpm probefn run flow --session sess_console_error --file test/fixtures/vite-console-error/flows/trigger-error.yaml --json
+npm run --silent probefn --workspace=probefn -- run flow --session sess_console_error --file test/fixtures/vite-console-error/flows/trigger-error.yaml --json
 ```
 
 ## Recommended Agent Loop
@@ -97,7 +97,7 @@ For design review:
 Agents can save a reusable local auth profile from any session that has browser storage state:
 
 ```bash
-pnpm probefn auth profile save --session sess_auth --profile customer-admin --json
+npm run --silent probefn --workspace=probefn -- auth profile save --session sess_auth --profile customer-admin --json
 ```
 
 That profile is stored locally under `.artifacts/auth-profiles/` and can be loaded into future config-backed sessions with `--auth-profile`.

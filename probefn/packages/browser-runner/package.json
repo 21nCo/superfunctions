@@ -6,17 +6,10 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
-  },
   "dependencies": {
     "@probefn/contracts": "*",
     "@probefn/core": "*",
     "@probefn/storage": "*",
     "playwright": "^1.55.0"
-  },
-  "devDependencies": {
-    "@probefn/dev-server": "*"
   }
 }

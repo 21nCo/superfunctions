@@ -523,11 +523,7 @@ export function jsonToolSchema(input: {
   };
 }
 
-export function strictObjectSchema<TShape extends z.ZodRawShape>(
-  shape: TShape,
-): z.ZodObject<TShape, 'strict'> {
-  return z.object(shape).strict();
-}
+export { strictObjectSchema } from './schema.js';
 
 export function parseToolArgs<TArgs extends JsonObject>(
   schema: ZodType<TArgs>,

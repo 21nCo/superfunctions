@@ -6,10 +6,6 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
-  },
   "dependencies": {
     "@probefn/contracts": "*",
     "@probefn/dev-server": "*",
@@ -17,8 +13,6 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "@probefn/core": "*",
-    "@probefn/storage": "*",
     "vitest": "^3.1.4"
   }
 }

@@ -55,7 +55,7 @@ interface VectorGroup {
   name: string;
   vectorIds: VectorId[];
   fixtures: FixtureName[];
-  run: () => Promise<void>;
+  run: () => Promise<unknown>;
 }
 
 interface CommandResult {
@@ -113,6 +113,9 @@ async function main(): Promise<void> {
       }
     }
 
+    // The aggregate vector passes only when the entire fixture suite passes.
+    if (!fixtureFilter && failures.length === 0) passedVectors.add('TV-FIXTURE-001');
+
     const payload = createSuccessEnvelope({
       vectorsPassed: passedVectors.size,
       vectorsFailed: failures.reduce((count, failure) => count + failure.vectorIds.length, 0),
@@ -145,13 +148,13 @@ function buildGroups(): VectorGroup[] {
       name: 'contracts',
       vectorIds: ['TV-CONFIG-001'],
       fixtures: [],
-      run: () => runPnpm(['--filter', '@probefn/contracts', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/contracts/test']),
     },
     {
       name: 'dev-server',
       vectorIds: ['TV-SESSION-001', 'TV-SESSION-002'],
       fixtures: ['vite-healthy', 'vite-hangs'],
-      run: () => runPnpm(['--filter', '@probefn/dev-server', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/dev-server/test']),
     },
     {
       name: 'browser-runner',
@@ -163,7 +166,7 @@ function buildGroups(): VectorGroup[] {
         'TV-ACTION-004',
       ],
       fixtures: ['vite-healthy', 'vite-ambiguous', 'vite-overlay'],
-      run: () => runPnpm(['--filter', '@probefn/browser-runner', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/browser-runner/test']),
     },
     {
       name: 'core',
@@ -173,43 +176,43 @@ function buildGroups(): VectorGroup[] {
         'TV-DETERMINISM-002',
       ],
       fixtures: ['vite-healthy', 'vite-auth'],
-      run: () => runPnpm(['--filter', '@probefn/core', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/core/test']),
     },
     {
       name: 'storage',
       vectorIds: ['TV-STORAGE-001', 'TV-LIMITS-001'],
       fixtures: [],
-      run: () => runPnpm(['--filter', '@probefn/storage', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/storage/test']),
     },
     {
       name: 'design-analyzers',
       vectorIds: ['TV-DESIGN-001', 'TV-DESIGN-002'],
       fixtures: ['vite-overflow', 'vite-token-drift'],
-      run: () => runPnpm(['--filter', '@probefn/analyzers', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/analyzers/test']),
     },
     {
       name: 'visual-baselines',
       vectorIds: ['TV-BASELINE-001', 'TV-BASELINE-002', 'TV-BASELINE-003'],
       fixtures: ['vite-regression', 'vite-healthy'],
-      run: () => runPnpm(['--filter', '@probefn/visual-baselines', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/visual-baselines/test']),
     },
     {
       name: 'session-reporter',
       vectorIds: ['TV-DEBUG-001', 'TV-REPORT-001', 'TV-OBS-001'],
       fixtures: ['vite-console-error', 'vite-healthy'],
-      run: () => runPnpm(['--filter', '@probefn/session-reporter', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/session-reporter/test']),
     },
     {
       name: 'mcp-server',
       vectorIds: ['TV-MCP-001'],
       fixtures: ['vite-console-error'],
-      run: () => runPnpm(['--filter', '@probefn/mcp-server', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'packages/mcp-server/test']),
     },
     {
       name: 'cli',
       vectorIds: ['TV-CLI-001'],
       fixtures: ['vite-healthy'],
-      run: () => runPnpm(['--filter', '@probefn/cli', 'test']),
+      run: () => runNpm(['test', '--workspace=probefn', '--', 'apps/cli/test']),
     },
     {
       name: 'cli-runtime-flows',
@@ -222,12 +225,6 @@ function buildGroups(): VectorGroup[] {
       vectorIds: ['TV-DETERMINISM-001'],
       fixtures: ['vite-healthy'],
       run: runDeterministicSmoke,
-    },
-    {
-      name: 'fixture-suite-summary',
-      vectorIds: ['TV-FIXTURE-001'],
-      fixtures: [],
-      run: async () => undefined,
     },
   ];
 }
@@ -243,7 +240,7 @@ async function runDeterministicSmoke(): Promise<void> {
     }),
   ]);
 
-  const started = await runPnpm([
+  const started = await runNpm([
     'probefn',
     'session',
     'start',
@@ -283,7 +280,7 @@ async function runDeterministicSmoke(): Promise<void> {
     throw new Error(`Expected deterministic settings in session start output, received ${JSON.stringify(payload.data)}`);
   }
 
-  await runPnpm([
+  await runNpm([
     'probefn',
     'session',
     'stop',
@@ -308,7 +305,7 @@ async function runConsoleErrorFlowVector(): Promise<void> {
   await cleanupSessionArtifacts(runId, sessionId);
 
   try {
-    await runPnpm([
+    await runNpm([
       'probefn',
       'session',
       'start',
@@ -321,7 +318,7 @@ async function runConsoleErrorFlowVector(): Promise<void> {
       '--json',
     ], consoleErrorEnv);
 
-    const flowed = await runPnpm([
+    const flowed = await runNpm([
       'probefn',
       'run',
       'flow',
@@ -377,7 +374,7 @@ async function runConsoleErrorDeltaVector(): Promise<void> {
   await cleanupSessionArtifacts(runId, sessionId);
 
   try {
-    await runPnpm([
+    await runNpm([
       'probefn',
       'session',
       'start',
@@ -390,7 +387,7 @@ async function runConsoleErrorDeltaVector(): Promise<void> {
       '--json',
     ], consoleErrorEnv);
 
-    const acted = await runPnpm([
+    const acted = await runNpm([
       'probefn',
       'page',
       'act',
@@ -440,7 +437,7 @@ async function runSecretLeakFlowVector(): Promise<void> {
   await cleanupSessionArtifacts(runId, sessionId);
 
   try {
-    await runPnpm([
+    await runNpm([
       'probefn',
       'session',
       'start',
@@ -453,7 +450,7 @@ async function runSecretLeakFlowVector(): Promise<void> {
       '--json',
     ]);
 
-    const flowed = await runPnpm([
+    const flowed = await runNpm([
       'probefn',
       'run',
       'flow',
@@ -489,8 +486,8 @@ async function safeStopSession(
   envOverrides: Record<string, string> = {},
 ): Promise<void> {
   await runCommand(
-    process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
-    ['probefn', 'session', 'stop', '--session', sessionId, '--json'],
+    process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    ['run', '--silent', 'probefn', '--workspace=probefn', '--', 'session', 'stop', '--session', sessionId, '--json'],
     repoRoot,
     envOverrides,
   ).catch(() => undefined);
@@ -508,12 +505,13 @@ async function cleanupSessionArtifacts(runId: string, sessionId: string): Promis
   ]);
 }
 
-async function runPnpm(
+async function runNpm(
   args: string[],
   envOverrides: Record<string, string> = {},
 ): Promise<CommandResult> {
-  const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-  const result = await runCommand(command, args, repoRoot, envOverrides);
+  const command = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const npmArgs = args[0] === 'probefn' ? ['run', '--silent', 'probefn', '--workspace=probefn', '--', ...args.slice(1)] : args;
+  const result = await runCommand(command, npmArgs, repoRoot, envOverrides);
   if (result.exitCode !== 0) {
     throw new Error([
       `$ ${command} ${args.join(' ')}`,

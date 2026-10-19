@@ -6,16 +6,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
-  },
   "dependencies": {
     "@probefn/contracts": "*",
     "@probefn/session-reporter": "*",
     "@probefn/storage": "*"
-  },
-  "devDependencies": {
-    "@probefn/browser-runner": "*"
   }
 }

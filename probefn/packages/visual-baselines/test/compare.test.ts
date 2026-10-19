@@ -285,7 +285,7 @@ async function seedRun(input: {
       screenshot: async () => startedBrowser.page.screenshot({ fullPage: true }),
       domSnapshot: async () => ({ html: await startedBrowser.page.content() }),
       accessibilitySnapshot: async () => ({
-        snapshot: await startedBrowser.page.locator('body').ariaSnapshot({ mode: 'ai' }),
+        snapshot: await startedBrowser.page.locator('body').ariaSnapshot(),
       }),
       layoutSnapshot: async () => captureLayoutMetadata(startedBrowser.page),
       stylesSnapshot: async () => captureStylesMetadata(startedBrowser.page),

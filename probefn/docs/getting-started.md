@@ -5,7 +5,7 @@ Probefn is a local-first browser evidence framework for coding agents and humans
 ## Prerequisites
 
 - Node.js `>=22.0.0` is recommended by the workspace.
-- `pnpm` `10.x`
+- `npm` `10.2+` (root workspace)
 - A local checkout of the repository.
 
 ## Install
@@ -13,7 +13,7 @@ Probefn is a local-first browser evidence framework for coding agents and humans
 From the repository root:
 
 ```bash
-pnpm install
+npm ci # from the Superfunctions repository root
 ```
 
 ## Run The Golden Vectors
@@ -21,14 +21,14 @@ pnpm install
 Use the repo-root vector suite to verify the local framework contract:
 
 ```bash
-pnpm test:vectors
+npm run test:vectors --workspace=probefn
 ```
 
 To focus on a specific local fixture:
 
 ```bash
-pnpm test:vectors -- --fixture vite-healthy
-pnpm test:vectors -- --fixture vite-auth
+npm run test:vectors --workspace=probefn -- --fixture vite-healthy
+npm run test:vectors --workspace=probefn -- --fixture vite-auth
 ```
 
 ## Start A Local Session
@@ -36,7 +36,7 @@ pnpm test:vectors -- --fixture vite-auth
 All core workflows are local-first. Sessions start from a repository-relative config file, write artifacts under `.artifacts/`, and do not require cloud auth, remote storage, or hosted orchestration.
 
 ```bash
-pnpm probefn session start \
+npm run --silent probefn --workspace=probefn -- session start \
   --config test/fixtures/vite-healthy/probefn.config.ts \
   --mode mixed \
   --browser chromium \
@@ -51,17 +51,17 @@ The healthy fixture returns deterministic fixture identifiers:
 ## Core Session Lifecycle
 
 ```bash
-pnpm probefn session start --config test/fixtures/vite-healthy/probefn.config.ts --mode mixed --browser chromium --json
-pnpm probefn checkpoint create --session sess_healthy --name landing --json
-pnpm probefn audit design --session sess_healthy --checkpoint chk_landing --json
-pnpm probefn report export --session sess_healthy --format json
+npm run --silent probefn --workspace=probefn -- session start --config test/fixtures/vite-healthy/probefn.config.ts --mode mixed --browser chromium --json
+npm run --silent probefn --workspace=probefn -- checkpoint create --session sess_healthy --name landing --json
+npm run --silent probefn --workspace=probefn -- audit design --session sess_healthy --checkpoint chk_landing --json
+npm run --silent probefn --workspace=probefn -- report export --session sess_healthy --format json
 ```
 
 For visual regressions:
 
 ```bash
-pnpm probefn baseline record --session sess_healthy --checkpoint chk_landing --key home.desktop.chromium.light.1440x900.utc --json
-pnpm probefn baseline compare --session sess_healthy --checkpoint chk_landing --key home.desktop.chromium.light.1440x900.utc --json
+npm run --silent probefn --workspace=probefn -- baseline record --session sess_healthy --checkpoint chk_landing --key home.desktop.chromium.light.1440x900.utc --json
+npm run --silent probefn --workspace=probefn -- baseline compare --session sess_healthy --checkpoint chk_landing --key home.desktop.chromium.light.1440x900.utc --json
 ```
 
 ## Fixture Configs
@@ -82,8 +82,8 @@ Each config uses only repository-relative paths and local fixture servers.
 Before shipping changes, run:
 
 ```bash
-pnpm test:vectors
-pnpm turbo run test typecheck
+npm run test:vectors --workspace=probefn
+npx turbo run test typecheck --filter=probefn
 ```
 
 Those commands verify the golden vectors plus the workspace package tests and typechecking from the repository root.
