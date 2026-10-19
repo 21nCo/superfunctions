@@ -16,6 +16,7 @@ on:
           - datafn
           - extfn
           - secfn
+          - mdfn
           - clifn
           - botfn
           - langfn
@@ -34,13 +35,13 @@ on:
 
 jobs:
   routes:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
     concurrency:
       group: superfunctions-docs-cloudflare-routes-${{ github.event.inputs.environment }}
       cancel-in-progress: false
     steps:
-      - uses: useblacksmith/checkout@25227e61ff9dafe400e22fa487b673eac4e4409a # v1.8.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: actions/setup-node@v4
         with:
@@ -77,6 +78,7 @@ jobs:
           CLOUDFLARE_ROUTES_TOKEN: ${{ secrets.CLOUDFLARE_ROUTES_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ZONE_ID_EXTFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_EXTFN_COM }}
           CLOUDFLARE_ZONE_ID_SECFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_SECFN_COM }}
+          CLOUDFLARE_ZONE_ID_MDFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_MDFN_COM }}
           CLOUDFLARE_ZONE_ID_CLIFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_CLIFN_COM }}
           CLOUDFLARE_ZONE_ID_BOTFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_BOTFN_COM }}
           CLOUDFLARE_ZONE_ID_LANGFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_LANGFN_COM }}
