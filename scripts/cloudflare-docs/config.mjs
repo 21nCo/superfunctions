@@ -11,6 +11,16 @@ export const devAccountId = "c801efc2879825babdb9b2534199c4dd";
 export const devZoneName = "21n.site";
 
 export const docsProducts = {
+  clifn: {
+    packageName: "@clifn/docs",
+    docsDir: "clifn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "clifn.com",
+    hosts: {
+      dev: "clifn.21n.site",
+      live: "clifn.com",
+    },
+  },
   extfn: {
     packageName: "@extfn/docs",
     docsDir: "extfn/docs",

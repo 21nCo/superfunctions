@@ -25,6 +25,9 @@
       "node"
     ],
     "paths": {
+      "@site/docs-search": [
+        "../../scripts/docs-site/Search.svelte"
+      ],
       "$lib": [
         "./src/lib"
       ],

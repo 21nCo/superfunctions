@@ -7,7 +7,7 @@
     "dev": "vite dev --port 6011",
     "build": "vite build",
     "preview": "vite preview --port 6011",
-    "test": "npm run check:llms && node --test ../../scripts/docs-site/check-built-site.test.mjs && vitest run --config ../../scripts/docs-site/vitest.config.ts",
+    "test": "npm run check:llms && node --test ../../scripts/docs-site/check-built-site.test.mjs ../../scripts/docs-site/atomic-write.test.mjs && vitest run --config ../../scripts/docs-site/vitest.config.ts",
     "generate:llms": "node scripts/generate-llms.mjs",
     "prebuild": "npm run generate:llms",
     "check:llms": "node scripts/generate-llms.mjs --check"
