@@ -1,0 +1,57 @@
+.github/workflows/superfunctions-docs-cloudflare-deploy.yml
+  s_7d0a48f0aaecda::t_25c1632b28e076 14,21,29,54
+.github/workflows/superfunctions-docs-cloudflare-routes.yml
+  s_7d0a48f0aaecda::t_978e94106bfa4a 18,76
+memoryfn/docs/package.json
+  s_7d0a48f0aaecda::t_db86def6341c4f 10,21-22
+memoryfn/docs/scripts/generate-llms.mjs
+  s_7d0a48f0aaecda::t_33889ddf8b92fd 19-21
+memoryfn/docs/src/lib/server/docs-site-source.ts
+  s_7d0a48f0aaecda::t_5f22c0d4d2a131 7
+memoryfn/docs/src/routes/+error.svelte
+  s_7d0a48f0aaecda::t_31ae4073a73882 1-12
+memoryfn/docs/src/routes/docs/llms-full.txt/+server.ts
+  s_7d0a48f0aaecda::t_5043e830e1302e 3-4
+memoryfn/docs/src/routes/docs/llms.txt/+server.ts
+  s_7d0a48f0aaecda::t_ad892dd7e0440d 3-4
+memoryfn/docs/static/llms-full.txt
+  s_664f1e7a19bfc5::t_afef97ac01b06a 6
+memoryfn/docs/tsconfig.json
+  s_7d0a48f0aaecda::t_d367c348c57efe 24-57
+memoryfn/docs/turbo.json
+  s_7d0a48f0aaecda::t_17a0621c85f691 1-20
+memoryfn/docs/vite.config.ts
+  s_7d0a48f0aaecda::t_3006e093fe32d9 9
+package-lock.json
+  s_664f1e7a19bfc5::t_aac2db75dc7a83 51,21317-21688,28069-28072
+package.json
+  s_7d0a48f0aaecda::t_50537452880a0c 46
+scripts/cloudflare-docs/config.mjs
+  s_7d0a48f0aaecda::t_103c224be3aad5 14-23
+scripts/cloudflare-docs/select-products.mjs
+  s_7d0a48f0aaecda::t_b6c39b99bb842b 59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e3ad8382eb9f7fb8622b02069c9202608d4a68c0",
+  "prompts": {},
+  "sessions": {
+    "s_664f1e7a19bfc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cf2229e-c8fe-4b04-a5e0-6383ee13ba71",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    },
+    "s_7d0a48f0aaecda": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
