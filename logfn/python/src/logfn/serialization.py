@@ -11,7 +11,15 @@ def sanitize_value(value: Any) -> Any:
     ancestors: Set[int] = set()
 
     def visit(item: Any, depth: int) -> Any:
-        if item is None or isinstance(item, (str, bool, int)):
+        if item is None or isinstance(item, (str, bool)):
+            return item
+        if isinstance(item, int):
+            # Python may reject decimal conversion under its configured digit
+            # limit. Keep that protection enabled and isolate the bad value.
+            try:
+                str(item)
+            except (ValueError, OverflowError):
+                return "[unserializable]"
             return item
         if isinstance(item, float):
             return item if math.isfinite(item) else None

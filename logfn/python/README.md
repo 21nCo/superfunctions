@@ -101,3 +101,8 @@ remain separate. The `with_request_ids()` pipeline fills missing request IDs
 with UUID strings and missing trace IDs with lowercase 32-character hexadecimal
 values, preserving supplied IDs. This helper generates IDs per event; pass a
 shared request correlation mapping when multiple events belong to one request.
+
+Values that exceed Python's configured integer-to-decimal conversion limit are
+replaced with `[unserializable]` during event sanitization. Other context fields
+are preserved, the original input is unchanged, and the interpreter's limit is
+never disabled or increased.

@@ -76,3 +76,25 @@ def test_twenty_tag_limit_applies_even_when_event_is_small():
     events = []
     Logger("test", [lambda batch: events.extend(batch)]).info("hello", tags=[str(i) for i in range(30)])
     assert events[0]["tags"] == [str(i) for i in range(20)]
+
+
+def test_integer_conversion_limit_does_not_break_logging_or_drop_other_context():
+    import sys
+    import pytest
+
+    if not hasattr(sys, "set_int_max_str_digits"):
+        pytest.skip("Runtime has no integer conversion limit")
+    previous = sys.get_int_max_str_digits()
+    context = {"huge": 10 ** 5000, "useful": 123, "negative": -(10 ** 5000)}
+    events = []
+    try:
+        sys.set_int_max_str_digits(640)
+        Logger("test", [lambda batch: events.extend(batch)]).info("hello", context)
+        assert events[0]["ctx"] == {
+            "huge": "[unserializable]", "useful": 123, "negative": "[unserializable]"
+        }
+        assert sys.get_int_max_str_digits() == 640
+        json.dumps(events, allow_nan=False)
+        assert context["huge"] == 10 ** 5000
+    finally:
+        sys.set_int_max_str_digits(previous)
