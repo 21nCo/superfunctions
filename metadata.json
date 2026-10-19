@@ -3,7 +3,7 @@
   "checkpoint_id": "01M59J783D7ZXPVJE4BV92NPHN",
   "strategy": "manual-commit",
   "branch": "codex/docsfn-next-to-dev-20260829",
-  "checkpoints_count": 1,
+  "checkpoints_count": 7,
   "files_touched": [
     "docsfn/cli/src/migrate-docusaurus.ts",
     "docsfn/cli/tests/migration-route-safety.test.mjs",
@@ -24,6 +24,27 @@
       "compact_transcript": "/0/transcript.jsonl",
       "content_hash": "/0/content_hash.txt",
       "prompt": ""
+    },
+    {
+      "metadata": "/1/metadata.json",
+      "transcript": "/1/full.jsonl",
+      "compact_transcript": "/1/transcript.jsonl",
+      "content_hash": "/1/content_hash.txt",
+      "prompt": ""
     }
-  ]
+  ],
+  "token_usage": {
+    "input_tokens": 18,
+    "cache_creation_tokens": 5441,
+    "cache_read_tokens": 4888915,
+    "output_tokens": 1475,
+    "api_call_count": 9,
+    "subagent_tokens": {
+      "input_tokens": 62,
+      "cache_creation_tokens": 480621,
+      "cache_read_tokens": 3384438,
+      "output_tokens": 5872,
+      "api_call_count": 29
+    }
+  }
 }
