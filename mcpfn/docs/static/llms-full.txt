@@ -40,7 +40,7 @@ The wrapper publishes protected-resource metadata and passes verified auth infor
 
 ## Reuse hosted identity
 
-`createMcpAuthorizationCompatibilityHandler()` composes authorization-server metadata, registration, Client ID Metadata Documents, PKCE code validation, token exchange, refresh rotation, and revocation. The host remains responsible for login, consent, durable clients, token signing and values, and revocation state. This is separate from outbound provider account-linking flows.
+`createMcpAuthorizationCompatibilityHandler()` composes authorization-server metadata, PKCE code validation, and token exchange. Dynamic registration, Client ID Metadata Documents, refresh rotation, and revocation are enabled only when the corresponding `clients.register`, `clientMetadataDocuments`, `tokenAuthority.refreshToken`, and `tokenAuthority.revokeToken` options are supplied. The host remains responsible for login, consent, durable clients, token signing and values, and revocation state. This is separate from outbound provider account-linking flows.
 
 Run `mcpfn auth-diagnose URL` for read-only discovery checks. Add the [authentication regression suite](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/testing.md) before deploying a protected endpoint.
 
@@ -71,7 +71,7 @@ try {
 }
 ```
 
-Use `stdioTarget()` for a locally launched server on Node.js. `listAll()` follows inventory pagination; `listBounded(limit)` continues pagination but retains only the requested number of entries and reports dropped items. The client also exposes typed resources, prompts, completions, and task methods.
+Use `stdioTarget({ command: "node", args: ["./server.js"] })` for a locally launched server on Node.js; `command` is required, and `args`, `cwd`, and `env` follow the official SDK stdio parameters. `listAll()` follows inventory pagination; `listBounded(limit)` continues pagination but retains only the requested number of entries and reports dropped items. The client also exposes typed resources, prompts, completions, and task methods.
 
 ## Authorization and lifecycle
 
@@ -81,7 +81,7 @@ Pass an official `OAuthClientProvider` to a Streamable HTTP target. `@mcpfn/auth
 await client.completeAuthorization({ code, state });
 ```
 
-McpFn reconnects after the SDK exchange. Connection retries happen only when configured, and capability calls are never replayed implicitly. Register `handlers.roots`, `handlers.sampling`, or `handlers.elicitation` to advertise client-mediated capabilities. `onEvent()` observes redacted lifecycle and capability events. The [client reference](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/reference/client.md) documents the target and event surfaces.
+McpFn reconnects after the SDK exchange. Connection retries happen only when configured, and capability calls are never replayed implicitly. Register `handlers.roots`, `handlers.sampling`, or `handlers.elicitation` to advertise client-mediated capabilities. `onEvent()` (or the `events` option) observes redacted capability events such as progress, logging, list changes, and client-mediated requests; the `diagnostics` option or `onDiagnostic()` observes redacted lifecycle phases such as connect, authorization, token exchange, and close. The [client reference](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/reference/client.md) documents the target and event surfaces.
 
 ---
 
@@ -168,10 +168,11 @@ const server = declaration.createServer();
 await server.serveStdio();
 ```
 
-Install a TypeScript runner and generate the manifest from the declaration module, then start the transport:
+Install a TypeScript runner and generate the manifest from the declaration module, then start the transport. The entrypoint uses top-level `await`, so the project must be an ES module (`"type": "module"` in `package.json`):
 
 ```sh
 npm install --save-dev @mcpfn/cli tsx
+npm pkg set type=module
 npx mcpfn manifest server.ts --output manifest.json
 npx tsx stdio.ts
 ```
@@ -342,8 +343,8 @@ authorization-code flow.
 
 `createManifest` emits code-unit-sorted tool, resource, template, and prompt inventories plus a SHA-256 hash over a canonically ordered JSON representation. Object-valued capabilities, client requirements, and extensions retain their supplied insertion order in the returned body; their order does not affect the hash. `diffManifests` classifies changes as:
 
-- `breaking`: removed tools/properties/support, narrowed input enums, widened output enums, tighter input constraints, relaxed output constraints, newly required inputs, required output additions, and any output property added to a previously closed schema;
-- `additive`: added tools, optional input properties, optional output properties accepted by a previously open schema, widened input enums, relaxed input constraints, and added protocol/transport support;
+- `breaking`: removed tools/support, removed properties when the remaining fallback schema (`additionalProperties` or a matching `patternProperties` entry) no longer accepts the old values or the property was a required output, narrowed input enums, widened output enums, tighter input constraints, relaxed output constraints, newly required inputs, required output additions, and any output property added to a previously closed schema;
+- `additive`: added tools, optional input properties that the previous fallback schema already accepted (an optional input property that narrows the accepted fallback is breaking), optional output properties accepted by a previously open schema, widened input enums, relaxed input constraints, and added protocol/transport support;
 - `behavioral`: titles, descriptions, or annotations that can alter model tool selection without changing JSON validity.
 
 The diff is deliberately structural. Semantic scenarios are still required for authorization decisions, version resolution, idempotency, side effects, error envelopes, and result meaning.
@@ -473,9 +474,9 @@ native clients and name those schemes explicitly, for example
 `compatiblePrivateUseSchemes: ["cursor"]` for
 `cursor://anysphere.cursor-mcp/oauth/callback`. Compatibility mode still rejects
 web, network, launcher, and dangerous schemes, non-loopback HTTP, credentials,
-fragments, wildcards, and malformed or opaque callbacks. Authorization always
-requires exact matching; dynamic-port matching remains restricted to loopback
-HTTP. Successful dynamic
+fragments, wildcards, and malformed or opaque callbacks. Authorization
+requires exact matching except for loopback HTTP redirects registered without a
+port, which accept a dynamic port. Successful dynamic
 registrations expose compatibility scheme names and counts through the hosted
 authorization diagnostics hook so hosts can audit use without recording callback
 queries.
@@ -580,7 +581,7 @@ The conformance command delegates to the pinned official
 the other CLI commands support Node.js 18.18 or newer. McpFn does not maintain
 a competing protocol test suite.
 
-The manifest source may be JSON, a default-exported `McpFnServer`, an async factory returning a server, or a `McpFnRegistry`. Registry sources require both `--name` and `--version`. The `test` command requires a server export because it exercises a real client/server connection.
+The manifest source may be JSON, a default-exported `McpFnServer`, a `defineMcpFnServer` declaration, an async factory returning one of those, or a `McpFnRegistry`. Registry sources require both `--name` and `--version`. The `test` command requires a source that can create a server (a server or a declaration) because it exercises a real client/server connection.
 
 Scenario modules default-export either an array of `McpFnScenario` values or a
 version 1 `mcpfn.scenarios` artifact. See the runnable [server](https://github.com/21nCo/super-functions/blob/dev/mcpfn/examples/calculator-server.ts), [scenarios](https://github.com/21nCo/super-functions/blob/dev/mcpfn/examples/calculator-scenarios.ts), and committed [manifest](https://github.com/21nCo/super-functions/blob/dev/mcpfn/examples/calculator.manifest.json).
@@ -629,9 +630,11 @@ requests through the official SDK. Authorization is supplied through an
 official `OAuthClientProvider`, including the McpFn provider from
 `@mcpfn/auth`. When an interactive flow is required, `connect()` reports
 `MCPFN_AUTHORIZATION_REQUIRED`; pass the callback code to
-`completeAuthorization({ code, state })` and the client validates callback
-correlation, completes the SDK exchange, and reconnects without replaying a
-domain operation.
+`completeAuthorization({ code, state })`. The client passes `state` to the
+provider's optional `validateAuthorizationState()` extension, which the
+`@mcpfn/auth` provider implements; a provider without that extension does not
+get callback-state validation from McpFn. The client then completes the SDK
+exchange and reconnects without replaying a domain operation.
 
 McpFn retries only connection establishment when explicitly configured. It
 never implicitly replays tool calls, writes, or other capability operations.
@@ -798,7 +801,9 @@ const server = createMcpFnServer({
 
 McpFn applies canonical visibility before projection, checks calls against the
 same effective catalog, rejects model-supplied server-owned fields, enriches
-from trusted context, and only then invokes canonical Ajv validation. Declared
+from trusted context, and only then invokes the canonical schema validator (Ajv,
+or `@cfworker/json-schema` on Cloudflare Workers and other runtimes that forbid
+code generation). Declared
 server-owned fields must be canonical required properties, must be absent from
 the projected schema, and must be supplied by the enricher. A profile cannot
 invent or duplicate tools or mutate model-owned arguments. No matching profile
@@ -878,7 +883,7 @@ Lifecycle evidence retains only recognized framework error codes; application-de
 - no resource is exposed unless named in `expose`;
 - every read uses a fixed output projection;
 - filters and sort fields are allowlisted;
-- writes require explicit writable fields and a caller-supplied idempotency key;
+- create and update require explicit writable fields; all writes require a caller-supplied idempotency key;
 - principal and namespace context comes from the server, never tool arguments;
 - all calls execute through `DatafnExecutor`, preserving DataFn validation, permissions, hooks, authorization, namespace isolation, rate limits, and idempotency.
 
@@ -912,7 +917,11 @@ const server = createMcpFnServer({
   context: async (extra) => authenticateMcpRequest(extra.requestInfo),
   transports: ["stdio", "streamable-http"],
 });
+
+await server.serveStdio();
 ```
+
+`transports` only declares the supported transports in the manifest; it does not bind one. The example serves stdio; for Streamable HTTP, create a server instance per connection and use its `createWebStandardHandler()` as described in [Build a server](https://github.com/21nCo/super-functions/blob/dev/mcpfn/docs/content/docs/server.md).
 
 This adapter is appropriate for bounded data operations. Domain workflows with additional authorization, auditing, asset grants, or version-resolution semantics should remain explicit McpFn tools.
 
@@ -920,11 +929,11 @@ This adapter is appropriate for bounded data operations. Domain workflows with a
 
 - `fields` is the fixed list/get projection and must be non-empty, unique, and allowed by DataFn read policy.
 - `list` and `get` default to enabled after the resource itself is explicitly present in `expose`; pass `false` to disable either one.
-- `list.filterFields` defaults to `fields`; `sortFields` defaults to `id`; `defaultLimit` defaults to `50`; `maxLimit` defaults to `100`.
+- `list.filterFields` defaults to `fields`; `sortFields` defaults to `id`; `defaultLimit` defaults to `min(50, maxLimit)`; `maxLimit` defaults to `100`.
 - `create`, `update`, and `delete` default off. Create/update require a writable `fields` allowlist. All writes require `mutationId` and use the trusted `clientId` resolver.
 - Default names are `datafn_<resource>_<operation>`; `toolPrefix`, per-operation `name`, and descriptions can be overridden.
 
-Adapter construction fails before serving if a resource or field is unknown, unreadable, read-only, or not writable under the resolved DataFn capabilities.
+Adapter construction fails before serving if a resource is unknown, a read field is unknown or unreadable, or a mutation field is unknown, read-only, or not writable under the resolved DataFn capabilities.
 
 ---
 
@@ -986,8 +995,8 @@ const operation = {
 };
 const result = await inspector.run(operation);
 const scenario = inspector.exportScenario("status remains healthy", operation, result);
-// `scenario` is a top-level @mcpfn/testing McpFnScenario accepted by
-// runScenarios(), loadScenarios(), and `mcpfn test`.
+// `scenario` is a single @mcpfn/testing McpFnScenario. runScenarios(),
+// loadScenarios(), and `mcpfn test` take an array, so wrap it: [scenario].
 
 await inspector.close();
 ```
@@ -1053,10 +1062,7 @@ production-failure fixtures use the same call path and are never serialized
 with their argument values.
 
 ```ts
-import {
-  createMcpFnClientProfileSnapshot,
-  runMcpFnClientProfileContracts,
-} from "@mcpfn/testing";
+import { runMcpFnClientProfileContracts } from "@mcpfn/testing";
 
 const report = await runMcpFnClientProfileContracts({
   profiles: [{
@@ -1111,8 +1117,9 @@ sampling, elicitation, and notification handlers before initialization.
 
 `structuredTextParity` is appropriate only when the text block is JSON representing the same object as `structuredContent`. Human-readable text such as MemoryFn's search summary should be asserted separately.
 
-`McpFnInspector.exportScenario()` uses this same contract. Its sanitized output
-can be passed directly to `runScenarios()` or saved in a scenario module for
+`McpFnInspector.exportScenario()` uses this same contract. It returns one
+sanitized scenario; wrap it in an array (`[exportedScenario]`) before passing it
+to `runScenarios()` or default-exporting it from a scenario module for
 `mcpfn test`; the CLI validates tool, resource, prompt, inventory, and
 initialization shapes before execution.
 
@@ -1439,7 +1446,8 @@ OAuth adapters can additionally enable scope, expiry, resource-binding, and revo
 `createHostedAuthorizationFixtures()` keeps registration metadata independent
 from the generated authorization request. The ChatGPT-shaped pre-registration,
 Claude-shaped Client ID Metadata Document, and dynamic-registration cases cover
-authorization code with S256 PKCE and refresh. Advertised JWT bearer, device,
+authorization code with S256 PKCE; the ChatGPT and Claude cases also exercise
+refresh after the exchange. Advertised JWT bearer, device,
 and custom grants remain compatible when authorization code is supported, while
 an actual unsupported token request must return `unsupported_grant_type`.
 Allowed fixtures exchange the code returned by the authorization server. Set
@@ -1524,6 +1532,8 @@ Use `registerResource`, `registerResourceTemplate`, and `registerPrompt` on the 
 The `context` factory receives SDK request metadata. Resolve the authenticated principal, tenant, scopes, and credential there. Do not accept those values from tool arguments.
 
 ```ts
+import declaration from "./server.js";
+
 const server = declaration.createServer({
   context: (extra) => resolvePrincipal(extra.authInfo),
   toolVisibility: ({ tool, context }) =>
@@ -1555,7 +1565,7 @@ Use independent checks for domain behavior, public contract changes, effective a
 
 ## Compare the public contract
 
-Generate and review a candidate manifest from a server module or registry, then compare it with the committed baseline:
+Generate and review a candidate manifest from a server module or registry, then compare it with the committed baseline. A module that exports a `McpFnRegistry` also needs `--name` and `--version`, for example `mcpfn manifest ./src/mcp/registry.ts --name example --version 1.0.0`:
 
 ```sh
 mcpfn manifest ./src/mcp/server.ts --output ./candidate.manifest.json

@@ -14,6 +14,8 @@ Use `registerResource`, `registerResourceTemplate`, and `registerPrompt` on the 
 The `context` factory receives SDK request metadata. Resolve the authenticated principal, tenant, scopes, and credential there. Do not accept those values from tool arguments.
 
 ```ts
+import declaration from "./server.js";
+
 const server = declaration.createServer({
   context: (extra) => resolvePrincipal(extra.authInfo),
   toolVisibility: ({ tool, context }) =>

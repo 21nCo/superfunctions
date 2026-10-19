@@ -51,10 +51,7 @@ production-failure fixtures use the same call path and are never serialized
 with their argument values.
 
 ```ts
-import {
-  createMcpFnClientProfileSnapshot,
-  runMcpFnClientProfileContracts,
-} from "@mcpfn/testing";
+import { runMcpFnClientProfileContracts } from "@mcpfn/testing";
 
 const report = await runMcpFnClientProfileContracts({
   profiles: [{
@@ -109,8 +106,9 @@ sampling, elicitation, and notification handlers before initialization.
 
 `structuredTextParity` is appropriate only when the text block is JSON representing the same object as `structuredContent`. Human-readable text such as MemoryFn's search summary should be asserted separately.
 
-`McpFnInspector.exportScenario()` uses this same contract. Its sanitized output
-can be passed directly to `runScenarios()` or saved in a scenario module for
+`McpFnInspector.exportScenario()` uses this same contract. It returns one
+sanitized scenario; wrap it in an array (`[exportedScenario]`) before passing it
+to `runScenarios()` or default-exporting it from a scenario module for
 `mcpfn test`; the CLI validates tool, resource, prompt, inventory, and
 initialization shapes before execution.
 

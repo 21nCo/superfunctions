@@ -58,10 +58,11 @@ const server = declaration.createServer();
 await server.serveStdio();
 ```
 
-Install a TypeScript runner and generate the manifest from the declaration module, then start the transport:
+Install a TypeScript runner and generate the manifest from the declaration module, then start the transport. The entrypoint uses top-level `await`, so the project must be an ES module (`"type": "module"` in `package.json`):
 
 ```sh
 npm install --save-dev @mcpfn/cli tsx
+npm pkg set type=module
 npx mcpfn manifest server.ts --output manifest.json
 npx tsx stdio.ts
 ```

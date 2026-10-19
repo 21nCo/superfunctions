@@ -30,6 +30,6 @@ The wrapper publishes protected-resource metadata and passes verified auth infor
 
 ## Reuse hosted identity
 
-`createMcpAuthorizationCompatibilityHandler()` composes authorization-server metadata, registration, Client ID Metadata Documents, PKCE code validation, token exchange, refresh rotation, and revocation. The host remains responsible for login, consent, durable clients, token signing and values, and revocation state. This is separate from outbound provider account-linking flows.
+`createMcpAuthorizationCompatibilityHandler()` composes authorization-server metadata, PKCE code validation, and token exchange. Dynamic registration, Client ID Metadata Documents, refresh rotation, and revocation are enabled only when the corresponding `clients.register`, `clientMetadataDocuments`, `tokenAuthority.refreshToken`, and `tokenAuthority.revokeToken` options are supplied. The host remains responsible for login, consent, durable clients, token signing and values, and revocation state. This is separate from outbound provider account-linking flows.
 
 Run `mcpfn auth-diagnose URL` for read-only discovery checks. Add the [authentication regression suite](/docs/testing) before deploying a protected endpoint.

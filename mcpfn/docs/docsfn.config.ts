@@ -1,11 +1,16 @@
 import type { DocsConfig } from "@docsfn/core";
 
+const deploymentOrigin = process.env.CLOUDFLARE_DOCS_DEPLOY === "1"
+  ? process.env.CLOUDFLARE_DOCS_PUBLIC_ORIGIN || undefined
+  : undefined;
+
 const config: DocsConfig = {
   schemaVersion: 1,
   site: {
     title: "McpFn",
     description: "Build, secure, test, and evolve Model Context Protocol servers with stable consumer contracts.",
     basePath: "/docs",
+    canonicalUrl: deploymentOrigin,
     editLink: { pattern: "https://github.com/21nCo/super-functions/edit/dev/mcpfn/docs/{path}" },
   },
   compat: { preset: "none" },

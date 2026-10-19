@@ -34,8 +34,8 @@ const operation = {
 };
 const result = await inspector.run(operation);
 const scenario = inspector.exportScenario("status remains healthy", operation, result);
-// `scenario` is a top-level @mcpfn/testing McpFnScenario accepted by
-// runScenarios(), loadScenarios(), and `mcpfn test`.
+// `scenario` is a single @mcpfn/testing McpFnScenario. runScenarios(),
+// loadScenarios(), and `mcpfn test` take an array, so wrap it: [scenario].
 
 await inspector.close();
 ```

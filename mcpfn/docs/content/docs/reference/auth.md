@@ -54,9 +54,9 @@ native clients and name those schemes explicitly, for example
 `compatiblePrivateUseSchemes: ["cursor"]` for
 `cursor://anysphere.cursor-mcp/oauth/callback`. Compatibility mode still rejects
 web, network, launcher, and dangerous schemes, non-loopback HTTP, credentials,
-fragments, wildcards, and malformed or opaque callbacks. Authorization always
-requires exact matching; dynamic-port matching remains restricted to loopback
-HTTP. Successful dynamic
+fragments, wildcards, and malformed or opaque callbacks. Authorization
+requires exact matching except for loopback HTTP redirects registered without a
+port, which accept a dynamic port. Successful dynamic
 registrations expose compatibility scheme names and counts through the hosted
 authorization diagnostics hook so hosts can audit use without recording callback
 queries.

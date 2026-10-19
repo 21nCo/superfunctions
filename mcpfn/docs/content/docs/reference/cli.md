@@ -61,7 +61,7 @@ The conformance command delegates to the pinned official
 the other CLI commands support Node.js 18.18 or newer. McpFn does not maintain
 a competing protocol test suite.
 
-The manifest source may be JSON, a default-exported `McpFnServer`, an async factory returning a server, or a `McpFnRegistry`. Registry sources require both `--name` and `--version`. The `test` command requires a server export because it exercises a real client/server connection.
+The manifest source may be JSON, a default-exported `McpFnServer`, a `defineMcpFnServer` declaration, an async factory returning one of those, or a `McpFnRegistry`. Registry sources require both `--name` and `--version`. The `test` command requires a source that can create a server (a server or a declaration) because it exercises a real client/server connection.
 
 Scenario modules default-export either an array of `McpFnScenario` values or a
 version 1 `mcpfn.scenarios` artifact. See the runnable [server](https://github.com/21nCo/super-functions/blob/dev/mcpfn/examples/calculator-server.ts), [scenarios](https://github.com/21nCo/super-functions/blob/dev/mcpfn/examples/calculator-scenarios.ts), and committed [manifest](https://github.com/21nCo/super-functions/blob/dev/mcpfn/examples/calculator.manifest.json).

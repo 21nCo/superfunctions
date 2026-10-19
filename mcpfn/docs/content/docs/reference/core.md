@@ -157,7 +157,9 @@ const server = createMcpFnServer({
 
 McpFn applies canonical visibility before projection, checks calls against the
 same effective catalog, rejects model-supplied server-owned fields, enriches
-from trusted context, and only then invokes canonical Ajv validation. Declared
+from trusted context, and only then invokes the canonical schema validator (Ajv,
+or `@cfworker/json-schema` on Cloudflare Workers and other runtimes that forbid
+code generation). Declared
 server-owned fields must be canonical required properties, must be absent from
 the projected schema, and must be supplied by the enricher. A profile cannot
 invent or duplicate tools or mutate model-owned arguments. No matching profile

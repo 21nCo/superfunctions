@@ -7,7 +7,7 @@ Use independent checks for domain behavior, public contract changes, effective a
 
 ## Compare the public contract
 
-Generate and review a candidate manifest from a server module or registry, then compare it with the committed baseline:
+Generate and review a candidate manifest from a server module or registry, then compare it with the committed baseline. A module that exports a `McpFnRegistry` also needs `--name` and `--version`, for example `mcpfn manifest ./src/mcp/registry.ts --name example --version 1.0.0`:
 
 ```sh
 mcpfn manifest ./src/mcp/server.ts --output ./candidate.manifest.json

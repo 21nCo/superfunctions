@@ -39,9 +39,11 @@ requests through the official SDK. Authorization is supplied through an
 official `OAuthClientProvider`, including the McpFn provider from
 `@mcpfn/auth`. When an interactive flow is required, `connect()` reports
 `MCPFN_AUTHORIZATION_REQUIRED`; pass the callback code to
-`completeAuthorization({ code, state })` and the client validates callback
-correlation, completes the SDK exchange, and reconnects without replaying a
-domain operation.
+`completeAuthorization({ code, state })`. The client passes `state` to the
+provider's optional `validateAuthorizationState()` extension, which the
+`@mcpfn/auth` provider implements; a provider without that extension does not
+get callback-state validation from McpFn. The client then completes the SDK
+exchange and reconnects without replaying a domain operation.
 
 McpFn retries only connection establishment when explicitly configured. It
 never implicitly replays tool calls, writes, or other capability operations.

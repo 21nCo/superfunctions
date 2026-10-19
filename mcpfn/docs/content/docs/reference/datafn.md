@@ -8,7 +8,7 @@ description: Source-aligned McpFn datafn adapter documentation.
 - no resource is exposed unless named in `expose`;
 - every read uses a fixed output projection;
 - filters and sort fields are allowlisted;
-- writes require explicit writable fields and a caller-supplied idempotency key;
+- create and update require explicit writable fields; all writes require a caller-supplied idempotency key;
 - principal and namespace context comes from the server, never tool arguments;
 - all calls execute through `DatafnExecutor`, preserving DataFn validation, permissions, hooks, authorization, namespace isolation, rate limits, and idempotency.
 
@@ -42,7 +42,11 @@ const server = createMcpFnServer({
   context: async (extra) => authenticateMcpRequest(extra.requestInfo),
   transports: ["stdio", "streamable-http"],
 });
+
+await server.serveStdio();
 ```
+
+`transports` only declares the supported transports in the manifest; it does not bind one. The example serves stdio; for Streamable HTTP, create a server instance per connection and use its `createWebStandardHandler()` as described in [Build a server](/docs/server).
 
 This adapter is appropriate for bounded data operations. Domain workflows with additional authorization, auditing, asset grants, or version-resolution semantics should remain explicit McpFn tools.
 
@@ -50,8 +54,8 @@ This adapter is appropriate for bounded data operations. Domain workflows with a
 
 - `fields` is the fixed list/get projection and must be non-empty, unique, and allowed by DataFn read policy.
 - `list` and `get` default to enabled after the resource itself is explicitly present in `expose`; pass `false` to disable either one.
-- `list.filterFields` defaults to `fields`; `sortFields` defaults to `id`; `defaultLimit` defaults to `50`; `maxLimit` defaults to `100`.
+- `list.filterFields` defaults to `fields`; `sortFields` defaults to `id`; `defaultLimit` defaults to `min(50, maxLimit)`; `maxLimit` defaults to `100`.
 - `create`, `update`, and `delete` default off. Create/update require a writable `fields` allowlist. All writes require `mutationId` and use the trusted `clientId` resolver.
 - Default names are `datafn_<resource>_<operation>`; `toolPrefix`, per-operation `name`, and descriptions can be overridden.
 
-Adapter construction fails before serving if a resource or field is unknown, unreadable, read-only, or not writable under the resolved DataFn capabilities.
+Adapter construction fails before serving if a resource is unknown, a read field is unknown or unreadable, or a mutation field is unknown, read-only, or not writable under the resolved DataFn capabilities.

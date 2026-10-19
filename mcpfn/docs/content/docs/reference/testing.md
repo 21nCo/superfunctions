@@ -233,7 +233,8 @@ OAuth adapters can additionally enable scope, expiry, resource-binding, and revo
 `createHostedAuthorizationFixtures()` keeps registration metadata independent
 from the generated authorization request. The ChatGPT-shaped pre-registration,
 Claude-shaped Client ID Metadata Document, and dynamic-registration cases cover
-authorization code with S256 PKCE and refresh. Advertised JWT bearer, device,
+authorization code with S256 PKCE; the ChatGPT and Claude cases also exercise
+refresh after the exchange. Advertised JWT bearer, device,
 and custom grants remain compatible when authorization code is supported, while
 an actual unsupported token request must return `unsupported_grant_type`.
 Allowed fixtures exchange the code returned by the authorization server. Set

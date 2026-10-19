@@ -22,7 +22,7 @@ try {
 }
 ```
 
-Use `stdioTarget()` for a locally launched server on Node.js. `listAll()` follows inventory pagination; `listBounded(limit)` continues pagination but retains only the requested number of entries and reports dropped items. The client also exposes typed resources, prompts, completions, and task methods.
+Use `stdioTarget({ command: "node", args: ["./server.js"] })` for a locally launched server on Node.js; `command` is required, and `args`, `cwd`, and `env` follow the official SDK stdio parameters. `listAll()` follows inventory pagination; `listBounded(limit)` continues pagination but retains only the requested number of entries and reports dropped items. The client also exposes typed resources, prompts, completions, and task methods.
 
 ## Authorization and lifecycle
 
@@ -32,4 +32,4 @@ Pass an official `OAuthClientProvider` to a Streamable HTTP target. `@mcpfn/auth
 await client.completeAuthorization({ code, state });
 ```
 
-McpFn reconnects after the SDK exchange. Connection retries happen only when configured, and capability calls are never replayed implicitly. Register `handlers.roots`, `handlers.sampling`, or `handlers.elicitation` to advertise client-mediated capabilities. `onEvent()` observes redacted lifecycle and capability events. The [client reference](/docs/reference/client) documents the target and event surfaces.
+McpFn reconnects after the SDK exchange. Connection retries happen only when configured, and capability calls are never replayed implicitly. Register `handlers.roots`, `handlers.sampling`, or `handlers.elicitation` to advertise client-mediated capabilities. `onEvent()` (or the `events` option) observes redacted capability events such as progress, logging, list changes, and client-mediated requests; the `diagnostics` option or `onDiagnostic()` observes redacted lifecycle phases such as connect, authorization, token exchange, and close. The [client reference](/docs/reference/client) documents the target and event surfaces.
