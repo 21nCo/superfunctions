@@ -1,3 +1,4 @@
+import { compareDeploymentMetrics, DeploymentComparisonOptions } from "../analysis/deployment-comparison";
 import { WatchFnConfig, WatchFnConfigSchema, WatchFnInstance } from "./types";
 import { EventRouter } from "./event-router";
 import { MemoryStorage } from "../storage/memory-storage";
@@ -215,11 +216,8 @@ export class WatchFn implements WatchFnInstance {
       return (await this.queryEngine.aggregate(params)).data;
   }
   
-  async compareDeploymentMetrics(params: any): Promise<any> {
-      return {
-          errorRate: { increase: 0 },
-          latency: { increase: 0 }
-      };
+  async compareDeploymentMetrics(params: DeploymentComparisonOptions) {
+      return compareDeploymentMetrics(options => this.query(options), params);
   }
   
   // Accessors for sub-modules could go here

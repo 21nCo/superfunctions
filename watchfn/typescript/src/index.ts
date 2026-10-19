@@ -89,3 +89,5 @@ export * from "./analysis/anomaly-detection";
 // Public names let downstream libraries emit portable inferred declarations.
 export type { Router } from "@superfunctions/http";
 export type { TableSchema } from "@superfunctions/db";
+
+export type { DeploymentComparisonOptions, ComparedMetric } from "./analysis/deployment-comparison";

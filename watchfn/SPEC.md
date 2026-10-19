@@ -1520,6 +1520,7 @@ host.on("deploy.started", (event) => {
 
 host.on("deploy.completed", async (event) => {
   watch.track("deployment.completed", {
+    deploymentId: event.deploymentId,
     version: event.version,
     duration: event.duration,
   });
