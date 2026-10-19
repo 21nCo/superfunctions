@@ -11,10 +11,11 @@ on:
       - superfunctions-docs-live-*
       - superfunctions-docs-datafn-live-*
       - superfunctions-docs-extfn-live-*
-      - superfunctions-docs-plugfn-live-*
+      - superfunctions-docs-reviewfn-live-*
       - superfunctions-docs-memoryfn-live-*
       - superfunctions-docs-mdfn-live-*
       - superfunctions-docs-clifn-live-*
+      - superfunctions-docs-plugfn-live-*
       - superfunctions-docs-botfn-live-*
       - superfunctions-docs-langfn-live-*
       - superfunctions-docs-devfn-live-*
@@ -23,10 +24,11 @@ on:
       - superfunctions-docs-authfn-live-*
       - superfunctions-datafn-docs-live-*
       - superfunctions-extfn-docs-live-*
-      - superfunctions-plugfn-docs-live-*
+      - superfunctions-reviewfn-docs-live-*
       - superfunctions-memoryfn-docs-live-*
       - superfunctions-mdfn-docs-live-*
       - superfunctions-clifn-docs-live-*
+      - superfunctions-plugfn-docs-live-*
       - superfunctions-botfn-docs-live-*
       - superfunctions-langfn-docs-live-*
       - superfunctions-devfn-docs-live-*
@@ -36,10 +38,11 @@ on:
     paths:
       - datafn/docs/**
       - extfn/docs/**
-      - plugfn/docs/**
+      - reviewfn/docs/**
       - memoryfn/docs/**
       - mdfn/docs/**
       - clifn/docs/**
+      - plugfn/docs/**
       - botfn/docs/**
       - langfn/docs/**
       - devfn/docs/**
@@ -66,10 +69,11 @@ on:
           - all
           - datafn
           - extfn
-          - plugfn
+          - reviewfn
           - memoryfn
           - mdfn
           - clifn
+          - plugfn
           - botfn
           - langfn
           - devfn
