@@ -1,4 +1,5 @@
-import { NotFoundError, type Adapter, type WhereClause } from '@superfunctions/db';
+import { getRecFnSchema } from './schema.js';
+import { NotFoundError, wrapWithSchema, type Adapter, type WhereClause } from '@superfunctions/db';
 import type {
   Bot,
   Calendar,
@@ -18,6 +19,10 @@ import type {
 
 export interface CreateDbStoreOptions {
   adapter: Adapter;
+  /** Explicit assertion that the configured backend persists across process restarts.
+   * Defaults false; database adapter identity alone cannot distinguish SQLite :memory:.
+   * The built-in memory adapter is always rejected when true.
+   */
   durable?: boolean;
   adapterName?: string;
 }
@@ -107,12 +112,18 @@ export function assertProductionStore(store: RecFnStore): void {
 }
 
 export function createDbStore(options: CreateDbStoreOptions): RecFnStore {
-  const { adapter, durable = true, adapterName = adapter.name } = options;
+  const isMemory = options.adapter.id === 'memory';
+  if (isMemory && options.durable === true) {
+    throw new TypeError('The shared memory adapter cannot be declared durable');
+  }
+  const durable = options.durable === true && !isMemory;
+  const adapterName = options.adapterName ?? options.adapter.name;
+  const adapter = wrapWithSchema(options.adapter, getRecFnSchema());
 
   return {
     capabilities: {
       durable,
-      backend: durable ? 'db' : 'memory',
+      backend: isMemory ? 'memory' : 'db',
       adapterName,
     },
 
@@ -362,6 +373,7 @@ export function createDbStore(options: CreateDbStoreOptions): RecFnStore {
       const recordId = `${namespace}:${botId}:${participant.id}`;
       await adapter.upsert({
         model: 'participants',
+        conflictTarget: 'id',
         where: withNamespace(namespace, [
           { field: 'id', operator: 'eq', value: recordId },
         ]),
@@ -494,6 +506,7 @@ export function createDbStore(options: CreateDbStoreOptions): RecFnStore {
       const recordId = metadata.id || `meta_${botId}`;
       const stored = await adapter.upsert<StoredMetadata>({
         model: 'meetingMetadata',
+        conflictTarget: ['namespace', 'botId'],
         where: withNamespace(namespace, [
           { field: 'botId', operator: 'eq', value: botId },
         ]),
@@ -634,6 +647,7 @@ export function createDbStore(options: CreateDbStoreOptions): RecFnStore {
       const recordId = `${namespace}:${calendarId}:${eventId}`;
       await adapter.upsert({
         model: 'calendarEventBots',
+        conflictTarget: 'id',
         where: withNamespace(namespace, [
           { field: 'id', operator: 'eq', value: recordId },
         ]),

@@ -215,7 +215,7 @@ export function createRecFnServer(config: RecFnServerConfig): RecFnServer {
 
 export { createMemoryStore } from './store/memory.js';
 export { createDbStore, assertProductionStore } from './store/db.js';
-export { REC_FN_STORE_SCHEMA } from './store/schema.js';
+export { REC_FN_STORE_SCHEMA, getRecFnSchema } from './store/schema.js';
 export type { RecFnStore } from './store/types.js';
 export type { ValidateApiKey, AuthResult } from './middleware/auth.js';
 export { ok, err } from './middleware/envelope.js';

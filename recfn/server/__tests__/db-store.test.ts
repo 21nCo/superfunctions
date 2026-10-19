@@ -56,24 +56,21 @@ describe('db store', () => {
         },
       ],
     };
-    await adapter.create({
-      model: 'meetingMetadata',
-      data: metadata,
-    });
+    await store.upsertMetadata(bot.id, metadata, 'ns_a');
 
-    const storeAfterRestart = createDbStore({
+    const secondStore = createDbStore({
       adapter,
       adapterName: '@superfunctions/db/memory',
     });
 
-    expect(await storeAfterRestart.getBot(bot.id, 'ns_a')).toMatchObject({
+    expect(await secondStore.getBot(bot.id, 'ns_a')).toMatchObject({
       id: bot.id,
       namespace: 'ns_a',
       platform: 'meet',
     });
-    expect(await storeAfterRestart.getBot(bot.id, 'ns_b')).toBeNull();
+    expect(await secondStore.getBot(bot.id, 'ns_b')).toBeNull();
 
-    const participants = await storeAfterRestart.getParticipants(bot.id, 'ns_a');
+    const participants = await secondStore.getParticipants(bot.id, 'ns_a');
     expect(participants).toEqual([
       expect.objectContaining({
         id: 'participant-1',
@@ -81,15 +78,28 @@ describe('db store', () => {
         role: 'host',
       }),
     ]);
-    expect(await storeAfterRestart.getParticipants(bot.id, 'ns_b')).toEqual([]);
+    expect(await secondStore.getParticipants(bot.id, 'ns_b')).toEqual([]);
 
-    expect(await storeAfterRestart.getMetadata(bot.id, 'ns_a')).toEqual(
+    expect(await secondStore.getMetadata(bot.id, 'ns_a')).toEqual(
       expect.objectContaining({
         id: 'meta_1',
         title: 'Platform sync',
       }),
     );
-    expect(await storeAfterRestart.getMetadata(bot.id, 'ns_b')).toBeNull();
+    expect(await secondStore.getMetadata(bot.id, 'ns_b')).toBeNull();
+  });
+
+  it('fails closed for memory adapters even through the shared DB factory', () => {
+    const adapter = memoryAdapter();
+    const store = createDbStore({ adapter });
+    expect(store.capabilities.durable).toBe(false);
+    expect(() => assertProductionStore(store)).toThrow(/durable/);
+    expect(() => createDbStore({ adapter, durable: true, adapterName: 'persistent' })).toThrow(/cannot be declared durable/);
+  });
+
+  it('requires explicit durability for unknown database configurations', () => {
+    const adapter = { ...memoryAdapter(), id: 'custom' };
+    expect(() => assertProductionStore(createDbStore({ adapter }))).toThrow(/durable/);
   });
 
   it('fails fast in production when a durable store is not configured', () => {

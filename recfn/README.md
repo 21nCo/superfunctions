@@ -29,6 +29,21 @@ const server = createRecFnServer({
 });
 ```
 
+### Persistent server storage
+
+Pass a shared `@superfunctions/db` adapter to `createDbStore`. RecFn wraps it with its schema internally; consumers do not pass `adapterSchema` to the adapter constructor. Apply migrations based on `getRecFnSchema()` before serving requests.
+
+```ts
+import { createDbStore, getRecFnSchema } from '@recfn/server';
+
+const schema = getRecFnSchema(); // Migration metadata for the application's database.
+const store = createDbStore({ adapter, durable: true });
+```
+
+`durable: true` is an explicit deployment assertion that the configured backend survives connection/process restarts. It defaults to false because a database adapter can point at an in-memory database. The built-in memory adapter cannot be declared durable. Production startup retains the durable-store guard.
+
+The store schema uses JSON text and ISO date text, and requires a unique `(namespace, botId)` index for meeting metadata. Existing installations must migrate those representations and resolve duplicate metadata rows before applying this schema. Do not switch existing native JSON columns without a matching migration. File-backed SQLite close/reopen is covered by the store acceptance test; other providers require their own migration and persistence validation.
+
 ### Bot worker
 
 ```ts

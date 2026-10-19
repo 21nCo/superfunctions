@@ -29,6 +29,7 @@ export const REC_FN_STORE_SCHEMA: TableSchemaMap = withIsoDateDefaults({
       duration: { type: 'number', required: true },
       storageRef: { type: 'string', required: true },
       size: { type: 'number', required: true },
+      downloadUrl: { type: 'string' },
       createdAt: { type: 'date', required: true },
     },
     indexes: [
@@ -96,7 +97,7 @@ export const REC_FN_STORE_SCHEMA: TableSchemaMap = withIsoDateDefaults({
       chatMessages: { type: 'json', required: true },
     },
     indexes: [
-      { name: 'meeting_metadata_namespace_bot_idx', fields: ['namespace', 'botId'] },
+      { name: 'meeting_metadata_namespace_bot_idx', fields: ['namespace', 'botId'], unique: true },
     ],
   },
   calendars: {
@@ -156,11 +157,16 @@ function normalizeTable(table: TableSchema): TableSchema {
         field.type === 'date' || field.type === 'datetime'
           ? {
               dateValueType: 'iso-string',
-              dateStorageType: 'timestamptz',
+              dateStorageType: 'iso-text',
               ...field,
             }
-          : field,
+          : field.type === 'json' ? { ...field, jsonStorageType: 'json-text' } : field,
       ])
     ),
   };
+}
+
+/** Application migration metadata; runtime wrapping is owned by createDbStore. */
+export function getRecFnSchema(): TableSchemaMap {
+  return structuredClone(REC_FN_STORE_SCHEMA);
 }

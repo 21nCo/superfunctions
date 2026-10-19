@@ -76,7 +76,8 @@ describe('Recording API routes', () => {
       expect(data.recordings[0].duration).toBe(1800000);
       expect(data.recordings[0].storageRef).toMatch(/^recordings\/ns_test\//);
       expect(data.recordings[0].size).toBe(52428800);
-      expect(data.recordings[0].createdAt).toBe('2026-02-28T15:00:00Z');
+      // Shared schema codecs return canonical ISO timestamps.
+      expect(data.recordings[0].createdAt).toBe('2026-02-28T15:00:00.000Z');
     });
 
     it('returns empty array for bot with no recordings', async () => {
