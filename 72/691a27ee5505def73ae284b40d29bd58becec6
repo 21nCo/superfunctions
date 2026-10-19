@@ -1,347 +1,345 @@
-scripts/docs-site/dependency-owner.test.ts
-  s_c1093e7194f7e3::t_b7c9ade5a3b9db 16-22
-  s_c1093e7194f7e3::t_af33a5e343c654 1-15,23-52
-authfn/docs/package.json
-  s_c1093e7194f7e3::t_db1c6b4925ffb0 49
-  s_c1093e7194f7e3::t_21f5527e197c28 10-11,21-23,35-36,40-41,43-44,48
 .github/workflows/ci.yml
-  s_7d0a48f0aaecda::t_9db6d2131bfe08 26,47,65-67,81,84,160,163,193,200,227,230,273,276
+  s_7d0a48f0aaecda::t_a028e0e6016040 26,47,65-67,81,84,160,163,193,200,227,230,273,276
 .github/workflows/mailfn-release.yml
-  s_7d0a48f0aaecda::t_11a8fc953af5f5 23,25
+  s_7d0a48f0aaecda::t_51f9fb425cf6ff 23,25
 .github/workflows/publish-tag.yml
-  s_7d0a48f0aaecda::t_daca8811e27769 30,38
+  s_7d0a48f0aaecda::t_6bcaeee731a9e1 30,38
 .github/workflows/pullfrog.yml
-  s_7d0a48f0aaecda::t_c09b1625c89e08 19,25
+  s_7d0a48f0aaecda::t_e1cef59b6d5fa1 19,25
 .github/workflows/reviewfn-release.yml
-  s_7d0a48f0aaecda::t_77a38cd75b558c 32,34
+  s_7d0a48f0aaecda::t_05e07c349613d7 32,34
 .github/workflows/searchfn-client-tests.yml
-  s_c1093e7194f7e3::t_83e3572eee08d2 31,34
+  s_c1093e7194f7e3::t_6b716ecae014b7 31,34
 .github/workflows/searchfn-client-tusk-vitest.yml
-  s_7d0a48f0aaecda::t_56f13be4a725c6 23,29
+  s_7d0a48f0aaecda::t_08ac07c8b0dcf2 23,29
 .github/workflows/superfunctions-docs-cloudflare-deploy.yml
-  s_7d0a48f0aaecda::t_7e58aa3ad689b0 13,18,24,29,32,47,62,67,91,103
+  s_7d0a48f0aaecda::t_6685f1d836af2c 13,18,24,29,32,47,62,67,91,103
 .github/workflows/superfunctions-docs-cloudflare-routes.yml
-  s_7d0a48f0aaecda::t_6ad5f2ae0da949 17,32,38,73
+  s_7d0a48f0aaecda::t_e1fadfe11de2b1 17,32,38,73
 .github/workflows/uifn-catalogs-cloudflare-preview.yml
-  s_7d0a48f0aaecda::t_d28ed5c9634110 47,49
+  s_7d0a48f0aaecda::t_acabbab25cad4a 47,49
 .github/workflows/uifn-phase-14-compat.yml
-  s_7d0a48f0aaecda::t_7150f2c55cc1c7 16,24,70,88,153,177
+  s_7d0a48f0aaecda::t_fea545b3b246c4 16,24,70,88,153,177
 authfn/docs/content/docs/ai-resources/claude.md
-  s_7d0a48f0aaecda::t_c28071c53e9565 65
+  s_7d0a48f0aaecda::t_65f9479f87e7f4 65
 authfn/docs/content/docs/ai-resources/codex.md
-  s_7d0a48f0aaecda::t_fdbcb273b62613 24-25
+  s_7d0a48f0aaecda::t_bcd496fe414633 24-25
 authfn/docs/content/docs/ai-resources/cursor.md
-  s_7d0a48f0aaecda::t_df836ed33959ac 32,46
+  s_7d0a48f0aaecda::t_c233bce4e90555 32,46
 authfn/docs/content/docs/ai-resources/index.md
-  s_7d0a48f0aaecda::t_b8ede5f4820852 53
+  s_7d0a48f0aaecda::t_6777c884f0d23a 53
 authfn/docs/content/docs/ai-resources/llms-txt.md
-  s_7d0a48f0aaecda::t_b069de73479729 8,10-11,13,15,17,19-20,23,25-28,31,33,35,38,41,43-45,48,50,52
+  s_7d0a48f0aaecda::t_1e3aa9662d70cd 8,10-11,13,15,17,19-20,23,25-28,31,33,35,38,41,43-45,48,50,52
 authfn/docs/docsfn.config.ts
-  s_7d0a48f0aaecda::t_2396859e77a11a 3-6,13,33
+  s_7d0a48f0aaecda::t_621387b0b3c345 3-6,13,33
+authfn/docs/package.json
+  s_c1093e7194f7e3::t_a306bf9c17a424 10-11,21-23,35-36,40-41,43-44,48-49
 authfn/docs/scripts/generate-llms.mjs
-  s_7d0a48f0aaecda::t_736e20119e1f5c 5-6,8-10,12
+  s_7d0a48f0aaecda::t_04202d8fdea5b2 5-6,8-10,12
 authfn/docs/src/lib/components/DocsSiteSearch.svelte
-  s_7d0a48f0aaecda::t_507b51073bfc7a 5
+  s_7d0a48f0aaecda::t_3432b0b9b9c659 5
 authfn/docs/src/lib/server/docs-site-source.ts
-  s_7d0a48f0aaecda::t_d879aac9afad55 2,4-5,7-8,11-22
+  s_7d0a48f0aaecda::t_073b88904f6a18 2,4-5,7-8,11-22
 authfn/docs/src/routes/+error.svelte
-  s_7d0a48f0aaecda::t_7d99e605bc7e65 1-12
+  s_7d0a48f0aaecda::t_b34c2fb88801d1 1-12
 authfn/docs/src/routes/+layout.server.ts
-  s_7d0a48f0aaecda::t_ad30c1a1e69c0a 4-5,7,9
+  s_7d0a48f0aaecda::t_7d2b597b27d9cf 4-5,7,9
 authfn/docs/src/routes/+page.svelte
-  s_7d0a48f0aaecda::t_146bc7842b4025 37
+  s_7d0a48f0aaecda::t_7fe773788c5a98 37
 authfn/docs/src/routes/blog/+page.server.ts
-  s_7d0a48f0aaecda::t_99ee7c627af900 1-5
+  s_7d0a48f0aaecda::t_5394c9058b4cba 1-5
 authfn/docs/src/routes/blog/+page.svelte
-  s_7d0a48f0aaecda::t_adf4d8406b8954 27
+  s_7d0a48f0aaecda::t_a0f049daf78474 27
 authfn/docs/src/routes/blog/[slug]/+page.server.ts
-  s_7d0a48f0aaecda::t_a8b2e35a022494 2-3,6-8
+  s_7d0a48f0aaecda::t_79424019363107 2-3,6-8
 authfn/docs/src/routes/blog/rss.xml/+server.ts
-  s_7d0a48f0aaecda::t_062df90068e20a 2,5
+  s_7d0a48f0aaecda::t_8844cd1fe1cd9b 2,5
 authfn/docs/src/routes/docs/[...slug]/+page.server.ts
-  s_7d0a48f0aaecda::t_6c784fd65befb2 2-3,6-8
+  s_7d0a48f0aaecda::t_3e84c7e3e8c88f 2-3,6-8
 authfn/docs/src/routes/docs/blog/+page.server.ts
-  s_7d0a48f0aaecda::t_2b1369636ca4c8 1-5
+  s_7d0a48f0aaecda::t_7211718c4c4533 1-5
 authfn/docs/src/routes/docs/blog/+page.svelte
-  s_7d0a48f0aaecda::t_ca335ff48b1862 1-7
+  s_7d0a48f0aaecda::t_3b62bee4fea972 1-7
 authfn/docs/src/routes/docs/blog/[...slug]/+page.server.ts
-  s_7d0a48f0aaecda::t_134585c186c67d 1-8
+  s_7d0a48f0aaecda::t_346fdd40c49599 1-8
 authfn/docs/src/routes/docs/blog/[...slug]/+page.svelte
-  s_7d0a48f0aaecda::t_c46655455ee5d8 1-7
+  s_7d0a48f0aaecda::t_af4269168cd592 1-7
 authfn/docs/src/routes/docs/blog/rss.xml/+server.ts
-  s_7d0a48f0aaecda::t_05a0d2d9b8203c 1-5
+  s_7d0a48f0aaecda::t_a3045bd0135218 1-5
 authfn/docs/src/routes/docs/llms-full.txt/+server.ts
-  s_7d0a48f0aaecda::t_8e5a7353650ac0 1-7
+  s_7d0a48f0aaecda::t_33b4e28d74c370 1-7
 authfn/docs/src/routes/docs/llms.txt/+server.ts
-  s_7d0a48f0aaecda::t_3e18a7731e8e6e 1-7
+  s_7d0a48f0aaecda::t_13db9ef22956de 1-7
 authfn/docs/src/routes/docs/search.json/+server.ts
-  s_7d0a48f0aaecda::t_afb15a93a014a5 1-2
+  s_7d0a48f0aaecda::t_b8f7e1139b1748 1-2
 authfn/docs/static/llms-full.txt
-  s_7d0a48f0aaecda::t_b9a31974b2c72e 1237,1275-1276,1352,1366,1448,1463,1465-1466,1468,1470,1472,1474-1475,1478,1480-1483,1486,1488,1490,1493,1496,1498-1500,1503,1505,1507
+  s_7d0a48f0aaecda::t_7c17870718af6c 1237,1275-1276,1352,1366,1448,1463,1465-1466,1468,1470,1472,1474-1475,1478,1480-1483,1486,1488,1490,1493,1496,1498-1500,1503,1505,1507
 authfn/docs/static/llms.txt
-  s_7d0a48f0aaecda::t_9116b6058d69f4 7-115,119
+  s_7d0a48f0aaecda::t_9d944c5641e73a 7-115,119
 authfn/docs/tsconfig.json
-  s_7d0a48f0aaecda::t_846beefaa2225f 2,4-11,25-27
+  s_7d0a48f0aaecda::t_20683254da2db7 2,4-11,25-27
 authfn/docs/turbo.json
-  s_7d0a48f0aaecda::t_70b87c0d1bc8ed 3-5,18-27
+  s_7d0a48f0aaecda::t_bf15c78c24c053 3-5,18-27
 authfn/docs/vite.config.ts
-  s_7d0a48f0aaecda::t_e803b8c3b9c7a1 2,15,17
+  s_7d0a48f0aaecda::t_70b9d5b33bf0c3 2,15,17
 botfn/.gitignore
-  s_7d0a48f0aaecda::t_eb7f1c1b4596bf 43
+  s_7d0a48f0aaecda::t_13bbc30c2e502b 43
 botfn/AGENTS.md
-  s_7d0a48f0aaecda::t_fd36a0842606c1 1,3,5,7-10,12,15-24,27,29,31-36,38,40,42,44,46-49
+  s_7d0a48f0aaecda::t_58053f5b18984a 1,3,5,7-10,12,15-24,27,29,31-36,38,40,42,44,46-49
 botfn/README.md
-  s_7d0a48f0aaecda::t_2dd8074eeda9ab 1,3,5,7,9-19,21,23,25,28-29,31-32,34-38,41-42
+  s_7d0a48f0aaecda::t_55e800b5173e01 1,3,5,7,9-19,21,23,25,28-29,31-32,34-38,41-42
 botfn/persistence/wrangler.toml
-  s_7d0a48f0aaecda::t_0b48485f204167 3-5
+  s_7d0a48f0aaecda::t_23cc92a63efa61 3-5
 datafn/docs/app/layout.tsx
-  s_7d0a48f0aaecda::t_65f217a053ca8a 7-14
+  s_7d0a48f0aaecda::t_26a3e5124f9c96 7-14
 datafn/docs/content/docs/ai-resources/claude.mdx
-  s_7d0a48f0aaecda::t_253732c5ee5687 40
+  s_7d0a48f0aaecda::t_74482cf163933d 40
 datafn/docs/content/docs/ai-resources/codex.mdx
-  s_7d0a48f0aaecda::t_f985e89d95bed2 47
+  s_7d0a48f0aaecda::t_8ce9b322439ae4 47
 datafn/docs/content/docs/ai-resources/cursor.mdx
-  s_7d0a48f0aaecda::t_f5b372b0d6f566 40,50,53
+  s_7d0a48f0aaecda::t_8accd9031185a4 40,50,53
 datafn/docs/content/docs/ai-resources/index.mdx
-  s_7d0a48f0aaecda::t_2e2ab4ff799687 16,35-37,40
+  s_7d0a48f0aaecda::t_20c3e6847720c6 16,35-37,40
 datafn/docs/content/docs/ai-resources/llms-txt.mdx
-  s_7d0a48f0aaecda::t_ca45bfb6ccba35 15,21,31,44,73,79
+  s_7d0a48f0aaecda::t_e2c42144eb64d1 15,21,31,44,73,79
 datafn/docs/content/docs/ai-resources/mcp.mdx
-  s_7d0a48f0aaecda::t_329e5b06aee181 33
+  s_7d0a48f0aaecda::t_58287134346e2e 33
 datafn/docs/content/docs/ai-resources/skills.mdx
-  s_7d0a48f0aaecda::t_cd187457da8006 54,108
+  s_7d0a48f0aaecda::t_1079dad8990218 54,108
 datafn/docs/content/docs/documentation/index.mdx
-  s_7d0a48f0aaecda::t_93d01cdacba25b 190
+  s_7d0a48f0aaecda::t_1d51b9cc8a659c 190
 datafn/docs/content/docs/documentation/server/administration.mdx
-  s_7d0a48f0aaecda::t_73d4939a6720b2 1-28
+  s_7d0a48f0aaecda::t_f1fbd6e0e35a40 1-28
 datafn/docs/content/docs/documentation/server/meta.json
-  s_7d0a48f0aaecda::t_afbd208478b96a 3
+  s_7d0a48f0aaecda::t_0ab7117c39eb89 3
 datafn/docs/content/docs/reference/changelog.mdx
-  s_7d0a48f0aaecda::t_9c47c7d0c6f5b7 16
+  s_7d0a48f0aaecda::t_5afa12f7d02b42 16
 datafn/docs/content/docs/reference/events.mdx
-  s_7d0a48f0aaecda::t_0f84abc8eedef1 2-3,8,10,15-25,29,31-39,41,43,45,47,49,51,54,56-64,66,68,71-73
+  s_7d0a48f0aaecda::t_95f08f44d1f603 2-3,8,10,15-25,29,31-39,41,43,45,47,49,51,54,56-64,66,68,71-73
 datafn/docs/public/llms-full.txt
-  s_7d0a48f0aaecda::t_ccaee70dd88536 16,52,114,157,199,235,245,248,313,324,330,340,353,382,388,398,427,505,555,609,622,633,652-654,657,664,745,883,981,1167,1174,1215,1527,1629,1675,1724,1744,1779,2013,2161,2297,2386,2569,2704,2894,3023,3085,3293,3623,3894,4019,4148,4426,4537,5195,5382,5517,5815,6004,6116,6337,6511,6711,6854,7051,7225,7341,7501,7634,7761,7885,7963,8115,8273,8452,8634,8787,9014,9166,9369,9508,9711,9887,10151,10450,10601,10738,11024,11183,11330,11528,11690,11866,11922,12163,12318,12454,12591-12780,12784,12841,12851-12852,12942-12943,12967-12968,12989-13121,13125,13235-13236,13476,13595,13841,13999,14135,14146-14147,14159,14166-14167,14197,14286,14416,14533,14627,14635-14637,14713,14722,14867,14879,14883-14884,14899,14924,14927-14930,14933-14941,14943-14946,14950-14952,15021,15033,15039-15175,15179,15297-15329,15333,15553,15688,15857,15999,16479,16741,16890,17023,17197,17421,17572,17647,17769,17894,18033,18190,18276,18380,18500,18614,18758,18925,19067,19226,19370,19492,19753,19837,19942,20054,20151,20256,20372,20479,20585,20722,20883,20991,21132,21266,21413,21580,21735,21895,22038,22189,22340,22485,22618,22736,22841,22998,23169,23350,23508,23619,23629-23632,23706,24030,24130,24188,24242,24392,24520,24703,24800,24937,25030,25201,25279,25299,25309-25314,25329,25340-25344,25416,25523,25625,25685-25715,25719,25777-25839,25843,26011,26208,26354,26587,26695,26727,26729,26738,26760-26764,26822,26824-26825,26828,26830,26835-26845,26849,26851-26859,26861,26863,26865,26867,26869,26871,26874,26876-26884,26886,26888,26891-26893,26900,27129,27309,27427,27549-27626,27630,27699
+  s_7d0a48f0aaecda::t_118408682abec7 16,52,114,157,199,235,245,248,313,324,330,340,353,382,388,398,427,505,555,609,622,633,652-654,657,664,745,883,981,1167,1174,1215,1527,1629,1675,1724,1744,1779,2013,2161,2297,2386,2569,2704,2894,3023,3085,3293,3623,3894,4019,4148,4426,4537,5195,5382,5517,5815,6004,6116,6337,6511,6711,6854,7051,7225,7341,7501,7634,7761,7885,7963,8115,8273,8452,8634,8787,9014,9166,9369,9508,9711,9887,10151,10450,10601,10738,11024,11183,11330,11528,11690,11866,11922,12163,12318,12454,12591-12780,12784,12841,12851-12852,12942-12943,12967-12968,12989-13121,13125,13235-13236,13476,13595,13841,13999,14135,14146-14147,14159,14166-14167,14197,14286,14416,14533,14627,14635-14637,14713,14722,14867,14879,14883-14884,14899,14924,14927-14930,14933-14941,14943-14946,14950-14952,15021,15033,15039-15175,15179,15297-15329,15333,15553,15688,15857,15999,16479,16741,16890,17023,17197,17421,17572,17647,17769,17894,18033,18190,18276,18380,18500,18614,18758,18925,19067,19226,19370,19492,19753,19837,19942,20054,20151,20256,20372,20479,20585,20722,20883,20991,21132,21266,21413,21580,21735,21895,22038,22189,22340,22485,22618,22736,22841,22998,23169,23350,23508,23619,23629-23632,23706,24030,24130,24188,24242,24392,24520,24703,24800,24937,25030,25201,25279,25299,25309-25314,25329,25340-25344,25416,25523,25625,25685-25715,25719,25777-25839,25843,26011,26208,26354,26587,26695,26727,26729,26738,26760-26764,26822,26824-26825,26828,26830,26835-26845,26849,26851-26859,26861,26863,26865,26867,26869,26871,26874,26876-26884,26886,26888,26891-26893,26900,27129,27309,27427,27549-27626,27630,27699
 datafn/docs/public/llms.txt
-  s_7d0a48f0aaecda::t_51310d336df5ed 9-14,18-28,32-40,44-58,62-145,149-151,155-163,167-182,186-219
+  s_7d0a48f0aaecda::t_095eb061df1b5c 9-14,18-28,32-40,44-58,62-145,149-151,155-163,167-182,186-219
 datafn/docs/scripts/generate-llms.mjs
-  s_7d0a48f0aaecda::t_06c646cda0d3a5 12
+  s_7d0a48f0aaecda::t_2712d7170826c7 12
 extfn/docs/.gitignore
-  s_7d0a48f0aaecda::t_f7ffc59d81bdc4 1-10
+  s_7d0a48f0aaecda::t_5267c15162749a 1-10
 extfn/docs/README.md
-  s_7d0a48f0aaecda::t_9403245ebbb2b3 1-24
+  s_7d0a48f0aaecda::t_5749960bd75ddd 1-24
 extfn/docs/cli.md
-  s_7d0a48f0aaecda::t_41149af20b62b4 117
+  s_7d0a48f0aaecda::t_3943a854adae79 117
 extfn/docs/consumer-host-abstraction.md
-  s_7d0a48f0aaecda::t_8284ee71e1eeff 76-84,89-93,96,107-108
+  s_7d0a48f0aaecda::t_4b76cecde40505 76-84,89-93,96,107-108
 extfn/docs/content/docs/cli.md
-  s_7d0a48f0aaecda::t_f69f61a747aac4 1-15
+  s_7d0a48f0aaecda::t_157a55f13c5ae4 1-15
 extfn/docs/content/docs/configuration.md
-  s_7d0a48f0aaecda::t_77f9a1256c7b53 1-31
+  s_7d0a48f0aaecda::t_6cd596989b99aa 1-31
 extfn/docs/content/docs/content-and-background.md
-  s_7d0a48f0aaecda::t_544f0a6397aafe 1-10
+  s_7d0a48f0aaecda::t_3551cede9e302b 1-10
 extfn/docs/content/docs/getting-started.md
-  s_7d0a48f0aaecda::t_b970dbee2c139c 1-29
+  s_7d0a48f0aaecda::t_6665603c4e9b1d 1-29
 extfn/docs/content/docs/index.md
-  s_7d0a48f0aaecda::t_2c612581d68bb9 1-10
+  s_7d0a48f0aaecda::t_87a1c3e173315a 1-10
 extfn/docs/content/docs/integrations.md
-  s_7d0a48f0aaecda::t_1955d620751eea 1-10
+  s_7d0a48f0aaecda::t_109ebc870c0d45 1-10
 extfn/docs/content/docs/meta.json
-  s_7d0a48f0aaecda::t_cb3de5d5ac3059 1-4
+  s_7d0a48f0aaecda::t_1cd25af6c86173 1-4
 extfn/docs/content/docs/operations-and-limits.md
-  s_7d0a48f0aaecda::t_19f8e31ad0ae41 1-10
+  s_7d0a48f0aaecda::t_f2626d37e4e153 1-10
 extfn/docs/content/docs/reference/cli.md
-  s_7d0a48f0aaecda::t_a45c022a00c728 1-147
+  s_7d0a48f0aaecda::t_be2f63cd0cdf29 1-147
 extfn/docs/content/docs/reference/consumer-host-abstraction.md
-  s_7d0a48f0aaecda::t_99453bd5e452ab 1-158
+  s_7d0a48f0aaecda::t_03faed28849185 1-158
 extfn/docs/content/docs/reference/index.md
-  s_7d0a48f0aaecda::t_71afd5ed53451e 1-13
+  s_7d0a48f0aaecda::t_9250cc44a7cecc 1-13
 extfn/docs/content/docs/reference/meta.json
-  s_7d0a48f0aaecda::t_ed83529be3b4c3 1-4
+  s_7d0a48f0aaecda::t_0e9e880768a89b 1-4
 extfn/docs/content/docs/reference/multi-content-and-background-handlers.md
-  s_7d0a48f0aaecda::t_523c124592f13f 1-151
+  s_7d0a48f0aaecda::t_f112e7e9d84bd5 1-151
 extfn/docs/content/docs/reference/scan.md
-  s_7d0a48f0aaecda::t_56f17d0619bf9b 1-114
+  s_7d0a48f0aaecda::t_0afc646320d0c1 1-114
 extfn/docs/content/docs/runtime.md
-  s_7d0a48f0aaecda::t_76a78580878464 1-18
+  s_7d0a48f0aaecda::t_c98a352a04cab2 1-18
 extfn/docs/content/docs/scan-and-package.md
-  s_7d0a48f0aaecda::t_f884269c47582a 1-10
+  s_7d0a48f0aaecda::t_1f2938ebd23ee7 1-10
 extfn/docs/docsfn.config.ts
-  s_7d0a48f0aaecda::t_57bebfa9ab6e0a 1-40
+  s_7d0a48f0aaecda::t_119998b8d3f2a0 1-40
 extfn/docs/package.json
-  s_c1093e7194f7e3::t_9b22f771b2b6c6 1-38
+  s_c1093e7194f7e3::t_71a02812c6b619 1-38
 extfn/docs/scan.md
-  s_7d0a48f0aaecda::t_9e5f2b4956c395 86,89
+  s_7d0a48f0aaecda::t_bca98575237f9f 86,89
 extfn/docs/scripts/generate-llms.mjs
-  s_7d0a48f0aaecda::t_1358aa06169bd5 1-20
+  s_7d0a48f0aaecda::t_d3813d5a9991be 1-20
 extfn/docs/src/app.css
-  s_7d0a48f0aaecda::t_8d874f346da6bf 1-85
+  s_7d0a48f0aaecda::t_21ecfac560e6ff 1-85
 extfn/docs/src/app.html
-  s_7d0a48f0aaecda::t_6bb0867829d09d 1-11
+  s_7d0a48f0aaecda::t_684e341bf7e2a1 1-11
 extfn/docs/src/lib/components/DocsSiteSearch.svelte
-  s_7d0a48f0aaecda::t_0f047863f04004 1-5
+  s_7d0a48f0aaecda::t_d7051f7226471d 1-5
 extfn/docs/src/lib/server/docs-site-source.ts
-  s_7d0a48f0aaecda::t_6b46edf08044ff 1-14
+  s_7d0a48f0aaecda::t_7a7cc463892797 1-14
 extfn/docs/src/routes/+error.svelte
-  s_7d0a48f0aaecda::t_1c34aafea3e10a 1-12
+  s_7d0a48f0aaecda::t_b29661d4db7c52 1-12
 extfn/docs/src/routes/+layout.server.ts
-  s_7d0a48f0aaecda::t_f981b851c2376a 1-10,12-13
+  s_7d0a48f0aaecda::t_bf1825d37587d7 1-10,12-13
 extfn/docs/src/routes/+layout.svelte
-  s_7d0a48f0aaecda::t_9f44651c781be6 1-86
+  s_7d0a48f0aaecda::t_e82c627f275007 1-86
 extfn/docs/src/routes/+page.svelte
-  s_7d0a48f0aaecda::t_7e03153873a361 1-28
+  s_7d0a48f0aaecda::t_3b51b722939103 1-28
 extfn/docs/src/routes/docs/[...slug]/+page.server.ts
-  s_7d0a48f0aaecda::t_7c36696a6a29ec 1-25
+  s_7d0a48f0aaecda::t_009af98c256c51 1-25
 extfn/docs/src/routes/docs/[...slug]/+page.svelte
-  s_7d0a48f0aaecda::t_92e931c0a82243 1-41
+  s_7d0a48f0aaecda::t_7882ae8ae8e752 1-41
 extfn/docs/src/routes/docs/llms-full.txt/+server.ts
-  s_7d0a48f0aaecda::t_6fa0fe021e45c1 1-7
+  s_7d0a48f0aaecda::t_0dd0df8ba14136 1-7
 extfn/docs/src/routes/docs/llms.txt/+server.ts
-  s_7d0a48f0aaecda::t_e7a6e823ee025b 1-7
+  s_7d0a48f0aaecda::t_e28d3367bbbe6c 1-7
 extfn/docs/src/routes/docs/search.json/+server.ts
-  s_7d0a48f0aaecda::t_977011e668ee83 1-3,5-7
+  s_7d0a48f0aaecda::t_196f128a6e41d9 1-3,5-7
 extfn/docs/static/llms-full.txt
-  s_7d0a48f0aaecda::t_0e0d248d88e7a9 1-790
+  s_7d0a48f0aaecda::t_9e935a7150b89e 1-790
 extfn/docs/static/llms.txt
-  s_7d0a48f0aaecda::t_d0a51386e28d8f 1-20
+  s_7d0a48f0aaecda::t_9b08141eac53e6 1-20
 extfn/docs/svelte.config.js
-  s_7d0a48f0aaecda::t_cf19bffe82785d 1-26
+  s_7d0a48f0aaecda::t_4b0dfb14420ff8 1-26
 extfn/docs/tsconfig.json
-  s_7d0a48f0aaecda::t_e0948fdb34fd8d 1-59
+  s_7d0a48f0aaecda::t_9726c7c9f3b142 1-59
 extfn/docs/turbo.json
-  s_7d0a48f0aaecda::t_0052e651c80960 1-11,13-20
+  s_7d0a48f0aaecda::t_89c4f1f42c2462 1-11,13-20
 extfn/docs/vite.config.ts
-  s_7d0a48f0aaecda::t_fe8489ae5a4e36 1-4,7-10
+  s_7d0a48f0aaecda::t_fc96034cae2cb7 1-4,7-10
 filefn/docs/content/docs/ai-resources/claude.md
-  s_7d0a48f0aaecda::t_319d44b199536c 3,8,11,13-16,19
+  s_7d0a48f0aaecda::t_793ef01e4c9ef4 3,8,11,13-16,19
 filefn/docs/content/docs/ai-resources/codex.md
-  s_7d0a48f0aaecda::t_193ec7ba4e549c 3,8,10,12-16,19
+  s_7d0a48f0aaecda::t_3fd4fd3cfbcba2 3,8,10,12-16,19
 filefn/docs/content/docs/ai-resources/cursor.md
-  s_7d0a48f0aaecda::t_c8a56c27922832 3,8,11,13,15-18,21
+  s_7d0a48f0aaecda::t_11607456b5a32e 3,8,11,13,15-18,21
 filefn/docs/content/docs/ai-resources/index.md
-  s_7d0a48f0aaecda::t_adcd85b6ad3bb5 3,8,10-11,13,15-21
+  s_7d0a48f0aaecda::t_379b99857514a6 3,8,10-11,13,15-21
 filefn/docs/content/docs/ai-resources/llms-txt.md
-  s_7d0a48f0aaecda::t_c9899729c4ddba 3,8,10-13,15,17,19,21-22,25,27-30,33,35,37,39,41-43,46
+  s_7d0a48f0aaecda::t_1dd71d57241533 3,8,10-13,15,17,19,21-22,25,27-30,33,35,37,39,41-43,46
 filefn/docs/content/docs/ai-resources/mcp.md
-  s_7d0a48f0aaecda::t_eb1aa2c5965257 2-3,6,8,10,12
+  s_7d0a48f0aaecda::t_9cc6c681de4802 2-3,6,8,10,12
 filefn/docs/content/docs/ai-resources/skills.md
-  s_7d0a48f0aaecda::t_66fe27ee1dcb55 2-3,6,8,10,12-16,18
+  s_7d0a48f0aaecda::t_48cd2d6526f011 2-3,6,8,10,12-16,18
 filefn/docs/content/docs/api/index.md
-  s_7d0a48f0aaecda::t_524b12d692f03d 8
+  s_7d0a48f0aaecda::t_f0559523bed864 8
 filefn/docs/docsfn.config.ts
-  s_7d0a48f0aaecda::t_6f1d39541a51d1 3-6,13,33
+  s_7d0a48f0aaecda::t_92b14b9fe8e989 3-6,13,33
 filefn/docs/package.json
-  s_c1093e7194f7e3::t_2a4781e4a8595b 10-11,21-23,31-32,37-38
+  s_c1093e7194f7e3::t_b05ff56ef0e7c1 10-11,21-23,31-32,37-38
 filefn/docs/scripts/generate-llms.mjs
-  s_7d0a48f0aaecda::t_96c0fd1eab7a6e 6,8-10,20,67
+  s_7d0a48f0aaecda::t_8266a5f871457a 6,8-10,20,67
 filefn/docs/src/lib/components/DocsSiteSearch.svelte
-  s_7d0a48f0aaecda::t_f1787af7214918 5
+  s_7d0a48f0aaecda::t_1c9fab477535db 5
 filefn/docs/src/lib/server/docs-site-source.ts
-  s_7d0a48f0aaecda::t_8d1adcc1e51588 2,4-5,7-8,11-22
+  s_7d0a48f0aaecda::t_e78fcd4b43f49a 2,4-5,7-8,11-22
 filefn/docs/src/routes/+error.svelte
-  s_7d0a48f0aaecda::t_182b8535b51e56 1-12
+  s_7d0a48f0aaecda::t_6a9494309eff64 1-12
 filefn/docs/src/routes/+layout.server.ts
-  s_7d0a48f0aaecda::t_4fed305e0bb970 4-5,7,9
+  s_7d0a48f0aaecda::t_91fd1f8ef6818d 4-5,7,9
 filefn/docs/src/routes/blog/+page.server.ts
-  s_7d0a48f0aaecda::t_eb2471fa9e1624 1-5
+  s_7d0a48f0aaecda::t_07c88fd3d7ca95 1-5
 filefn/docs/src/routes/blog/+page.svelte
-  s_7d0a48f0aaecda::t_8c98791d96d097 27
+  s_7d0a48f0aaecda::t_47a8e847669cfb 27
 filefn/docs/src/routes/blog/[slug]/+page.server.ts
-  s_7d0a48f0aaecda::t_dff432580deca8 2-3,6-8
+  s_7d0a48f0aaecda::t_bdb2b7aaa31cd9 2-3,6-8
 filefn/docs/src/routes/blog/rss.xml/+server.ts
-  s_7d0a48f0aaecda::t_a86cc8c0129545 2,5
+  s_7d0a48f0aaecda::t_660c40633847fb 2,5
 filefn/docs/src/routes/docs/[...slug]/+page.server.ts
-  s_7d0a48f0aaecda::t_adab68182ecb99 1,3,6-8
+  s_7d0a48f0aaecda::t_7ee85fdfe371f3 1,3,6-8
 filefn/docs/src/routes/docs/blog/+page.server.ts
-  s_7d0a48f0aaecda::t_95edeb8d3a4756 1-5
+  s_7d0a48f0aaecda::t_3a54a8d013a8cb 1-5
 filefn/docs/src/routes/docs/blog/+page.svelte
-  s_7d0a48f0aaecda::t_e9a3b36411f225 1-7
+  s_7d0a48f0aaecda::t_f8c76396d23df1 1-7
 filefn/docs/src/routes/docs/blog/[...slug]/+page.server.ts
-  s_7d0a48f0aaecda::t_4146a184894d05 1-8
+  s_7d0a48f0aaecda::t_dd8bd6c435f9f5 1-8
 filefn/docs/src/routes/docs/blog/[...slug]/+page.svelte
-  s_7d0a48f0aaecda::t_6d4237eb6041fb 1-7
+  s_7d0a48f0aaecda::t_45aaa2da4fff04 1-7
 filefn/docs/src/routes/docs/blog/rss.xml/+server.ts
-  s_7d0a48f0aaecda::t_7627e27d176fde 1-5
+  s_7d0a48f0aaecda::t_6b0b57aa9d867b 1-5
 filefn/docs/src/routes/docs/llms-full.txt/+server.ts
-  s_7d0a48f0aaecda::t_6181772960abaf 1-7
+  s_7d0a48f0aaecda::t_b0724f46524f2d 1-7
 filefn/docs/src/routes/docs/llms.txt/+server.ts
-  s_7d0a48f0aaecda::t_caadf5dfdeea01 1-7
+  s_7d0a48f0aaecda::t_a8888c4d0d4411 1-7
 filefn/docs/src/routes/docs/search.json/+server.ts
-  s_7d0a48f0aaecda::t_f2f2b3e5f8cd7a 1-2
+  s_7d0a48f0aaecda::t_f9a7468616763a 1-2
 filefn/docs/static/llms-full.txt
-  s_7d0a48f0aaecda::t_a1c53a6959a02e 10,94,138,212,267,309,376,441,639,710,763,828,875,947,1005,1102,1105,1110,1112-1113,1115,1117-1123,1130,1133,1138,1141,1143-1146,1149,1156,1159,1164,1166,1168-1172,1175,1182,1185,1190,1193,1195,1197-1200,1203,1210,1213,1218,1220,1222-1223,1225,1227,1229,1231-1232,1235,1237-1240,1243,1245,1247,1249,1251-1253,1256,1259,1261,1263,1266,1269,1271,1273,1275,1280,1282,1285,1288,1290,1292,1294-1298,1300,1307,1315,1326,1414,1526,1640,1721,1823,1905,2009,2092,2205,2339,2451,2588,2710,2830,2929,3038,3107,3226,3300,3327,3413,3541,3576,3646,3732,3828,3920,4051,4144,4302,4394,4469,4534,4647,4735,4762,4841,4907,5021,5099,5217,5357,5496,5704,5744,5809,5907,6031,6104,6228,6319,6429,6562,6590,6713,6842,6941,7039,7162,7263,7368,7508,7610,7730,7759,7793,7938,8040,8146,8222,8332,8486,8522,8748,8905,9151,9346,9483
+  s_7d0a48f0aaecda::t_8c50a75ba1e0c5 10,94,138,212,267,309,376,441,639,710,763,828,875,947,1005,1102,1105,1110,1112-1113,1115,1117-1123,1130,1133,1138,1141,1143-1146,1149,1156,1159,1164,1166,1168-1172,1175,1182,1185,1190,1193,1195,1197-1200,1203,1210,1213,1218,1220,1222-1223,1225,1227,1229,1231-1232,1235,1237-1240,1243,1245,1247,1249,1251-1253,1256,1259,1261,1263,1266,1269,1271,1273,1275,1280,1282,1285,1288,1290,1292,1294-1298,1300,1307,1315,1326,1414,1526,1640,1721,1823,1905,2009,2092,2205,2339,2451,2588,2710,2830,2929,3038,3107,3226,3300,3327,3413,3541,3576,3646,3732,3828,3920,4051,4144,4302,4394,4469,4534,4647,4735,4762,4841,4907,5021,5099,5217,5357,5496,5704,5744,5809,5907,6031,6104,6228,6319,6429,6562,6590,6713,6842,6941,7039,7162,7263,7368,7508,7610,7730,7759,7793,7938,8040,8146,8222,8332,8486,8522,8748,8905,9151,9346,9483
 filefn/docs/static/llms.txt
-  s_7d0a48f0aaecda::t_107b732e012792 7-108
+  s_7d0a48f0aaecda::t_d137eb1ecfea36 7-108
 filefn/docs/tsconfig.json
-  s_7d0a48f0aaecda::t_76d8feb17febf9 2,4-11,25-27
+  s_7d0a48f0aaecda::t_41736116ebb38f 2,4-11,25-27
 filefn/docs/turbo.json
-  s_7d0a48f0aaecda::t_cb7625337d1d9e 1-12,14-22
+  s_7d0a48f0aaecda::t_abc8f7180bce24 1-12,14-22
 filefn/docs/vite.config.ts
-  s_7d0a48f0aaecda::t_f584c03a3dbb92 2,15
+  s_7d0a48f0aaecda::t_51984d881ec8b0 2,15
 package-lock.json
-  s_c1093e7194f7e3::t_7529b579fb0fad 1583-1585,1597-1598,1602,1604,1610-1611,7849-8104,8596-8598,8605,8607,8612-8613,8774-8777,8780,8783-8786,8789-8792,8795,22669-22672,54835-54837
+  s_c1093e7194f7e3::t_0bd2b61f815a12 1583-1585,1597-1598,1602,1604,1610-1611,7849-8104,8596-8598,8605,8607,8612-8613,8774-8777,8780,8783-8786,8789-8792,8795,22669-22672,54835-54837
 scripts/cloudflare-docs/config.mjs
-  s_7d0a48f0aaecda::t_0155eb3e102572 14-23
+  s_7d0a48f0aaecda::t_7dc75f8b581802 14-23
 scripts/cloudflare-docs/deploy.mjs
-  s_7d0a48f0aaecda::t_6f5a94544ebdfc 49-52,74-75,92-98
+  s_7d0a48f0aaecda::t_1e31465786a698 49-52,74-75,92-98
 scripts/cloudflare-docs/select-products.mjs
-  s_7d0a48f0aaecda::t_a33fe848035e19 49,56,58
+  s_7d0a48f0aaecda::t_f899889f04c22e 49,56,58
 scripts/docs-site/LandingPage.svelte
-  s_7d0a48f0aaecda::t_baec77778a9412 1-230
+  s_7d0a48f0aaecda::t_ddcf9f23f2dae1 1-230
 scripts/docs-site/README.md
-  s_7d0a48f0aaecda::t_ab5b1d922c68a8 1-17
+  s_7d0a48f0aaecda::t_12e450e97208d2 1-17
 scripts/docs-site/Search.svelte
-  s_7d0a48f0aaecda::t_8d7319fee11f5d 1-83
+  s_7d0a48f0aaecda::t_ad07432d31a1e1 1-83
 scripts/docs-site/atomic-write.test.mjs
-  s_7d0a48f0aaecda::t_62f50663895753 1-83
+  s_7d0a48f0aaecda::t_82b5cc2ffc60f0 1-83
 scripts/docs-site/blog.test.ts
-  s_7d0a48f0aaecda::t_26fb0ae7f7e3cb 1-98
+  s_7d0a48f0aaecda::t_c418da2e2e63d0 1-98
 scripts/docs-site/blog.ts
-  s_7d0a48f0aaecda::t_c0d71944c31548 1-8,10-11,13-29,33-69,71-87
+  s_7d0a48f0aaecda::t_85fefea0b83521 1-8,10-11,13-29,33-69,71-87
 scripts/docs-site/check-built-site.mjs
-  s_7d0a48f0aaecda::t_e500328b7b6961 1-43
+  s_7d0a48f0aaecda::t_44977b11de3e61 1-43
 scripts/docs-site/check-built-site.test.mjs
-  s_7d0a48f0aaecda::t_48acac4b6010eb 1-32
+  s_7d0a48f0aaecda::t_32368873acfbda 1-32
+scripts/docs-site/dependency-owner.test.ts
+  s_c1093e7194f7e3::t_2b69b8d8f9c6b2 1-52
 scripts/docs-site/layout.ts
-  s_7d0a48f0aaecda::t_04fbd9684197c9 1-13
+  s_7d0a48f0aaecda::t_eed01b09dfb76a 1-13
 scripts/docs-site/llms.mjs
-  s_7d0a48f0aaecda::t_90fdfdba8ba1a5 1-108
+  s_7d0a48f0aaecda::t_904b2a3cc38c42 1-108
 scripts/docs-site/llms.test.mjs
-  s_7d0a48f0aaecda::t_c1121bf95b93d4 1-35
+  s_7d0a48f0aaecda::t_c71093d6db5caa 1-35
 scripts/docs-site/origin.test.mjs
-  s_7d0a48f0aaecda::t_509c3c53182fb7 1-75
+  s_7d0a48f0aaecda::t_bd2b3fa8ac82e5 1-75
 scripts/docs-site/page.test.ts
-  s_7d0a48f0aaecda::t_bdbb9549562f54 1-94
+  s_7d0a48f0aaecda::t_fe7e02ae39da11 1-94
 scripts/docs-site/page.ts
-  s_7d0a48f0aaecda::t_3bd80942a48d72 1-114
+  s_7d0a48f0aaecda::t_5ee328cf35bfcf 1-114
 scripts/docs-site/runtime.test.ts
-  s_7d0a48f0aaecda::t_c1f0ab802e7d95 1-110
+  s_7d0a48f0aaecda::t_a79a0dc11c7687 1-110
 scripts/docs-site/runtime.ts
-  s_7d0a48f0aaecda::t_93f2686c47078c 1-527
+  s_7d0a48f0aaecda::t_a767f4a59cc062 1-527
 scripts/docs-site/vite.test.mjs
-  s_7d0a48f0aaecda::t_a7735a1c8a0e6d 1-88
+  s_7d0a48f0aaecda::t_3b3e534494090a 1-88
 scripts/docs-site/vite.ts
-  s_7d0a48f0aaecda::t_d8df27cf04c8ab 1-64
+  s_7d0a48f0aaecda::t_e8298f1543db99 1-64
 scripts/docs-site/vitest.config.ts
-  s_7d0a48f0aaecda::t_47a94fc838c5d8 1-30
+  s_7d0a48f0aaecda::t_46d31370ecf8ee 1-30
 scripts/generate-uifn-phase-17.mjs
-  s_7d0a48f0aaecda::t_bbdee27835ca49 575,578-612
+  s_7d0a48f0aaecda::t_885024dfa5cab9 575,578-612
 scripts/uifn-docs-cli-resolution.test.mjs
-  s_7d0a48f0aaecda::t_2965a4dbec53c4 1-61
+  s_7d0a48f0aaecda::t_3a845f3a6335b6 1-61
 scripts/verify-uifn-phase-17.mjs
-  s_7d0a48f0aaecda::t_4dbee384ab97c7 29
+  s_7d0a48f0aaecda::t_de38e4974e1664 29
 turbo.json
-  s_7d0a48f0aaecda::t_4ea36d19edbf8e 45-46
+  s_7d0a48f0aaecda::t_88aadf784fe643 45-46
 uifn/docs/generated/delivery.md
-  s_7d0a48f0aaecda::t_fc4098ce3487e9 3-24
+  s_7d0a48f0aaecda::t_06fcc79165eded 3-24
 uifn/docs/generated/docs-coverage.json
-  s_7d0a48f0aaecda::t_7d514251c7aee0 11
+  s_7d0a48f0aaecda::t_34d4474789277d 11
 uifn/docs/generated/site/delivery.html
-  s_7d0a48f0aaecda::t_752619470f68ec 1-6
+  s_7d0a48f0aaecda::t_c03c6ac8329d4c 1-6
 uifn/docs/generated/site/index.html
-  s_7d0a48f0aaecda::t_f3e836ea3defec 1
+  s_7d0a48f0aaecda::t_08ea8e000a3dae 1
 uifn/storybook/generated/story-inventory.json
-  s_7d0a48f0aaecda::t_edae566c980117 15
+  s_7d0a48f0aaecda::t_74da4c755e7369 15
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -361,7 +359,7 @@ uifn/storybook/generated/story-inventory.json
       "agent_id": {
         "tool": "claude",
         "id": "203316bd-9c88-41f4-b037-58d76f8b6cd9",
-        "model": "claude-opus-5-5"
+        "model": "unknown"
       },
       "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
     }
