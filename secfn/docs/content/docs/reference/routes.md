@@ -3,7 +3,7 @@ title: Routes
 description: SecFn admin and runtime route families.
 ---
 
-The server router defaults to `/secfn` as its base path. Admin routes require host `authorize(ctx, action, details)` and pass rate checks. They cover namespace and environment management, secrets, secret versions through rotate and reveal actions, secret sets and members, service-token creation and revocation, audit-event lists, and scan-run lists. Secret and set reveal routes require `confirm: true` in the request body.
+The server router defaults to `/secfn` as its base path. Admin routes require host `authorize(ctx, action, details)` and pass rate checks. They cover namespace and environment management, secrets, secret rotate and reveal actions, secret sets and members, service-token creation and revocation, audit-event lists, and scan-run lists. Secret and set reveal routes require `confirm: true` in the request body.
 
 Runtime routes are `GET /runtime/secrets/:key` and `POST /runtime/secret-sets/:name/resolve`, both under the base path. They require a bearer service token, trusted scope, and rate checks. `GET /runtime/health` returns `{ ok: true, data: { status: "ok" } }` without the runtime token flow.
 

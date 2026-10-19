@@ -59,7 +59,7 @@ export function createSecretsServer(
 }
 ```
 
-The host supplies a durable database and an `authenticate` callback that verifies the request’s session and returns server-owned action grants. Unauthenticated callers get no admin grants; listing audits requires the explicit `audit-events:list` grant. This tenant-scoped example never enables global operator access.
+The host supplies a durable database and an `authenticate` callback that verifies the request’s session and returns server-owned action grants. Unauthenticated callers get no admin grants; listing audits requires the explicit `audit-events:list` grant. This tenant-scoped example never enables global operator access. Also return trusted `ip`, `userAgent`, and `requestId` values from the host's proxy layer in the context; the server uses them for per-IP rate limits and audit events and does not read them from the request itself.
 
 The return value contains:
 

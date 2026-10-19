@@ -1,6 +1,6 @@
 # @secfn/core
 
-Core contracts and pure utilities for SecFn V1.
+Core contracts and utilities for SecFn V1. The scanner's file, directory, and Git-history methods perform local file and `git` I/O; the other utilities are pure.
 
 `@secfn/core` intentionally contains no database adapter, HTTP router, or framework integration. It provides the shared types that `@secfn/server` and `@secfn/runtime` build on.
 

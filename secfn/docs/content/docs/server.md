@@ -41,7 +41,7 @@ export function createSecretsServer(
 }
 ```
 
-The host’s `authenticate` callback must verify session identity and derive action grants from trusted policy. No session means no admin access; even audit listing requires an explicit `audit-events:list` grant.
+The host’s `authenticate` callback must verify session identity and derive action grants from trusted policy. No session means no admin access; even audit listing requires an explicit `audit-events:list` grant. Also return trusted `ip`, `userAgent`, and `requestId` values from the host's proxy layer in the context; the server uses them for per-IP rate limits and audit events and does not read them from the request itself.
 
 Supply either `keyProvider` or `encryption.masterKey`; server creation fails when both are absent. The host owns key custody and rotation. The default router base path is `/secfn`, and the default JSON body limit is one MiB. SecFn does not re-export Express, Hono, Fastify, Next.js, or SvelteKit adapters. Use the shared HTTP adapter for the chosen host.
 

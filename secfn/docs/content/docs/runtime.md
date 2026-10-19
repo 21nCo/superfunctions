@@ -20,6 +20,6 @@ const value = await secfn.get("OPENAI_API_KEY");
 const values = await secfn.getSet("service-runtime");
 ```
 
-`get` reads one secret; `getSet` resolves a set; `preload` warms either form (`set:name` selects a set); `toEnv` returns a set as an object; `toDotEnv` returns formatted text without writing it; and `injectEnv` writes into the current process environment after validating variable names. A per-call `environment` overrides the configured environment. `bypassCache` forces retrieval, and `clearCache()` drops cached entries. The default cache TTL is zero; any positive TTL can temporarily retain a rotated value, so choose it deliberately.
+`get` reads one secret; `getSet` resolves a set; `preload` warms either form (`set:name` selects a set); `toEnv` returns a set as an object; `toDotEnv` returns formatted text without writing it; and `injectEnv` validates variable names, then writes into the current process environment. It skips names that are already set unless `override: true` is passed. A per-call `environment` overrides the configured environment. `bypassCache` forces retrieval, and `clearCache()` drops cached entries. The default cache TTL is zero; any positive TTL can temporarily retain a rotated value, so choose it deliberately.
 
 The client calls `GET /runtime/secrets/:key` and `POST /runtime/secret-sets/:name/resolve` under the configured endpoint and expects the SecFn response envelope. See [runtime package reference](/docs/reference/runtime).

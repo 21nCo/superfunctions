@@ -9,4 +9,4 @@ description: SecFn packages, routes, and source package guides.
 - [Runtime package README](/docs/reference/runtime)
 - [Server package README](/docs/reference/server)
 
-The package pages mirror the source READMEs. Keep those copies aligned when a public contract changes.
+The core, runtime, and server pages are generated from their source READMEs. When a public contract changes, edit the source README and run `npm --workspace @secfn/docs run generate:references`; do not edit these pages by hand.

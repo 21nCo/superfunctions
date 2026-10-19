@@ -7,4 +7,4 @@ The host must provide a DB adapter with transactions for secret creation and rot
 
 Keep master keys, service tokens, and returned plaintext outside untrusted clients and logs. Admin reveal is a distinct confirmed and audited action. Use tenant, namespace, environment, and actor context derived from trusted authentication. Do not treat a query parameter as a new authorization scope.
 
-The `secfn/SPEC.md` file is an older proposal; its dashboard, CLI, framework adapter, and scanning examples are not evidence of implemented packages. The current package manifests expose core, server, and runtime. Validate with focused package tests and a real DB migration before production rollout; a DocsFn build proves only the site structure.
+The `secfn/SPEC.md` file is an older proposal; its dashboard, CLI, framework adapter, and scanning examples are not evidence of implemented packages. The current package manifests expose core, server, and runtime. Validate with focused package tests and a real DB migration before production rollout.

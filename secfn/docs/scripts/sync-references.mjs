@@ -15,7 +15,7 @@ for (const [slug, title, description] of pages) {
   const target = resolve(site, `content/docs/reference/${slug}.md`);
   if (process.argv.includes("--check")) {
     let actual;
-    try { actual = readFileSync(target, "utf8"); } catch { /* Missing mirrors are stale too. */ }
+    try { actual = readFileSync(target, "utf8"); } catch (error) { if (error?.code !== "ENOENT") throw error; /* Missing mirrors are stale too. */ }
     if (actual !== expected) throw new Error(`${slug} reference is stale; run npm run generate:references --workspace @secfn/docs`);
   } else writeFileSync(target, expected);
 }

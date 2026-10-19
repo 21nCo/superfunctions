@@ -1,27 +1,26 @@
 # SecFn documentation site
 
-This SvelteKit site uses DocsFn. Consumer guides live in `content/docs`; source-aligned references mirror the core, server, and runtime package READMEs.
+This SvelteKit site uses DocsFn. Consumer guides live in `content/docs`; the core, server, and runtime reference pages are generated from those packages' READMEs.
 
-From the repository root:
+Prepare repository-owned dependencies and build from the repository root:
+
+```sh
+npm exec -- turbo run build --filter=@secfn/docs
+```
+
+The filtered Turbo build prepares declared workspace dependency exports before building the site. The site resolves its declared public SearchFn/DocsFn dependencies; it does not substitute SearchFn workspace source aliases, so a direct Vite invocation needs those exports prepared first.
+
+After prerequisites are prepared, run from the repository root:
 
 ```sh
 npm --workspace @secfn/docs run dev
-npm --workspace @secfn/docs run build
+npm --workspace @secfn/docs run generate:references
+npm --workspace @secfn/docs run generate:llms
+npm --workspace @secfn/docs run check:references
+npm --workspace @secfn/docs run check:llms
+npm exec --workspace @secfn/docs -- docsfn validate --root .
 ```
 
-The build regenerates the three source README reference mirrors and `static/llms.txt` / `static/llms-full.txt`. Edit the core, server, or runtime README, then run `npm --workspace @secfn/docs run generate:references` and `npm --workspace @secfn/docs run generate:llms`. Run `npm --workspace @secfn/docs run check:references` and `npm --workspace @secfn/docs run check:llms` before building: these checks reject stale committed bytes without rewriting them. CI runs the reference and all affected consumers' LLM checks before Build/prebuild.
+To change a reference page, edit the core, server, or runtime README and run `generate:references`, then `generate:llms`. The build regenerates the reference mirrors, `static/llms.txt`, and `static/llms-full.txt`; the package test runs both checks, which reject stale committed bytes without rewriting them. The site defaults to port 6016; documentation and the LLM-resource routes live under `/docs`.
 
-For CLI validation, first build the SearchFn workspace dependencies from the repository root (the Vite site build uses source aliases and does not require these separate builds):
-
-```sh
-npm run build --workspace @searchfn/core
-npm run build --workspace @searchfn/adapter-contracts
-npm run build --workspace @searchfn/adapter-memory
-npm run build --workspace @searchfn/adapter-indexeddb
-npm run build --workspace @searchfn/client
-npm run validate --workspace=@secfn/docs
-```
-
-The site defaults to port 6016. The planned public documentation URL is `https://secfn.com/docs`; set `site.canonicalUrl` after the host serves the site.
-
-The LLM resources are served at `/docs/llms.txt` and `/docs/llms-full.txt` so they stay inside the shared docs Worker route. Until the public docs host is live, generated page links and the standalone full-corpus index footer point to source files on GitHub. `DOCS_SOURCE_REF` selects an encoded source revision (default `dev`). Deployment selects `CLOUDFLARE_DOCS_PUBLIC_ORIGIN` independently of `CLOUDFLARE_DOCS_ASSETS_ORIGIN`, which is only the asset CDN.
+Public-origin configuration is applied only when `CLOUDFLARE_DOCS_DEPLOY=1`. `CLOUDFLARE_DOCS_PUBLIC_ORIGIN` names the public receiver independently of `CLOUDFLARE_DOCS_ASSETS_ORIGIN`. Without a public origin, generated page links in the committed LLM artifacts point to their source files on the `dev` branch on GitHub.
