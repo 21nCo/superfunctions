@@ -61,7 +61,8 @@ export type WatchFnConfig = z.infer<typeof WatchFnConfigSchema>;
 
 export interface WatchFnInstance {
   start(): void;
-  stop(): void;
+  stop(): Promise<void>;
+  flush(): Promise<void>;
   track(event: string, properties?: Record<string, any>): void;
   captureException(error: any, context?: Record<string, any>): void;
   captureMessage(message: string, context?: Record<string, any>): void;

@@ -15,6 +15,12 @@ import { SyntheticScheduler } from "../synthetics/scheduler";
 import { Router } from "@superfunctions/http";
 import { createWatchFnRouter } from "../http/router";
 
+interface StorageWrite {
+  completion: Promise<void>;
+  failed: boolean;
+  error?: unknown;
+}
+
 export class WatchFn implements WatchFnInstance {
   private config: WatchFnConfig;
   private eventRouter: EventRouter;
@@ -29,6 +35,44 @@ export class WatchFn implements WatchFnInstance {
   private processMetrics: ProcessMetricsCollector;
   private syntheticsScheduler: SyntheticScheduler;
   private isStarted: boolean = false;
+  private pendingWrites = new Set<StorageWrite>();
+  private failedWrites = new Set<StorageWrite>();
+  private stopping?: Promise<void>;
+  private readonly storageListener = (event: unknown): void => {
+    const storage = this.storage;
+    if (storage && this.isStarted) this.write(() => storage.add(event));
+  };
+
+  /** Observe every storage outcome immediately, including synchronous adapter throws. */
+  private write(operation: () => void | Promise<void>): StorageWrite {
+    let finish!: () => void;
+    const record: StorageWrite = { failed: false, completion: new Promise<void>(resolve => { finish = resolve; }) };
+    this.pendingWrites.add(record);
+    const settle = (failed: boolean, error?: unknown) => {
+      record.failed = failed;
+      record.error = error;
+      if (failed) this.failedWrites.add(record);
+      this.pendingWrites.delete(record);
+      finish();
+    };
+    try { Promise.resolve(operation()).then(() => settle(false), error => settle(true, error)); }
+    catch (error) { settle(true, error); }
+    return record;
+  }
+
+  private async drain(consumeFailures: boolean): Promise<void> {
+    // Capture a barrier, so unrelated later writes cannot make a flush endless.
+    const records = new Set([...this.failedWrites, ...this.pendingWrites]);
+    await Promise.all([...records].map(record => record.completion));
+    const failures = [...records].filter(record => record.failed);
+    if (consumeFailures) for (const record of failures) this.failedWrites.delete(record);
+    if (failures.length) throw new AggregateError(failures.map(record => record.error), "WatchFn storage operations failed");
+  }
+
+  /** Await writes admitted before this call, reporting and consuming retained failures. */
+  flush(): Promise<void> {
+    return this.drain(true);
+  }
 
   /** True only while collectors route captured events into the configured runtime. */
   get started(): boolean {
@@ -62,7 +106,14 @@ export class WatchFn implements WatchFnInstance {
   /** Await persistence for external batches; never acknowledge stopped storage. */
   async ingest(events: Record<string, unknown>[]): Promise<void> {
     if (!this.isStarted || !this.storage) throw new Error("WatchFn storage is unavailable");
-    for (const event of events) await this.storage.add(event);
+    const storage = this.storage;
+    const batch = [...events];
+    const record = this.write(async () => {
+      // A batch admitted before stop remains owned until its entire operation settles.
+      for (const event of batch) await storage.add(event);
+    });
+    await record.completion;
+    if (record.failed) throw record.error;
   }
 
   authorizeIngest(request: Request): boolean {
@@ -74,18 +125,17 @@ export class WatchFn implements WatchFnInstance {
   }
 
   start() {
+    if (this.stopping) throw new Error("WatchFn is stopping; await stop() before restarting");
     if (this.isStarted) return;
     this.isStarted = true;
     
     // Wire up storage
     if (this.storage) {
-        this.eventRouter.on("event", (event) => {
-            this.storage?.add(event);
-        });
+        this.eventRouter.on("event", this.storageListener);
     }
 
     if (this.config.errors?.enabled) {
-      this.exceptionHandler.install();
+      this.exceptionHandler.install(this.config.errors);
     }
 
     if (this.config.apm?.enabled) {
@@ -100,13 +150,26 @@ export class WatchFn implements WatchFnInstance {
     }
   }
 
-  stop() {
+  stop(): Promise<void> {
+    if (this.stopping) return this.stopping;
     this.isStarted = false;
-    this.eventRouter.removeAllListeners("event");
-    this.httpInterceptor.uninstall();
-    this.systemMetrics.stop();
-    this.processMetrics.stop();
-    this.syntheticsScheduler.stop();
+    this.eventRouter.removeListener("event", this.storageListener);
+    // Continue cleanup even if one collector fails; surface every failure with storage.
+    for (const cleanup of [
+      () => this.exceptionHandler.uninstall(),
+      () => this.httpInterceptor.uninstall(),
+      () => this.systemMetrics.stop(),
+      () => this.processMetrics.stop(),
+      () => this.syntheticsScheduler.stop(),
+    ]) {
+      try { cleanup(); } catch (error) { this.write(() => { throw error; }); }
+    }
+    const stopped = this.drain(false);
+    this.stopping = stopped;
+    // Observe ignored legacy stop() calls while keeping rejection visible to awaiters.
+    const complete = () => { if (this.stopping === stopped) this.stopping = undefined; };
+    void stopped.then(complete, complete);
+    return stopped;
   }
 
   track(eventName: string, properties?: Record<string, any>) {
