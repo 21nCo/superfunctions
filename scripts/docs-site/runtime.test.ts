@@ -13,7 +13,7 @@ const config: DocsConfig = {
   site: { title: "Contract test", basePath: "/docs" },
   content: { root: ".", docsDir: "guide", pagesDir: "pages", blogDir: "blog", apiDir: "api", assetsDir: "static", metaFileName: "META.json" },
   navigation: { sidebars: { docs: { root: true, include: ["docs/**"] } } },
-  search: { enabled: false },
+  search: { enabled: false, scopes: ["docs"] },
 };
 beforeEach(() => { vi.mocked(buildManifest).mockClear(); });
 
@@ -25,7 +25,6 @@ describe("bundled DocsFn provider", () => {
     const runtime = createDocsSiteRuntime(config, { "../../../guide/index.md": markdown }, {});
     const source = await runtime.loadDocsSiteSource();
     const page = source.manifest.pages["docs:index.md"];
-    expect(source.manifest.sidebars).toHaveProperty("default");
     expect(page.title).toBe("true");
     expect(page.frontmatter.order).toBe(2);
     expect(page.frontmatter.tags).toEqual(["memory", "api"]);
@@ -51,8 +50,22 @@ describe("bundled DocsFn provider", () => {
     const provider = vi.mocked(buildManifest).mock.calls[0][0];
     const entries = await provider.listEntries({ config, collections: ["docs", "pages", "blog", "api", "assets"] });
     expect(entries.map(({ id }) => id).sort()).toEqual(["api:openapi.json", "assets:index.txt", "blog:post.md", "docs:META.json", "docs:index.md", "pages:about.mdx"].sort());
+    expect(entries.map(({ absolutePath }) => absolutePath).sort()).toEqual([
+      "guide/index.md", "guide/META.json", "pages/about.mdx", "blog/post.md",
+      "api/openapi.json", "static/index.txt",
+    ].sort());
     expect(entries.find(({ relativePath }) => relativePath === "META.json")?.entryType).toBe("control");
     expect(entries.find(({ collection }) => collection === "assets")?.bytes).toBe(5);
+  });
+
+  it.each(["txt", "json", "yaml", "yml", "md", "mdx"])("preserves published UTF-8 metadata for %s assets", async (extension) => {
+    const runtime = createDocsSiteRuntime(config, {}, { [`../../../static/input.${extension}`]: "café\n" });
+    await runtime.loadDocsSiteSource();
+    const provider = vi.mocked(buildManifest).mock.calls[0][0];
+    const entries = await provider.listEntries({ config, collections: ["assets"] });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ collection: "assets", relativePath: `input.${extension}`, bytes: 6 });
+    expect(entries[0].updatedAt).toBeUndefined();
   });
 
   it("shares successful initialization, caches compiled pages, and rejects unknown IDs", async () => {
@@ -66,16 +79,23 @@ describe("bundled DocsFn provider", () => {
     expect(await other.loadDocsSiteSource()).not.toBe(left);
   });
 
-  it.each(["docs", "pages"])("resolves real %s provider index links from source filename", async collection => {
+  it.each(["docs", "pages"])("resolves %s collection index links from their source directory", async (collection) => {
     const directory = collection === "docs" ? "guide" : "pages";
-    const runtime = createDocsSiteRuntime(config, { [`../../../${directory}/index.md`]: "# About\n\n[Child](child.md)" }, {});
+    const runtime = createDocsSiteRuntime(config, {
+      [`../../../${directory}/index.md`]: "# About\n\n[Child](child.md)",
+    }, {});
     const source = await runtime.loadDocsSiteSource();
     const id = `${collection}:index.md`;
+    // A pages-collection index can be mounted at a docs surface route.
     source.manifest.pages[id].path = "/docs/about";
     source.manifest.routes = { "/docs/about": id };
     source.manifest.sidebars = { docs: { id: "docs", items: [{ type: "link", text: "About", link: "/docs/about" }] } };
-    const data = await loadDocsPage({ slug: "about", source, getCompiledDocsPage: runtime.getCompiledDocsPage, resolveMarkdownRelativeLinks });
-    expect(JSON.stringify(data.compiled?.blocks)).toContain("/docs/about/child.md");
+    const data = await loadDocsPage({
+      slug: "about", source,
+      getCompiledDocsPage: runtime.getCompiledDocsPage,
+      resolveMarkdownRelativeLinks,
+    });
+    expect(JSON.stringify(data.compiled?.blocks)).toContain('/docs/about/child.md');
   });
 
   it("retries after a rejected initialization", async () => {

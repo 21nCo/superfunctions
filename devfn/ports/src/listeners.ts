@@ -6,20 +6,52 @@ import type { ListenerInfo, ListenerScanResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
-export async function isPortAvailable(port: number, protocol: "tcp" | "udp" = "tcp", host = "127.0.0.1"): Promise<boolean> {
+export type BindProbe = "available" | "occupied" | "denied" | "unavailable";
+
+/**
+ * Bind one address once. "denied" (no privilege for the port) proves nothing
+ * about occupancy, and "unavailable" (any other failure, such as an address
+ * this host does not have) proves neither occupancy nor absence.
+ */
+export async function bindProbe(port: number, protocol: "tcp" | "udp" = "tcp", host = "127.0.0.1"): Promise<BindProbe> {
+  const outcome = (error: NodeJS.ErrnoException): BindProbe => {
+    if (error.code === "EADDRINUSE") return "occupied";
+    return error.code === "EACCES" || error.code === "EPERM" ? "denied" : "unavailable";
+  };
   if (protocol === "udp") {
     const dgram = await import("node:dgram");
-    return await new Promise<boolean>((resolve) => {
-      const socket = dgram.createSocket("udp4");
-      socket.once("error", () => { socket.close(); resolve(false); });
-      socket.bind(port, host, () => { socket.close(() => resolve(true)); });
+    return await new Promise<BindProbe>((resolve) => {
+      const socket = dgram.createSocket(net.isIPv6(host) ? "udp6" : "udp4");
+      socket.once("error", (error: NodeJS.ErrnoException) => { socket.close(); resolve(outcome(error)); });
+      socket.bind(port, host, () => { socket.close(() => resolve("available")); });
     });
   }
-  return await new Promise<boolean>((resolve) => {
+  return await new Promise<BindProbe>((resolve) => {
     const server = net.createServer();
     server.unref();
-    server.once("error", () => resolve(false));
-    server.listen({ port, host, exclusive: true }, () => server.close(() => resolve(true)));
+    server.once("error", (error: NodeJS.ErrnoException) => resolve(outcome(error)));
+    server.listen({ port, host, exclusive: true }, () => server.close(() => resolve("available")));
+  });
+}
+
+export async function isPortAvailable(port: number, protocol: "tcp" | "udp" = "tcp", host = "127.0.0.1"): Promise<boolean> {
+  return await bindProbe(port, protocol, host) === "available";
+}
+
+/**
+ * A refused TCP connection shows no socket accepts on that address and port,
+ * including wildcard listeners, without the privilege a bind would need and
+ * even when the listener's owner is hidden from socket inspection. A
+ * firewall rule can also refuse connections to a listening port, so callers
+ * that retire state need independent evidence too.
+ */
+export async function connectionRefused(port: number, host = "127.0.0.1", timeoutMs = 500): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const socket = net.connect({ port, host });
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => { socket.destroy(); resolve(false); });
+    socket.once("error", (error: NodeJS.ErrnoException) => { socket.destroy(); resolve(error.code === "ECONNREFUSED"); });
+    socket.once("timeout", () => { socket.destroy(); resolve(false); });
   });
 }
 
@@ -93,28 +125,38 @@ export function parseWindowsNetstatListeners(output: string, protocol: "tcp" | "
   return listeners;
 }
 
-export async function scanListenerState(): Promise<ListenerScanResult> {
+async function scanOsListeners(protocol: "tcp" | "udp"): Promise<{ listeners: ListenerInfo[]; inspected: boolean }> {
+  if (process.platform === "win32") {
+    try {
+      const output = (await execFileAsync("netstat", ["-ano", "-p", protocol])).stdout;
+      return { listeners: parseWindowsNetstatListeners(output, protocol), inspected: true };
+    } catch { return { listeners: [], inspected: false }; }
+  }
+  const args = protocol === "tcp" ? ["-nP", "-iTCP", "-sTCP:LISTEN"] : ["-nP", "-iUDP"];
+  try { return { listeners: parseLsof((await execFileAsync("lsof", args)).stdout, protocol), inspected: true }; }
+  catch (error) { return { listeners: [], inspected: commandProducedNoMatches(error) }; }
+}
+
+/** Native ownership checks need OS listeners only; diagnostics may include Docker. */
+export async function scanListenerState(includeDocker = true): Promise<ListenerScanResult> {
   const results: ListenerInfo[] = [];
   const inspection = { tcp: false, udp: false, docker: false };
-  if (process.platform !== "win32") {
-    try { results.push(...parseLsof((await execFileAsync("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"])).stdout, "tcp")); inspection.tcp = true; }
-    catch (error) { if (commandProducedNoMatches(error)) inspection.tcp = true; }
-    try { results.push(...parseLsof((await execFileAsync("lsof", ["-nP", "-iUDP"])).stdout, "udp")); inspection.udp = true; }
-    catch (error) { if (commandProducedNoMatches(error)) inspection.udp = true; }
-  } else {
-    try {
-      const output = (await execFileAsync("netstat", ["-ano", "-p", "tcp"])).stdout;
-      results.push(...parseWindowsNetstatListeners(output, "tcp"));
-      inspection.tcp = true;
-    } catch { /* unavailable */ }
-    try {
-      const output = (await execFileAsync("netstat", ["-ano", "-p", "udp"])).stdout;
-      results.push(...parseWindowsNetstatListeners(output, "udp"));
-      inspection.udp = true;
-    } catch { /* unavailable */ }
+  for (const protocol of ["tcp", "udp"] as const) {
+    const scanned = await scanOsListeners(protocol);
+    results.push(...scanned.listeners);
+    inspection[protocol] = scanned.inspected;
   }
-  try { results.push(...parseDockerListeners((await execFileAsync("docker", ["ps", "--format", "{{.ID}}\\t{{.Names}}\\t{{.Ports}}"])).stdout)); inspection.docker = true; } catch { /* Docker is optional */ }
-  return { listeners: results.sort((a, b) => a.port - b.port || a.source.localeCompare(b.source)), inspection };
+  if (includeDocker) {
+    try { results.push(...parseDockerListeners((await execFileAsync("docker", ["ps", "--format", String.raw`{{.ID}}\t{{.Names}}\t{{.Ports}}`], { timeout: 10_000 })).stdout)); inspection.docker = true; }
+    catch { /* Docker is optional */ }
+  }
+  results.sort((a, b) => {
+    if (a.port !== b.port) return a.port - b.port;
+    if (a.source < b.source) return -1;
+    if (a.source > b.source) return 1;
+    return 0;
+  });
+  return { listeners: results, inspection };
 }
 
 export async function scanListeners(): Promise<ListenerInfo[]> { return (await scanListenerState()).listeners; }
