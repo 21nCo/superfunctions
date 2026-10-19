@@ -50,8 +50,7 @@ export async function createIntegrationApp(
   await plug.ready;
   const app = express();
   // Keep original bytes for webhook signature verification.
-  app.use(express.raw({ type: "*/*", limit: "2mb" }));
-  app.use("/api/plugfn", toExpress(createPlugFnRouter(plug)));
+  app.use("/api/plugfn", express.raw({ type: "*/*", limit: "2mb" }), toExpress(createPlugFnRouter(plug)));
   return { app, plug };
 }
 ```

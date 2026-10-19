@@ -53,4 +53,4 @@ if (selected) {
 }
 ```
 
-Treat `expired`, `revoked`, and `error` status as unavailable until the connection is recovered or reauthorized. `PlugFnClientError` exposes `code`, `status`, `retryable`, and `details`. An ownership mismatch is an authorization failure, not a signal to retry under a different caller-supplied tenant. Connection summaries do not expose provider credentials.
+Treat `expired`, `revoked`, and `error` status as unavailable until the connection is recovered or reauthorized. `PlugFnClientError` exposes `code`, `status`, `retryable`, and `details`. An ownership mismatch is an authorization failure, not a signal to retry under a different caller-supplied tenant. `GET /connections` and `GET /connections/:connectionId` return the stored connection record, which includes its encrypted credential envelope (`credentials`) but never decrypted tokens; `getConnectionStatus` returns only `id`, `provider`, and `status`. Use the status call when the browser only needs availability.

@@ -21,13 +21,13 @@ checks that the site reference mirrors match their source guides.
 1. `npm --prefix plugfn/core run build`
 2. `npm --prefix plugfn/core run type-check`
 3. `npm --prefix plugfn/core test -- --run`
-4. `npm --prefix plugfn/providers test -- --run tests/webhook-raw-body.test.ts tests/e2e/oauth-callback.test.ts tests/e2e/webhook-verification.test.ts` (after provider build/typecheck)
-5. `npm --prefix plugfn/client run build`
-6. `npm --prefix plugfn/client run typecheck`
-7. `npm --prefix plugfn/client test -- --run`
-8. `npm --prefix plugfn/providers run build`
-9. `npm --prefix plugfn/providers run typecheck`
-10. `npm --prefix plugfn/providers test -- --run`
+4. `npm --prefix plugfn/client run build`
+5. `npm --prefix plugfn/client run typecheck`
+6. `npm --prefix plugfn/client test -- --run`
+7. `npm --prefix plugfn/providers run build`
+8. `npm --prefix plugfn/providers run typecheck`
+9. `npm --prefix plugfn/providers test -- --run`
+10. `npm --prefix plugfn/providers test -- --run tests/webhook-raw-body.test.ts tests/e2e/oauth-callback.test.ts tests/e2e/webhook-verification.test.ts`
 11. provider-specific gates:
    - `npm run gate:plugfn-provider-github`
    - `npm run gate:plugfn-provider-linear`
@@ -57,7 +57,7 @@ Anything outside that boundary remains `beta`, `experimental`, `vertical-only`, 
 
 ## Repo-root verification commands
 
-These commands are the reproducible verification surface documented by Phase 08:
+These commands are the reproducible repo-root verification surface:
 
 ```bash
 npm run gate:plugfn-release
@@ -71,23 +71,23 @@ npm test --workspace @plugfn/cli
 python3 -m pytest -q plugfn/python/tests
 ```
 
-## Phase 04 runtime semantics
+## Workflow runtime semantics
 
-Workflow lifecycle hardening in Phase 04 uses the following production-truth model:
+Workflow lifecycle handling uses the following production-truth model:
 
 - Trigger backend coverage: in-process `WebhookHandler` bindings only.
 - Unregister semantics: disable/delete must detach the active local binding; if no live binding exists to detach, the runtime returns `WORKFLOW_TRIGGER_UNREGISTER_FAILED` instead of silently logging and continuing.
 - Durability model: idempotent resume is DB-backed through `workflow_executions` state, so failed executions can resume after restart or from another engine instance when the same durable storage is shared.
 - Delay semantics: process-local timers are not treated as production-safe. Delay steps fail closed with `WORKFLOW_DURABILITY_UNSUPPORTED` until a durable scheduler backend exists.
 
-CLI diagnostics in Phase 04 use the following deterministic exit-code contract:
+CLI diagnostics use the following deterministic exit-code contract:
 
 - `0`: runtime load, connection resolution, provider action, and any requested OAuth/webhook diagnostics all passed.
 - `1`: validation or runtime/config loading failed before provider execution.
 - `2`: provider registration, connection resolution, or action execution failed.
 - `3`: requested webhook diagnostic failed.
 
-## Phase 00 documentation checks
+## Documentation checks
 
 These checks are intentionally lightweight and only prove contract truth, not runtime readiness. They should look for:
 

@@ -16,7 +16,15 @@ const generatedFooter = "For programmatic access, prefer the MCP server\nor the 
 if (!artifacts.llmsFullTxt.includes(generatedFooter)) {
   throw new Error("Unexpected DocsFn llms-full footer; review the generated artifact before publishing");
 }
-artifacts.llmsFullTxt = artifacts.llmsFullTxt.replace(generatedFooter, "For a page index, see /docs/llms.txt.");
+const pageIndexUrl = canonicalUrl
+  ? `${canonicalUrl.replace(/\/$/, "")}/docs/llms.txt`
+  : "https://github.com/21nCo/super-functions/blob/dev/plugfn/docs/static/llms.txt";
+artifacts.llmsFullTxt = artifacts.llmsFullTxt.replace(generatedFooter, `For a page index, see ${pageIndexUrl}.`);
 artifacts.llmsTxt = withSourceLinks(artifacts.llmsTxt, manifest, "plugfn", canonicalUrl);
 artifacts.llmsFullTxt = withSourceLinks(artifacts.llmsFullTxt, manifest, "plugfn", canonicalUrl);
+if (canonicalUrl) {
+  // Deployed corpora are read without a page origin, so resolve site links against it.
+  const origin = canonicalUrl.replace(/\/$/, "");
+  artifacts.llmsFullTxt = artifacts.llmsFullTxt.replace(/\]\((\/docs[^\s)]*)\)/g, (_match, href) => `](${origin}${href})`);
+}
 writeLlmsArtifacts(resolve(cwd, "static"), artifacts);
