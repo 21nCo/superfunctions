@@ -127,3 +127,12 @@ Shared request-logging middleware, admin dependency/runtime integration and othe
 New http/shared subpath exports requestLogger as a shared HTTP Middleware with typed optional context.log. It uses existing correlation, default root, header redaction, sampling and bounded body helpers. Automatic completion records the router's final response, including configured error responses; application logs retain correlation when automatic request sampling is disabled. Framework adapters stay external consumer dependencies. Existing direct Express/Fastify/Hono adapters remain compatibility entrypoints.
 
 Three focused real-router tests, core typecheck/build pass. Fresh tarball consumer verifies middleware export, correlated start/completion and ingestion on exactNode18.18.0/20.19.0/22.23.3; strictNode16/NodeNext declarations and runtime audit0 pass. The prior full231 core tests predate this new subpath. Admin, remaining Python middleware/error parity, browser and performance gates remain open.
+
+
+## Admin dependency and dispatcher validation (2026-10-20)
+
+Aligned LogFn admin to shared admin 0.1.5 and its Node >=20 runtime floor, removing stale nested dependency entries through lock regeneration. Clean scoped npm10 ci installed419 packages; MCP/shared admin/core/admin builds and admin typecheck pass. ESM resolution confirms the local shared admin package.
+
+Six LogFn admin tests pass, including real dispatcher validation/permissions, namespace rejection before delivery, spoofed actor replacement, audit-context redaction and failed flush acknowledgment.234 core and109 shared admin tests pass after the dependency change. Added usage documentation distinguishing dispatcher authorization from trusted adapter calls and emission acknowledgment from durable flush.
+
+Packed admin consumers and full WatchFn host composition are not yet validated. Python middleware/error parity, browser/performance and other original readiness gates remain open. This checkpoint was completed with only the main agent active.
