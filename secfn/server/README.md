@@ -43,10 +43,17 @@ export function createSecretsServer(
     encryption: { masterKey: process.env.SECFN_MASTER_KEY!, keyId: "env:main" },
     context: async (request) => {
       const principal = await authenticate(request);
-      return principal
-        ? { actorId: principal.actorId, tenantId: principal.tenantId,
-            namespace: principal.namespace, allowedActions: principal.allowedActions }
-        : { allowedActions: [] };
+      if (principal) {
+        return { actorId: principal.actorId, tenantId: principal.tenantId,
+          namespace: principal.namespace, allowedActions: principal.allowedActions };
+      }
+      // Runtime callers have no session: pass the client's scope headers through.
+      // Runtime routes check them against the bearer token; no admin grants.
+      return {
+        tenantId: request.headers.get("x-secfn-tenant") ?? undefined,
+        namespace: request.headers.get("x-secfn-namespace") ?? undefined,
+        allowedActions: [],
+      };
     },
     authorize: (ctx, action) => Boolean(
       ctx.actorId && ctx.tenantId && ctx.allowedActions.includes(action),
@@ -56,7 +63,7 @@ export function createSecretsServer(
 }
 ```
 
-The host supplies a durable database and an `authenticate` callback that verifies the request’s session and returns server-owned action grants. Unauthenticated callers get no admin grants; listing audits requires the explicit `audit-events:list` grant. This tenant-scoped example never enables global operator access. Also return trusted `ip`, `userAgent`, and `requestId` values from the host's proxy layer in the context; the server uses them for per-IP rate limits and audit events and does not read them from the request itself.
+The host supplies a durable database and an `authenticate` callback that verifies the request’s session and returns server-owned action grants. Unauthenticated callers get no admin grants; listing audits requires the explicit `audit-events:list` grant. This tenant-scoped example never enables global operator access. Runtime requests from `@secfn/runtime` carry only a bearer token plus `x-secfn-tenant` and `x-secfn-namespace` headers. The router reads runtime scope from the context and query, not from those headers, so the context factory must map them as shown; the token's tenant and namespace bindings are still verified against that scope, and the resulting context has no actor or admin grants. Issue tenant-bound service tokens: a token without a tenant binding accepts whatever tenant the header names. Also return trusted `ip`, `userAgent`, and `requestId` values from the host's proxy layer in the context; the server uses them for per-IP rate limits and audit events and does not read them from the request itself.
 
 The return value contains:
 

@@ -28,10 +28,17 @@ export function createSecretsServer(
     encryption: { masterKey: process.env.SECFN_MASTER_KEY!, keyId: "env:main" },
     context: async (request) => {
       const principal = await authenticate(request);
-      return principal
-        ? { actorId: principal.actorId, tenantId: principal.tenantId,
-            namespace: principal.namespace, allowedActions: principal.allowedActions }
-        : { allowedActions: [] };
+      if (principal) {
+        return { actorId: principal.actorId, tenantId: principal.tenantId,
+          namespace: principal.namespace, allowedActions: principal.allowedActions };
+      }
+      // Runtime callers have no session: pass the client's scope headers through.
+      // Runtime routes check them against the bearer token; no admin grants.
+      return {
+        tenantId: request.headers.get("x-secfn-tenant") ?? undefined,
+        namespace: request.headers.get("x-secfn-namespace") ?? undefined,
+        allowedActions: [],
+      };
     },
     authorize: (ctx, action) => Boolean(
       ctx.actorId && ctx.tenantId && ctx.allowedActions.includes(action),
@@ -41,7 +48,7 @@ export function createSecretsServer(
 }
 ```
 
-The host’s `authenticate` callback must verify session identity and derive action grants from trusted policy. No session means no admin access; even audit listing requires an explicit `audit-events:list` grant. Also return trusted `ip`, `userAgent`, and `requestId` values from the host's proxy layer in the context; the server uses them for per-IP rate limits and audit events and does not read them from the request itself.
+The host’s `authenticate` callback must verify session identity and derive action grants from trusted policy. No session means no admin access; even audit listing requires an explicit `audit-events:list` grant. Runtime requests from `@secfn/runtime` carry only a bearer token plus `x-secfn-tenant` and `x-secfn-namespace` headers. The router reads runtime scope from the context and query, not from those headers, so the context factory must map them as shown; the token's tenant and namespace bindings are still verified against that scope, and the resulting context has no actor or admin grants. Issue tenant-bound service tokens: a token without a tenant binding accepts whatever tenant the header names. Also return trusted `ip`, `userAgent`, and `requestId` values from the host's proxy layer in the context; the server uses them for per-IP rate limits and audit events and does not read them from the request itself.
 
 Supply either `keyProvider` or `encryption.masterKey`; server creation fails when both are absent. The host owns key custody and rotation. The default router base path is `/secfn`, and the default JSON body limit is one MiB. SecFn does not re-export Express, Hono, Fastify, Next.js, or SvelteKit adapters. Use the shared HTTP adapter for the chosen host.
 
