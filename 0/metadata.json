@@ -1,0 +1,63 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M5AY2Q31FYFXPW9TS0CDRH9Q",
+  "session_id": "01a13e18-4241-7662-a24f-782076addabe",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-19T20:36:37.367462Z",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "mailfn/OPERATIONS.md",
+    "mailfn/THREAT_MODEL.md",
+    "mailfn/docs/content/docs/cloudflare-runtime.md",
+    "mailfn/docs/content/docs/getting-started.md",
+    "mailfn/docs/content/docs/reference/mcp.md",
+    "mailfn/docs/content/docs/reference/operations.md",
+    "mailfn/docs/content/docs/reference/threat-model.md",
+    "mailfn/docs/static/llms-full.txt",
+    "mailfn/mcp/README.md"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6-astra",
+  "turn_id": "6ba85374eea7",
+  "checkpoint_transcript_start": 10792,
+  "transcript_lines_at_start": 10792,
+  "compact_transcript_start": 1302,
+  "token_usage": {
+    "input_tokens": 155876,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 14251008,
+    "output_tokens": 34773,
+    "api_call_count": 149,
+    "subagent_tokens_complete": false
+  },
+  "session_metrics": {
+    "turn_count": 49
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-19T20:36:36.833061Z",
+    "agent_lines": 855,
+    "agent_removed": 5,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 855,
+    "total_lines_changed": 860,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
