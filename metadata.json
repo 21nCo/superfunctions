@@ -1,0 +1,60 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59PCHHDWH7R9EQVDBDR6PDN",
+  "strategy": "manual-commit",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "mdfn/docs/README.md",
+    "mdfn/docs/content/docs/reference/adapter-kit.md",
+    "mdfn/docs/content/docs/reference/ai.md",
+    "mdfn/docs/content/docs/reference/client.md",
+    "mdfn/docs/content/docs/reference/collab.md",
+    "mdfn/docs/content/docs/reference/components-react.md",
+    "mdfn/docs/content/docs/reference/components-solid.md",
+    "mdfn/docs/content/docs/reference/components-svelte.md",
+    "mdfn/docs/content/docs/reference/components.md",
+    "mdfn/docs/content/docs/reference/contentfn.md",
+    "mdfn/docs/content/docs/reference/core.md",
+    "mdfn/docs/content/docs/reference/examples.md",
+    "mdfn/docs/content/docs/reference/extensions.md",
+    "mdfn/docs/content/docs/reference/facade.md",
+    "mdfn/docs/content/docs/reference/filefn.md",
+    "mdfn/docs/content/docs/reference/index.md",
+    "mdfn/docs/content/docs/reference/markdown.md",
+    "mdfn/docs/content/docs/reference/overview.md",
+    "mdfn/docs/content/docs/reference/react.md",
+    "mdfn/docs/content/docs/reference/registry.md",
+    "mdfn/docs/content/docs/reference/render.md",
+    "mdfn/docs/content/docs/reference/searchfn.md",
+    "mdfn/docs/content/docs/reference/server.md",
+    "mdfn/docs/content/docs/reference/source.md",
+    "mdfn/docs/content/docs/reference/testing.md",
+    "mdfn/docs/content/docs/rendering-and-security.md",
+    "mdfn/docs/content/docs/server-and-storage.md",
+    "mdfn/docs/static/llms-full.txt",
+    "mdfn/docs/static/llms.txt"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 1609,
+    "cache_read_tokens": 1804966,
+    "output_tokens": 528,
+    "api_call_count": 3,
+    "subagent_tokens": {
+      "input_tokens": 20,
+      "cache_creation_tokens": 9385,
+      "cache_read_tokens": 1132045,
+      "output_tokens": 3924,
+      "api_call_count": 10
+    }
+  }
+}
