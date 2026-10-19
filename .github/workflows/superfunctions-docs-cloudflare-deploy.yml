@@ -11,22 +11,26 @@ on:
       - superfunctions-docs-live-*
       - superfunctions-docs-datafn-live-*
       - superfunctions-docs-extfn-live-*
-      - superfunctions-docs-secfn-live-*
+      - superfunctions-docs-reviewfn-live-*
+      - superfunctions-docs-memoryfn-live-*
       - superfunctions-docs-mdfn-live-*
       - superfunctions-docs-clifn-live-*
       - superfunctions-docs-botfn-live-*
       - superfunctions-docs-langfn-live-*
+      - superfunctions-docs-secfn-live-*
       - superfunctions-docs-devfn-live-*
       - superfunctions-docs-filefn-live-*
       - superfunctions-docs-searchfn-live-*
       - superfunctions-docs-authfn-live-*
       - superfunctions-datafn-docs-live-*
       - superfunctions-extfn-docs-live-*
-      - superfunctions-secfn-docs-live-*
+      - superfunctions-reviewfn-docs-live-*
+      - superfunctions-memoryfn-docs-live-*
       - superfunctions-mdfn-docs-live-*
       - superfunctions-clifn-docs-live-*
       - superfunctions-botfn-docs-live-*
       - superfunctions-langfn-docs-live-*
+      - superfunctions-secfn-docs-live-*
       - superfunctions-devfn-docs-live-*
       - superfunctions-filefn-docs-live-*
       - superfunctions-searchfn-docs-live-*
@@ -34,11 +38,13 @@ on:
     paths:
       - datafn/docs/**
       - extfn/docs/**
-      - secfn/docs/**
+      - reviewfn/docs/**
+      - memoryfn/docs/**
       - mdfn/docs/**
       - clifn/docs/**
       - botfn/docs/**
       - langfn/docs/**
+      - secfn/docs/**
       - devfn/docs/**
       - filefn/docs/**
       - searchfn/docs/**
@@ -63,11 +69,13 @@ on:
           - all
           - datafn
           - extfn
-          - secfn
+          - reviewfn
+          - memoryfn
           - mdfn
           - clifn
           - botfn
           - langfn
+          - secfn
           - devfn
           - filefn
           - searchfn

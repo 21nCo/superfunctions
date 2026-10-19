@@ -11,14 +11,24 @@ export const devAccountId = "c801efc2879825babdb9b2534199c4dd";
 export const devZoneName = "21n.site";
 
 export const docsProducts = {
-  secfn: {
-    packageName: "@secfn/docs",
-    docsDir: "secfn/docs",
+  reviewfn: {
+    packageName: "@reviewfn/docs",
+    docsDir: "reviewfn/docs",
     kind: "sveltekit-cloudflare",
-    zoneName: "secfn.com",
+    zoneName: "reviewfn.com",
     hosts: {
-      dev: "secfn.21n.site",
-      live: "secfn.com",
+      dev: "reviewfn.21n.site",
+      live: "reviewfn.com",
+    },
+  },
+  memoryfn: {
+    packageName: "@memoryfn/docs",
+    docsDir: "memoryfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "memoryfn.com",
+    hosts: {
+      dev: "memoryfn.21n.site",
+      live: "memoryfn.com",
     },
   },
   mdfn: {
@@ -49,6 +59,16 @@ export const docsProducts = {
     hosts: {
       dev: "botfn.21n.site",
       live: "botfn.com",
+    },
+  },
+  secfn: {
+    packageName: "@secfn/docs",
+    docsDir: "secfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "secfn.com",
+    hosts: {
+      dev: "secfn.21n.site",
+      live: "secfn.com",
     },
   },
   langfn: {

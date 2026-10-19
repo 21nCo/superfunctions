@@ -44,6 +44,7 @@
     "langfn/typescript",
     "langfn/docs",
     "memoryfn/typescript",
+    "memoryfn/docs",
     "secfn/core",
     "secfn/server",
     "secfn/runtime",
