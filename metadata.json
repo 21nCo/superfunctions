@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M5AVQ8SH627SPG031P9BC8E1",
+  "strategy": "manual-commit",
+  "branch": "codex/docsfn-next-to-dev-20260829",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "docsfn/cli/src/migrate-docusaurus.ts",
+    "docsfn/examples/sveltekit-docs-site/src/app.html",
+    "docsfn/examples/sveltekit-hybrid-site/src/app.html"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 352847,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 8488576,
+    "output_tokens": 12369,
+    "api_call_count": 50
+  }
+}
