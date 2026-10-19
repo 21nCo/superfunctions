@@ -53,6 +53,11 @@ describe("source links for unhosted sites", () => {
       .toBe("[Guide](https://github.com/21nCo/super-functions/blob/dev/clifn/docs/guides/guide/index.md)");
   });
 
+  it("accepts in-repository directory names that start with dots", () => {
+    expect(withSourceLinks("[Guide](/docs/guide)", manifest, site("..docs"), undefined))
+      .toBe("[Guide](https://github.com/21nCo/super-functions/blob/dev/clifn/docs/..docs/guide/index.md)");
+  });
+
   it("rejects a docs directory outside the repository", () => {
     expect(() => withSourceLinks("[Guide](/docs/guide)", manifest, { content: { root: tmpdir(), docsDir: "docs" } }, undefined))
       .toThrow(/outside the repository/);

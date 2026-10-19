@@ -13,7 +13,7 @@ an LLM-based assistant in a single shot. For a page index, see /docs/llms.txt.
 > Execute commands and create files with explicit limits and overwrite policy.
 
 
-`@clifn/core/exec` exports `createExec()`. Call `command(file, args, options)` with a separate executable and argument array. The result includes command, exit code or signal, captured stdout and stderr, timeout state, and duration. Capture defaults to one MiB per stream, and timeout defaults to 30 seconds. Pass callbacks or `streamOutput` to observe chunks while the command runs.
+`@clifn/core/exec` exports `createExec()`. Call `command(file, args, options)` with a separate executable and argument array. The result includes command, exit code or signal, captured stdout and stderr, timeout state, and duration. Capture defaults to one MiB per stream; set `maxBufferBytes` to change it. Output beyond the limit is dropped from the captured `stdout`/`stderr` without an error or flag, although streaming callbacks still receive every chunk. Timeout defaults to 30 seconds. Pass callbacks or `streamOutput` to observe chunks while the command runs.
 
 ```ts
 import { createExec } from "@clifn/core/exec";
@@ -27,18 +27,19 @@ if (result.exitCode !== 0) throw new Error(result.stderr);
 
 On timeout, `ExecTimeoutError` carries code `CLIFN_EXEC_TIMEOUT` and the partial result. The child receives SIGTERM, then SIGKILL after a short grace period. `runAction()` exposes this service as `ctx.exec` with inherited working directory and environment.
 
-`@clifn/core/scaffold` exports `createScaffold()`. Its `apply()` accepts `mkdir` and `write-file` operations, a working directory, and `dryRun`. Existing file behavior is explicit: `error` (default), `skip`, or `overwrite`. It returns written and skipped paths. The service resolves real paths and rejects a target that escapes the configured root, including through an existing symlink.
+`@clifn/core/scaffold` exports `createScaffold()`. Its `apply()` accepts `mkdir` and `write-file` operations, a working directory, and `dryRun`. Each `write-file` operation sets `ifExists` to `error` (default), `skip`, or `overwrite`. It returns written and skipped paths. The service resolves the real path of the nearest existing path and rejects a target that escapes the configured root, including through an existing symlink. A dangling symlink (one whose destination does not exist yet) is not detected, and `write-file` follows it, so do not scaffold into directories that untrusted parties can write to.
 
 ```ts
 import { createScaffold } from "@clifn/core/scaffold";
 
 const result = await createScaffold().apply([
   { kind: "mkdir", path: "src" },
-  { kind: "write-file", path: "src/index.ts", content: "export {};\n" },
+  { kind: "write-file", path: "src/index.ts", content: "export {};\n", ifExists: "skip" },
 ], { cwd: process.cwd(), dryRun: false });
+console.log({ written: result.written, skipped: result.skipped });
 ```
 
-Use `dryRun` to display a planned change before applying it. `ScaffoldError` carries `CLIFN_SCAFFOLD_EXISTS` or `CLIFN_SCAFFOLD_INVALID_PATH`.
+With `dryRun`, `apply()` writes nothing and returns the planned `written` and `skipped` paths; it does not print them, so display the result yourself before applying it. `ScaffoldError` carries `CLIFN_SCAFFOLD_EXISTS` or `CLIFN_SCAFFOLD_INVALID_PATH`.
 
 ---
 
@@ -74,7 +75,7 @@ if (positionals[0] === "greet") {
 }
 ```
 
-In text mode, emit user-facing messages with `ctx.output`. In JSON mode, returned `data` is serialized to stdout. `RunnerOptions` also accepts `quiet`, `verbose`, `color`, `cwd`, `env`, `stdout`, `stderr`, `nonInteractive`, and an `onDiagnostics` listener. The context's `exec` and `scaffold` services inherit its working directory; `exec` also inherits its environment.
+In text mode, emit user-facing messages with `ctx.output`. In JSON mode, returned `data` is serialized to stdout. `RunnerOptions` accepts `mode` (`"text"` or `"json"`) along with `quiet`, `verbose`, `color`, `cwd`, `env`, `stdout`, `stderr`, `nonInteractive`, and an `onDiagnostics` listener. The context's `exec` and `scaffold` services inherit its working directory; `exec` also inherits its environment.
 
 Return `exitCode` for an expected product failure you have handled. An invalid or negative returned exit code normalizes to zero, so set explicit positive codes for failure cases. Thrown failures normalize to code 1. The runner does not print collected diagnostics automatically; use `onDiagnostics` or your own output policy to present them.
 
@@ -112,7 +113,7 @@ The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module 
 
 ## Store project settings
 
-`createProjectConfig(path?)` provides a JSON store with `read`, `write`, `get`, and `set`. Supply a product-specific path; its default filename is Conduct-specific. Invalid JSON or a non-object shape raises `InvalidConfigError`. It is separate from the discovered module loader.
+`createProjectConfig(path?)` provides a JSON store with `read`, `write`, `get`, and `set`. Supply a product-specific path; the legacy default is `conduct.config.json` in `process.cwd()`, resolved once when the module is first loaded. Invalid JSON or a non-object shape raises `InvalidConfigError`. It is separate from the discovered module loader.
 
 ## Read environment values
 
@@ -126,9 +127,9 @@ The loader accepts local TS, JS, MJS, CJS, and JSON files. TS uses Jiti. Module 
 > Persist named profiles and make authenticated requests with bounded retries.
 
 
-`createCredentialStore(path?)` stores named `{ backend, key }` profiles in an INI file. Pass a product-specific path; the legacy default is Conduct-specific. The synchronous store supports `getProfile`, `setProfile`, `hasProfile`, `removeProfile`, and `listProfiles`. A missing profile raises `MissingProfileError`.
+`createCredentialStore(path?)` stores named `{ backend, key }` profiles in an INI file. Pass a product-specific path; the legacy default is `~/.conduct/credentials`. The synchronous store supports `getProfile`, `setProfile`, `hasProfile`, `removeProfile`, and `listProfiles`. A missing profile raises `MissingProfileError`.
 
-Credential writes use a sibling lock, a mode-0600 temporary file, fsync, and atomic rename. Concurrent writers fail with `CLIFN_CREDENTIAL_STORE_BUSY`; symlink credential files are rejected. Filesystem permissions are a fallback, not encryption or an OS keychain. For keychain integration, inject a `CredentialStore` implementation and persist values before reporting success.
+Credential writes use a sibling lock, a mode-0600 temporary file, fsync, and atomic rename. A write that cannot take the lock throws a plain `Error` whose message is `CLIFN_CREDENTIAL_STORE_BUSY` (there is no `code` property, so match on `error.message`). A writer that crashes while holding the lock leaves the sibling `.lock` file behind, and every later write fails the same way until it is removed: stop all writers, then delete only that `.lock` file before retrying. A credentials path that is a symlink to an existing file is rejected with an `Error` whose message is `CLIFN_CREDENTIAL_SYMLINK`; a dangling symlink is treated as a missing file, and the next write replaces the link itself with a regular file. Filesystem permissions are a fallback, not encryption or an OS keychain. For keychain integration, inject a `CredentialStore` implementation and persist values before reporting success.
 
 ## Make a request
 
@@ -138,8 +139,16 @@ import { createCredentialStore } from "@clifn/core/credentials";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+const credentials = createCredentialStore(join(homedir(), ".my-cli", "credentials"));
+// A fresh file has no profiles; save one (for example from a login command) first.
+if (!credentials.hasProfile("default")) {
+  const key = process.env.MY_CLI_API_KEY;
+  if (!key) throw new Error("Set MY_CLI_API_KEY or run the login command first");
+  credentials.setProfile("default", { backend: "https://api.example.com", key });
+}
+
 const client = createApiClient({
-  credentials: createCredentialStore(join(homedir(), ".my-cli", "credentials")),
+  credentials,
   profile: "default",
   projectId: "example",
 });
@@ -148,7 +157,7 @@ const response = await client.get<{ items: unknown[] }>("/items", { limit: 20 })
 console.log(response.data);
 ```
 
-Alternatively pass `{ baseUrl, apiKey }` directly. The client adds Bearer authorization unless the request sets its own authorization header, and adds `X-Project-ID` when configured. Paths must be relative. Responses include status, parsed data, and headers. Non-2xx responses throw `HttpFailureError`; transport failures throw `HttpRequestError`.
+The profile is resolved when the client is constructed, so a missing profile throws `MissingProfileError` from `createApiClient()`. Alternatively pass `{ baseUrl, apiKey }` directly and skip the credential store. The client adds Bearer authorization unless the request sets its own authorization header, and adds `X-Project-ID` when configured. Paths must be relative. Responses include status, parsed data, and headers. Non-2xx responses throw `HttpFailureError`; transport failures throw `HttpRequestError`.
 
 Only GET requests retry by default, on HTTP 429 or 5xx and retryable transport failures. Use `request({ ..., retrySafe: true })` only when the server guarantees idempotency. One-shot stream bodies are not retried. A timed-out write may already have succeeded, so reconcile before repeating it. `ApiClientConfig` accepts `retries`, `retryDelayMs`, `timeoutMs`, `defaultHeaders`, and `fetchImpl`.
 
@@ -220,14 +229,19 @@ Import from documented subpaths such as `@clifn/core/runner`, `@clifn/core/outpu
 > Interactive input, terminal feedback, and machine-readable pipes.
 
 
-`@clifn/core/prompt` exports the named, preconfigured `prompt` object and `createPrompt()` for an injected ask function. It supports `select`, `multiSelect`, `text`, and `confirm`. Use the runner's `nonInteractive` flag to decide whether your command should prompt or require flags; the prompt API itself does not infer that policy.
+`@clifn/core/prompt` exports the named, preconfigured `prompt` object and `createPrompt()` for an injected ask function. It supports `select`, `multiSelect`, `text`, and `confirm`. Use the runner's `nonInteractive` flag to decide whether your command should prompt or require flags; the prompt API itself does not infer that policy. Invalid answers throw `PromptInputError` (code `CLIFN_PROMPT_INPUT_ERROR`): `confirm` accepts only y, yes, n, or no; `select` and `multiSelect` accept a listed choice or its 1-based number and also throw for an empty choice list.
 
 ```ts
 import { prompt } from "@clifn/core/prompt";
 import { ui } from "@clifn/core/ui";
 
-const target = await prompt.select("Target environment", ["local", "staging"]);
-if (await prompt.confirm(`Continue with ${target}?`)) {
+// Inside a runAction handler; `targetFlag` comes from your parsed options.
+const targets = ["local", "staging"];
+const target = ctx.nonInteractive
+  ? targets.find((choice) => choice === targetFlag)
+  : await prompt.select("Target environment", targets);
+if (!target) throw new Error("--target must be one of local, staging in non-interactive mode");
+if (ctx.nonInteractive || (await prompt.confirm(`Continue with ${target}?`))) {
   ui.success(`selected ${target}`);
 }
 ```
@@ -333,7 +347,6 @@ import { createCredentialStore } from "@clifn/core/credentials";
 import { createProjectConfig } from "@clifn/core/config";
 import { createApiClient } from "@clifn/core/client";
 import { readJsonStdin, writeJsonStdout } from "@clifn/core/stdio";
-import { ui } from "@clifn/core/ui";
 
 const credentials = createCredentialStore();
 const config = createProjectConfig();
@@ -736,6 +749,6 @@ See the [package export map](https://github.com/21nCo/super-functions/blob/dev/c
 - [Package README](https://github.com/21nCo/super-functions/blob/dev/clifn/docs/content/docs/reference/core-readme.md) contains the complete source-aligned usage guide and parser examples.
 - [Admin capability](https://github.com/21nCo/super-functions/blob/dev/clifn/docs/content/docs/reference/admin.md) explains the separate Super Console package and its current availability.
 
-The precise exports for a published release are the versioned package artifact. These pages describe the source on `origin/dev` when the site was prepared.
+The precise exports for a published release are the versioned package artifact. These pages describe the source on the [`dev` branch](https://github.com/21nCo/super-functions/tree/dev/clifn/core/src) as of the time the site was prepared.
 
 ---

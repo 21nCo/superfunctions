@@ -10,10 +10,11 @@ import { prompt } from "@clifn/core/prompt";
 import { ui } from "@clifn/core/ui";
 
 // Inside a runAction handler; `targetFlag` comes from your parsed options.
+const targets = ["local", "staging"];
 const target = ctx.nonInteractive
-  ? targetFlag
-  : await prompt.select("Target environment", ["local", "staging"]);
-if (!target) throw new Error("--target is required in non-interactive mode");
+  ? targets.find((choice) => choice === targetFlag)
+  : await prompt.select("Target environment", targets);
+if (!target) throw new Error("--target must be one of local, staging in non-interactive mode");
 if (ctx.nonInteractive || (await prompt.confirm(`Continue with ${target}?`))) {
   ui.success(`selected ${target}`);
 }

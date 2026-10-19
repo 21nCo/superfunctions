@@ -1,6 +1,6 @@
 import { closeSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { dirname, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 /**
  * Resolve DocsFn from the consumer site so each site's published package pin is honored.
@@ -96,8 +96,11 @@ const sourceBaseUrl = "https://github.com/21nCo/super-functions/blob/dev";
 export function withSourceLinks(text, manifest, config, canonicalUrl) {
   if (canonicalUrl) return text;
   const docsDir = resolve(config.content.root, config.content.docsDir ?? "content/docs");
-  const sourceDir = relative(repositoryRoot, docsDir).split(sep).map(encodeURIComponent).join("/");
-  if (!sourceDir || sourceDir.startsWith("..")) throw new Error(`Docs directory is outside the repository: ${docsDir}`);
+  const relativeDocsDir = relative(repositoryRoot, docsDir);
+  if (!relativeDocsDir || relativeDocsDir === ".." || relativeDocsDir.startsWith(`..${sep}`) || isAbsolute(relativeDocsDir)) {
+    throw new Error(`Docs directory is outside the repository: ${docsDir}`);
+  }
+  const sourceDir = relativeDocsDir.split(sep).map(encodeURIComponent).join("/");
   const sources = new Map(Object.values(manifest.pages)
     .filter((page) => page.id.startsWith("docs:"))
     .map((page) => [new URL(page.path, "https://docs.invalid").pathname, page.id.slice("docs:".length)]));
