@@ -762,7 +762,10 @@ esac
     const registry = new FilePortRegistry(path.join(dir, "registry.json"), undefined, async () => true);
     const self = { pid: process.pid, birthSignature: (await processBirthSignature(process.pid))! };
     try {
-      const ports = { one: await allocateEphemeralPort(), two: await allocateEphemeralPort() };
+      const first = await allocateEphemeralPort();
+      let second = await allocateEphemeralPort();
+      while (second === first) second = await allocateEphemeralPort();
+      const ports = { one: first, two: second };
       for (const instanceId of ["one", "two"] as const) {
         await registry.reserve({ projectId: "app", instanceId, invocationId: instanceId, profile: "default", requests: [{ name: "api", spec: { preferred: ports[instanceId], exact: true } }] });
         await registry.markActive(instanceId, { api: { process: self } });
@@ -777,6 +780,9 @@ esac
         ...[null, 0, false, "", "not-a-time"].map((recordedAt): [string, Record<string, unknown>, "invalid"] => [`record time ${String(recordedAt)}`, { process: { ...self, recordedAt } }, "invalid"]),
         ["legacy owner without record time", { process: self }, true],
         ["valid record time", { process: { ...self, recordedAt: new Date().toISOString() } }, true],
+        ["future record time", { process: { ...self, recordedAt: new Date(Date.now() + 3_600_000).toISOString() } }, false],
+        ["legacy owner activated in the future", { process: self, updatedAt: new Date(Date.now() + 3_600_000).toISOString() }, false],
+        ["lease without id", { process: self, id: "" }, "invalid"],
         ["empty container", { container: { id: "" } }, "invalid"],
         ["container environment", { container: { id: "fixture", dockerEnvironment: { DOCKER_HOST: 1 } } }, "invalid"],
       ];
@@ -813,15 +819,23 @@ esac
       expect(await registry.instanceServesPort("one", port)).toBe(true);
       type Saved = { invocations: Array<Record<string, unknown>>; allocations: Array<Record<string, unknown>> };
       const valid = JSON.parse(await readFile(registry.filePath, "utf8")) as Saved;
-      const cases: Array<[string, (invocation: Record<string, unknown>, lease: Record<string, unknown>) => void, boolean | "invalid"]> = [
+      const cases: Array<[string, (invocation: Record<string, unknown>, lease: Record<string, unknown>, saved: Saved) => void, boolean | "invalid"]> = [
         ["stopping lifecycle", (invocation) => { invocation.state = "stopping"; }, false],
         ["legacy invocation without owner journal", (invocation) => { delete invocation.ownerJournal; }, false],
         ["unresolved launch", (invocation) => { invocation.launching = ["api"]; }, false],
+        ["unresolved compose launch", (invocation) => { invocation.composeLaunches = { api: {} }; }, false],
+        ["malformed compose launches", (invocation) => { invocation.composeLaunches = ["api"]; }, "invalid"],
+        ["malformed lifecycle state", (invocation) => { invocation.state = "serving"; }, "invalid"],
         ["lease recorded for another lifecycle", (_, lease) => { lease.instanceId = "other"; }, false],
         ["lease recorded for another project", (_, lease) => { lease.projectId = "other"; }, false],
         ["absent lifecycle ids", (invocation, lease) => { delete invocation.id; delete lease.invocationId; }, "invalid"],
         ["absent project ids", (invocation, lease) => { delete invocation.projectId; delete lease.projectId; }, "invalid"],
         ["lease without project id", (_, lease) => { delete lease.projectId; }, "invalid"],
+        ["lease without lifecycle id", (_, lease) => { delete lease.invocationId; }, "invalid"],
+        ["malformed lease port", (_, lease) => { lease.port = String(port); }, "invalid"],
+        ["null invocation entry", (_, __, saved) => { saved.invocations.push(null as never); }, "invalid"],
+        ["null lease entry", (_, __, saved) => { saved.allocations.push(null as never); }, "invalid"],
+        ["malformed owner of another lifecycle's lease", (_, lease, saved) => { saved.allocations.push({ ...lease, id: "other", invocationId: "other", instanceId: "other", process: "invalid" }); }, true],
         ["released lease", (_, lease) => { lease.state = "released"; }, false],
         ["udp lease", (_, lease) => { lease.protocol = "udp"; }, false],
         ["reused pid", (_, lease) => { lease.process = { pid: process.pid, birthSignature: `${birthSignature.split(":")[0]}:reused-pid` }; }, false],
@@ -832,7 +846,7 @@ esac
       ];
       for (const [label, mutate, outcome] of cases) {
         const saved = structuredClone(valid);
-        mutate(saved.invocations[0]!, saved.allocations[0]!);
+        mutate(saved.invocations[0]!, saved.allocations[0]!, saved);
         const bytes = JSON.stringify(saved);
         await writeFile(registry.filePath, bytes);
         if (outcome === "invalid") await expect(registry.instanceServesPort("one", port), label).rejects.toMatchObject({ code: "DEVFN_REGISTRY_INVALID" });
