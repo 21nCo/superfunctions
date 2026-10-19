@@ -70,6 +70,16 @@ export function VersionSwitcher({
     }
   };
 
+  // Keyboard activation selects the menu's highlighted item without a click,
+  // so navigate from the content's active item on Enter or Space.
+  const activateHighlightedVersion = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const versionSlug = event.currentTarget.getAttribute("data-active-item");
+    if (versionSlug && resolvedVersions.some((version) => version.slug === versionSlug)) {
+      navigateToVersion(versionSlug);
+    }
+  };
+
   if (resolvedVersions.length <= 1 || !resolvedCurrentVersion) {
     return null;
   }
@@ -89,7 +99,7 @@ export function VersionSwitcher({
         </svg>
       </DropdownMenuTrigger>
       <DropdownMenuPositioner>
-        <DropdownMenuContent className="docsfn-version-switcher-content">
+        <DropdownMenuContent className="docsfn-version-switcher-content" onKeyDown={activateHighlightedVersion}>
           {resolvedVersions.map((version) => {
             const isActive = version.slug === resolvedCurrentVersion;
             return (

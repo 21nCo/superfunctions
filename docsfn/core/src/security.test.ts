@@ -326,3 +326,12 @@ it("treats whitespace in source identities literally and bounds wildcard work", 
   expect(() => assertSourceEntriesTrusted({ entries: [createEntry({ id: " approved ", relativePath: "other", body })], policy: { allowUnsafeHtmlAllowlist: ["approved"] } })).toThrow();
   expect(() => assertCompiledContentTrusted({ source: body, sourcePath: "a".repeat(10000), policy: { allowUnsafeHtmlAllowlist: ["*a".repeat(100) + "b"] } })).toThrow();
 });
+
+it.each([
+  "[open](&#1;javascript:alert(1))",
+  "[open](&#x1F;JaVaScRiPt:alert(1))",
+  '<a href="&#x01;javascript:alert(1)">open</a>',
+  '<a href="&#8;&#9;java&#10;script:alert(1)">open</a>',
+])("blocks javascript URLs behind leading C0 controls: %s", (body) => {
+  expect(() => assertSourceEntriesTrusted({ entries: [createEntry({ body })] })).toThrowError(/DOCS_HTML_UNSAFE|unsafe HTML/);
+});

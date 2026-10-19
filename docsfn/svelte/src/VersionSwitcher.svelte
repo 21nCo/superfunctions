@@ -64,6 +64,16 @@
       window.location.href = `${nextPath}${window.location.search}${window.location.hash}`;
     }
   }
+
+  // Keyboard activation selects the menu's highlighted item without a click,
+  // so navigate from the content's active item on Enter or Space.
+  function activateHighlightedVersion(event: KeyboardEvent) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const versionSlug = (event.currentTarget as HTMLElement | null)?.getAttribute("data-active-item");
+    if (versionSlug && resolvedVersions.some((version) => version.slug === versionSlug)) {
+      handleChange(versionSlug);
+    }
+  }
 </script>
 
 {#if resolvedVersions.length > 1 && resolvedCurrentVersion}
@@ -87,7 +97,7 @@
       </svg>
     </DropdownMenuTrigger>
     <DropdownMenuPositioner>
-      <DropdownMenuContent class="docsfn-version-switcher-content">
+      <DropdownMenuContent class="docsfn-version-switcher-content" onkeydown={activateHighlightedVersion}>
         {#each resolvedVersions as version (version.slug)}
           {@const isActive = version.slug === resolvedCurrentVersion}
           <DropdownMenuItem

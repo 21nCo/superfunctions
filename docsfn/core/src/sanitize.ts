@@ -1,7 +1,7 @@
 import { mapHtmlAttributes } from "./html-attributes";
 import { createDiagnostic, createDocsError } from "./diagnostics";
 import { scanFenceLines, splitMarkdownContainerPrefix } from "./markdown-fences";
-import { decodeHTML } from "entities";
+import { isJavascriptUrl } from "./url-safety";
 import { marked, type Token } from "marked";
 
 export const BLOCKED_HTML_TAGS = [
@@ -113,8 +113,7 @@ export function findUnsafeHtml(source: string): UnsafeHtmlMatch[] {
   }
 
   const checkUrl = (value: string) => {
-    const normalized = decodeHTML(value).replace(/[\t\n\r]/g, "").trim();
-    if (/^javascript:/i.test(normalized)) matches.push({ category: "javascript-url", match: value });
+    if (isJavascriptUrl(value)) matches.push({ category: "javascript-url", match: value });
   };
   marked.walkTokens(marked.lexer(source), (token: Token) => {
     if ((token.type === "link" || token.type === "image") && typeof token.href === "string") checkUrl(token.href);

@@ -1121,47 +1121,99 @@ function rewriteColocatedAssets(source: string, record: ContentRecord, assets: S
 
   // Parse with the renderer's Markdown parser so code, escapes and container
   // boundaries follow the same rules as the published page. Only destinations
-  // the parser reports as live links, images, definitions or HTML are edited.
+  // the parser reports as live links, images, definitions or HTML are edited,
+  // and each edit targets that node's own destination range in the source.
   const edits: Array<{ from: number; to: number; text: string }> = [];
-  const editDestination = (from: number, raw: string, url: unknown, after: string) => {
-    if (typeof url !== "string" || !url) return;
-    const anchor = raw.indexOf(after);
-    const offset = anchor < 0 ? -1 : raw.indexOf(url, anchor + after.length);
-    const asset = offset < 0 ? undefined : resolveAsset(url);
-    if (!asset) return;
+  const addEdit = (from: number, to: number, value: string) => {
+    const asset = resolveAsset(value);
+    if (!asset || edits.some((edit) => from < edit.to && edit.from < to)) return;
     assets.add(asset.target);
-    edits.push({ from: from + offset, to: from + offset + url.length, text: asset.href });
+    edits.push({ from, to, text: asset.href });
   };
-  const visit = (node: MarkdownNode): void => {
+  const editAttributes = (from: number, raw: string) => {
+    for (const match of raw.matchAll(/(\b(?:src|href)=["'])([^"']+)["']/g)) {
+      const start = from + match.index! + match[1].length;
+      addEdit(start, start + match[2].length, match[2]);
+    }
+  };
+  const visit = (node: MarkdownNode, base: number): void => {
     if (node.type === "codeBlock" || node.type === "inlineCode") return;
     const { from, raw } = node.source ?? {};
     if (typeof from === "number" && typeof raw === "string") {
-      if (node.type === "image" || node.type === "link") editDestination(from, raw, node.attrs?.url, "](");
-      else if (node.type === "definition") editDestination(from, raw, node.attrs?.url, "]:");
-      else if (node.type === "opaque" && node.attrs?.syntax === "html") {
-        for (const match of raw.matchAll(/(\b(?:src|href)=["'])([^"']+)["']/g)) {
-          const asset = resolveAsset(match[2]);
-          if (!asset) continue;
-          assets.add(asset.target);
-          const start = from + match.index! + match[1].length;
-          edits.push({ from: start, to: start + match[2].length, text: asset.href });
+      const at = base + from;
+      if (node.type === "image" || node.type === "link" || node.type === "definition") {
+        const destination = readNodeDestination(raw, node.type === "definition" ? ":" : "(");
+        if (destination && destination.value === node.attrs?.url)
+          addEdit(at + destination.from, at + destination.to, destination.value);
+      } else if (node.type === "opaque" && node.attrs?.syntax === "html") {
+        if (!/^\s*<\/?[A-Z]/.test(raw)) editAttributes(at, raw);
+        else {
+          // MDX component bodies are Markdown: blank the tag-only lines while
+          // keeping offsets, then parse the remaining body like the renderer.
+          const body = raw.replace(/^[ \t]*<\/?[A-Z][^\n>]*>[ \t]*$/gm, (tag, offset: number) => {
+            editAttributes(at + offset, tag);
+            return " ".repeat(tag.length);
+          });
+          if (body.trim()) visit(parseMarkdown(body, MARKDOWN_OPTIONS).document as MarkdownNode, at);
         }
       }
     }
-    for (const child of node.content ?? []) visit(child);
+    for (const child of node.content ?? []) visit(child, base);
   };
-  visit(parseMarkdown(source, { dialect: "gfm", allowRawHtml: true, extensions: defaultExtensions }).document as MarkdownNode);
+  visit(parseMarkdown(source, MARKDOWN_OPTIONS).document as MarkdownNode, 0);
   let output = source;
   for (const edit of edits.sort((left, right) => right.from - left.from))
     output = `${output.slice(0, edit.from)}${edit.text}${output.slice(edit.to)}`;
   return output;
 }
 
+const MARKDOWN_OPTIONS = { dialect: "gfm", allowRawHtml: true, extensions: defaultExtensions } as const;
+const ESCAPABLE = /[!-/:-@[-`{-~]/;
+
+// Finds the destination that follows a link, image or definition label,
+// skipping nested brackets, escapes and code spans inside the label.
+function readNodeDestination(raw: string, opener: "(" | ":"): { from: number; to: number; value: string } | undefined {
+  let index = raw.startsWith("!") ? 1 : 0;
+  if (raw[index] !== "[") return undefined;
+  let depth = 0;
+  for (; index < raw.length; index += 1) {
+    const character = raw[index];
+    if (character === "\\") index += 1;
+    else if (character === "`") {
+      const run = /^`+/.exec(raw.slice(index))![0];
+      const close = raw.indexOf(run, index + run.length);
+      if (close >= 0) index = close + run.length - 1;
+    } else if (character === "[") depth += 1;
+    else if (character === "]" && --depth === 0) break;
+  }
+  if (raw[index + 1] !== opener) return undefined;
+  index += 2;
+  while (raw[index] === " " || raw[index] === "\t" || raw[index] === "\n") index += 1;
+  let end = index;
+  if (raw[index] === "<") {
+    end = raw.indexOf(">", index);
+    if (end < 0 || raw.slice(index, end).includes("\n")) return undefined;
+    index += 1;
+  } else {
+    let parentheses = 0;
+    for (; end < raw.length; end += 1) {
+      const character = raw[end];
+      if (character === "\\" && ESCAPABLE.test(raw[end + 1] ?? "")) end += 1;
+      else if (/[\s\u0000-\u001f]/.test(character)) break;
+      else if (character === "(") parentheses += 1;
+      else if (character === ")" && parentheses-- === 0) break;
+    }
+  }
+  if (end <= index) return undefined;
+  const text = raw.slice(index, end);
+  return { from: index, to: end, value: text.replace(/\\([!-/:-@[-`{-~])/g, "$1") };
+}
+
 interface MarkdownNode {
   type: string;
   source?: { from?: number; raw?: string };
   attrs?: { url?: unknown; syntax?: unknown };
-  content?: MarkdownNode[];
+  content?: readonly MarkdownNode[];
 }
 
 async function copyContentRecords(input: {

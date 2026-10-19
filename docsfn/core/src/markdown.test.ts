@@ -611,3 +611,42 @@ it("does not end an island at a closing tag inside its code example", () => {
   expect(collectCodeBlocks(compiled.blocks).map(({ code }) => code)).toEqual(["</DocsTab>"]);
   expect(JSON.stringify(compiled.blocks)).toContain("After the example.");
 });
+
+it("neutralizes javascript URLs behind leading C0 controls in rendered callouts and tables", () => {
+  const compiled = compileMarkdown({
+    source: "> [!NOTE]\n> [callout](&#1;javascript:alert(1))\n\n| Link |\n| --- |\n| [table](&#x1F;javascript:alert(2)) |\n",
+    sourcePath: "content/docs/c0.mdx",
+    allowRawHtml: true,
+  });
+  const html = compiled.blocks.map((block) => ("html" in block ? block.html : "")).join("\n");
+  expect(html).toContain('<a href="#">callout</a>');
+  expect(html).toContain('<a href="#">table</a>');
+  expect(html).not.toMatch(/javascript:/i);
+});
+
+it("finds component boundaries outside code examples", () => {
+  const compiled = compileMarkdown({
+    source: [
+      "<Callout>",
+      "",
+      "Close it with `</Callout>` after the example:",
+      "",
+      "```mdx",
+      "</Callout>",
+      "```",
+      "",
+      "After the example.",
+      "",
+      "</Callout>",
+      "",
+      "Outside.",
+    ].join("\n"),
+    sourcePath: "component-region.mdx",
+    components: { Callout: () => null },
+  } as Parameters<typeof compileMarkdown>[0]);
+  const component = compiled.blocks.find((block) => block.type === "component") as { children: unknown[] } | undefined;
+  expect(collectCodeBlocks(component?.children).map(({ code }) => code)).toEqual(["</Callout>"]);
+  expect(JSON.stringify(component?.children)).toContain("After the example.");
+  expect(JSON.stringify(component?.children)).not.toContain("Outside.");
+  expect(JSON.stringify(compiled.blocks.at(-1))).toContain("Outside.");
+});

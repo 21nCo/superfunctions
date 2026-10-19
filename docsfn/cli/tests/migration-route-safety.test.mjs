@@ -258,3 +258,36 @@ test("migration follows Markdown block and escape rules when publishing referenc
     for (const file of literal) await assert.rejects(access(join(target, "static/docs-assets", file)));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("migration edits each node's own destination, including escaped, linked and component media", async () => {
+  const root = await mkdtemp(join(tmpdir(), "docsfn-migration-destinations-"));
+  try {
+    const source = join(root, "source"), target = join(root, "target");
+    await mkdir(join(source, "docs"), { recursive: true });
+    const files = ["diagram(1).png", "public.png", "island.png", "figure.png"];
+    for (const file of files) await writeFile(join(source, "docs", file), file);
+    await writeFile(
+      join(source, "docs/index.md"),
+      [
+        "# Destinations",
+        "",
+        "![Diagram](./diagram\\(1\\).png)",
+        "",
+        "[![Image](./public.png)](./public.png)",
+        "",
+        "<Callout>",
+        "![Island](./island.png)",
+        '<Figure src="./figure.png" />',
+        "</Callout>",
+        "",
+      ].join("\n")
+    );
+    await execute(process.execPath, [cli, "migrate", "docusaurus", source, "--out-dir", target]);
+    const migrated = await readFile(join(target, "content/docs/index.md"), "utf8");
+    assert.match(migrated, /^!\[Diagram\]\(\/docs-assets\/diagram\(1\)\.png\)$/m);
+    assert.match(migrated, /^\[!\[Image\]\(\/docs-assets\/public\.png\)\]\(\/docs-assets\/public\.png\)$/m);
+    assert.match(migrated, /^!\[Island\]\(\/docs-assets\/island\.png\)$/m);
+    assert.match(migrated, /^<Figure src="\/docs-assets\/figure\.png" \/>$/m);
+    for (const file of files) assert.equal(await readFile(join(target, "static/docs-assets", file), "utf8"), file);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

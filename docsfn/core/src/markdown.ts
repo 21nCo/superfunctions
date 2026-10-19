@@ -1,6 +1,5 @@
 import { mapHtmlAttributes } from "./html-attributes";
 import { marked } from "marked";
-import { decodeHTML } from "entities";
 import { parseMarkdown } from "@mdfn/markdown";
 import { extractDocument, renderHtml } from "@mdfn/render";
 import { defaultExtensions } from "@mdfn/extensions";
@@ -9,6 +8,7 @@ import { transformFumadocsV15 } from "./compat/fumadocs";
 import { createDiagnostic, createDocsError, type DocsError } from "./diagnostics";
 import { matchFenceLine, scanFenceLines, type FenceLineRole } from "./markdown-fences";
 import { assertSafeSource } from "./sanitize";
+import { isJavascriptUrl } from "./url-safety";
 import type {
   CompiledContentArtifact,
   CompiledContentBlock,
@@ -110,7 +110,7 @@ function parseComponentProps(rawAttributes: string): Record<string, string | num
 function sanitizeMarkdownHtml(html: string): string {
   return mapHtmlAttributes(html, (name, value, raw) => {
     if (/^on[a-z][a-z0-9]*$/.test(name)) return "";
-    if (["href", "src", "xlink:href", "action", "formaction"].includes(name) && /^javascript:/i.test(decodeHTML(value).replace(/[\t\n\r]/g, "").trim())) return ` ${name}="#"`;
+    if (["href", "src", "xlink:href", "action", "formaction"].includes(name) && isJavascriptUrl(value)) return ` ${name}="#"`;
     return raw;
   });
 }
@@ -811,8 +811,21 @@ function findComponentRegion(source: string, node: MdfnNode): { raw: string; end
 
   const tagPattern = new RegExp(`<\\s*(/?)\\s*${name}\\b[^>]*>`, "gi");
   tagPattern.lastIndex = start;
+  // Tags inside code examples are text, not component boundaries.
+  const lines = source.split("\n");
+  const fenceRoles = classifyFenceLines(lines);
+  const lineStarts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
+  let lineIndex = 0;
   let depth = 0;
   for (let match = tagPattern.exec(source); match; match = tagPattern.exec(source)) {
+    while (lineIndex + 1 < lineStarts.length && lineStarts[lineIndex + 1] <= match.index) lineIndex += 1;
+    const before = source.slice(lineStarts[lineIndex], match.index).replace(/\\`/g, "");
+    if (fenceRoles[lineIndex] !== undefined || (before.match(/`/g)?.length ?? 0) % 2 === 1) continue;
     const closing = match[1] === "/";
     const tag = match[0];
     if (!closing && !/\/\s*>$/.test(tag)) depth += 1;
