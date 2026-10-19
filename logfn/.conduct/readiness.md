@@ -145,3 +145,10 @@ Fresh independent tarballs for MCP/shared admin/LogFn core/admin pass strict Nod
 The first packed flush failed the dispatcher's idempotency-key precondition. This exposed a weakness in the preceding failure test: a negative result alone did not prove the rejecting sink ran. Corrected source test supplies an idempotency store/key and asserts the sink flush was called; all six admin tests pass. Documentation now states the key/store requirement. This supersedes the earlier unsupported implication that the previous negative test proved sink failure propagation.
 
 Actual WatchFn host composition, Python middleware/error parity and original browser/performance gates remain open; no full readiness claim.
+
+
+## Python error callback parity (2026-10-20)
+
+Logger/create_logger expose synchronous on_error with exported ErrorHandler type. Parent/child loggers share reporting state; stage, sync sink, async delivery and flush hook failures carry stage/sink context. Callback exceptions and synchronous recursive reports are contained. Async delivery ownership and explicit flush rejection remain intact.
+
+34 Python3.9 source tests and34 tests against a fresh Python3.12 wheel pass. Strict mypy1.18.2 passes changed core/types. Four regressions cover inherited callbacks, callback failure/recursion, asynchronous delivery reporting plus flush rejection, and healthy hook completion alongside a failing flush. Remaining Python correlation/middleware and other original readiness gates stay open.

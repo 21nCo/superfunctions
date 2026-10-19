@@ -9,6 +9,7 @@ from .serialization import bound_event
 
 from .types import (
     DEFAULT_VERSION,
+    ErrorHandler,
     LOG_LEVEL_VALUES,
     ChildLoggerOptions,
     LogEvent,
@@ -25,18 +26,42 @@ def get_default_level() -> LogLevel:
     env = os.environ.get("ENV", os.environ.get("NODE_ENV", "development"))
     return "info" if env == "production" else "debug"
 
+class _ErrorReporter:
+    def __init__(self, callback: Optional[ErrorHandler]) -> None:
+        self.callback = callback
+        self.reporting = False
+
+    def report(self, error: BaseException, context: Dict[str, str]) -> None:
+        if self.reporting:
+            return
+        self.reporting = True
+        try:
+            if self.callback is not None:
+                try:
+                    self.callback(error, context)
+                except Exception:
+                    print("[logfn internal error] error callback failed", file=sys.stderr)
+            else:
+                print(f"[logfn internal error] {context}: {type(error).__name__}", file=sys.stderr)
+        finally:
+            self.reporting = False
+
+
 class _DeliveryState:
-    def __init__(self) -> None:
+    def __init__(self, reporter: _ErrorReporter) -> None:
+        self.reporter = reporter
+        self.contexts: Dict[asyncio.Future[Any], Dict[str, str]] = {}
         self.pending: Set[asyncio.Future[Any]] = set()
         self.error: Optional[BaseException] = None
 
     def completed(self, task: asyncio.Future[Any]) -> None:
         self.pending.discard(task)
+        context = self.contexts.pop(task, {"sink": "unknown"})
         error = asyncio.CancelledError() if task.cancelled() else task.exception()
         if error is not None:
             if self.error is None:
                 self.error = error
-            print(f"[logfn internal error] async sink failed: {type(error).__name__}", file=sys.stderr)
+            self.reporter.report(error, context)
 
 
 class Logger:
@@ -49,8 +74,10 @@ class Logger:
         now: Optional[Callable[[], datetime]] = None,
         base_context: Optional[Dict[str, Any]] = None,
         base_tags: Optional[List[str]] = None,
+        on_error: Optional[ErrorHandler] = None,
     ):
-        self._delivery = _DeliveryState()
+        self._reporter = _ErrorReporter(on_error)
+        self._delivery = _DeliveryState(self._reporter)
         self.name = name
         self.sinks = sinks
         self.level = level or get_default_level()
@@ -110,7 +137,7 @@ class Logger:
                 if current_event:
                     current_event = stage(current_event)
             except Exception as e:
-                print(f"[logfn internal error] stage failed: {e}", file=sys.stderr)
+                self._reporter.report(e, {"stage": getattr(stage, "__name__", type(stage).__name__)})
         
         if not current_event:
             return
@@ -129,13 +156,14 @@ class Logger:
                         error = RuntimeError("Async sink requires a running event loop")
                         if self._delivery.error is None:
                             self._delivery.error = error
-                        print("[logfn internal error] Async sink requires a running event loop", file=sys.stderr)
+                        self._reporter.report(error, {"sink": getattr(sink, "__name__", type(sink).__name__)})
                     else:
                         task = asyncio.ensure_future(res)
                         self._delivery.pending.add(task)
+                        self._delivery.contexts[task] = {"sink": getattr(sink, "__name__", type(sink).__name__)}
                         task.add_done_callback(self._delivery.completed)
             except Exception as e:
-                print(f"[logfn internal error] sink failed: {e}", file=sys.stderr)
+                self._reporter.report(e, {"sink": getattr(sink, "__name__", type(sink).__name__)})
 
     def trace(self, msg: str, ctx: Optional[Dict[str, Any]] = None, tags: Optional[List[str]] = None, **kwargs: Any) -> None:
         self._log("trace", msg, ctx, tags, **kwargs)
@@ -174,6 +202,7 @@ class Logger:
             base_context=new_ctx,
             base_tags=new_tags,
         )
+        child._reporter = self._reporter
         child._delivery = self._delivery
         return child
 
@@ -189,9 +218,13 @@ class Logger:
         async def flush_sink(sink: Sink) -> None:
             flush = getattr(sink, "flush", None)
             if flush is not None:
-                result = flush()
-                if inspect.isawaitable(result):
-                    await result
+                try:
+                    result = flush()
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as error:
+                    self._reporter.report(error, {"sink": getattr(sink, "__name__", type(sink).__name__), "phase": "flush"})
+                    raise
 
         results = await asyncio.gather(
             *(flush_sink(sink) for sink in self.sinks), return_exceptions=True
@@ -211,6 +244,7 @@ def create_logger(
     pipeline: Optional[List[PipelineStage]] = None,
     base_context: Optional[Dict[str, Any]] = None,
     base_tags: Optional[List[str]] = None,
+    on_error: Optional[ErrorHandler] = None,
 ) -> Logger:
     return Logger(
         name=name,
@@ -219,4 +253,5 @@ def create_logger(
         pipeline=pipeline,
         base_context=base_context,
         base_tags=base_tags,
+        on_error=on_error,
     )

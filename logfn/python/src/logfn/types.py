@@ -34,6 +34,8 @@ class LogEvent(TypedDict):
     tenantId: NotRequired[str]
     version: str
 
+ErrorHandler = Callable[[BaseException, Dict[str, str]], None]
+
 PipelineStage = Callable[[LogEvent], Optional[LogEvent]]
 
 @runtime_checkable
@@ -51,6 +53,7 @@ class Sink(Protocol):
         ...
 
 class LoggerOptions(TypedDict):
+    onError: NotRequired[ErrorHandler]
     name: str
     level: NotRequired[LogLevel]
     pipeline: NotRequired[List[PipelineStage]]

@@ -78,3 +78,9 @@ Sink events are sanitized after pipeline processing: dates become ISO strings, n
 The `redact` stage applies its patterns recursively to strings inside dictionaries and lists. Its optional `keys` selects top-level context fields; all nested values within each selected field are processed. Message redaction remains active. Configure patterns for the secrets your application emits.
 
 Logger events are limited to 64 KiB in the standard escaped JSON representation, which also bounds the compact UTF-8 HTTP representation. Tags are capped at 20 entries. Oversized context retains whole entries that fit and adds `ctx._truncated`; oversized envelope text is shortened at Unicode code-point boundaries. The escaped JSON budget is conservative for non-ASCII text. Custom sinks that add fields or whitespace after delivery must enforce their own resulting wire-size limit.
+
+## Internal error reporting
+
+Pass synchronous `on_error(error, context)` to `Logger` or `create_logger` to observe pipeline, sink delivery and flush failures. Context identifies the stage or sink, with `phase: "flush"` for flush hooks. Children inherit the same callback. Callback exceptions and synchronous recursive reports are isolated so they do not replace the logging outcome. Use a separate reporting channel rather than logging callback failures back into the same sinks.
+
+`flush()` still raises asynchronous delivery or flush failures after all sink hooks settle. Without a callback, internal reports go to stderr. The exported `ErrorHandler` type describes this callback.
