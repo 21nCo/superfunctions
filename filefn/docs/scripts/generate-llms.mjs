@@ -1,27 +1,23 @@
 #!/usr/bin/env node
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
 import { buildManifest, loadDocsConfig } from "@docsfn/core";
 import { FsContentProvider } from "@docsfn/provider-fs";
 import { loadLlmsSiteSource, writeLlmsArtifacts } from "../../../scripts/docs-site/llms.mjs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const cwd = resolve(here, "..");
-const staticDir = resolve(cwd, "static");
-
+const cwd = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const { config, manifest } = await loadLlmsSiteSource(cwd, {
   buildManifest, loadDocsConfig, FsContentProvider,
 });
 
-const siteTitle = manifest.site?.title ?? config.site?.title ?? "filefn";
+const siteTitle = manifest.site?.title ?? config.site?.name ?? "filefn";
 const siteDescription =
   manifest.site?.description ??
-  config.site?.description ??
+  config.site?.tagline ??
   "Self-hosted file uploads, storage, and processing for TypeScript, Python, and Swift.";
 const canonicalUrl =
-  config.site?.canonicalUrl ||
-  "https://docs.filefn.dev";
+  (config.site && (config.site.canonicalUrl || config.site.url)) ||
+  "https://filefn.com";
 
 const pages = Object.values(manifest.pages)
   .filter((page) => (page.id ?? "").startsWith("docs:"))
@@ -68,4 +64,4 @@ for (const page of docsPages) {
 }
 const llmsFullTxt = fullSections.join("\n");
 
-writeLlmsArtifacts(staticDir, { llmsTxt, llmsFullTxt }, process.argv.includes("--check"));
+writeLlmsArtifacts(resolve(cwd, "static"), { llmsTxt, llmsFullTxt });

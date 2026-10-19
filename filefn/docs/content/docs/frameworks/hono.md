@@ -69,9 +69,8 @@ Use the `rateLimit` config:
 ```ts
 const fileFn = createFileFn({
   db, storage,
-  stores: { atomicKv: redisAtomicKvStore },
   rateLimit: {
-    mode: "strict",
+    persistence: redisPersistence,
     algorithm: "sliding-window",
     limits: {
       uploadInit: { windowSeconds: 60, maxRequests: 10 },
@@ -81,7 +80,7 @@ const fileFn = createFileFn({
 });
 ```
 
-For shared counters in strict mode, bind an `AtomicKVStoreAdapter` implementing `compareAndSet` through `stores.atomicKv` and use `mode: "strict"`. The type is exported by `@superfunctions/db`; a missing CAS method fails at startup with `RATE_LIMIT_ATOMIC_CAS_REQUIRED`. Method presence alone does not establish the backend's atomicity, consistency, or durability. A non-atomic `stores.kv` requires `mode: "best-effort"`.
+For multi-instance deployments, plug in a shared persistence (Redis, KV).
 
 ## Observability
 

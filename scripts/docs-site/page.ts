@@ -100,8 +100,6 @@ export async function loadDocsPage(input: {
     ? resolveMarkdownRelativeLinks({
         compiled: await getCompiledDocsPage(routeEntry.page.id),
         route: routeEntry.route,
-        // Published DocPage IDs encode collection:path; provider-only fields
-        // are not carried into the manifest. Split only the collection prefix.
         sourcePath: routeEntry.page.id.slice(routeEntry.page.id.indexOf(":") + 1),
       })
     : undefined;
@@ -111,9 +109,6 @@ export async function loadDocsPage(input: {
     surface,
     sidebar,
     compiled,
-    searchDocumentCount: Array.isArray(source.searchArtifact.documents) ? source.searchArtifact.documents.length : 0,
-    searchScopes: Array.isArray(source.searchArtifact.scopes) ? source.searchArtifact.scopes.join(", ") : "none",
     siteTitle: source.siteTitle,
-    compatPreset: source.compatPreset,
   };
 }

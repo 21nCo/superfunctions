@@ -9,7 +9,7 @@ const config: DocsConfig = {
   site: { title: "Provider contract", basePath: "/docs", canonicalUrl: "https://docs.example/" },
   content: { root: ".", docsDir: "guide", pagesDir: "pages", blogDir: "blog", apiDir: "api", assetsDir: "static" },
   navigation: { sidebars: { docs: { root: true, include: ["docs/**"] } } },
-  search: { enabled: false },
+  search: { enabled: false, scopes: ["docs"] },
 };
 
 // Use actual manifest pages and published route/surface/compiler helpers, not
@@ -48,6 +48,9 @@ describe("published page/provider boundary", () => {
         expect(blocks).toContain('href=\\"https://example.com/path\\"');
         expect(result.routeEntry).toEqual({ kind: "page" });
         expect(result.routeEntry).not.toHaveProperty("page");
+        for (const field of ["searchDocumentCount", "searchScopes", "compatPreset"]) {
+          expect(result).not.toHaveProperty(field);
+        }
         expect(JSON.stringify(result)).not.toContain('"body":');
         expect(JSON.stringify(result)).not.toContain("PRIVATE_METADATA");
         expect(result.surface.title).toBe("Guide");
@@ -55,11 +58,17 @@ describe("published page/provider boundary", () => {
     });
   }
 
-  it("retains API records, fallback sidebar and linear canonical normalization", async () => {
+  it.each([
+    ["unset", undefined, "/docs/api/http"],
+    ["empty", "", "/docs/api/http"],
+    ["origin", "https://docs.example", "https://docs.example/docs/api/http"],
+    ["suffix", "https://docs.example/", "https://docs.example/docs/api/http"],
+    ["long suffix", "https://docs.example" + "/".repeat(10000), "https://docs.example/docs/api/http"],
+  ])("retains actual API records, sidebar and canonical normalization with %s base", async (_label, canonicalUrl, expected) => {
     const runtime = createDocsSiteRuntime(config, { "../../../guide/index.md": "# Docs",
       "../../../api/http.json": JSON.stringify({ openapi: "3.0.0", info: { title: "HTTP API", version: "1" }, paths: {} }) }, {});
     const source = await runtime.loadDocsSiteSource();
-    source.canonicalUrl = "https://docs.example" + "/".repeat(10000);
+    source.canonicalUrl = canonicalUrl;
     const compiler = vi.fn();
     const result = await loadDocsPage({ slug: "api/http", source, getCompiledDocsPage: compiler,
       resolveMarkdownRelativeLinks, options: { fallbackSidebarId: "docs" } });
@@ -68,8 +77,8 @@ describe("published page/provider boundary", () => {
     expect(result.compiled).toBeUndefined();
     expect(compiler).not.toHaveBeenCalled();
     expect(result.sidebar).toBe(source.manifest.sidebars.docs);
-    expect(result.surface.canonicalUrl).toBe("https://docs.example/docs/api/http");
-    expect(result.surface.breadcrumbs[1].href).toBe("/docs/api");
+    expect(result.surface.canonicalUrl).toBe(expected);
+    expect(result.surface.breadcrumbs?.[1].href).toBe("/docs/api");
   });
 
   it("uses a consumer-recognizable 404 without invoking the compiler", async () => {

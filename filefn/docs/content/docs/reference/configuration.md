@@ -11,7 +11,7 @@ description: Every option in FileFnConfig — types, defaults, and effects.
 
 | Field | Type | Effect |
 | --- | --- | --- |
-| `db` | `Adapter` | The DB adapter (`@superfunctions/db`). |
+| `database` | `Adapter` | The DB adapter (`@superfunctions/db`); `db` remains a deprecated alias. |
 | `storage` | `StorageAdapter` | The storage adapter (`@superfunctions/storage`). |
 
 ## Policies
@@ -48,10 +48,9 @@ Default authorizer reads `filefn_file_permissions` and respects ownership.
 | Field | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `rateLimiter` | `RateLimiter` | undefined | Single global rate limiter. |
-| `stores.atomicKv` | `AtomicKVStoreAdapter` | undefined | Shared atomic counters for strict mode; must implement `compareAndSet`. |
-| `stores.kv` | `KVStoreAdapter` | undefined | Non-atomic shared counters for best-effort mode. |
-| `rateLimit.mode` | `"strict" \| "best-effort" \| "local"` | Store-dependent | Defaults to strict with `stores.atomicKv`, best-effort with `stores.kv`, otherwise local. |
-| `rateLimit.algorithm` | `"fixed-window" \| "sliding-window" \| "token-bucket"` | `"fixed-window"` | Algorithm. |
+| `stores` | `RuntimeStores` | undefined | Shared `atomicKv` / `kv` stores. |
+| `rateLimit.mode` | `"strict" \| "best-effort" \| "local"` | inferred from stores | Strict requires CAS-capable `stores.atomicKv`; best-effort uses `stores.kv`; local keeps counters in-process. |
+| `rateLimit.algorithm` | `"fixed-window" | "sliding-window" | "token-bucket"` | `"fixed-window"` | Algorithm. |
 | `rateLimit.limits.uploadInit` | `{ windowSeconds, maxRequests }` | undefined | Per-route. |
 | `rateLimit.limits.uploadSign` | same | undefined | |
 | `rateLimit.limits.uploadComplete` | same | undefined | |
@@ -81,13 +80,13 @@ Default authorizer reads `filefn_file_permissions` and respects ownership.
 | Field | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `namespace` | `string` | `"filefn"` | Table prefix. |
-| `logger` | `Logger` | undefined | Pluggable structured logger. |
+| `observability` | `ObservabilityInput<FileFnObservationEvent>` | undefined | Structured logger, events, metrics, traces and request observations. |
 
 ## Example: production config
 
 ```ts
 const fileFn = createFileFn({
-  db: createPostgresAdapter({ pool }),
+  database: createPostgresAdapter({ pool }),
   storage: createS3Storage({ region, bucket, cdnPrefix }),
   policies: createNucleusPolicies(),
 
@@ -101,9 +100,9 @@ const fileFn = createFileFn({
 
   quota: storageQuotaProvider,
   authorizer: composeAuthorizers([orgAdminCanRead, createDefaultAuthorizer({ db, namespace: "filefn" })]),
-  logger: pinoLogger,
+  observability: { logger: pinoLogger },
+  stores: { atomicKv: redisAtomicStore },
 
-  stores: { atomicKv: redisAtomicKvStore },
   rateLimit: {
     mode: "strict",
     algorithm: "sliding-window",

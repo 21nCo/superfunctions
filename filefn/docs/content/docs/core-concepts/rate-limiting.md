@@ -11,10 +11,10 @@ filefn integrates with `@superfunctions/middleware`'s `RateLimiter` to throttle 
 
 ```ts
 const fileFn = createFileFn({
-  db, storage,
-  stores: { kv: sharedKv },               // omit for in-memory limits
+  database: db, storage,
+  stores: { atomicKv: redisAtomicStore },
   rateLimit: {
-    mode: "best-effort",                  // or "local" without a store
+    mode: "strict",
     algorithm: "sliding-window",          // or "fixed-window" | "token-bucket"
     limits: {
       uploadInit:        { windowSeconds: 60, maxRequests: 10 },
@@ -62,27 +62,23 @@ Routes not in any category (read-only file metadata, listing, render-descriptor)
 - **`sliding-window`** — smooths out the boundary effect. Default for the production examples.
 - **`token-bucket`** — burst-friendly, refill over time. Best when you have legitimate bursty traffic (e.g. mass uploads from a script).
 
-## Persistence
+## Shared stores and modes
 
-In-memory persistence is fine for development and single-instance deployments. For multi-instance / Edge / load-balanced deployments, use a shared persistence:
+FileFn 0.2.0 uses `stores` and `rateLimit.mode`, not `rateLimit.persistence`.
 
-- Redis (recommended)
-- Postgres
-- Cloudflare KV
+- **`strict`** — shared `stores.atomicKv` with `compareAndSet`; missing atomic
+  storage is rejected instead of silently using process-local counters.
+- **`best-effort`** — `stores.kv` for deployments that accept approximate
+  cross-replica limits.
+- **`local`** — in-process counters for development or a single instance.
 
-`@superfunctions/middleware` ships persistence implementations or accepts your own.
+Without an explicit mode, FileFn selects strict for `stores.atomicKv`,
+best-effort for `stores.kv`, otherwise local. Supply adapters implementing
+the `@superfunctions/db` runtime-store contracts.
 
-For a strict limit shared by multiple processes, configure `createFileFn` with
-`stores.atomicKv` and `rateLimit.mode: "strict"`. FileFn passes this adapter to
-`createRateLimiter` as `atomicStore`. When constructing a `createRateLimiter`
-directly, pass the adapter as its `atomicStore` option. The adapter must
-implement `compareAndSet`; the limiter rejects an `atomicStore` without CAS
-support instead of silently falling back to process-local serialization.
-This startup capability check does not verify the backend's atomicity,
-consistency, or durability; the shared-store implementation must supply those semantics.
-For best-effort cross-replica limits in `createFileFn`, provide `stores.kv`
-and set `rateLimit.mode: "best-effort"`. Direct `createRateLimiter` calls can
-use `persistence` for single-process or best-effort shared limits.
+The separate pre-built `rateLimiter` still accepts the middleware's own
+`atomicStore` / `persistence` options.
+
 
 ## What clients see
 

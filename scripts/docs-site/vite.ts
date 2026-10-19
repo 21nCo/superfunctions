@@ -39,6 +39,18 @@ export function docsSiteCorePlugin(configUrl: string) {
   return {
     name: "docs-site-pinned-core",
     enforce: "pre",
+    config() {
+      if (dependencies["gray-matter"]) {
+        // Dev SSR needs CJS-to-ESM prebundling from the actual consumer owner.
+        // Production uses Rollup's normal bundling, including Cloudflare builds.
+        return { ssr: {
+          optimizeDeps: { include: ["gray-matter"] },
+          // Shared source's bare imports have no standalone parent install.
+          // Keep ESM adapters in Vite so its consumer resolver stays in charge.
+          noExternal: ["@docsfn/core", "@docsfn/provider-fs", "@docsfn/sveltekit", "@sveltejs/kit"],
+        } };
+      }
+    },
     async resolveId(source, importer) {
       if (!importer?.replaceAll("\\", "/").includes("/scripts/docs-site/")) return;
       const owner = ["@docsfn/core", "@docsfn/provider-fs", "@docsfn/sveltekit", "@sveltejs/kit", "gray-matter", "vitest", "vite"]

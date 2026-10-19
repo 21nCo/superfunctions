@@ -13,8 +13,8 @@ See [Core Concepts › Rate limiting](../core-concepts/rate-limiting) for the co
 import { createFileFn } from "@filefn/server";
 
 const fileFn = createFileFn({
-  db, storage,
-  stores: { atomicKv: redisAtomicKvStore },
+  database: db, storage,
+  stores: { atomicKv: redisAtomicStore },
   rateLimit: {
     mode: "strict",
     algorithm: "sliding-window",
@@ -34,7 +34,11 @@ const fileFn = createFileFn({
 
 `rateLimit.algorithm` is one of `"fixed-window" | "sliding-window" | "token-bucket"`.
 
-For shared counters in strict mode, provide a shared `stores.atomicKv` (`AtomicKVStoreAdapter` from `@superfunctions/db`) implementing `compareAndSet` and set `rateLimit.mode: "strict"`. The limiter rejects an atomic adapter without this capability at startup (`RATE_LIMIT_ATOMIC_CAS_REQUIRED`); method presence alone does not establish the backend's atomicity, consistency, or durability. Use `stores.kv` with `mode: "best-effort"` for non-atomic shared storage. Omitting a store uses the built-in in-memory counters; it does not coordinate instances.
+`rateLimit.mode: "strict"` uses CAS-capable `stores.atomicKv` for shared counters.
+Use `"best-effort"` with `stores.kv` when approximate cross-replica limits are
+acceptable, or `"local"` for in-process counters. Without an explicit mode,
+FileFn selects strict for `atomicKv`, best-effort for `kv`, otherwise local.
+The former `rateLimit.persistence` option was removed in 0.2.0.
 
 ## Pre-built rate limiter
 

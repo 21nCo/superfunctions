@@ -19,7 +19,6 @@
 - [AWS SES](https://authfn.com/docs/adapters/mail/ses) — Use AWS SES as your authfn email provider.
 - [OAuth adapters](https://authfn.com/docs/adapters/oauth) — Bundled OAuth providers and how to extend.
 - [Admin](https://authfn.com/docs/admin) — @authfn/admin — admin-only routes for listing and deleting users, with a customizable authorization callback.
-- [Super Console integration](https://authfn.com/docs/admin/super-console) — Bind scoped AuthFn user and session operations to an authorized operator.
 - [Claude](https://authfn.com/docs/ai-resources/claude) — One-click Claude Desktop / Claude Code setup for authfn.
 - [Codex / Droid](https://authfn.com/docs/ai-resources/codex) — AGENTS.md / Factory Codex / Factory Droid setup for authfn.
 - [Cursor](https://authfn.com/docs/ai-resources/cursor) — One-click Cursor setup for authfn — MCP, llms.txt, and rules.

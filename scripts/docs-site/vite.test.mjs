@@ -46,10 +46,35 @@ describe("consumer-owned conditional dependency resolution", () => {
       const loaded = await server.ssrLoadModule(shared);
       expect([loaded.core, loaded.search, loaded.parser]).toEqual(["CONSUMER_OK_IMPORT", "CONSUMER_OK_SEARCH", "CONSUMER_OK_IMPORT"]);
       const browser = await server.transformRequest(shared);
-      expect(browser.code).toContain("lib/browser.mjs");
-      expect(browser.code).not.toContain("ROOT_BAD");
+      // The rewritten import must point at the consumer's copy, not the repository root's.
+      const browserImport = browser.code.match(/["']([^"']*@docsfn\/core\/lib\/browser\.mjs)["']/)?.[1];
+      expect(browserImport).toBeDefined();
+      expect(browserImport.startsWith(`/@fs${root}/node_modules/`)).toBe(false);
+      expect(browserImport).toMatch(/^(?:\/node_modules\/|\/@fs.*\/consumer\/docs\/node_modules\/)@docsfn\/core\/lib\/browser\.mjs$/);
       const dependency = await server.ssrLoadModule(path.join(ownedDependency, "entry.js"));
       expect(dependency.marker).toBe("DEPENDENCY_OK_IMPORT");
+    } finally { await server?.close(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("executes the consumer's real CommonJS parser during standalone dev SSR without parent dependencies", async () => {
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), "docs-parser-dev-")));
+    const site = path.join(root, "consumer", "docs");
+    const shared = path.join(root, "scripts", "docs-site", "parser.js");
+    const parser = path.join(site, "node_modules", "gray-matter");
+    let server;
+    try {
+      put(path.join(root, "package.json"), { type: "module" });
+      put(path.join(site, "package.json"), { type: "module", dependencies: { "@docsfn/core": "0.0.5", "gray-matter": "4.0.3" } });
+      put(path.join(parser, "package.json"), { name: "gray-matter", main: "index.cjs" });
+      put(path.join(parser, "index.cjs"), 'const path = require("node:path"); module.exports = source => ({ content: source.trim(), owner: "CONSUMER_CJS", basename: path.basename("/probe/cjs") });');
+      put(shared, 'import parser from "gray-matter"; export const parse = source => parser(source);');
+      server = await createServer({ configFile: false, root: site,
+        plugins: [docsSiteCorePlugin(pathToFileURL(path.join(site, "vite.config.ts")).href)],
+        ssr: { noExternal: true }, optimizeDeps: { noDiscovery: true },
+        server: { middlewareMode: true, fs: { allow: [root] } },
+      });
+      const loaded = await server.ssrLoadModule(shared);
+      expect(loaded.parse("  # Actual CJS  ")).toEqual({ content: "# Actual CJS", owner: "CONSUMER_CJS", basename: "cjs" });
     } finally { await server?.close(); rmSync(root, { recursive: true, force: true }); }
   });
 
