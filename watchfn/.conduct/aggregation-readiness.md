@@ -48,3 +48,14 @@ WatchFn ingestion/aggregate calls, numeric and empty-set semantics, mixed time
 buckets, typed grouping, percentile endpoints, invalid input before backend
 access, pre-aggregation limit handling and overflow. Native-provider performance,
 full HTTP/packed integration and all other original readiness gates remain open.
+
+
+## Cross-metric rate checkpoint
+
+Named rate aggregations and `watch.aggregate({aggregation: "rate", numerator, denominator})` now implement the SPEC's metric-count ratio. Each selector is `{metric: string}`. Both selectors share the query's time range, filters and grouping, but select their own event names/types. The outer metric continues to select events for ordinary statistics in a mixed query; it must not discard numerator events before calculating the rate. Storage query pushdown therefore omits the outer metric when a rate needs other metrics.
+
+The result is numerator count divided by denominator count, not a percentage or events per second. Zero denominators return null, including empty datasets; a positive denominator with no numerator returns zero. A group containing only error events remains visible with a null ratio and zero ordinary request count. Unrelated metric groups are omitted when an outer metric or rate-only query defines the relevant metric set. Selector-specific filters are not supported and are rejected rather than ignored.
+
+Five additional tests cover the SPEC mixed aggregation, global filters/time buckets, missing denominators, raw-storage query selection, malformed selectors and the public aggregate helper. This supersedes the earlier rate-rejection limitation. Other original limitations above remain open.
+
+Validation for this checkpoint:125 core and12 browser tests pass; source typecheck and all core builds pass. Both built ESM and synchronous CommonJS execute mixed request-count/error-rate queries and return count2/ratio0.5. Provider-scale aggregation and separate utility behavior remain unproven.

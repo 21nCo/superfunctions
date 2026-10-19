@@ -84,7 +84,7 @@ describe("query aggregations", () => {
     for (const options of [
       { aggregations: { value: { operation: "avg" } } },
       { aggregations: { value: { operation: "percentile", field: "duration", percentile: 101 } } },
-      { aggregations: { value: { operation: "rate", numerator: { metric: "error" }, denominator: { metric: "request" } } } },
+      { aggregations: { value: { operation: "rate", numerator: { metric: "error" } } } },
       { groupBy: { interval: "0m" }, aggregations: { count: { operation: "count" } } },
       { groupBy: ["endpoint", "endpoint"], aggregations: { count: { operation: "count" } } },
       { groupBy: "endpoint", aggregations: { endpoint: { operation: "count" } } },

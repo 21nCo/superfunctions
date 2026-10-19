@@ -15,14 +15,15 @@ export class QueryEngine {
 
   async aggregate(options: AggregateOptions): Promise<QueryResult> {
     if (!this.isRecord(options)) throw new QueryValidationError("Aggregation options must be an object");
-    const { aggregation, field, percentile, ...query } = options;
+    const { aggregation, field, percentile, numerator, denominator, ...query } = options;
     const shorthand = typeof aggregation === "string" && /^p(?:\d+(?:\.\d+)?)$/.test(aggregation);
     const config: Aggregation = {
       operation: shorthand ? "percentile" : aggregation as Aggregation["operation"],
       field: field ?? (aggregation === "count" ? undefined : "value"),
       percentile: shorthand ? Number(aggregation.slice(1)) : percentile,
+      numerator, denominator,
     };
-    return this.executeInternal({ ...query, aggregations: { value: config } }, field === undefined && aggregation !== "count");
+    return this.executeInternal({ ...query, aggregations: { value: config } }, field === undefined && aggregation !== "count" && aggregation !== "rate");
   }
 
   async execute(options: QueryOptions): Promise<QueryResult> {
@@ -37,13 +38,14 @@ export class QueryEngine {
     catch (error) { throw new QueryValidationError(error instanceof Error ? error.message : "Invalid time range"); }
     const grouping = this.grouping(options.groupBy);
     let aggregations = options.aggregations;
+    const rates = Object.values(aggregations ?? {}).filter(config => config.operation === "rate");
     let data: any[] = [];
     
     // Check if storage has specialized query capabilities
     if ("executeQuery" in this.storage && typeof (this.storage as any).executeQuery === "function") {
         // Storage must return raw matching events, not pre-limited or aggregated rows.
         data = await (this.storage as any).executeQuery({
-          ...(scalarMetric ? {} : { metric: options.metric }), where: options.where, timeRange: options.timeRange,
+          ...(scalarMetric || rates.length ? {} : { metric: options.metric }), where: options.where, timeRange: options.timeRange,
         });
     } else {
         // Fallback to in-memory filtering (fetching all might be bad for DB, but fine for memory)
@@ -51,7 +53,15 @@ export class QueryEngine {
     }
 
     // 1. Filter by metric
-    if (options.metric) {
+    if (rates.length) {
+      // Rate selectors share global time/where filters but select their own metrics.
+      // Keep the outer metric for ordinary aggregates in each resulting group.
+      const onlyRates = Object.values(aggregations!).every(config => config.operation === "rate");
+      if (options.metric || onlyRates) {
+        const metrics = new Set([...(options.metric ? [options.metric] : []), ...rates.flatMap(config => [config.numerator!.metric, config.denominator!.metric])]);
+        data = data.filter(event => metrics.has(event.name) || metrics.has(event.type));
+      }
+    } else if (options.metric) {
       const exact = data.filter((e) => e.name === options.metric || e.type === options.metric);
       if (scalarMetric && exact.length === 0 && options.metric.includes(".")) {
         const at = options.metric.lastIndexOf(".");
@@ -75,7 +85,7 @@ export class QueryEngine {
       });
     }
 
-    if (aggregations) data = this.aggregateRows(data, aggregations, grouping);
+    if (aggregations) data = this.aggregateRows(data, aggregations, grouping, rates.length ? options.metric : undefined);
 
     // 5. Sorting
     if (options.orderBy) {
@@ -145,10 +155,16 @@ export class QueryEngine {
       for (const [name, aggregation] of Object.entries(options.aggregations)) {
         this.field(name);
         if (groups.some(group => group.key === name)) throw new QueryValidationError("Aggregation name collides with group field");
-        if (!this.isRecord(aggregation) || !["count", "sum", "avg", "min", "max", "count_distinct", "percentile"].includes(aggregation.operation)) {
-          throw new QueryValidationError("Unsupported aggregation operation (rate requires an explicit metric ratio contract)");
+        if (!this.isRecord(aggregation) || !["count", "sum", "avg", "min", "max", "count_distinct", "percentile", "rate"].includes(aggregation.operation)) {
+          throw new QueryValidationError("Unsupported aggregation operation");
         }
-        if (aggregation.operation !== "count" || aggregation.field !== undefined) this.field(aggregation.field);
+        if (aggregation.operation === "rate") {
+          for (const selector of [aggregation.numerator, aggregation.denominator]) {
+            if (!this.isRecord(selector) || Object.keys(selector).length !== 1 || typeof selector.metric !== "string" || !selector.metric.trim()) {
+              throw new QueryValidationError("Rate requires numerator and denominator metric selectors");
+            }
+          }
+        } else if (aggregation.operation !== "count" || aggregation.field !== undefined) this.field(aggregation.field);
         if (aggregation.operation === "percentile" && (typeof aggregation.percentile !== "number" || !Number.isFinite(aggregation.percentile) || aggregation.percentile < 0 || aggregation.percentile > 100)) throw new QueryValidationError("Percentile must be between 0 and 100");
       }
     }
@@ -172,7 +188,7 @@ export class QueryEngine {
     return result;
   }
 
-  private aggregateRows(events: any[], configs: Record<string, Aggregation>, grouping: Array<{ key: string; interval?: number }>): any[] {
+  private aggregateRows(events: any[], configs: Record<string, Aggregation>, grouping: Array<{ key: string; interval?: number }>, metric?: string): any[] {
     const groups = new Map<string, { labels: Record<string, any>; events: any[] }>();
     if (!grouping.length) groups.set("[]", { labels: {}, events: [] });
     for (const event of events) {
@@ -197,7 +213,7 @@ export class QueryEngine {
     return [...groups.values()].map(group => {
       const row = { ...group.labels };
       for (const [name, config] of Object.entries(configs)) {
-        Object.defineProperty(row, name, { value: this.aggregateValue(group.events, config), enumerable: true });
+        Object.defineProperty(row, name, { value: this.aggregateValue(config.operation === "rate" || !metric ? group.events : group.events.filter(event => event.name === metric || event.type === metric), config), enumerable: true });
       }
       return row;
     });
@@ -205,6 +221,11 @@ export class QueryEngine {
 
   private aggregateValue(events: any[], config: Aggregation): number | null {
     if (config.operation === "count") return events.length;
+    if (config.operation === "rate") {
+      const count = (metric: string) => events.filter(event => event.name === metric || event.type === metric).length;
+      const denominator = count(config.denominator!.metric);
+      return denominator === 0 ? null : count(config.numerator!.metric) / denominator;
+    }
     const raw = events.map(event => this.getFieldValue(event, config.field!));
     if (config.operation === "count_distinct") {
       const values = raw.filter(value => value !== undefined && value !== null);

@@ -14,8 +14,8 @@ export interface Aggregation {
   operation: "count" | "avg" | "sum" | "min" | "max" | "count_distinct" | "rate" | "percentile";
   field?: string;
   percentile?: number;
-  numerator?: any;
-  denominator?: any;
+  numerator?: { metric: string };
+  denominator?: { metric: string };
 }
 
 export type QueryGrouping = string | { interval: string };
@@ -43,4 +43,6 @@ export interface AggregateOptions extends Omit<QueryOptions, "aggregations"> {
   aggregation: Aggregation["operation"] | `p${number}`;
   field?: string;
   percentile?: number;
+  numerator?: { metric: string };
+  denominator?: { metric: string };
 }
