@@ -152,3 +152,15 @@ Actual WatchFn host composition, Python middleware/error parity and original bro
 Logger/create_logger expose synchronous on_error with exported ErrorHandler type. Parent/child loggers share reporting state; stage, sync sink, async delivery and flush hook failures carry stage/sink context. Callback exceptions and synchronous recursive reports are contained. Async delivery ownership and explicit flush rejection remain intact.
 
 34 Python3.9 source tests and34 tests against a fresh Python3.12 wheel pass. Strict mypy1.18.2 passes changed core/types. Four regressions cover inherited callbacks, callback failure/recursion, asynchronous delivery reporting plus flush rejection, and healthy hook completion alongside a failing flush. Remaining Python correlation/middleware and other original readiness gates stay open.
+
+## WatchFn HTTP composition (2026-10-20)
+
+`logfn/scripts/watchfn-integration-acceptance.mjs` exercises the built LogFn logger/HTTP sink against a real loopback HTTP server forwarding requests through WatchFn's actual router and ingestion handler. WatchFn core is bundled from the checkout selected by `WATCHFN_ROOT`; its installed dependencies and built shared HTTP/observability packages are prerequisites. Example after building LogFn:
+
+```sh
+WATCHFN_ROOT=/path/to/watchfn-checkout node logfn/scripts/watchfn-integration-acceptance.mjs
+```
+
+On Node20.20.0, all eight HTTP requests passed: MemoryStorage retains the complete event envelope (timestamp, level, message, nested context, tags and correlation fields); DatabaseStorage waits on adapter completion before 202; storage rejection returns 503 and the sink retains the event for a subsequent successful flush; invalid credentials produce one terminal 401 despite three configured attempts; corrected x-api-key credentials deliver the retained event; stopped storage returns 503 and restart permits delivery. Bearer authentication is exercised by the primary logger. Both storage failures reach the logger's error callback.
+
+The DatabaseStorage adapter is a deterministic in-process gate/failure fixture, not a database durability test. This acceptance depends on the separate WatchFn ingestion changes and bundles source rather than proving WatchFn's published package. It establishes local LogFn-to-WatchFn transport composition, not hosted deployment, transactional batch persistence, retention/query completeness or production readiness. WatchFn still needs its broader storage and runtime work; LogFn's remaining original browser/performance/Python middleware gates remain open.
