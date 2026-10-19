@@ -1,0 +1,78 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M59NFEFBPECQEPFT57NXTW9Z",
+  "session_id": "ec9cf707-0884-40ca-b283-dbc4d0f2a4b5",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-19T08:47:09.602066Z",
+  "checkpoints_count": 3,
+  "files_touched": [
+    ".github/workflows/superfunctions-docs-cloudflare-deploy.yml",
+    ".github/workflows/superfunctions-docs-cloudflare-routes.yml",
+    "package-lock.json",
+    "package.json",
+    "scripts/cloudflare-docs/config.mjs",
+    "scripts/cloudflare-docs/select-products.mjs",
+    "secfn/docs/content/docs/reference/runtime.md",
+    "secfn/docs/content/docs/reference/server.md",
+    "secfn/docs/package.json",
+    "secfn/docs/scripts/generate-llms.mjs",
+    "secfn/docs/src/lib/server/docs-site-source.ts",
+    "secfn/docs/src/routes/+error.svelte",
+    "secfn/docs/src/routes/docs/llms-full.txt/+server.ts",
+    "secfn/docs/src/routes/docs/llms.txt/+server.ts",
+    "secfn/docs/static/llms-full.txt",
+    "secfn/docs/tsconfig.json",
+    "secfn/docs/turbo.json",
+    "secfn/docs/vite.config.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "66a23ef0fcc5",
+  "checkpoint_transcript_start": 5786,
+  "transcript_lines_at_start": 5786,
+  "compact_transcript_start": 501,
+  "token_usage": {
+    "input_tokens": 16,
+    "cache_creation_tokens": 5349,
+    "cache_read_tokens": 4705802,
+    "output_tokens": 2788,
+    "api_call_count": 8,
+    "subagent_tokens": {
+      "input_tokens": 152,
+      "cache_creation_tokens": 470494,
+      "cache_read_tokens": 9292577,
+      "output_tokens": 25221,
+      "api_call_count": 75
+    }
+  },
+  "session_metrics": {
+    "turn_count": 9
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-19T08:47:08.060103Z",
+    "agent_lines": 29872,
+    "agent_removed": 21063,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 29872,
+    "total_lines_changed": 50935,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 462,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".agents/skills/publish-superfunctions-packages/SKILL.md": 172,
+        ".agents/skills/publish-superfunctions-packages/agents/openai.yaml": 4,
+        ".agents/skills/publish-superfunctions-packages/scripts/inventory-npm-packages.mjs": 198,
+        ".codex/hooks.json": 88
+      }
+    }
+  ]
+}
