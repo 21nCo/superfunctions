@@ -20,6 +20,7 @@ on:
           - mdfn
           - mcpfn
           - clifn
+          - plugfn
           - botfn
           - langfn
           - devfn
@@ -84,6 +85,7 @@ jobs:
           CLOUDFLARE_ZONE_ID_MDFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_MDFN_COM }}
           CLOUDFLARE_ZONE_ID_MCPFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_MCPFN_COM }}
           CLOUDFLARE_ZONE_ID_CLIFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_CLIFN_COM }}
+          CLOUDFLARE_ZONE_ID_PLUGFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_PLUGFN_COM }}
           CLOUDFLARE_ZONE_ID_BOTFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_BOTFN_COM }}
           CLOUDFLARE_ZONE_ID_LANGFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_LANGFN_COM }}
           CLOUDFLARE_ZONE_ID_DEVFN_COM: ${{ vars.CLOUDFLARE_ZONE_ID_DEVFN_COM }}

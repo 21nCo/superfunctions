@@ -51,6 +51,16 @@ export const docsProducts = {
       live: "mdfn.com",
     },
   },
+  plugfn: {
+    packageName: "@plugfn/docs",
+    docsDir: "plugfn/docs",
+    kind: "sveltekit-cloudflare",
+    zoneName: "plugfn.com",
+    hosts: {
+      dev: "plugfn.21n.site",
+      live: "plugfn.com",
+    },
+  },
   clifn: {
     packageName: "@clifn/docs",
     docsDir: "clifn/docs",

@@ -16,6 +16,7 @@ on:
       - superfunctions-docs-mdfn-live-*
       - superfunctions-docs-mcpfn-live-*
       - superfunctions-docs-clifn-live-*
+      - superfunctions-docs-plugfn-live-*
       - superfunctions-docs-botfn-live-*
       - superfunctions-docs-langfn-live-*
       - superfunctions-docs-devfn-live-*
@@ -29,6 +30,7 @@ on:
       - superfunctions-mdfn-docs-live-*
       - superfunctions-mcpfn-docs-live-*
       - superfunctions-clifn-docs-live-*
+      - superfunctions-plugfn-docs-live-*
       - superfunctions-botfn-docs-live-*
       - superfunctions-langfn-docs-live-*
       - superfunctions-devfn-docs-live-*
@@ -43,6 +45,7 @@ on:
       - mdfn/docs/**
       - mcpfn/docs/**
       - clifn/docs/**
+      - plugfn/docs/**
       - botfn/docs/**
       - langfn/docs/**
       - devfn/docs/**
@@ -74,6 +77,7 @@ on:
           - mdfn
           - mcpfn
           - clifn
+          - plugfn
           - botfn
           - langfn
           - devfn
