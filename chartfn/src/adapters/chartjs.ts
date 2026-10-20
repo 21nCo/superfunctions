@@ -82,12 +82,13 @@ const chartTypeMap: Record<ChartSpec["type"], string> = {
 
 const buildConfig = (spec: ChartSpec) => {
   const labels = buildLabels(spec);
+  const radial = spec.type === "pie" || spec.type === "donut";
   const datasets = spec.data.series.map((series, index) => {
     const values = getSeriesValues(series);
     const label = getSeriesName(series, `Series ${index + 1}`);
     const dataset: Record<string, unknown> = {
       label,
-      data: spec.type === "scatter" || spec.options?.axes?.x?.type === "linear" ? values.map((y, x) => ({ x, y })) : values,
+      data: !radial && (spec.type === "scatter" || spec.options?.axes?.x?.type === "linear") ? values.map((y, x) => ({ x, y })) : values,
     };
 
     const seriesType = spec.type === 'combo' ? (series.type ?? (index === 0 ? 'bar' : 'line')) : spec.type;
@@ -118,7 +119,7 @@ const buildConfig = (spec: ChartSpec) => {
               ? { position: spec.options.legend.position }
               : undefined,
       },
-      scales: spec.type === "pie" || spec.type === "donut" ? {} : {
+      scales: radial ? {} : {
         x:
           spec.options?.axes?.x?.type === "linear" || spec.type === "scatter"
             ? { type: "linear", title: { display: !!spec.options?.axes?.x?.label, text: spec.options?.axes?.x?.label } }

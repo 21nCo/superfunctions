@@ -93,6 +93,11 @@ describe("chartjsAdapter", () => {
 
 
 describe('Chart.js chart contracts', () => {
+  it.each(['pie', 'donut'] as const)('keeps %s values numeric when reusing linear-axis options', type => {
+    const config = _private.buildConfig({ ...spec, type, options: { axes: { x: { type: 'linear' } } } }) as any;
+    expect(config.data.datasets[0].data).toEqual([1, 2, 3]);
+    expect(config.options.scales).toEqual({});
+  });
   it('builds scatter coordinates and radial charts without Cartesian scales', () => {
     const scatter = _private.buildConfig({ ...spec, type: 'scatter' }) as any;
     expect(scatter.data.datasets[0].data).toEqual([{ x: 0, y: 1 }, { x: 1, y: 2 }, { x: 2, y: 3 }]);

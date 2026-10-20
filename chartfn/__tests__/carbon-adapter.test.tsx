@@ -40,6 +40,11 @@ describe("Carbon adapter", () => {
     const config = _private.buildCarbonConfig({ type: "donut", data: { labels: ["same"], series: [{ name: "A", values: [1] }, { name: "B", values: [2] }] } });
     expect(config.data.map(row => row.group)).toEqual(["A: same", "B: same"]);
   });
+  it("uses labels when dimensions is an empty optional array", () => {
+    const data = { ...spec.data, dimensions: [], labels: ["First", "Second", "Third"] };
+    expect(_private.buildCarbonConfig({ ...spec, data }).data.map(row => row.key)).toEqual(data.labels);
+    expect(_private.buildCarbonConfig({ ...spec, type: "pie", data }).data.map(row => row.group)).toEqual(data.labels);
+  });
   it("maps themes and honors explicit Carbon passthrough", () => {
     expect(_private.buildCarbonConfig({ ...spec, options: { theme: "dark" } }).options.theme).toBe("g100");
     expect(_private.buildCarbonConfig({ ...spec, options: { theme: "light" }, passthrough: { carbonOptions: { theme: "g90", height: "250px" } } }).options).toMatchObject({ theme: "g90", height: "250px" });

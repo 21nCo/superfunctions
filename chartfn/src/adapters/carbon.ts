@@ -20,7 +20,8 @@ const names = (spec: ChartSpec): string[] => {
     return name;
   });
 };
-const categories = (spec: ChartSpec): string[] => spec.data.dimensions ?? spec.data.labels ?? [];
+const categories = (spec: ChartSpec): string[] =>
+  spec.data.dimensions?.length ? spec.data.dimensions : spec.data.labels ?? [];
 
 const buildCarbonConfig = (spec: ChartSpec): CarbonConfig => {
   assertChartSpec(spec);

@@ -68,6 +68,20 @@ PLAYWRIGHT_MODULE_PATH=/absolute/path/to/playwright BROWSER_EXECUTABLE_PATH=/abs
 
 The local driver came from an existing installation; all three product/vendor imports resolved from the ChartFn checkout. Browser contexts and the local server are closed on success/failure. The structured local browser receipt is `/tmp/chartfn-determinism-acceptance.json`.
 
+### Follow-up: radial data and label fallback
+
+Reusing linear-X options for Chart.js pie/donut charts previously converted
+numeric values to Cartesian `{x,y}` objects despite omitting Cartesian scales.
+Two new regressions fail on that implementation. Radial charts now retain
+numeric data regardless of axis options; actual Chrome acceptance verifies the
+parsed values and finite nonempty arcs after updating each radial type.
+Carbon now uses the supplied labels when optional dimensions is an empty array,
+matching the other adapters; unit assertions cover bar keys and pie groups.
+
+After these changes all 63 core tests pass. The complete actual-vendor browser
+script passes 153 assertions on Chrome 154.0.8037.58 with no page errors
+(`/tmp/chartfn-radial-root-browser.log`), including the new radial cases.
+
 The API-005 broad envelope statement requires contract alignment with the detailed imperative API; changing those method signatures would be a compatibility decision, not an unannounced fix. Current behavior and limits are prominent in the README. Vendor-specific theme capabilities, Carbon plot-only export, same-browser determinism and SSR-import-versus-chart-rendering boundaries are not hidden behind a blanket completion claim.
 
 Hosted validation remains separate. The recorded JavaScript run 39141885349 failed from inherited ProbeFn dependency-cycle configuration, not these ChartFn changes; its snapshot is `/tmp/chartfn-hosted-failed.log`. The later account billing/job-start limitation also prevents claiming a current green hosted run. The separate ProbeFn fix does not by itself prove ChartFn CI has rerun successfully. No CI bypass, merge, publication or deployment is established by these local results.

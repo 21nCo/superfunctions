@@ -37,6 +37,11 @@ try {
           assert(vendor.getDatasetMeta(0).data.length === 3, `${type}: actual vendor data points`);
           if (type === 'area') assert(vendor.isPluginEnabled('filler'), 'area filler plugin');
           if (type === 'scatter') assert(vendor.getDatasetMeta(0)._parsed[1].x === 1, 'scatter numeric X');
+          if (type === 'pie' || type === 'donut') {
+            result.result.update({ ...spec(type), options: { axes: { x: { type: 'linear' } } } });
+            assert(vendor.getDatasetMeta(0)._parsed.every((value, index) => value === [2, 4, 3][index]), `${type}: linear-axis options preserve radial values`);
+            assert(vendor.getDatasetMeta(0).data.every(arc => Number.isFinite(arc.circumference) && arc.circumference > 0), `${type}: nonempty finite arcs`);
+          }
           if (type === 'combo') assert(vendor.getDatasetMeta(1).type === 'line', 'combo mixed series');
           result.result.update(spec('line'));
           assert(vendor.config.type === 'line', 'type update');
