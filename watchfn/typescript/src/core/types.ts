@@ -1,3 +1,6 @@
+import type { RetentionPageOptions, RetentionPageResult } from "../storage/event-retention";
+import type { WatchFnDatabase } from "../storage/database";
+import type { BotFnIssueConfig } from "../integrations/botfn/types";
 import { z } from "zod";
 
 export const WatchFnConfigSchema = z.object({
@@ -13,7 +16,13 @@ export const WatchFnConfigSchema = z.object({
     }),
   ]).optional().default("memory"),
   
-  database: z.any().optional(),
+  database: z.custom<WatchFnDatabase>().optional(),
+  retention: z.object({
+    apps: z.array(z.string().min(1).max(200).refine(value => !!value.trim())).min(1).max(100),
+    defaultTtlMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    bugReportTtlMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  }).optional(),
+  botfn: z.custom<BotFnIssueConfig>(value => !!value && typeof value === "object" && !Array.isArray(value)).optional(),
   
   apm: z.object({
     enabled: z.boolean().default(true),
@@ -60,7 +69,9 @@ export type WatchFnConfig = z.infer<typeof WatchFnConfigSchema>;
 
 export interface WatchFnInstance {
   start(): void;
-  stop(): void;
+  stop(): Promise<void>;
+  flush(): Promise<void>;
+  cleanupRetention(options?: RetentionPageOptions): Promise<RetentionPageResult>;
   track(event: string, properties?: Record<string, any>): void;
   captureException(error: any, context?: Record<string, any>): void;
   captureMessage(message: string, context?: Record<string, any>): void;

@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "async_hooks";
-import { WatchFn } from "../core/watch-fn";
+import type { WatchFn } from "../core/watch-fn";
 import { Span, SpanOptions } from "./span";
 
 export class Tracer {
@@ -23,46 +23,41 @@ export class Tracer {
       ...options,
       parentId,
       traceId,
-    });
+    }, finished => this.record(finished));
 
     return span;
   }
 
-  // Wrapper to automatically handle context
+  /** Manual transactions keep explicit parentage without leaking ambient context. */
+  startTransaction(name: string): Span & { startSpan(name: string, options?: Partial<SpanOptions>): Span } {
+    const transaction = this.startSpan(name);
+    return Object.assign(transaction, {
+      startSpan: (childName: string, options: Partial<SpanOptions> = {}) => {
+        if (transaction.endTime !== undefined) throw new Error("Transaction is finished");
+        return this.startSpan(childName, { ...options, parentId: transaction.id, traceId: transaction.traceId });
+      },
+    });
+  }
+
+  // Callback spans record once on finish, including manual early completion.
   start<T>(name: string, cb: (span: Span) => T, options: Partial<SpanOptions> = {}): T {
-      const span = this.startSpan(name, options);
-      
-      // Run the callback within the context of the new span
-      return this.context.run(span, () => {
-          try {
-              const result = cb(span);
-              if (result instanceof Promise) {
-                  return result
-                    .then((val) => {
-                        span.finish();
-                        this.record(span);
-                        return val;
-                    })
-                    .catch((err) => {
-                        span.setTag("error", true);
-                        span.log({ event: "error", error: err });
-                        span.finish();
-                        this.record(span);
-                        throw err;
-                    }) as any;
-              }
-              
-              span.finish();
-              this.record(span);
-              return result;
-          } catch (err) {
-              span.setTag("error", true);
-              span.log({ event: "error", error: err });
-              span.finish();
-              this.record(span);
-              throw err;
-          }
-      });
+    const span = this.startSpan(name, options);
+    const fail = (error: unknown): never => {
+      span.setTag("error", true);
+      span.log({ event: "error", error });
+      span.finish();
+      throw error;
+    };
+    return this.context.run(span, () => {
+      try {
+        const result = cb(span);
+        if (result != null && typeof (result as any).then === "function") {
+          return Promise.resolve(result).then(value => { span.finish(); return value; }, fail) as T;
+        }
+        span.finish();
+        return result;
+      } catch (error) { return fail(error); }
+    });
   }
 
   record(span: Span) {

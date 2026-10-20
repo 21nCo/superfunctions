@@ -1,7 +1,9 @@
-import type { NextRequest } from "next/server";
 import { toNextHandlers } from "@superfunctions/http-next";
 import type { WatchFn } from "../core/watch-fn";
 import { createWatchFnRouter } from "../http/router";
+
+/** The request surface used by tracking; actual NextRequest objects satisfy it. */
+export type WatchFnNextRequest = Request & { nextUrl: { pathname: string } };
 
 export interface NextWatchFnOptions {
   trackRequests?: boolean;
@@ -34,7 +36,7 @@ export function createNextHandler(
  * Wrap handler with tracking
  */
 function wrapHandler(watchFn: WatchFn, handler: any, method: string) {
-  return async (request: NextRequest, context: any) => {
+  return async (request: WatchFnNextRequest, context: any) => {
     const startTime = Date.now();
     const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
@@ -71,7 +73,7 @@ function wrapHandler(watchFn: WatchFn, handler: any, method: string) {
  * Next.js middleware for automatic tracking
  */
 export function createNextMiddleware(watchFn: WatchFn) {
-  return async (request: NextRequest) => {
+  return async (request: WatchFnNextRequest) => {
     const startTime = Date.now();
     const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 

@@ -27,38 +27,29 @@ export function createExpressMiddleware(watchFn: WatchFn) {
     // Track request start
     const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
-    // Override res.json to capture response
-    const originalJson = res.json.bind(res);
-    res.json = function (body: any) {
-      const duration = Date.now() - startTime;
-
+    // Response completion is the delivery boundary. Writing JSON may occur
+    // before completion, and a disconnected socket may never emit finish.
+    let completed = false;
+    const complete = (aborted: boolean) => {
+      if (completed) return;
+      completed = true;
+      res.removeListener("finish", onFinish);
+      res.removeListener("close", onClose);
       watchFn.track("http.request", {
         method: req.method,
         path: req.path,
         statusCode: res.statusCode,
-        duration,
+        duration: Date.now() - startTime,
         requestId,
         userAgent: req.get("user-agent"),
         ip: req.ip,
+        aborted,
       });
-
-      return originalJson(body);
     };
-
-    // Handle response finish
-    res.on("finish", () => {
-      const duration = Date.now() - startTime;
-
-      watchFn.track("http.request", {
-        method: req.method,
-        path: req.path,
-        statusCode: res.statusCode,
-        duration,
-        requestId,
-        userAgent: req.get("user-agent"),
-        ip: req.ip,
-      });
-    });
+    const onFinish = () => complete(false);
+    const onClose = () => complete(!res.writableFinished);
+    res.once("finish", onFinish);
+    res.once("close", onClose);
 
     next();
   };

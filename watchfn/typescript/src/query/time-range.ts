@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 export type TimeRangeShortcut =
   | "last-15m"
   | "last-1h"
@@ -81,7 +79,11 @@ export class TimeRangeParser {
       w: 7 * 24 * 60 * 60 * 1000, // weeks
     };
 
-    return value * multipliers[unit];
+    const milliseconds = value * multipliers[unit];
+    if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0) {
+      throw new RangeError("Duration must be positive and within the safe millisecond range");
+    }
+    return milliseconds;
   }
 
   /**
@@ -155,13 +157,23 @@ export class TimeRangeParser {
    */
   static getBuckets(
     range: AbsoluteTimeRange,
-    bucketSize: number
+    bucketSize: number,
+    maxBuckets = 100000
   ): AbsoluteTimeRange[] {
+    if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.from > range.to) {
+      throw new RangeError("Bucket range must have finite ordered bounds");
+    }
+    if (!Number.isFinite(bucketSize) || bucketSize <= 0 || !Number.isSafeInteger(maxBuckets) || maxBuckets <= 0) {
+      throw new RangeError("Bucket size and maximum count must be positive");
+    }
+    const count = Math.ceil((range.to - range.from) / bucketSize);
+    if (!Number.isSafeInteger(count) || count > maxBuckets) throw new RangeError("Bucket count exceeds the configured maximum");
     const buckets: AbsoluteTimeRange[] = [];
     let current = range.from;
 
     while (current < range.to) {
       const next = Math.min(current + bucketSize, range.to);
+      if (next <= current || buckets.length >= maxBuckets) throw new RangeError("Bucket size cannot advance within the configured bounds");
       buckets.push({ from: current, to: next });
       current = next;
     }

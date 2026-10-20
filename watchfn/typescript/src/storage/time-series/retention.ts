@@ -1,3 +1,5 @@
+export const DEFAULT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 export interface RetentionPolicy {
   name: string;
   duration: number; // milliseconds
@@ -13,7 +15,7 @@ export class RetentionManager {
   private rules: Map<string, RetentionPolicy[]> = new Map();
   private defaultPolicy: RetentionPolicy;
 
-  constructor(defaultRetention: number = 30 * 24 * 60 * 60 * 1000) {
+  constructor(defaultRetention: number = DEFAULT_RETENTION_MS) {
     // 30 days default
     this.defaultPolicy = {
       name: "default",
