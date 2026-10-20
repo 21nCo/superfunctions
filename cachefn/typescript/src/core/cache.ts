@@ -50,6 +50,7 @@ export class CacheFn<T = any> {
   private queueSequence = 0;
   private readonly queuePrefix = `${Date.now()}:${Math.random()}`;
   private pending = new Map<string, Promise<T>>();
+  private pendingPriorities = new WeakMap<Promise<T>, SetOptions["priority"]>();
 
   constructor(config: CacheFnConfig) {
     this.defaultTTL = config.defaultTTL;
@@ -195,10 +196,13 @@ export class CacheFn<T = any> {
   async clear(options?: ClearOptions): Promise<void> {
     if (options?.priority !== undefined) {
       if (!['low', 'normal', 'high'].includes(options.priority)) throw new TypeError('Unknown cache priority');
+      // Fence matching fills before awaiting storage: they may not have entries yet.
+      for (const [key, task] of this.pending) {
+        if ((this.pendingPriorities.get(task) ?? 'normal') === options.priority) this.pending.delete(key);
+      }
       for (const key of (await this.storage.keys()).filter(key => this.ownsKey(key))) {
         const metadata = await this.storage.getMetadata(key);
         if (metadata && (metadata.priority ?? 'normal') === options.priority) {
-          this.pending.delete(key);
           if (await this.storage.delete(key)) this.stats.recordDelete();
         }
       }
@@ -289,6 +293,7 @@ export class CacheFn<T = any> {
     }).finally(() => {
       if (this.pending.get(fullKey) === task) this.pending.delete(fullKey);
     });
+    this.pendingPriorities.set(task, config.priority);
     this.pending.set(fullKey, task);
     return task;
   }
