@@ -10,7 +10,7 @@ const run = (command, args, cwd = directory) => execFileSync(command, args, { cw
 const npm = (args, cwd) => process.env.USERFN_NPM_CLI ? run(process.execPath, [process.env.USERFN_NPM_CLI, ...args], cwd) : run('npm', args, cwd);
 try {
   const tarballs = [];
-  for (const folder of ['packages/observability', 'packages/auth', 'packages/http', 'packages/db', 'userfn/typescript', 'userfn/service']) {
+  for (const folder of ['packages/observability', 'packages/auth', 'packages/http', 'packages/db', 'watchfn/agents/browser', 'userfn/typescript', 'userfn/service']) {
     const [pack] = JSON.parse(npm(['pack', '--json', '--pack-destination', directory], join(root, folder))); tarballs.push(join(directory, pack.filename));
   }
   await writeFile(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
@@ -18,13 +18,15 @@ try {
   const fixture = `
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
 import { generateKeyPairSync, verify } from 'node:crypto';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
 import { createUserFnService } from '@userfn/service';
 import { UserFnClient } from 'userfn';
 const keys=generateKeyPairSync('ed25519');
 const service=createUserFnService({database:memoryAdapter(),auth:{async authenticate(request){return request.headers.get('authorization')==='Bearer key'?{id:'key',type:'api-key',subject:{actorId:'publisher',actorType:'api-key',tenantId:'tenant'},scopes:['userfn:config:read','userfn:config:write']}:null}},flagConfigSigning:{privateKey:keys.privateKey,keyId:'key-1'}});
-const server=createServer(async(incoming,outgoing)=>{try{const chunks=[];for await(const chunk of incoming)chunks.push(chunk);const response=await service.router.handle(new Request('http://localhost'+incoming.url,{method:incoming.method,headers:incoming.headers,...(incoming.method==='PUT'?{body:Buffer.concat(chunks)}:{})}));outgoing.writeHead(response.status,Object.fromEntries(response.headers));outgoing.end(Buffer.from(await response.arrayBuffer()));}catch{outgoing.writeHead(500);outgoing.end('failure')}});
+const exposures=[];
+const server=createServer(async(incoming,outgoing)=>{try{const chunks=[];for await(const chunk of incoming)chunks.push(chunk);if(incoming.url==='/ingest'){assert.equal(incoming.headers.authorization,'Bearer watch-key');exposures.push(...JSON.parse(Buffer.concat(chunks)));outgoing.writeHead(202);outgoing.end();return;}const response=await service.router.handle(new Request('http://localhost'+incoming.url,{method:incoming.method,headers:incoming.headers,...(incoming.method==='PUT'?{body:Buffer.concat(chunks)}:{})}));outgoing.writeHead(response.status,Object.fromEntries(response.headers));outgoing.end(Buffer.from(await response.arrayBuffer()));}catch{outgoing.writeHead(500);outgoing.end('failure')}});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 try{
  const endpoint='http://127.0.0.1:'+server.address().port+'/config/production';
@@ -33,6 +35,8 @@ try{
  const snapshot=JSON.parse(bytes);assert.equal(snapshot.tenantId,'tenant');assert.equal(snapshot.environment,'production');assert.equal(snapshot.algorithm,'Ed25519');assert.equal(snapshot.keyId,'key-1');
  const client=new UserFnClient({apiKey:'key',endpoint:'http://127.0.0.1:'+server.address().port,environment:'production',config:{tenantId:'tenant',trustedKeys:{'key-1':keys.publicKey.export({type:'spki',format:'der'}).toString('base64url')},allowInsecureHttp:true}});assert.equal(await client.refreshConfig(),true);assert.equal(client.getFlag('feature'),true);assert.equal(await client.refreshConfig(),false);client.startConfigRefresh();const deadline=Date.now()+1000;while(!client.getConfigRefreshStatus().lastSuccessAt){if(Date.now()>deadline)throw new Error('Scheduler timeout');await new Promise(resolve=>setTimeout(resolve,10));}await client.stopConfigRefresh();await client.closeConfig();
  assert.equal((await fetch(endpoint,{headers:{authorization:'Bearer key','if-none-match':response.headers.get('etag')}})).status,304);
+ const exposed=new UserFnClient({apiKey:'unused',bootstrapFlags:{hello:0},exposures:{endpoint:'http://127.0.0.1:'+server.address().port+'/ingest',apiKey:'watch-key',app:'packed',allowInsecureHttp:true}});assert.equal(exposed.getFlag('hello'),0);await exposed.flushExposures();await exposed.closeExposures();assert.equal(exposures[0].properties.reason,'bootstrap');assert.equal(exposures[0].properties.flagKey,'hello');
+ const {UserFnClient:CjsClient}=createRequire(import.meta.url)('userfn');const cjs=new CjsClient({apiKey:'unused',bootstrapFlags:{cjs:false},exposures:{endpoint:'http://127.0.0.1:'+server.address().port+'/ingest',apiKey:'watch-key',app:'packed',allowInsecureHttp:true}});assert.equal(cjs.getFlag('cjs'),false);await cjs.closeExposures();assert.equal(exposures[1].properties.flagKey,'cjs');
  console.log('Fresh installed service/shared/SDK signed HTTP publication and conditional fetch passed');
 }finally{await new Promise(resolve=>server.close(resolve));}
 `;
@@ -41,10 +45,15 @@ try{
   await writeFile(join(directory, 'consumer.mts'), `import { generateKeyPairSync } from 'node:crypto';
 import { createUserFnService, type FlagConfigSigningOptions } from '@userfn/service';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
+import { UserFnClient, type ExposureOptions } from 'userfn';
+const exposure:ExposureOptions={endpoint:'https://watch.example/ingest',apiKey:'key',app:'app'};
+new UserFnClient({apiKey:'key',exposures:exposure}).flushExposures();
 const signing:FlagConfigSigningOptions={privateKey:generateKeyPairSync('ed25519').privateKey,keyId:'key'};
 const service=createUserFnService({database:memoryAdapter(),auth:{async authenticate(){return null}},flagConfigSigning:signing});
 service.router.handle(new Request('http://localhost/config/production'));
 `);
   process.stdout.write(run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', 'consumer.mts']));
+  await writeFile(join(directory, 'consumer.cts'), `import { UserFnClient, type ExposureOptions } from 'userfn'; const options:ExposureOptions={endpoint:'https://watch.example/ingest',apiKey:'key',app:'app'}; new UserFnClient({apiKey:'key',exposures:options}).flushExposures();`);
+  process.stdout.write(run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', 'consumer.cts']));
   console.log('Fresh installed strict service declarations passed without skipLibCheck or peer bypass');
 } finally { await rm(directory, { recursive: true, force: true }); }

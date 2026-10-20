@@ -74,6 +74,7 @@
     "@types/uuid": "^10.0.0"
   },
   "dependencies": {
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "@watchfn/browser": "0.0.2"
   }
 }

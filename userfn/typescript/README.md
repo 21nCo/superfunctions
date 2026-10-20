@@ -270,3 +270,42 @@ restart, but prevents late application. It also cancels any explicit refresh
 coalesced with the active request. `await client.closeConfig()` permanently closes
 configuration and stops the loop. Constructors still make no network requests.
 Node timers are unref'ed; the optional loop alone does not keep a process alive.
+
+### Flag exposures to WatchFn
+
+Configure a separate authenticated Watch ingestion endpoint to record flag
+exposures. Evaluation still returns its value synchronously. The SDK reuses
+`@watchfn/browser` with RUM disabled; it does not emit page views or user traits.
+
+```ts
+const client = new UserFnClient({
+  apiKey: 'userfn-service-key',
+  exposures: { endpoint: 'https://watch.example/ingest', apiKey: 'watch-key', app: 'shop' },
+});
+client.getFlag('checkout', false); // Starts bounded asynchronous delivery.
+await client.flushExposures();
+console.log(client.getExposureStatus()); // pending, dropped, lastError, closed
+await client.closeExposures();
+```
+
+Events contain the requested flag key, selected variation/rule IDs, environment
+and reason (`rule`, `default_variation`, `default_value`, `bootstrap` or
+`unavailable`), plus an identified user ID when present. Values, traits and keys
+are not event properties. Prerequisite evaluation does not create extra exposures;
+equal-valued variations retain their actual selected IDs. Each public evaluation
+is an exposure, with no sampling or deduplication.
+
+HTTPS is required; local tests can explicitly set `allowInsecureHttp:true`.
+`maxQueueSize` defaults to 1000 (1–100000), `timeoutMs` to 10000 (1–300000).
+Failed requests remain queued; `flushExposures` reports failure and explicitly
+retries them. IDs remain stable on retry, but Watch ordinary events are
+**at least once**: a lost response after persistence can produce duplicate rows.
+A full queue or oversized event increments `dropped` without changing evaluation;
+the next flush reports those rejected captures once, even if retained events were
+delivered. Close fences new capture immediately and drains; a failed close can be
+retried. Post-close evaluations still return values and count rejected exposures.
+The queue is in memory and is lost on process/page termination.
+
+Watch keys currently authorize more than ingestion and are not tenant-scoped.
+Use a trusted application proxy or an appropriately isolated Watch deployment;
+this option does not create a browser-safe, tenant-scoped credential.

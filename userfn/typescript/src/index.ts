@@ -1,3 +1,4 @@
+import { FlagExposures } from './core/exposures';
 import { ConfigRefreshLoop } from './core/config-refresh';
 import { HttpConfigService, ConfigRefreshError } from './core/config-http';
 export { ConfigRefreshError } from './core/config-http';
@@ -21,11 +22,14 @@ export class UserFnClient {
   private renderer: VanillaRenderer | null = null;
   private options: UserFnOptions;
   private configService?: HttpConfigService;
+  private exposures?: FlagExposures;
+  private bootstrapKeys = new Set<string>();
   private configRefreshLoop?: ConfigRefreshLoop;
   private readonly configEnvironment?: string;
 
   constructor(options: UserFnOptions) {
     this.options = options;
+    this.exposures = options.exposures ? new FlagExposures(options.exposures, options.environment) : undefined;
     this.configEnvironment = options.environment;
     this.configService = options.config ? new HttpConfigService(options) : undefined;
     this.identity = new IdentityManager();
@@ -39,6 +43,7 @@ export class UserFnClient {
       this.renderer = new VanillaRenderer();
     }
 
+    this.bootstrapKeys = new Set(Object.keys(options.bootstrapFlags ?? {}));
     this.flags.setFlags(Object.entries(options.bootstrapFlags ?? {}).map(([key, value]) => ({
       key, defaultValue: value, variations: [], rules: [], enabled: true,
     })));
@@ -121,6 +126,7 @@ export class UserFnClient {
       const flags = new FlagEvaluator(value.flags, this.segments, this.configEnvironment);
       this.segments.setSegments(value.segments);
       this.flags = flags;
+      this.bootstrapKeys.clear();
     });
   }
 
@@ -146,6 +152,7 @@ export class UserFnClient {
 
   setFlags(flags: FlagConfig[]) {
     this.flags.setFlags(flags);
+    this.bootstrapKeys.clear();
     this.configService?.invalidate();
   }
 
@@ -166,8 +173,15 @@ export class UserFnClient {
 
   getFlag(key: string, defaultValue: FlagValue = false): FlagValue {
     const user = this.identity.getUser();
-    return this.flags.getFlag(key, defaultValue, user);
+    const result = this.flags.evaluate(key, defaultValue, user);
+    if (this.bootstrapKeys.has(key) && result.reason === 'default_value') result.reason = 'bootstrap';
+    this.exposures?.capture(key, result, user);
+    return result.value;
   }
+
+  flushExposures(): Promise<void> { return this.exposures?.flush() ?? Promise.resolve(); }
+  closeExposures(): Promise<void> { return this.exposures?.close() ?? Promise.resolve(); }
+  getExposureStatus() { return this.exposures?.status() ?? { pending: 0, dropped: 0, closed: false }; }
 
   track(event: string, properties?: EventProperties) {
     console.log(`[UserFn] Track: ${event}`, properties);

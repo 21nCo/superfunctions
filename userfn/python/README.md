@@ -293,3 +293,41 @@ ETag and prevents late application. `client.close_config()` synchronously fences
 and permanently closes config, cancelling its loop; await stop first when the
 caller needs to await settlement. No loop starts at construction, and synchronous
 start without a running asyncio loop rejects without leaving a scheduled task.
+
+### Flag exposures to WatchFn
+
+Install `userfn[exposures]` for the optional HTTP transport. Evaluation remains
+synchronous and queues metadata; explicitly await delivery from an asyncio loop.
+
+```python
+from userfn import UserFnClient, UserFnOptions, ExposureOptions
+client = UserFnClient(UserFnOptions(
+    api_key="userfn-service-key",
+    exposures=ExposureOptions("https://watch.example/ingest", "watch-key", "shop"),
+))
+client.get_flag("checkout", False)
+await client.flush_exposures()
+print(client.get_exposure_status())  # pending, dropped, lastError, closed
+await client.close_exposures()
+```
+
+This is a direct Watch HTTP transport, not a separate Python Watch SDK. It sends
+the selected variation/rule IDs, requested flag key, environment and reason
+(`rule`, `default_variation`, `default_value`, `bootstrap`, `unavailable`), with
+identified user ID when present. It sends no flag values, user traits or credential
+properties; prerequisites do not create extra exposures. Every public evaluation
+is recorded, including caller fallbacks and bootstrap values.
+
+HTTPS is required unless `allow_insecure_http=True` explicitly enables local HTTP.
+`max_queue_size` defaults to 1000 (1–100000), `timeout_ms` to 10000 (1–300000).
+Flush coalesces concurrent callers, bounds requests, retains failed events and
+raises a fixed error. Retry is explicit and preserves event IDs. Delivery is at
+least once: Watch can store duplicate rows after a response is lost. A full queue
+or oversized event increments `dropped`; next flush reports rejected captures
+once after draining retained events. Close immediately prevents new captures,
+then flushes; failed close/flush can be retried. Evaluation after close still
+returns its value and records rejected captures. The queue is not durable and
+must be flushed before shutdown; it does not run a background thread.
+
+Watch credentials are not tenant-scoped or ingestion-only. Use a trusted proxy or
+isolated Watch deployment for mutually untrusted tenants.

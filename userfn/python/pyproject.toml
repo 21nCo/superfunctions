@@ -9,6 +9,7 @@ readme = "README.md"
 license = {text = "MIT"}
 
 [project.optional-dependencies]
+exposures = ["httpx>=0.27,<1"]
 config = ["cryptography>=41.0", "httpx>=0.27,<1"]
 dev = [
     "pytest>=7.0",

@@ -97,7 +97,17 @@ export interface SignedConfigOptions {
   /** Explicit opt-in for local HTTP acceptance; use HTTPS in production. */
   allowInsecureHttp?: boolean;
 }
+export interface ExposureOptions {
+  endpoint: string;
+  apiKey: string;
+  app: string;
+  allowInsecureHttp?: boolean;
+  maxQueueSize?: number;
+  timeoutMs?: number;
+}
+
 export interface UserFnOptions {
+  exposures?: ExposureOptions;
   config?: SignedConfigOptions;
   apiKey: string;
   /** Exact, case-sensitive local flag environment; omitted means base configuration. */

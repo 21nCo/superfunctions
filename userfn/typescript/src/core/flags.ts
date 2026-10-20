@@ -2,7 +2,8 @@ import { FlagConfig, FlagValue, UserIdentity, FlagRule } from '../types';
 import { SegmentEvaluator } from './segments';
 import { getBucket } from '../utils/hash';
 
-type Evaluation = { available: false } | { available: true; value: FlagValue };
+export type FlagEvaluation = { value: FlagValue; variationId: string | null; ruleId: string | null; reason: 'rule' | 'default_variation' | 'default_value' | 'unavailable' | 'bootstrap' };
+type Evaluation = { available: false } | ({ available: true } & FlagEvaluation);
 const unavailable: Evaluation = { available: false };
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 
@@ -24,6 +25,10 @@ export class FlagEvaluator {
   }
 
   getFlag(key: string, defaultValue: FlagValue, user?: UserIdentity | null): FlagValue {
+    return this.evaluate(key, defaultValue, user).value;
+  }
+
+  evaluate(key: string, defaultValue: FlagValue, user?: UserIdentity | null): FlagEvaluation {
     const resolved = new Map<string, Evaluation>();
     const active = new Set<string>();
     const stack: Array<{ key: string; flag?: FlagConfig; next: number }> = [{ key, next: 0 }];
@@ -51,15 +56,15 @@ export class FlagEvaluator {
         if (!result) { stack.push({ key: prerequisite.key, next: 0 }); continue; }
         if (!result.available || canonicalJson(result.value) !== canonicalJson(prerequisite.expectedValue)) { finish(unavailable); continue; }
         frame.next++;
-      } else finish({ available: true, value: this.evaluateRules(frame.flag, user) });
+      } else finish({ available: true, ...this.evaluateRules(frame.flag, user) });
     }
     const result = resolved.get(key)!;
-    if (!result.available) return defaultValue;
+    if (!result.available) return { value: defaultValue, variationId: null, ruleId: null, reason: 'unavailable' };
     // Returned JSON objects must not let callers mutate later prerequisite decisions.
-    return result.value !== null && typeof result.value === 'object' ? JSON.parse(JSON.stringify(result.value)) : result.value;
+    return { value: result.value !== null && typeof result.value === 'object' ? JSON.parse(JSON.stringify(result.value)) : result.value, variationId: result.variationId, ruleId: result.ruleId, reason: result.reason };
   }
 
-  private evaluateRules(flag: FlagConfig, user?: UserIdentity | null): FlagValue {
+  private evaluateRules(flag: FlagConfig, user?: UserIdentity | null): FlagEvaluation {
     // Evaluate rules in order
     for (const rule of flag.rules) {
       // 1. Check constraints (Segment & Inline)
@@ -82,7 +87,7 @@ export class FlagEvaluator {
       // 3. Return Variation
       if (rule.variationId) {
         const variation = flag.variations.find(v => v.id === rule.variationId);
-        if (variation) return variation.value;
+        if (variation) return { value: variation.value, variationId: variation.id, ruleId: rule.id, reason: 'rule' };
       }
       
       // If rule matches but no variation ID, skip it or return default.
@@ -92,10 +97,10 @@ export class FlagEvaluator {
     // Fallback
     if (flag.defaultVariationId) {
       const variation = flag.variations.find(v => v.id === flag.defaultVariationId);
-      if (variation) return variation.value;
+      if (variation) return { value: variation.value, variationId: variation.id, ruleId: null, reason: 'default_variation' };
     }
 
-    return flag.defaultValue;
+    return { value: flag.defaultValue, variationId: null, ruleId: null, reason: 'default_value' };
   }
 
   private matchesConstraints(rule: FlagRule, user?: UserIdentity | null): boolean {

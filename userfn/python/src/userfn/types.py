@@ -94,6 +94,16 @@ class SignedConfigOptions:
 
 
 @dataclass
+class ExposureOptions:
+    endpoint: str
+    api_key: str
+    app: str
+    allow_insecure_http: bool = False
+    max_queue_size: int = 1000
+    timeout_ms: int = 10000
+
+
+@dataclass
 class UserFnOptions:
     api_key: str
     endpoint: Optional[str] = None
@@ -104,6 +114,7 @@ class UserFnOptions:
     feedback_timeout_ms: int = 10000
     environment: Optional[str] = None
     config: Optional[SignedConfigOptions] = None
+    exposures: Optional[ExposureOptions] = None
 
 EventProperties = Dict[str, Any]
 

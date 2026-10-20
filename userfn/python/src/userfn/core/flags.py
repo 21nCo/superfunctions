@@ -27,6 +27,9 @@ class FlagEvaluator:
         self.flags = {flag.key: flag for flag in snapshot}
 
     def get_flag(self, key: str, default_value: FlagValue, user: Optional[UserIdentity] = None) -> FlagValue:
+        return self.evaluate(key, default_value, user)["value"]
+
+    def evaluate(self, key: str, default_value: FlagValue, user: Optional[UserIdentity] = None) -> Dict[str, Any]:
         resolved: Dict[str, Any] = {}
         active = set()
         stack: List[Dict[str, Any]] = [{"key": key, "next": 0}]
@@ -72,16 +75,16 @@ class FlagEvaluator:
                     stack.append({"key": prerequisite.key, "next": 0})
                     continue
                 result = resolved[prerequisite.key]
-                if result is _UNAVAILABLE or not _json_equal(result, prerequisite.expected_value):
+                if result is _UNAVAILABLE or not _json_equal(result["value"], prerequisite.expected_value):
                     finish(_UNAVAILABLE)
                     continue
                 frame["next"] += 1
             else:
                 finish(self._evaluate_rules(flag, user))
         result = resolved[key]
-        return default_value if result is _UNAVAILABLE else deepcopy(result)
+        return {"value": default_value, "variationId": None, "ruleId": None, "reason": "unavailable"} if result is _UNAVAILABLE else deepcopy(result)
 
-    def _evaluate_rules(self, flag: FlagConfig, user: Optional[UserIdentity]) -> FlagValue:
+    def _evaluate_rules(self, flag: FlagConfig, user: Optional[UserIdentity]) -> Dict[str, Any]:
         # Evaluate rules in order
         for rule in flag.rules:
             # 1. Check constraints
@@ -107,7 +110,7 @@ class FlagEvaluator:
             if rule.variation_id:
                 variation = next((v for v in flag.variations if v.id == rule.variation_id), None)
                 if variation:
-                    return variation.value
+                    return {"value": variation.value, "variationId": variation.id, "ruleId": rule.id, "reason": "rule"}
             
             # If no variation ID but matched, maybe just fall through?
             # TS says "continue"
@@ -117,9 +120,9 @@ class FlagEvaluator:
         if flag.default_variation_id:
             variation = next((v for v in flag.variations if v.id == flag.default_variation_id), None)
             if variation:
-                return variation.value
+                return {"value": variation.value, "variationId": variation.id, "ruleId": None, "reason": "default_variation"}
 
-        return flag.default_value
+        return {"value": flag.default_value, "variationId": None, "ruleId": None, "reason": "default_value"}
 
     def _matches_constraints(self, rule: FlagRule, user: Optional[UserIdentity] = None) -> bool:
         if not user:

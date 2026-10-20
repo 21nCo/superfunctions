@@ -1,3 +1,4 @@
+from .core.exposures import FlagExposures
 from .core.config_refresh import ConfigRefreshLoop
 from .core.config_http import HttpConfigService, ConfigRefreshError
 from typing import Optional, List, Any
@@ -12,6 +13,7 @@ from .core.messaging import MessagingEngine
 class UserFnClient:
     def __init__(self, options: UserFnOptions):
         self.options = options
+        self.exposures = FlagExposures(options.exposures, options.environment) if options.exposures else None
         self._config_environment = options.environment
         self._config_refresh_loop = None
         self.config_service = HttpConfigService(options) if options.config else None
@@ -22,6 +24,7 @@ class UserFnClient:
         self.messaging = MessagingEngine(self.segments)
         # self.surveys = SurveyEngine(self.segments) # TODO: Implement SurveyEngine
 
+        self._bootstrap_keys = set((options.bootstrap_flags or {}).keys())
         self.flags.set_flags([
             FlagConfig(key=key, default_value=value, variations=[], rules=[], enabled=True)
             for key, value in (options.bootstrap_flags or {}).items()
@@ -35,7 +38,23 @@ class UserFnClient:
 
     def get_flag(self, key: str, default_value: FlagValue = False) -> FlagValue:
         user = self.identity.get_user()
-        return self.flags.get_flag(key, default_value, user)
+        result = self.flags.evaluate(key, default_value, user)
+        if key in self._bootstrap_keys and result["reason"] == "default_value":
+            result["reason"] = "bootstrap"
+        if self.exposures:
+            self.exposures.capture(key, result, user)
+        return result["value"]
+
+    async def flush_exposures(self):
+        if self.exposures:
+            await self.exposures.flush()
+
+    async def close_exposures(self):
+        if self.exposures:
+            await self.exposures.close()
+
+    def get_exposure_status(self):
+        return self.exposures.status() if self.exposures else {"pending": 0, "dropped": 0, "closed": False}
 
     # Messaging
     def trigger(self, trigger_type: str, context: str) -> List[Campaign]:
@@ -54,6 +73,7 @@ class UserFnClient:
             evaluator = FlagEvaluator(flags, self.segments, self._config_environment)
             self.segments.set_segments(segments)
             self.flags = evaluator
+            self._bootstrap_keys.clear()
         return await self.config_service.refresh(apply)
 
     def close_config(self):
@@ -87,6 +107,7 @@ class UserFnClient:
 
     def set_flags(self, flags):
         self.flags.set_flags(flags)
+        self._bootstrap_keys.clear()
         if self.config_service:
             self.config_service.invalidate()
 
