@@ -70,7 +70,8 @@ const drawfn = new Drawfn({
 - `load(scene: Scene)`: Load a scene from JSON
 - `loadScene(sceneData: unknown): DrawfnResult<Scene>`: Tolerantly validate and load a serialized scene
 - `getScene(): Scene`: Get current scene as JSON
-- `clear()`: Clear the entire canvas
+- `clear()`: Clear the canvas as one undoable content mutation (an empty clear is a no-op)
+- `resetHistory()`: Discard undo/redo history without changing scene content
 
 **Element Operations**
 - `add(element: Element): string`: Add an element, returns ID
@@ -167,3 +168,9 @@ Scenes accept up to 2,000 elements and stored pen strokes up to 16,384 points. G
 Each renderer admits at most 64 distinct cached or pending image sources. Repeated URLs share a request. Excess sources report `SCENE_LIMIT_EXCEEDED`; an export needing more than 64 sources fails before loading. Existing images are retained rather than repeatedly evicted. Removing sources from the rendered scene releases their cached bitmaps; in-flight loaders keep their slot until completion, and late unused bitmaps are closed. Host loaders should return assets owned by that renderer, not shared with unrelated consumers. This is an entry-count limit, not a limit on individual image bytes.
 
 See [requirement evidence and remaining qualifications](../.conduct/requirement-readiness.md) for the complete original requirement mapping, including hosted verification, Svelte version support, SVG image portability and performance limits.
+
+### Clear and text event migration
+
+`clear()` now preserves one undo step, emits removal events followed by selection/history/scene changes, and closes pending text editors. Call `clear(); resetHistory();` when the intended action is to clear content and permanently discard prior undo/redo history. `resetHistory()` alone leaves the scene intact. Both React's hook result and the Svelte component/store expose this method. Repeated empty clears do not emit scene/history events.
+
+Committed text creation and editing now use `sceneChanged.reason === "text-commit"`; direct `add()` and `update()` calls retain their existing reasons. Update consumers that previously inferred text commits from the generic add/update reason.

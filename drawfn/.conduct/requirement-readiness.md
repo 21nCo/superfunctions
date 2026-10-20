@@ -13,11 +13,11 @@ Paths in the evidence column are relative to `drawfn/`. Vector names refer to `T
 | SURFACE-002 | Package build/lint/test scripts and conditional exports; `scripts/packed-consumer.mjs`, `scripts/framework-browser-acceptance.mjs`; TV-SURFACE-003/004 | Packed matrix evidence is the baseline receipt in `pr-destination.md`, not a new packed run. Svelte root is ESM only and component subpaths ship Svelte source. |
 | SCENE-001 | `normalizeSceneData`, `normalizeElement`, `applyLoadedScene` in `core/src/drawfn.ts`; `scene-load.test.ts`; TV-SCENE-001/002 | Unknown fields are dropped, metadata cloned, malformed scene keeps prior state. Non-positive grid sizes now fail before entering rendering loops. Missing IDs are generated; repeated normalization of missing-ID input does not promise byte-identical IDs. |
 | SCENE-002 | Freedraw normalization, renderer and SVG local coordinates; `freedraw-normalization.test.ts`, browser pen smoke; TV-SCENE-003/004 | Legacy repair is restricted to the documented first-point corruption pattern. |
-| HISTORY-001 | Gesture snapshots and completion in core; `interaction-history.test.ts`, cancellation in `readiness.test.ts`, browser drag/resize/rotation/undo; TV-HISTORY-001/002 | Gesture granularity is covered. Broader SPEC wording calls `clear` a committed mutation, but current `clear()` resets history; undoable clear remains a semantic gap. |
-| EVENTS-001 | Core event methods; `selection-events.test.ts`, `camera-input.test.ts`, `text-editing.test.ts`; TV-EVENTS-001/002 | Text commits emit `sceneChanged` with add/update reasons. The declared `text-commit` reason is not emitted. |
+| HISTORY-001 | Gesture snapshots and completion in core; `interaction-history.test.ts`, cancellation in `readiness.test.ts`, browser drag/resize/rotation/undo; TV-HISTORY-001/002 | Gesture granularity and undoable clear are covered by `clear-history.test.ts`; explicit `resetHistory()` preserves the ability to discard history without changing content. |
+| EVENTS-001 | Core event methods; `selection-events.test.ts`, `camera-input.test.ts`, `text-editing.test.ts`; TV-EVENTS-001/002 | Text creation/editing now emit `text-commit`, with ordered element/history/scene events and one undo snapshot. |
 | INPUT-001 | `tools/select-tool.ts`, geometry and pointer capture/window completion/cancellation; `selection-events.test.ts`, `renderer-rotation.test.ts`, browser interactions; TV-INPUT-001/002 | Single-pointer desktop evidence; not exhaustive touch/multi-pointer evidence. |
 | INPUT-002 | Canvas-scoped keyboard handling, space restoration and cursor-anchored wheel zoom; `camera-input.test.ts`, `readiness.test.ts`, browser CSS-scaled interactions; TV-INPUT-003/004 | Text-entry/outside-canvas shortcuts are excluded; no cross-browser/mobile matrix is claimed. |
-| TEXT-001 | `tools/text-tool.ts` create/edit/cleanup pipeline; `text-editing.test.ts`, browser focus/blur and CSS-scaled overlay; TV-TEXT-001/002 | Empty provisional text and destroy cleanup are covered; event reason qualification above still applies. |
+| TEXT-001 | `tools/text-tool.ts` create/edit/cleanup pipeline; `text-editing.test.ts`, browser focus/blur and CSS-scaled overlay; TV-TEXT-001/002 | Empty provisional text, clear/destroy cleanup, and text-commit metadata are covered. |
 | RENDER-001 | `renderer.ts` oriented bounds, locked rendering and zoom-normalized handles; `renderer-rotation.test.ts`, browser visual interactions; TV-RENDER-001/002 | No benchmark establishes the original 2,000-element interactivity target. |
 | EXPORT-001 | Core PNG/SVG bounds, selection and error handling; `export-image.test.ts`, `image-capacity.test.ts`, actual browser decoded PNG pixels and native tainted-canvas failure; TV-EXPORT-001/002 | PNG uses the host loader. SVG still writes an image href rather than embedding host-loaded pixels; broad SVG loader parity/portable authenticated images remains open. |
 | REACT-001 | `drawfn-react/src/use-drawfn.ts`, component and hook tests; TV-REACT-001/002 | Deep-equal echoes and constructor-option replacement covered; baseline packed React 18/19 evidence retained. |
@@ -35,7 +35,7 @@ Paths in the evidence column are relative to `drawfn/`. Vector names refer to `T
 | 4: production single-user flows | Local browser interactions and lifecycle coverage; performance, hosted CI and qualified semantics remain gates. |
 | 5: packaging/docs consistency | SURFACE-001/002. |
 | 6: scene/serialization/freedraw | SCENE-001/002. |
-| 7: history/events | HISTORY-001 and EVENTS-001, with clear/text-reason qualifications. |
+| 7: history/events | HISTORY-001 and EVENTS-001, including undoable clear and dedicated text-commit metadata. |
 | 8: selection/input | INPUT-001/002 and EVENTS-001. |
 | 9: text editing | TEXT-001. |
 | 10: rendering/image/export | RENDER-001 and EXPORT-001; authenticated SVG qualification retained. |
@@ -64,3 +64,9 @@ PLAYWRIGHT_MODULE_PATH=/path/to/playwright BROWSER_EXECUTABLE_PATH=/path/to/chro
 ```
 
 The npm workspace selector includes core and its two adapters. 70 core, 5 React and 6 Svelte tests passed; all three typechecks and builds passed. Chrome 154.0.8037.58 passed 49 browser assertions with zero page errors, including native cross-origin bitmap taint reaching the PNG encoding failure path. Receipts: `/tmp/drawfn-limits-tests.log`, `/tmp/drawfn-limits-typecheck.log`, `/tmp/drawfn-browser-limits.json`. Historical clean install, packed consumer/runtime declarations, React18/19/Svelte5 and production audit evidence remain in `pr-destination.md`; those are not represented as rerun by this change. No Python DrawFn implementation is present or required by this browser-only specification.
+
+## Clear and text commit completion
+
+Clear now records one snapshot and emits element removal events before selection/history/scene events. An empty clear does not create phantom history or events. Clearing dismisses provisional text so a delayed blur cannot restore deleted content. React hook and Svelte component/store expose the additive `resetHistory()` method; it clears only history. Svelte store mutations no longer overwrite fresh nested event updates with stale pre-clear state. Core and adapter regression tests cover these behaviors; README migration guidance identifies the changed clear and text event contracts.
+
+The clear/text changes pass 74 core, 6 React and 7 Svelte tests, all builds/typechecks, and 52 actual Chrome154 browser assertions with zero page errors. The browser gate includes text-commit metadata, undo after clear, and content preservation after resetHistory. Logs: `/tmp/drawfn-history-tests.log`, `/tmp/drawfn-history-types.log`, `/tmp/drawfn-history-build.log`, `/tmp/drawfn-history-browser.json`.

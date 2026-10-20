@@ -11,6 +11,7 @@ import type {
   DrawfnResult,
   ElementType,
   FreeDrawElement,
+  TextElement,
   Point,
   ToolContext,
   Bounds,
@@ -942,7 +943,7 @@ export class Drawfn {
       return;
     }
 
-    if (reason === "add" || this.activeGesture.reason !== "add") {
+    if (this.activeGesture.reason !== "text-commit" && (reason === "add" || this.activeGesture.reason !== "add")) {
       this.activeGesture.reason = reason;
     }
 
@@ -995,13 +996,34 @@ export class Drawfn {
   }
 
   clear(): void {
+    this.toolManager.getTool("text")?.deactivate();
+    const previousScene = this.activeGesture?.snapshot ?? this.getScene();
+    const removedIds = this.scene.elements.map(element => element.id);
     this.activeGesture = null;
+    if (previousScene.elements.length === 0 && removedIds.length === 0) {
+      this.setSelection([]);
+      return;
+    }
     this.scene = this.createEmptyScene();
-    this.history.clear();
+    if (previousScene.elements.length > 0) this.history.push(previousScene);
+    for (const id of removedIds) this.emit("elementRemoved", id);
     this.setSelection([]);
     this.emitHistoryChanged();
-    this.emitSceneChanged("clear", []);
+    this.emitSceneChanged("clear", removedIds);
     this.scheduleRender();
+  }
+
+  resetHistory(): void {
+    this.history.clear();
+    this.emitHistoryChanged();
+  }
+
+  commitTextElement(element: TextElement, isNew: boolean): void {
+    this.completeGesture();
+    this.beginGesture("text-commit");
+    if (isNew) this.add(element);
+    else this.update(element.id, { text: element.text });
+    this.completeGesture();
   }
 
   add(element: Element): string {

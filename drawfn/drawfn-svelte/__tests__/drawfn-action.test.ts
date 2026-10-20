@@ -96,3 +96,12 @@ it("initializes store history from the attached instance and unsubscribes on rep
   expect(get(store).canUndo).toBe(false); expect(get(store).canRedo).toBe(false);
   instance.redo(); expect(get(store).elementCount).toBe(0); store.destroy(); instance.destroy();
 });
+
+it("keeps store clear/undo/reset state synchronized without restoring stale state", () => {
+  const instance = new Drawfn({ canvas: document.createElement("canvas") });
+  const store = createDrawfnStore(); store.setInstance(instance); instance.add(rectangle("kept")); instance.setSelection(["kept"]);
+  store.clear(); expect(get(store)).toMatchObject({ elementCount: 0, selectedIds: [], canUndo: true });
+  instance.undo(); expect(get(store)).toMatchObject({ elementCount: 1, canRedo: true });
+  store.resetHistory(); expect(get(store)).toMatchObject({ elementCount: 1, canUndo: false, canRedo: false });
+  store.destroy();
+});

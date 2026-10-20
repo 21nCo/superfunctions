@@ -155,3 +155,7 @@ Props:
 ## License
 
 MIT
+
+### Clearing and undo history
+
+`clear()` is undoable. Use `resetHistory()` to discard undo/redo entries without changing content, or call it after `clear()` for a permanent clear. The component/hook or store exposes this helper alongside `clear()`. Text commits produce `sceneChanged` metadata with reason `text-commit`.

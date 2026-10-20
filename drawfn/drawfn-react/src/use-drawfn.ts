@@ -23,6 +23,7 @@ export type UseDrawfnResult = {
   undo(): void;
   redo(): void;
   clear(): void;
+  resetHistory(): void;
   exportPNG(options?: Parameters<Drawfn["exportPNG"]>[0]): Promise<Blob | undefined>;
   exportSVG(options?: Parameters<Drawfn["exportSVG"]>[0]): Promise<string | undefined>;
   on<E extends DrawfnEvent>(
@@ -130,6 +131,8 @@ export function useDrawfn(options?: UseDrawfnOptions): UseDrawfnResult {
     drawfnRef.current?.clear();
   }, []);
 
+  const resetHistory = useCallback(() => { drawfnRef.current?.resetHistory(); }, []);
+
   const exportPNG = useCallback(async (opts?: Parameters<Drawfn['exportPNG']>[0]) => {
     return await drawfnRef.current?.exportPNG(opts);
   }, []);
@@ -154,6 +157,7 @@ export function useDrawfn(options?: UseDrawfnOptions): UseDrawfnResult {
     undo,
     redo,
     clear,
+    resetHistory,
     exportPNG,
     exportSVG,
     on,

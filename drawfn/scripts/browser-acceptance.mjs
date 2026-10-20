@@ -28,7 +28,7 @@ try{
   await page.evaluate(()=>a.redo());check(await page.evaluate(()=>a.getElements().length===1),`${tool} redo`);
  }
  // Browser pointer cancellation restores the gesture snapshot without history.
- await page.evaluate(()=>{a.clear();a.setTool('rectangle');a.on('pointerDown',e=>window.activePointer=e.pointerId)});
+ await page.evaluate(()=>{a.clear();a.resetHistory();a.setTool('rectangle');a.on('pointerDown',e=>window.activePointer=e.pointerId)});
  await page.mouse.move(30,30);await page.mouse.down();await page.mouse.move(90,80,{steps:4});
  await page.evaluate(()=>document.querySelector('#a').dispatchEvent(new PointerEvent('pointercancel',{pointerId:window.activePointer,bubbles:true})));await page.mouse.up();
  check(await page.evaluate(()=>a.getElements().length===0&&!a.getHistoryState().canUndo),'canceled shape rolls back without undo entry');
@@ -41,8 +41,11 @@ try{
  const rotate=await page.evaluate(()=>{const r=a.getElementById('r');return{x:r.x+r.w/2,y:r.y-20}});
  await drag(rotate.x,rotate.y,rotate.x+50,rotate.y+40);check(await page.evaluate(()=>Math.abs(a.getElementById('r').rotation)>0.1),'selection rotation');
  // Text receives keyboard input immediately after the pointer gesture.
- await page.evaluate(()=>{a.clear();a.setTool('text')});await page.mouse.click(80,80);check(await page.evaluate(()=>document.activeElement?.tagName==='TEXTAREA'),'text editor receives focus');
+ await page.evaluate(()=>{a.clear();a.setTool('text');window.textReasons=[];a.on('sceneChanged',event=>window.textReasons.push(event.reason))});await page.mouse.click(80,80);check(await page.evaluate(()=>document.activeElement?.tagName==='TEXTAREA'),'text editor receives focus');
  await page.keyboard.type('Canvas text');await page.locator('#input').click();check(await page.evaluate(()=>a.getElements()[0]?.text==='Canvas text'),'text commits on blur');
+ check(await page.evaluate(()=>window.textReasons.join(',')==='text-commit'),'text commit reason');
+ check(await page.evaluate(()=>{a.clear();a.undo();return a.getElements()[0]?.text==='Canvas text'}),'clear restores text through undo');
+ check(await page.evaluate(()=>{const scene=a.getScene();a.resetHistory();return !a.getHistoryState().canUndo&&JSON.stringify(a.getScene())===JSON.stringify(scene)}),'explicit history reset preserves scene');
  // Programmatic image/node tool inputs, scene roundtrip.
  await page.evaluate(()=>{a.clear();a.setTool('image',{src:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>',naturalW:40,naturalH:30})});await page.mouse.click(100,100);
  check(await page.evaluate(()=>a.getElements()[0]?.type==='image'),'image tool');

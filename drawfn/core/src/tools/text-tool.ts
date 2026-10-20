@@ -166,17 +166,14 @@ export class TextTool extends BaseTool {
     if (session.mode === "create") {
       session.context.getDrawfn().discardStagedTextElement(session.element.id);
       if (text.trim() !== "") {
-        session.context.addElement({
-          ...session.element,
-          text,
-        });
+        session.context.getDrawfn().commitTextElement({ ...session.element, text }, true);
       }
     } else {
       const latest = session.context
         .getScene()
         .elements.find((element) => element.id === session.element.id);
       if (latest?.type === "text" && latest.text !== text) {
-        session.context.updateElement(session.element.id, { text });
+        session.context.getDrawfn().commitTextElement({ ...latest, text }, false);
       }
     }
   }

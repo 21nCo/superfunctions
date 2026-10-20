@@ -120,3 +120,14 @@ it("forwards the latest preview callback without replacing the active instance",
   expect(ready.mock.lastCall![0].drawfn).toBe(instance);
   view.unmount();
 });
+
+it("exposes undoable clear and an explicit history reset through the hook", async () => {
+  let api!: UseDrawfnResult;
+  const view = render(<HookHarness onReady={value => { api = value; }} />);
+  await waitFor(() => expect(api?.isReady).toBe(true));
+  act(() => { api.drawfn!.add(rectangle("kept")); api.clear(); });
+  expect(api.getScene()!.elements).toEqual([]);
+  act(() => api.undo()); expect(api.getScene()!.elements).toHaveLength(1);
+  act(() => api.resetHistory()); expect(api.drawfn!.getHistoryState()).toMatchObject({ canUndo: false, canRedo: false });
+  expect(api.getScene()!.elements).toHaveLength(1); view.unmount();
+});

@@ -50,6 +50,10 @@
     drawfn?.redo();
   }
 
+  export function resetHistory(): void {
+    drawfn?.resetHistory();
+  }
+
   export function clear(): void {
     drawfn?.clear();
   }

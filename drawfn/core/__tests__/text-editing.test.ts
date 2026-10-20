@@ -58,7 +58,7 @@ describe("text editing", () => {
       events.push("historyChanged");
       historyDepths.push(event.depth);
     });
-    drawfn.on("sceneChanged", () => events.push("sceneChanged"));
+    drawfn.on("sceneChanged", event => events.push(`sceneChanged:${event.reason}`));
 
     drawfn.editTextElement("text-1");
 
@@ -71,7 +71,7 @@ describe("text editing", () => {
     const element = drawfn.getElementById("text-1");
     expect(element?.type).toBe("text");
     expect((element as any).text).toBe("hello world");
-    expect(events).toEqual(["elementUpdated", "historyChanged", "sceneChanged"]);
+    expect(events).toEqual(["elementUpdated", "historyChanged", "sceneChanged:text-commit"]);
     expect(historyDepths[historyDepths.length - 1]).toBe(2);
   });
 
@@ -126,4 +126,14 @@ describe("text editing", () => {
     );
     removeDocumentClickListener.mockRestore();
   });
+  it("commits new text with text-commit reason and exactly one undo step", () => {
+    const changed = vi.fn(); drawfn.on("sceneChanged", changed); drawfn.setTool("text");
+    canvas.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 20, clientY: 20 }));
+    canvas.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 20, clientY: 20 }));
+    const textarea = overlayRoot.querySelector("textarea")!; textarea.value = "new text"; textarea.dispatchEvent(new Event("blur"));
+    expect(changed).toHaveBeenCalledOnce(); expect(changed).toHaveBeenCalledWith(expect.objectContaining({ reason: "text-commit" }));
+    expect(drawfn.getHistoryState().depth).toBe(1); drawfn.undo(); expect(drawfn.getElements()).toEqual([]);
+    drawfn.redo(); expect(drawfn.getElements()[0]).toMatchObject({ text: "new text" }); drawfn.destroy();
+  });
+
 });
