@@ -19,7 +19,7 @@ const BACKEND_SERVICE = "oauth-relay";
 const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
 /** The proxy operations the relay service needs; a CaddyProxyController by default. */
-export type OAuthRelayProxy = Pick<CaddyProxyController, "upsert" | "removeInstance" | "instanceRouteState">;
+export type OAuthRelayProxy = Pick<CaddyProxyController, "upsert" | "removeInstance" | "instanceRouteState" | "instanceRoutesLive">;
 
 export interface StartOAuthRelayInput {
   stateDir: string;
@@ -374,13 +374,13 @@ export async function stopOAuthRelay(stateDir: string, proxy: OAuthRelayProxy = 
   }, { timeoutMs: SERVICE_LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
 }
 
-async function relayStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState">): Promise<OAuthRelayStatus> {
+async function relayStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "instanceRoutesLive">): Promise<OAuthRelayStatus> {
   const current = await serviceStatus(stateDir, proxy);
   const routes = (await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID)).committed;
   const service = current.service;
   return {
     running: current.status === "running",
-    routeActive: service !== undefined && routes.some((route) => routeServes(route, service)),
+    routeActive: service !== undefined && routes.some((route) => routeServes(route, service)) && await proxy.instanceRoutesLive(OAUTH_RELAY_OWNER_ID, routes),
     ...(service ? { origin: service.origin, hostname: service.hostname, pid: service.pid } : {}),
     ...(current.status === "unverified" ? { unverified: true } : {}),
     tickets: await relayTicketSummary(stateDir),
@@ -390,9 +390,9 @@ async function relayStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "insta
 /**
  * The relay's status, after the relay route rule is applied: status never
  * reports, or leaves, a route to a dead relay or to a port the live relay
- * does not serve.
+ * does not serve, and reports a route active only while the DevFn Caddy serves it.
  */
-export async function oauthRelayStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "removeInstance"> = new CaddyProxyController(stateDir)): Promise<OAuthRelayStatus> {
+export async function oauthRelayStatus(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "removeInstance" | "instanceRoutesLive"> = new CaddyProxyController(stateDir)): Promise<OAuthRelayStatus> {
   await recoverOAuthRelayRoute(stateDir, proxy);
   return await relayStatus(stateDir, proxy);
 }
@@ -403,8 +403,8 @@ export async function oauthRelayStatus(stateDir: string, proxy: Pick<OAuthRelayP
  * relay's record and listener claims end once every recorded relay process
  * is verifiably gone. Returns whether a route was removed. A relay command
  * holding the service lock past lockTimeoutMs fails with
- * DEVFN_REGISTRY_LOCK_TIMEOUT; onLocked runs once the service lock is held,
- * so a caller can tell that timeout from one raised inside it.
+ * DEVFN_REGISTRY_LOCK_TIMEOUT.
+ * onLocked runs once the service lock is held.
  */
 export async function recoverOAuthRelayRoute(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "removeInstance">, options: { lockTimeoutMs?: number; onLocked?: () => void } = {}): Promise<boolean> {
   await relayDirectory(stateDir);

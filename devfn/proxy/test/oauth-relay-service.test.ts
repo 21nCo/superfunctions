@@ -11,7 +11,7 @@ import { allocateEphemeralPort, FilePortRegistry, withFileLock } from "@devfn/po
 import { processBirthSignature, processIdentityStatus } from "@devfn/processes";
 import { CaddyProxyController, proxyListenerPorts, registerDomain, type ProxyRoute } from "../src/index.js";
 import {
-  OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayClient, oauthRelayStatus, readRelayService, recoverOAuthRelayRoute, startOAuthRelay, stopOAuthRelay, type OAuthRelayProxy,
+  OAUTH_RELAY_OWNER_ID, OAuthRelayClient, oauthRelayStatus, readRelayService, recoverOAuthRelayRoute, startOAuthRelay, stopOAuthRelay, type OAuthRelayProxy,
 } from "../src/oauth-relay/index.js";
 import { createFakeProvider, createOAuthClientApp, FixtureBrowser } from "./fixtures/oauth.js";
 
@@ -32,6 +32,7 @@ function fakeProxy(initial: ProxyRoute[] = []): OAuthRelayProxy & { routes: Prox
     },
     async removeInstance(instanceId: string) { proxy.removed.push(instanceId); proxy.routes = proxy.routes.filter((route) => route.instanceId !== instanceId); },
     async instanceRouteState(instanceId: string) { return { committed: proxy.routes.filter((route) => route.instanceId === instanceId) }; },
+    async instanceRoutesLive() { return true; },
   };
   return proxy;
 }
@@ -78,6 +79,7 @@ it.skipIf(process.platform === "win32")("starts one relay, survives its crash wi
   expect(await registry.instanceMayRun(OAUTH_RELAY_OWNER_ID)).toBe(true);
   // A live relay keeps its route through orphan recovery and status.
   expect(await recoverOAuthRelayRoute(stateDir, proxy)).toBe(false);
+  expect(await oauthRelayStatus(stateDir, { ...proxy, instanceRoutesLive: async () => false })).toMatchObject({ running: true, routeActive: false });
   expect(await oauthRelayStatus(stateDir, proxy)).toMatchObject({ running: true, routeActive: true });
   process.kill(-first.pid, "SIGKILL");
   for (let attempt = 0; attempt < 100 && await processIdentityStatus(first.pid, first.birthSignature) === "running"; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -333,16 +335,6 @@ it.skipIf(process.platform === "win32")("fails a start whose relay exits before 
   expect(proxy.routes).toEqual([sibling]);
 }, 60_000);
 
-it("reports a pending relay route that stop withdraws as removed", async () => {
-  const stateDir = await registeredState();
-  const proxy = fakeProxy();
-  let pending: ProxyRoute[] | undefined = [{ ...sibling, id: OAUTH_RELAY_ROUTE_ID, instanceId: OAUTH_RELAY_OWNER_ID, hostname: `auth.${DOMAIN}` }];
-  const journaled: OAuthRelayProxy = { upsert: proxy.upsert, async removeInstance(instanceId) { pending = undefined; await proxy.removeInstance(instanceId); },
-    async instanceRouteState(instanceId) { return { ...await proxy.instanceRouteState(instanceId), ...(pending ? { pending } : {}) }; } };
-  expect(await stopOAuthRelay(stateDir, journaled)).toEqual({ stopped: false, routeRemoved: true });
-  expect(pending).toBeUndefined();
-});
-
 it("stops nothing when Caddy cannot remove the relay route, so no callback can reach a freed port", async () => {
   const stateDir = await registeredState();
   const proxy = fakeProxy([sibling]);
@@ -385,6 +377,7 @@ it("withdraws a route that a failed start activated or journaled before it stops
         await proxy.removeInstance(instanceId);
       },
       async instanceRouteState(instanceId) { return { ...await proxy.instanceRouteState(instanceId), ...(pending ? { pending } : {}) }; },
+      instanceRoutesLive: proxy.instanceRoutesLive,
     };
     await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy: failing, command: RELAY_COMMAND }))
       .rejects.toMatchObject({ code: "DEVFN_PROXY_RELOAD_FAILED" });
@@ -546,7 +539,7 @@ process.stdout.end = (...args) => { const result = end(...args); writeFileSync($
 await import(${JSON.stringify(new URL("../src/oauth-relay/serve.ts", import.meta.url).href)});
 `);
   await writeFile(starter, `import { startOAuthRelay } from ${JSON.stringify(new URL("../src/oauth-relay/index.ts", import.meta.url).href)};
-const proxy = { upsert: async (routes) => routes, removeInstance: async () => undefined, instanceRouteState: async () => ({ committed: [] }) };
+const proxy = { upsert: async (routes) => routes, removeInstance: async () => undefined, instanceRouteState: async () => ({ committed: [] }), instanceRoutesLive: async () => false };
 await startOAuthRelay({ stateDir: ${JSON.stringify(stateDir)}, domain: ${JSON.stringify(DOMAIN)}, projectId: "fixture", repositoryIdentity: ${JSON.stringify(stateDir)}, proxy,
   command: ${JSON.stringify([...RELAY_COMMAND.slice(0, -1), wrapper])} });
 setInterval(() => undefined, 1000);
@@ -705,4 +698,9 @@ it("removes a committed or pending relay route that does not reach the live reco
   const routed = JSON.stringify(proxy.routes);
   expect(await oauthRelayStatus(stateDir, journaled)).toMatchObject({ running: true, routeActive: true });
   expect(JSON.stringify(proxy.routes)).toBe(routed);
+  // Once the relay is stopped, stop reports a relay route only the journal holds as removed.
+  expect(await stopOAuthRelay(stateDir, journaled)).toEqual({ stopped: true, routeRemoved: true });
+  pending = [route];
+  expect(await stopOAuthRelay(stateDir, journaled)).toEqual({ stopped: false, routeRemoved: true });
+  expect(pending).toBeUndefined();
 }, 60_000);
