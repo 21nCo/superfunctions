@@ -3,9 +3,9 @@ import type { JsonObject, JsonValue } from '@probefn/contracts/envelopes';
 
 const REDACTED = '[REDACTED]';
 const SENSITIVE_KEY_PATTERN = /(authorization|cookie|set-cookie|token|secret|password|api[_-]?key|session)/i;
-const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/g;
+const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi;
 const KEY_VALUE_PATTERN =
-  /\b([A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|COOKIE|SESSION)[A-Z0-9_]*)=([^\s]+)/g;
+  /\b([A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|COOKIE|SESSION)[A-Z0-9_]*)=([^\s]+)/gi;
 const SECRET_VALUE_PATTERN =
   /\b(sk_(live|test)_[A-Za-z0-9]+|ghp_[A-Za-z0-9]+|xox[baprs]-[A-Za-z0-9-]+)\b/g;
 
