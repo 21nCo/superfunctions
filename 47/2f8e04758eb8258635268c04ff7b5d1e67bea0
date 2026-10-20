@@ -1,0 +1,55 @@
+userfn/.conduct/consent-readiness.md
+  s_e1c5fc1a65c0cf::t_27a3015b24c9ce 1-87
+userfn/.conduct/original-requirements-status.md
+  s_e1c5fc1a65c0cf::t_396c5b5eb07e24 26-29,82,97
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_726fd650274414 350-382
+userfn/python/src/userfn/__init__.py
+  s_e1c5fc1a65c0cf::t_b470c8b6d64bdb 2,8
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_6f0806a544ef8c 2,17,46,50-58,68,76-77
+userfn/python/src/userfn/core/consent.py
+  s_e1c5fc1a65c0cf::t_932bfa0eba526b 1-32
+userfn/python/src/userfn/core/exposures.py
+  s_e1c5fc1a65c0cf::t_87bc6c263bae6a 29,34-35,58-72,74-75,77,90-91,93-94,97-98,102-103,109-110,113-114,116-119,124-127,131-133,140
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_e318214a3440cc 107-112,125-126
+userfn/python/tests/test_consent.py
+  s_e1c5fc1a65c0cf::t_3a407d6693d486 1-133
+userfn/service/scripts/verify-consent-watch.mjs
+  s_e1c5fc1a65c0cf::t_5338fbd84c3adb 1-81
+userfn/service/scripts/verify-frameworks.mjs
+  s_e1c5fc1a65c0cf::t_41cf7ccbb8b821 62,65
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_83c44e4708c66c 400-440
+userfn/typescript/src/__tests__/consent.test.ts
+  s_e1c5fc1a65c0cf::t_6b9c040c500372 1-61
+userfn/typescript/src/core/consent.ts
+  s_e1c5fc1a65c0cf::t_2651c6c26b61e5 1-25
+userfn/typescript/src/core/exposures.ts
+  s_e1c5fc1a65c0cf::t_89a2a25865764c 15-16,23,27-28,36-37,40-45,47-55,60
+userfn/typescript/src/core/flag-observation.ts
+  s_e1c5fc1a65c0cf::t_85dc0c7726000f 23-24,30,36,38,48-49
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_28eca5bf4c3edf 1-2,33-35,41-44,55,87,96,98,115,197,215-219,233-247,250,256
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_144daf925110f4 110-113,115-117
+userfn/typescript/src/ui/renderer.ts
+  s_e1c5fc1a65c0cf::t_d8646420347a35 6-8,14-21,23,32,134,157-158,190,218,224,230,264-265,273,276,280,284-286,290,305-306,331,333,340
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "472f8e04758eb8258635268c04ff7b5d1e67bea0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
