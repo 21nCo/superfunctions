@@ -1,0 +1,37 @@
+watchfn/.conduct/event-index-readiness.md
+  s_e1c5fc1a65c0cf::t_cd47407600541c 59-64
+watchfn/.conduct/query-streaming-readiness.md
+  s_e1c5fc1a65c0cf::t_0967b02992611d 1-101
+watchfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_9ec4815391c224 93-114
+watchfn/typescript/scripts/verify-query-streaming.mjs
+  s_e1c5fc1a65c0cf::t_86a71b8ed89e27 1-50
+watchfn/typescript/src/query/query-engine.ts
+  s_e1c5fc1a65c0cf::t_306f9fd1dcb3c6 42-65,67-68,70-72,74-75,178-182,185-193,195-285
+watchfn/typescript/src/storage/database.ts
+  s_e1c5fc1a65c0cf::t_2aee6c38ab446d 63,66,68-69,73-78,111-117,119-121,124-169
+watchfn/typescript/src/storage/types.ts
+  s_e1c5fc1a65c0cf::t_17be0ed850b1b7 4-5
+watchfn/typescript/tests/query/streaming.test.ts
+  s_e1c5fc1a65c0cf::t_f8345556e6feab 1-66
+watchfn/typescript/tests/storage/query-streaming-sqlite.acceptance.ts
+  s_e1c5fc1a65c0cf::t_9346d6305acdbf 1-74
+watchfn/typescript/tests/storage/query-streaming-sqlite.config.ts
+  s_e1c5fc1a65c0cf::t_d92664d7c8d068 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a475a710cf2c678c39ba5043116fa6bcd54c0e3d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
