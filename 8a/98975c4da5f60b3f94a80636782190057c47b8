@@ -1,0 +1,31 @@
+probefn/.conduct/storage-concurrency-readiness.md
+  s_e1c5fc1a65c0cf::t_8f1033656b4f9c 1-15
+probefn/packages/core/src/deltas.ts
+  s_e1c5fc1a65c0cf::t_b9d9752681799d 1,68
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_7c5cc6827d05d1 1,283
+probefn/packages/session-reporter/src/report-json.ts
+  s_e1c5fc1a65c0cf::t_86ac24690b041c 1,355-357,362-363
+probefn/packages/storage/src/event-reader.ts
+  s_e1c5fc1a65c0cf::t_999f81a654528f 1-38
+probefn/packages/storage/src/index.ts
+  s_e1c5fc1a65c0cf::t_521a4fec3359cc 7
+probefn/packages/storage/test/event-reader.test.ts
+  s_e1c5fc1a65c0cf::t_4b3f225a142e6e 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a98975c4da5f60b3f94a80636782190057c47b8",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
