@@ -1,0 +1,31 @@
+chartfn/.conduct/requirement-readiness.md
+  s_e1c5fc1a65c0cf::t_608effd26725d9 1-73
+chartfn/README.md
+  s_e1c5fc1a65c0cf::t_f97d1a13c274ff 32-34,150-157
+chartfn/__tests__/core-readiness.test.ts
+  s_e1c5fc1a65c0cf::t_e6f6a670939575 31-35
+chartfn/__tests__/observability.test.ts
+  s_e1c5fc1a65c0cf::t_7207cca1d31e94 33-51,69
+chartfn/scripts/determinism-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_ace53858dca2a6 1-57
+chartfn/src/chart-fn.ts
+  s_e1c5fc1a65c0cf::t_dac7eccf80c56a 23,27,66,109,114
+chartfn/src/validate.ts
+  s_e1c5fc1a65c0cf::t_8eb9d81fd7b4dc 39-45,92
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "03fa28b8f7d01caf0c8ec845e531ee248f9734e0",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
