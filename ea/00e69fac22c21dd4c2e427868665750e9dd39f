@@ -1,0 +1,29 @@
+userfn/.conduct/authfn-feedback-acceptance.md
+  s_e1c5fc1a65c0cf::t_06eba1352bbe54 1-22
+userfn/.conduct/feedback-service-readiness.md
+  s_e1c5fc1a65c0cf::t_77b09fcfa8bde7 37-40
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_beb522eb05bb16 24,37,39
+userfn/service/package.json
+  s_e1c5fc1a65c0cf::t_1e134d8093d72a 21-22
+userfn/service/tests/authfn-acceptance.test.ts
+  s_e1c5fc1a65c0cf::t_5441a5a0c1cf64 1-101
+userfn/service/vitest.authfn.config.ts
+  s_e1c5fc1a65c0cf::t_3f257dc465680c 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea00e69fac22c21dd4c2e427868665750e9dd39f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
