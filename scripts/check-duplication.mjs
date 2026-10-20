@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { checkSharedUsage } from "./check-shared-usage.mjs";
 
 const repoRoot = process.cwd();
 const outputDir = path.join(repoRoot, ".tmp", "jscpd", "langfn");
@@ -34,14 +35,10 @@ try {
 }
 
 try {
-  execFileSync(
-    process.platform === "win32" ? "rg.exe" : "rg",
-    ["-n", "@superfunctions/|superfunctions\\.", "langfn/typescript", "langfn/python"],
-    { stdio: "inherit", cwd: repoRoot }
-  );
+  console.log(JSON.stringify({ sharedUsage: checkSharedUsage(repoRoot) }));
 } catch (error) {
-  console.error("shared superfunctions usage guard failed");
-  process.exit(error.status || 1);
+  console.error(`shared superfunctions usage guard failed: ${error.message}${error.code ? ` [${error.code}]` : ""}`);
+  process.exit(1);
 }
 
 if (!existsSync(reportFile)) {
