@@ -201,10 +201,12 @@ async function domainsCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown domains action ${action}.`);
 }
 
-async function oauthRelayCommand(args: ParsedArgs, stateDir: string, loaded: LoadedConfig): Promise<unknown> {
+/** The relay is machine state: only start reads the trusted project, for its identity. */
+async function oauthRelayCommand(args: ParsedArgs, stateDir: string, load: () => Promise<LoadedConfig>): Promise<unknown> {
   const [action = "status", domain, ...extra] = args.positionals;
   if (action === "start") {
     if (!domain || extra.length) throw new DevFnError("DEVFN_RUNTIME_INVALID", "oauth-relay start requires exactly one registered domain.");
+    const loaded = await load();
     const identity = await resolveInstanceIdentity(loaded.config.project.id, loaded.root);
     return { ok: true, relay: await startOAuthRelay({ stateDir, domain, projectId: identity.projectId, repositoryIdentity: identity.repositoryIdentity, ...(args.host ? { host: args.host } : {}) }) };
   }
@@ -216,7 +218,6 @@ async function oauthRelayCommand(args: ParsedArgs, stateDir: string, loaded: Loa
 
 async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, loaded: LoadedConfig): Promise<unknown> {
   if (args.command === "domains") return await domainsCommand(args, cwd, stateDir, loaded);
-  if (args.command === "oauth-relay") return await oauthRelayCommand(args, stateDir, loaded);
   const orchestrator = new DevFnOrchestrator();
   const lifecycle = { config: loaded.config, root: loaded.root, stateDir };
   const handlers: Record<string, () => Promise<unknown>> = {
@@ -266,8 +267,8 @@ export async function runCli(argv: readonly string[], options: CliOptions = {}):
     if (args.command === "init") {
       const result = await initCommand(args, cwd); if (args.json) output.json(result); else { if (!result.written) output.info(String(result.preview)); output.success(result.written ? `Created ${result.manifest}` : String(result.confirmationRequired)); } return 0;
     }
-    const loaded = await trustedConfig(args, cwd, stateDir);
-    const result = await executeCommand(args, cwd, stateDir, loaded);
+    const load = () => trustedConfig(args, cwd, stateDir);
+    const result = args.command === "oauth-relay" ? await oauthRelayCommand(args, stateDir, load) : await executeCommand(args, cwd, stateDir, await load());
     renderResult(args, result, output);
     return args.command === "doctor" && !(result as { ok?: boolean }).ok ? 1 : 0;
   } catch (error) {

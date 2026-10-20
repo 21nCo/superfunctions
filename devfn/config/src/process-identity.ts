@@ -206,8 +206,9 @@ export async function processGroupStatus(pid: number, signature?: string, record
   }
   // Signal 0 also reaches zombies. The group is gone only when members are
   // listed and every one has exited; one that cannot be listed may be live.
+  // Members reaped after the signal leave none to list, and so are gone too.
   const states = await processGroupMemberStates(pid);
-  return states && states.length > 0 && states.every((state) => EXITED_STATE.test(state)) ? "exited" : "unverified";
+  return states && states.every((state) => EXITED_STATE.test(state)) ? "exited" : "unverified";
 }
 
 /** Whether the PID is verifiably the recorded process, as required before signalling it. */

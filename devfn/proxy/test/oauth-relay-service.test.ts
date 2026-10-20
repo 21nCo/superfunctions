@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 
 import { allocateEphemeralPort, FilePortRegistry, withFileLock } from "@devfn/ports";
-import { processBirthSignature, processIdentityStatus } from "@devfn/processes";
+import { processBirthSignature, processExists, processIdentityStatus } from "@devfn/processes";
 import { CaddyProxyController, proxyListenerPorts, registerDomain, type ProxyRoute } from "../src/index.js";
 import {
   OAUTH_RELAY_OWNER_ID, OAuthRelayClient, oauthRelayStatus, readRelayService, recoverOAuthRelayRoute, startOAuthRelay, stopOAuthRelay, type OAuthRelayProxy,
@@ -554,7 +554,7 @@ setInterval(() => undefined, 1000);
   child.kill("SIGKILL");
   expect(relayPid).toBeDefined();
   cleanup.push(async () => { try { process.kill(-relayPid!, "SIGKILL"); } catch { /* stopped */ } });
-  const alive = () => { try { process.kill(relayPid!, 0); return true; } catch { return false; } };
+  const alive = () => processExists(relayPid!);
   for (let attempt = 0; attempt < 100 && alive(); attempt += 1) {
     if ((await readRelayService(stateDir).catch(() => undefined))?.pid === relayPid) break;
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -576,7 +576,8 @@ spawn(process.execPath, ["-e", \`process.on("SIGTERM", () => undefined); require
 const wait = () => fs.existsSync(pidFile) ? spawn(relay[0], relay.slice(1), { stdio: "inherit" }) : setTimeout(wait, 10);
 wait();
 `);
-  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  // An orphaned member force-stopped where no init reaps it stays a zombie, which runs nothing.
+  const alive = (pid: number) => processExists(pid);
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   const claims = async () => (await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state);
   const start = async (pidFile: string) => await startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy,
@@ -623,6 +624,8 @@ it("retires an unclaimed relay route-first: a failed replacement leaves no relay
     cleanup.push(async () => { try { process.kill(-old.pid, "SIGKILL"); } catch { /* stopped */ } });
     const registry = new FilePortRegistry(path.join(stateDir, "registry.json"), undefined, async () => true);
     await registry.release({ invocationId: old.invocationId });
+    // Where a privileged bind is denied, the registry keeps the ended claim on 80/443; it is retirement evidence, not what this test covers.
+    await registry.transaction((state) => { for (const item of state.invocations) delete item.proxyClaimRetained; });
     if (failure === "claim") await registry.reserve({ projectId: "fixture", instanceId: "v01", invocationId: "v01-1", profile: "default", requests: [{ name: "web", spec: { preferred: proxyListenerPorts().httpsPort, exact: true } }] });
     const record = await readFile(path.join(stateDir, "oauth-relay", "service.json"), "utf8");
     const routes = JSON.stringify(proxy.routes);

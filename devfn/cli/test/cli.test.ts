@@ -44,6 +44,11 @@ describe("devfn CLI", () => {
       expect(await run("stop", "dev.example.test")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
       expect(await run("restart")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
       expect(await run("stop")).toEqual({ code: 0, result: { ok: true, stopped: false, routeRemoved: false } });
+      // status and stop need no project: they run outside any repository, or after it is gone.
+      await rm(path.join(cwd, "devfn.config.json"));
+      expect(await run("status")).toMatchObject({ code: 0, result: { ok: true, relay: { running: false } } });
+      expect(await run("stop")).toEqual({ code: 0, result: { ok: true, stopped: false, routeRemoved: false } });
+      expect(await run("start", "dev.example.test")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_CONFIG_NOT_FOUND" } } });
     } finally { await rm(cwd, { recursive: true, force: true }); await rm(stateDir, { recursive: true, force: true }); }
   });
 

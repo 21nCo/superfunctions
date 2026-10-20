@@ -76,6 +76,15 @@ describe.skipIf(process.platform !== "linux")("incomplete /proc group evidence",
     });
   });
 
+  it("counts a group whose members are reaped between its signal and its listing as gone", async () => {
+    await withZombieLeader(async ({ leader, member }) => {
+      process.kill(member, "SIGKILL");
+      // Signal 0 still reaches the unreaped leader; both are reaped before /proc is listed.
+      for (const pid of [leader, member]) procFiles.set(`/proc/${pid}/stat`, async () => { throw Object.assign(new Error("reaped"), { code: "ENOENT" }); });
+      await expect(processGroupStatus(leader)).resolves.toBe("exited");
+    });
+  });
+
   it("never proves a group gone while /proc hides other users' processes", async () => {
     await withZombieLeader(async ({ leader, member }) => {
       process.kill(member, "SIGKILL");
