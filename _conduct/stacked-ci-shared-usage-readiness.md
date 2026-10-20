@@ -6,7 +6,7 @@ The LangFn duplication gate no longer requires an externally installed ripgrep e
 
 Validation on 2026-10-20:
 
-- `node --test scripts/check-shared-usage.test.mjs scripts/ci-stacked-pr.test.mjs`: 7 passing cases. Includes TS/Python imports, ignored dependency/binary/symlink rejection, missing-directory CLI failure, an environment containing Git but no ripgrep, and a real disposable Git history whose stacked base contains unrelated changes. The child selects only its changed package.
+- `node --test scripts/check-shared-usage.test.mjs scripts/ci-stacked-pr.test.mjs`: 8 passing cases. Includes TS/Python imports, ignored dependency/binary/symlink rejection, missing-directory CLI failure, an environment containing Git but no ripgrep, and a real disposable Git history whose stacked base contains unrelated changes. The child selects only its changed package. A tracked file deleted from the working tree is skipped before finding a valid remaining import; missing scan roots and other I/O errors still fail.
 - `npm run check:duplication`: passes, 170 files, 392 duplicated lines, 2.1631166537909725%, threshold 5%.
 - Ruby YAML parser verifies workflow syntax, unrestricted pull-request bases, and unchanged push branches. Node syntax check and `git diff --check` pass.
 - Local command logs: `/tmp/shared-ci-guard-tests.log`, `/tmp/shared-ci-duplication.log`. Disposable test repositories are removed by test cleanup.
