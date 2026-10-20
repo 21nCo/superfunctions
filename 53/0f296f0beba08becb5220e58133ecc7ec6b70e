@@ -1,0 +1,21 @@
+probefn/packages/storage/src/redaction.ts
+  s_e1c5fc1a65c0cf::t_99abe7111bf520 6,8
+probefn/packages/storage/test/redaction.test.ts
+  s_e1c5fc1a65c0cf::t_c89a5a28ab6373 23-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "530f296f0beba08becb5220e58133ecc7ec6b70e",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
