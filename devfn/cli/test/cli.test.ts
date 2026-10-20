@@ -26,6 +26,27 @@ async function withListenerTools<T>(action: () => Promise<T>): Promise<T> {
 interface CliResult { error?: { message: string }; state?: string; invocationId?: string; allocations?: Array<{ port: number }> }
 
 describe("devfn CLI", () => {
+  it("reports the OAuth relay and refuses to start it for a domain this repository has not registered", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-oauth-relay-cli-"));
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-oauth-relay-state-"));
+    try {
+      await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "fixture" }, profiles: { default: {} } }));
+      const run = async (...args: string[]) => {
+        let output = "";
+        const code = await runCli(["oauth-relay", ...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { output += text; }, stderr: () => undefined });
+        return { code, result: JSON.parse(output) as Record<string, unknown> };
+      };
+      expect(await run("status")).toEqual({ code: 0, result: { ok: true, relay: { running: false, routeActive: false, tickets: { valid: true, pending: 0 } } } });
+      expect(await run("start", "dev.example.test")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_DOMAIN_UNREGISTERED" } } });
+      expect(await run("start")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
+      // A malformed host label is refused as input, before any machine state is read.
+      expect(await run("start", "dev.example.test", "--host", "Bad_Label")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_OAUTH_RELAY_REJECTED" } } });
+      expect(await run("stop", "dev.example.test")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
+      expect(await run("restart")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
+      expect(await run("stop")).toEqual({ code: 0, result: { ok: true, stopped: false, routeRemoved: false } });
+    } finally { await rm(cwd, { recursive: true, force: true }); await rm(stateDir, { recursive: true, force: true }); }
+  });
+
   it("rejects extra domains list arguments without reading machine state", async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), "devfn-domain-list-"));
     const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-domain-state-"));

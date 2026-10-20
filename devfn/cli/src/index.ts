@@ -13,7 +13,7 @@ import {
   resolveDevFnManifestPath,
   trustProject,
 } from "@devfn/config";
-import { DevFnError, DevFnOrchestrator, readRegisteredDomains, recoverOrphanedProxyRoutes, registerDomain, resolveInstanceIdentity, unregisterDomain } from "@devfn/core";
+import { DevFnError, DevFnOrchestrator, oauthRelayStatus, readRegisteredDomains, recoverOrphanedProxyRoutes, registerDomain, resolveInstanceIdentity, startOAuthRelay, stopOAuthRelay, unregisterDomain } from "@devfn/core";
 import { FilePortRegistry, renderPortInventory } from "@devfn/ports";
 import { defaultStateDir } from "@devfn/config";
 
@@ -32,6 +32,7 @@ interface ParsedArgs {
   tls?: string;
   certificateFile?: string;
   keyFile?: string;
+  host?: string;
 }
 
 export interface CliOptions { cwd?: string; env?: NodeJS.ProcessEnv; stdout?: (text: string) => void; stderr?: (text: string) => void }
@@ -51,6 +52,7 @@ Commands:
   ports [gc|report]    Inspect, reconcile, collect (incl. orphaned routes), or report port state
   url [name]           Print resolved local URLs
   domains [list|register|unregister]  Manage machine-owned development domains
+  oauth-relay [status|start <domain>|stop]  Manage the machine's OAuth callback relay
 
 Options:
   --profile <name>     Select a named profile
@@ -65,12 +67,13 @@ Options:
   --tls <mode>         Domain TLS: internal or certificate
   --cert <path>        Certificate PEM for certificate TLS
   --key <path>         Private key PEM for certificate TLS
+  --host <label>       OAuth relay host label under its domain (default auth)
 `;
 
 function parse(argv: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
   const values: Record<string, string | boolean> = {};
-  const takesValue = new Set(["--profile", "--config", "--state-dir", "--output", "--tail", "--tls", "--cert", "--key"]);
+  const takesValue = new Set(["--profile", "--config", "--state-dir", "--output", "--tail", "--tls", "--cert", "--key", "--host"]);
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (!token.startsWith("--")) { positionals.push(token); continue; }
@@ -99,6 +102,7 @@ function parse(argv: readonly string[]): ParsedArgs {
     ...(typeof values["--tls"] === "string" ? { tls: values["--tls"] } : {}),
     ...(typeof values["--cert"] === "string" ? { certificateFile: values["--cert"] } : {}),
     ...(typeof values["--key"] === "string" ? { keyFile: values["--key"] } : {}),
+    ...(typeof values["--host"] === "string" ? { host: values["--host"] } : {}),
   };
 }
 
@@ -197,8 +201,22 @@ async function domainsCommand(args: ParsedArgs, cwd: string, stateDir: string, l
   throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown domains action ${action}.`);
 }
 
+async function oauthRelayCommand(args: ParsedArgs, stateDir: string, loaded: LoadedConfig): Promise<unknown> {
+  const [action = "status", domain, ...extra] = args.positionals;
+  if (action === "start") {
+    if (!domain || extra.length) throw new DevFnError("DEVFN_RUNTIME_INVALID", "oauth-relay start requires exactly one registered domain.");
+    const identity = await resolveInstanceIdentity(loaded.config.project.id, loaded.root);
+    return { ok: true, relay: await startOAuthRelay({ stateDir, domain, projectId: identity.projectId, repositoryIdentity: identity.repositoryIdentity, ...(args.host ? { host: args.host } : {}) }) };
+  }
+  if (domain !== undefined || args.host !== undefined) throw new DevFnError("DEVFN_RUNTIME_INVALID", `oauth-relay ${action} takes no domain or --host.`);
+  if (action === "stop") return { ok: true, ...await stopOAuthRelay(stateDir) };
+  if (action === "status") return { ok: true, relay: await oauthRelayStatus(stateDir) };
+  throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown oauth-relay action ${action}. Expected status, start or stop.`);
+}
+
 async function executeCommand(args: ParsedArgs, cwd: string, stateDir: string, loaded: LoadedConfig): Promise<unknown> {
   if (args.command === "domains") return await domainsCommand(args, cwd, stateDir, loaded);
+  if (args.command === "oauth-relay") return await oauthRelayCommand(args, stateDir, loaded);
   const orchestrator = new DevFnOrchestrator();
   const lifecycle = { config: loaded.config, root: loaded.root, stateDir };
   const handlers: Record<string, () => Promise<unknown>> = {

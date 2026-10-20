@@ -18,7 +18,7 @@ Registry mutations use an exclusive lock plus atomic rename. Allocations disting
 
 ## Adapters and boundaries
 
-Native adapters cover command, npm, Corepack-pinned pnpm, Turbo, Wrangler, Xcode, and ExtFn workflows. Compose retains conventional container ports and uses generated loopback mappings unless public exposure is explicit. Caddy is a DevFn-owned singleton with locked explicit routes and safe reloads; unrelated Caddy instances are never reconfigured. Public tunnels remain explicit profile commands.
+Native adapters cover command, npm, Corepack-pinned pnpm, Turbo, Wrangler, Xcode, and ExtFn workflows. Compose retains conventional container ports and uses generated loopback mappings unless public exposure is explicit. Caddy is a DevFn-owned singleton with locked explicit routes and safe reloads; unrelated Caddy instances are never reconfigured. An explicitly started OAuth callback relay serves one registered redirect URI host and forwards each single-use, expiring state only to the live route its owner bound it to. Public tunnels remain explicit profile commands.
 
 Registered development domains live in machine state, bound to a repository and project. Manifests may select registered domains but cannot register them. The DevFn Caddy binds to IPv4 loopback and uses IPv6 loopback when available, does not install its internal CA in OS trust stores, and denies unselected hosts and paths. Explicit certificate files are checked for generated hostname coverage. DNS-01 remains unavailable without a validated adapter.
 

@@ -1,5 +1,6 @@
 export { domainAliases, resolveInstanceIdentity } from "./identity.js";
 export { registerDomain, unregisterDomain, readRegisteredDomains, verifyLocalDns, type RegisteredDomain } from "@devfn/proxy";
+export { oauthRelayStatus, startOAuthRelay, stopOAuthRelay, type OAuthRelayStatus } from "@devfn/proxy/oauth-relay";
 export { DevFnOrchestrator, hasRecordedProcessOwner, recoverOrphanedProxyRoutes, resolveAllocationUrls, selectOwnershipListeners, verifyOwnedLoopbackListeners } from "./orchestrator.js";
 export { createPlan } from "./planner.js";
 export { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution, type EndpointResolutionInput, type ResolvedNodeStartup } from "./endpoints.js";
