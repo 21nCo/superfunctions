@@ -611,7 +611,18 @@ recorded run used the sibling TestFn readiness build, not a published package.
 
 Run `npm --prefix cachefn/typescript run test:coverage` for the four V8 coverage
 metrics; the V0 specification's general 95% claim does not identify a metric.
-Pending release checks include the combined packaged TestFn dependency graph and native Safari/Firefox host acceptance; WebKit acceptance is not native Safari evidence.
+A fresh consumer of locally packed CacheFn/TestFn/shared dependencies also passes
+the same fixture lifecycle and failure checks. Run it with already built packages:
+
+```sh
+CACHEFN_TESTFN_WORKTREE=/absolute/path/to/testfn-readiness-worktree node cachefn/typescript/scripts/testfn-packed-acceptance.mjs
+```
+
+`CACHEFN_NPM_CLI` optionally selects an installed npm CLI JavaScript entrypoint.
+The recorded run used npm11.21.0 after npm10.8.2 encountered an internal
+`edgesOut` resolution failure, without force or legacy peer flags. SDK and Vitest
+resolution is checked inside the disposable consumer; no workspace module aliases
+are used. Registry publication and native Safari/Firefox host acceptance remain; WebKit acceptance is not native Safari evidence.
 
 
 ### Unpublished dependency validation
