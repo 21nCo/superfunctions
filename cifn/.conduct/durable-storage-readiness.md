@@ -60,3 +60,15 @@ Durable records are a prerequisite, not a durable scheduler. The following remai
 - Durable notification delivery/outbox and actual SendFn provider acceptance; current defaults still use memory notifications and existing email integration gaps remain.
 - Persistent external queue, logs, artifact and secret-provider acceptance, deployment backups and restore, key rotation/migrations, retention, concurrency/load tests and packaged-consumer matrix. SQLite crash acceptance is local process evidence, not filesystem power-loss, hosted database or production deployment evidence.
 - Original cross-language, CLI, dashboard and end-to-end execution requirements remain unchanged. No Python implementation was altered or validated by this TypeScript storage slice.
+
+### Pagination and module-consumer follow-up
+
+Pagination boundaries use the authenticated cursor tuple even if that run changes
+status between requests. A SQLite regression covers both recovery pages and
+status-filtered run pages; the durable suite now has nine cases.
+`node scripts/verify-module-consumers.mjs` runs independent CJS and ESM consumer
+processes against built entrypoints and exercises pipeline validation, schema
+exports and app construction. The Ajv ESM import includes its `.js` extension;
+the ESM bundle supplies Node `createRequire` for bundled CommonJS dependencies.
+These probes use the installed workspace dependency graph, not a fresh installed
+npm tarball graph. Both module probes and the built SQLite restart probe pass.

@@ -1,4 +1,4 @@
-import Ajv2020 from 'ajv/dist/2020';
+import Ajv2020 from 'ajv/dist/2020.js';
 import pipelineSchema from '../../../../schemas/pipeline.schema.json';
 import type { PipelineSpec, ValidationResult, JobSpec } from './types.js';
 import { validateExpression, EXPR_MAX_LENGTH } from '../expressions/eval.js';

@@ -118,6 +118,17 @@ describe('real SQLite durable control-plane state', () => {
     expect((await second.store.listRuns()).runs.map(run => run.id)).toEqual([foreign.id]);
   });
 
+  it('continues filtered and recovery pages when the boundary run changes status', async () => {
+    const { path } = await location(); const { store } = await open(path);
+    for (let i = 0; i < 3; i++) await store.createRun(input);
+    const recovery = await store.listRecoveryCandidates({ limit: 1 });
+    const filtered = await store.listRuns({ limit: 1, status: 'queued' });
+    expect(recovery.nextCursor).toBe(filtered.nextCursor);
+    await store.updateRunStatus(recovery.candidates[0].run.id, 'success');
+    expect((await store.listRecoveryCandidates({ cursor: recovery.nextCursor })).candidates).toHaveLength(2);
+    expect((await store.listRuns({ cursor: filtered.nextCursor, status: 'queued' })).runs).toHaveLength(2);
+  });
+
   it('uses optimistic revisions across independent connections without losing artifacts, secrets or step updates', async () => {
     const { path } = await location();
     const [first, second] = await Promise.all([open(path), open(path)]);

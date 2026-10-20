@@ -141,7 +141,7 @@ export class DatabaseStore implements ControlPlaneStore {
     else if (options.status) where.push({ field: 'status', operator: 'eq', value: options.status });
     if (options.cursor) {
       const cursor = await this.database.findOne<StateRow>({ model: CIFN_STATE_TABLE, where: this.where(this.id('run', options.cursor)) });
-      if (!cursor || (statuses && !statuses.includes(cursor.status as RunStatus)) || (options.status && cursor.status !== options.status)) return { rows: [] };
+      if (!cursor) return { rows: [] };
       this.decode<RunState>(cursor);
       // Two bounded queries express the keyset boundary without OR predicates
       // that could escape the namespace filter in an adapter.
