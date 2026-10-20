@@ -95,12 +95,14 @@ export interface FeedbackSubmission {
 }
 
 export interface FeedbackItem {
+  tags?: string[];
   id: string;
   title: string;
   body: string;
   category: FeedbackCategory;
   status: FeedbackStatus;
   votes: number;
+  viewerVote?: -1 | 0 | 1;
   createdAt: string;
 }
 
@@ -177,5 +179,13 @@ export interface FeedbackReceipt { id: string; accepted: true; }
 export interface FeedbackSubmitOptions { idempotencyKey?: string; }
 export interface FeedbackContext extends FeedbackSubmitOptions { source: 'in_app'; user: UserIdentity | null; }
 export interface FeedbackService {
+  list?(options?: FeedbackBoardOptions): Promise<FeedbackBoardPage>;
+  vote?(id: string, direction: -1 | 0 | 1): Promise<FeedbackVote>;
+  setStatus?(id: string, status: FeedbackStatus): Promise<FeedbackStatusResult>;
   submit(feedback: FeedbackSubmission, context: FeedbackContext): Promise<FeedbackReceipt>;
 }
+
+export interface FeedbackBoardOptions { limit?: number; after?: string; status?: FeedbackStatus; }
+export interface FeedbackBoardPage { items: FeedbackItem[]; nextCursor: string | null; }
+export interface FeedbackVote { id: string; votes: number; viewerVote: -1 | 0 | 1; }
+export interface FeedbackStatusResult { id: string; status: FeedbackStatus; }

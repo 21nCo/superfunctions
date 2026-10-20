@@ -27,3 +27,21 @@ class FeedbackEngine:
         if (not isinstance(receipt, FeedbackReceipt) or receipt.accepted is not True
                 or not isinstance(receipt.id, str) or not receipt.id.strip()):
             raise FeedbackDeliveryError('Feedback service did not acknowledge acceptance')
+
+    async def get_feedback_board(self, **options):
+        method = getattr(self.service, 'list', None)
+        if method is None:
+            raise FeedbackDeliveryError('Feedback board service is not configured')
+        return await method(options)
+
+    async def vote_feedback(self, feedback_id: str, direction: int):
+        method = getattr(self.service, 'vote', None)
+        if method is None:
+            raise FeedbackDeliveryError('Feedback voting service is not configured')
+        return await method(feedback_id, direction)
+
+    async def set_feedback_status(self, feedback_id: str, status: str):
+        method = getattr(self.service, 'set_status', None)
+        if method is None:
+            raise FeedbackDeliveryError('Feedback moderation service is not configured')
+        return await method(feedback_id, status)

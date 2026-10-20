@@ -15,5 +15,16 @@ export function getUserFnSchema(): TableSchemaMap {
       votes: { type: 'number', required: true },
     },
     indexes: [{ name: 'userfn_feedback_tenant_created', fields: ['tenantId', 'createdAt'] }],
+  }, userfn_feedback_votes: {
+    modelName: 'userfn_feedback_votes',
+    fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 67 },
+      tenantId: { type: 'string', required: true, maxLength: 200 },
+      feedbackId: { type: 'string', required: true, maxLength: 67 },
+      actorType: { type: 'string', required: true, maxLength: 16 },
+      actorId: { type: 'string', required: true, maxLength: 200 },
+      direction: { type: 'number', required: true },
+    },
+    indexes: [{ name: 'userfn_votes_feedback_direction', fields: ['tenantId', 'feedbackId', 'direction'] }],
   } };
 }

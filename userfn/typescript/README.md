@@ -120,4 +120,17 @@ The SDK sends `POST <endpoint>/feedback` with bearer authentication and a stable
 
 `submitFeedback()` resolves only after a positive service receipt; the backend waits for its database write. The widget uses the same operation and retains its failure state on rejection. Current identity is submitted as client metadata, separate from the server-authenticated actor. Reset sends anonymous client metadata and does not change bearer permissions.
 
-An explicit `feedbackService` still overrides HTTP delivery and must implement the awaited `FeedbackService` receipt contract. Without either service or endpoint, submission rejects. The board placeholder rejects. Configuration sync, offline queues, voting, external-source ingestion and browser end-to-end acceptance remain open. See [service setup](../service/README.md). Use narrowly scoped credentials in browser clients; never embed an administrative key.
+An explicit `feedbackService` still overrides HTTP delivery and must implement the awaited `FeedbackService` receipt contract. Without either service or endpoint, submission rejects. Configuration sync, offline queues, external-source ingestion and browser end-to-end acceptance remain open. See [service setup](../service/README.md). Use narrowly scoped credentials in browser clients; never embed an administrative key.
+
+### Board, votes and status
+
+```typescript
+const page = await client.getFeedbackBoard({ limit: 20, status: 'open' });
+const next = page.nextCursor
+  ? await client.getFeedbackBoard({ limit: 20, status: 'open', after: page.nextCursor })
+  : null;
+await client.voteFeedback(page.items[0].id, 1); // -1 downvote; 0 remove
+await client.setFeedbackStatus(page.items[0].id, 'planned');
+```
+
+These operations require independent read, vote and moderate bearer scopes. The server counts one vote per authenticated actor; changing client identity does not create another voter. API keys count as key principals, so use verified user principals for human voting. HTTP errors reject and malformed results are not acknowledged. Operations use the same bounded retry/timeout policy; repeated directions/statuses are idempotent, with last committed update winning concurrent changes. Board results are limited to 100 items and 16 MiB. Custom `feedbackService` implementations may optionally implement `list`, `vote` and `setStatus`; missing methods fail explicitly. See service documentation for schema migration, projection limits and live cursor semantics.

@@ -24,7 +24,7 @@ it('persists actual TS/Python HTTP submissions and retry races across SQLite clo
   const directory = await mkdtemp(join(tmpdir(), 'userfn-feedback-'));
   const connect = () => {
     const sql = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(join(directory, 'feedback.sqlite')) }) });
-    return { sql, adapter: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { userfn_feedback: 'userfn_feedback' } }) };
+    return { sql, adapter: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { userfn_feedback: 'userfn_feedback', userfn_feedback_votes: 'userfn_feedback_votes' } }) };
   };
   let { sql, adapter } = connect();
   let service = createUserFnService({ database: adapter, auth });
@@ -49,8 +49,9 @@ it('persists actual TS/Python HTTP submissions and retry races across SQLite clo
     } catch (error) { outgoing.writeHead(500); outgoing.end('fixture failure'); }
   });
   try {
-    let migration = sql.schema.createTable('userfn_feedback');
-    for (const [name, field] of Object.entries(getUserFnSchema().userfn_feedback.fields)) {
+    for (const table of Object.values(getUserFnSchema())) {
+    let migration = sql.schema.createTable(table.modelName);
+    for (const [name, field] of Object.entries(table.fields)) {
       migration = migration.addColumn(name, field.type === 'number' ? 'integer' : 'text', column => {
         if (field.required) column = column.notNull();
         if (name === 'id') column = column.primaryKey();
@@ -58,6 +59,7 @@ it('persists actual TS/Python HTTP submissions and retry races across SQLite clo
       });
     }
     await migration.execute();
+    }
     for (const index of getUserFnSchema().userfn_feedback.indexes ?? []) {
       await sql.schema.createIndex(index.name).on('userfn_feedback').columns(index.fields).execute();
     }

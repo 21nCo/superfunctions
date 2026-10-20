@@ -56,3 +56,32 @@ it('rejects unsafe endpoint configuration, invalid keys and oversized requests b
   await expect(client.submitFeedback({ ...feedback, body: 'x'.repeat(65537) })).rejects.toThrow('65536');
   expect(transport).not.toHaveBeenCalled();
 });
+
+it('rejects malformed board, vote and moderation acknowledgments without retry', async () => {
+  const transport = vi.fn(); vi.stubGlobal('fetch', transport);
+  const client = new UserFnClient({ endpoint: 'https://service.example', apiKey: 'key' });
+  const id = 'uf_' + 'a'.repeat(64);
+  for (const [reply, operation] of [
+    [{ items: [], nextCursor: 42 }, () => client.getFeedbackBoard()],
+    [{ id, votes: '1', viewerVote: 1 }, () => client.voteFeedback(id, 1)],
+    [{ id, status: 'closed' }, () => client.setFeedbackStatus(id, 'planned')],
+  ] as const) {
+    transport.mockReset().mockResolvedValue(Response.json(reply));
+    await expect(operation()).rejects.toBeInstanceOf(FeedbackDeliveryError);
+    expect(transport).toHaveBeenCalledOnce();
+  }
+  transport.mockReset();
+  await expect(client.voteFeedback('../escape', 1)).rejects.toBeInstanceOf(TypeError);
+  expect(transport).not.toHaveBeenCalled();
+});
+
+it('retries an idempotent vote with the same target and direction', async () => {
+  const id = 'uf_' + 'b'.repeat(64);
+  const transport = vi.fn().mockResolvedValueOnce(new Response('', { status: 503 }))
+    .mockResolvedValueOnce(Response.json({ id, votes: -1, viewerVote: -1 }));
+  vi.stubGlobal('fetch', transport);
+  const client = new UserFnClient({ endpoint: 'https://service.example', apiKey: 'key', feedbackMaxAttempts: 2 });
+  expect(await client.voteFeedback(id, -1)).toEqual({ id, votes: -1, viewerVote: -1 });
+  expect(transport.mock.calls[0][0]).toBe(transport.mock.calls[1][0]);
+  expect(transport.mock.calls[0][1].body).toBe(transport.mock.calls[1][1].body);
+});

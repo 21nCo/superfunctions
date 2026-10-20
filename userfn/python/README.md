@@ -134,4 +134,17 @@ This sends an actual bearer-authenticated POST to `<endpoint>/feedback`. A stabl
 
 HTTP runs through the standard-library transport on an asyncio worker thread. `feedback_timeout_ms` bounds socket operations, not the total duration of a slow streaming response. Cancelling the awaiting task does not terminate the worker thread or undo a committed write; reuse the same idempotency key when reconciling an uncertain outcome. Attempts are limited to 1–5.
 
-An explicit async `feedback_service` overrides HTTP delivery and retains its awaited receipt contract. Missing configuration fails. Identity remains client metadata, distinct from the server-authenticated actor. See [service setup](../service/README.md). Offline delivery, board/voting and source integrations remain open.
+An explicit async `feedback_service` overrides HTTP delivery and retains its awaited receipt contract. Missing configuration fails. Identity remains client metadata, distinct from the server-authenticated actor. See [service setup](../service/README.md). Offline delivery and source integrations remain open.
+
+### Board, votes and status
+
+```python
+page = await client.get_feedback_board(limit=20, status="open")
+if page["nextCursor"]:
+    next_page = await client.get_feedback_board(limit=20, status="open", after=page["nextCursor"])
+feedback_id = page["items"][0]["id"]
+await client.vote_feedback(feedback_id, 1)  # -1 downvote; 0 remove
+await client.set_feedback_status(feedback_id, "planned")
+```
+
+Results are dictionaries using the HTTP field names (`items`, `nextCursor`, `viewerVote`). Read, vote and moderate scopes are independent. Voting identity is the verified server principal, not `identify()` metadata; an API key represents one key actor rather than one human. Repeated direction/removal/status writes are idempotent; concurrent changes use the last committed update. Custom services may provide async `list(options)`, `vote(id, direction)` and `set_status(id, status)`; otherwise these operations fail explicitly. Board results are capped at 16 MiB and 100 items. See the service documentation for live pagination and the configurable bounded score projection.

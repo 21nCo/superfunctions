@@ -38,3 +38,7 @@ No hosted changes or publication were performed for this checkpoint.
 ## Follow-up: actual AuthFn provider
 
 The [AuthFn acceptance checkpoint](authfn-feedback-acceptance.md) subsequently exercises real API-key issuance and revocation through AuthFn routes and its actual provider, with trusted tenant mapping and UserFn SQLite reopen. This supersedes the earlier fixture-only provider limitation for repository-source integration. AuthFn durable storage, packed dependency compatibility and hosted acceptance remain open.
+
+## Follow-up: board, votes and status
+
+The [feedback board checkpoint](feedback-board-readiness.md) subsequently implements bounded status-filtered listing, authenticated actor voting and moderation status updates with both SDKs and native concurrency/reopen acceptance. It supersedes those missing-route gates; tag/product-area filters, scaling, full board UI and remaining product/deployment requirements stay open.

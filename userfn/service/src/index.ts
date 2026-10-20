@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { assertValidAuthSession, type AuthProvider, type AuthSession } from '@superfunctions/auth';
-import { wrapWithSchema, type Adapter } from '@superfunctions/db';
+import { wrapWithSchema, type Adapter, type WhereClause } from '@superfunctions/db';
 import { createRouter, PayloadTooLargeError, RouterError } from '@superfunctions/http';
 import { corsMiddleware } from '@superfunctions/http/middleware';
 import { getUserFnSchema } from './schema.js';
-import { canonical, FeedbackConflictError, FeedbackValidationError, validateKey, validatePayload } from './validation.js';
+import { canonical, FeedbackConflictError, FeedbackValidationError, validateKey, validatePayload, object } from './validation.js';
 export { getUserFnSchema } from './schema.js';
 
 export interface UserFnServiceOptions {
@@ -14,6 +14,8 @@ export interface UserFnServiceOptions {
   /** Trusted server-side tenant/permission mapping after authentication; never use client claims. */
   resolveAccess?: (session: AuthSession) => Promise<{ tenantId: string; scopes: string[] } | null> | { tenantId: string; scopes: string[] } | null;
   maxBodyBytes?: number;
+  /** Maximum vote rows read per item; overflow fails rather than reporting a partial score. Default 10,000. */
+  maxVotesPerFeedback?: number;
   /** Explicit browser origins; credentials/cookies are never enabled. */
   allowedOrigins?: string[];
 }
@@ -21,6 +23,8 @@ interface StoredFeedback {
   id: string; tenantId: string; actorId: string; fingerprint: string;
   payload: Record<string, unknown>; createdAt: string; status: string; votes: number;
 }
+const statuses = ['open', 'planned', 'in_progress', 'done', 'closed'];
+const validId = (id: string) => /^uf_[a-f0-9]{64}$/.test(id);
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: {
   'content-type': 'application/json', 'cache-control': 'no-store',
@@ -31,6 +35,8 @@ export function createUserFnService(options: UserFnServiceOptions) {
   if (options.allowedOrigins?.some(origin => {
     try { const url = new URL(origin); return !['http:', 'https:'].includes(url.protocol) || url.origin !== origin; } catch { return true; }
   })) throw new TypeError('UserFn allowedOrigins must contain explicit HTTP(S) origins');
+  const maxVotes = options.maxVotesPerFeedback ?? 10000;
+  if (!Number.isInteger(maxVotes) || maxVotes < 1 || maxVotes > 100000) throw new TypeError('maxVotesPerFeedback must be an integer from 1 to 100000');
   const database = wrapWithSchema(options.database, getUserFnSchema());
   const authorize = async (request: Request, scope: string): Promise<AuthSession | Response> => {
     // Require explicit bearer credentials and exclude ambient cookies to avoid a cookie/CSRF fallback.
@@ -60,6 +66,19 @@ export function createUserFnService(options: UserFnServiceOptions) {
   const find = (tenantId: string, id: string) => database.findOne<StoredFeedback>({ model: 'userfn_feedback', where: [
     { field: 'tenantId', operator: 'eq', value: tenantId }, { field: 'id', operator: 'eq', value: id },
   ] });
+  const votes = async (tenantId: string, feedbackId: string, actorId: string, actorType: string) => {
+    // One projection query supplies score and own vote from the same read, independent of transaction defaults.
+    const rows = await database.findMany<{ direction: number; actorId: string; actorType: string }>({ model: 'userfn_feedback_votes',
+      where: [{ field: 'tenantId', operator: 'eq', value: tenantId }, { field: 'feedbackId', operator: 'eq', value: feedbackId }],
+      select: ['direction', 'actorId', 'actorType'], limit: maxVotes + 1 });
+    if (rows.length > maxVotes) throw new Error('Feedback vote projection exceeds configured bound');
+    return { votes: rows.reduce((sum, row) => sum + row.direction, 0), viewerVote: rows.find(row => row.actorId === actorId && row.actorType === actorType)?.direction ?? 0 };
+  };
+  const boardItem = async (row: StoredFeedback, actorId: string, actorType: string) => {
+    const feedback = row.payload.feedback as Record<string, unknown>;
+    return { id: row.id, title: feedback.title, body: feedback.body, category: feedback.category, tags: feedback.tags ?? [],
+      status: row.status, createdAt: row.createdAt, ...await votes(row.tenantId, row.id, actorId, actorType) };
+  };
   const errorResponse = (error: unknown): Response => {
       if (error instanceof PayloadTooLargeError) return json({ error: 'Payload too large' }, 413);
       if (error instanceof FeedbackConflictError) return json({ error: 'Idempotency key already used for different feedback' }, 409);
@@ -75,12 +94,55 @@ export function createUserFnService(options: UserFnServiceOptions) {
     maxBodyBytes: options.maxBodyBytes ?? 65536,
     onError: errorResponse,
     middleware: [
-      ...(options.allowedOrigins ? [corsMiddleware({ origin: options.allowedOrigins, methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'], credentials: false })] : []),
+      ...(options.allowedOrigins ? [corsMiddleware({ origin: options.allowedOrigins, methods: ['GET', 'POST', 'PATCH', 'OPTIONS'], allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'], credentials: false })] : []),
       async (_request, _context, next) => { try { return await next(); } catch (error) { return errorResponse(error); } },
     ],
     routes: [
       { method: 'OPTIONS', path: '/feedback', handler: () => new Response(null, { status: 204 }) },
       { method: 'OPTIONS', path: '/feedback/:id', handler: () => new Response(null, { status: 204 }) },
+      { method: 'OPTIONS', path: '/feedback/:id/vote', handler: () => new Response(null, { status: 204 }) },
+      { method: 'OPTIONS', path: '/feedback/:id/status', handler: () => new Response(null, { status: 204 }) },
+      { method: 'GET', path: '/feedback', handler: async (request) => {
+        const session = await authorize(request, 'userfn:feedback:read');
+        if (session instanceof Response) return session;
+        const query = new URL(request.url).searchParams;
+        if ([...query.keys()].some(key => !['limit', 'after', 'status'].includes(key) || query.getAll(key).length !== 1)) throw new FeedbackValidationError();
+        const rawLimit = query.get('limit') ?? '20';
+        const limit = Number(rawLimit);
+        const after = query.get('after'); const status = query.get('status');
+        if (!/^[0-9]+$/.test(rawLimit) || limit < 1 || limit > 100 || (after !== null && !validId(after)) || (status !== null && !statuses.includes(status))) throw new FeedbackValidationError();
+        const where: WhereClause[] = [{ field: 'tenantId', operator: 'eq', value: session.subject.tenantId! }];
+        if (after) where.push({ field: 'id', operator: 'gt', value: after });
+        if (status) where.push({ field: 'status', operator: 'eq', value: status });
+        const rows = await database.findMany<StoredFeedback>({ model: 'userfn_feedback', where, limit: limit + 1, orderBy: [{ field: 'id', direction: 'asc' }] });
+        const selected = rows.slice(0, limit);
+        const items = [];
+        for (const row of selected) items.push(await boardItem(row, session.subject.actorId, session.subject.actorType));
+        return json({ items, nextCursor: rows.length > limit ? selected[selected.length - 1].id : null });
+      } },
+      { method: 'POST', path: '/feedback/:id/vote', handler: async (request, context) => {
+        const session = await authorize(request, 'userfn:feedback:vote');
+        if (session instanceof Response) return session;
+        const body = await context.json();
+        if (!validId(context.params.id) || !object(body) || Object.keys(body).some(key => key !== 'direction') || ![-1, 0, 1].includes(body.direction as number)) throw new FeedbackValidationError();
+        const tenantId = session.subject.tenantId!; const actorId = session.subject.actorId;
+        if (!await find(tenantId, context.params.id)) return json({ error: 'Feedback not found' }, 404);
+        const id = 'uv_' + hash(JSON.stringify([tenantId, context.params.id, session.subject.actorType, actorId]));
+        const where: WhereClause[] = [{ field: 'id', operator: 'eq', value: id }, { field: 'tenantId', operator: 'eq', value: tenantId }];
+        if (body.direction === 0) await database.deleteMany({ model: 'userfn_feedback_votes', where });
+        else await database.upsert({ model: 'userfn_feedback_votes', where, conflictTarget: 'id', create: { id, tenantId, feedbackId: context.params.id, actorId, actorType: session.subject.actorType, direction: body.direction }, update: { direction: body.direction } });
+        return json({ id: context.params.id, ...await votes(tenantId, context.params.id, actorId, session.subject.actorType) });
+      } },
+      { method: 'PATCH', path: '/feedback/:id/status', handler: async (request, context) => {
+        const session = await authorize(request, 'userfn:feedback:moderate');
+        if (session instanceof Response) return session;
+        const body = await context.json();
+        if (!validId(context.params.id) || !object(body) || Object.keys(body).some(key => key !== 'status') || !statuses.includes(body.status as string)) throw new FeedbackValidationError();
+        const tenantId = session.subject.tenantId!;
+        if (!await find(tenantId, context.params.id)) return json({ error: 'Feedback not found' }, 404);
+        await database.update({ model: 'userfn_feedback', where: [{ field: 'tenantId', operator: 'eq', value: tenantId }, { field: 'id', operator: 'eq', value: context.params.id }], data: { status: body.status } });
+        return json({ id: context.params.id, status: body.status });
+      } },
       { method: 'POST', path: '/feedback', handler: async (request, context) => {
         const session = await authorize(request, 'userfn:feedback:write');
         if (session instanceof Response) return session;
@@ -114,7 +176,7 @@ export function createUserFnService(options: UserFnServiceOptions) {
         const row = await find(session.subject.tenantId!, context.params.id);
         if (!row) return json({ error: 'Feedback not found' }, 404);
         const { fingerprint: _fingerprint, ...feedback } = row;
-        return json(feedback);
+        return json({ ...feedback, ...await votes(row.tenantId, row.id, session.subject.actorId, session.subject.actorType) });
       } },
     ],
   });

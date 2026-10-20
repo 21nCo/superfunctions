@@ -10,7 +10,7 @@ describe('feedback delivery boundary', () => {
     const log = vi.spyOn(console, 'log');
     try {
       await expect(new UserFnClient({ apiKey: 'key' }).submitFeedback(feedback)).rejects.toThrow('not configured');
-      await expect(new FeedbackEngine().getFeedbackBoard()).rejects.toThrow('not implemented');
+      await expect(new FeedbackEngine().getFeedbackBoard()).rejects.toThrow('not configured');
       expect(log).not.toHaveBeenCalled();
     } finally { log.mockRestore(); }
   });

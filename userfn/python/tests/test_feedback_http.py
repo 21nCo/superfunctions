@@ -13,7 +13,7 @@ def endpoint():
     replies = []
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
-            calls.append((self.path, {key.lower(): value for key, value in self.headers.items()}, self.rfile.read(int(self.headers['Content-Length']))))
+            calls.append((self.path, {key.lower(): value for key, value in self.headers.items()}, self.rfile.read(int(self.headers.get('Content-Length', '0')))))
             status, body, extra, delay = replies.pop(0) if replies else (201, {'id': 'stored', 'accepted': True}, {}, 0)
             time.sleep(delay)
             self.send_response(status)
@@ -24,6 +24,8 @@ def endpoint():
                 self.wfile.write(body.encode() if isinstance(body, str) else json.dumps(body).encode())
             except BrokenPipeError:
                 pass
+        do_GET = do_POST
+        do_PATCH = do_POST
         def log_message(self, *_args):
             pass
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
@@ -87,3 +89,32 @@ def test_timeout_does_not_acknowledge(endpoint):
     with pytest.raises((TimeoutError, OSError)):
         asyncio.run(client.submit_feedback(submission()))
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize('kind,reply', [
+    ('board', {'items': [], 'nextCursor': 42}),
+    ('vote', {'id': 'uf_' + 'a' * 64, 'votes': True, 'viewerVote': 1}),
+    ('status', {'id': 'uf_' + 'a' * 64, 'status': 'closed'}),
+])
+def test_malformed_board_operations_never_acknowledged(endpoint, kind, reply):
+    url, calls, replies = endpoint
+    replies.append((200, reply, {}, 0))
+    client = UserFnClient(UserFnOptions(api_key='key', endpoint=url))
+    feedback_id = 'uf_' + 'a' * 64
+    operation = (client.get_feedback_board() if kind == 'board' else
+                 client.vote_feedback(feedback_id, 1) if kind == 'vote' else
+                 client.set_feedback_status(feedback_id, 'planned'))
+    with pytest.raises(FeedbackDeliveryError):
+        asyncio.run(operation)
+    assert len(calls) == 1
+
+
+def test_vote_retry_preserves_target_and_direction(endpoint):
+    url, calls, replies = endpoint
+    feedback_id = 'uf_' + 'b' * 64
+    replies.extend([(503, {}, {}, 0), (200, {'id': feedback_id, 'votes': -1, 'viewerVote': -1}, {}, 0)])
+    client = UserFnClient(UserFnOptions(api_key='key', endpoint=url, feedback_max_attempts=2))
+    assert asyncio.run(client.vote_feedback(feedback_id, -1))['viewerVote'] == -1
+    assert len(calls) == 2
+    assert calls[0][0] == calls[1][0]
+    assert calls[0][2] == calls[1][2] == b'{"direction": -1}'

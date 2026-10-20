@@ -138,3 +138,36 @@ it('preserves method negotiation headers', async () => {
   expect(response.headers.get('allow')).toContain('POST');
   expect(response.headers.get('cache-control')).toBe('no-store');
 });
+
+
+it('fails explicitly when a vote projection exceeds its configured bound, never returning a truncated score', async () => {
+  const database = memoryAdapter();
+  const votingAuth: AuthProvider = { async authenticate(req) {
+    return { ...session(), subject: { ...session().subject, actorId: req.headers.get('authorization')! }, scopes: ['userfn:feedback:write', 'userfn:feedback:read', 'userfn:feedback:vote', 'userfn:feedback:moderate'] };
+  } };
+  const service = createUserFnService({ database, auth: votingAuth, maxVotesPerFeedback: 1 });
+  const { id } = await (await service.router.handle(request())).json();
+  const vote = (actor: string, body: unknown) => service.router.handle(new Request(`http://localhost/feedback/${id}/vote`, { method: 'POST', headers: { authorization: `Bearer ${actor}` }, body: JSON.stringify(body) }));
+  expect((await vote('one', { direction: 1 })).status).toBe(200);
+  const overflow = await vote('two', { direction: -1 });
+  expect(overflow.status).toBe(503);
+  expect(await overflow.json()).not.toHaveProperty('votes');
+  expect((await service.router.handle(new Request('http://localhost/feedback', { headers: { authorization: 'Bearer one' } }))).status).toBe(503);
+  expect(await database.count({ model: 'userfn_feedback_votes' })).toBe(2); // Mutation persisted; the read projection fails honestly.
+  expect((await vote('two', { direction: 0 })).status).toBe(200);
+  for (const body of [{ direction: true }, { direction: 2 }, { direction: 1, actorId: 'spoof' }, null]) expect((await vote('one', body)).status).toBe(400);
+  expect((await service.router.handle(new Request(`http://localhost/feedback/${id}/status`, { method: 'PATCH', headers: { authorization: 'Bearer one' }, body: JSON.stringify({ status: 'invented' }) }))).status).toBe(400);
+  for (const limit of [0, 100001, 1.5]) expect(() => createUserFnService({ database, auth: votingAuth, maxVotesPerFeedback: limit })).toThrow('maxVotesPerFeedback');
+});
+
+
+it('keeps user and API-key principals distinct even when their actor IDs match', async () => {
+  const service = createUserFnService({ database: memoryAdapter(), auth: { authenticate: async req => ({
+    ...session(), subject: { actorId: 'same-id', actorType: req.headers.get('authorization') === 'Bearer user' ? 'user' : 'api-key', tenantId: 'tenant-a' }, scopes: ['userfn:feedback:write', 'userfn:feedback:vote'],
+  }) } });
+  const { id } = await (await service.router.handle(request())).json();
+  for (const [actor, total] of [['key', 1], ['user', 2]] as const) {
+    const response = await service.router.handle(new Request(`http://localhost/feedback/${id}/vote`, { method: 'POST', headers: { authorization: `Bearer ${actor}` }, body: JSON.stringify({ direction: 1 }) }));
+    expect(await response.json()).toMatchObject({ votes: total, viewerVote: 1 });
+  }
+});

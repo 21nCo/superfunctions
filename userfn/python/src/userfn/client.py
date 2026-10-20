@@ -52,3 +52,17 @@ class UserFnClient:
 
     async def submit_feedback(self, feedback: FeedbackSubmission, *, idempotency_key: Optional[str] = None) -> None:
         await self.feedback.submit(feedback, idempotency_key)
+
+    async def get_feedback_board(self, *, limit=20, after=None, status=None):
+        options = {'limit': limit}
+        if after is not None:
+            options['after'] = after
+        if status is not None:
+            options['status'] = status
+        return await self.feedback.get_feedback_board(**options)
+
+    async def vote_feedback(self, feedback_id: str, direction: int):
+        return await self.feedback.vote_feedback(feedback_id, direction)
+
+    async def set_feedback_status(self, feedback_id: str, status: str):
+        return await self.feedback.set_feedback_status(feedback_id, status)

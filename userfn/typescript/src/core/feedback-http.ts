@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid';
-import type { FeedbackContext, FeedbackReceipt, FeedbackService, FeedbackSubmission, UserFnOptions } from '../types';
+import type { FeedbackContext, FeedbackReceipt, FeedbackBoardOptions, FeedbackBoardPage, FeedbackVote, FeedbackStatus, FeedbackStatusResult, FeedbackService, FeedbackSubmission, UserFnOptions } from '../types';
 import { FeedbackDeliveryError } from './feedback';
 
 export class FeedbackHTTPError extends FeedbackDeliveryError {
@@ -24,22 +24,45 @@ export class HttpFeedbackService implements FeedbackService {
     const key = context.idempotencyKey ?? uuid();
     const body = JSON.stringify({ feedback, context: { source: context.source, user: context.user } });
     if (new TextEncoder().encode(body).byteLength > 65536) throw new RangeError('Feedback request exceeds 65536 bytes');
+    const receipt = await this.request<FeedbackReceipt>('', 'POST', body, key);
+    if (!receipt || receipt.accepted !== true || typeof receipt.id !== 'string' || !receipt.id.trim()) throw new FeedbackDeliveryError('Feedback service did not acknowledge acceptance');
+    return receipt;
+  }
+  async list(options: FeedbackBoardOptions = {}): Promise<FeedbackBoardPage> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(options)) if (value !== undefined) query.set(key, String(value));
+    const page = await this.request<FeedbackBoardPage>('?' + query, 'GET');
+    if (!page || !Array.isArray(page.items) || !(page.nextCursor === null || (typeof page.nextCursor === 'string' && /^uf_[a-f0-9]{64}$/.test(page.nextCursor))) || page.items.length > 100 || page.items.some(item => !item || !/^uf_[a-f0-9]{64}$/.test(item.id) || typeof item.title !== 'string' || typeof item.body !== 'string' || !Number.isInteger(item.votes) || ![-1, 0, 1].includes(item.viewerVote!) || !['open', 'planned', 'in_progress', 'done', 'closed'].includes(item.status) || typeof item.createdAt !== 'string')) throw new FeedbackDeliveryError('Invalid feedback board response');
+    return page;
+  }
+  async vote(id: string, direction: -1 | 0 | 1): Promise<FeedbackVote> {
+    if (!/^uf_[a-f0-9]{64}$/.test(id) || ![-1, 0, 1].includes(direction)) throw new TypeError('Invalid feedback vote');
+    const result = await this.request<FeedbackVote>('/' + id + '/vote', 'POST', JSON.stringify({ direction }));
+    if (!result || result.id !== id || !Number.isInteger(result.votes) || ![-1, 0, 1].includes(result.viewerVote)) throw new FeedbackDeliveryError('Invalid feedback vote response');
+    return result;
+  }
+  async setStatus(id: string, status: FeedbackStatus): Promise<FeedbackStatusResult> {
+    if (!/^uf_[a-f0-9]{64}$/.test(id) || !['open', 'planned', 'in_progress', 'done', 'closed'].includes(status)) throw new TypeError('Invalid feedback status');
+    const result = await this.request<FeedbackStatusResult>('/' + id + '/status', 'PATCH', JSON.stringify({ status }));
+    if (!result || result.id !== id || result.status !== status) throw new FeedbackDeliveryError('Invalid feedback status response');
+    return result;
+  }
+  private async request<T>(path: string, method: string, body?: string, key?: string): Promise<T> {
     for (let attempt = 0; attempt < this.attempts; attempt++) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeout);
       try {
-        const response = await fetch(this.url, { method: 'POST', headers: {
-          authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json', 'idempotency-key': key,
+        const response = await fetch(this.url + path, { method, headers: {
+          authorization: `Bearer ${this.options.apiKey}`, 'content-type': 'application/json', ...(key ? { 'idempotency-key': key } : {}),
         }, body, signal: controller.signal, redirect: 'error', credentials: 'omit' });
         if (!response.ok) {
           await response.body?.cancel().catch(() => undefined);
           throw new FeedbackHTTPError(response.status);
         }
         // Malformed successful responses are not acknowledgments and must not be retried blindly.
-        let receipt: FeedbackReceipt;
-        try { receipt = await readReceipt(response); }
+        let receipt: T;
+        try { receipt = await readReceipt(response, method === 'GET' ? 16 * 1024 * 1024 : 65536) as T; }
         catch (error) { if (controller.signal.aborted || error instanceof FeedbackDeliveryError) throw error; throw new FeedbackDeliveryError('Feedback service returned an invalid receipt'); }
-        if (!receipt || receipt.accepted !== true || typeof receipt.id !== 'string' || !receipt.id.trim()) throw new FeedbackDeliveryError('Feedback service did not acknowledge acceptance');
         return receipt;
       } catch (error) {
         if (attempt + 1 >= this.attempts || (error instanceof FeedbackHTTPError && !transient(error.status)) || (error instanceof FeedbackDeliveryError && !(error instanceof FeedbackHTTPError))) throw error;
@@ -51,7 +74,7 @@ export class HttpFeedbackService implements FeedbackService {
 }
 
 
-async function readReceipt(response: Response): Promise<FeedbackReceipt> {
+async function readReceipt(response: Response, maxBytes: number): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw new FeedbackDeliveryError('Feedback service returned an empty receipt');
   const chunks: Uint8Array[] = [];
@@ -61,7 +84,7 @@ async function readReceipt(response: Response): Promise<FeedbackReceipt> {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 65536) {
+      if (size > maxBytes) {
         void reader.cancel().catch(() => undefined);
         throw new FeedbackDeliveryError('Feedback service returned an oversized receipt');
       }

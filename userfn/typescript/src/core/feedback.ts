@@ -1,4 +1,4 @@
-import type { FeedbackSubmission, FeedbackItem, FeedbackService, FeedbackSubmitOptions, UserIdentity } from '../types';
+import type { FeedbackSubmission, FeedbackBoardOptions, FeedbackBoardPage, FeedbackStatus, FeedbackService, FeedbackSubmitOptions, UserIdentity } from '../types';
 
 export class FeedbackDeliveryError extends Error {
   constructor(message: string) { super(message); this.name = 'FeedbackDeliveryError'; }
@@ -21,7 +21,16 @@ export class FeedbackEngine {
     }
   }
 
-  async getFeedbackBoard(): Promise<FeedbackItem[]> {
-    throw new FeedbackDeliveryError('Feedback board service is not implemented');
+  async getFeedbackBoard(options?: FeedbackBoardOptions): Promise<FeedbackBoardPage> {
+    if (!this.service?.list) throw new FeedbackDeliveryError('Feedback board service is not configured');
+    return this.service.list(options);
+  }
+  async voteFeedback(id: string, direction: -1 | 0 | 1) {
+    if (!this.service?.vote) throw new FeedbackDeliveryError('Feedback voting service is not configured');
+    return this.service.vote(id, direction);
+  }
+  async setFeedbackStatus(id: string, status: FeedbackStatus) {
+    if (!this.service?.setStatus) throw new FeedbackDeliveryError('Feedback moderation service is not configured');
+    return this.service.setStatus(id, status);
   }
 }

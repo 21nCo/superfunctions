@@ -18,12 +18,13 @@ it('accepts actual AuthFn-issued keys, preserves tenant/actor authority, and rej
   const directory = await mkdtemp(join(tmpdir(), 'userfn-authfn-'));
   const connect = () => {
     const sql = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(join(directory, 'feedback.sqlite')) }) });
-    return { sql, adapter: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { userfn_feedback: 'userfn_feedback' } }) };
+    return { sql, adapter: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { userfn_feedback: 'userfn_feedback', userfn_feedback_votes: 'userfn_feedback_votes' } }) };
   };
   let { sql, adapter } = connect();
   try {
-    let migration = sql.schema.createTable('userfn_feedback');
-    for (const [name, field] of Object.entries(getUserFnSchema().userfn_feedback.fields)) {
+    for (const table of Object.values(getUserFnSchema())) {
+    let migration = sql.schema.createTable(table.modelName);
+    for (const [name, field] of Object.entries(table.fields)) {
       migration = migration.addColumn(name, field.type === 'number' ? 'integer' : 'text', column => {
         if (field.required) column = column.notNull();
         if (name === 'id') column = column.primaryKey();
@@ -31,6 +32,7 @@ it('accepts actual AuthFn-issued keys, preserves tenant/actor authority, and rej
       });
     }
     await migration.execute();
+    }
     const app = authfn({ plugins: [authFnApiKeyPlugin()] });
     const authDatabase = memoryAdapter(); // Real AuthFn logic, but no claim of durable AuthFn key storage.
     const auth = app.createServer({ database: authDatabase });
