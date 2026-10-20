@@ -1,0 +1,34 @@
+flowfn/python/tests/test_stream_retention.py
+  s_e1c5fc1a65c0cf::t_63f3a0d80f6954 67,81-87,105
+flowfn/typescript/scripts/provider-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_10dbcb36a3e9a5 4-5,96,98-109,111
+  s_e1c5fc1a65c0cf::t_74c743a2ffba08 13,64,81,83-86,88
+flowfn/typescript/src/adapters/redis.test.ts
+  s_e1c5fc1a65c0cf::t_893c72aa4e7bd2 44,49-69
+flowfn/.conduct/native-provider-20261020.md
+  s_e1c5fc1a65c0cf::t_efc15e54aa6869 1-46
+flowfn/.conduct/native-queue-measurements-20261020.json
+  s_e1c5fc1a65c0cf::t_34b755d9b2651a 1-138
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_48beb87596d2ff 265-277
+flowfn/typescript/docs/queue-ownership.md
+  s_e1c5fc1a65c0cf::t_6a4147c014191b 68-73
+flowfn/typescript/src/adapters/redis.ts
+  s_e1c5fc1a65c0cf::t_556029792111f7 3,64-81,91,120,171,199,209,226,375,388,443,554,566,603
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34d72ad8498311af8f67556717935108902a7118",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
