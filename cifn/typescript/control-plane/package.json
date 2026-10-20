@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
-    "test:startup": "npm run build && node scripts/verify-startup.mjs"
+    "test:startup": "npm run build && node scripts/verify-startup.mjs",
+    "test:durable": "vitest run src/store/database-store.test.ts && tsc -p tsconfig.durable.json && npm run build && node scripts/verify-durable-startup.mjs"
   },
   "keywords": [
     "ci",
@@ -43,7 +44,8 @@
     "@superfunctions/envelope": "0.0.1",
     "@superfunctions/errors": "0.0.1",
     "@superfunctions/queue": "0.0.1",
-    "@superfunctions/http": "0.3.1"
+    "@superfunctions/http": "0.3.1",
+    "@superfunctions/db": "0.4.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
@@ -51,6 +53,11 @@
     "@types/uuid": "^9.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.3.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@types/better-sqlite3": "^7.6.13"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.5.0",
+    "kysely": "^0.28.0"
   }
 }

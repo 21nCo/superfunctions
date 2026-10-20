@@ -1,6 +1,7 @@
+import type { ControlPlaneStore } from '../store/store.js';
 import { verifyWebhookSignature } from '@superfunctions/webhooks';
 import type { TriggerType } from '../pipeline/types.js';
-import type { MemoryStore, CreateRunInput } from '../store/memory-store.js';
+import type { CreateRunInput } from '../store/memory-store.js';
 import type { QueueClient } from '../queue/flowfn-client.js';
 import { DEFAULT_QUEUE_NAME } from '../queue/flowfn-client.js';
 import { resolveDAG } from '../pipeline/dag.js';
@@ -14,7 +15,7 @@ import type { SecFnClient } from '../secrets/secfn-client.js';
 export type PipelineDocResolver = (ref: PipelineRef) => Promise<{ doc: string; resolvedConfigPath: string }>;
 
 export interface WebhookOptions {
-  store: MemoryStore;
+  store: ControlPlaneStore;
   queue: QueueClient;
   webhookSecret: string;
   pipelineResolver?: PipelineDocResolver;
@@ -131,7 +132,7 @@ export async function handleWebhook(
     trigger: { type: triggerType, payload },
   };
 
-  const run = options.store.createRun(input);
+  const run = await options.store.createRun(input);
 
   const secretNames = discoverSecrets(validationResult.spec);
   const jobEnvMap: Record<string, Record<string, string>> = {};
@@ -156,7 +157,7 @@ export async function handleWebhook(
       jobEnvMap[jobKey] = resolved;
       jobSecretKeys[jobKey] = Array.from(secretNames);
       
-      options.store.registerJobSecretValues(run.id, jobKey, secretValues);
+      await options.store.registerJobSecretValues(run.id, jobKey, secretValues);
     }
   }
 

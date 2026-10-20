@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { readJsonBody, readBodyText, PayloadTooLargeError } from './body.js';
+import type { ControlPlaneStore } from '../store/store.js';
 import { MemoryStore, type CreateRunInput } from '../store/memory-store.js';
 import { validate } from '../pipeline/validator.js';
 import { parse, normalizeParsedPipeline } from '../pipeline/parser.js';
@@ -21,8 +22,8 @@ const VALID_TRIGGER_TYPES: TriggerType[] = ['push', 'pull_request', 'schedule', 
 
 export type PipelineDocResolver = (ref: PipelineRef) => Promise<{ doc: string; resolvedConfigPath: string }>;
 
-export interface CreateAppOptions {
-  store?: MemoryStore;
+export interface CreateAppOptions<TStore extends ControlPlaneStore = ControlPlaneStore> {
+  store?: TStore;
   /** @deprecated Use adapters.queue instead */
   queue?: QueueClient;
   /** @deprecated Use adapters.logs instead */
@@ -38,9 +39,9 @@ export interface CreateAppOptions {
   adapters?: IntegrationAdapters;
 }
 
-export function createApp(options: CreateAppOptions = {}) {
+export function createApp<TStore extends ControlPlaneStore = MemoryStore>(options: CreateAppOptions<TStore> = {}) {
   const app = new Hono();
-  const runStore = options.store ?? new MemoryStore();
+  const runStore = (options.store ?? new MemoryStore()) as TStore;
   
   const queue = options.adapters?.queue ?? options.queue ?? new MemoryQueueClient();
   const artifactAdapter = options.adapters?.artifacts;
@@ -160,7 +161,7 @@ export function createApp(options: CreateAppOptions = {}) {
       trigger: { type: trigger.type as TriggerType, payload: trigger.payload },
     };
 
-    const run = runStore.createRun(input);
+    const run = await runStore.createRun(input);
 
     if (logs) {
       await logs.emitEvent({
@@ -195,7 +196,7 @@ export function createApp(options: CreateAppOptions = {}) {
       jobEnvMap[jobKey] = resolved;
       jobSecretKeys[jobKey] = Array.from(secretNames);
       
-      runStore.registerJobSecretValues(run.id, jobKey, secretValues);
+      await runStore.registerJobSecretValues(run.id, jobKey, secretValues);
     }
 
     const dag = resolveDAG(resolvedSpec);
@@ -217,7 +218,7 @@ export function createApp(options: CreateAppOptions = {}) {
     );
   });
 
-  api.get('/runs', (c) => {
+  api.get('/runs', async (c) => {
     const limitParam = c.req.query('limit');
     const cursor = c.req.query('cursor');
     const status = c.req.query('status') as RunStatus | undefined;
@@ -237,7 +238,7 @@ export function createApp(options: CreateAppOptions = {}) {
       return c.json(error('BAD_REQUEST', `Invalid status filter: ${status}`), 400);
     }
 
-    const result = runStore.listRuns({ limit, cursor: cursor || undefined, status });
+    const result = await runStore.listRuns({ limit, cursor: cursor || undefined, status });
     return c.json(success({
       runs: result.runs.map(formatRun),
       nextCursor: result.nextCursor ?? null,
@@ -247,7 +248,7 @@ export function createApp(options: CreateAppOptions = {}) {
   api.get('/runs/:runId/jobs/:jobKey/logs', async (c) => {
     const runId = c.req.param('runId');
     const jobKey = c.req.param('jobKey');
-    const run = runStore.getRun(runId);
+    const run = await runStore.getRun(runId);
     if (!run) {
       return c.json(error('RUN_NOT_FOUND', `Run ${runId} not found`), 404);
     }
@@ -263,7 +264,7 @@ export function createApp(options: CreateAppOptions = {}) {
       entries = logClient.getLines(runId, jobKey);
     }
     
-    const secretValues = runStore.getSecretValues(runId);
+    const secretValues = await runStore.getSecretValues(runId);
     
     const lines = entries.map(e => {
       let redactedLine = e.line;
@@ -279,11 +280,11 @@ export function createApp(options: CreateAppOptions = {}) {
 
   api.get('/runs/:runId/artifacts', async (c) => {
     const runId = c.req.param('runId');
-    const run = runStore.getRun(runId);
+    const run = await runStore.getRun(runId);
     if (!run) {
       return c.json(error('RUN_NOT_FOUND', `Run ${runId} not found`), 404);
     }
-    const artifacts = runStore.getArtifacts(runId);
+    const artifacts = await runStore.getArtifacts(runId);
     const projectedArtifacts = await Promise.all(artifacts.map(async (artifact) => {
       const signedUrl = artifact.url
         ?? (artifactAdapter?.getSignedUrl
@@ -300,18 +301,18 @@ export function createApp(options: CreateAppOptions = {}) {
     }));
   });
 
-  api.get('/runs/:runId', (c) => {
+  api.get('/runs/:runId', async (c) => {
     const runId = c.req.param('runId');
-    const run = runStore.getRun(runId);
+    const run = await runStore.getRun(runId);
     if (!run) {
       return c.json(error('RUN_NOT_FOUND', `Run ${runId} not found`), 404);
     }
     return c.json(success(formatRun(run)));
   });
 
-  api.post('/runs/:runId/cancel', (c) => {
+  api.post('/runs/:runId/cancel', async (c) => {
     const runId = c.req.param('runId');
-    const result = runStore.cancelRun(runId);
+    const result = await runStore.cancelRun(runId);
     if (result.error === 'NOT_FOUND') {
       return c.json(error('RUN_NOT_FOUND', `Run ${runId} not found`), 404);
     }
@@ -368,7 +369,7 @@ export function createApp(options: CreateAppOptions = {}) {
       return c.json(error('UNAUTHORIZED', 'Missing runner secret'), 401);
     }
     
-    const runner = runStore.getRunner(runnerId);
+    const runner = await runStore.getRunner(runnerId);
     if (!runner) {
       return c.json(error('RUNNER_NOT_FOUND', `Runner ${runnerId} not found`), 404);
     }
@@ -377,14 +378,14 @@ export function createApp(options: CreateAppOptions = {}) {
       return c.json(error('UNAUTHORIZED', 'Invalid runner secret'), 401);
     }
 
-    runStore.updateRunnerLastSeen(runnerId);
+    await runStore.updateRunnerLastSeen(runnerId);
 
     const runnerLabels = runner.labels.length > 0 ? runner.labels : ['default'];
     const job = await queue.dequeueMatching(DEFAULT_QUEUE_NAME, queuedJob =>
       runnerLabels.includes(queuedJob.jobSpec['runs-on'])
     );
     if (job) {
-      runStore.updateJobStatus(job.runId, job.jobKey, 'running', new Date().toISOString());
+      await runStore.updateJobStatus(job.runId, job.jobKey, 'running', new Date().toISOString());
       return c.json(success({ job }));
     }
 

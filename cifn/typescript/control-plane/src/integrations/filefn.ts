@@ -64,7 +64,7 @@ export class FileFnArtifactsAdapter implements ArtifactsAdapter {
 
   async upload(namespace: string, key: string, data: Buffer): Promise<string> {
     const formData = new FormData();
-    formData.append('file', new Blob([data]));
+    formData.append('file', new Blob([new Uint8Array(data)]));
     formData.append('namespace', namespace);
     formData.append('key', key);
 

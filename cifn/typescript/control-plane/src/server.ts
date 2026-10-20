@@ -5,6 +5,7 @@ import { createQueueAdapter } from './integrations/flowfn.js';
 import { createArtifactsAdapter } from './integrations/filefn.js';
 import { createSecretsAdapter } from './integrations/secfn.js';
 import { createLogsAdapter } from './integrations/logfn.js';
+import { createRuntimeStore } from './store/runtime-store.js';
 
 const PORT = parseInt(process.env.PORT ?? '3100', 10);
 
@@ -35,25 +36,48 @@ const adapters = {
   logs: createLogsAdapter(adapterConfig.logs),
 };
 
-const initialApiKeys = process.env.CIFN_API_KEYS;
-if (initialApiKeys && adapterConfig.secrets.type === 'memory') {
-  adapters.secrets.setSecret('CIFN_API_KEYS', initialApiKeys);
+async function start() {
+  const initialApiKeys = process.env.CIFN_API_KEYS;
+  if (initialApiKeys && adapterConfig.secrets.type === 'memory') {
+    await adapters.secrets.setSecret('CIFN_API_KEYS', initialApiKeys);
+  }
+
+  const registrationToken = process.env.CIFN_RUNNER_REGISTRATION_TOKEN!;
+  if (adapterConfig.secrets.type === 'memory') {
+    await adapters.secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', registrationToken);
+  }
+
+  const webhookSecret = process.env.CIFN_WEBHOOK_SECRET;
+
+  const runtimeStore = await createRuntimeStore();
+  const { app } = createApp({ adapters, webhookSecret, store: runtimeStore.store });
+
+  const server = createControlPlaneServer(app);
+  let closing = false;
+  const close = () => {
+    if (closing) return;
+    closing = true;
+    server.close(async () => {
+      try { await runtimeStore.close(); }
+      catch { console.error('CiFn store shutdown failed'); process.exitCode = 1; }
+    });
+  };
+  process.once('SIGTERM', close);
+  process.once('SIGINT', close);
+  server.once('error', () => {
+    process.exitCode = 1;
+    void runtimeStore.close().catch(() => console.error('CiFn store shutdown failed'));
+  });
+
+  server.listen(PORT, () => {
+    const address = server.address();
+    const listeningPort = address && typeof address === 'object' ? address.port : PORT;
+    console.log(`CiFn Control Plane listening on port ${listeningPort}`);
+    console.log(`Store: ${runtimeStore.mode}`);
+    console.log(`Adapters: queue=${adapterConfig.queue.type}, artifacts=${adapterConfig.artifacts.type}, secrets=${adapterConfig.secrets.type}, logs=${adapterConfig.logs.type}`);
+  });
 }
-
-const registrationToken = process.env.CIFN_RUNNER_REGISTRATION_TOKEN!;
-if (adapterConfig.secrets.type === 'memory') {
-  adapters.secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', registrationToken);
-}
-
-const webhookSecret = process.env.CIFN_WEBHOOK_SECRET;
-
-const { app } = createApp({ adapters, webhookSecret });
-
-const server = createControlPlaneServer(app);
-
-server.listen(PORT, () => {
-  const address = server.address();
-  const listeningPort = address && typeof address === 'object' ? address.port : PORT;
-  console.log(`CiFn Control Plane listening on port ${listeningPort}`);
-  console.log(`Adapters: queue=${adapterConfig.queue.type}, artifacts=${adapterConfig.artifacts.type}, secrets=${adapterConfig.secrets.type}, logs=${adapterConfig.logs.type}`);
+start().catch((cause: unknown) => {
+  console.error(`Fatal: ${cause instanceof Error ? cause.message : "Control-plane startup failed"}`);
+  process.exitCode = 1;
 });

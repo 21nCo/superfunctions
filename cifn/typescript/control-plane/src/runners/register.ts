@@ -1,9 +1,9 @@
-import { MemoryStore } from '../store/memory-store.js';
+import type { ControlPlaneStore } from '../store/store.js';
 import { SecFnClient } from '../secrets/secfn-client.js';
 import { generateRunnerSecret, hashSecret } from './crypto.js';
 
 export async function registerRunner(
-  store: MemoryStore,
+  store: ControlPlaneStore,
   secFn: SecFnClient,
   token: string,
   labels?: string[]
@@ -20,7 +20,7 @@ export async function registerRunner(
   
   const runnerSecret = generateRunnerSecret();
   const secretHash = hashSecret(runnerSecret);
-  const runner = store.createRunner(normalizedLabels, secretHash);
+  const runner = await store.createRunner(normalizedLabels, secretHash);
   
   return { ok: true, runnerId: runner.id, runnerSecret };
 }

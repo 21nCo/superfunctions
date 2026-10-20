@@ -1,5 +1,6 @@
+import type { ControlPlaneStore } from '../store/store.js';
 import type { PipelineSpec } from '../pipeline/types.js';
-import type { MemoryStore, CreateRunInput } from '../store/memory-store.js';
+import type { CreateRunInput } from '../store/memory-store.js';
 import type { QueueClient } from '../queue/flowfn-client.js';
 import { DEFAULT_QUEUE_NAME } from '../queue/flowfn-client.js';
 import { resolveDAG } from '../pipeline/dag.js';
@@ -12,12 +13,12 @@ export interface CronPipeline {
 }
 
 export interface CronSchedulerOptions {
-  store: MemoryStore;
+  store: ControlPlaneStore;
   queue: QueueClient;
 }
 
 export class CronScheduler {
-  private store: MemoryStore;
+  private store: ControlPlaneStore;
   private queue: QueueClient;
   private pipelines: CronPipeline[] = [];
   private timers: Map<string, ReturnType<typeof setInterval>> = new Map();
@@ -38,7 +39,7 @@ export class CronScheduler {
       trigger: { type: 'schedule', payload: { cron: pipeline.cronExpression } },
     };
 
-    const run = this.store.createRun(input);
+    const run = await this.store.createRun(input);
 
     const dag = resolveDAG(pipeline.spec);
     for (const rootJobKey of dag.rootJobs) {

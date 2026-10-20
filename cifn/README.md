@@ -80,3 +80,20 @@ See [SPEC.md](SPEC.md) for the full technical specification.
 ## License
 
 MIT
+
+## Durable control-plane records (SQLite)
+
+The control-plane server defaults to memory storage. To persist run/job/step state,
+runner authentication, artifact references and encrypted log-redaction values,
+set `CIFN_STORE_ADAPTER=sqlite`, `CIFN_SQLITE_PATH` to a persistent filesystem path,
+and `CIFN_STORE_ENCRYPTION_KEY` to a canonical base64-encoded 32-byte deployment key.
+`CIFN_STORE_NAMESPACE` is optional and defaults to `default`.
+SQLite mode requires Node 20+ and the optional `better-sqlite3`/`kysely` packages.
+Keep the key backed up separately; no key is generated or saved by CiFn, and an
+invalid configuration fails startup rather than falling back to memory.
+
+This persists records, but does not yet recover dispatch: the default memory queue
+is lost on restart. Automatic replay, leases, fencing and notification outboxes
+remain required before durable end-to-end execution can be claimed. See the
+[storage contract and validation](.conduct/durable-storage-readiness.md) for schema,
+encryption, migration and remaining recovery requirements.

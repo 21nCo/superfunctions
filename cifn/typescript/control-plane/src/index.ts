@@ -60,3 +60,8 @@ export { MemoryQueueAdapter, FlowFnQueueAdapter, createQueueAdapter } from './in
 export { MemoryArtifactsAdapter, FileFnArtifactsAdapter, createArtifactsAdapter } from './integrations/filefn.js';
 export { MemorySecretsAdapter, SecFnSecretsAdapter, createSecretsAdapter } from './integrations/secfn.js';
 export { MemoryLogsAdapter, LogFnLogsAdapter, createLogsAdapter } from './integrations/logfn.js';
+
+export { DatabaseStore } from './store/database-store.js';
+export type { DatabaseStoreOptions, RecoveryCandidate, RecoveryPage } from './store/database-store.js';
+export type { ControlPlaneStore, StoreResult } from './store/store.js';
+export { getCiFnStoreSchema, CIFN_STATE_TABLE, CIFN_SQLITE_SCHEMA } from './store/database-schema.js';

@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.boundary.json",
+  "include": ["src/store/**/*.ts", "src/server.ts"],
+  "exclude": ["node_modules", "dist"]
+}
