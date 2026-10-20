@@ -1,4 +1,4 @@
-import type { FeedbackSubmission, FeedbackBoardOptions, FeedbackBoardPage, FeedbackStatus, FeedbackService, FeedbackSubmitOptions, UserIdentity } from '../types';
+import type { FeedbackSubmission, FeedbackBoardOptions, FeedbackBoardPage, FeedbackStatus, FeedbackMetadataPatch, FeedbackMetadataResult, FeedbackService, FeedbackSubmitOptions, UserIdentity } from '../types';
 
 export class FeedbackDeliveryError extends Error {
   constructor(message: string) { super(message); this.name = 'FeedbackDeliveryError'; }
@@ -28,6 +28,10 @@ export class FeedbackEngine {
   async voteFeedback(id: string, direction: -1 | 0 | 1) {
     if (!this.service?.vote) throw new FeedbackDeliveryError('Feedback voting service is not configured');
     return this.service.vote(id, direction);
+  }
+  async setFeedbackMetadata(id: string, patch: FeedbackMetadataPatch): Promise<FeedbackMetadataResult> {
+    if (!this.service?.setMetadata) throw new FeedbackDeliveryError('Feedback metadata service is not configured');
+    return this.service.setMetadata(id, patch);
   }
   async setFeedbackStatus(id: string, status: FeedbackStatus) {
     if (!this.service?.setStatus) throw new FeedbackDeliveryError('Feedback moderation service is not configured');

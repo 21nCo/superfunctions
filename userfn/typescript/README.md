@@ -150,3 +150,14 @@ do {
 ```
 
 Labels are trimmed, NFC-normalized and case-sensitive. Missing/incomplete backfill returns 503. The scan budget can yield partial or empty pages with a progress cursor. Keep all filters unchanged when following `nextCursor`. Continue until `nextCursor` is null, regardless of page length. See the service's migration and per-request scan-budget contract; this is live pagination, not a snapshot.
+
+
+### Moderate tags and product area
+
+```typescript
+await client.setFeedbackMetadata(id, { tags: ['UI', 'Accessibility'], productArea: 'Search' });
+await client.setFeedbackMetadata(id, { productArea: null }); // clear area, retain tags
+await client.setFeedbackMetadata(id, { tags: [] }); // clear tags
+```
+
+Requires the server-verified `userfn:feedback:moderate` scope and completed filter backfill. Tags replace the complete set; omitted fields remain unchanged. The awaited receipt contains `{id, tags, productArea}`. Invalid/mismatching receipts reject. The service commits projections atomically and preserves original submission payloads and idempotency keys; board/filter reads use current metadata. Retryable failures replay the same patch. Concurrent edits use database serialization order without a version precondition. Custom services can implement `setMetadata(id, patch)`; absent support fails explicitly.

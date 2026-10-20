@@ -4,6 +4,7 @@ import json
 import re
 import time
 import uuid
+import unicodedata
 from dataclasses import asdict
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlencode
@@ -59,6 +60,23 @@ class HttpFeedbackService:
         if type(direction) is not int or direction not in (-1, 0, 1):
             raise ValueError('Invalid vote direction')
         return await asyncio.to_thread(self._send, json.dumps({'direction': direction}).encode(), None, '/' + feedback_id + '/vote', 'POST', 'vote', feedback_id)
+
+    async def set_metadata(self, feedback_id: str, patch: dict):
+        self._validate_id(feedback_id)
+        valid_text = lambda value, maximum: isinstance(value, str) and bool(value.strip()) and len(value) <= maximum
+        if (not isinstance(patch, dict) or not patch or any(key not in ('tags', 'productArea') for key in patch)
+                or ('tags' in patch and (not isinstance(patch['tags'], list) or len(patch['tags']) > 20 or any(not valid_text(tag, 64) for tag in patch['tags'])))
+                or ('productArea' in patch and patch['productArea'] is not None and not valid_text(patch['productArea'], 100))):
+            raise ValueError('Invalid feedback metadata')
+        result = await asyncio.to_thread(self._send, json.dumps(patch, ensure_ascii=False).encode(), None, '/' + feedback_id + '/metadata', 'PATCH', 'metadata', feedback_id)
+        if (not isinstance(result.get('tags'), list) or len(result['tags']) > 20 or any(not valid_text(tag, 64) for tag in result['tags'])
+                or 'productArea' not in result or (result['productArea'] is not None and not valid_text(result['productArea'], 100))):
+            raise FeedbackDeliveryError('Invalid feedback metadata response')
+        normalize = lambda value: unicodedata.normalize('NFC', value).strip()
+        if (('tags' in patch and {normalize(tag) for tag in result['tags']} != {normalize(tag) for tag in patch['tags']})
+                or ('productArea' in patch and result['productArea'] != (None if patch['productArea'] is None else normalize(patch['productArea'])))):
+            raise FeedbackDeliveryError('Feedback metadata acknowledgment does not match request')
+        return result
 
     async def set_status(self, feedback_id: str, status: str):
         self._validate_id(feedback_id)

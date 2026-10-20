@@ -85,3 +85,26 @@ it('retries an idempotent vote with the same target and direction', async () => 
   expect(transport.mock.calls[0][0]).toBe(transport.mock.calls[1][0]);
   expect(transport.mock.calls[0][1].body).toBe(transport.mock.calls[1][1].body);
 });
+
+
+it('validates metadata acknowledgments and retries identical patches', async () => {
+  const id = 'uf_' + 'c'.repeat(64);
+  const patch = { tags: [' UI ', 'UI'], productArea: null };
+  const reply = { id, tags: ['UI'], productArea: null };
+  const transport = vi.fn().mockResolvedValueOnce(new Response('', { status: 503 })).mockResolvedValueOnce(Response.json(reply));
+  vi.stubGlobal('fetch', transport);
+  const client = new UserFnClient({ endpoint: 'https://service.example', apiKey: 'key', feedbackMaxAttempts: 2 });
+  expect(await client.setFeedbackMetadata(id, patch)).toEqual(reply);
+  expect(transport.mock.calls[0][0]).toBe(`https://service.example/feedback/${id}/metadata`);
+  expect(transport.mock.calls[0][1].method).toBe('PATCH');
+  expect(transport.mock.calls[0][1].body).toBe(transport.mock.calls[1][1].body);
+  for (const invalid of [{}, { ...reply, tags: null }, { ...reply, tags: ['different'] }, { ...reply, productArea: 'different' }, { ...reply, id: 'wrong' }]) {
+    transport.mockReset().mockResolvedValue(Response.json(invalid));
+    await expect(client.setFeedbackMetadata(id, patch)).rejects.toBeInstanceOf(FeedbackDeliveryError);
+    expect(transport).toHaveBeenCalledOnce();
+  }
+  transport.mockReset();
+  for (const invalid of [{}, { tags: undefined }, { tags: [42] }, { tags: [' '] }, { productArea: undefined }, { tags: [], actorId: 'spoof' }]) await expect(client.setFeedbackMetadata(id, invalid as any)).rejects.toBeInstanceOf(TypeError);
+  expect(transport).not.toHaveBeenCalled();
+  await expect(new UserFnClient({ apiKey: 'key' }).setFeedbackMetadata(id, patch)).rejects.toThrow('not configured');
+});

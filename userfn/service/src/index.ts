@@ -5,7 +5,7 @@ import { createRouter, PayloadTooLargeError, RouterError } from '@superfunctions
 import { corsMiddleware } from '@superfunctions/http/middleware';
 import { getUserFnSchema } from './schema.js';
 import { canonical, FeedbackConflictError, FeedbackValidationError, validateKey, validatePayload, object } from './validation.js';
-import { readFilterMarker, writeFeedbackFilters, normalizeFilter } from './feedback-filters.js';
+import { readFilterMarker, writeFeedbackFilters, normalizeFilter, readFeedbackMetadata, patchFeedbackMetadata, validateMetadataPatch } from './feedback-filters.js';
 export { backfillFeedbackFilters } from './feedback-filters.js';
 export { getUserFnSchema } from './schema.js';
 
@@ -82,7 +82,7 @@ export function createUserFnService(options: UserFnServiceOptions) {
   };
   const boardItem = async (row: StoredFeedback, actorId: string, actorType: string) => {
     const feedback = row.payload.feedback as Record<string, unknown>;
-    return { id: row.id, title: feedback.title, body: feedback.body, category: feedback.category, productArea: typeof feedback.productArea === 'string' ? normalizeFilter(feedback.productArea, 100) : null, tags: [...new Set(((feedback.tags as string[] | undefined) ?? []).map(tag => normalizeFilter(tag, 64)))],
+    return { id: row.id, title: feedback.title, body: feedback.body, category: feedback.category, ...await database.transaction(tx => readFeedbackMetadata(tx, row)),
       status: row.status, createdAt: row.createdAt, ...await votes(row.tenantId, row.id, actorId, actorType) };
   };
   const errorResponse = (error: unknown): Response => {
@@ -107,6 +107,7 @@ export function createUserFnService(options: UserFnServiceOptions) {
       { method: 'OPTIONS', path: '/feedback', handler: () => new Response(null, { status: 204 }) },
       { method: 'OPTIONS', path: '/feedback/:id', handler: () => new Response(null, { status: 204 }) },
       { method: 'OPTIONS', path: '/feedback/:id/vote', handler: () => new Response(null, { status: 204 }) },
+      { method: 'OPTIONS', path: '/feedback/:id/metadata', handler: () => new Response(null, { status: 204 }) },
       { method: 'OPTIONS', path: '/feedback/:id/status', handler: () => new Response(null, { status: 204 }) },
       { method: 'GET', path: '/feedback', handler: async (request) => {
         const session = await authorize(request, 'userfn:feedback:read');
@@ -185,6 +186,20 @@ export function createUserFnService(options: UserFnServiceOptions) {
         else await database.upsert({ model: 'userfn_feedback_votes', where, conflictTarget: 'id', create: { id, tenantId, feedbackId: context.params.id, actorId, actorType: session.subject.actorType, direction: body.direction }, update: { direction: body.direction } });
         return json({ id: context.params.id, ...await votes(tenantId, context.params.id, actorId, session.subject.actorType) });
       } },
+      { method: 'PATCH', path: '/feedback/:id/metadata', handler: async (request, context) => {
+        const session = await authorize(request, 'userfn:feedback:moderate');
+        if (session instanceof Response) return session;
+        if (!validId(context.params.id)) throw new FeedbackValidationError();
+        const patch = validateMetadataPatch(await context.json());
+        if (!database.capabilities.transactions.supported) throw new Error('Feedback metadata updates require transactions');
+        return database.transaction(async tx => {
+          const row = await tx.findOne<StoredFeedback>({ model: 'userfn_feedback', where: [
+            { field: 'tenantId', operator: 'eq', value: session.subject.tenantId! }, { field: 'id', operator: 'eq', value: context.params.id },
+          ] });
+          if (!row) return json({ error: 'Feedback not found' }, 404);
+          return json({ id: row.id, ...await patchFeedbackMetadata(tx, row, patch) });
+        });
+      } },
       { method: 'PATCH', path: '/feedback/:id/status', handler: async (request, context) => {
         const session = await authorize(request, 'userfn:feedback:moderate');
         if (session instanceof Response) return session;
@@ -233,7 +248,7 @@ export function createUserFnService(options: UserFnServiceOptions) {
         const row = await find(session.subject.tenantId!, context.params.id);
         if (!row) return json({ error: 'Feedback not found' }, 404);
         const { fingerprint: _fingerprint, ...feedback } = row;
-        return json({ ...feedback, ...await votes(row.tenantId, row.id, session.subject.actorId, session.subject.actorType) });
+        return json({ ...feedback, metadata: await database.transaction(tx => readFeedbackMetadata(tx, row)), ...await votes(row.tenantId, row.id, session.subject.actorId, session.subject.actorType) });
       } },
     ],
   });

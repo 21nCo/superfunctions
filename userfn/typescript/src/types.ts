@@ -183,6 +183,7 @@ export interface FeedbackContext extends FeedbackSubmitOptions { source: 'in_app
 export interface FeedbackService {
   list?(options?: FeedbackBoardOptions): Promise<FeedbackBoardPage>;
   vote?(id: string, direction: -1 | 0 | 1): Promise<FeedbackVote>;
+  setMetadata?(id: string, patch: FeedbackMetadataPatch): Promise<FeedbackMetadataResult>;
   setStatus?(id: string, status: FeedbackStatus): Promise<FeedbackStatusResult>;
   submit(feedback: FeedbackSubmission, context: FeedbackContext): Promise<FeedbackReceipt>;
 }
@@ -191,3 +192,6 @@ export interface FeedbackBoardOptions { limit?: number; after?: string; status?:
 export interface FeedbackBoardPage { items: FeedbackItem[]; nextCursor: string | null; }
 export interface FeedbackVote { id: string; votes: number; viewerVote: -1 | 0 | 1; }
 export interface FeedbackStatusResult { id: string; status: FeedbackStatus; }
+
+export interface FeedbackMetadataPatch { tags?: string[]; productArea?: string | null; }
+export interface FeedbackMetadataResult { id: string; tags: string[]; productArea: string | null; }

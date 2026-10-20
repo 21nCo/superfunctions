@@ -45,3 +45,9 @@ class FeedbackEngine:
         if method is None:
             raise FeedbackDeliveryError('Feedback moderation service is not configured')
         return await method(feedback_id, status)
+
+    async def set_feedback_metadata(self, feedback_id: str, patch: dict):
+        method = getattr(self.service, 'set_metadata', None)
+        if method is None:
+            raise FeedbackDeliveryError('Feedback metadata service is not configured')
+        return await method(feedback_id, patch)

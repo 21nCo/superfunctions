@@ -118,3 +118,28 @@ def test_vote_retry_preserves_target_and_direction(endpoint):
     assert len(calls) == 2
     assert calls[0][0] == calls[1][0]
     assert calls[0][2] == calls[1][2] == b'{"direction": -1}'
+
+
+def test_metadata_patch_retries_and_validates_acknowledgment(endpoint):
+    url, calls, replies = endpoint
+    feedback_id = 'uf_' + 'c' * 64
+    patch = {'tags': [' UI ', 'UI'], 'productArea': None}
+    reply = {'id': feedback_id, 'tags': ['UI'], 'productArea': None}
+    replies.extend([(503, {}, {}, 0), (200, reply, {}, 0)])
+    client = UserFnClient(UserFnOptions(api_key='key', endpoint=url, feedback_max_attempts=2))
+    assert asyncio.run(client.set_feedback_metadata(feedback_id, patch)) == reply
+    assert calls[0][0] == calls[1][0] == '/api/feedback/' + feedback_id + '/metadata'
+    assert calls[0][2] == calls[1][2]
+    for invalid in [{}, {**reply, 'tags': None}, {**reply, 'tags': ['different']}, {**reply, 'productArea': 'different'}, {**reply, 'id': 'wrong'}]:
+        before = len(calls)
+        replies.append((200, invalid, {}, 0))
+        with pytest.raises(FeedbackDeliveryError):
+            asyncio.run(client.set_feedback_metadata(feedback_id, patch))
+        assert len(calls) == before + 1
+    before = len(calls)
+    for invalid in [{}, {'tags': None}, {'tags': [42]}, {'tags': [' ']}, {'tags': [], 'actorId': 'spoof'}]:
+        with pytest.raises(ValueError):
+            asyncio.run(client.set_feedback_metadata(feedback_id, invalid))
+    assert len(calls) == before
+    with pytest.raises(FeedbackDeliveryError, match='not configured'):
+        asyncio.run(UserFnClient(UserFnOptions(api_key='key')).set_feedback_metadata(feedback_id, patch))

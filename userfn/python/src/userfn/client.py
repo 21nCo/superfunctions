@@ -68,5 +68,9 @@ class UserFnClient:
     async def vote_feedback(self, feedback_id: str, direction: int):
         return await self.feedback.vote_feedback(feedback_id, direction)
 
+    async def set_feedback_metadata(self, feedback_id: str, patch: dict):
+        """Replace tags and/or assign productArea (None clears it); omitted fields remain unchanged."""
+        return await self.feedback.set_feedback_metadata(feedback_id, patch)
+
     async def set_feedback_status(self, feedback_id: str, status: str):
         return await self.feedback.set_feedback_status(feedback_id, status)

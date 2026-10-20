@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid';
-import type { FeedbackContext, FeedbackReceipt, FeedbackBoardOptions, FeedbackBoardPage, FeedbackVote, FeedbackStatus, FeedbackStatusResult, FeedbackService, FeedbackSubmission, UserFnOptions } from '../types';
+import type { FeedbackContext, FeedbackReceipt, FeedbackBoardOptions, FeedbackBoardPage, FeedbackVote, FeedbackStatus, FeedbackMetadataPatch, FeedbackMetadataResult, FeedbackStatusResult, FeedbackService, FeedbackSubmission, UserFnOptions } from '../types';
 import { FeedbackDeliveryError } from './feedback';
 
 export class FeedbackHTTPError extends FeedbackDeliveryError {
@@ -39,6 +39,16 @@ export class HttpFeedbackService implements FeedbackService {
     if (!/^uf_[a-f0-9]{64}$/.test(id) || ![-1, 0, 1].includes(direction)) throw new TypeError('Invalid feedback vote');
     const result = await this.request<FeedbackVote>('/' + id + '/vote', 'POST', JSON.stringify({ direction }));
     if (!result || result.id !== id || !Number.isInteger(result.votes) || ![-1, 0, 1].includes(result.viewerVote)) throw new FeedbackDeliveryError('Invalid feedback vote response');
+    return result;
+  }
+  async setMetadata(id: string, patch: FeedbackMetadataPatch): Promise<FeedbackMetadataResult> {
+    if (!/^uf_[a-f0-9]{64}$/.test(id) || !patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length || Object.keys(patch).some(key => !['tags', 'productArea'].includes(key))) throw new TypeError('Invalid feedback metadata');
+    const validText = (value: unknown, max: number): value is string => typeof value === 'string' && !!value.trim() && value.length <= max;
+    if (('tags' in patch && (!Array.isArray(patch.tags) || patch.tags.length > 20 || patch.tags.some(tag => !validText(tag, 64)))) || ('productArea' in patch && patch.productArea !== null && !validText(patch.productArea, 100))) throw new TypeError('Invalid feedback metadata');
+    const result = await this.request<FeedbackMetadataResult>('/' + id + '/metadata', 'PATCH', JSON.stringify(patch));
+    if (!result || result.id !== id || !Array.isArray(result.tags) || result.tags.length > 20 || result.tags.some(tag => !validText(tag, 64)) || (result.productArea !== null && !validText(result.productArea, 100))) throw new FeedbackDeliveryError('Invalid feedback metadata response');
+    const normalizedTags = (tags: string[]) => [...new Set(tags.map(tag => tag.normalize('NFC').trim()))].sort();
+    if ((patch.tags !== undefined && JSON.stringify(normalizedTags(result.tags)) !== JSON.stringify(normalizedTags(patch.tags))) || ('productArea' in patch && result.productArea !== (patch.productArea === null ? null : patch.productArea!.normalize('NFC').trim()))) throw new FeedbackDeliveryError('Feedback metadata acknowledgment does not match request');
     return result;
   }
   async setStatus(id: string, status: FeedbackStatus): Promise<FeedbackStatusResult> {

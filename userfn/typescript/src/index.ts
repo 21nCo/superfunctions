@@ -6,7 +6,7 @@ import { SurveyEngine } from './core/surveys';
 import { FeedbackEngine } from './core/feedback';
 import { HttpFeedbackService } from './core/feedback-http';
 import { VanillaRenderer } from './ui/renderer';
-import { UserFnOptions, FlagValue, UserTraits, EventProperties, FeedbackSubmission, FeedbackSubmitOptions, FeedbackBoardOptions, FeedbackStatus, Campaign, Survey } from './types';
+import { UserFnOptions, FlagValue, UserTraits, EventProperties, FeedbackSubmission, FeedbackSubmitOptions, FeedbackBoardOptions, FeedbackStatus, FeedbackMetadataPatch, Campaign, Survey } from './types';
 
 export class UserFnClient {
   private identity: IdentityManager;
@@ -52,6 +52,7 @@ export class UserFnClient {
 
   getFeedbackBoard(options?: FeedbackBoardOptions) { return this.feedback.getFeedbackBoard(options); }
   voteFeedback(id: string, direction: -1 | 0 | 1) { return this.feedback.voteFeedback(id, direction); }
+  setFeedbackMetadata(id: string, patch: FeedbackMetadataPatch) { return this.feedback.setFeedbackMetadata(id, patch); }
   setFeedbackStatus(id: string, status: FeedbackStatus) { return this.feedback.setFeedbackStatus(id, status); }
 
   // ... rest of class

@@ -28,3 +28,5 @@ No shared edits, hosted changes or push were performed.
 ## Follow-up: resumable scanning
 
 The [resumable filter pagination checkpoint](feedback-filter-pagination-readiness.md) removes the earlier total matching-candidate ceiling and overflow503. The same option now bounds candidates scanned per request; partial/empty progress pages remain traversable until a null cursor. Offline migration and broader readiness limitations remain unchanged.
+
+Tag/product-area editing is subsequently implemented in `feedback-metadata-readiness.md`; original migration and offline-writer constraints still apply.

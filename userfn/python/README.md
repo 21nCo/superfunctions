@@ -166,3 +166,14 @@ while True:
 ```
 
 The SDK maps `product_area` to the canonical HTTP `productArea` field. Labels are trimmed, NFC-normalized and case-sensitive. The host must complete the service's normalized-table migration; incomplete migration fails with 503. A per-request scan budget can return partial/empty pages with a non-null progress cursor. Preserve filters and continue until the cursor is null; this is live pagination, not a snapshot.
+
+
+### Moderate tags and product area
+
+```python
+await client.set_feedback_metadata(feedback_id, {"tags": ["UI", "Accessibility"], "productArea": "Search"})
+await client.set_feedback_metadata(feedback_id, {"productArea": None})  # retain tags
+await client.set_feedback_metadata(feedback_id, {"tags": []})
+```
+
+The patch dictionary uses canonical HTTP keys (`productArea`); the awaited result contains `id`, `tags`, and `productArea`. Tags replace the complete set; `None` clears product area; omitted fields are unchanged. Moderator scope and completed backfill are required. Invalid/mismatching acknowledgments reject. Original submissions and idempotency remain immutable while board filters use updated metadata. Retryable failures replay the same patch; concurrent edits have no version precondition. Custom services can implement async `set_metadata(id, patch)`; missing support fails explicitly.
