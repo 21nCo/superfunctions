@@ -10,4 +10,22 @@ Merged shared prerequisite head0ef7b9cb6 and aligned BrowseFn to DB0.4.0. Regene
 
 Packed core and admin consumers pass on exact Node20.19.0: ESM real-HTTP scraping, synchronous CJS router/limiter APIs, scoped admin service, and NodeNext declarations. Each production dependency audit reports zero vulnerabilities. The packed harness accepts NPM_CLI because npm10 hits its internal edgesOut failure during isolated local-tarball installation; npm11 succeeds.
 
-Python target validation is still blocked: sf-next shared python-core identifies itself as superfunctions instead of required superfunctions-core (unavailable from registry), and shared SQLAlchemy0.1.0 is older than required0.1.1. Synchronize and validate those prerequisites before readiness. Prior Python/browser evidence from the original implementation checkout is not target-context proof. Full original requirements and hosted checks remain open.
+## Fresh Python target package acceptance — 2026-10-20
+
+The earlier prerequisite blocker is resolved in this branch: shared Python core is
+`superfunctions-core` 0.1.1 and SQLAlchemy is 0.1.1. The new
+`scripts/packed-python-acceptance.py` builds all three local wheels, installs them
+with normal dependency resolution in an isolated environment, copies the tests and
+required non-Python fixtures, and asserts package imports originate in site-packages.
+No Python implementation is copied into the consumer tree. Temporary environments
+are removed on completion or failure.
+
+Python 3.10 and 3.12 each pass all 94 existing tests plus the installed-origin check
+(95 total). This includes actual local HTTP/image/cache/SQLAlchemy tests. Eighteen
+shared Pydantic deprecation warnings remain; they do not fail these runs. Receipts:
+`/tmp/browsefn-python-wheel-310.log` and `/tmp/browsefn-python-wheel-312.log`.
+
+Reproduce: `python3 browsefn/scripts/packed-python-acceptance.py --python 3.10`
+and repeat with `--python 3.12`. Requires uv and Node for the release-script fixture.
+These checks do not establish live paid-provider behavior, full browser/platform
+coverage, hosted CI, release or deployment. Full original readiness remains open.
