@@ -51,13 +51,9 @@ async function generateJWT(
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const message = `${encodedHeader}.${encodedPayload}`;
 
-  // Import private key
-  const pemKey = privateKey
-    .replace(/-----BEGIN RSA PRIVATE KEY-----/, '')
-    .replace(/-----END RSA PRIVATE KEY-----/, '')
-    .replace(/\s/g, '');
-
-  const binaryKey = base64ToArrayBuffer(pemKey);
+  // GitHub supplies PKCS#1 RSA PEM; Web Crypto imports PKCS#8 PrivateKeyInfo.
+  // Also accept standard PKCS#8 PEM and the historical raw PKCS#8 base64 form.
+  const binaryKey = privateKeyDer(privateKey);
 
   const cryptoKey = await crypto.subtle.importKey(
     'pkcs8',
@@ -107,4 +103,21 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes.buffer;
+}
+
+/** Wrap PKCS#1 bytes in PKCS#8 without Node-only crypto dependencies. */
+function privateKeyDer(value: string): ArrayBuffer {
+  if (typeof value !== 'string' || value.length > 65536) throw new Error('Invalid GitHub App private key');
+  const pem = value.trim();
+  const match = /^-----BEGIN (RSA PRIVATE KEY|PRIVATE KEY)-----([\s\S]+)-----END \1-----$/.exec(pem);
+  if (pem.includes('-----') && !match) throw new Error('Unsupported GitHub App private key format');
+  const encoded = (match ? match[2] : pem).replace(/\s/g, '');
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error('Invalid GitHub App private key');
+  const bytes = new Uint8Array(base64ToArrayBuffer(encoded));
+  if (match?.[1] !== 'RSA PRIVATE KEY') return bytes.buffer;
+  const length = (n: number): number[] => n < 128 ? [n] : n < 256 ? [0x81, n] : [0x82, n >> 8, n & 255];
+  // version=0; rsaEncryption AlgorithmIdentifier including NULL parameters.
+  const prefix = [0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00];
+  const contents = new Uint8Array([...prefix, 0x04, ...length(bytes.length), ...bytes]);
+  return new Uint8Array([0x30, ...length(contents.length), ...contents]).buffer;
 }
