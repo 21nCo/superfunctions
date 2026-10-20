@@ -45,7 +45,7 @@ export class QueryEngine {
     if ("executeQuery" in this.storage && typeof (this.storage as any).executeQuery === "function") {
         // Storage must return raw matching events, not pre-limited or aggregated rows.
         data = await (this.storage as any).executeQuery({
-          ...(scalarMetric || rates.length ? {} : { metric: options.metric }), where: options.where, timeRange: options.timeRange,
+          ...(scalarMetric || rates.length ? {} : { metric: options.metric }), where: options.where, timeRange: options.timeRange, resolvedTimeRange: range,
         });
     } else {
         // Fallback to in-memory filtering (fetching all might be bad for DB, but fine for memory)

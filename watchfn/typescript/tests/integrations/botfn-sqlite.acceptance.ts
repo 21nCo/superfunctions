@@ -158,4 +158,6 @@ it("atomically rolls back intake and fences two SQLite workers while preserving 
   incorrect = false; expect(await instance.reconcileBugIssue(ref, "8")).toBe(true);
   expect(await instance.getBugIssueStatus(ref)).toMatchObject({ state: "linked", issueId: "8", attempts: 1 });
   expect((await instance.query({}))[0].integration.issueId).toBe("8");
+  expect(await instance.query({ where: { type: "bug_report", "app.name": "web", "integration.issueId": "8" } })).toHaveLength(1);
+  expect(await instance.query({ where: { "integration.issueId": "missing" } })).toEqual([]);
 });
