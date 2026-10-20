@@ -120,3 +120,51 @@ it("validates delivery limits and honors explicit zero sampling", async () => {
   const client = setup({ sampleRate: 0 }); client.track("ignored"); await client.flush();
   expect(fetchMock).not.toHaveBeenCalled();
 });
+
+it("captures canonical envelopes without a DOM or RUM sampling and awaits acknowledgment", async () => {
+  vi.stubGlobal("window", undefined);
+  let release!: (response: Response) => void;
+  const fetchMock = vi.fn(() => new Promise<Response>(resolve => { release = resolve; }));
+  vi.stubGlobal("fetch", fetchMock);
+  const client = setup({ sampleRate: 0 });
+  const event = { id: "report", type: "bug_report", report: { title: "Before" }, context: { nested: true } };
+  let resolved = false;
+  const pending = client.capture(event).then(() => { resolved = true; });
+  event.report.title = "After";
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  expect(resolved).toBe(false);
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual([{ ...event, report: { title: "Before" } }]);
+  release(new Response(null, { status: 202 }));
+  await pending;
+  expect(client.pendingCount).toBe(0);
+});
+
+it("rejects invalid capture admission and retains failed delivery for flush recovery", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(null, { status: 503 }))
+    .mockResolvedValue(new Response(null, { status: 202 })));
+  const client = setup({ maxQueueSize: 1 });
+  await expect(client.capture({ id: "retained" })).rejects.toMatchObject({ status: 503 });
+  await expect(client.capture({ id: "overflow" })).rejects.toThrow("queue is full");
+  expect(client.pendingCount).toBe(1);
+  await client.flush();
+  await expect(client.capture({ value: "x".repeat(65536) })).rejects.toThrow("64 KiB");
+  const cycle: any = {}; cycle.self = cycle;
+  await expect(client.capture(cycle)).rejects.toThrow();
+  await expect(client.capture(null as any)).rejects.toThrow("object");
+  await client.close();
+  await expect(client.capture({ id: "closed" })).rejects.toThrow("closed");
+});
+
+it("does not lose a capture admitted while a preceding drain is settling", async () => {
+  const fetchMock = vi.fn().mockImplementation(async () => new Response(null, { status: 202 }));
+  vi.stubGlobal("fetch", fetchMock);
+  const client = setup();
+  // drain() resolves synchronously for an empty queue; capture joins the still
+  // registered pending promise before its finally callback clears ownership.
+  const empty = client.flush();
+  let captured!: Promise<void>;
+  await Promise.resolve().then(() => { captured = client.capture({ id: "late" }); });
+  await Promise.all([empty, captured]);
+  expect(client.pendingCount).toBe(0);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});

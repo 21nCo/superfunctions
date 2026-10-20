@@ -1,6 +1,25 @@
 import { createRouteContext, PayloadTooLargeError } from "@superfunctions/http";
+import { z } from "zod";
 import { WatchFn } from "../core/watch-fn";
 import { QueryValidationError } from "../query/query-engine";
+
+// Validate without transforming the envelope persisted by the shared transport.
+const requiredText = z.string().trim().min(1);
+const bugReportSchema = z.object({
+  id: requiredText,
+  type: z.literal("bug_report"),
+  timestamp: z.string().datetime({ offset: true }),
+  app: z.object({ name: requiredText, version: z.string().optional() }).passthrough(),
+  sessionId: requiredText,
+  report: z.object({
+    title: requiredText, description: z.string().optional(), steps: z.array(z.string()).optional(),
+    severity: z.enum(["low", "medium", "high", "critical"]), tags: z.array(z.string()).optional(),
+  }).passthrough(),
+  context: z.record(z.unknown()),
+  attachments: z.array(z.record(z.unknown())).optional(),
+  user: z.record(z.unknown()).optional(), integration: z.record(z.unknown()).optional(),
+  replayId: z.string().optional(),
+}).passthrough();
 
 export class HttpHandlers {
   private watch: WatchFn;
@@ -34,7 +53,11 @@ export class HttpHandlers {
     for (const event of events) {
       if (!event || typeof event !== "object" || Array.isArray(event)) return reply({ error: "Invalid event" }, 400);
       const value = event as Record<string, unknown>;
-      if (typeof value.name !== "string" || !value.name.trim()) return reply({ error: "Event name is required" }, 400);
+      if (value.type === "bug_report") {
+        if (!bugReportSchema.safeParse(value).success) return reply({ error: "Invalid bug report" }, 400);
+      } else if (typeof value.name !== "string" || !value.name.trim()) {
+        return reply({ error: "Event name is required" }, 400);
+      }
       if (encoder.encode(JSON.stringify(value)).byteLength > 64 * 1024) return reply({ error: "Event too large" }, 413);
     }
     try {
