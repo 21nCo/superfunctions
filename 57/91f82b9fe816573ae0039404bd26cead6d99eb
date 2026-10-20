@@ -1,0 +1,19 @@
+catchfn/.conduct/browser-discard-integration-readiness.md
+  s_e1c5fc1a65c0cf::t_4e1b3f003cd849 1-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5791f82b9fe816573ae0039404bd26cead6d99eb",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
