@@ -1,3 +1,4 @@
+import { hashSecret } from '../runners/crypto.js';
 import { NotificationPublisher, notificationBackoff } from '../sendfn/outbox.js';
 import { EmailSendFnClient, parseNotificationConfig } from '../sendfn/sendfn-client.js';
 import { createServer } from 'node:http';
@@ -180,6 +181,53 @@ describe('real SQLite durable control-plane state', () => {
     await expect(open(path, 'first', Buffer.alloc(32, 72))).rejects.toThrow('metadata is missing');
   });
 
+  it('captures job-scoped secrets once before acceptance and preserves them through SQLite reopen and rotation', async () => {
+    const { path, directory } = await location(); let opened = await open(path);
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('TOKEN', secret); await secrets.setSecret('OTHER', 'other-job-secret');
+    const lookup = vi.spyOn(secrets, 'getSecret');
+    const definition: CreateRunInput = { ...input, pipelineSpec: { on: { workflow_dispatch: {} }, jobs: {
+      build: { 'runs-on': 'default', env: { VALUE: '${{ secrets. TOKEN }}' }, steps: [{ run: 'echo "${{ secrets.TOKEN }}"' }] },
+      other: { 'runs-on': 'default', steps: [{ run: 'echo "${{ secrets.OTHER }}"' }] },
+    } } };
+    const prepared = await prepareRun(definition, secrets);
+    expect(lookup.mock.calls).toEqual([['TOKEN'], ['OTHER']]);
+    const run = await opened.store.createPreparedRun(prepared);
+    prepared.jobs[0].secretSnapshot!.TOKEN = 'caller-mutated';
+    await secrets.setSecret('TOKEN', 'rotated');
+    await close(opened.sql); opened = await open(path);
+    const runner = await opened.store.createRunner(['default'], hashSecret('runner-fixture'));
+    const queue = new MemoryQueueClient(); await publishRun(opened.store, queue, run.id);
+    const message = queue.peek(DEFAULT_QUEUE_NAME).find(value => value.jobKey === 'build')!;
+    const claim = await opened.store.claimDispatch(run.id, message.dispatchId!, runner.id, ['default']);
+    expect(claim?.secretSnapshot).toEqual({ TOKEN: secret });
+    expect(claim?.env).toEqual({ VALUE: secret });
+    expect(await opened.store.getSecretValues(run.id)).toContain(secret);
+    expect(JSON.stringify(await opened.store.getRun(run.id))).not.toContain(secret);
+    const { app } = createApp({ store: opened.store, queue, secFn: secrets });
+    await secrets.setSecret('CIFN_API_KEYS', 'api-fixture');
+    const response = await app.request(`http://localhost/api/v1/runs/${run.id}`, { headers: { Authorization: 'Bearer api-fixture' } });
+    expect(response.status).toBe(200);
+    expect(await response.text()).not.toContain(secret);
+    const baseUrl = await serve(app);
+    const resume = (token: string) => fetch(baseUrl + '/api/v1/runners/claims/resume', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ runnerId: runner.id }) });
+    const denied = await resume('wrong-runner'); expect(denied.status).toBe(401); expect(await denied.text()).not.toContain(secret);
+    const allowed = await resume('runner-fixture'); expect(allowed.status).toBe(200);
+    expect((await allowed.json() as { data: { claims: Array<{ payload: { secretSnapshot: unknown } }> } }).data.claims[0].payload.secretSnapshot).toEqual({ TOKEN: secret });
+    for (const name of await readdir(directory)) expect((await readFile(join(directory, name))).includes(Buffer.from(secret))).toBe(false);
+  });
+
+  it('rejects missing step-only secrets before accepting a run', async () => {
+    const definition: CreateRunInput = { ...input, pipelineSpec: { on: { workflow_dispatch: {} }, jobs: {
+      build: { 'runs-on': 'default', steps: [{ run: 'echo "${{ secrets.MISSING }}"' }] },
+    } } };
+    await expect(prepareRun(definition, new MemorySecFnClient())).rejects.toThrow('Required pipeline secret is unavailable');
+    await expect(prepareRun(definition)).rejects.toThrow('Required pipeline secret is unavailable');
+    const broken = new MemorySecFnClient(); vi.spyOn(broken, 'getSecret').mockRejectedValue(new Error('provider credential: sensitive'));
+    await expect(prepareRun(definition, broken)).rejects.toThrow(/^Required pipeline secret is unavailable$/);
+    const empty = new MemorySecFnClient(); await empty.setSecret('MISSING', '');
+    expect((await prepareRun(definition, empty)).jobs[0].secretSnapshot).toEqual({ MISSING: '' });
+  });
+
   it('commits prepared intent atomically, retries failed delivery after reopen, and claims duplicate messages once', async () => {
     const { path } = await location(); let opened = await open(path);
     const secrets = new MemorySecFnClient();
@@ -287,11 +335,11 @@ describe('real SQLite durable control-plane state', () => {
     const response = await app.request('http://localhost/api/v1/runs', { method: 'POST', headers: { Authorization: 'Bearer key' }, body: JSON.stringify(input) });
     expect(response.status).toBe(500);
     const scheduler = new CronScheduler({ store, queue, secrets });
-    await expect(scheduler.triggerPipeline({ id: 'cron', spec: input.pipelineSpec, pipelineRef: input.pipelineRef!, cronExpression: '* * * * *' })).rejects.toThrow('provider unavailable');
+    await expect(scheduler.triggerPipeline({ id: 'cron', spec: input.pipelineSpec, pipelineRef: input.pipelineRef!, cronExpression: '* * * * *' })).rejects.toThrow('Required pipeline secret is unavailable');
     const body = JSON.stringify({ repository: { full_name: 'owner/repo' }, ref: 'refs/heads/main' });
     const signature = signWebhookPayload(body, 'signing', { algorithm: 'sha256', encoding: 'hex', prefix: 'sha256=' });
     await expect(handleWebhook(body, signature, 'push', { store, queue, secFn: secrets, webhookSecret: 'signing',
-      pipelineResolver: async () => ({ doc: JSON.stringify(input.pipelineSpec), resolvedConfigPath: 'ci.json' }) })).rejects.toThrow('provider unavailable');
+      pipelineResolver: async () => ({ doc: JSON.stringify(input.pipelineSpec), resolvedConfigPath: 'ci.json' }) })).rejects.toThrow('Required pipeline secret is unavailable');
     expect((await store.listRuns()).runs).toEqual([]);
     expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
   });

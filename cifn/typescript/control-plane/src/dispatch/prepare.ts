@@ -15,16 +15,26 @@ export async function prepareRun(input: CreateRunInput, secrets?: SecFnClient, g
   const spec = input.pipelineSpec;
   resolveDAG(spec);
   const names = Array.from(discoverSecrets(spec));
+  const snapshot: Record<string, string> = Object.create(null);
+  for (const name of names) {
+    let value: string | null | undefined;
+    try { value = await secrets?.getSecret(name); }
+    catch { throw new Error('Required pipeline secret is unavailable'); }
+    if (typeof value !== 'string') throw new Error('Required pipeline secret is unavailable');
+    snapshot[name] = value;
+  }
   const payload = input.trigger.payload?.github as { ref?: string; repository?: string; sha?: string } | undefined;
-  const context = { secrets: secrets ?? { getSecret: async () => { throw new Error('Secret provider is not configured'); }, setSecret: async () => {}, listKeys: async () => [] }, github: github ?? {
+  const context = { secrets: { getSecret: async (name: string) => { if (!Object.prototype.hasOwnProperty.call(snapshot, name)) throw new Error('Required pipeline secret is unavailable'); return snapshot[name]; }, setSecret: async () => {}, listKeys: async () => names }, github: github ?? {
     ref: payload?.ref ?? input.pipelineRef?.ref ?? '', repository: payload?.repository ?? input.pipelineRef?.repo ?? '',
     sha: payload?.sha ?? '', event_name: input.trigger.type,
   } };
-  const result: PreparedRun = { input, jobs: [], secretValues: [] };
+  const result: PreparedRun = { input, jobs: [], secretValues: Object.values(snapshot) };
   for (const [jobKey, jobSpec] of Object.entries(spec.jobs)) {
     const { resolved, secretValues } = await resolveEnvMap({ ...spec.env, ...jobSpec.env }, context);
     result.secretValues.push(...secretValues);
-    result.jobs.push({ jobKey, jobSpec, pipelineRef: input.pipelineRef, env: resolved, secretKeys: names });
+    const jobNames = Array.from(discoverSecrets({ on: spec.on, env: spec.env, jobs: { [jobKey]: jobSpec } }));
+    result.jobs.push({ jobKey, jobSpec, pipelineRef: input.pipelineRef, env: resolved, secretKeys: jobNames,
+      secretSnapshot: Object.fromEntries(jobNames.map(name => [name, snapshot[name]])) });
   }
   result.secretValues = [...new Set(result.secretValues)];
   return result;

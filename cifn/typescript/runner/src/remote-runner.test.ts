@@ -1,6 +1,7 @@
+import { MemoryLogFnClient } from './reporting/logfn-client.js';
 import { spawn } from 'node:child_process';
 import { executeOwnedShell } from './executor/owned-shell.js';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, statSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -164,4 +165,52 @@ it('does not acknowledge stopped if another process wins execution ownership dur
   };
   await new RemoteRunner({ baseUrl: 'http://localhost', runnerId: 'runner', runnerSecret: 'secret', stateDirectory: path, fetch: fetcher }).tick();
   expect(stopped).toBe(0); expect(journal.get('dispatch')?.phase).toBe('started');
+});
+
+
+it('runs secret expressions from the prepared snapshot and redacts expanded commands and output', async () => {
+  const secret = 'accepted-secret-rotation-witness';
+  const lines: string[] = [];
+  const append = vi.spyOn(MemoryLogFnClient.prototype, 'appendLines').mockImplementation((_run, _job, _step, values) => { lines.push(...values); });
+  try {
+    const result = await executeRemoteShellJob({ runId: 'run', jobKey: 'job', env: { EXPECTED: secret }, secretSnapshot: { TOKEN: secret }, jobSpec: {
+      'runs-on': 'default', steps: [{ run: 'test "${{ secrets.TOKEN }}" = "$EXPECTED" && printf "%s\\n" "${{ secrets.TOKEN }}"' }],
+    } });
+    expect(result.status).toBe('success');
+    expect(lines.join('\n')).not.toContain(secret);
+    expect(lines.join('\n')).toContain('***');
+    expect(JSON.stringify(result)).not.toContain(secret);
+    const missing = await executeRemoteShellJob({ runId: 'run', jobKey: 'job', jobSpec: {
+      'runs-on': 'default', steps: [{ run: 'echo "${{ secrets.TOKEN }}"' }],
+    } });
+    expect(missing.status).toBe('failure');
+  } finally { append.mockRestore(); }
+});
+
+
+it('keeps captured secrets and expanded scripts out of durable journal entries and completion requests', async () => {
+  const path = directory(); const secret = 'journal-must-not-contain-this-fixture';
+  const payload = { runId: 'run', jobKey: 'job', dispatchId: 'dispatch', claimToken: 'token', secretSnapshot: { TOKEN: secret }, env: { EXPECTED: secret }, jobSpec: {
+    'runs-on': 'default', steps: [{ run: 'test "${{ secrets.TOKEN }}" = "$EXPECTED"' }],
+  } };
+  let offered = false; let completed = false;
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = String(input); let data: unknown;
+    expect(String(init?.body)).not.toContain(secret);
+    expect(String(init?.body)).not.toContain('secretSnapshot');
+    if (url.endsWith('/resume')) data = { claims: [] };
+    else if (url.endsWith('/heartbeat')) { data = { job: offered ? null : payload }; offered = true; }
+    else if (url.endsWith('/status')) data = { cancelRequested: false };
+    else if (url.endsWith('/ack')) data = { acknowledged: true };
+    else if (url.endsWith('/complete')) { completed = true; expect(JSON.parse(String(init?.body)).result.status).toBe('success'); data = { accepted: true }; }
+    else throw Error('Unexpected request');
+    return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
+  };
+  await new RemoteRunner({ baseUrl: 'http://localhost', runnerId: 'runner', runnerSecret: 'secret', stateDirectory: path, fetch: fetcher }).tick();
+  expect(completed).toBe(true);
+  expect(new ClaimJournal(path).get('dispatch')?.phase).toBe('finished');
+  for (const name of readdirSync(path)) {
+    const bytes = readFileSync(join(path, name), 'utf8');
+    expect(bytes).not.toContain(secret); expect(bytes).not.toContain('secretSnapshot'); expect(bytes).not.toContain('test ');
+  }
 });

@@ -58,11 +58,12 @@ function extractSecretsFromWithMap(withMap: Record<string, unknown>, secretNames
 }
 
 function extractSecretsFromString(str: string, secretNames: Set<string>): void {
-  const re = /\$\{\{\s*secrets\.([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
+  // Match the interpolation grammar exactly, including whitespace after the dot
+  // and provider-specific names. Inspect only the original template.
+  const re = /\$\{\{\s*([\s\S]*?)\s*\}\}/g;
   let match: RegExpExecArray | null;
-  
   while ((match = re.exec(str)) !== null) {
-    const secretName = match[1];
-    secretNames.add(secretName);
+    const expression = match[1].trim();
+    if (expression.startsWith('secrets.')) secretNames.add(expression.slice(8).trim());
   }
 }

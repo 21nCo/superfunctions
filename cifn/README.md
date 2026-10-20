@@ -154,3 +154,15 @@ state. Configuration changes affect newly accepted runs; rotate old credentials
 only after draining or reconciling existing intents. No automatic credential
 migration or resend with a new identity occurs. See the
 [email contract and validation limits](.conduct/email-notification-readiness.md).
+
+### Remote shell secret snapshots
+
+Newly accepted jobs capture referenced secrets once in encrypted prepared state.
+Remote shell `${{ secrets.NAME }}` expressions use that acceptance-time snapshot,
+including after restart or provider rotation. Missing secrets reject acceptance;
+explicitly stored empty strings remain valid. Updated control planes and runners
+should be deployed together. Historical jobs without named snapshots fail closed
+for step expressions instead of fetching current values. Commands are source
+substitution, not shell escaping: use environment variables for arbitrary data.
+See [secret snapshot behavior and validation](.conduct/secret-snapshot-readiness.md)
+for redaction, compatibility and remaining remote integration requirements.

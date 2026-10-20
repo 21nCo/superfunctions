@@ -22,7 +22,11 @@ export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortS
   await queue.enqueue(DEFAULT_QUEUE_NAME, { ...payload, runId: run.id, jobSpec });
   const baseEnv = { PATH: process.env.PATH, LANG: process.env.LANG, TMPDIR: process.env.TMPDIR };
   const runner = new Runner({ executionSignal: signal, runCommand: (command, workspace, env) => executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal), executionEnv: baseEnv, store, queue, logClient: new MemoryLogFnClient(), labels: [jobSpec['runs-on']],
-    pipelineSpecs: new Map([[run.id, spec]]), secretValues: new Map([[run.id, Object.values(payload.env ?? {}).filter(Boolean)]]) });
+    getSecret: async (_runId, name) => {
+      if (!payload.secretSnapshot || !Object.prototype.hasOwnProperty.call(payload.secretSnapshot, name)) throw new Error('Required prepared secret is unavailable');
+      return payload.secretSnapshot[name];
+    },
+    pipelineSpecs: new Map([[run.id, spec]]), secretValues: new Map([[run.id, [...Object.values(payload.env ?? {}), ...Object.values(payload.secretSnapshot ?? {})].filter(Boolean)]]) });
   try { await runner.processNextJob(); } catch (cause) { if (cause instanceof ProcessGroupUncertainError) throw cause; return failed(); }
   const result = store.getRun(run.id)!.jobs[0];
   const status = ['success', 'failure', 'skipped'].includes(result.status) ? result.status as JobCompletion['status'] : 'failure';

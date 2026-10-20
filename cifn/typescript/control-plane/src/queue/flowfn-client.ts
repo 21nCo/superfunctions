@@ -11,6 +11,8 @@ export interface JobPayload {
   pipelineRef?: { repo: string; ref: string; configPath?: string };
   env?: Record<string, string>;
   secretKeys?: string[];
+  /** Acceptance-time values; only encrypted storage and authenticated runner delivery. */
+  secretSnapshot?: Record<string, string>;
 }
 
 export interface QueueClient {

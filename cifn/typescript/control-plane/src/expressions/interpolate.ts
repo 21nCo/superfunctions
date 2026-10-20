@@ -23,7 +23,8 @@ export async function interpolate(
 ): Promise<{ result: string; secretValues: string[] }> {
   const secretValues: string[] = [];
   const re = /\$\{\{\s*([\s\S]*?)\s*\}\}/g;
-  let result = template;
+  const chunks: string[] = [];
+  let offset = 0;
   let match: RegExpExecArray | null;
 
   re.lastIndex = 0;
@@ -35,10 +36,12 @@ export async function interpolate(
       throw new Error(`Expression exceeds maximum length of ${EXPR_MAX_LENGTH} characters (actual: ${len})`);
     }
     const value = await resolveInterpolationExpression(inner, context, secretValues);
-    result = result.replace(full, value);
+    chunks.push(template.slice(offset, match.index), value);
+    offset = match.index + full.length;
   }
 
-  return { result, secretValues };
+  chunks.push(template.slice(offset));
+  return { result: chunks.join(''), secretValues };
 }
 
 async function resolveInterpolationExpression(
@@ -92,7 +95,8 @@ export function interpolateSync(
 ): { result: string; secretValues: string[] } {
   const secretValues: string[] = [];
   const re = /\$\{\{\s*([\s\S]*?)\s*\}\}/g;
-  let result = template;
+  const chunks: string[] = [];
+  let offset = 0;
   let match: RegExpExecArray | null;
 
   re.lastIndex = 0;
@@ -104,11 +108,13 @@ export function interpolateSync(
       const allowed = ['ref', 'repository', 'sha', 'event_name'];
       if (!allowed.includes(key)) throw new Error(`${UNSUPPORTED_MSG}: github.${key}`);
       const v = context.github?.[key as keyof NonNullable<InterpolateContext['github']>];
-      result = result.replace(full, typeof v === 'string' ? v : '');
+      chunks.push(template.slice(offset, match.index), typeof v === 'string' ? v : '');
+      offset = match.index + full.length;
     } else {
       throw new Error(`${UNSUPPORTED_MSG}: ${inner} (use async interpolate for secrets/hashFiles)`);
     }
   }
 
-  return { result, secretValues };
+  chunks.push(template.slice(offset));
+  return { result: chunks.join(''), secretValues };
 }
