@@ -1,4 +1,5 @@
-import { notificationDestination, type SendFnConfig } from '../sendfn/sendfn-client.js';
+import type { EmailDeliveryResult } from '../sendfn/email-transport.js';
+import { notificationDestination, type SendFnConfig, type NotificationDestination } from '../sendfn/sendfn-client.js';
 import { notificationBackoff, type NotificationIntent } from '../sendfn/outbox.js';
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash } from 'node:crypto';
 import type { Adapter, WhereClause } from '@superfunctions/db';
@@ -17,7 +18,7 @@ interface StateRow {
   id: string; namespace: string; kind: 'run' | 'runner' | 'meta'; status: string;
   createdAt: string; revision: number; payload: EncryptedPayload;
 }
-interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2; notificationDestination?: string; notification?: NotificationIntent }
+interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2; notificationDestination?: NotificationDestination; notification?: NotificationIntent }
 export interface DatabaseStoreOptions {
   database: Adapter;
   /** Exactly 32 bytes supplied by the deployment. Never generated or persisted by CiFn. */
@@ -36,7 +37,7 @@ export class DatabaseStore implements ControlPlaneStore {
   private readonly database: Adapter;
   private readonly key: Buffer;
   private readonly namespace: string;
-  private notificationUrl?: string;
+  private notificationUrl?: NotificationDestination;
   private onRunStatusChange?: (run: Run) => void;
 
   private constructor(options: DatabaseStoreOptions) {
@@ -174,24 +175,33 @@ export class DatabaseStore implements ControlPlaneStore {
       summary: status === 'cancelled' ? `Run ${run.id}: cancellation requested; subprocess termination is tracked separately` : `Run ${run.id} ${status}: ${run.jobs.length} job(s)`,
     } };
   }
+  async getNotificationState(runId: string) {
+    const intent = (await this.read<RunState>('run', runId))?.notification;
+    if (!intent) return undefined;
+    return clone({ eventId: intent.id, attempts: intent.attempts, nextAttemptAt: intent.nextAttemptAt, deliveredAt: intent.deliveredAt, emailReceipt: intent.emailReceipt, reconciliation: intent.reconciliation });
+  }
   async listNotificationRuns(cursor?: string): Promise<{ runIds: string[]; nextCursor?: string }> {
     const page = await this.page({ limit: 10, cursor }, TERMINAL);
-    return { runIds: page.rows.filter(row => { const intent = this.decode<RunState>(row).notification; return intent && !intent.deliveredAt; }).map(row => this.decode<RunState>(row).run.id), nextCursor: page.nextCursor };
+    return { runIds: page.rows.filter(row => { const intent = this.decode<RunState>(row).notification; return intent && !intent.deliveredAt && !intent.reconciliation; }).map(row => this.decode<RunState>(row).run.id), nextCursor: page.nextCursor };
   }
   async claimNotification(runId: string, now: number, leaseMs: number): Promise<NotificationIntent | undefined> {
     return this.mutate<RunState, NotificationIntent | undefined>('run', runId, state => {
       const intent = state.notification;
-      if (!intent || intent.deliveredAt || intent.nextAttemptAt > now || (intent.lease && intent.lease.expiresAt > now)) return { result: undefined, changed: false };
+      if (!intent || intent.deliveredAt || intent.reconciliation || intent.nextAttemptAt > now || (intent.lease && intent.lease.expiresAt > now)) return { result: undefined, changed: false };
       intent.attempts++; intent.lease = { token: randomUUID(), expiresAt: now + leaseMs };
       return { result: clone(intent), changed: true };
     });
   }
-  async finishNotification(runId: string, eventId: string, token: string, delivered: boolean, now: number): Promise<boolean> {
+  async finishNotification(runId: string, eventId: string, token: string, delivered: boolean | EmailDeliveryResult, now: number): Promise<boolean> {
     return await this.mutate<RunState, boolean>('run', runId, state => {
       const intent = state.notification;
       if (!intent || intent.id !== eventId || intent.deliveredAt || intent.lease?.token !== token || intent.lease.expiresAt <= now) return { result: false, changed: false };
-      if (delivered) intent.deliveredAt = new Date(now).toISOString();
-      else intent.nextAttemptAt = now + notificationBackoff(intent.attempts);
+      if (typeof delivered === 'object' && delivered.status === 'reconciliation') {
+        intent.reconciliation = { reason: delivered.reason, ...(delivered.transactionId ? { transactionId: delivered.transactionId } : {}), at: new Date(now).toISOString() };
+      } else if (delivered === true || (typeof delivered === 'object' && delivered.status === 'accepted')) {
+        intent.deliveredAt = new Date(now).toISOString();
+        if (typeof delivered === 'object' && delivered.status === 'accepted') intent.emailReceipt = { transactionId: delivered.transactionId, status: delivered.transactionStatus };
+      } else intent.nextAttemptAt = now + notificationBackoff(intent.attempts);
       delete intent.lease;
       return { result: true, changed: true };
     }) ?? false;

@@ -16,6 +16,9 @@ export interface SendFnConfig {
   enabled: boolean;
   webhookUrl?: string;
   emailTo?: string;
+  sendFnEmailUrl?: string;
+  sendFnAdminKey?: string;
+  sendFnUserId?: string;
 }
 
 /**
@@ -70,10 +73,20 @@ export class EmailSendFnClient implements SendFnClient {
 }
 
 
-export function notificationDestination(config: SendFnConfig): string | undefined {
+export interface SendFnEmailDestination { kind: 'sendfn-email'; url: string; to: string; userId: string; adminKey: string }
+export type NotificationDestination = string | SendFnEmailDestination;
+export function notificationDestination(config: SendFnConfig): NotificationDestination | undefined {
   if (typeof config.enabled !== 'boolean') throw new Error('CiFn notification enabled must be a boolean');
   if (!config.enabled) return undefined;
-  if (config.emailTo) throw new Error('CiFn durable email notifications require a real SendFn integration');
+  if (config.emailTo) {
+    if (config.webhookUrl) throw new Error('Choose one CiFn notification destination');
+    if (!config.sendFnEmailUrl || !config.sendFnAdminKey || !config.sendFnUserId) throw new Error('CiFn email requires a real SendFn endpoint, admin key and user ID');
+    if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(config.emailTo) || /[\r\n]/.test(config.sendFnAdminKey) || !config.sendFnUserId.trim()) throw new Error('Invalid CiFn SendFn email configuration');
+    let endpoint: URL;
+    try { endpoint = new URL(config.sendFnEmailUrl); } catch { throw new Error('Invalid CiFn SendFn email endpoint'); }
+    if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash || endpoint.search) throw new Error('SendFn endpoint must use HTTP(S) without userinfo, query or fragment');
+    return { kind: 'sendfn-email', url: endpoint.toString(), to: config.emailTo, userId: config.sendFnUserId, adminKey: config.sendFnAdminKey };
+  }
   if (!config.webhookUrl) throw new Error('Enabled CiFn notifications require an explicit webhook URL');
   let url: URL;
   try { url = new URL(config.webhookUrl); } catch { throw new Error('Invalid CiFn notification webhook URL'); }
@@ -83,7 +96,7 @@ export function notificationDestination(config: SendFnConfig): string | undefine
 export function parseNotificationConfig(env: Record<string, string | undefined>): SendFnConfig {
   const flag = env.CIFN_NOTIFY_ON_RUN_COMPLETE;
   if (flag !== undefined && flag !== 'true' && flag !== 'false') throw new Error('CIFN_NOTIFY_ON_RUN_COMPLETE must be true or false');
-  const config = { enabled: flag === 'true', webhookUrl: env.CIFN_NOTIFICATION_WEBHOOK_URL, emailTo: env.CIFN_NOTIFICATION_EMAIL_TO };
+  const config = { enabled: flag === 'true', webhookUrl: env.CIFN_NOTIFICATION_WEBHOOK_URL, emailTo: env.CIFN_NOTIFICATION_EMAIL_TO, sendFnEmailUrl: env.CIFN_SENDFN_EMAIL_URL, sendFnAdminKey: env.CIFN_SENDFN_ADMIN_KEY, sendFnUserId: env.CIFN_SENDFN_USER_ID };
   notificationDestination(config);
   return config;
 }

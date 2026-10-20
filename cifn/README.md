@@ -103,7 +103,7 @@ Run the built runner with `CIFN_CONTROL_PLANE_URL`, `CIFN_RUNNER_ID`,
 `CIFN_RUNNER_SECRET` and a persistent `CIFN_RUNNER_STATE_DIR`. This remote path
 supports shell steps; Docker and provider steps remain unsupported remotely.
 Execution leases/reassignment, cancellation delivery, remote logs/artifacts and
-durable webhook notifications are described below; email/provider delivery remains open. See the [remote execution contract](.conduct/remote-execution-readiness.md),
+durable notifications are described below; hosted email delivery remains unverified. See the [remote execution contract](.conduct/remote-execution-readiness.md),
 [dispatch contract](.conduct/durable-dispatch-readiness.md), and
 [storage contract](.conduct/durable-storage-readiness.md) for validation and migration
 requirements. These checkpoints do not establish full production readiness.
@@ -126,6 +126,31 @@ With SQLite storage, set `CIFN_NOTIFY_ON_RUN_COMPLETE=true` and
 `CIFN_NOTIFICATION_WEBHOOK_URL` to opt in. Completion and cancellation-intent
 events commit with the terminal run state and retry across restart using a stable
 `Idempotency-Key`; receivers must deduplicate retries. Cancellation events do not
-assert that subprocesses stopped. Enabled email configuration fails explicitly
-until a real SendFn email integration is supplied. See the
+assert that subprocesses stopped. See the
 [notification outbox contract](.conduct/notification-outbox-readiness.md).
+
+
+### Durable SendFn email notifications
+
+With SQLite storage, configure an existing SendFn instance's authenticated email endpoint:
+
+```sh
+CIFN_NOTIFY_ON_RUN_COMPLETE=true
+CIFN_NOTIFICATION_EMAIL_TO=owner@example.com
+CIFN_SENDFN_EMAIL_URL=https://send.example.com/email
+CIFN_SENDFN_ADMIN_KEY=<SendFn admin key>
+CIFN_SENDFN_USER_ID=ci-notifications
+```
+
+Choose email or `CIFN_NOTIFICATION_WEBHOOK_URL`, not both. CiFn posts the same
+idempotency key on every attempt. A SendFn `pending` transaction remains pending;
+`failed`, `bounced`, or `complained` requires reconciliation. Only a matching
+`sent`/`delivered` transaction with a provider receipt is acknowledged. `sent`
+means provider acceptance, not inbox delivery. Use a SendFn provider with durable
+idempotency for safe recovery from ambiguous requests.
+
+The endpoint, recipient, user and admin key are snapshotted in encrypted run
+state. Configuration changes affect newly accepted runs; rotate old credentials
+only after draining or reconciling existing intents. No automatic credential
+migration or resend with a new identity occurs. See the
+[email contract and validation limits](.conduct/email-notification-readiness.md).

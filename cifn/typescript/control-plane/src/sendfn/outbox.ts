@@ -1,15 +1,18 @@
 import type { DatabaseStore } from '../store/database-store.js';
 import type { ControlPlaneStore } from '../store/store.js';
-import type { SendFnNotification } from './sendfn-client.js';
+import { deliverSendFnEmail, type EmailDeliveryResult } from './email-transport.js';
+import type { SendFnNotification, NotificationDestination } from './sendfn-client.js';
 
 export interface NotificationIntent {
   id: string;
-  destination: string;
+  destination: NotificationDestination;
   payload: SendFnNotification & { eventId: string };
   attempts: number;
   nextAttemptAt: number;
   lease?: { token: string; expiresAt: number };
   deliveredAt?: string;
+  emailReceipt?: { transactionId: string; status: 'sent' | 'delivered' };
+  reconciliation?: { reason: string; transactionId?: string; at: string };
 }
 export type NotificationStore = Pick<DatabaseStore, 'configureNotifications' | 'listNotificationRuns' | 'claimNotification' | 'finishNotification'>;
 export function isNotificationStore(store: ControlPlaneStore): store is ControlPlaneStore & NotificationStore {
@@ -34,7 +37,12 @@ export class NotificationPublisher {
       for (const runId of page.runIds) {
         const intent = await this.store.claimNotification(runId, Date.now(), NOTIFICATION_LEASE_MS);
         if (!intent?.lease) continue;
-        let delivered = false;
+        let delivered: boolean | EmailDeliveryResult = false;
+        if (typeof intent.destination !== 'string') {
+          delivered = await deliverSendFnEmail(intent.destination, intent.payload, intent.id);
+          await this.store.finishNotification(runId, intent.id, intent.lease.token, delivered, Date.now());
+          continue;
+        }
         try {
           const response = await fetch(intent.destination, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': intent.id, 'X-CiFn-Event-Id': intent.id },

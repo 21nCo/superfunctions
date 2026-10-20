@@ -1,7 +1,8 @@
 # CiFn durable webhook notification checkpoint
 
-2026-10-20. Implements the webhook delivery portion of SPEC §7.3. Email/SendFn
-provider delivery and per-pipeline notification configuration remain open.
+2026-10-20. Implements the webhook delivery portion of SPEC §7.3. The subsequent
+[SendFn email checkpoint](email-notification-readiness.md) adds authenticated email
+transport; per-pipeline configuration and hosted provider acceptance remain open.
 
 ## Configuration and integration
 
@@ -15,9 +16,9 @@ CIFN_NOTIFICATION_WEBHOOK_URL=https://receiver.example/cifn-events
 
 The flag accepts only `true` or `false`; default is disabled. Enabled configuration
 without an explicit HTTP(S) webhook fails startup. Userinfo/fragments and
-non-HTTP protocols are rejected. Redirects are not followed. Email configuration
-(`CIFN_NOTIFICATION_EMAIL_TO`) fails explicitly while enabled; the old
-`EmailSendFnClient` no longer logs and returns fabricated success.
+non-HTTP protocols are rejected. Redirects are not followed. Incomplete email configuration fails explicitly. Complete configuration uses the
+subsequent email transport described above; the legacy `EmailSendFnClient`
+placeholder still rejects instead of returning fabricated success.
 
 Programmatic durable callers may supply `DatabaseStoreOptions.notifications` or
 `createApp({store,sendFnConfig:{enabled:true,webhookUrl}})`. The durable app returns
@@ -65,7 +66,7 @@ Delivery is **at least once**. A receiver may accept a request whose response is
 lost, or before CiFn crashes while recording its receipt. The same event ID is
 retried and the receiver must deduplicate it. A 2xx response means receiver HTTP
 acceptance, not downstream email delivery or exactly-once effects. No generic
-remote SendFn API was invented; a real SendFn email/provider integration still
+remote SendFn API was invented; at this webhook checkpoint the SendFn email/provider integration still
 needs its documented SDK and transaction-status semantics.
 
 ## Evidence
@@ -103,8 +104,8 @@ was used as evidence.
 
 ## Remaining original gates
 
-Email via the actual SendFn SDK/provider, per-pipeline notification options,
-provider credentials/rotation, operator dead-letter/retry tooling, retention,
+Hosted SendFn/provider acceptance, per-pipeline notification options,
+credential rotation/migration tooling, operator dead-letter/retry tooling, retention,
 large-history scan/index performance and deployed receiver/provider acceptance
 remain incomplete. Memory notification callbacks are not made durable. Existing
 execution lease/reconciliation, remote provider/log/artifact, platform/runtime,

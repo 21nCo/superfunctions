@@ -57,7 +57,8 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
     if (options.sendFnConfig) runStore.configureNotifications(options.sendFnConfig);
   }
   const destination = sendFnConfig.enabled && !options.sendFn ? notificationDestination(sendFnConfig) : undefined;
-  const sendFn = options.sendFn ?? (destination ? new WebhookSendFnClient(destination) : new MemorySendFnClient());
+  if (destination && typeof destination !== 'string' && !isNotificationStore(runStore)) throw new Error('SendFn email notifications require durable storage');
+  const sendFn = options.sendFn ?? (typeof destination === 'string' ? new WebhookSendFnClient(destination) : new MemorySendFnClient());
 
   // Set up sendfn notification hook for run status changes
   if (!(isNotificationStore(runStore))) runStore.setRunStatusChangeCallback((run) => {
