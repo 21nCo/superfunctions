@@ -37,7 +37,7 @@ Errors are observable as ConfigRefreshError; no successful receipt is fabricated
 
 ## Validation
 
-- TS SDK68 existing tests/types/build; service signed-config HTTP acceptance10
+- TS SDK68 existing tests/types/build; service signed-config HTTP acceptance11
   cases, now including actual TS refresh, actual Python refresh against the
   service, invalid signature/identity/ETag, fully signed malformed definitions,
   manual-cache invalidation, real HTTP deadlines, ignored-abort late completion
@@ -58,9 +58,34 @@ Errors are observable as ConfigRefreshError; no successful receipt is fabricated
 
 `refreshInterval/refresh_interval` does not yet schedule background work. Automatic
 refresh lifecycle/backoff, persistent client caching, monotonic replay/rollback
-and freshness policy, key distribution/revocation administration, browser-native
+and freshness policy, key distribution/revocation administration, cross-browser/load
 acceptance, WatchFn flag exposures/evaluation telemetry, UI/hooks and broader
 segment/operator parity remain open. A valid signature proves authenticity, not
 that a server returned its newest revision; revision UUIDs are not monotonic.
 Messaging, surveys, feedback integrations, roadmap/changelog and all other
 original requirements are unaffected and remain in scope.
+
+
+## Late-response cleanup and real browser acceptance
+
+The transport checks abort immediately after fetch resolves and cancels the
+returned body before any status/body read. A regression supplies a response after
+the request deadline whose body never completes; cancellation is observed once
+and no values apply. This handles fetch implementations that ignore abort, in
+addition to preventing late application.
+
+`service/scripts/verify-config-browser.mjs` passed with installed Chrome
+154.0.8037.58. It bundles the built SDK for the browser, starts real separate-origin
+local HTTP app/service servers, and uses actual WebCrypto Ed25519 verification.
+Acceptance covers first verified refresh, conditional304 with CORS-exposed headers,
+allowed and blocked origins, omission of an ambient cookie, signature/tenant
+failure preserving state, and an actual delayed HTTP response respecting the
+whole-request deadline. Temporary bundle/profile resources and servers are cleaned
+up. This is local Chrome acceptance with explicit HTTP opt-in, not hosted HTTPS,
+all-browser or load acceptance.
+
+```sh
+USERFN_PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
+  USERFN_CHROME_PATH=/absolute/path/to/chrome \
+  node userfn/service/scripts/verify-config-browser.mjs
+```

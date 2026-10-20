@@ -234,8 +234,8 @@ client.closeConfig(); // permanent config-transport close; no late application
 
 Keys are base64url SPKI DER Ed25519 public keys provisioned out of band, not keys
 from the response. HTTPS is required; `allowInsecureHttp: true` is an explicit
-local-test option. WebCrypto with Ed25519 is required (Node20 acceptance passes;
-browser acceptance remains open). The SDK verifies exact UTF-8 bytes, fixed
+local-test option. WebCrypto with Ed25519 is required (Node20 and Chrome154 acceptance pass;
+other browser engines remain open). The SDK verifies exact UTF-8 bytes, fixed
 algorithm/version, expected tenant/environment, trusted key ID and the matching
 SHA-256 ETag before applying validated flags and segments synchronously.
 
@@ -251,4 +251,4 @@ with `ConfigRefreshError` and preserve bootstrap or the last good configuration.
 
 This API is explicit refresh only: `refreshInterval` still does not schedule
 requests. Persistent caches, monotonic anti-rollback/freshness policy, automatic
-key distribution, browser acceptance and WatchFn exposures remain open.
+key distribution, cross-browser/load acceptance and WatchFn exposures remain open.

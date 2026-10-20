@@ -176,3 +176,13 @@ it('enforces total refresh deadline and prevents late application even when fetc
   const closed = new UserFnClient(signedOptions(1000)); const pending = closed.refreshConfig(); closed.closeConfig();
   await expect(pending).rejects.toThrow(); await new Promise(resolve => setTimeout(resolve, 100)); expect(closed.getFlag('enabled')).toBe('bootstrap');
 });
+
+
+it('cancels a late response body even when fetch ignored abort and its body never settles', async () => {
+  const cancelled = vi.fn();
+  vi.stubGlobal('fetch', () => new Promise(resolve => setTimeout(() => resolve(new Response(new ReadableStream({ cancel: cancelled }))), 50)));
+  const client = new UserFnClient(signedOptions(10));
+  await expect(client.refreshConfig()).rejects.toThrow();
+  await new Promise(resolve => setTimeout(resolve, 90));
+  expect(cancelled).toHaveBeenCalledOnce(); expect(client.getFlag('enabled')).toBe('bootstrap');
+});

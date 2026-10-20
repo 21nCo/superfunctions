@@ -86,6 +86,7 @@ export class HttpConfigService {
   }
   private async download(controller: AbortController, previous?: string): Promise<{ value: VerifiedConfig; etag: string } | null> {
     const response = await fetch(this.url, { headers: { authorization: 'Bearer ' + this.key, ...(previous ? { 'if-none-match': previous } : {}) }, signal: controller.signal, redirect: 'error', credentials: 'omit', cache: 'no-store' });
+    if (controller.signal.aborted) { void response.body?.cancel().catch(() => {}); throw new ConfigRefreshError('Configuration request cancelled'); }
     if (response.status === 304) {
       if (!previous || response.headers.get('etag') !== previous) throw new ConfigRefreshError('Unverified conditional configuration response');
       return null;
