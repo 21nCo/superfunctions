@@ -39,53 +39,40 @@ export class QueryEngine {
     const grouping = this.grouping(options.groupBy);
     let aggregations = options.aggregations;
     const rates = Object.values(aggregations ?? {}).filter(config => config.operation === "rate");
-    let data: any[] = [];
-    
-    // Check if storage has specialized query capabilities
-    if ("executeQuery" in this.storage && typeof (this.storage as any).executeQuery === "function") {
-        // Storage must return raw matching events, not pre-limited or aggregated rows.
-        data = await (this.storage as any).executeQuery({
-          ...(scalarMetric || rates.length ? {} : { metric: options.metric }), where: options.where, timeRange: options.timeRange, resolvedTimeRange: range,
-        });
-    } else {
-        // Fallback to in-memory filtering (fetching all might be bad for DB, but fine for memory)
-        data = (this.storage.getAll ? await this.storage.getAll() : []) || [];
-    }
-
-    // 1. Filter by metric
-    if (rates.length) {
-      // Rate selectors share global time/where filters but select their own metrics.
-      // Keep the outer metric for ordinary aggregates in each resulting group.
-      const onlyRates = Object.values(aggregations!).every(config => config.operation === "rate");
-      if (options.metric || onlyRates) {
-        const metrics = new Set([...(options.metric ? [options.metric] : []), ...rates.flatMap(config => [config.numerator!.metric, config.denominator!.metric])]);
-        data = data.filter(event => metrics.has(event.name) || metrics.has(event.type));
+    const onlyRates = rates.length > 0 && Object.values(aggregations!).every(config => config.operation === "rate");
+    const metrics = new Set([...(options.metric ? [options.metric] : []), ...rates.flatMap(config => [config.numerator!.metric, config.denominator!.metric])]);
+    const storageOptions = {
+      ...(scalarMetric || rates.length ? {} : { metric: options.metric }),
+      where: options.where, timeRange: options.timeRange, resolvedTimeRange: range,
+    };
+    const source = this.events(storageOptions);
+    const primary = this.collector(options, aggregations, grouping, rates.length ? options.metric : undefined);
+    const suffixAt = scalarMetric && options.metric?.includes(".") ? options.metric.lastIndexOf(".") : -1;
+    const fallbackMetric = suffixAt >= 0 ? options.metric!.slice(0, suffixAt) : undefined;
+    const fallbackConfigs = fallbackMetric === undefined ? undefined : { value: { ...aggregations!.value, field: options.metric!.slice(suffixAt + 1) } };
+    let fallback = fallbackConfigs ? this.collector(options, fallbackConfigs, grouping) : undefined;
+    let exactMetricSeen = false;
+    for await (const event of source) {
+      const exact = !options.metric || event.name === options.metric || event.type === options.metric;
+      // Exact metric presence is determined before residual where/time filters,
+      // matching the original suffix fallback rule. Never run a second live scan.
+      if (fallback && exact) { exactMetricSeen = true; fallback = undefined; }
+      let target = primary;
+      if (rates.length) {
+        if ((options.metric || onlyRates) && !metrics.has(event.name) && !metrics.has(event.type)) continue;
+      } else if (!exact) {
+        if (!fallback || (event.name !== fallbackMetric && event.type !== fallbackMetric)) continue;
+        target = fallback;
       }
-    } else if (options.metric) {
-      const exact = data.filter((e) => e.name === options.metric || e.type === options.metric);
-      if (scalarMetric && exact.length === 0 && options.metric.includes(".")) {
-        const at = options.metric.lastIndexOf(".");
-        const name = options.metric.slice(0, at);
-        const field = options.metric.slice(at + 1);
-        data = data.filter((event) => event.name === name || event.type === name);
-        aggregations = { value: { ...aggregations!.value, field } };
-      } else data = exact;
-    }
-
-    // 2. Filter by where clause
-    if (options.where) {
-      data = data.filter((e) => this.matches(e, options.where!));
-    }
-
-    // Match both in-process Date timestamps and serialized ISO/epoch timestamps.
-    if (range) {
-      data = data.filter((event) => {
+      if (options.where && !this.matches(event, options.where)) continue;
+      if (range) {
         const timestamp = this.timestamp(event.timestamp === undefined ? event.ts : event.timestamp);
-        return Number.isFinite(timestamp) && TimeRangeParser.inRange(timestamp, range);
-      });
+        if (!Number.isFinite(timestamp) || !TimeRangeParser.inRange(timestamp, range)) continue;
+      }
+      target.add(event);
     }
-
-    if (aggregations) data = this.aggregateRows(data, aggregations, grouping, rates.length ? options.metric : undefined);
+    if (fallbackConfigs && !exactMetricSeen) aggregations = fallbackConfigs;
+    let data = (fallback ?? primary).finish();
 
     // 5. Sorting
     if (options.orderBy) {
@@ -188,69 +175,114 @@ export class QueryEngine {
     return result;
   }
 
-  private aggregateRows(events: any[], configs: Record<string, Aggregation>, grouping: Array<{ key: string; interval?: number }>, metric?: string): any[] {
-    const groups = new Map<string, { labels: Record<string, any>; events: any[] }>();
-    if (!grouping.length) groups.set("[]", { labels: {}, events: [] });
-    for (const event of events) {
-      const labels: Record<string, any> = {};
-      let valid = true;
-      for (const group of grouping) {
-        let value = this.getFieldValue(event, group.key);
-        if (group.interval) {
-          const timestamp = this.timestamp(event.timestamp === undefined ? event.ts : event.timestamp);
-          if (!Number.isFinite(timestamp)) { valid = false; break; }
-          value = Math.floor(timestamp / group.interval) * group.interval;
-        }
-        if (value === undefined) value = null;
-        if (value !== null && !["string", "number", "boolean"].includes(typeof value) || typeof value === "number" && !Number.isFinite(value)) throw new QueryValidationError("Group fields must be finite scalar values");
-        Object.defineProperty(labels, group.key, { value, enumerable: true });
-      }
-      if (!valid) continue;
-      const key = JSON.stringify(Object.values(labels));
-      if (!groups.has(key)) groups.set(key, { labels, events: [] });
-      groups.get(key)!.events.push(event);
-    }
-    return [...groups.values()].map(group => {
-      const row = { ...group.labels };
-      for (const [name, config] of Object.entries(configs)) {
-        Object.defineProperty(row, name, { value: this.aggregateValue(config.operation === "rate" || !metric ? group.events : group.events.filter(event => event.name === metric || event.type === metric), config), enumerable: true });
-      }
-      return row;
-    });
+  private async *events(options: any): AsyncGenerator<any> {
+    if (this.storage.iterateQuery) { yield* this.storage.iterateQuery(options); return; }
+    const storage = this.storage as StorageAdapter & { executeQuery?: (options: any) => Promise<any[]> };
+    const rows = storage.executeQuery ? await storage.executeQuery(options) : await storage.getAll?.() ?? [];
+    yield* rows;
   }
 
-  private aggregateValue(events: any[], config: Aggregation): number | null {
-    if (config.operation === "count") return events.length;
-    if (config.operation === "rate") {
-      const count = (metric: string) => events.filter(event => event.name === metric || event.type === metric).length;
-      const denominator = count(config.denominator!.metric);
-      return denominator === 0 ? null : count(config.numerator!.metric) / denominator;
+  /** Retain output rows or aggregation state, never complete grouped payloads. */
+  private collector(options: QueryOptions, configs: Record<string, Aggregation> | undefined,
+    grouping: Array<{ key: string; interval?: number }>, metric?: string): { add(event: any): void; finish(): any[] } {
+    if (!configs) {
+      const rows: any[] = [];
+      return {
+        add: event => { if (options.orderBy || options.limit === undefined || rows.length < options.limit) rows.push(event); },
+        finish: () => rows,
+      };
     }
-    const raw = events.map(event => this.getFieldValue(event, config.field!));
-    if (config.operation === "count_distinct") {
-      const values = raw.filter(value => value !== undefined && value !== null);
-      if (values.some(value => !["string", "number", "boolean"].includes(typeof value) || typeof value === "number" && !Number.isFinite(value))) throw new QueryValidationError("Distinct fields must be finite scalar values");
-      return new Set(values).size;
-    }
-    const values = raw.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    if (!values.length) return config.operation === "sum" ? 0 : null;
-    let value: number;
-    switch (config.operation) {
-      case "sum": value = values.reduce((sum, current) => sum + current, 0); break;
-      case "avg": value = values.reduce((mean, current) => mean + current / values.length, 0); break;
-      case "min": value = values.reduce((min, current) => Math.min(min, current)); break;
-      case "max": value = values.reduce((max, current) => Math.max(max, current)); break;
-      case "percentile": {
-        const sorted = [...values].sort((a, b) => a - b);
-        const index = config.percentile! / 100 * (sorted.length - 1);
-        const low = Math.floor(index), high = Math.ceil(index), weight = index - low;
-        value = sorted[low] * (1 - weight) + sorted[high] * weight;
-        break;
-      }
-      default: throw new QueryValidationError("Unsupported aggregation");
-    }
-    if (!Number.isFinite(value)) throw new QueryValidationError("Aggregation exceeds finite numeric range");
-    return value;
+    type State = { count: number; numerator: number; denominator: number; numericCount: number; sum: number; min?: number; max?: number; samples?: number[]; distinct?: Set<any>; invalidDistinct?: boolean };
+    type Group = { labels: Record<string, any>; states: State[] };
+    const entries = Object.entries(configs);
+    const create = (labels: Record<string, any>): Group => ({ labels, states: entries.map(([, config]) => ({ count: 0, numerator: 0, denominator: 0, numericCount: 0, sum: 0,
+      ...(["avg", "percentile"].includes(config.operation) ? { samples: [] } : {}),
+      ...(config.operation === "count_distinct" ? { distinct: new Set() } : {}),
+    })) });
+    const groups = new Map<string, Group>();
+    if (!grouping.length) groups.set("[]", create({}));
+    let error: unknown;
+    const add = (event: any) => {
+      if (error) return;
+      try {
+        const labels: Record<string, any> = {};
+        for (const group of grouping) {
+          let value = this.getFieldValue(event, group.key);
+          if (group.interval) {
+            const timestamp = this.timestamp(event.timestamp === undefined ? event.ts : event.timestamp);
+            if (!Number.isFinite(timestamp)) return;
+            value = Math.floor(timestamp / group.interval) * group.interval;
+          }
+          if (value === undefined) value = null;
+          if (value !== null && !["string", "number", "boolean"].includes(typeof value) || typeof value === "number" && !Number.isFinite(value)) throw new QueryValidationError("Group fields must be finite scalar values");
+          Object.defineProperty(labels, group.key, { value, enumerable: true });
+        }
+        const key = JSON.stringify(Object.values(labels));
+        let group = groups.get(key);
+        if (!group) { group = create(labels); groups.set(key, group); }
+        entries.forEach(([, config], index) => {
+          const state = group!.states[index];
+          if (config.operation === "rate") {
+            if (event.name === config.numerator!.metric || event.type === config.numerator!.metric) state.numerator++;
+            if (event.name === config.denominator!.metric || event.type === config.denominator!.metric) state.denominator++;
+            return;
+          }
+          if (metric && event.name !== metric && event.type !== metric) return;
+          state.count++;
+          if (config.operation === "count") return;
+          const value = this.getFieldValue(event, config.field!);
+          if (config.operation === "count_distinct") {
+            if (value === undefined || value === null) return;
+            if (!["string", "number", "boolean"].includes(typeof value) || typeof value === "number" && !Number.isFinite(value)) state.invalidDistinct = true;
+            else state.distinct!.add(value);
+            return;
+          }
+          if (typeof value !== "number" || !Number.isFinite(value)) return;
+          state.numericCount++;
+          switch (config.operation) {
+            case "sum": state.sum += value; break;
+            case "min": state.min = state.min === undefined ? value : Math.min(state.min, value); break;
+            case "max": state.max = state.max === undefined ? value : Math.max(state.max, value); break;
+            // Preserve the exact existing sum(value / finalCount) arithmetic and
+            // percentile interpolation; payloads are not retained with samples.
+            case "avg": case "percentile": state.samples!.push(value); break;
+          }
+        });
+      } catch (failure) { error = failure; }
+    };
+    const finish = () => {
+      if (error) throw error;
+      return [...groups.values()].map(group => {
+        const row = { ...group.labels };
+        entries.forEach(([name, config], index) => {
+          const state = group.states[index];
+          let value: number | null;
+          switch (config.operation) {
+            case "count": value = state.count; break;
+            case "rate": value = state.denominator ? state.numerator / state.denominator : null; break;
+            case "count_distinct":
+              if (state.invalidDistinct) throw new QueryValidationError("Distinct fields must be finite scalar values");
+              value = state.distinct!.size; break;
+            case "sum": value = state.sum; break;
+            case "min": value = state.min ?? null; break;
+            case "max": value = state.max ?? null; break;
+            case "avg": value = state.numericCount ? state.samples!.reduce((mean, current) => mean + current / state.numericCount, 0) : null; break;
+            case "percentile": {
+              const sorted = state.samples!;
+              if (!sorted.length) { value = null; break; }
+              sorted.sort((a, b) => a - b);
+              const at = config.percentile! / 100 * (sorted.length - 1), low = Math.floor(at), high = Math.ceil(at), weight = at - low;
+              value = sorted[low] * (1 - weight) + sorted[high] * weight;
+              break;
+            }
+          }
+          if (value !== null && !Number.isFinite(value)) throw new QueryValidationError("Aggregation exceeds finite numeric range");
+          Object.defineProperty(row, name, { value, enumerable: true });
+        });
+        return row;
+      });
+    };
+    return { add, finish };
   }
 
   private matches(event: any, filters: any): boolean {
