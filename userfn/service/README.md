@@ -145,3 +145,7 @@ Built package acceptance is reproducible with
 `node userfn/service/scripts/verify-config-package.mjs` from the repository root
 after building SDK/service/shared dependencies. It installs fresh tarballs and
 checks signed HTTP behavior plus strict installed declaration consumption.
+
+Use npm 11 for this consumer check if npm 10 fails while resolving optional
+peers. `USERFN_NPM_CLI=/absolute/path/to/npm/bin/npm-cli.js` selects an existing
+CLI without changing the global installation or bypassing peer checks.

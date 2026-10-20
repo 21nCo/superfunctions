@@ -70,19 +70,23 @@ SDK, shared DB/HTTP/auth/observability), installs them in a fresh temporary cons
 with normal npm dependency resolution, and runs actual local HTTP signed
 publication/conditional fetch plus SDK evaluation. It compiles installed service
 and memory-adapter declarations under strict NodeNext without skipLibCheck or peer
-bypass. Both runtime and declarations passed on Node 20.20.0/npm 10.8.2. This
+bypass. Both runtime and declarations passed on Node 20.20.0 with npm 11. This
 package-runtime fixture uses memory storage; durable SQLite evidence is the
 separate native acceptance above. Temporary directories are removed.
 
-The initial unconstrained optional-peer resolution hit npm Arborist's null
-`edgesOut` error while choosing the latest Vitest 4 graph. The reproducible
-consumer explicitly installs compatible repository versions `drizzle-orm@0.35.3`
-and `vitest@3.2.4`, alongside TypeScript5.6.3 and Node22 types; normal peer checking
-then passes. This is evidence for that dependency matrix, not all future peer
-versions. Shared dependency manifests were not changed.
+The initial npm10.8.2 unconstrained optional-peer resolution hit Arborist's null
+`edgesOut` error while choosing the latest Vitest4 graph. npm11 resolves the
+normal declared graph successfully, without extra consumer peer pins. A first
+compatible pinned-matrix run also passed, but the final reproducible script does
+not add Drizzle/Vitest or other artificial peers. Shared dependency manifests
+were not changed. The only explicit consumer development tools are
+TypeScript5.6.3 and Node22 types.
 
 ```sh
+# With npm11 on PATH:
 node userfn/service/scripts/verify-config-package.mjs
+# Or select an existing npm11 CLI without changing the global installation:
+USERFN_NPM_CLI=/absolute/path/to/npm/bin/npm-cli.js node userfn/service/scripts/verify-config-package.mjs
 ```
 
 ## Original gates still open

@@ -7,13 +7,14 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const directory = await mkdtemp(join(tmpdir(), 'userfn-config-package-'));
 const run = (command, args, cwd = directory) => execFileSync(command, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
+const npm = (args, cwd) => process.env.USERFN_NPM_CLI ? run(process.execPath, [process.env.USERFN_NPM_CLI, ...args], cwd) : run('npm', args, cwd);
 try {
   const tarballs = [];
   for (const folder of ['packages/observability', 'packages/auth', 'packages/http', 'packages/db', 'userfn/typescript', 'userfn/service']) {
-    const [pack] = JSON.parse(run('npm', ['pack', '--json', '--pack-destination', directory], join(root, folder))); tarballs.push(join(directory, pack.filename));
+    const [pack] = JSON.parse(npm(['pack', '--json', '--pack-destination', directory], join(root, folder))); tarballs.push(join(directory, pack.filename));
   }
   await writeFile(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
-  run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', ...tarballs, 'typescript@5.6.3', '@types/node@22', 'drizzle-orm@0.35.3', 'vitest@3.2.4']);
+  npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...tarballs, 'typescript@5.6.3', '@types/node@22']);
   const fixture = `
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
