@@ -361,10 +361,20 @@ const report = await catcher.captureBug({
 
 The hint is optional when the server can select one route for the app. Invalid hints and provider-credential fields are rejected locally; unauthorized destinations are rejected by WatchFn. A provider issue ID or URL is a server result, not a client routing input.
 
-`report.delivery === 'sent'` means the canonical report and pending issue delivery were acknowledged by WatchFn. It does not mean the provider issue already exists. Watch's explicit server worker creates the issue; the linked canonical event then exposes `integration.issueId`/`issueUrl` through its authenticated query API. The reporter still displays an issue link when an injected client returns one, but automatic refresh of a later asynchronous issue link is not implemented. Do not fabricate a provider link from a successful HTTP 202.
+`report.delivery === 'sent'` means the canonical report and pending issue delivery were acknowledged by WatchFn. It does not mean the provider issue already exists. Watch's explicit server worker creates the issue; the linked canonical event then exposes `integration.issueId`/`issueUrl` through its authenticated query API. The reporter displays a validated issue link from an injected client and can opt in to bounded polling for an asynchronous link as described below. Do not fabricate a provider link from a successful HTTP 202.
 
 The configured Watch API key also authorizes Watch queries and every configured route; there is no ingestion-only key or per-app credential isolation in this integration. Use an authenticated application-backend proxy when exposing that key in the browser is unsuitable. All apps sharing one Watch deployment/key must share its trust boundary. Provider credentials remain server-only.
 
 Enabled outbox intake deduplicates the same canonical report ID/content, including a lost acknowledgment retried by the shared Watch browser transport. Modified content for an existing ID returns 409. The existing `CatchFnDeliveryError.retry()` retains the original report for retry; calling `captureBug()` again creates a new report. WatchFn without the outbox retains its original at-least-once arrival behavior.
 
 See [BotFn delivery acceptance and limits](../.conduct/botfn-delivery-readiness.md) and [WatchFn migration/worker setup](../../watchfn/.conduct/botfn-issue-readiness.md).
+
+### Waiting for a verified issue link
+
+Opt in with `issueStatus: { enabled: true }`. After the reporter receives an ingestion acknowledgment, it reads the status route and shows **View issue** when the server returns a verified link. `captureBug()` itself still returns after ingestion and never starts polling. Programmatic callers can separately use `await catcher.pollIssueStatus(report.id, { signal })`.
+
+Polling defaults to at most 10 reads, a 1-second interval and a 15-second total deadline. Configure `maxAttempts` (1–30), `intervalMs` (100–10000) and `timeoutMs` (10–60000) inside `issueStatus`. The attempt limit returns the last status (or null); deadline, cancellation, malformed replies and HTTP failures reject. Linked and reconciliation states stop polling immediately. Status failure does not resubmit a report or change its accepted delivery acknowledgment. Reporter close and `catcher.stop()` cancel active polling, including an injected provider that ignores its signal; late results are ignored.
+
+With endpoint transport, the reader derives `/mount/issues/status` from `/mount/ingest`. For a custom ingestion URL, set `watch.issueStatusEndpoint` explicitly. Reads use the same dynamic headers and full Watch API key. Alternatively supply `issueStatus.read(reference, {signal})` to call your authenticated application backend, or implement `readBugIssueStatus` on the injected Watch client. The backend must enforce application authorization and return a matching typed status; the SDK validates app/report binding and provider HTTPS URLs before displaying a link. Only verified GitHub/Linear links are rendered, including immediate injected-client receipts.
+
+No worker is started by the browser: schedule `watch.processBugIssues()` on the server. A report needing reconciliation stays accepted and the widget directs the user to operator attention. See [polling lifecycle and acceptance](../.conduct/issue-link-readiness.md).

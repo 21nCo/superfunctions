@@ -8,6 +8,10 @@ export { CatchFn } from "./core/catch-fn.js";
 export { CatchFnDeliveryError } from "./core/delivery-error.js";
 export type {
   CatchFnConfig,
+  IssueStatusConfig,
+  BugIntegrationHint,
+  BugIssueReference,
+  BrowserBugIssueStatus,
   BugReportEvent,
   CaptureBugOptions,
   BugSeverity,

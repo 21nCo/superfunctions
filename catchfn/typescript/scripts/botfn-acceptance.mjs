@@ -23,6 +23,7 @@ const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const requests = []; const issues = []; const catchers = [];
 let sql, watch, api, provider, browser, endpoint, bundle;
 let dropAfterStorage = true;
+let statusMode = "normal"; let statusReads = 0;
 const closeServer = async server => { if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
 const listen = async server => { await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); return `http://127.0.0.1:${server.address().port}`; };
 const bytes = async request => { const parts = []; for await (const part of request) parts.push(part); return Buffer.concat(parts); };
@@ -73,15 +74,21 @@ try {
         res.setHeader('content-type', req.url === '/app.js' ? 'application/javascript' : 'text/html');
         res.end(req.url === '/app.js' ? await readFile(bundle) : '<!doctype html><html><body><script src="/app.js"></script></body></html>'); return;
       }
-      const body = await bytes(req); if (req.url === '/ingest') requests.push(JSON.parse(body));
-      const response = await watch.httpRouter.handle(new Request('http://local' + req.url, { method: req.method, headers: req.headers, body }));
-      if (req.url === '/ingest' && response.ok && dropAfterStorage) { dropAfterStorage = false; res.destroy(); return; }
+      const body = await bytes(req); if (req.url === '/watch/ingest') requests.push(JSON.parse(body));
+      if (req.url === '/watch/issues/status') {
+        statusReads++;
+        if (statusMode === 'unavailable') { json(res, { error: 'unavailable' }, 503); return; }
+        if (statusMode === 'hang') return;
+        if (statusMode === 'unsafe') { const ref = JSON.parse(body); json(res, { ...ref, target: 'github', state: 'linked', issueId: '7', issueUrl: 'javascript:alert(1)' }); return; }
+      }
+      const response = await watch.httpRouter.handle(new Request('http://local' + req.url.replace(/^\/watch/, ''), { method: req.method, headers: req.headers, body }));
+      if (req.url === '/watch/ingest' && response.ok && dropAfterStorage) { dropAfterStorage = false; res.destroy(); return; }
       res.writeHead(response.status, Object.fromEntries(response.headers)); res.end(Buffer.from(await response.arrayBuffer()));
     } catch { res.writeHead(500); res.end(); }
   });
-  const origin = await listen(api); endpoint = origin + '/ingest';
+  const origin = await listen(api); endpoint = origin + '/watch/ingest';
   const query = async options => {
-    const response = await originalFetch(origin + '/query', { method: 'POST', headers: { authorization: 'Bearer full-watch-fixture-key', 'content-type': 'application/json' }, body: JSON.stringify(options) });
+    const response = await originalFetch(origin + '/watch/query', { method: 'POST', headers: { authorization: 'Bearer full-watch-fixture-key', 'content-type': 'application/json' }, body: JSON.stringify(options) });
     assert.equal(response.status, 200); return (await response.json()).results;
   };
   const client = (extra = {}) => {
@@ -104,19 +111,50 @@ try {
   assert.deepEqual(linked.context, requests[0][0].context);
   // Submit through a real browser and built browser-compatible CatchFn source.
   bundle = join(temporary, 'browser.js');
-  await build({ stdin: { contents: `import {catchFn} from './catchfn/typescript/src/index.ts'; window.catcher=catchFn({name:'shop',integration:{target:'github',project:'acme/bugs'},watch:{endpoint:${JSON.stringify(endpoint)},apiKey:'full-watch-fixture-key',retries:0}});`, resolveDir: root }, bundle: true, platform: 'browser', format: 'iife', outfile: bundle });
+  await build({ stdin: { contents: `import {catchFn} from './catchfn/typescript/src/index.ts'; window.catcher=catchFn({name:'shop',reporter:{screenshot:false,floatingButton:true},issueStatus:{enabled:true,intervalMs:100,maxAttempts:30,timeoutMs:5000},integration:{target:'github',project:'acme/bugs'},watch:{endpoint:${JSON.stringify(endpoint)},apiKey:'full-watch-fixture-key',retries:0}});`, resolveDir: root }, bundle: true, platform: 'browser', format: 'iife', outfile: bundle });
   browser = await chromium.launch({ channel: 'chrome', headless: true });
   const page = await browser.newPage(); await page.goto(origin);
   const browserReport = await page.evaluate(() => window.catcher.captureBug({ title: 'Browser issue', severity: 'high' }));
   assert.equal(browserReport.delivery, 'sent'); assert.equal(browserReport.integration.issueId, undefined);
   await watch.processBugIssues(); assert.equal(issues.length, 2);
   assert.equal((await watch.getBugIssueStatus({ app: 'shop', reportId: browserReport.id })).state, 'linked');
+  assert.equal(statusReads, 0); // Standalone capture never starts status polling.
+  const openReporter = async title => {
+    await page.evaluate(() => window.catcher.closeReporter());
+    await page.getByRole('button', { name: 'Report a bug', exact: true }).click();
+    await page.locator('input[name=title]').fill(title);
+    await page.getByRole('button', { name: 'Submit report', exact: true }).click();
+  };
+  const waitForStatusRead = async previous => {
+    for (let count = 0; count < 100 && statusReads <= previous; count++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(statusReads > previous, 'browser must read the default mounted status route');
+  };
+  await openReporter('Widget delayed issue'); await waitForStatusRead(0);
+  assert.equal(await page.getByRole('link', { name: 'View issue' }).count(), 0);
+  await watch.processBugIssues();
+  const issueLink = page.getByRole('link', { name: 'View issue' }); await issueLink.waitFor();
+  assert.equal(await issueLink.getAttribute('href'), 'https://github.com/acme/bugs/issues/3');
+  assert.equal(await issueLink.getAttribute('rel'), 'noopener noreferrer');
+  statusMode = 'unavailable'; await openReporter('Status service unavailable');
+  await page.getByRole('status').filter({ hasText: 'Report submitted. Issue status is currently unavailable.' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Retry same report', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Submit report', exact: true }).isDisabled(), true);
+  statusMode = 'unsafe'; await openReporter('Unsafe receipt');
+  await page.getByRole('status').filter({ hasText: 'Report submitted. Issue status is currently unavailable.' }).waitFor();
+  assert.equal(await page.getByRole('link', { name: 'View issue' }).count(), 0);
+  statusMode = 'hang'; const previousReads = statusReads; await openReporter('Close cancels status'); await waitForStatusRead(previousReads);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  const closedReads = statusReads; await new Promise(resolve => setTimeout(resolve, 250)); assert.equal(statusReads, closedReads);
+  assert.equal(await page.getByRole('dialog').count(), 0);
+  // The accepted reports survive status failures/cancellation; they were never resubmitted.
+  statusMode = 'normal'; assert.equal((await query({ metric: 'bug_report' })).length, 6);
+  await watch.processBugIssues(); assert.equal(issues.length, 6);
   await page.evaluate(() => window.catcher.stop()); await browser.close(); browser = undefined;
   await watch.stop(); await sql.destroy(); sql = undefined; connect();
-  assert.equal((await query({ metric: 'bug_report' })).length, 2);
+  assert.equal((await query({ metric: 'bug_report' })).length, 6);
   assert.equal((await watch.getBugIssueStatus({ app: 'shop', reportId: browserReport.id })).issueUrl, 'https://github.com/acme/bugs/issues/2');
-  await watch.processBugIssues(); assert.equal(issues.length, 2);
-  console.log('CatchFn built SDK and Chrome -> WatchFn HTTP -> SQLite reopen -> actual BotFn GitHub HTTP contract passed; lost intake replay deduplicated, auth/route denial, pending acknowledgment, verified durable linkage');
+  await watch.processBugIssues(); assert.equal(issues.length, 6);
+  console.log('CatchFn built SDK and Chrome -> WatchFn HTTP -> SQLite reopen -> actual BotFn GitHub HTTP contract passed; lost intake replay deduplicated, auth/route denial, pending acknowledgment, verified durable linkage and mounted widget status polling/cancellation');
 } finally {
   globalThis.fetch = originalFetch;
   for (const catcher of catchers) catcher.stop();

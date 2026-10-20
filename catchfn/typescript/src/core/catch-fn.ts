@@ -2,7 +2,7 @@
  * Main CatchFn SDK class
  */
 
-import { BrowserClient } from "@watchfn/browser";
+import { BrowserClient, parseBugIssueStatus, type BrowserBugIssueStatus } from "@watchfn/browser";
 import { CatchFnDeliveryError, WatchCaptureFailure } from "./delivery-error.js";
 import type { ReporterWidget } from "../reporter/widget.js";
 import { BreadcrumbCollector } from "../collectors/breadcrumbs.js";
@@ -58,6 +58,7 @@ export class CatchFn {
   private sessionId: string;
   private watchClient?: WatchBugReportClient;
   private reporter?: ReporterWidget;
+  private readonly statusPolls = new Set<AbortController>();
   private opening?: Promise<void>;
   private reporterGeneration = 0;
   private reporterButton?: HTMLButtonElement;
@@ -65,6 +66,14 @@ export class CatchFn {
 
   constructor(config: CatchFnConfig) {
     integrationHint(config.integration);
+    if (config.issueStatus !== undefined && (!config.issueStatus || typeof config.issueStatus !== "object" || Array.isArray(config.issueStatus) ||
+        (config.issueStatus.enabled !== undefined && typeof config.issueStatus.enabled !== "boolean") ||
+        (config.issueStatus.read !== undefined && typeof config.issueStatus.read !== "function"))) throw new TypeError("Invalid issueStatus configuration");
+    for (const [key, value, min, max] of [
+      ["maxAttempts", config.issueStatus?.maxAttempts, 1, 30],
+      ["intervalMs", config.issueStatus?.intervalMs, 100, 10000],
+      ["timeoutMs", config.issueStatus?.timeoutMs, 10, 60000],
+    ] as const) if (value !== undefined && (!Number.isInteger(value) || value < min || value > max)) throw new RangeError(`Invalid issueStatus ${key}`);
     if (!config.name?.trim()) throw new TypeError("Application name is required");
     for (const value of [config.maxBreadcrumbs, config.maxConsoleLogs, config.maxNetworkRequests]) {
       if (value !== undefined && (!Number.isInteger(value) || value < 0)) throw new RangeError("Collector limits must be nonnegative integers");
@@ -86,13 +95,14 @@ export class CatchFn {
           return delivery.catch(cause => { throw new WatchCaptureFailure(cause, queued ? () => client.flush() : send); });
         };
         return send();
-      }, flush: () => client.flush() };
+      }, flush: () => client.flush(), readBugIssueStatus: (ref, options) => client.readBugIssueStatus(ref, options) };
     } else if (config.watch && "client" in config.watch) {
       this.watchClient = config.watch.client;
     }
     this.config = {
       ...config,
       integration: integrationHint(config.integration),
+      issueStatus: config.issueStatus ? Object.freeze({ ...config.issueStatus }) : undefined,
       maxBreadcrumbs: config.maxBreadcrumbs ?? 50,
       maxConsoleLogs: config.maxConsoleLogs ?? 100,
       maxNetworkRequests: config.maxNetworkRequests ?? 20,
@@ -342,6 +352,45 @@ export class CatchFn {
 
   async flush(): Promise<void> { await this.watchClient?.flush?.(); }
 
+  /** Optional bounded observation; never resubmits or changes captureBug's acknowledgment. */
+  async pollIssueStatus(reportId: string, options: { signal?: AbortSignal; onStatus?: (status: BrowserBugIssueStatus | null) => void } = {}): Promise<BrowserBugIssueStatus | null> {
+    const config = this.config.issueStatus;
+    if (!config?.enabled) throw new Error("Issue status polling is not enabled");
+    const read = config.read ?? (this.watchClient?.readBugIssueStatus ? this.watchClient.readBugIssueStatus.bind(this.watchClient) : undefined);
+    if (!read) throw new Error("Issue status provider is unavailable");
+    if (typeof reportId !== "string" || !reportId.trim() || reportId.length > 256) throw new TypeError("Invalid bug reference");
+    const ref = Object.freeze({ app: this.config.name, reportId });
+    const controller = new AbortController(); this.statusPolls.add(controller);
+    let rejectAbort!: (reason: unknown) => void;
+    const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
+    let delayTimer: ReturnType<typeof setTimeout> | undefined; let releaseDelay: (() => void) | undefined;
+    const abort = () => { rejectAbort(new Error("Issue status polling canceled")); if (delayTimer) clearTimeout(delayTimer); releaseDelay?.(); };
+    const forwardAbort = () => controller.abort();
+    controller.signal.addEventListener("abort", abort, { once: true });
+    options.signal?.addEventListener("abort", forwardAbort, { once: true });
+    const deadline = setTimeout(() => { rejectAbort(new Error("Issue status polling timed out")); controller.abort(); }, config.timeoutMs ?? 15000);
+    if (options.signal?.aborted) controller.abort();
+    try {
+      return await Promise.race([aborted, (async () => {
+        let last: BrowserBugIssueStatus | null = null;
+        for (let attempt = 0; attempt < (config.maxAttempts ?? 10); attempt++) {
+          if (controller.signal.aborted) throw new Error("Issue status polling canceled");
+          const value = await read({ ...ref }, { signal: controller.signal });
+          if (controller.signal.aborted) throw new Error("Issue status polling canceled");
+          last = value === null ? null : parseBugIssueStatus(value, ref);
+          options.onStatus?.(last);
+          if (last?.state === "linked" || last?.state === "reconciliation") return last;
+          if (attempt + 1 < (config.maxAttempts ?? 10)) await new Promise<void>(resolve => { releaseDelay = resolve; delayTimer = setTimeout(resolve, config.intervalMs ?? 1000); });
+        }
+        return last;
+      })()]);
+    } finally {
+      clearTimeout(deadline); if (delayTimer) clearTimeout(delayTimer); releaseDelay?.();
+      options.signal?.removeEventListener("abort", forwardAbort); controller.signal.removeEventListener("abort", abort);
+      controller.abort(); this.statusPolls.delete(controller);
+    }
+  }
+
   private toWatchEvent(report: BugReportEvent): WatchBugReportEvent {
     const context: Record<string, unknown> = {
       url: typeof location === "undefined" ? "" : location.href,
@@ -380,6 +429,7 @@ export class CatchFn {
   }
 
   stop(): void {
+    for (const controller of this.statusPolls) controller.abort();
     this.closeReporter();
     this.reporterButton?.remove();
     this.reporterButton = undefined;

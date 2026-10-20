@@ -1,4 +1,4 @@
-import type { BrowserConfig } from "@watchfn/browser";
+import type { BrowserConfig, BugIssueReference, BrowserBugIssueStatus } from "@watchfn/browser";
 
 /**
  * Core types and interfaces for CatchFn
@@ -173,7 +173,18 @@ export type IgnorePattern = string | RegExp;
 /**
  * CatchFn configuration
  */
+export interface IssueStatusConfig {
+  /** Opt in to reporter polling; captureBug itself still acknowledges ingestion only. */
+  enabled?: boolean;
+  maxAttempts?: number;
+  intervalMs?: number;
+  timeoutMs?: number;
+  /** Trusted authenticated backend alternative to exposing the full Watch key. */
+  read?: (reference: BugIssueReference, options: { signal: AbortSignal }) => Promise<BrowserBugIssueStatus | null>;
+}
+
 export interface CatchFnConfig {
+  issueStatus?: IssueStatusConfig;
   /** Default server route hint. The Watch API key authorizes all routes in its deployment. */
   integration?: BugIntegrationHint;
   watch?: {client: WatchBugReportClient} | WatchEndpointConfig;
@@ -310,4 +321,7 @@ export interface WatchEndpointConfig extends Omit<BrowserConfig, "projectId" | "
 export interface WatchBugReportClient {
   capture(event: WatchBugReportEvent): Promise<{integration?: BugReportEvent["integration"]} | void>;
   flush?(): Promise<void>;
+  readBugIssueStatus?(reference: BugIssueReference, options: { signal: AbortSignal }): Promise<BrowserBugIssueStatus | null>;
 }
+
+export type { BugIssueReference, BrowserBugIssueStatus };

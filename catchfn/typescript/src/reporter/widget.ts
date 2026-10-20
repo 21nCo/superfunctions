@@ -1,3 +1,4 @@
+import { parseBugIssueStatus } from "@watchfn/browser";
 import html2canvas from "html2canvas";
 import { CatchFnDeliveryError } from "../core/delivery-error.js";
 import { Drawfn, type Scene, type ToolName } from "drawfn";
@@ -21,6 +22,7 @@ export class ReporterWidget {
   private screenshot?: HTMLCanvasElement;
   private screenshotId = id();
   private closed = false;
+  private statusPoll?: AbortController;
   private previousFocus: Element | null = null;
   private blurMode = false;
   private drag?: {x:number;y:number};
@@ -100,11 +102,28 @@ export class ReporterWidget {
         pendingDelivery = undefined;
         if (this.closed) return;
         status.textContent = report.delivery === "sent" ? "Report submitted." : report.delivery === "dropped" ? "Report excluded by application settings; it has not been sent." : "Report captured locally; it has not been sent.";
-        if (report.integration?.issueUrl) {
-          const url = new URL(report.integration.issueUrl);
-          if (["https:","http:"].includes(url.protocol)) {
-            const link = document.createElement("a");link.href=url.href;link.textContent="View issue";link.target="_blank";link.rel="noopener noreferrer";status.append(" ",link);
-          }
+        let linked = false;
+        const showLink = (value: { target?: string; issueId?: string | null; issueUrl?: string | null }) => {
+          try {
+            const target = value.target ?? (new URL(value.issueUrl!).hostname === "github.com" ? "github" : "linear");
+            const result = parseBugIssueStatus({ app: this.catcher.getConfig().name, reportId: report.id, state: "linked", target, issueId: value.issueId, issueUrl: value.issueUrl }, { app: this.catcher.getConfig().name, reportId: report.id });
+            if (this.closed) return;
+            status.textContent = "Report submitted.";
+            const link = document.createElement("a"); link.href = result.issueUrl!; link.textContent = "View issue"; link.target = "_blank"; link.rel = "noopener noreferrer"; status.append(" ", link); linked = true;
+          } catch { /* An accepted report must not become a preparation failure for a bad receipt. */ }
+        };
+        if (report.delivery === "sent" && report.integration?.issueUrl) showLink(report.integration);
+        if (report.delivery === "sent" && !linked && this.catcher.getConfig().issueStatus?.enabled) {
+          this.statusPoll?.abort(); const polling = new AbortController(); this.statusPoll = polling;
+          status.textContent = "Report submitted. Waiting for the issue link…";
+          // Observe status separately: failure must never offer report resubmission.
+          void this.catcher.pollIssueStatus(report.id, { signal: polling.signal }).then(result => {
+            if (this.closed || polling.signal.aborted || this.statusPoll !== polling) return;
+            if (result?.state === "linked") showLink(result);
+            else status.textContent = result?.state === "reconciliation" ? "Report submitted. Issue delivery needs operator attention." : "Report submitted. The issue link is not available yet.";
+          }, () => {
+            if (!this.closed && !polling.signal.aborted && this.statusPoll === polling) status.textContent = "Report submitted. Issue status is currently unavailable.";
+          });
         }
         form.querySelector<HTMLButtonElement>("[data-close]")!.textContent="Close";
       })().catch(error=>{if (!this.closed) {
@@ -159,5 +178,5 @@ export class ReporterWidget {
     },true);
   }
   focus(): void { this.root?.querySelector<HTMLInputElement>("input[name=title]")?.focus(); }
-  close(): void { this.closed=true;this.draw?.destroy();this.draw=undefined;this.root?.remove();this.root=undefined;if(this.previousFocus instanceof HTMLElement&&this.previousFocus.isConnected)this.previousFocus.focus(); }
+  close(): void { this.closed=true;this.statusPoll?.abort();this.statusPoll=undefined;this.draw?.destroy();this.draw=undefined;this.root?.remove();this.root=undefined;if(this.previousFocus instanceof HTMLElement&&this.previousFocus.isConnected)this.previousFocus.focus(); }
 }
