@@ -1,9 +1,11 @@
+import { deleteBotAggregate } from '../deletion/service.js';
+import type { StorageAdapter } from '../integrations/storage.js';
+import type { SearchFnClient } from '../integrations/searchfn.js';
 import type { Route, RouteContext } from '@superfunctions/http';
 import {
   ErrorCode,
   validateMeetingUrl,
   validateBotConfig,
-  isTerminalState,
   canTransition,
 } from '@recfn/core';
 import type { RecFnStore, ListBotsOptions } from '../store/types.js';
@@ -27,6 +29,8 @@ import type {
 } from '@recfn/core';
 
 export interface BotRouteDeps {
+  storage?: StorageAdapter;
+  searchClient?: SearchFnClient | null;
   store: RecFnStore;
   validateApiKey: ValidateApiKey;
   limits: import('../config.js').RecFnLimitsConfig;
@@ -230,21 +234,9 @@ export function createBotRoutes(deps: BotRouteDeps): Route[] {
       path: '/api/v1/bots/:botId',
       handler: async (request: Request, ctx: RouteContext) => {
         const auth = await authenticate(request, validateApiKey);
-        const bot = await store.getBot(ctx.params.botId, auth.namespace);
-
-        if (!bot) {
-          return err(ErrorCode.BOT_NOT_FOUND, 'Bot not found.');
-        }
-
-        if (!isTerminalState(bot.status) && bot.status !== 'left') {
-          return err(
-            ErrorCode.BOT_STILL_ACTIVE,
-            'Cannot delete bot while it is active. Call leave first.',
-          );
-        }
-
-        await store.deleteBot(bot.id, auth.namespace);
-        return ok({ botId: bot.id, deleted: true });
+        const result = await deleteBotAggregate(ctx.params.botId, auth.namespace, deps);
+        if (!result) return err(ErrorCode.BOT_NOT_FOUND, 'Bot not found.');
+        return ok({ botId: ctx.params.botId, ...result }, result.deleted ? 200 : 202);
       },
     },
   ];

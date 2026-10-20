@@ -125,10 +125,14 @@ export async function processTranscriptionJob(
         )).catch(() => {});
       }
       if (searchClient) {
-        await indexTranscript(
-          { recordingId, botId: recording.botId, segments: sortedSegments },
-          searchClient,
-        );
+        const producer = await store.beginBotProducer({ botId: recording.botId, namespace, recordingId });
+        let settled = false;
+        try {
+          await indexTranscript({ recordingId, botId: recording.botId, segments: sortedSegments }, searchClient);
+          settled = true;
+        } finally {
+          await store.finishBotProducer(producer.id, namespace, settled);
+        }
       }
     }
 

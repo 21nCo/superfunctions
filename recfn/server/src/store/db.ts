@@ -1,3 +1,4 @@
+import { deletionMethods, fenceStore, readAll, lockBot, blocked, type ProducerIntent } from './deletion.js';
 import { getRecFnSchema } from './schema.js';
 import { NotFoundError, wrapWithSchema, type Adapter, type WhereClause } from '@superfunctions/db';
 import type {
@@ -112,15 +113,20 @@ export function assertProductionStore(store: RecFnStore): void {
 }
 
 export function createDbStore(options: CreateDbStoreOptions): RecFnStore {
+  return buildStore(options, wrapWithSchema(options.adapter, getRecFnSchema()), true);
+}
+
+function buildStore(options: CreateDbStoreOptions, adapter: Adapter, fenced: boolean): RecFnStore {
   const isMemory = options.adapter.id === 'memory';
   if (isMemory && options.durable === true) {
     throw new TypeError('The shared memory adapter cannot be declared durable');
   }
   const durable = options.durable === true && !isMemory;
   const adapterName = options.adapterName ?? options.adapter.name;
-  const adapter = wrapWithSchema(options.adapter, getRecFnSchema());
 
-  return {
+
+  const store: RecFnStore = {
+    ...deletionMethods(adapter),
     capabilities: {
       durable,
       backend: isMemory ? 'memory' : 'db',
@@ -220,13 +226,15 @@ export function createDbStore(options: CreateDbStoreOptions): RecFnStore {
         if (!bot) {
           return false;
         }
+        await lockBot(transaction, id, namespace);
+        const producers = await readAll<ProducerIntent>(transaction, 'botProducers', withNamespace(namespace, [
+          { field: 'botId', operator: 'eq', value: id },
+        ]));
+        if (producers.some(producer => producer.state !== 'settled')) throw blocked();
 
-        const recordings = await transaction.findMany<Recording>({
-          model: 'recordings',
-          where: withNamespace(namespace, [
-            { field: 'botId', operator: 'eq', value: id },
-          ]),
-        });
+        const recordings = await readAll<Recording>(transaction, 'recordings', withNamespace(namespace, [
+          { field: 'botId', operator: 'eq', value: id },
+        ]));
 
         for (const recording of recordings) {
           await transaction.deleteMany({
@@ -688,4 +696,5 @@ export function createDbStore(options: CreateDbStoreOptions): RecFnStore {
       return new Map(rows.map((row: StoredCalendarEventBot) => [row.eventId, row.botId]));
     },
   };
+  return fenced ? fenceStore(store, adapter, tx => buildStore(options, tx, false)) : store;
 }

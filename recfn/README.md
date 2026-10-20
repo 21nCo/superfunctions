@@ -73,16 +73,49 @@ Webhook delivery uses the shared validated, DNS-pinned Undici transport. The obs
 ## License
 
 MIT
-## Database aggregate deletion
+## Recoverable bot deletion
 
-`createDbStore().deleteBot()` requires a shared database adapter that supports
-transactions. Bot lookup and deletion of its recordings, transcripts,
-participants, chat messages, meeting metadata and calendar mappings now commit
-together. An error rolls back those database changes; adapters without
-transactions reject the operation before any deletion.
+`DELETE /api/v1/bots/:id` and exported `deleteBotAggregate(id, namespace, deps)`
+first persist a deletion marker and inventory recording keys, then remove search
+entries and recording objects, then atomically delete the database aggregate.
+External I/O runs outside database transactions. Active bots still return 409.
+A completed deletion returns HTTP 200 with `deleted: true, state: "completed"`.
+HTTP 202 with `deleted: false` means cleanup is pending or blocked: callers must
+inspect this field, including TypeScript and Python clients, and retry the same
+bot ID. Missing cleanup adapters block deletion; recordings require a search
+cleanup adapter even when the host believes no index exists.
 
-This transaction does not delete external recording objects or search-index
-entries, and does not fence independent background writers. Those cleanup and
-concurrency requirements remain open. Hosts must stop producers for the bot
-before deleting its aggregate; other database adapters' isolation has not been
-verified by the SQLite acceptance.
+Apply the additive `botDeletions` and `botProducers` tables and indexes from
+`getRecFnSchema()` before starting this version. Resources are JSON text and
+created timestamps are ISO text, matching the existing schema normalization.
+Stop old workers during migration: they do not participate in producer admission.
+Do not remove these tables or restart older writers while deletion is pending.
+Existing bot/recording rows need no backfill; deletion inventories them at request
+time. Completed markers retain only bot ID, namespace, state and creation time;
+resource references and producer rows are removed. Retain these markers to keep
+retries idempotent and never reuse deleted bot IDs.
+
+Built-in uploads and transcription index publication reserve durable producer
+intents before external writes. The store fences child mutations after deletion
+begins and rejects producers without an existing bot. Each bot allows at most 64
+unresolved/retained intents; successful operations with a persisted recording
+release their slot. A failed or crashed external operation remains unresolved
+because an error or timeout does not prove that a remote write stopped. Deletion
+returns `state: "blocked"` and the affected `producerIds`.
+
+After independently verifying that an operation and any remote write have stopped,
+a trusted operator can call
+`store.reconcileBotProducer(id, namespace, { operationStopped: true, reason })`,
+then retry deletion. This method is intentionally not exposed as an HTTP route.
+It requires a pending deletion and a nonempty reason; it is not a lease expiry or
+a cancellation mechanism. There is no automatic cleanup scheduler in this slice.
+Custom upload/index producers must use the same admission/completion protocol;
+direct storage/search writes bypass it. External delete adapters must be
+idempotent and acknowledge completed removal, including deletion of absent keys.
+
+`store.deleteBot()` remains the database-only transaction primitive; use the
+coordinator or HTTP endpoint for external cleanup. The database adapter must
+support transactions and serialize writes to the bot root. File-backed SQLite,
+real local files, and the SearchFn memory index have failure/reopen and concurrent
+producer coverage. Other database isolation modes and remote storage/search
+providers require their own acceptance; this is not live-provider evidence.

@@ -40,7 +40,7 @@ export interface CreateBotInput {
   namespace: string;
 }
 
-export interface RecFnStore {
+export interface RecFnStore extends ReturnType<typeof import('./deletion.js').deletionMethods> {
   readonly capabilities: RecFnStoreCapabilities;
 
   createBot(input: CreateBotInput): Promise<Bot>;

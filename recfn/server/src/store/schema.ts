@@ -1,6 +1,22 @@
 import type { TableSchema, TableSchemaMap } from '@superfunctions/db';
 
 export const REC_FN_STORE_SCHEMA: TableSchemaMap = withIsoDateDefaults({
+  botDeletions: {
+    modelName: 'botDeletions',
+    fields: {
+      id: { type: 'string', required: true, unique: true }, namespace: { type: 'string', required: true },
+      state: { type: 'string', required: true }, resources: { type: 'json', required: true }, createdAt: { type: 'date', required: true },
+    },
+    indexes: [{ name: 'bot_deletions_namespace_idx', fields: ['namespace', 'state'] }],
+  },
+  botProducers: {
+    modelName: 'botProducers',
+    fields: {
+      id: { type: 'string', required: true, unique: true }, namespace: { type: 'string', required: true }, botId: { type: 'string', required: true },
+      recordingId: { type: 'string', required: true }, storageRef: { type: 'string' }, reconciliationReason: { type: 'string' }, state: { type: 'string', required: true }, createdAt: { type: 'date', required: true },
+    },
+    indexes: [{ name: 'bot_producers_namespace_bot_idx', fields: ['namespace', 'botId'] }],
+  },
   bots: {
     modelName: 'bots',
     fields: {

@@ -84,6 +84,8 @@ export async function uploadRecording(
     source,
   });
 
+  const producer = await store.beginBotProducer({ botId, namespace, recordingId, storageRef: key });
+  let externalSettled = false;
   const startTime = Date.now();
   try {
     await uploadObject(storage, key, capture.data, {
@@ -91,6 +93,7 @@ export async function uploadRecording(
       encryption: true,
     });
 
+    externalSettled = true;
     const uploadDuration = Date.now() - startTime;
 
     logger.info('recording.upload.complete', {
@@ -151,5 +154,7 @@ export async function uploadRecording(
         source,
       },
     );
+  } finally {
+    await store.finishBotProducer(producer.id, namespace, externalSettled);
   }
 }

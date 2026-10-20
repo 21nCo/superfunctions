@@ -109,7 +109,7 @@ export function createRecFnServer(config: RecFnServerConfig): RecFnServer {
   const rateLimitCfg = loadRateLimitConfig();
 
   const baseDeps = { store, validateApiKey, limits };
-  const botDeps = { ...baseDeps, queue, logger: resolvedLogger, metrics };
+  const botDeps = { ...baseDeps, queue, logger: resolvedLogger, metrics, storage, searchClient };
   const recordingDeps = { ...baseDeps, storage };
   const uploadDeps =
     storage
@@ -296,3 +296,6 @@ export {
   emitCalendarScheduleDecision,
   emitApiRequest,
 } from './observability/metrics.js';
+
+export { deleteBotAggregate, type DeleteBotResult } from './deletion/service.js';
+export type { BotDeletion, ProducerIntent } from './store/deletion.js';

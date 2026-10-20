@@ -51,7 +51,7 @@ export function createBotsResource(client: RecFnHttpClient) {
       return client.request('POST', `/api/v1/bots/${botId}/leave`);
     },
 
-    async delete(botId: string): Promise<ApiResult<{ botId: string; deleted: boolean }>> {
+    async delete(botId: string): Promise<ApiResult<{ botId: string; deleted: boolean; state?: 'completed' | 'pending' | 'blocked'; producerIds?: string[]; reason?: string }>> {
       return client.request('DELETE', `/api/v1/bots/${botId}`);
     },
   };

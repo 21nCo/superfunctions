@@ -300,3 +300,18 @@ async def test_recordings_upload() -> None:
         call = mock_instance.request.await_args
         assert "botId=bot_123&transcribe=true" in call.args[1]
         assert call.kwargs["files"]["file"][1] == b"abc"
+
+
+@pytest.mark.asyncio
+async def test_delete_preserves_pending_completion() -> None:
+    data = {"botId": "bot", "deleted": False, "state": "blocked", "producerIds": ["producer"]}
+    response = MagicMock(is_success=True, status_code=202)
+    response.headers = {"content-type": "application/json"}
+    response.json.return_value = {"ok": True, "data": data}
+    transport = MagicMock()
+    transport.request = AsyncMock(return_value=response)
+    with patch("recfn.client.httpx.AsyncClient") as constructor:
+        constructor.return_value.__aenter__ = AsyncMock(return_value=transport)
+        constructor.return_value.__aexit__ = AsyncMock(return_value=None)
+        result = await RecFn(base_url="https://example.com", api_key="key").bots.delete("bot")
+    assert result == {"ok": True, "data": data}

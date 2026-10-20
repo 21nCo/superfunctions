@@ -205,3 +205,11 @@ describe('RecFn client (TV-SDK-001, TV-SDK-003)', () => {
     }
   });
 });
+
+it('preserves blocked deletion data from HTTP 202 instead of reporting completed deletion', async () => {
+  const data = { botId: 'bot', deleted: false, state: 'blocked', producerIds: ['producer'], reason: 'External operation remains unresolved.' };
+  const client = new RecFn({ baseUrl: 'http://localhost', apiKey: 'key', fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, data }), { status: 202, headers: { 'Content-Type': 'application/json' } })) });
+  const result = await client.bots.delete('bot');
+  expect(result).toEqual({ ok: true, data });
+  if (result.ok) expect(result.data.state).toBe('blocked');
+});
