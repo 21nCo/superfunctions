@@ -28,3 +28,8 @@ describe('core readiness', () => {
 it('rejects sparse arrays that would become null in serialized data', () => {
   expect(validateChartSpec({ ...spec, data: { series: [{ values: new Array(2) }] } }).ok).toBe(false);
 });
+
+it.each(["dimensions", "labels"])("rejects sparse %s instead of serializing holes as null", field => {
+  const result = validateChartSpec({...spec,data:{...spec.data,[field]:new Array(2)}});
+  expect(result).toMatchObject({ok:false,error:{code:"SPEC_INVALID",details:{path:`data.${field}`}}});
+});

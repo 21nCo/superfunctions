@@ -20,12 +20,11 @@ const adapterUnknown = (adapter: string): ChartfnEnvelope<ChartAdapterHandle> =>
   } satisfies ChartfnError,
 });
 
-const adapterError = (adapter: string, error: unknown): ChartfnEnvelope<ChartAdapterHandle> => ({
+const adapterError = (adapter: string, message = "Adapter failed during mount"): ChartfnEnvelope<ChartAdapterHandle> => ({
   ok: false,
   error: {
     code: "ADAPTER_ERROR",
-    message:
-      error instanceof Error ? error.message : "Adapter threw during mount",
+    message,
     details: { adapter },
   } satisfies ChartfnError,
 });
@@ -64,7 +63,7 @@ export const chartFn = (config: ChartFnConfig): ChartFnAPI => {
       });
       return adapterError(
         options?.adapter ?? defaultAdapter,
-        new Error("Container not found"),
+        "Container not found",
       );
     }
 
@@ -73,7 +72,6 @@ export const chartFn = (config: ChartFnConfig): ChartFnAPI => {
       logger.warn("chartfn.render.invalidSpec", {
         code: validation.error.code,
         path: validation.error.details.path,
-        type: spec?.type,
       });
       return validation;
     }
@@ -108,12 +106,12 @@ export const chartFn = (config: ChartFnConfig): ChartFnAPI => {
         ...(handle.toImage ? { toImage: (imageOptions: Parameters<NonNullable<ChartAdapterHandle['toImage']>>[0]) =>
           disposed ? Promise.resolve('') : handle.toImage!(imageOptions) } : {}),
       } };
-    } catch (error) {
+    } catch {
       logger.error("chartfn.render.adapterError", {
         code: "ADAPTER_ERROR",
         adapter: adapterName,
       });
-      return adapterError(adapterName, error);
+      return adapterError(adapterName);
     }
   };
 

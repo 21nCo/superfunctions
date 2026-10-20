@@ -30,6 +30,25 @@ describe("observability", () => {
     errorSpy.mockClear();
   });
 
+  it.each([
+    { data: { series: [{ name: "PRIVATE_CUSTOMER", values: [12345] }] } },
+    "PRIVATE_CUSTOMER secret chart data",
+  ])("does not log an unvalidated type value", type => {
+    const api = chartFn({ defaultAdapter: "mock" });
+    const result = api.render({} as HTMLElement, { ...spec, type } as unknown as ChartSpec);
+    expect(result).toMatchObject({ok:false,error:{code:"SPEC_INVALID",details:{path:"type"}}});
+    expect(warnSpy).toHaveBeenCalledWith("chartfn.render.invalidSpec", {code:"SPEC_INVALID",path:"type"});
+    expect(JSON.stringify([debugSpy.mock.calls,infoSpy.mock.calls,warnSpy.mock.calls,errorSpy.mock.calls])).not.toContain("PRIVATE_CUSTOMER");
+  });
+
+  it("does not expose an adapter error containing chart data in the public envelope", () => {
+    const secret = JSON.stringify({data:{series:[{name:"PRIVATE_CUSTOMER",values:[12345]}]}});
+    const api = chartFn({defaultAdapter:"private",adapters:{private:{name:"private",mount(){throw new Error(secret)}}}});
+    const result = api.render({} as HTMLElement,spec);
+    expect(result).toEqual({ok:false,error:{code:"ADAPTER_ERROR",message:"Adapter failed during mount",details:{adapter:"private"}}});
+    expect(JSON.stringify([result,debugSpy.mock.calls,infoSpy.mock.calls,warnSpy.mock.calls,errorSpy.mock.calls])).not.toContain("PRIVATE_CUSTOMER");
+  });
+
   it("does not log full series in production", () => {
     const adapter = {
       name: "mock",
@@ -47,7 +66,7 @@ describe("observability", () => {
       errorSpy.mock.calls,
     ]
       .flat()
-      .map((call) => call.map((arg) => String(arg)).join(" "))
+      .map((call) => JSON.stringify(call))
       .join("\n");
 
     expect(messages.includes(seriesString)).toBe(false);

@@ -36,6 +36,13 @@ const fail = (message: string, path?: string): ChartfnEnvelope<null> => ({
 const isNumberArray = (value: unknown): value is number[] =>
   Array.isArray(value) && Array.from(value).every((item) => typeof item === "number" && Number.isFinite(item));
 
+const isStringArray = (value: unknown): value is string[] => {
+  if (!Array.isArray(value)) return false;
+  // Array.every skips holes; iteration treats them as undefined and rejects them.
+  for (const item of value) if (typeof item !== "string") return false;
+  return true;
+};
+
 const getValuesArray = (series: unknown): number[] | null => {
   if (!isObject(series)) {
     return null;
@@ -82,7 +89,7 @@ export const validateChartSpec = (spec: unknown): ChartfnEnvelope<null> => {
 
   for (const field of ['dimensions', 'labels'] as const) {
     const labels = data[field];
-    if (labels !== undefined && (!Array.isArray(labels) || !labels.every(item => typeof item === 'string'))) {
+    if (labels !== undefined && !isStringArray(labels)) {
       return fail(`ChartSpec.data.${field} must be an array of strings`, `data.${field}`);
     }
   }

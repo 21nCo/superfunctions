@@ -29,6 +29,9 @@ canvases; caller-supplied canvases remain in place. Other adapters use HTML cont
 
 `render` and `validateChartSpec` return success/error envelopes. Invalid selectors
 return `ADAPTER_ERROR`; invalid specs return `SPEC_INVALID` before mounting.
+Adapter mount failures use a generic public message rather than exposing vendor
+exception text, which may contain chart data. Invalid-spec logs contain only the
+error code and field path, never the rejected field value.
 Handles retain their imperative interface: invalid updates throw, adapter errors
 propagate, and exports reject on failure. Disposal is idempotent; updates after
 disposal are no-ops and supported exports after disposal return an empty string.
@@ -144,3 +147,11 @@ React/Svelte consumers. These browser scripts require Playwright and Chromium.
 Set `PLAYWRIGHT_MODULE_PATH` to an installed Playwright module and optionally
 `BROWSER_EXECUTABLE_PATH` to a Chromium executable. Both scripts close their
 disposable browser contexts and local servers when they finish.
+
+`node chartfn/scripts/determinism-acceptance.mjs` compares rendered pixels from two
+independent mounts for all seven chart types and all three vendors with animations
+disabled. This checks repeatability within the selected browser/vendor versions,
+not identical output across browsers, fonts, operating systems, or library versions.
+The numbered requirement and original intent coverage is recorded in
+`.conduct/requirement-readiness.md`, including the imperative-handle error-contract
+qualification and separate hosted CI gates.
