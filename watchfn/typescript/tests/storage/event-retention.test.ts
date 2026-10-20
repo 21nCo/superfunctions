@@ -55,11 +55,12 @@ describe("canonical event retention", () => {
   });
   it("protects pending, processing, reconciliation, foreign and missing managed receipts", async () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(now); const { watch, db } = setup();
-    for (const id of ["pending", "processing", "reconciliation", "foreign", "missing"]) await watch.ingest([bug(id)]);
+    for (const id of ["pending", "processing", "reconciliation", "foreign", "missing", "partial-linked"]) await watch.ingest([bug(id)]);
     for (const state of ["processing", "reconciliation"]) await db.updateMany({ model: BUG_ISSUES_TABLE, where: [{ field: "reportId", operator: "eq", value: state }], data: { state } });
     await db.updateMany({ model: BUG_ISSUES_TABLE, where: [{ field: "reportId", operator: "eq", value: "foreign" }], data: { state: "linked", namespace: "other" } });
     await db.deleteMany({ model: BUG_ISSUES_TABLE, where: [{ field: "reportId", operator: "eq", value: "missing" }] });
-    clock.mockReturnValue(now + 101); expect(await watch.cleanupRetention()).toMatchObject({ scanned: 5, deleted: 0, retained: 5 });
+    await db.updateMany({ model: BUG_ISSUES_TABLE, where: [{ field: "reportId", operator: "eq", value: "partial-linked" }], data: { state: "linked", issueId: "7", issueUrl: "https://github.com/acme/bugs/issues/7" } });
+    clock.mockReturnValue(now + 101); expect(await watch.cleanupRetention()).toMatchObject({ scanned: 6, deleted: 0, retained: 6 });
     const noOutbox = new DatabaseStorage(db, "watchfn_events", undefined, { apps: ["web"], defaultTtlMs: 1 });
     expect((await noOutbox.cleanupRetention()).deleted).toBe(0);
   });

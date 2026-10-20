@@ -42,10 +42,13 @@ export class EventRetention {
   private async safeToExpire(row: EventRow, tx: TransactionAdapter): Promise<boolean> {
     if (!row.id.startsWith("bug_")) return true;
     if (!this.namespace) return false;
-    const receipts = await tx.findMany<{ state: string; namespace: string; app: string; reportId: string; eventId: string }>({ model: BUG_ISSUES_TABLE,
+    const receipts = await tx.findMany<{ state: string; namespace: string; app: string; reportId: string; eventId: string; target: string; project: string; issueId: string | null; issueUrl: string | null }>({ model: BUG_ISSUES_TABLE,
       where: [{ field: "eventId", operator: "eq", value: row.id }], limit: 2 });
     const receipt = receipts[0];
-    return receipts.length === 1 && receipt.namespace === this.namespace && receipt.state === "linked" && receipt.app === row.payload?.app?.name && receipt.reportId === row.payload?.id;
+    const integration = row.payload?.integration;
+    return receipts.length === 1 && receipt.namespace === this.namespace && receipt.state === "linked" && receipt.app === row.payload?.app?.name && receipt.reportId === row.payload?.id &&
+      typeof receipt.issueId === "string" && receipt.issueId.length > 0 && typeof receipt.issueUrl === "string" && receipt.issueUrl.length > 0 &&
+      integration?.target === receipt.target && integration?.project === receipt.project && integration?.issueId === receipt.issueId && integration?.issueUrl === receipt.issueUrl;
   }
   async cleanup(options: RetentionPageOptions = {}): Promise<RetentionPageResult> {
     const limit = retentionPage(options); const now = Date.now();
