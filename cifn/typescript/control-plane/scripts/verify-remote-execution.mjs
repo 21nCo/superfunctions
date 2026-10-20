@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -13,6 +13,7 @@ const key = randomBytes(32).toString('base64');
 const apiKey = 'disposable-remote-job-secret';
 const token = 'disposable-remote-registration';
 const children = [];
+const ownedGroups = new Set();
 let output = '', port = 0, control, proxy, runner, completionBody;
 const stateDirectory = join(directory, 'runner-state');
 const witness = join(directory, 'witness');
@@ -97,15 +98,47 @@ try {
   assert.ok(final.jobs.every(job => job.status === 'success' && job.steps.every(step => step.status === 'success')));
   await stop(runner); await stop(control); control = await startControl();
   assert.deepEqual(await data(`/api/v1/runs/${run.runId}`), final);
+  // Cancellation is observed over authenticated HTTP while a resistant descendant runs.
+  const cancelReady = join(directory, 'cancel-ready'); const cancelledWitness = join(directory, 'cancel-late');
+  const cancelledGroup = join(directory, 'cancel-group');
+  const sentinelScript = join(directory, 'sentinel.cjs');
+  await writeFile(sentinelScript, 'setInterval(()=>{},1000);');
+  const sentinel = child(sentinelScript, {});
+  const resistant = `require('fs').writeFileSync(${JSON.stringify(cancelReady)},'ready');process.on('SIGTERM',()=>{});require('fs').closeSync(1);require('fs').closeSync(2);setTimeout(()=>require('fs').writeFileSync(${JSON.stringify(cancelledWitness)},'late'),8000);setInterval(()=>{},1000);`;
+  const cancelCommand = `echo $$ > ${quote(cancelledGroup)}; ${quote(process.execPath)} -e ${quote(resistant)} & wait`;
+  const cancelRun = await data('/api/v1/runs', { ...input, pipelineSpec: { ...input.pipelineSpec, jobs: { cancel: {
+    'runs-on': 'default', steps: [{ run: cancelCommand }, { run: `echo later > ${quote(cancelledWitness)}` }],
+  } } } });
+  runner = startRunner();
+  await until(async () => readFile(cancelReady, 'utf8').catch(() => ''), 'resistant descendant startup');
+  const cancelGroup = Number(await readFile(cancelledGroup, 'utf8')); ownedGroups.add(cancelGroup);
+  await data(`/api/v1/runs/${cancelRun.runId}/cancel`, {});
+  const cancellationEntry = await until(async () => {
+    for (const name of await readdir(stateDirectory)) {
+      if (!name.endsWith('.json')) continue;
+      const entry = JSON.parse(await readFile(join(stateDirectory, name), 'utf8'));
+      if (entry.runId === cancelRun.runId && entry.phase === 'finished') return entry;
+    }
+  }, 'durable cancellation receipt');
+  assert.throws(() => process.kill(-cancelGroup, 0), { code: 'ESRCH' }); ownedGroups.delete(cancelGroup);
+  assert.equal(await readFile(cancelledWitness, 'utf8').catch(() => ''), '');
+  assert.doesNotThrow(() => process.kill(sentinel.child.pid, 0));
+  assert.equal((await data(`/api/v1/runs/${cancelRun.runId}`)).status, 'cancelled');
+  assert.deepEqual(await data('/api/v1/runners/claims/status', cancellationEntry, registration.runnerSecret), { cancelRequested: true, completed: false, stopped: true });
+  assert.equal((await request('/api/v1/runners/claims/stopped', { ...cancellationEntry, claimToken: 'wrong' }, registration.runnerSecret)).status, 409);
+  await stop(sentinel); await stop(runner);
   // Kill a real subprocess after its side effect but before result persistence.
-  const uncertain = await data('/api/v1/runs', { ...input, pipelineSpec: { ...input.pipelineSpec, jobs: { uncertain: { 'runs-on': 'default', steps: [{ run: command('uncertain', true) }] } } } });
+  const uncertainGroup = join(directory, 'uncertain-group');
+  const uncertain = await data('/api/v1/runs', { ...input, pipelineSpec: { ...input.pipelineSpec, jobs: { uncertain: { 'runs-on': 'default', steps: [{ run: `echo $$ > ${quote(uncertainGroup)}; ${command('uncertain', true)}` }] } } } });
   runner = startRunner();
   await until(async () => (await readFile(witness, 'utf8')).includes('uncertain'), 'real started execution');
+  const uncertainProcessGroup = Number(await readFile(uncertainGroup, 'utf8')); ownedGroups.add(uncertainProcessGroup);
   await stop(runner, 'SIGKILL'); runner = startRunner();
   await delay(1200);
   assert.equal(await readFile(witness, 'utf8'), 'build\ntest\nuncertain\n');
   assert.equal((await data(`/api/v1/runs/${uncertain.runId}`)).status, 'running');
   assert.ok(output.includes('automatic replay refused'));
+  process.kill(-uncertainProcessGroup, 'SIGKILL'); ownedGroups.delete(uncertainProcessGroup);
   await stop(runner); await stop(control);
   assert.equal((await stat(stateDirectory)).mode & 0o777, 0o700);
   for (const name of await readdir(stateDirectory)) {
@@ -114,8 +147,9 @@ try {
     for (const value of [apiKey, registration.runnerSecret, token, key]) assert.equal(bytes.includes(Buffer.from(value)), false, 'Journal must not contain raw job/provider credentials');
   }
   for (const value of [apiKey, registration.runnerSecret, token, key]) assert.equal(output.includes(value), false, 'Child output must not contain credentials');
-  console.log('Remote shell DAG passed: real side effects, lost offer/completion recovery, SQLite restart, idempotent completion, and uncertain execution refusal');
+  console.log('Remote shell DAG passed: real side effects, lost offer/completion recovery, SQLite restart, idempotent completion, authenticated cancellation with owned descendant termination, and uncertain execution refusal');
 } finally {
+  for (const group of ownedGroups) { try { process.kill(-group, 'SIGKILL'); } catch {} }
   for (const value of children) await stop(value, 'SIGKILL');
   if (proxy) { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
   await rm(directory, { recursive: true, force: true });

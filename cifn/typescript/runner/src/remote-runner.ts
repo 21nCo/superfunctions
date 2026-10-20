@@ -1,3 +1,4 @@
+import { executeOwnedShell, ProcessGroupUncertainError } from './executor/owned-shell.js';
 import { randomUUID } from 'node:crypto';
 import { MemoryStore, MemoryQueueClient, DEFAULT_QUEUE_NAME, type JobPayload, type JobCompletion, type PipelineSpec } from '@cifn/control-plane';
 import { Runner } from './runner.js';
@@ -8,7 +9,7 @@ export interface RemoteRunnerOptions { baseUrl: string; runnerId: string; runner
 interface ResumableClaim { payload?: JobPayload; runId: string; dispatchId: string; claimToken: string; executionId?: string; reconciliationRequired: boolean }
 
 /** Reuses the real shell executor. The memory projection is scratch state only. */
-export async function executeRemoteShellJob(payload: JobPayload): Promise<JobCompletion> {
+export async function executeRemoteShellJob(payload: JobPayload, signal?: AbortSignal): Promise<JobCompletion> {
   const failed = (): JobCompletion => ({ status: 'failure', steps: payload.jobSpec.steps.map((_, index) => ({ stepKey: `step-${index}`, status: index === 0 ? 'failure' : 'skipped' })) });
   if (payload.jobSpec.image || payload.jobSpec.steps.some(step => !('run' in step))) {
     console.error('Remote job requires an unsupported executor/provider'); return failed();
@@ -19,9 +20,10 @@ export async function executeRemoteShellJob(payload: JobPayload): Promise<JobCom
   const spec: PipelineSpec = { on: { workflow_dispatch: {} }, jobs: { [payload.jobKey]: jobSpec } };
   const run = store.createRun({ pipelineSpec: spec, pipelineRef: payload.pipelineRef, trigger: { type: (payload.trigger?.type ?? 'workflow_dispatch') as 'workflow_dispatch', payload: payload.trigger?.payload } });
   await queue.enqueue(DEFAULT_QUEUE_NAME, { ...payload, runId: run.id, jobSpec });
-  const runner = new Runner({ executionEnv: { PATH: process.env.PATH, LANG: process.env.LANG, TMPDIR: process.env.TMPDIR }, store, queue, logClient: new MemoryLogFnClient(), labels: [jobSpec['runs-on']],
+  const baseEnv = { PATH: process.env.PATH, LANG: process.env.LANG, TMPDIR: process.env.TMPDIR };
+  const runner = new Runner({ executionSignal: signal, runCommand: (command, workspace, env) => executeOwnedShell(command, workspace, { ...baseEnv, ...env }, signal), executionEnv: baseEnv, store, queue, logClient: new MemoryLogFnClient(), labels: [jobSpec['runs-on']],
     pipelineSpecs: new Map([[run.id, spec]]), secretValues: new Map([[run.id, Object.values(payload.env ?? {}).filter(Boolean)]]) });
-  try { await runner.processNextJob(); } catch { return failed(); }
+  try { await runner.processNextJob(); } catch (cause) { if (cause instanceof ProcessGroupUncertainError) throw cause; return failed(); }
   const result = store.getRun(run.id)!.jobs[0];
   const status = ['success', 'failure', 'skipped'].includes(result.status) ? result.status as JobCompletion['status'] : 'failure';
   const steps: JobCompletion['steps'] = result.steps.map(step => ({ stepKey: step.stepKey, status: ['success', 'failure', 'skipped'].includes(step.status) ? step.status as JobCompletion['status'] : 'skipped' }));
@@ -49,9 +51,20 @@ export class RemoteRunner {
       this.journal.save({ ...entry, phase: 'finished' });
     } catch (cause) {
       if (!(cause instanceof RunnerProtocolError) || (cause.status !== 409 && cause.status !== 400)) throw cause;
+      if (cause.status === 409 && (await this.status(entry)).cancelRequested) {
+        const cancelled = { ...entry, phase: 'cancelled' as const };
+        this.journal.save(cancelled); await this.stopped(cancelled); return;
+      }
       this.journal.save({ ...entry, phase: 'reconciliation' });
       console.error('CiFn completion requires reconciliation; conflicting result retained');
     }
+  }
+  private async stopped(entry: ClaimJournalEntry): Promise<void> {
+    await this.request('/api/v1/runners/claims/stopped', entry);
+    this.journal.save({ ...entry, phase: 'finished' });
+  }
+  private status(entry: ClaimJournalEntry) {
+    return this.request<{ cancelRequested: boolean; completed: boolean; stopped: boolean }>('/api/v1/runners/claims/status', entry);
   }
   private async handle(claim: ResumableClaim): Promise<boolean> {
     if (claim.reconciliationRequired || !claim.payload) return false;
@@ -62,22 +75,55 @@ export class RemoteRunner {
     }
     if (entry.runnerId !== this.options.runnerId || (claim.executionId && claim.executionId !== entry.executionId)) return false;
     if (entry.phase === 'finished' || entry.phase === 'reconciliation') return false;
+    if (entry.phase === 'cancelled') { await this.stopped(entry); return true; }
     if (entry.phase === 'completed') { await this.finish(entry); return true; }
     if (entry.phase === 'started' || this.journal.hasStarted(entry.dispatchId)) {
       if (!this.reportedUncertain.has(entry.dispatchId)) { console.error('CiFn execution requires reconciliation; automatic replay refused'); this.reportedUncertain.add(entry.dispatchId); }
       return false;
     }
-    await this.request('/api/v1/runners/claims/ack', entry);
+    const cancelBeforeStart = async () => {
+      if (!(await this.status(entry!)).cancelRequested) return false;
+      // Competing processes can share a journal. Claim the same exclusive
+      // execution decision before asserting that no subprocess was started.
+      if (!this.journal.markStarted(entry!)) return true;
+      const cancelled = { ...entry!, phase: 'cancelled' as const };
+      this.journal.save(cancelled); await this.stopped(cancelled); return true;
+    };
+    if (await cancelBeforeStart()) return true;
+    try { await this.request('/api/v1/runners/claims/ack', entry); }
+    catch (cause) { if (cause instanceof RunnerProtocolError && cause.status === 409 && await cancelBeforeStart()) return true; throw cause; }
+    if (await cancelBeforeStart()) return true;
     if (!this.journal.markStarted(entry)) return false;
-    const result = await executeRemoteShellJob(claim.payload);
-    const completed = { ...entry, phase: 'completed' as const, result };
-    this.journal.save(completed);
-    await this.finish(completed);
-    return true;
+    const cancellation = new AbortController();
+    let monitoring = true;
+    let pending: Promise<void> | undefined;
+    const observe = () => {
+      if (pending || !monitoring) return;
+      pending = this.status(entry!).then(status => { if (status.cancelRequested) cancellation.abort(); })
+        .catch(() => { /* Network failures are not cancellation or proof of termination. */ })
+        .finally(() => { pending = undefined; });
+    };
+    const timer = setInterval(observe, 1_000);
+    try {
+      observe();
+      const result = await executeRemoteShellJob(claim.payload, cancellation.signal);
+      const completed = { ...entry, phase: 'completed' as const, result };
+      this.journal.save(completed);
+      monitoring = false; clearInterval(timer); await pending;
+      if (cancellation.signal.aborted) {
+        const cancelled = { ...entry, phase: 'cancelled' as const };
+        this.journal.save(cancelled); await this.stopped(cancelled);
+      } else {
+        await this.finish(completed);
+      }
+      return true;
+    } finally { monitoring = false; clearInterval(timer); }
+
   }
   async tick(): Promise<number> {
     let processed = 0;
     for (const entry of this.journal.list()) {
+      if (entry.runnerId === this.options.runnerId && entry.phase === 'cancelled') { await this.stopped(entry); processed++; }
       if (entry.runnerId === this.options.runnerId && entry.phase === 'completed') { await this.finish(entry); processed++; }
     }
     let cursor: string | undefined;

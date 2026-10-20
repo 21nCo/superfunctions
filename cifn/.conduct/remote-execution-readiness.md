@@ -1,6 +1,7 @@
 # CiFn durable remote shell execution checkpoint
 
-2026-10-20. Adds a functioning remote shell runner to the durable control plane.
+2026-10-20. Initial execution checkpoint at `8a13600f9`; cancellation is
+extended by [cancellation-readiness.md](./cancellation-readiness.md). Adds a functioning remote shell runner to the durable control plane.
 It supersedes the root-only/no-completion limits in the earlier dispatch
 checkpoint for newly prepared runs. Production readiness remains incomplete.
 
@@ -121,7 +122,7 @@ npm run test:remote --workspace=./cifn/typescript/runner
 npm run test:remote --workspace=./cifn/typescript/control-plane
 ```
 
-Validation: 169 control-plane tests and 75 runner tests, package typechecks,
+Validation at `8a13600f9`: 169 control-plane tests and 75 runner tests, package typechecks,
 strict durable/remote configurations with `skipLibCheck:false`, both package
 builds, and the real two-process acceptance probe pass. Existing built startup,
 SQLite dispatch restart and CJS/ESM control-plane consumer probes also pass.
@@ -136,8 +137,11 @@ Execution lease expiry/renewal, explicit operator reconciliation/reassignment,
 crash recovery after an unknown subprocess result, durable notification delivery,
 remote step/log streaming, artifact/cache/checkout/TestFn/HostFn/Docker provider
 integration, and step-level secret expressions remain open. Remote shell jobs
-with unsupported providers fail rather than claiming success. Cancellation does
-not terminate a running subprocess. Completion is reported per job, so step
+with unsupported providers fail rather than claiming success. Authenticated
+cancellation now stops owned POSIX shell groups as described in
+[cancellation-readiness.md](./cancellation-readiness.md); uncertain executions
+and escaped processes still require reconciliation. Completion is reported per
+job, so step
 progress before terminal completion is not durably streamed.
 
 Journal retention/backup and filesystem portability, installed tarball/runtime

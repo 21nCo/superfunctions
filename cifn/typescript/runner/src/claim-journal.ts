@@ -5,7 +5,7 @@ import type { ClaimIdentity, JobCompletion } from '@cifn/control-plane';
 
 export interface ClaimJournalEntry extends ClaimIdentity {
   version: 1;
-  phase: 'prepared' | 'started' | 'completed' | 'finished' | 'reconciliation';
+  phase: 'prepared' | 'started' | 'completed' | 'finished' | 'reconciliation' | 'cancelled';
   result?: JobCompletion;
 }
 /** Contains identity/results only; never stores job payload, environment, or logs. */
@@ -19,7 +19,7 @@ export class ClaimJournal {
   }
   private read(path: string): ClaimJournalEntry {
     const value = JSON.parse(readFileSync(path, 'utf8')) as ClaimJournalEntry;
-    if (value.version !== 1 || typeof value.dispatchId !== 'string' || typeof value.executionId !== 'string' || !['prepared', 'started', 'completed', 'finished', 'reconciliation'].includes(value.phase)) throw new Error('Claim journal needs explicit repair');
+    if (value.version !== 1 || typeof value.dispatchId !== 'string' || typeof value.executionId !== 'string' || !['prepared', 'started', 'completed', 'finished', 'reconciliation', 'cancelled'].includes(value.phase)) throw new Error('Claim journal needs explicit repair');
     return value;
   }
   list(): ClaimJournalEntry[] { return readdirSync(this.directory).filter(name => name.endsWith('.json')).map(name => this.read(join(this.directory, name))); }

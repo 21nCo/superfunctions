@@ -14,7 +14,7 @@ export interface DispatchIntent {
   state: 'blocked' | 'ready' | 'claimed' | 'completed';
   nextDeliveryAt: number;
   publication?: { token: string; expiresAt: number };
-  claim?: { token: string; runnerId: string; claimedAt: string; protocolVersion?: 1; executionId?: string; acknowledgedAt?: string };
+  claim?: { token: string; runnerId: string; claimedAt: string; protocolVersion?: 1; executionId?: string; acknowledgedAt?: string; stoppedAt?: string };
   blockedByFailure?: boolean;
   completion?: { digest: string; result: JobCompletion };
 }

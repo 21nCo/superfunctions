@@ -379,6 +379,67 @@ describe('real SQLite durable control-plane state', () => {
     await expect(store.completeDispatch(cancelledIdentity, { status: 'success', steps: [{ stepKey: 'step-0', status: 'success' }, { stepKey: 'step-1', status: 'success' }] })).rejects.toThrow('conflicts');
   });
 
+  it('binds cancellation observation and stopped receipts, including cancel-before-ack and completion races', async () => {
+    const { path } = await location(); let opened = await open(path);
+    const spec = { on: { workflow_dispatch: {} }, jobs: { build: { 'runs-on': 'default', steps: [{ run: 'true' }] } } };
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', 'registration');
+    const app = createApp({ store: opened.store, secFn: secrets }).app;
+    const registered = await app.request('/api/v1/runners/register', { method: 'POST', body: JSON.stringify({ token: 'registration' }) });
+    const owner = (await registered.json()).data;
+    const make = async () => {
+      const run = await opened.store.createPreparedRun(await prepareRun({ trigger: { type: 'workflow_dispatch' }, pipelineSpec: spec }));
+      const dispatchId = JSON.stringify([run.id, 'build', 1]);
+      const claim = await opened.store.claimDispatch(run.id, dispatchId, owner.runnerId, ['default']);
+      return { runId: run.id, dispatchId, runnerId: owner.runnerId, claimToken: claim!.claimToken!, executionId: 'execution' };
+    };
+    const identity = await make();
+    const call = (action: string, value = identity, credential = owner.runnerSecret) => app.request(`/api/v1/runners/claims/${action}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${credential}` }, body: JSON.stringify(value),
+    });
+    expect((await call('status', identity, 'wrong')).status).toBe(401);
+    expect((await call('status', { ...identity, claimToken: 'wrong' })).status).toBe(409);
+    await expect(opened.store.observeDispatch({ ...identity, runnerId: 'other' })).rejects.toThrow('conflicts');
+    await expect(opened.store.acknowledgeCancellation(identity)).rejects.toThrow('conflicts');
+    await opened.store.cancelRun(identity.runId);
+    expect((await (await call('status')).json()).data).toEqual({ cancelRequested: true, completed: false, stopped: false });
+    expect((await call('ack')).status).toBe(409);
+    expect((await call('stopped')).status).toBe(200);
+    expect((await call('stopped')).status).toBe(200);
+    expect((await call('status', { ...identity, executionId: 'other' })).status).toBe(409);
+    await close(opened.sql); opened = await open(path);
+    expect(await opened.store.observeDispatch(identity)).toEqual({ cancelRequested: true, completed: false, stopped: true });
+    const completed = await make(); await opened.store.acknowledgeDispatch(completed);
+    const result = { status: 'success' as const, steps: [{ stepKey: 'step-0', status: 'success' as const }] };
+    await opened.store.completeDispatch(completed, result);
+    expect((await opened.store.cancelRun(completed.runId)).error).toBe('ALREADY_FINISHED');
+    expect(await opened.store.completeDispatch(completed, result)).toEqual({ accepted: true });
+    expect(await opened.store.observeDispatch(completed)).toEqual({ cancelRequested: false, completed: true, stopped: false });
+    await expect(opened.store.acknowledgeCancellation(completed)).rejects.toThrow('conflicts');
+    const other = await open(path);
+    const racing = await make(); await opened.store.acknowledgeDispatch(racing);
+    const outcomes = await Promise.allSettled([opened.store.completeDispatch(racing, result), other.store.cancelRun(racing.runId)]);
+    const status = (await opened.store.getRun(racing.runId))!.status;
+    expect(['success', 'cancelled']).toContain(status);
+    if (status === 'success') {
+      expect(outcomes[0].status).toBe('fulfilled');
+      expect(await opened.store.completeDispatch(racing, result)).toEqual({ accepted: true });
+    } else {
+      expect(outcomes[0].status).toBe('rejected');
+      await expect(opened.store.completeDispatch(racing, result)).rejects.toThrow('conflicts');
+    }
+    await secrets.setSecret('TOKEN', secret);
+    const partial = await opened.store.createPreparedRun(await prepareRun(input, secrets));
+    const partialId = JSON.stringify([partial.id, 'build', 1]);
+    const partialClaim = await opened.store.claimDispatch(partial.id, partialId, owner.runnerId, ['default']);
+    const partialIdentity = { ...identity, runId: partial.id, dispatchId: partialId, claimToken: partialClaim!.claimToken! };
+    const partialResult = { status: 'success' as const, steps: [{ stepKey: 'step-0', status: 'success' as const }, { stepKey: 'step-1', status: 'success' as const }] };
+    await opened.store.acknowledgeDispatch(partialIdentity); await opened.store.completeDispatch(partialIdentity, partialResult);
+    await opened.store.cancelRun(partial.id);
+    expect(await opened.store.completeDispatch(partialIdentity, partialResult)).toEqual({ accepted: true });
+    expect(await opened.store.observeDispatch(partialIdentity)).toEqual({ cancelRequested: false, completed: true, stopped: false });
+
+  });
+
   it('does not acknowledge failed persistence or dispatch a run after a native database failure', async () => {
     const { path } = await location(); const { store, native } = await open(path);
     native.exec("CREATE TRIGGER fail_run BEFORE INSERT ON cifn_state WHEN NEW.kind = 'run' BEGIN SELECT RAISE(ABORT, 'write rejected'); END");

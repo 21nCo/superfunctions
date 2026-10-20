@@ -107,3 +107,14 @@ durable notifications remain open. See the [remote execution contract](.conduct/
 [dispatch contract](.conduct/durable-dispatch-readiness.md), and
 [storage contract](.conduct/durable-storage-readiness.md) for validation and migration
 requirements. These checkpoints do not establish full production readiness.
+
+
+### Remote shell cancellation
+
+With the durable SQLite control plane, `POST /api/v1/runs/:runId/cancel` is
+observed by the remote runner during shell execution. The runner stops its owned
+POSIX process group, escalates resistant descendants from SIGTERM to SIGKILL,
+and reports a stopped receipt only after confirming the group is gone. Later
+steps are skipped. Network outages do not count as cancellation; started work
+without a durable result remains uncertain after a runner crash and is never
+automatically replayed. See [cancellation contract and limits](.conduct/cancellation-readiness.md).

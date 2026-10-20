@@ -202,6 +202,26 @@ export class DatabaseStore implements ControlPlaneStore {
     });
     if (!changed) throw new ClaimConflictError();
   }
+  async observeDispatch(identity: ClaimIdentity): Promise<{ cancelRequested: boolean; completed: boolean; stopped: boolean }> {
+    const state = await this.read<RunState>('run', identity.runId);
+    if (!state) throw new ClaimConflictError();
+    const intent = this.boundClaim(state, identity);
+    if (intent.claim!.executionId && intent.claim!.executionId !== identity.executionId) throw new ClaimConflictError();
+    return { cancelRequested: state.run.status === 'cancelled' && !intent.completion, completed: !!intent.completion, stopped: !!intent.claim!.stoppedAt };
+  }
+  async acknowledgeCancellation(identity: ClaimIdentity): Promise<{ stopped: true }> {
+    const result = await this.mutate<RunState, { stopped: true }>('run', identity.runId, state => {
+      const intent = this.boundClaim(state, identity);
+      if (intent.claim!.executionId && intent.claim!.executionId !== identity.executionId) throw new ClaimConflictError();
+      if (state.run.status !== 'cancelled' || intent.completion) throw new ClaimConflictError();
+      if (intent.claim!.stoppedAt) return { result: { stopped: true }, changed: false };
+      intent.claim!.executionId = identity.executionId;
+      intent.claim!.stoppedAt = new Date().toISOString();
+      return { result: { stopped: true }, changed: true };
+    });
+    if (!result) throw new ClaimConflictError();
+    return result;
+  }
   private boundClaim(state: RunState, identity: ClaimIdentity): DispatchIntent {
     const intent = state.dispatches?.find(value => value.id === identity.dispatchId);
     if (state.dispatchProtocolVersion !== 2 || !intent?.claim || intent.claim.protocolVersion !== 1 || intent.claim.runnerId !== identity.runnerId || intent.claim.token !== identity.claimToken) throw new ClaimConflictError();

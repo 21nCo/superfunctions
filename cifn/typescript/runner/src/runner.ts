@@ -11,7 +11,7 @@ import {
   type MemoryStore,
   type PipelineSpec,
 } from '@cifn/control-plane';
-import { executeRunStep } from './executor/run-step.js';
+import { executeRunStep, type RunStepResult } from './executor/run-step.js';
 import { executeCheckout } from './steps/checkout.js';
 import { executeArtifactUpload } from './steps/artifact-upload.js';
 import { executeArtifactDownload } from './steps/artifact-download.js';
@@ -23,6 +23,8 @@ import { redactSecrets } from './reporting/redact.js';
 import { DockerExecutor } from './docker-executor.js';
 
 export interface RunnerOptions {
+  runCommand?: (command: string, workspace: string, env?: Record<string, string>) => Promise<RunStepResult>;
+  executionSignal?: AbortSignal;
   executionEnv?: NodeJS.ProcessEnv;
   store: MemoryStore;
   queue: QueueClient;
@@ -49,6 +51,8 @@ export interface RunnerOptions {
 }
 
 export class Runner {
+  private runCommand?: RunnerOptions['runCommand'];
+  private executionSignal?: AbortSignal;
   private executionEnv?: NodeJS.ProcessEnv;
   private store: MemoryStore;
   private queue: QueueClient;
@@ -69,6 +73,8 @@ export class Runner {
 
   constructor(options: RunnerOptions) {
     this.executionEnv = options.executionEnv;
+    this.runCommand = options.runCommand;
+    this.executionSignal = options.executionSignal;
     this.store = options.store;
     this.queue = options.queue;
     this.logClient = options.logClient;
@@ -196,6 +202,10 @@ export class Runner {
 
     try {
       for (let i = 0; i < jobSpec.steps.length; i++) {
+        if (this.executionSignal?.aborted) {
+          job.steps.slice(i).forEach(step => { step.status = 'skipped'; });
+          jobFailed = true; break;
+        }
         const stepSpec = jobSpec.steps[i];
         const step = job.steps[i];
         if (!step) continue;
@@ -517,7 +527,7 @@ export class Runner {
           `Step "${step.stepKey}" started: ${runCommand}`,
         ]);
 
-        const result = this.executeRunCommand(runCommand, workspace, jobSpec, jobEnv);
+        const result = await this.executeRunCommand(runCommand, workspace, jobSpec, jobEnv);
 
         logLines(step.stepKey, result.lines);
 
@@ -575,6 +585,7 @@ export class Runner {
       });
     }
 
+    if (this.runCommand) return this.runCommand(command, workspace, env);
     return executeRunStep(command, workspace, env, this.executionEnv);
   }
 
