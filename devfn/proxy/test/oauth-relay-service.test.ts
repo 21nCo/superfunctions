@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -296,26 +296,47 @@ it("stops by every recorded identity when the service record is unreadable, and 
 // A legal 251-character registered domain: auth.<domain> exceeds the 253-character hostname a service record holds.
 const LONG_DOMAIN = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(54), "test"].join(".");
 
-it.skipIf(process.platform === "win32")("refuses a relay hostname its service record cannot hold, or an unnormalized domain, before any claim, process or route", async () => {
+it.skipIf(process.platform === "win32")("refuses a relay its service record cannot hold, or an unnormalized domain, before any claim, process or route", async () => {
   const stateDir = await registeredState();
-  await registerDomain(stateDir, { domain: LONG_DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, tls: "internal" }, loopback);
+  const longProject = "p".repeat(2048);
+  await registerDomain(stateDir, { domain: LONG_DOMAIN, projectId: longProject, repositoryIdentity: stateDir, tls: "internal" }, loopback);
   const proxy = fakeProxy([sibling]);
-  const start = (domain: string, host?: string) => startOAuthRelay({ stateDir, domain, host, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
-  for (const host of [undefined, "h".repeat(40)]) await expect(start(LONG_DOMAIN, host)).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_REJECTED", reason: "malformed" });
+  const start = (domain: string, host?: string, projectId = longProject, repositoryIdentity = stateDir) => startOAuthRelay({ stateDir, domain, host, projectId, repositoryIdentity, proxy, command: RELAY_COMMAND });
+  const rejected = { code: "DEVFN_OAUTH_RELAY_REJECTED", reason: "malformed" };
+  for (const host of [undefined, "h".repeat(40)]) await expect(start(LONG_DOMAIN, host)).rejects.toMatchObject(rejected);
+  for (const [index, [projectId, repository]] of [[`${longProject}p`, stateDir], ["fix\nture", stateDir], ["fixture", `${stateDir}/re\npo`]].entries()) {
+    await mkdir(repository, { recursive: true });
+    await registerDomain(stateDir, { domain: `bad-${index}.example.test`, projectId, repositoryIdentity: repository, tls: "internal" }, loopback);
+    await expect(start(`bad-${index}.example.test`, undefined, projectId, repository)).rejects.toMatchObject(rejected);
+  }
   await expect(start("Dev.Example.Test")).rejects.toMatchObject({ code: "DEVFN_DOMAIN_INVALID" });
   expect(await readRelayService(stateDir)).toBeUndefined();
   expect((await new FilePortRegistry(path.join(stateDir, "registry.json")).read()).invocations).toEqual([]);
   expect(proxy.routes).toEqual([sibling]);
-  // A hostname of exactly 253 characters is served and stopped.
+  // A hostname of exactly 253 characters and a 2048-character project ID are served and stopped.
   expect(await start(LONG_DOMAIN, "x")).toMatchObject({ running: true, routeActive: true, hostname: `x.${LONG_DOMAIN}` });
   expect(await stopOAuthRelay(stateDir, proxy)).toEqual({ stopped: true, routeRemoved: true });
+}, 60_000);
+
+it.skipIf(process.platform === "win32")("fails a start whose relay exits before the proxy activates its route, leaving no record, claim or route", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy([sibling]);
+  const dying: OAuthRelayProxy = { ...proxy, async upsert() {
+    const service = (await readRelayService(stateDir))!;
+    process.kill(-service.pid, "SIGKILL");
+    while (await processIdentityStatus(service.pid, service.birthSignature) === "running") await new Promise((resolve) => setTimeout(resolve, 20));
+    return []; } };
+  await expect(startOAuthRelay({ stateDir, domain: DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, proxy: dying, command: RELAY_COMMAND }))
+    .rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_UNAVAILABLE", message: expect.stringMatching(/exited before its route was activated/) });
+  expect(await readRelayService(stateDir)).toBeUndefined();
+  expect((await new FilePortRegistry(path.join(stateDir, "registry.json")).read()).invocations.map((item) => item.state)).toEqual(["failed"]);
+  expect(proxy.routes).toEqual([sibling]);
 }, 60_000);
 
 it("reports a pending relay route that stop withdraws as removed", async () => {
   const stateDir = await registeredState();
   const proxy = fakeProxy();
-  let pending: ProxyRoute[] | undefined = [{ id: OAUTH_RELAY_ROUTE_ID, instanceId: OAUTH_RELAY_OWNER_ID, hostname: `auth.${DOMAIN}`, targetHost: "127.0.0.1",
-    targetPort: 41001, tls: "internal", updatedAt: new Date().toISOString() }];
+  let pending: ProxyRoute[] | undefined = [{ ...sibling, id: OAUTH_RELAY_ROUTE_ID, instanceId: OAUTH_RELAY_OWNER_ID, hostname: `auth.${DOMAIN}` }];
   const journaled: OAuthRelayProxy = { upsert: proxy.upsert, async removeInstance(instanceId) { pending = undefined; await proxy.removeInstance(instanceId); },
     async instanceRouteState(instanceId) { return { ...await proxy.instanceRouteState(instanceId), ...(pending ? { pending } : {}) }; } };
   expect(await stopOAuthRelay(stateDir, journaled)).toEqual({ stopped: false, routeRemoved: true });
@@ -525,7 +546,7 @@ process.stdout.end = (...args) => { const result = end(...args); writeFileSync($
 await import(${JSON.stringify(new URL("../src/oauth-relay/serve.ts", import.meta.url).href)});
 `);
   await writeFile(starter, `import { startOAuthRelay } from ${JSON.stringify(new URL("../src/oauth-relay/index.ts", import.meta.url).href)};
-const proxy = { upsert: async () => [], removeInstance: async () => undefined, instanceRouteState: async () => ({ committed: [] }) };
+const proxy = { upsert: async (routes) => routes, removeInstance: async () => undefined, instanceRouteState: async () => ({ committed: [] }) };
 await startOAuthRelay({ stateDir: ${JSON.stringify(stateDir)}, domain: ${JSON.stringify(DOMAIN)}, projectId: "fixture", repositoryIdentity: ${JSON.stringify(stateDir)}, proxy,
   command: ${JSON.stringify([...RELAY_COMMAND.slice(0, -1), wrapper])} });
 setInterval(() => undefined, 1000);

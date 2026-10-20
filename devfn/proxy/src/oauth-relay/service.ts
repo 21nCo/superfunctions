@@ -9,7 +9,7 @@ import { ProcessError, processBirthSignature, processGroupStatus, stopProcessGro
 
 import { CaddyProxyController, DomainError, normalizeDomain, proxyListenerPorts, proxyListenerPortsFor, readRegisteredDomains, type ProxyRoute } from "../index.js";
 import {
-  OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayError, RELAY_LOCK_STALE_MS, readRelayService, relayDirectory, relayPaths, relayTicketSummary,
+  OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayError, RELAY_LOCK_STALE_MS, parseRelayService, readRelayService, relayDirectory, relayPaths, relayTicketSummary,
   writePrivateJson, type OAuthRelayService,
 } from "./state.js";
 
@@ -233,6 +233,10 @@ async function activateClaim(stateDir: string, service: OAuthRelayService): Prom
   await registry.markActive(service.invocationId, { [BACKEND_SERVICE]: { process: owner } });
 }
 
+/** The proxy activates no route for a relay verified gone; a start that gets none fails. */
+function requireActivated(routes: readonly ProxyRoute[], service: OAuthRelayService): void {
+  if (!routes.some((route) => route.id === OAUTH_RELAY_ROUTE_ID)) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_UNAVAILABLE", `The relay (PID ${service.pid}) exited before its route was activated.`);
+}
 /**
  * Start the machine's one relay process and route `<host>.<domain>` to it.
  * The domain must be registered to the calling repository and project. A
@@ -243,16 +247,18 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
   const host = input.host ?? "auth";
   if (!HOST_LABEL.test(host)) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_REJECTED", "The relay host must be one lowercase DNS label of at most 40 characters.", "malformed");
   const domain = normalizeDomain(input.domain);
-  const hostname = `${host}.${domain}`;
-  // Refused before any claim, process or route exists: the service record admits no longer hostname.
-  if (hostname.length > 253) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_REJECTED", `The relay hostname ${hostname} exceeds 253 characters.`, "malformed");
   // Registrations hold the canonical repository path, as domain unregistration compares.
   const repositoryIdentity = await realpath(input.repositoryIdentity).catch(() => input.repositoryIdentity);
   const registration = (await readRegisteredDomains(input.stateDir)).find((item) => item.domain === domain &&
     item.projectId === input.projectId && item.repositoryIdentity === repositoryIdentity);
-  if (!registration) throw new DomainError("DEVFN_DOMAIN_UNREGISTERED", `Domain ${domain} is not registered to this repository and project.`);
+  if (!registration) throw new DomainError("DEVFN_DOMAIN_UNREGISTERED", `Domain ${input.domain} is not registered to this repository and project.`);
+  const hostname = `${host}.${registration.domain}`;
   const httpsPort = proxyListenerPorts().httpsPort;
   const origin = `https://${hostname}${httpsPort === 443 ? "" : `:${httpsPort}`}`;
+  // The record this start writes must pass the reader's own validator before any claim, process or route exists.
+  try { parseRelayService({ version: 1, pid: 1, birthSignature: "pending", port: 1, startedAt: new Date(0).toISOString(), origin, hostname, domain: registration.domain,
+    projectId: registration.projectId, repositoryIdentity: registration.repositoryIdentity, invocationId: randomUUID() }); }
+  catch (error) { throw new OAuthRelayError("DEVFN_OAUTH_RELAY_REJECTED", `A relay for ${origin} cannot be recorded: ${(error as Error).message}`, "malformed"); }
   const proxy = input.proxy ?? new CaddyProxyController(input.stateDir);
   const certificate = registration.certificateFile ? { certificateFile: registration.certificateFile, keyFile: registration.keyFile } : {};
   await relayDirectory(input.stateDir);
@@ -271,7 +277,7 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
       const claimed = registry.invocations.some((item) => item.id === service.invocationId && item.state === "ready") &&
         registry.allocations.some((item) => item.invocationId === service.invocationId && item.state === "active" && item.port === service.port);
       if (claimed) {
-        await proxy.upsert([relayRoute(service, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID);
+        requireActivated(await proxy.upsert([relayRoute(service, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID), service);
         await releaseClaims(input.stateDir, service.invocationId);
         return await relayStatus(input.stateDir, proxy);
       }
@@ -301,7 +307,7 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
       await activateClaim(input.stateDir, service);
       started.commit();
       routing = true;
-      await proxy.upsert([relayRoute(service, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID);
+      requireActivated(await proxy.upsert([relayRoute(service, registration.tls, certificate)], OAUTH_RELAY_OWNER_ID), service);
     } catch (error) {
       started?.abandon();
       // A failed activation can still have reloaded Caddy or journaled the
@@ -400,11 +406,8 @@ export async function oauthRelayStatus(stateDir: string, proxy: Pick<OAuthRelayP
  * DEVFN_REGISTRY_LOCK_TIMEOUT; onLocked runs once the service lock is held,
  * so a caller can tell that timeout from one raised inside it.
  */
-export async function recoverOAuthRelayRoute(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "removeInstance">,
-  options: { lockTimeoutMs?: number; onLocked?: () => void } = {}): Promise<boolean> {
+export async function recoverOAuthRelayRoute(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "removeInstance">, options: { lockTimeoutMs?: number; onLocked?: () => void } = {}): Promise<boolean> {
   await relayDirectory(stateDir);
-  return await withFileLock(relayPaths(stateDir).serviceLock, async () => {
-    options.onLocked?.();
-    return await reconcileRelayRoute(stateDir, proxy, await serviceStatus(stateDir, proxy));
-  }, { timeoutMs: options.lockTimeoutMs ?? SERVICE_LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
+  return await withFileLock(relayPaths(stateDir).serviceLock, async () => { options.onLocked?.(); return await reconcileRelayRoute(stateDir, proxy, await serviceStatus(stateDir, proxy)); },
+    { timeoutMs: options.lockTimeoutMs ?? SERVICE_LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
 }
