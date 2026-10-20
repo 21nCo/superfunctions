@@ -4,8 +4,9 @@ import { SegmentEvaluator } from './core/segments';
 import { MessagingEngine } from './core/messaging';
 import { SurveyEngine } from './core/surveys';
 import { FeedbackEngine } from './core/feedback';
+import { HttpFeedbackService } from './core/feedback-http';
 import { VanillaRenderer } from './ui/renderer';
-import { UserFnOptions, FlagValue, UserTraits, EventProperties, FeedbackSubmission, Campaign, Survey } from './types';
+import { UserFnOptions, FlagValue, UserTraits, EventProperties, FeedbackSubmission, FeedbackSubmitOptions, Campaign, Survey } from './types';
 
 export class UserFnClient {
   private identity: IdentityManager;
@@ -24,7 +25,7 @@ export class UserFnClient {
     this.flags = new FlagEvaluator([], this.segments);
     this.messaging = new MessagingEngine(this.segments);
     this.surveys = new SurveyEngine(this.segments);
-    this.feedback = new FeedbackEngine(options.feedbackService, () => this.identity.getUser());
+    this.feedback = new FeedbackEngine(options.feedbackService ?? (options.endpoint ? new HttpFeedbackService(options) : undefined), () => this.identity.getUser());
     
     if (typeof window !== 'undefined') {
       this.renderer = new VanillaRenderer();
@@ -45,8 +46,8 @@ export class UserFnClient {
   }
 
   // Direct submit
-  async submitFeedback(feedback: FeedbackSubmission): Promise<void> {
-    return this.feedback.submit(feedback);
+  async submitFeedback(feedback: FeedbackSubmission, options?: FeedbackSubmitOptions): Promise<void> {
+    return this.feedback.submit(feedback, options);
   }
 
   // ... rest of class
@@ -130,3 +131,5 @@ export * from './types';
 export * from './operator';
 
 export { FeedbackDeliveryError } from './core/feedback';
+
+export { FeedbackHTTPError } from './core/feedback-http';

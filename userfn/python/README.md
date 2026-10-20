@@ -115,10 +115,23 @@ pytest
 
 MIT
 
-## Feedback delivery boundary
+## Feedback delivery
 
-Use `await client.submit_feedback(FeedbackSubmission(...))`. Configure `UserFnOptions(feedback_service=service)` with an async `submit(submission, context)` method returning `FeedbackReceipt(id='stored-id', accepted=True)` after the backing service accepts the submission. The context contains `source='in_app'` and the current identity, or `None` after reset.
+```python
+client = UserFnClient(UserFnOptions(
+    endpoint="https://feedback.example.com/userfn",
+    api_key="tenant-scoped-token",
+    feedback_max_attempts=3,
+    feedback_timeout_ms=10000,
+))
+await client.submit_feedback(
+    FeedbackSubmission(title="Improve search", body="Saved queries", category="feature"),
+    idempotency_key="submission-123",
+)
+```
 
-Missing configuration, invalid input, or a missing/negative/empty receipt raises an error; service exceptions propagate. `endpoint` and `api_key` alone do not configure this operation. The Python SDK previously had no feedback submission method.
+This sends an actual bearer-authenticated POST to `<endpoint>/feedback`. A stable key is reused across bounded retries for network errors, HTTP 408/429 and 5xx. Manual retries should reuse the explicit key and content; conflicting reuse raises `FeedbackHTTPError` with status 409. Other non-retryable statuses fail immediately. Positive, nonempty receipts are required before success. Requests and receipts are limited to 64 KiB, redirects are rejected, and ambient proxy settings are disabled for this credential-bearing transport.
 
-This is a temporary injected service contract, not the specified HTTP/DB backend or proof of persistence. Authentication, durable storage, retries, feedback board/voting, and source integrations remain implementation requirements. Callers must not synthesize acceptance before their backing service accepts the submission.
+HTTP runs through the standard-library transport on an asyncio worker thread. `feedback_timeout_ms` bounds socket operations, not the total duration of a slow streaming response. Cancelling the awaiting task does not terminate the worker thread or undo a committed write; reuse the same idempotency key when reconciling an uncertain outcome. Attempts are limited to 1–5.
+
+An explicit async `feedback_service` overrides HTTP delivery and retains its awaited receipt contract. Missing configuration fails. Identity remains client metadata, distinct from the server-authenticated actor. See [service setup](../service/README.md). Offline delivery, board/voting and source integrations remain open.

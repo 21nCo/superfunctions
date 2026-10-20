@@ -1,0 +1,36 @@
+{
+  "name": "@userfn/service",
+  "version": "0.0.1",
+  "description": "Tenant-scoped UserFn feedback HTTP and database service",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run tests/service.test.ts",
+    "test:native": "vitest run tests/sqlite-http.test.ts"
+  },
+  "dependencies": {
+    "@superfunctions/auth": "0.1.2",
+    "@superfunctions/db": "0.4.0",
+    "@superfunctions/http": "0.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.5.0",
+    "kysely": "^0.28.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  }
+}

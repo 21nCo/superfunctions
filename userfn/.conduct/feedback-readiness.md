@@ -29,3 +29,7 @@ A supplied service must return acceptance only after its backing service accepts
 ## Remaining gates
 
 Dedicated shared HTTP/DB service and internally owned schemas; real authentication/tenancy and persistence; idempotency, retries/offline delivery; feedback board/voting/status and external-source ingestion; privacy/moderation/rate limits; screenshots/annotation; deployed or live transport acceptance; packaged Python consumer and Python 3.9 validation. Existing flag/bootstrap, analytics, survey delivery, roadmap/changelog and UI accessibility requirements also remain open. No browser widget acceptance was run in this slice. No push, PR, release, or deployment occurred.
+
+## Subsequent dedicated-service checkpoint
+
+The 2026-10-20 [feedback service checkpoint](feedback-service-readiness.md) implements shared HTTP/DB submission/readback and both SDK HTTP transports with local SQLite reopen acceptance. The original observations above describe the earlier bounded change; the new checkpoint supersedes the missing-feedback-backend finding while retaining the broader product and deployment gates.

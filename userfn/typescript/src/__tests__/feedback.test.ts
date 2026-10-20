@@ -9,7 +9,7 @@ describe('feedback delivery boundary', () => {
   it('rejects unconfigured delivery and board reads without logging private content', async () => {
     const log = vi.spyOn(console, 'log');
     try {
-      await expect(new UserFnClient({ apiKey: 'key', endpoint: 'https://example.test' }).submitFeedback(feedback)).rejects.toThrow('not configured');
+      await expect(new UserFnClient({ apiKey: 'key' }).submitFeedback(feedback)).rejects.toThrow('not configured');
       await expect(new FeedbackEngine().getFeedbackBoard()).rejects.toThrow('not implemented');
       expect(log).not.toHaveBeenCalled();
     } finally { log.mockRestore(); }

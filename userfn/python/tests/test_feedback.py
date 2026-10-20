@@ -8,7 +8,7 @@ def feedback():
 
 
 def test_unconfigured_does_not_acknowledge_or_log(capsys):
-    client = UserFnClient(UserFnOptions(api_key='key', endpoint='https://example.test'))
+    client = UserFnClient(UserFnOptions(api_key='key'))
     with pytest.raises(FeedbackDeliveryError, match='not configured'):
         asyncio.run(client.submit_feedback(feedback()))
     assert capsys.readouterr().out == ''

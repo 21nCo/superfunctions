@@ -69,7 +69,9 @@ export interface FlagConfig {
 export interface UserFnOptions {
   apiKey: string;
   endpoint?: string;
-  /** Temporary service boundary; resolve only after feedback has been accepted. */
+  feedbackMaxAttempts?: number;
+  feedbackTimeoutMs?: number;
+  /** Optional override; otherwise endpoint/apiKey configure the HTTP service. */
   feedbackService?: FeedbackService;
   bootstrapFlags?: Record<string, FlagValue>;
   refreshInterval?: number;
@@ -172,7 +174,8 @@ export interface SurveyResponse {
 
 /** The service must return this only after accepting the submission for persistence. */
 export interface FeedbackReceipt { id: string; accepted: true; }
-export interface FeedbackContext { source: 'in_app'; user: UserIdentity | null; }
+export interface FeedbackSubmitOptions { idempotencyKey?: string; }
+export interface FeedbackContext extends FeedbackSubmitOptions { source: 'in_app'; user: UserIdentity | null; }
 export interface FeedbackService {
   submit(feedback: FeedbackSubmission, context: FeedbackContext): Promise<FeedbackReceipt>;
 }

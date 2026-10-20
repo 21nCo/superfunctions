@@ -94,15 +94,30 @@ Campaigns are evaluated client-side for performance:
 ## Architecture
 - **Core**: Framework-agnostic logic (`src/core`) handles all evaluation.
 - **UI**: Vanilla JS renderer (`src/ui`) injects lightweight, themeable DOM elements.
-- **Network**: (Coming Soon) Syncs events and config with the UserFn service.
+- **Network**: Feedback submits to the dedicated UserFn service; event/config synchronization remains separate unfinished work.
 
 ## License
 MIT
 
-## Feedback delivery boundary
+## Feedback delivery
 
-`submitFeedback()` now rejects with `FeedbackDeliveryError` when no `feedbackService` is configured. Setting `endpoint` or `apiKey` alone does not configure feedback delivery. The previous console-only success behavior has been removed. The feedback widget awaits the same operation and keeps its existing failure state on rejection.
+Configure `endpoint` and `apiKey` to submit to the dedicated `@userfn/service` backend:
 
-Provide an application service implementing `FeedbackService.submit(submission, context)`. It receives the original submission and `{ source: 'in_app', user }`, using the current identity or `null` after reset. It must resolve with `{ id: '<stored-feedback-id>', accepted: true }` only after its backing service accepts the submission. Void, missing/empty IDs, and negative acknowledgments are rejected; exceptions propagate to the caller. Submission content is no longer logged by the feedback engine.
+```typescript
+const client = new UserFnClient({
+  endpoint: 'https://feedback.example.com/userfn', // mount the service router here
+  apiKey: 'tenant-scoped-token',
+  feedbackMaxAttempts: 3,
+  feedbackTimeoutMs: 10000,
+});
+await client.submitFeedback(
+  { title: 'Improve search', body: 'Support saved queries', category: 'feature' },
+  { idempotencyKey: 'submission-123' },
+);
+```
 
-This injected interface is a temporary compatibility boundary. It does not implement the specified dedicated UserFn HTTP/DB service, authentication, persistence, offline retries, board/voting, or external-source ingestion. Applications must provide those guarantees behind the service; the SDK cannot independently verify a receipt. The internal feedback board placeholder now rejects instead of returning a misleading empty list.
+The SDK sends `POST <endpoint>/feedback` with bearer authentication and a stable idempotency key across automatic retries. Network failures, HTTP 408/429 and 5xx are retried up to the configured attempt count (1–5). Each attempt has an abort deadline. Other HTTP failures throw `FeedbackHTTPError` with `status`; malformed or negative receipts throw `FeedbackDeliveryError`. Requests and receipts are bounded to 64 KiB. Redirects are rejected. For a later manual retry, reuse the same explicit key and content; conflicting reuse returns 409. Without an explicit key each new call is a separate submission.
+
+`submitFeedback()` resolves only after a positive service receipt; the backend waits for its database write. The widget uses the same operation and retains its failure state on rejection. Current identity is submitted as client metadata, separate from the server-authenticated actor. Reset sends anonymous client metadata and does not change bearer permissions.
+
+An explicit `feedbackService` still overrides HTTP delivery and must implement the awaited `FeedbackService` receipt contract. Without either service or endpoint, submission rejects. The board placeholder rejects. Configuration sync, offline queues, voting, external-source ingestion and browser end-to-end acceptance remain open. See [service setup](../service/README.md). Use narrowly scoped credentials in browser clients; never embed an administrative key.

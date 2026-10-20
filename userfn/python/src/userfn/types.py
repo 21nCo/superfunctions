@@ -70,6 +70,8 @@ class UserFnOptions:
     bootstrap_flags: Optional[Dict[str, FlagValue]] = None
     refresh_interval: Optional[int] = None
     feedback_service: Optional["FeedbackService"] = None
+    feedback_max_attempts: int = 3
+    feedback_timeout_ms: int = 10000
 
 EventProperties = Dict[str, Any]
 
@@ -181,6 +183,7 @@ class FeedbackReceipt:
 class FeedbackContext:
     source: Literal['in_app']
     user: Optional[UserIdentity]
+    idempotency_key: Optional[str] = None
 
 class FeedbackService(Protocol):
     async def submit(self, feedback: FeedbackSubmission, context: FeedbackContext) -> FeedbackReceipt:
