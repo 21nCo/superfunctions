@@ -1,3 +1,6 @@
+import { NotificationPublisher, notificationBackoff } from '../sendfn/outbox.js';
+import { EmailSendFnClient, parseNotificationConfig } from '../sendfn/sendfn-client.js';
+import { createServer } from 'node:http';
 import { handleWebhook } from '../triggers/webhook.js';
 import { signWebhookPayload } from '@superfunctions/webhooks';
 import { prepareRun, acceptRun } from '../dispatch/prepare.js';
@@ -440,6 +443,82 @@ describe('real SQLite durable control-plane state', () => {
 
   });
 
+  it('atomically persists terminal webhook intents, fences delivery leases and reopens without replaying acknowledged events', async () => {
+    const { path } = await location(); let opened = await open(path);
+    opened.store.configureNotifications({ enabled: true, webhookUrl: 'http://localhost/receiver?token=private' });
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('TOKEN', secret);
+    const prepared = await prepareRun({ ...input, trigger: { type: 'workflow_dispatch', payload: { token: secret } }, pipelineRef: { repo: 'https://user:password@example.com/repo?credential=private', ref: secret } }, secrets);
+    const run = await opened.store.createPreparedRun(prepared);
+    opened.native.exec("CREATE TRIGGER fail_terminal BEFORE UPDATE ON cifn_state WHEN NEW.status = 'cancelled' BEGIN SELECT RAISE(ABORT, 'terminal rejected'); END");
+    await expect(opened.store.cancelRun(run.id)).rejects.toThrow('terminal rejected');
+    expect((await opened.store.getRun(run.id))?.status).toBe('queued');
+    expect(await opened.store.claimNotification(run.id, 10, 100)).toBeUndefined();
+    opened.native.exec('DROP TRIGGER fail_terminal'); await opened.store.cancelRun(run.id);
+    await close(opened.sql); opened = await open(path); const competitor = await open(path);
+    const claims = await Promise.all([opened.store.claimNotification(run.id, 10, 100), competitor.store.claimNotification(run.id, 10, 100)]);
+    expect(claims.filter(Boolean)).toHaveLength(1); const first = claims.find(Boolean)!;
+    expect(first.payload.status).toBe('cancelled'); expect(first.payload.summary).toContain('cancellation requested');
+    expect(JSON.stringify(first.payload)).not.toContain(secret); expect(JSON.stringify(first.payload)).not.toContain('password');
+    expect(first.payload.trigger).toEqual({ type: 'workflow_dispatch' });
+    expect(await opened.store.finishNotification(run.id, first.id, 'forged', true, 20)).toBe(false);
+    expect(await opened.store.finishNotification(run.id, first.id, first.lease!.token, true, 110)).toBe(false);
+    const retry = (await opened.store.claimNotification(run.id, 111, 100))!;
+    expect(retry.id).toBe(first.id); expect(retry.lease!.token).not.toBe(first.lease!.token);
+    expect(await opened.store.finishNotification(run.id, first.id, first.lease!.token, true, 112)).toBe(false);
+    expect(await opened.store.finishNotification(run.id, retry.id, retry.lease!.token, false, 112)).toBe(true);
+    expect(await opened.store.claimNotification(run.id, 113, 100)).toBeUndefined();
+    const final = (await opened.store.claimNotification(run.id, 10_000, 100))!;
+    expect(await opened.store.finishNotification(run.id, final.id, final.lease!.token, true, 10_001)).toBe(true);
+    await close(opened.sql); opened = await open(path);
+    expect((await opened.store.listNotificationRuns()).runIds).toEqual([]);
+    expect(await opened.store.claimNotification(run.id, 100_000, 100)).toBeUndefined();
+    const disabled = await opened.store.createRun(input); await opened.store.cancelRun(disabled.id);
+    expect(await opened.store.claimNotification(disabled.id, 100_000, 100)).toBeUndefined();
+    expect(notificationBackoff(100_000)).toBe(60_000);
+  });
+
+  it('delivers actual HTTP with stable receiver idempotency after failure, response loss and publisher races', async () => {
+    const { path } = await location(); const opened = await open(path);
+    let attempts = 0; const ids: string[] = []; const unique = new Set<string>();
+    const receiver = createServer(async (req, res) => {
+      const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const payload = JSON.parse(Buffer.concat(chunks).toString());
+      ids.push(String(req.headers['idempotency-key'])); expect(payload.eventId).toBe(ids[ids.length - 1]);
+      attempts++; if (attempts === 1) { res.writeHead(503); res.end(); return; }
+      unique.add(payload.eventId);
+      if (attempts === 2) { res.destroy(); return; }
+      res.writeHead(204); res.end();
+    });
+    await new Promise<void>(resolve => receiver.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = receiver.address() as { port: number };
+      opened.store.configureNotifications({ enabled: true, webhookUrl: `http://127.0.0.1:${address.port}/notify` });
+      const run = await opened.store.createRun(input); await opened.store.updateRunStatus(run.id, 'success');
+      const first = new NotificationPublisher(opened.store); const second = new NotificationPublisher(opened.store);
+      await Promise.all([first.tick(), second.tick()]); expect(attempts).toBe(1);
+      await new Promise(resolve => setTimeout(resolve, 1_050)); await first.tick(); expect(attempts).toBe(2);
+      await close(opened.sql); const reopened = await open(path);
+      await new Promise(resolve => setTimeout(resolve, 2_050)); await new NotificationPublisher(reopened.store).tick();
+      expect(attempts).toBe(3); expect(unique.size).toBe(1); expect(new Set(ids).size).toBe(1);
+      expect((await reopened.store.listNotificationRuns()).runIds).toEqual([]);
+    } finally { receiver.closeAllConnections(); await new Promise<void>(resolve => receiver.close(() => resolve())); }
+  });
+
+  it('bounds a hanging HTTP delivery and leaves its intent pending', async () => {
+    const { path } = await location(); const { store } = await open(path);
+    const receiver = createServer(() => { /* Deliberately never return headers. */ });
+    await new Promise<void>(resolve => receiver.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = receiver.address() as { port: number };
+      store.configureNotifications({ enabled: true, webhookUrl: `http://127.0.0.1:${address.port}/hang` });
+      const run = await store.createRun(input); await store.updateRunStatus(run.id, 'failure');
+      const started = Date.now(); await new NotificationPublisher(store).tick();
+      expect(Date.now() - started).toBeLessThan(4_500);
+      expect((await store.listNotificationRuns()).runIds).toEqual([run.id]);
+      expect(await store.claimNotification(run.id, Date.now(), 100)).toBeUndefined();
+    } finally { receiver.closeAllConnections(); await new Promise<void>(resolve => receiver.close(() => resolve())); }
+  }, 8_000);
+
   it('does not acknowledge failed persistence or dispatch a run after a native database failure', async () => {
     const { path } = await location(); const { store, native } = await open(path);
     native.exec("CREATE TRIGGER fail_run BEFORE INSERT ON cifn_state WHEN NEW.kind = 'run' BEGIN SELECT RAISE(ABORT, 'write rejected'); END");
@@ -483,4 +562,12 @@ it('requires explicit key/storage configuration and never silently falls back to
   const run = await first.store.createRun(input); await first.close();
   const second = await createRuntimeStore({ CIFN_STORE_ADAPTER: 'sqlite', CIFN_SQLITE_PATH: path, CIFN_STORE_ENCRYPTION_KEY: key.toString('base64') });
   try { expect(await second.store.getRun(run.id)).toEqual(run); } finally { await second.close(); }
+});
+
+
+it('rejects unsupported notification configuration and email placeholders instead of claiming delivery', async () => {
+  expect(() => parseNotificationConfig({ CIFN_NOTIFY_ON_RUN_COMPLETE: 'true' })).toThrow('explicit webhook');
+  expect(() => parseNotificationConfig({ CIFN_NOTIFY_ON_RUN_COMPLETE: 'true', CIFN_NOTIFICATION_EMAIL_TO: 'person@example.com' })).toThrow('real SendFn');
+  expect(() => parseNotificationConfig({ CIFN_NOTIFY_ON_RUN_COMPLETE: 'true', CIFN_NOTIFICATION_WEBHOOK_URL: 'file:///tmp/out' })).toThrow('HTTP(S)');
+  await expect(new EmailSendFnClient('person@example.com').sendNotification({ runId: 'run', status: 'success', pipelineRef: { repo: '', ref: '' }, trigger: { type: 'workflow_dispatch' }, createdAt: '', completedAt: '', summary: '' })).rejects.toThrow('not configured');
 });

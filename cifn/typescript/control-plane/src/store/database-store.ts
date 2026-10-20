@@ -1,3 +1,5 @@
+import { notificationDestination, type SendFnConfig } from '../sendfn/sendfn-client.js';
+import { notificationBackoff, type NotificationIntent } from '../sendfn/outbox.js';
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash } from 'node:crypto';
 import type { Adapter, WhereClause } from '@superfunctions/db';
 import { wrapWithSchema } from '@superfunctions/db/schema';
@@ -15,12 +17,13 @@ interface StateRow {
   id: string; namespace: string; kind: 'run' | 'runner' | 'meta'; status: string;
   createdAt: string; revision: number; payload: EncryptedPayload;
 }
-interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2 }
+interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2; notificationDestination?: string; notification?: NotificationIntent }
 export interface DatabaseStoreOptions {
   database: Adapter;
   /** Exactly 32 bytes supplied by the deployment. Never generated or persisted by CiFn. */
   encryptionKey: Uint8Array;
   namespace?: string;
+  notifications?: SendFnConfig;
 }
 export interface RecoveryCandidate { run: Run; definition: CreateRunInput }
 export interface RecoveryPage { candidates: RecoveryCandidate[]; nextCursor?: string }
@@ -33,6 +36,7 @@ export class DatabaseStore implements ControlPlaneStore {
   private readonly database: Adapter;
   private readonly key: Buffer;
   private readonly namespace: string;
+  private notificationUrl?: string;
   private onRunStatusChange?: (run: Run) => void;
 
   private constructor(options: DatabaseStoreOptions) {
@@ -43,6 +47,7 @@ export class DatabaseStore implements ControlPlaneStore {
     if (options.namespace !== undefined && (!options.namespace.trim() || options.namespace.length > 128)) {
       throw new Error('CiFn storage namespace must contain 1 to 128 characters');
     }
+    this.notificationUrl = notificationDestination(options.notifications ?? { enabled: false });
     this.namespace = options.namespace ?? 'default';
     this.key = Buffer.from(options.encryptionKey);
     this.database = wrapWithSchema(options.database, getCiFnStoreSchema());
@@ -118,6 +123,10 @@ export class DatabaseStore implements ControlPlaneStore {
       const value = this.decode<T>(row);
       const change = update(value);
       if (!change.changed) return change.result;
+      if (kind === 'run' && !TERMINAL.includes(row.status as RunStatus)) {
+        const state = value as RunState;
+        if (TERMINAL.includes(state.run.status)) this.prepareNotification(state);
+      }
       const next = { ...row, revision: row.revision + 1, status: change.status ?? row.status };
       const count = await this.database.updateMany({ model: CIFN_STATE_TABLE,
         where: [...this.where(row.id), { field: 'revision', operator: 'eq', value: row.revision }],
@@ -131,7 +140,7 @@ export class DatabaseStore implements ControlPlaneStore {
   async createRun(input: CreateRunInput): Promise<Run> {
     const definition = clone(input);
     const run = createRunRecord(definition);
-    const state: RunState = { run, definition, artifacts: [], secretValues: [] };
+    const state: RunState = { run, definition, artifacts: [], secretValues: [], notificationDestination: this.notificationUrl };
     await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('run', run.id, run.status, run.createdAt, state) });
     return clone(run);
   }
@@ -142,9 +151,50 @@ export class DatabaseStore implements ControlPlaneStore {
       const id = JSON.stringify([run.id, job.jobKey, 1]);
       return { id, payload: { ...clone(job), runId: run.id, dispatchId: id, trigger: clone(definition.trigger) }, state: (definition.pipelineSpec.jobs[job.jobKey].needs?.length ?? 0) > 0 ? 'blocked' : 'ready', nextDeliveryAt: 0 };
     });
-    const state: RunState = { run, definition, artifacts: [], secretValues: [...prepared.secretValues], dispatches, dispatchProtocolVersion: 2 };
+    const state: RunState = { run, definition, artifacts: [], secretValues: [...prepared.secretValues], dispatches, dispatchProtocolVersion: 2, notificationDestination: this.notificationUrl };
     await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('run', run.id, run.status, run.createdAt, state) });
     return clone(run);
+  }
+  configureNotifications(config: SendFnConfig): void { this.notificationUrl = notificationDestination(config); }
+  private prepareNotification(state: RunState): void {
+    if (!state.notificationDestination || state.notification) return;
+    const run = state.run;
+    const status = run.status as 'success' | 'failure' | 'cancelled';
+    const id = createHash('sha256').update(JSON.stringify([this.namespace, run.id, status, 1])).digest('hex');
+    const clean = (input: string) => {
+      let value = input;
+      for (const secret of state.secretValues.filter(Boolean).sort((a, b) => b.length - a.length)) value = value.split(secret).join('***');
+      return value.slice(0, 512);
+    };
+    let repo = run.pipelineRef.repo;
+    try { const url = new URL(repo); url.username = ''; url.password = ''; url.search = ''; url.hash = ''; repo = url.toString(); } catch { /* Non-URL repository reference. */ }
+    state.notification = { id, destination: state.notificationDestination, attempts: 0, nextAttemptAt: 0, payload: {
+      eventId: id, runId: run.id, status, pipelineRef: { repo: clean(repo), ref: clean(run.pipelineRef.ref), ...(run.pipelineRef.configPath ? { configPath: clean(run.pipelineRef.configPath) } : {}) },
+      trigger: { type: run.trigger.type }, createdAt: run.createdAt, completedAt: run.updatedAt,
+      summary: status === 'cancelled' ? `Run ${run.id}: cancellation requested; subprocess termination is tracked separately` : `Run ${run.id} ${status}: ${run.jobs.length} job(s)`,
+    } };
+  }
+  async listNotificationRuns(cursor?: string): Promise<{ runIds: string[]; nextCursor?: string }> {
+    const page = await this.page({ limit: 10, cursor }, TERMINAL);
+    return { runIds: page.rows.filter(row => { const intent = this.decode<RunState>(row).notification; return intent && !intent.deliveredAt; }).map(row => this.decode<RunState>(row).run.id), nextCursor: page.nextCursor };
+  }
+  async claimNotification(runId: string, now: number, leaseMs: number): Promise<NotificationIntent | undefined> {
+    return this.mutate<RunState, NotificationIntent | undefined>('run', runId, state => {
+      const intent = state.notification;
+      if (!intent || intent.deliveredAt || intent.nextAttemptAt > now || (intent.lease && intent.lease.expiresAt > now)) return { result: undefined, changed: false };
+      intent.attempts++; intent.lease = { token: randomUUID(), expiresAt: now + leaseMs };
+      return { result: clone(intent), changed: true };
+    });
+  }
+  async finishNotification(runId: string, eventId: string, token: string, delivered: boolean, now: number): Promise<boolean> {
+    return await this.mutate<RunState, boolean>('run', runId, state => {
+      const intent = state.notification;
+      if (!intent || intent.id !== eventId || intent.deliveredAt || intent.lease?.token !== token || intent.lease.expiresAt <= now) return { result: false, changed: false };
+      if (delivered) intent.deliveredAt = new Date(now).toISOString();
+      else intent.nextAttemptAt = now + notificationBackoff(intent.attempts);
+      delete intent.lease;
+      return { result: true, changed: true };
+    }) ?? false;
   }
   /** Privileged reconciliation metadata; excludes job environments and secret values. */
   async getDispatchStates(runId: string): Promise<Array<{ dispatchId: string; jobKey: string; state: DispatchIntent['state']; claim?: DispatchIntent['claim'] }>> {

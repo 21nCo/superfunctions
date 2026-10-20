@@ -1,3 +1,4 @@
+import { NotificationPublisher, isNotificationStore } from '../sendfn/outbox.js';
 import { registerClaimRoutes } from './claims.js';
 import { prepareRun, acceptRun } from '../dispatch/prepare.js';
 import { isDispatchStore } from '../dispatch/types.js';
@@ -17,7 +18,7 @@ import type { IntegrationAdapters } from '../integrations/types.js';
 import { authMiddleware } from './auth.js';
 import { registerRunner } from '../runners/register.js';
 import { compareSecretHash } from '../runners/crypto.js';
-import { SendFnClient, MemorySendFnClient, type SendFnConfig } from '../sendfn/sendfn-client.js';
+import { SendFnClient, MemorySendFnClient, WebhookSendFnClient, notificationDestination, type SendFnConfig } from '../sendfn/sendfn-client.js';
 
 const VALID_TRIGGER_TYPES: TriggerType[] = ['push', 'pull_request', 'schedule', 'workflow_dispatch'];
 
@@ -50,11 +51,16 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
   const logs = options.adapters?.logs;
   const logClient = options.logClient;
   
-  const sendFn = options.sendFn ?? new MemorySendFnClient();
   const sendFnConfig = options.sendFnConfig ?? { enabled: false };
+  if (isNotificationStore(runStore)) {
+    if (options.sendFn) throw new Error('Durable notifications use the configured webhook outbox');
+    if (options.sendFnConfig) runStore.configureNotifications(options.sendFnConfig);
+  }
+  const destination = sendFnConfig.enabled && !options.sendFn ? notificationDestination(sendFnConfig) : undefined;
+  const sendFn = options.sendFn ?? (destination ? new WebhookSendFnClient(destination) : new MemorySendFnClient());
 
   // Set up sendfn notification hook for run status changes
-  runStore.setRunStatusChangeCallback((run) => {
+  if (!(isNotificationStore(runStore))) runStore.setRunStatusChangeCallback((run) => {
     if (sendFnConfig.enabled && (run.status === 'success' || run.status === 'failure')) {
       const summary = `Run ${run.id} ${run.status}: ${Object.keys(run.jobs).length} job(s)`;
       sendFn.sendNotification({
@@ -65,8 +71,10 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
         createdAt: run.createdAt,
         completedAt: run.updatedAt,
         summary,
-      }).catch(err => {
-        console.error(`Failed to send notification for run ${run.id}:`, err);
+      }).then(delivered => {
+        if (!delivered) console.error('CiFn notification delivery failed');
+      }).catch(() => {
+        console.error('CiFn notification delivery failed');
       });
     }
   });
@@ -390,7 +398,7 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
       return c.json(result.body, result.status as any);
   });
 
-  return { app, store: runStore, queue, dispatchPublisher: isDispatchStore(runStore) ? new DispatchPublisher(runStore, queue) : undefined };
+  return { app, store: runStore, queue, notificationPublisher: isNotificationStore(runStore) ? new NotificationPublisher(runStore) : undefined, dispatchPublisher: isDispatchStore(runStore) ? new DispatchPublisher(runStore, queue) : undefined };
 }
 
 function formatRun(run: {

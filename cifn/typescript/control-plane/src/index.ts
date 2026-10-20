@@ -70,3 +70,7 @@ export { prepareRun, acceptRun } from './dispatch/prepare.js';
 export { DispatchPublisher } from './dispatch/publisher.js';
 export type { PreparedRun, DispatchStore } from './dispatch/types.js';
 export type { JobCompletion, ClaimIdentity } from './dispatch/types.js';
+
+export { NotificationPublisher } from './sendfn/outbox.js';
+export { parseNotificationConfig } from './sendfn/sendfn-client.js';
+export type { SendFnConfig, SendFnNotification } from './sendfn/sendfn-client.js';

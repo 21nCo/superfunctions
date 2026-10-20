@@ -103,7 +103,7 @@ Run the built runner with `CIFN_CONTROL_PLANE_URL`, `CIFN_RUNNER_ID`,
 `CIFN_RUNNER_SECRET` and a persistent `CIFN_RUNNER_STATE_DIR`. This remote path
 supports shell steps; Docker and provider steps remain unsupported remotely.
 Execution leases/reassignment, cancellation delivery, remote logs/artifacts and
-durable notifications remain open. See the [remote execution contract](.conduct/remote-execution-readiness.md),
+durable webhook notifications are described below; email/provider delivery remains open. See the [remote execution contract](.conduct/remote-execution-readiness.md),
 [dispatch contract](.conduct/durable-dispatch-readiness.md), and
 [storage contract](.conduct/durable-storage-readiness.md) for validation and migration
 requirements. These checkpoints do not establish full production readiness.
@@ -118,3 +118,14 @@ and reports a stopped receipt only after confirming the group is gone. Later
 steps are skipped. Network outages do not count as cancellation; started work
 without a durable result remains uncertain after a runner crash and is never
 automatically replayed. See [cancellation contract and limits](.conduct/cancellation-readiness.md).
+
+
+### Durable webhook notifications
+
+With SQLite storage, set `CIFN_NOTIFY_ON_RUN_COMPLETE=true` and
+`CIFN_NOTIFICATION_WEBHOOK_URL` to opt in. Completion and cancellation-intent
+events commit with the terminal run state and retry across restart using a stable
+`Idempotency-Key`; receivers must deduplicate retries. Cancellation events do not
+assert that subprocesses stopped. Enabled email configuration fails explicitly
+until a real SendFn email integration is supplied. See the
+[notification outbox contract](.conduct/notification-outbox-readiness.md).

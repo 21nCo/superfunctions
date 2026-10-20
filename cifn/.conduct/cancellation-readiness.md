@@ -89,7 +89,8 @@ restarted runner never signals historical PIDs or reexecutes uncertain work.
 SIGTERM to the runner itself still requests shutdown after the current tick;
 it is not an authenticated run-cancellation operation.
 
-Execution leases/reassignment, notification outbox and SendFn delivery, provider
+Execution leases/reassignment, SendFn email/provider delivery (webhook outbox now covered in
+[notification-outbox-readiness.md](./notification-outbox-readiness.md)), provider
 steps, remote logs/progress/artifacts, live provider acceptance, installed
 consumer/runtime matrices, performance/deployment and Python/CLI/dashboard
 parity remain open as recorded in the original spec and execution checkpoint.

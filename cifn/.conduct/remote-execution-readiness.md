@@ -36,7 +36,9 @@ be scheduled again. Concurrent parent completions can release a join only once.
 Failed dependencies skip blocked descendants; independent branches may finish.
 A run becomes terminal only when all jobs are terminal. Cancelled runs reject
 new execution acknowledgements and completions that were not already committed.
-Notifications are not made durable by this transition.
+Webhook notifications now commit with terminal transitions through the
+[notification outbox](./notification-outbox-readiness.md); email delivery remains
+an open integration gate.
 
 The payload's `dispatchProtocolVersion:2` marks fully prepared runs. Earlier
 record-only or root-only payloads remain readable but are not automatically
@@ -134,7 +136,8 @@ supported remotely.
 ## Remaining original gates
 
 Execution lease expiry/renewal, explicit operator reconciliation/reassignment,
-crash recovery after an unknown subprocess result, durable notification delivery,
+crash recovery after an unknown subprocess result, email/provider notification delivery (webhook outbox now covered in
+[notification-outbox-readiness.md](./notification-outbox-readiness.md)),
 remote step/log streaming, artifact/cache/checkout/TestFn/HostFn/Docker provider
 integration, and step-level secret expressions remain open. Remote shell jobs
 with unsupported providers fail rather than claiming success. Authenticated
