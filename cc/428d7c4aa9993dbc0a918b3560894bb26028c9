@@ -1,0 +1,17 @@
+devfn/proxy/src/oauth-relay/service.ts
+  h_bdc5b81c173ee9 236-239,254-261,280,310,409,411-412
+devfn/proxy/test/oauth-relay-service.test.ts
+  h_bdc5b81c173ee9 327-328,339
+  h_bdc5b81c173ee9 304,321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc428d7c4aa9993dbc0a918b3560894bb26028c9",
+  "prompts": {},
+  "humans": {
+    "h_bdc5b81c173ee9": {
+      "author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
