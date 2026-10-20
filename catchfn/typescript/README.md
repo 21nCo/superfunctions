@@ -75,7 +75,22 @@ await catcher.flush();
 catcher.stop();
 ```
 
-Endpoint configuration uses `@watchfn/browser`'s shared queue, bearer authentication and bounded retry transport. The canonical `bug_report` envelope is stored unchanged by WatchFn; ingestion must include canonical bug-report support. Successful capture waits for an HTTP acknowledgement. Failed events remain queued for an explicit `flush()` retry; capture rejects on authorization, exhausted transport or storage errors. Calling `captureBug` again creates a new report, so use `flush` to retry an existing queued report.
+Endpoint configuration uses `@watchfn/browser`'s shared queue, bearer authentication and bounded retry transport. The canonical `bug_report` envelope is stored unchanged by WatchFn; ingestion must include canonical bug-report support. Successful capture waits for an HTTP acknowledgement. Failed events remain queued for an explicit `flush()` retry; capture rejects on authorization, exhausted transport or storage errors. Calling `captureBug` again creates a new report. Use `CatchFnDeliveryError.retry()` to retry the prepared report with its original ID and payload; it also handles a report that could not enter a full queue. `flush()` retries events already accepted into the queue.
+
+```ts
+import { CatchFnDeliveryError } from "catchfn";
+
+try {
+  await catcher.captureBug({ title: "Save failed" });
+} catch (error) {
+  if (!(error instanceof CatchFnDeliveryError)) throw error;
+  // Invoke after recovery or an explicit user retry. Failure still rejects.
+  await error.retry();
+}
+```
+
+The widget locks the prepared details after a delivery failure and offers **Retry same report**. **Start a new report** explicitly creates a separate report; the queued original can still arrive. Retries reuse the prepared attachments and hooks, and concurrent retries share one attempt. A response timeout after successful storage can still produce duplicate arrivals with the same ID: delivery is at least once, without server deduplication. The queue is in memory; page reload, unload delivery and persistent offline recovery are not guaranteed. Cross-origin hosts must explicitly permit the browser origin, `POST`, `Authorization` and `Content-Type` in their CORS policy.
+
 
 This path defaults to WatchFn's 64 KiB per-event limit and rejects larger configured limits. Upload larger attachments through `uploadAttachment` and send references. Without `watch`, capture remains local. Existing `watch: { client }` injection remains supported with its own payload limit. Transport is at least once: retries after a lost response can store duplicate arrivals with the same report ID. WatchFn HTTP query filters can select `type: "bug_report"`, `app.name`, severity, tags and timestamp; per-report deduplication and retention policy are separate open gates.
 

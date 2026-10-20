@@ -1,4 +1,5 @@
 import html2canvas from "html2canvas";
+import { CatchFnDeliveryError } from "../core/delivery-error.js";
 import { Drawfn, type Scene, type ToolName } from "drawfn";
 import type { CatchFn } from "../core/catch-fn.js";
 import type { CatchFnConfig, AttachmentReference, BugSeverity } from "../core/types.js";
@@ -75,6 +76,7 @@ export class ReporterWidget {
       else if (!event.shiftKey && document.activeElement === last) {event.preventDefault();first?.focus();}
     });
     if (this.screenshot) this.setupAnnotation(root.querySelector<HTMLElement>(".catchfn-preview")!);
+    let pendingDelivery: CatchFnDeliveryError | undefined;
     form.addEventListener("submit",event=>{
       event.preventDefault();
       const submit = form.querySelector<HTMLButtonElement>("button[type=submit]")!;
@@ -82,6 +84,7 @@ export class ReporterWidget {
       submit.disabled = true;
       status.textContent = "Submitting report…";
       void (async()=>{
+        const capture = async () => {
         const data = new FormData(form);
         const attachments: AttachmentReference[] = [];
         if (this.draw && form.querySelector<HTMLInputElement>("[name=screenshot]")?.checked) {
@@ -91,7 +94,10 @@ export class ReporterWidget {
           scene.elements = scene.elements.filter(element=>element.id !== this.screenshotId);
           attachments.push({id:id(),name:"screenshot.png",type:"image/png",mimeType:"image/png",kind:"screenshot",size:blob.size,dataUrl:await asDataUrl(blob),annotationScene:scene});
         }
-        const report = await this.catcher.captureBug({title:String(data.get("title") ?? ""),description:String(data.get("description") ?? ""),steps:String(data.get("steps") ?? "").split("\n").map(value=>value.trim()).filter(Boolean),severity:String(data.get("severity")) as BugSeverity,tags:String(data.get("tags") ?? "").split(",").map(value=>value.trim()).filter(Boolean),includeConsoleLogs:data.has("console"),includeNetworkLogs:data.has("network"),attachments});
+        return this.catcher.captureBug({title:String(data.get("title") ?? ""),description:String(data.get("description") ?? ""),steps:String(data.get("steps") ?? "").split("\n").map(value=>value.trim()).filter(Boolean),severity:String(data.get("severity")) as BugSeverity,tags:String(data.get("tags") ?? "").split(",").map(value=>value.trim()).filter(Boolean),includeConsoleLogs:data.has("console"),includeNetworkLogs:data.has("network"),attachments});
+        };
+        const report = pendingDelivery ? await pendingDelivery.retry() : await capture();
+        pendingDelivery = undefined;
         if (this.closed) return;
         status.textContent = report.delivery === "sent" ? "Report submitted." : report.delivery === "dropped" ? "Report excluded by application settings; it has not been sent." : "Report captured locally; it has not been sent.";
         if (report.integration?.issueUrl) {
@@ -101,7 +107,21 @@ export class ReporterWidget {
           }
         }
         form.querySelector<HTMLButtonElement>("[data-close]")!.textContent="Close";
-      })().catch(()=>{if (!this.closed) {status.textContent="Could not submit the report. Try again, or remove the screenshot if it is too large.";submit.disabled=false;}});
+      })().catch(error=>{if (!this.closed) {
+        if (error instanceof CatchFnDeliveryError) {
+          pendingDelivery = error;
+          status.textContent = "Delivery is unconfirmed. Retry sends the same report. Its details are locked; starting a new report creates another report and the queued original may still be delivered.";
+          submit.textContent = "Retry same report";
+          for (const field of form.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,textarea,select,.catchfn-toolbar button")) field.disabled = true;
+          for (const canvas of form.querySelectorAll<HTMLCanvasElement>("canvas")) canvas.style.pointerEvents = "none";
+          if (!form.querySelector("[data-new-report]")) {
+            const fresh = document.createElement("button"); fresh.type = "button"; fresh.dataset.newReport = ""; fresh.textContent = "Start a new report";
+            fresh.onclick = () => { this.close(); void this.catcher.openReporter().catch(()=>console.error("Could not open bug reporter")); };
+            form.append(fresh);
+          }
+        } else status.textContent="Could not prepare the report. Check the fields or remove the screenshot if it is too large.";
+        submit.disabled=false;
+      }});
     });
     this.focus();
   }

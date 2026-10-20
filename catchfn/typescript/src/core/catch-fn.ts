@@ -3,6 +3,7 @@
  */
 
 import { BrowserClient } from "@watchfn/browser";
+import { CatchFnDeliveryError, WatchCaptureFailure } from "./delivery-error.js";
 import type { ReporterWidget } from "../reporter/widget.js";
 import { BreadcrumbCollector } from "../collectors/breadcrumbs.js";
 import { ConsoleCollector } from "../collectors/console.js";
@@ -62,7 +63,17 @@ export class CatchFn {
     }
     if (endpointWatch) {
       const client = new BrowserClient({ ...endpointWatch, projectId: endpointWatch.projectId ?? config.name, autoTrack: false, sampleRate: 1 });
-      this.watchClient = { capture: event => client.capture({ ...event }), flush: () => client.flush() };
+      this.watchClient = { capture: event => {
+        const send = (): Promise<void> => {
+          const before = client.pendingCount;
+          const delivery = client.capture({ ...event });
+          // BrowserClient enqueues synchronously before its first await. A queue
+          // rejection must retry capture; an accepted event must only retry flush.
+          const queued = client.pendingCount > before;
+          return delivery.catch(cause => { throw new WatchCaptureFailure(cause, queued ? () => client.flush() : send); });
+        };
+        return send();
+      }, flush: () => client.flush() };
     } else if (config.watch && "client" in config.watch) {
       this.watchClient = config.watch.client;
     }
@@ -278,8 +289,23 @@ export class CatchFn {
     if (this.watchClient) {
       const envelope = this.toWatchEvent(processedEvent);
       if (new TextEncoder().encode(JSON.stringify(envelope)).byteLength > this.config.maxPayloadSize) throw new RangeError("Bug report envelope exceeds maxPayloadSize");
-      const result = await this.watchClient.capture(envelope);
-      if (result?.integration) processedEvent = {...processedEvent, integration:result.integration};
+      try {
+        const result = await this.watchClient.capture(envelope);
+        if (result?.integration) processedEvent = {...processedEvent, integration:result.integration};
+      } catch (cause) {
+        const prepared = safeSerialize(processedEvent);
+        const client = this.watchClient;
+        let retry = cause instanceof WatchCaptureFailure ? cause.retryDelivery : () => client.capture(safeSerialize(envelope));
+        throw new CatchFnDeliveryError(cause, prepared.id, async () => {
+          try {
+            const result = await retry();
+            return {...safeSerialize(prepared), ...(result?.integration ? {integration:result.integration} : {}), delivery:"sent"};
+          } catch (failure) {
+            if (failure instanceof WatchCaptureFailure) retry = failure.retryDelivery;
+            throw failure;
+          }
+        });
+      }
     }
 
     return {...processedEvent, delivery:this.watchClient ? "sent" : "local"};

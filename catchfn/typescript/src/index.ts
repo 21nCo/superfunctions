@@ -5,6 +5,7 @@
 
 // Core exports
 export { CatchFn } from "./core/catch-fn.js";
+export { CatchFnDeliveryError } from "./core/delivery-error.js";
 export type {
   CatchFnConfig,
   BugReportEvent,
