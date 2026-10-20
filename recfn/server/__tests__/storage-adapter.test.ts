@@ -10,6 +10,38 @@ import {
 } from '../src/integrations/storage.js';
 
 describe('storage adapter integration', () => {
+  it('preserves a native stream write failure and releases its writer', async () => {
+    const failure = new Error('storage quota exceeded');
+    let closed = false;
+    const stream = new WritableStream<Uint8Array>({
+      write() { throw failure; },
+      close() { closed = true; },
+    });
+    const storage = new MemoryStorageAdapter();
+    storage.openUploadStream = async () => stream;
+    await expect(uploadObject(storage, 'failed', new Uint8Array([1]))).rejects.toBe(failure);
+    expect(closed).toBe(false);
+    expect(stream.locked).toBe(false);
+  });
+
+  it('releases native stream writers after successful close or failed finalization', async () => {
+    for (const fail of [false, true]) {
+      const failure = new Error('finalization failed');
+      const chunks: number[] = [];
+      const stream = new WritableStream<Uint8Array>({
+        write(chunk) { chunks.push(...chunk); },
+        close() { if (fail) throw failure; },
+      });
+      const storage = new MemoryStorageAdapter();
+      storage.openUploadStream = async () => stream;
+      const upload = uploadObject(storage, 'recording', new Uint8Array([1, 2]));
+      if (fail) await expect(upload).rejects.toBe(failure);
+      else await upload;
+      expect(chunks).toEqual([1, 2]);
+      expect(stream.locked).toBe(false);
+    }
+  });
+
   it('uploads bytes and returns a signed URL from the shared storage seam (TV-ARCH-002)', async () => {
     const storage = new MemoryStorageAdapter();
 

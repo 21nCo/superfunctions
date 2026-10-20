@@ -24,8 +24,13 @@ async function writeStream(
   const writer = writable.getWriter();
   try {
     await writer.write(data);
-  } finally {
     await writer.close();
+  } catch (error) {
+    // Never replace the storage failure with an abort/close state error.
+    try { await writer.abort(error); } catch { /* Preserve the original failure. */ }
+    throw error;
+  } finally {
+    writer.releaseLock();
   }
 }
 
