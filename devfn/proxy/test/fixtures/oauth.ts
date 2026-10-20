@@ -162,14 +162,21 @@ export interface Hop { url: string; status: number; location?: string; setCookie
  */
 export class FixtureBrowser {
   public readonly jar = new Map<string, Map<string, string>>();
+  /** Names of each host's cookies that were set with `Secure`. */
+  private readonly secure = new Map<string, Set<string>>();
 
   public constructor(private readonly connect: (url: URL) => { port: number; ca?: string; tls: boolean }) {}
 
   public async request(target: string): Promise<Hop> {
     const url = new URL(target);
     const route = this.connect(url);
-    // Like a browser, host-only cookies are keyed by hostname, not port.
-    const cookies = [...(this.jar.get(url.hostname) ?? new Map()).entries()].map(([name, value]) => `${name}=${value}`).join("; ");
+    // Like a browser, host-only cookies are keyed by hostname, not port, and a
+    // Secure cookie is sent, set or replaced only over a secure scheme. The
+    // scheme is the logical URL's: `connect` may stand in for TLS termination.
+    const secureScheme = url.protocol === "https:";
+    const secure = this.secure.get(url.hostname) ?? new Set<string>();
+    const cookies = [...(this.jar.get(url.hostname) ?? new Map()).entries()].filter(([name]) => secureScheme || !secure.has(name))
+      .map(([name, value]) => `${name}=${value}`).join("; ");
     const hop = await new Promise<Hop>((resolve, reject) => {
       const client = route.tls ? https : http;
       const call = client.request({ hostname: "127.0.0.1", port: route.port, path: `${url.pathname}${url.search}`, method: "GET",
@@ -187,9 +194,15 @@ export class FixtureBrowser {
       const [pair, ...attributes] = header.split(/;\s*/);
       if (attributes.some((item) => /^domain=/i.test(item))) throw new Error("Fixture cookies must be host-only.");
       const [name, value] = [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)];
+      const isSecure = attributes.some((item) => /^secure$/i.test(item));
+      if (!secureScheme && (isSecure || secure.has(name))) continue;
       const jar = this.jar.get(url.hostname) ?? new Map<string, string>();
-      if (attributes.some((item) => /^max-age=0$/i.test(item))) jar.delete(name); else jar.set(name, value);
+      if (attributes.some((item) => /^max-age=0$/i.test(item))) { jar.delete(name); secure.delete(name); } else {
+        jar.set(name, value);
+        if (isSecure) secure.add(name); else secure.delete(name);
+      }
       this.jar.set(url.hostname, jar);
+      this.secure.set(url.hostname, secure);
     }
     return hop;
   }

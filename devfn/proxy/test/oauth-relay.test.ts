@@ -169,6 +169,26 @@ describe("OAuth relay fixture journey", () => {
     expect(hops[1]).toMatchObject({ status: 303 });
     expect(hops.at(-1)).toMatchObject({ status: 400, body: "nonce_mismatch" });
   });
+
+  it("keeps the worktree's Secure session cookie off insecure-scheme requests", async () => {
+    const m = await setup();
+    // Plain-HTTP requests to app-a reach the same app, as a misrouted http: origin would.
+    const browser = () => new FixtureBrowser((url) => url.protocol === "http:" && url.hostname === `app-a.${DOMAIN}` ? { port: m.apps["owner-a"].port, tls: false } : m.connect(url));
+    const insecure = (target: string) => { const url = new URL(target); url.protocol = "http:"; return url.href; };
+    // An https: session is not sent over http:, and stays usable over https:.
+    const secure = browser();
+    expect((await secure.navigate(`${origin("app-a")}/login?user=alice`)).at(-1)).toMatchObject({ status: 200, body: "alice" });
+    expect(await secure.request(insecure(`${origin("app-a")}/me`))).toMatchObject({ status: 401, body: "anonymous" });
+    expect(await secure.request(`${origin("app-a")}/me`)).toMatchObject({ status: 200, body: "alice" });
+    // A callback completed over http: leaves no session, even though the client accepted it.
+    const plain = browser();
+    const hops = await plain.navigate(`${origin("app-a")}/login?user=bob`, 3);
+    expect(hops[2]).toMatchObject({ status: 303 });
+    expect((await plain.navigate(insecure(hops[2].location!))).map((hop) => hop.status)).toEqual([302, 401]);
+    expect(m.apps["owner-a"].callbacks.at(-1)).toEqual({ ok: true });
+    expect(plain.jar.get(`app-a.${DOMAIN}`)?.has("sid")).toBe(false);
+    expect(await plain.request(`${origin("app-a")}/me`)).toMatchObject({ status: 401 });
+  });
 });
 
 describe("OAuth relay ticket contract", () => {
