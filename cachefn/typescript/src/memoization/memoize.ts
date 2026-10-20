@@ -106,19 +106,25 @@ export function memoizeSync<T extends (...args: any[]) => any>(
   };
   const memoized = function (this: ThisParameterType<T>, ...args: Parameters<T>): ReturnType<T> {
     const key = keyGenerator(...args);
-    prune();
     const entry = cache.get(key);
-    if (entry) {
+    const expired = entry?.expiresAt !== undefined && Date.now() >= entry.expiresAt;
+    if (entry && !expired) {
       cache.delete(key);
       cache.set(key, entry);
       stats.recordHit();
       return entry.value;
     }
+    // An expired lookup is a miss, not an eviction. Cold expired entries are
+    // reclaimed when capacity is needed, or when exact size statistics are read.
+    if (entry) cache.delete(key);
     stats.recordMiss();
     const value = fn.apply(this, args);
     if (maxSize > 0) {
       // Re-entrant calls may have filled the cache while computing this result.
       cache.delete(key);
+      // Reclaim expired entries before evicting a live LRU value. Check after
+      // computation, which may itself advance time or recursively populate us.
+      if (cache.size >= maxSize) prune();
       while (cache.size >= maxSize) {
         cache.delete(cache.keys().next().value!);
         stats.recordEviction();
