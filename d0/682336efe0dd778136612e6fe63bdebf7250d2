@@ -1,0 +1,49 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_485737e757610e 52987
+probefn/.conduct/artifact-identifier-readiness.md
+  s_e1c5fc1a65c0cf::t_134fe69ac7dafb 1-15
+probefn/admin/package.json
+  s_e1c5fc1a65c0cf::t_32e82c2a9e870a 37
+probefn/admin/src/domain-service.ts
+  s_e1c5fc1a65c0cf::t_024437fc29fa03 37
+probefn/packages/browser-runner/src/browser-runner.ts
+  s_e1c5fc1a65c0cf::t_97e48bc289d8f5 10,81-82
+probefn/packages/core/src/auth-profiles.ts
+  s_e1c5fc1a65c0cf::t_6a7302c9267daf 5,73,115,166-167,179,211
+probefn/packages/core/src/session-manager.ts
+  s_e1c5fc1a65c0cf::t_ec65fcdc797d10 7,52-53,176
+probefn/packages/core/test/artifact-identifiers.test.ts
+  s_e1c5fc1a65c0cf::t_0114904a1e2191 1-68
+probefn/packages/core/test/auth-identifier-preflight.test.ts
+  s_e1c5fc1a65c0cf::t_cada1a7579c51b 1-20
+probefn/packages/dev-server/src/dev-server-manager.ts
+  s_e1c5fc1a65c0cf::t_e1b4295fbbaed3 14,86-87
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_5a6f83e5981cab 2,582-583,591-593
+probefn/packages/mcp-server/test/start-identifiers.test.ts
+  s_e1c5fc1a65c0cf::t_c1bef5388b9d7b 1-14
+probefn/packages/storage/src/artifact-store.ts
+  s_e1c5fc1a65c0cf::t_5617e1f86a0306 7,198,203
+probefn/packages/storage/src/event-sink.ts
+  s_e1c5fc1a65c0cf::t_b5fb1c95c62bf3 7,38
+probefn/packages/storage/src/manifest-writer.ts
+  s_e1c5fc1a65c0cf::t_fd907d28023de7 7-14
+probefn/packages/storage/test/sink-identifiers.test.ts
+  s_e1c5fc1a65c0cf::t_a88cd3a5bd6d4a 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d0682336efe0dd778136612e6fe63bdebf7250d2",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
