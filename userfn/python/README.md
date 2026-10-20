@@ -177,3 +177,16 @@ await client.set_feedback_metadata(feedback_id, {"tags": []})
 ```
 
 The patch dictionary uses canonical HTTP keys (`productArea`); the awaited result contains `id`, `tags`, and `productArea`. Tags replace the complete set; `None` clears product area; omitted fields are unchanged. Moderator scope and completed backfill are required. Invalid/mismatching acknowledgments reject. Original submissions and idempotency remain immutable while board filters use updated metadata. Retryable failures replay the same patch; concurrent edits have no version precondition. Custom services can implement async `set_metadata(id, patch)`; missing support fails explicitly.
+## Local flag bootstrap
+
+`UserFnClient(UserFnOptions(api_key="...", bootstrap_flags={"checkout": False, "limit": 0}))`
+uses these resolved values immediately in `get_flag`. Missing keys use the
+caller's fallback; false, zero, empty strings, lists and dictionaries remain
+valid values. `set_flags(definitions)` replaces all local definitions, including
+bootstrap values, and `set_segments(segments)` supplies rule segments.
+
+Identity changes preserve configuration. Bootstrap values have no audience
+rules: supply values appropriate to the current user or replace them with rule
+definitions before switching audiences. No network request is made for this
+bootstrap. Automatic configuration fetch, ETag refresh and signed configuration
+delivery remain unimplemented; `refresh_interval` does not schedule them.

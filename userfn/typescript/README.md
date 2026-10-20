@@ -161,3 +161,17 @@ await client.setFeedbackMetadata(id, { tags: [] }); // clear tags
 ```
 
 Requires the server-verified `userfn:feedback:moderate` scope and completed filter backfill. Tags replace the complete set; omitted fields remain unchanged. The awaited receipt contains `{id, tags, productArea}`. Invalid/mismatching receipts reject. The service commits projections atomically and preserves original submission payloads and idempotency keys; board/filter reads use current metadata. Retryable failures replay the same patch. Concurrent edits use database serialization order without a version precondition. Custom services can implement `setMetadata(id, patch)`; absent support fails explicitly.
+## Local flag bootstrap
+
+`new UserFnClient({ apiKey, bootstrapFlags: { checkout: false, limit: 0 } })`
+uses these resolved values immediately in `getFlag`, including `false`, `0`,
+empty strings, arrays and objects. Missing keys use the caller's fallback.
+Only own enumerable keys are loaded. No request is made to obtain these values.
+
+`setFlags(definitions)` replaces all local definitions, including bootstrap
+values; `setSegments(segments)` configures the segment evaluator used by rules.
+Identity changes do not erase configuration. Bootstrap values are already
+resolved and have no audience rules: supply an appropriate bootstrap for the
+current user, or replace it with rule definitions before switching audiences.
+Automatic configuration fetch, ETag refresh and signed configuration delivery
+remain unimplemented; `refreshInterval` does not schedule them.

@@ -6,7 +6,7 @@ import { SurveyEngine } from './core/surveys';
 import { FeedbackEngine } from './core/feedback';
 import { HttpFeedbackService } from './core/feedback-http';
 import { VanillaRenderer } from './ui/renderer';
-import { UserFnOptions, FlagValue, UserTraits, EventProperties, FeedbackSubmission, FeedbackSubmitOptions, FeedbackBoardOptions, FeedbackStatus, FeedbackMetadataPatch, Campaign, Survey } from './types';
+import { UserFnOptions, FlagValue, FlagConfig, Segment, UserTraits, EventProperties, FeedbackSubmission, FeedbackSubmitOptions, FeedbackBoardOptions, FeedbackStatus, FeedbackMetadataPatch, Campaign, Survey } from './types';
 
 export class UserFnClient {
   private identity: IdentityManager;
@@ -31,10 +31,9 @@ export class UserFnClient {
       this.renderer = new VanillaRenderer();
     }
 
-    // In the future, fetch bootstrap flags here or hydrate from options
-    if (options.bootstrapFlags) {
-      // transform simple record to FlagConfig if needed
-    }
+    this.flags.setFlags(Object.entries(options.bootstrapFlags ?? {}).map(([key, value]) => ({
+      key, defaultValue: value, variations: [], rules: [], enabled: true,
+    })));
   }
 
   // ... trigger ...
@@ -104,6 +103,15 @@ export class UserFnClient {
 
   setSurveys(surveys: Survey[]) {
     this.surveys.setSurveys(surveys);
+  }
+
+  /** Replace all local flag definitions, including bootstrapped values. */
+  setFlags(flags: FlagConfig[]) {
+    this.flags.setFlags(flags);
+  }
+
+  setSegments(segments: Segment[]) {
+    this.segments.setSegments(segments);
   }
 
 

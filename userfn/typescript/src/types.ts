@@ -73,6 +73,7 @@ export interface UserFnOptions {
   feedbackTimeoutMs?: number;
   /** Optional override; otherwise endpoint/apiKey configure the HTTP service. */
   feedbackService?: FeedbackService;
+  /** Local resolved values, used immediately without network access; setFlags replaces them. */
   bootstrapFlags?: Record<string, FlagValue>;
   refreshInterval?: number;
 }

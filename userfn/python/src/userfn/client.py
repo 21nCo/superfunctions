@@ -1,5 +1,5 @@
 from typing import Optional, List, Any
-from .types import UserFnOptions, FlagValue, UserTraits, Campaign, Survey, FeedbackSubmission
+from .types import UserFnOptions, FlagValue, FlagConfig, UserTraits, Campaign, Survey, FeedbackSubmission
 from .core.identity import IdentityManager
 from .core.feedback import FeedbackEngine
 from .core.feedback_http import HttpFeedbackService
@@ -17,9 +17,10 @@ class UserFnClient:
         self.messaging = MessagingEngine(self.segments)
         # self.surveys = SurveyEngine(self.segments) # TODO: Implement SurveyEngine
 
-        if options.bootstrap_flags:
-            # TODO: Convert simple dict to FlagConfig if needed or just support simple flags
-            pass
+        self.flags.set_flags([
+            FlagConfig(key=key, default_value=value, variations=[], rules=[], enabled=True)
+            for key, value in (options.bootstrap_flags or {}).items()
+        ])
 
     def identify(self, id: str, traits: Optional[UserTraits] = None):
         self.identity.identify(id, traits)
