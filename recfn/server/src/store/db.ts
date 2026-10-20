@@ -209,64 +209,72 @@ export function createDbStore(options: CreateDbStoreOptions): RecFnStore {
     },
 
     async deleteBot(id: string, namespace: string): Promise<boolean> {
-      const bot = await this.getBot(id, namespace);
-      if (!bot) {
-        return false;
+      if (!adapter.capabilities.transactions.supported) {
+        throw new Error('Deleting a bot aggregate requires database transactions');
       }
+      return adapter.transaction(async transaction => {
+        const bot = await transaction.findOne<Bot>({
+          model: 'bots',
+          where: withNamespace(namespace, [{ field: 'id', operator: 'eq', value: id }]),
+        });
+        if (!bot) {
+          return false;
+        }
 
-      const recordings = await adapter.findMany<Recording>({
-        model: 'recordings',
-        where: withNamespace(namespace, [
-          { field: 'botId', operator: 'eq', value: id },
-        ]),
-      });
-
-      for (const recording of recordings) {
-        await adapter.deleteMany({
-          model: 'transcripts',
+        const recordings = await transaction.findMany<Recording>({
+          model: 'recordings',
           where: withNamespace(namespace, [
-            { field: 'recordingId', operator: 'eq', value: recording.id },
+            { field: 'botId', operator: 'eq', value: id },
           ]),
         });
-      }
 
-      await adapter.deleteMany({
-        model: 'participants',
-        where: withNamespace(namespace, [
-          { field: 'botId', operator: 'eq', value: id },
-        ]),
+        for (const recording of recordings) {
+          await transaction.deleteMany({
+            model: 'transcripts',
+            where: withNamespace(namespace, [
+              { field: 'recordingId', operator: 'eq', value: recording.id },
+            ]),
+          });
+        }
+
+        await transaction.deleteMany({
+          model: 'participants',
+          where: withNamespace(namespace, [
+            { field: 'botId', operator: 'eq', value: id },
+          ]),
+        });
+        await transaction.deleteMany({
+          model: 'chatMessages',
+          where: withNamespace(namespace, [
+            { field: 'botId', operator: 'eq', value: id },
+          ]),
+        });
+        await transaction.deleteMany({
+          model: 'meetingMetadata',
+          where: withNamespace(namespace, [
+            { field: 'botId', operator: 'eq', value: id },
+          ]),
+        });
+        await transaction.deleteMany({
+          model: 'calendarEventBots',
+          where: withNamespace(namespace, [
+            { field: 'botId', operator: 'eq', value: id },
+          ]),
+        });
+        await transaction.deleteMany({
+          model: 'recordings',
+          where: withNamespace(namespace, [
+            { field: 'botId', operator: 'eq', value: id },
+          ]),
+        });
+        await transaction.delete({
+          model: 'bots',
+          where: withNamespace(namespace, [
+            { field: 'id', operator: 'eq', value: id },
+          ]),
+        });
+        return true;
       });
-      await adapter.deleteMany({
-        model: 'chatMessages',
-        where: withNamespace(namespace, [
-          { field: 'botId', operator: 'eq', value: id },
-        ]),
-      });
-      await adapter.deleteMany({
-        model: 'meetingMetadata',
-        where: withNamespace(namespace, [
-          { field: 'botId', operator: 'eq', value: id },
-        ]),
-      });
-      await adapter.deleteMany({
-        model: 'calendarEventBots',
-        where: withNamespace(namespace, [
-          { field: 'botId', operator: 'eq', value: id },
-        ]),
-      });
-      await adapter.deleteMany({
-        model: 'recordings',
-        where: withNamespace(namespace, [
-          { field: 'botId', operator: 'eq', value: id },
-        ]),
-      });
-      await adapter.delete({
-        model: 'bots',
-        where: withNamespace(namespace, [
-          { field: 'id', operator: 'eq', value: id },
-        ]),
-      });
-      return true;
     },
 
     async createRecording(recording: Recording, namespace: string): Promise<Recording> {

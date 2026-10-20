@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
-import { Kysely, SqliteDialect } from 'kysely';
+import { Kysely, SqliteDialect, sql as rawSql } from 'kysely';
 import { kyselyAdapter } from '@superfunctions/db/adapters';
 import { assertProductionStore, createDbStore } from '../src/store/db.js';
 import { getRecFnSchema } from '../src/store/schema.js';
@@ -82,6 +82,22 @@ it('persists all RecFn aggregate models through native SQLite close/reopen with 
     expect(await store.getEventBotIds(calendar.id, ['event'], 'a')).toEqual(new Map([['event', bot.id]]));
     expect(await store.getEventBotIds(calendar.id, ['event'], 'b')).toEqual(new Map());
     expect(await store.deleteBot(bot.id, 'b')).toBe(false);
+    const models = ['bots', 'recordings', 'transcripts', 'participants', 'chatMessages', 'meetingMetadata', 'calendarEventBots'];
+    const snapshot = async () => Promise.all(models.map(model => sql!.selectFrom(model).selectAll().orderBy('id').execute()));
+    const beforeDeletion = await snapshot();
+    // Abort the final delete after every dependent table has already been changed.
+    await rawSql`CREATE TRIGGER reject_bot_delete BEFORE DELETE ON bots BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END`.execute(sql!);
+    await expect(store.deleteBot(bot.id, 'a')).rejects.toThrow(/injected delete failure/);
+    expect(await snapshot()).toEqual(beforeDeletion);
+    await adapter.close(); sql = undefined;
+    adapter = connect(); store = createDbStore({ adapter, durable: true });
+    expect(await snapshot()).toEqual(beforeDeletion);
+    await rawSql`DROP TRIGGER reject_bot_delete`.execute(sql!);
+    const unsupported = createDbStore({ adapter: {
+      ...adapter, capabilities: { ...adapter.capabilities, transactions: { supported: false, nested: false } },
+    } });
+    await expect(unsupported.deleteBot(bot.id, 'a')).rejects.toThrow(/transaction/i);
+    expect(await snapshot()).toEqual(beforeDeletion);
     expect(await store.deleteBot(bot.id, 'a')).toBe(true);
     expect(await store.getBot(other.id, 'b')).not.toBeNull();
     expect(await store.getTranscript(recording.id, 'a')).toBeNull();

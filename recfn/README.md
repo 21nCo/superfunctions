@@ -73,3 +73,16 @@ Webhook delivery uses the shared validated, DNS-pinned Undici transport. The obs
 ## License
 
 MIT
+## Database aggregate deletion
+
+`createDbStore().deleteBot()` requires a shared database adapter that supports
+transactions. Bot lookup and deletion of its recordings, transcripts,
+participants, chat messages, meeting metadata and calendar mappings now commit
+together. An error rolls back those database changes; adapters without
+transactions reject the operation before any deletion.
+
+This transaction does not delete external recording objects or search-index
+entries, and does not fence independent background writers. Those cleanup and
+concurrency requirements remain open. Hosts must stop producers for the bot
+before deleting its aggregate; other database adapters' isolation has not been
+verified by the SQLite acceptance.
