@@ -1,3 +1,6 @@
+import { prepareRun, acceptRun } from '../dispatch/prepare.js';
+import { isDispatchStore } from '../dispatch/types.js';
+import { DispatchPublisher } from '../dispatch/publisher.js';
 import { Hono } from 'hono';
 import { readJsonBody, readBodyText, PayloadTooLargeError } from './body.js';
 import type { ControlPlaneStore } from '../store/store.js';
@@ -6,7 +9,6 @@ import { validate } from '../pipeline/validator.js';
 import { parse, normalizeParsedPipeline } from '../pipeline/parser.js';
 import { resolvePipelineDoc, ResolverError, type PipelineRef } from '../pipeline/resolver.js';
 import { success, error } from './envelope.js';
-import { resolveDAG } from '../pipeline/dag.js';
 import { MemoryQueueClient, DEFAULT_QUEUE_NAME, type QueueClient } from '../queue/flowfn-client.js';
 import type { RunStatus, TriggerType, PipelineSpec } from '../pipeline/types.js';
 import { handleWebhook } from '../triggers/webhook.js';
@@ -15,8 +17,6 @@ import { authMiddleware } from './auth.js';
 import { registerRunner } from '../runners/register.js';
 import { compareSecretHash } from '../runners/crypto.js';
 import { SendFnClient, MemorySendFnClient, type SendFnConfig } from '../sendfn/sendfn-client.js';
-import { discoverSecrets } from '../secrets/discover.js';
-import { resolveEnvMap } from '../secrets/expression.js';
 
 const VALID_TRIGGER_TYPES: TriggerType[] = ['push', 'pull_request', 'schedule', 'workflow_dispatch'];
 
@@ -161,55 +161,11 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
       trigger: { type: trigger.type as TriggerType, payload: trigger.payload },
     };
 
-    const run = await runStore.createRun(input);
-
+    const prepared = await prepareRun(input, secFn);
+    const run = await acceptRun(runStore, queue, prepared);
     if (logs) {
-      await logs.emitEvent({
-        timestamp: new Date().toISOString(),
-        eventType: 'run.created',
-        runId: run.id,
-        status: run.status,
-        metadata: { trigger: trigger.type },
-      });
-    }
-
-    const secretNames = discoverSecrets(resolvedSpec);
-    const jobEnvMap: Record<string, Record<string, string>> = {};
-    const jobSecretKeys: Record<string, string[]> = {};
-
-    for (const jobKey of Object.keys(resolvedSpec.jobs)) {
-      const jobSpec = resolvedSpec.jobs[jobKey];
-      const mergedEnv = { ...(resolvedSpec.env ?? {}), ...(jobSpec.env ?? {}) };
-      
-      const githubPayload = trigger.payload?.github as { ref?: string; repository?: string; sha?: string } | undefined;
-      const context = {
-        secrets: secFn,
-        github: {
-          ref: githubPayload?.ref ?? run.pipelineRef?.ref ?? '',
-          repository: githubPayload?.repository ?? run.pipelineRef?.repo ?? '',
-          sha: githubPayload?.sha ?? '',
-          event_name: trigger.type as string,
-        },
-      };
-      
-      const { resolved, secretValues } = await resolveEnvMap(mergedEnv, context);
-      jobEnvMap[jobKey] = resolved;
-      jobSecretKeys[jobKey] = Array.from(secretNames);
-      
-      await runStore.registerJobSecretValues(run.id, jobKey, secretValues);
-    }
-
-    const dag = resolveDAG(resolvedSpec);
-    for (const rootJobKey of dag.rootJobs) {
-      const jobSpec = resolvedSpec.jobs[rootJobKey];
-      await queue.enqueue(DEFAULT_QUEUE_NAME, {
-        runId: run.id,
-        jobKey: rootJobKey,
-        jobSpec,
-        pipelineRef: run.pipelineRef,
-        env: jobEnvMap[rootJobKey],
-        secretKeys: jobSecretKeys[rootJobKey],
-      });
+      await logs.emitEvent({ timestamp: new Date().toISOString(), eventType: 'run.created', runId: run.id,
+        status: run.status, metadata: { trigger: trigger.type } }).catch(() => console.error('CiFn run-created event delivery failed'));
     }
 
     return c.json(
@@ -381,12 +337,18 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
     await runStore.updateRunnerLastSeen(runnerId);
 
     const runnerLabels = runner.labels.length > 0 ? runner.labels : ['default'];
-    const job = await queue.dequeueMatching(DEFAULT_QUEUE_NAME, queuedJob =>
-      runnerLabels.includes(queuedJob.jobSpec['runs-on'])
-    );
-    if (job) {
-      await runStore.updateJobStatus(job.runId, job.jobKey, 'running', new Date().toISOString());
-      return c.json(success({ job }));
+    // Bound duplicate draining per request. A later heartbeat continues draining.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const message = await queue.dequeueMatching(DEFAULT_QUEUE_NAME, candidate => runnerLabels.includes(candidate.jobSpec['runs-on']));
+      if (!message) break;
+      if (isDispatchStore(runStore)) {
+        if (!message.dispatchId) continue; // Legacy records require explicit reconciliation.
+        const job = await runStore.claimDispatch(message.runId, message.dispatchId, runnerId, runnerLabels);
+        if (job) return c.json(success({ job }));
+        continue;
+      }
+      await runStore.updateJobStatus(message.runId, message.jobKey, 'running', new Date().toISOString());
+      return c.json(success({ job: message }));
     }
 
     return c.json(success({ job: null }), 200);
@@ -426,7 +388,7 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
       return c.json(result.body, result.status as any);
   });
 
-  return { app, store: runStore, queue };
+  return { app, store: runStore, queue, dispatchPublisher: isDispatchStore(runStore) ? new DispatchPublisher(runStore, queue) : undefined };
 }
 
 function formatRun(run: {

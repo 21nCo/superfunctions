@@ -92,8 +92,11 @@ SQLite mode requires Node 20+ and the optional `better-sqlite3`/`kysely` package
 Keep the key backed up separately; no key is generated or saved by CiFn, and an
 invalid configuration fails startup rather than falling back to memory.
 
-This persists records, but does not yet recover dispatch: the default memory queue
-is lost on restart. Automatic replay, leases, fencing and notification outboxes
-remain required before durable end-to-end execution can be claimed. See the
-[storage contract and validation](.conduct/durable-storage-readiness.md) for schema,
-encryption, migration and remaining recovery requirements.
+New runs atomically persist prepared root-job dispatch intents with their records.
+The built server republishes unclaimed intents after transport failure or restart;
+duplicate messages can produce only one durable assignment. Already claimed jobs
+are never silently reassigned. Remote completion, execution leases, dependency
+scheduling and notification outboxes remain required before durable end-to-end
+execution can be claimed. See the [dispatch contract](.conduct/durable-dispatch-readiness.md)
+and [storage contract](.conduct/durable-storage-readiness.md) for validation,
+migration and remaining requirements.

@@ -1,6 +1,6 @@
 # CiFn durable state checkpoint
 
-2026-10-20. This implements durable control-plane records, not complete durable execution or production readiness.
+2026-10-20, initial checkpoint `49a14e09a`. This records the initial durable-state scope, not complete durable execution or production readiness. The later [dispatch checkpoint](durable-dispatch-readiness.md) supersedes the initial no-replay limitation for newly prepared root jobs; the remaining execution and provider gates stay open.
 
 ## Behavior
 

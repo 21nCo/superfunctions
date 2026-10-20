@@ -1,9 +1,9 @@
+import { prepareRun, acceptRun } from '../dispatch/prepare.js';
+import type { SecFnClient } from '../secrets/secfn-client.js';
 import type { ControlPlaneStore } from '../store/store.js';
 import type { PipelineSpec } from '../pipeline/types.js';
 import type { CreateRunInput } from '../store/memory-store.js';
 import type { QueueClient } from '../queue/flowfn-client.js';
-import { DEFAULT_QUEUE_NAME } from '../queue/flowfn-client.js';
-import { resolveDAG } from '../pipeline/dag.js';
 
 export interface CronPipeline {
   id: string;
@@ -15,17 +15,20 @@ export interface CronPipeline {
 export interface CronSchedulerOptions {
   store: ControlPlaneStore;
   queue: QueueClient;
+  secrets?: SecFnClient;
 }
 
 export class CronScheduler {
   private store: ControlPlaneStore;
   private queue: QueueClient;
+  private secrets?: SecFnClient;
   private pipelines: CronPipeline[] = [];
   private timers: Map<string, ReturnType<typeof setInterval>> = new Map();
 
   constructor(options: CronSchedulerOptions) {
     this.store = options.store;
     this.queue = options.queue;
+    this.secrets = options.secrets;
   }
 
   register(pipeline: CronPipeline): void {
@@ -39,18 +42,8 @@ export class CronScheduler {
       trigger: { type: 'schedule', payload: { cron: pipeline.cronExpression } },
     };
 
-    const run = await this.store.createRun(input);
-
-    const dag = resolveDAG(pipeline.spec);
-    for (const rootJobKey of dag.rootJobs) {
-      const jobSpec = pipeline.spec.jobs[rootJobKey];
-      await this.queue.enqueue(DEFAULT_QUEUE_NAME, {
-        runId: run.id,
-        jobKey: rootJobKey,
-        jobSpec,
-        pipelineRef: run.pipelineRef,
-      });
-    }
+    const prepared = await prepareRun(input, this.secrets);
+    const run = await acceptRun(this.store, this.queue, prepared);
 
     return run.id;
   }

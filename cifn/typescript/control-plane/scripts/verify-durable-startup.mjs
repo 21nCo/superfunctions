@@ -67,8 +67,19 @@ try {
   const pending = await second.request(`/api/v1/runs/${queued.runId}`);
   assert.equal(pending.status, 'queued'); assert.equal(pending.jobs[0].status, 'pending');
   const heartbeat = await second.request('/api/v1/runners/heartbeat', { runnerId: registration.runnerId }, registration.runnerSecret);
-  // Persistence does not claim dispatch replay: the selected memory queue was lost.
-  assert.equal(heartbeat.job, null);
+  // Only unclaimed intent is replayed after the delivery interval. The job
+  // assigned before SIGKILL must never be silently reassigned.
+  let replay = heartbeat.job;
+  const deadline = Date.now() + 40_000;
+  while (!replay && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    replay = (await second.request('/api/v1/runners/heartbeat', { runnerId: registration.runnerId }, registration.runnerSecret)).job;
+  }
+  assert.ok(replay, 'Unclaimed dispatch must recover from lost memory transport');
+  assert.equal(replay.runId, queued.runId);
+  assert.equal(typeof replay.dispatchId, 'string');
+  assert.equal(typeof replay.claimToken, 'string');
+  assert.equal((await second.request('/api/v1/runners/heartbeat', { runnerId: registration.runnerId }, registration.runnerSecret)).job, null);
   for (const name of await readdir(directory)) {
     const bytes = await readFile(join(directory, name));
     for (const value of [apiKey, token, registration.runnerSecret, key]) {
@@ -76,7 +87,7 @@ try {
       assert.equal(output.includes(value), false, 'Process output must not contain secrets');
     }
   }
-  console.log('Built SQLite server SIGKILL/restart passed: jobs and runner authentication survive; memory dispatch remains unrecovered');
+  console.log('Built SQLite server SIGKILL/restart passed: jobs and runner authentication survive; only unclaimed dispatch is replayed');
 } finally {
   for (const { child, exited } of children) {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');

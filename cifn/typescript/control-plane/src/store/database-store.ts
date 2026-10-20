@@ -5,6 +5,8 @@ import type { Run, RunStatus, Job, JobStatus, Step, StepStatus } from '../pipeli
 import type { Artifact, Runner, CreateRunInput, ListRunsOptions, ListRunsResult } from './memory-store.js';
 import type { ControlPlaneStore } from './store.js';
 import { createRunRecord } from './records.js';
+import type { PreparedRun, DispatchIntent, DispatchDelivery } from '../dispatch/types.js';
+import type { JobPayload } from '../queue/flowfn-client.js';
 import { CIFN_STATE_TABLE, getCiFnStoreSchema } from './database-schema.js';
 
 interface EncryptedPayload { version: 1; iv: string; tag: string; ciphertext: string }
@@ -12,7 +14,7 @@ interface StateRow {
   id: string; namespace: string; kind: 'run' | 'runner' | 'meta'; status: string;
   createdAt: string; revision: number; payload: EncryptedPayload;
 }
-interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[] }
+interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[] }
 export interface DatabaseStoreOptions {
   database: Adapter;
   /** Exactly 32 bytes supplied by the deployment. Never generated or persisted by CiFn. */
@@ -131,6 +133,61 @@ export class DatabaseStore implements ControlPlaneStore {
     const state: RunState = { run, definition, artifacts: [], secretValues: [] };
     await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('run', run.id, run.status, run.createdAt, state) });
     return clone(run);
+  }
+  async createPreparedRun(prepared: PreparedRun): Promise<Run> {
+    const definition = clone(prepared.input);
+    const run = createRunRecord(definition);
+    const dispatches: DispatchIntent[] = prepared.jobs.map(job => {
+      const id = JSON.stringify([run.id, job.jobKey, 1]);
+      return { id, payload: { ...clone(job), runId: run.id, dispatchId: id }, state: 'ready', nextDeliveryAt: 0 };
+    });
+    const state: RunState = { run, definition, artifacts: [], secretValues: [...prepared.secretValues], dispatches };
+    await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('run', run.id, run.status, run.createdAt, state) });
+    return clone(run);
+  }
+  /** Privileged reconciliation metadata; excludes job environments and secret values. */
+  async getDispatchStates(runId: string): Promise<Array<{ dispatchId: string; jobKey: string; state: 'ready' | 'claimed'; claim?: DispatchIntent['claim'] }>> {
+    const state = await this.read<RunState>('run', runId);
+    return (state?.dispatches ?? []).map(intent => ({ dispatchId: intent.id, jobKey: intent.payload.jobKey, state: intent.state, claim: intent.claim }));
+  }
+  async listDispatchRuns(cursor?: string): Promise<{ runIds: string[]; nextCursor?: string }> {
+    const page = await this.page({ limit: 100, cursor }, ['queued', 'running']);
+    return { runIds: page.rows.map(row => this.decode<RunState>(row).run.id), nextCursor: page.nextCursor };
+  }
+  async leaseDispatches(runId: string, now: number, leaseMs: number): Promise<DispatchDelivery[]> {
+    return await this.mutate<RunState, DispatchDelivery[]>('run', runId, state => {
+      if (TERMINAL.includes(state.run.status)) return { result: [], changed: false };
+      const result: DispatchDelivery[] = [];
+      for (const intent of state.dispatches ?? []) {
+        if (state.run.jobs.find(job => job.jobKey === intent.payload.jobKey)?.status !== 'pending' || intent.state !== 'ready' || intent.nextDeliveryAt > now || (intent.publication && intent.publication.expiresAt > now)) continue;
+        const token = randomUUID();
+        intent.publication = { token, expiresAt: now + leaseMs };
+        result.push({ dispatchId: intent.id, publicationToken: token, payload: clone(intent.payload) });
+      }
+      return { result, changed: result.length > 0 };
+    }) ?? [];
+  }
+  async finishPublication(runId: string, dispatchId: string, token: string, nextDeliveryAt: number): Promise<void> {
+    await this.mutate<RunState, void>('run', runId, state => {
+      const intent = state.dispatches?.find(value => value.id === dispatchId);
+      if (!intent || intent.state !== 'ready' || intent.publication?.token !== token) return { result: undefined, changed: false };
+      intent.nextDeliveryAt = nextDeliveryAt; delete intent.publication;
+      return { result: undefined, changed: true };
+    });
+  }
+  async claimDispatch(runId: string, dispatchId: string, runnerId: string, labels: string[]): Promise<JobPayload | undefined> {
+    return this.mutate<RunState, JobPayload | undefined>('run', runId, state => {
+      const intent = state.dispatches?.find(value => value.id === dispatchId);
+      const job = intent && state.run.jobs.find(value => value.jobKey === intent.payload.jobKey);
+      if (TERMINAL.includes(state.run.status) || !intent || intent.state !== 'ready' || !job || job.status !== 'pending' || !labels.includes(intent.payload.jobSpec['runs-on'])) {
+        return { result: undefined, changed: false };
+      }
+      const now = new Date().toISOString();
+      const token = randomUUID();
+      intent.state = 'claimed'; intent.claim = { token, runnerId, claimedAt: now }; delete intent.publication;
+      job.status = 'running'; job.startedAt = now; state.run.status = 'running'; state.run.updatedAt = now;
+      return { result: { ...clone(intent.payload), claimToken: token }, changed: true, status: 'running' };
+    });
   }
   async getRun(runId: string): Promise<Run | undefined> { return (await this.read<RunState>('run', runId))?.run; }
 

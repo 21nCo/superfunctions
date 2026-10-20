@@ -1,15 +1,12 @@
+import { prepareRun, acceptRun } from '../dispatch/prepare.js';
 import type { ControlPlaneStore } from '../store/store.js';
 import { verifyWebhookSignature } from '@superfunctions/webhooks';
 import type { TriggerType } from '../pipeline/types.js';
 import type { CreateRunInput } from '../store/memory-store.js';
 import type { QueueClient } from '../queue/flowfn-client.js';
-import { DEFAULT_QUEUE_NAME } from '../queue/flowfn-client.js';
-import { resolveDAG } from '../pipeline/dag.js';
 import { validate } from '../pipeline/validator.js';
 import { parse, normalizeParsedPipeline } from '../pipeline/parser.js';
 import { ResolverError, type PipelineRef } from '../pipeline/resolver.js';
-import { discoverSecrets } from '../secrets/discover.js';
-import { resolveEnvMap } from '../secrets/expression.js';
 import type { SecFnClient } from '../secrets/secfn-client.js';
 
 export type PipelineDocResolver = (ref: PipelineRef) => Promise<{ doc: string; resolvedConfigPath: string }>;
@@ -132,47 +129,10 @@ export async function handleWebhook(
     trigger: { type: triggerType, payload },
   };
 
-  const run = await options.store.createRun(input);
-
-  const secretNames = discoverSecrets(validationResult.spec);
-  const jobEnvMap: Record<string, Record<string, string>> = {};
-  const jobSecretKeys: Record<string, string[]> = {};
-
-  if (options.secFn) {
-    for (const jobKey of Object.keys(validationResult.spec.jobs)) {
-      const jobSpec = validationResult.spec.jobs[jobKey];
-      const mergedEnv = { ...(validationResult.spec.env ?? {}), ...(jobSpec.env ?? {}) };
-      
-      const context = {
-        secrets: options.secFn,
-        github: {
-          ref: ref,
-          repository: repository.full_name ?? repo,
-          sha: (payload.after as string) ?? '',
-          event_name: triggerType,
-        },
-      };
-      
-      const { resolved, secretValues } = await resolveEnvMap(mergedEnv, context);
-      jobEnvMap[jobKey] = resolved;
-      jobSecretKeys[jobKey] = Array.from(secretNames);
-      
-      await options.store.registerJobSecretValues(run.id, jobKey, secretValues);
-    }
-  }
-
-  const dag = resolveDAG(validationResult.spec);
-  for (const rootJobKey of dag.rootJobs) {
-    const jobSpec = validationResult.spec.jobs[rootJobKey];
-    await options.queue.enqueue(DEFAULT_QUEUE_NAME, {
-      runId: run.id,
-      jobKey: rootJobKey,
-      jobSpec,
-      pipelineRef: run.pipelineRef,
-      env: jobEnvMap[rootJobKey],
-      secretKeys: jobSecretKeys[rootJobKey],
-    });
-  }
+  const prepared = await prepareRun(input, options.secFn, {
+    ref, repository: repository.full_name ?? repo, sha: (payload.after as string) ?? '', event_name: triggerType,
+  });
+  const run = await acceptRun(options.store, options.queue, prepared);
 
   return {
     status: 201,

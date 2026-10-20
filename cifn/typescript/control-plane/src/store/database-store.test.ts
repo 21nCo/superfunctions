@@ -1,3 +1,9 @@
+import { handleWebhook } from '../triggers/webhook.js';
+import { signWebhookPayload } from '@superfunctions/webhooks';
+import { prepareRun, acceptRun } from '../dispatch/prepare.js';
+import { publishRun } from '../dispatch/publisher.js';
+import { MemoryQueueClient, DEFAULT_QUEUE_NAME } from '../queue/flowfn-client.js';
+import { CronScheduler } from '../triggers/cron.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SQLite from 'better-sqlite3';
 import { Kysely, SqliteDialect } from 'kysely';
@@ -169,6 +175,122 @@ describe('real SQLite durable control-plane state', () => {
     first.native.prepare("DELETE FROM cifn_state WHERE kind = 'meta'").run();
     await expect(open(path)).rejects.toThrow('metadata is missing');
     await expect(open(path, 'first', Buffer.alloc(32, 72))).rejects.toThrow('metadata is missing');
+  });
+
+  it('commits prepared intent atomically, retries failed delivery after reopen, and claims duplicate messages once', async () => {
+    const { path } = await location(); let opened = await open(path);
+    const secrets = new MemorySecFnClient();
+    await secrets.setSecret('TOKEN', secret);
+    await secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', 'register');
+    const queue = new MemoryQueueClient();
+    const failing = vi.spyOn(queue, 'enqueue').mockRejectedValueOnce(new Error('transport down'));
+    const run = await acceptRun(opened.store, queue, await prepareRun(input, secrets));
+    expect(await opened.store.getSecretValues(run.id)).toEqual([secret]);
+    expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
+    failing.mockRestore();
+    await close(opened.sql); opened = await open(path);
+    await publishRun(opened.store, queue, run.id, Date.now() + 6_000);
+    const message = queue.peek(DEFAULT_QUEUE_NAME)[0];
+    expect(message.dispatchId).toBe(JSON.stringify([run.id, 'build', 1]));
+    expect(message.env?.TOKEN).toBe(secret);
+    await queue.enqueue(DEFAULT_QUEUE_NAME, message);
+    await queue.enqueue(DEFAULT_QUEUE_NAME, message);
+    const { app } = createApp({ store: opened.store, queue, secFn: secrets });
+    const register = async () => {
+      const response = await app.request('http://localhost/api/v1/runners/register', { method: 'POST', body: JSON.stringify({ token: 'register' }) });
+      return (await response.json() as { data: { runnerId: string; runnerSecret: string } }).data;
+    };
+    const runners = await Promise.all([register(), register()]);
+    const assignments = await Promise.all(runners.map(async runner => {
+      const response = await app.request('http://localhost/api/v1/runners/heartbeat', { method: 'POST', headers: { Authorization: `Bearer ${runner.runnerSecret}` }, body: JSON.stringify({ runnerId: runner.runnerId }) });
+      expect(response.status).toBe(200);
+      return (await response.json() as { data: { job: { claimToken: string } | null } }).data.job;
+    }));
+    expect(assignments.filter(Boolean)).toHaveLength(1);
+    expect(assignments.find(Boolean)?.claimToken).toBeTypeOf('string');
+    expect((await opened.store.getRun(run.id))?.status).toBe('running');
+    await close(opened.sql); opened = await open(path);
+    expect(await opened.store.getDispatchStates(run.id)).toMatchObject([{ state: 'claimed', claim: { token: assignments.find(Boolean)?.claimToken } }]);
+    expect(await opened.store.leaseDispatches(run.id, Date.now() + 60_000, 5_000)).toEqual([]);
+    expect(await opened.store.claimDispatch(run.id, message.dispatchId!, runners[0].runnerId, ['default'])).toBeUndefined();
+  });
+
+  it('retries an expired publication lease, rejects stale acknowledgements and never publishes cancelled work', async () => {
+    const { path } = await location(); const [first, second] = await Promise.all([open(path), open(path)]);
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('TOKEN', secret);
+    const run = await first.store.createPreparedRun(await prepareRun(input, secrets));
+    const now = Date.now();
+    const publications = await Promise.all([first.store.leaseDispatches(run.id, now, 5_000), second.store.leaseDispatches(run.id, now, 5_000)]);
+    expect(publications.flat()).toHaveLength(1);
+    const original = publications.flat()[0];
+    expect(await second.store.leaseDispatches(run.id, now + 4_999, 5_000)).toEqual([]);
+    const retried = (await second.store.leaseDispatches(run.id, now + 5_000, 5_000))[0];
+    expect(retried.dispatchId).toBe(original.dispatchId);
+    expect(retried.publicationToken).not.toBe(original.publicationToken);
+    await first.store.finishPublication(run.id, original.dispatchId, original.publicationToken, now + 999_999);
+    await second.store.finishPublication(run.id, retried.dispatchId, retried.publicationToken, now + 10_000);
+    expect(await first.store.leaseDispatches(run.id, now + 10_000, 5_000)).toHaveLength(1);
+    await first.store.cancelRun(run.id);
+    expect(await second.store.claimDispatch(run.id, original.dispatchId, 'runner', ['default'])).toBeUndefined();
+    expect(await second.store.leaseDispatches(run.id, now + 60_000, 5_000)).toEqual([]);
+  });
+
+  it('recovers destructive dequeue when native claim persistence fails before assignment', async () => {
+    const { path } = await location(); const { store, native } = await open(path);
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('TOKEN', secret); await secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', 'register');
+    const queue = new MemoryQueueClient();
+    const run = await acceptRun(store, queue, await prepareRun(input, secrets));
+    const { app } = createApp({ store, queue, secFn: secrets });
+    const registration = await app.request('http://localhost/api/v1/runners/register', { method: 'POST', body: JSON.stringify({ token: 'register' }) });
+    const runner = (await registration.json() as { data: { runnerId: string; runnerSecret: string } }).data;
+    const heartbeat = () => app.request('http://localhost/api/v1/runners/heartbeat', { method: 'POST', headers: { Authorization: `Bearer ${runner.runnerSecret}` }, body: JSON.stringify({ runnerId: runner.runnerId }) });
+    native.exec("CREATE TRIGGER fail_claim BEFORE UPDATE ON cifn_state WHEN NEW.status = 'running' BEGIN SELECT RAISE(ABORT, 'claim rejected'); END");
+    expect((await heartbeat()).status).toBe(500);
+    expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
+    expect(await store.getDispatchStates(run.id)).toMatchObject([{ state: 'ready' }]);
+    native.exec('DROP TRIGGER fail_claim');
+    await publishRun(store, queue, run.id, Date.now() + 31_000);
+    const accepted = await heartbeat(); expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject({ data: { job: { runId: run.id } } });
+    expect(await store.getDispatchStates(run.id)).toMatchObject([{ state: 'claimed' }]);
+  });
+
+  it('shares encrypted prepared dispatch creation across webhook and cron triggers', async () => {
+    const { path } = await location(); const { store } = await open(path);
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('TOKEN', secret);
+    const queue = new MemoryQueueClient();
+    const scheduler = new CronScheduler({ store, queue, secrets });
+    const cronId = await scheduler.triggerPipeline({ id: 'cron', spec: input.pipelineSpec, pipelineRef: input.pipelineRef!, cronExpression: '* * * * *' });
+    const body = JSON.stringify({ repository: { full_name: 'owner/repo' }, ref: 'refs/heads/main' });
+    const signature = signWebhookPayload(body, 'signing', { algorithm: 'sha256', encoding: 'hex', prefix: 'sha256=' });
+    const result = await handleWebhook(body, signature, 'push', { store, queue, secFn: secrets, webhookSecret: 'signing',
+      pipelineResolver: async () => ({ doc: JSON.stringify(input.pipelineSpec), resolvedConfigPath: 'ci.json' }) });
+    expect(result.status).toBe(201);
+    expect(queue.peek(DEFAULT_QUEUE_NAME)).toHaveLength(2);
+    for (const message of queue.peek(DEFAULT_QUEUE_NAME)) {
+      expect(message.env?.TOKEN).toBe(secret);
+      expect(await store.getDispatchStates(message.runId)).toMatchObject([{ dispatchId: message.dispatchId, state: 'ready' }]);
+      expect(await store.getSecretValues(message.runId)).toEqual([secret]);
+    }
+    expect((await store.getRun(cronId))?.trigger.type).toBe('schedule');
+  });
+
+  it('does not store an orphan run when API, webhook or cron preparation fails', async () => {
+    const { path } = await location(); const { store } = await open(path);
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('CIFN_API_KEYS', 'key');
+    const get = secrets.getSecret.bind(secrets);
+    vi.spyOn(secrets, 'getSecret').mockImplementation(name => name === 'TOKEN' ? Promise.reject(new Error('provider unavailable')) : get(name));
+    const { app, queue } = createApp({ store, secFn: secrets });
+    const response = await app.request('http://localhost/api/v1/runs', { method: 'POST', headers: { Authorization: 'Bearer key' }, body: JSON.stringify(input) });
+    expect(response.status).toBe(500);
+    const scheduler = new CronScheduler({ store, queue, secrets });
+    await expect(scheduler.triggerPipeline({ id: 'cron', spec: input.pipelineSpec, pipelineRef: input.pipelineRef!, cronExpression: '* * * * *' })).rejects.toThrow('provider unavailable');
+    const body = JSON.stringify({ repository: { full_name: 'owner/repo' }, ref: 'refs/heads/main' });
+    const signature = signWebhookPayload(body, 'signing', { algorithm: 'sha256', encoding: 'hex', prefix: 'sha256=' });
+    await expect(handleWebhook(body, signature, 'push', { store, queue, secFn: secrets, webhookSecret: 'signing',
+      pipelineResolver: async () => ({ doc: JSON.stringify(input.pipelineSpec), resolvedConfigPath: 'ci.json' }) })).rejects.toThrow('provider unavailable');
+    expect((await store.listRuns()).runs).toEqual([]);
+    expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
   });
 
   it('does not acknowledge failed persistence or dispatch a run after a native database failure', async () => {

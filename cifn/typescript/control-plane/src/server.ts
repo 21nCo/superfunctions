@@ -50,7 +50,7 @@ async function start() {
   const webhookSecret = process.env.CIFN_WEBHOOK_SECRET;
 
   const runtimeStore = await createRuntimeStore();
-  const { app } = createApp({ adapters, webhookSecret, store: runtimeStore.store });
+  const { app, dispatchPublisher } = createApp({ adapters, webhookSecret, store: runtimeStore.store });
 
   const server = createControlPlaneServer(app);
   let closing = false;
@@ -58,6 +58,8 @@ async function start() {
     if (closing) return;
     closing = true;
     server.close(async () => {
+      try { await dispatchPublisher?.stop(); }
+      catch { console.error('CiFn dispatch shutdown failed'); process.exitCode = 1; }
       try { await runtimeStore.close(); }
       catch { console.error('CiFn store shutdown failed'); process.exitCode = 1; }
     });
@@ -70,6 +72,7 @@ async function start() {
   });
 
   server.listen(PORT, () => {
+    dispatchPublisher?.start();
     const address = server.address();
     const listeningPort = address && typeof address === 'object' ? address.port : PORT;
     console.log(`CiFn Control Plane listening on port ${listeningPort}`);

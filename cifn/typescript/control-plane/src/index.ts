@@ -65,3 +65,7 @@ export { DatabaseStore } from './store/database-store.js';
 export type { DatabaseStoreOptions, RecoveryCandidate, RecoveryPage } from './store/database-store.js';
 export type { ControlPlaneStore, StoreResult } from './store/store.js';
 export { getCiFnStoreSchema, CIFN_STATE_TABLE, CIFN_SQLITE_SCHEMA } from './store/database-schema.js';
+
+export { prepareRun, acceptRun } from './dispatch/prepare.js';
+export { DispatchPublisher } from './dispatch/publisher.js';
+export type { PreparedRun, DispatchStore } from './dispatch/types.js';
