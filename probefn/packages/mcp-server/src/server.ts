@@ -314,6 +314,7 @@ export class ProbefnRuntime {
     execute: (input: {
       page: Awaited<ReturnType<BrowserRunner['startSession']>>['page'];
       sinkPaths: Awaited<ReturnType<BrowserRunner['startSession']>>['sinkPaths'];
+      flushEvents: () => Promise<void>;
     }) => Promise<TValue>,
   ): Promise<PlaybackSessionResult<TValue>> {
     if (!session.resolvedUrl) {
@@ -354,10 +355,12 @@ export class ProbefnRuntime {
       },
     });
 
+    let executionError: unknown;
     try {
       const value = await execute({
         page: startedBrowser.page,
         sinkPaths: startedBrowser.sinkPaths,
+        flushEvents: () => startedBrowser.eventCapture.flush(),
       });
       return {
         value,
@@ -367,8 +370,15 @@ export class ProbefnRuntime {
           storageState: await startedBrowser.page.context().storageState(),
         }),
       };
+    } catch (error) {
+      executionError = error;
+      throw error;
     } finally {
-      await browserRunner.stopSession(playbackSessionId).catch(() => undefined);
+      try { await browserRunner.stopSession(playbackSessionId); }
+      catch (cleanupError) {
+        if (executionError) throw new AggregateError([executionError, cleanupError], 'Playback and browser cleanup failed');
+        throw cleanupError;
+      }
     }
   }
 
@@ -773,8 +783,11 @@ export async function actOnPage(
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
   const { scope, session } = await runtime.resolveSessionContext(input.sessionId);
-  const playback = await runtime.withPlaybackSession(session, async ({ page, sinkPaths }) =>
+  const playback = await runtime.withPlaybackSession(session, async ({ page, sinkPaths, flushEvents }) =>
     performPageAction({
+      flushEvents,
+      networkIdleMs: session.deterministic.networkIdleMs,
+      settleTimeoutMs: Math.max(5000, session.deterministic.networkIdleMs + 1000),
       repoRoot: runtime.getRepoRoot(),
       page,
       action: {

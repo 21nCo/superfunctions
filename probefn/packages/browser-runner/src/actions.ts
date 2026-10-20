@@ -4,6 +4,7 @@ import { createProbefnError } from '@probefn/contracts/errors';
 import type { EventDeltaBaseline, EventDeltaSummary } from '@probefn/core';
 import { captureEventDeltaBaseline, diffEventDeltaSummary } from '@probefn/core';
 
+import { settleAction, validateActionSettlement, type ActionSettlementOptions } from './action-settlement.js';
 import { confirmDomInteractable } from './confirmation.js';
 import { createLocatorForElement, findSemanticCandidates } from './semantic-find.js';
 import { snapshotLocatorElement } from './page-model.js';
@@ -28,7 +29,7 @@ export interface DeterministicActionResult extends EventDeltaSummary {
   checkpointId: string | null;
 }
 
-export interface PerformDeterministicActionOptions {
+export interface PerformDeterministicActionOptions extends ActionSettlementOptions {
   repoRoot: string;
   page: Page;
   action: DeterministicAction;
@@ -71,17 +72,19 @@ export async function performDeterministicAction(
   }
 
   const target = locator.first();
+  validateActionSettlement(options);
+  await options.flushEvents?.();
   const before = await captureEventDeltaBaseline(options.repoRoot, options.eventPaths);
 
-  await executeActionOnLocator(target, options.action, {
+  const targetSnapshot = await snapshotLocatorElement(target);
+  await settleAction(options.page, options, () => executeActionOnLocator(target, options.action, {
     notInteractableMessage: `Element matched selector ${selector} but is not safely interactable.`,
     details: {
       selector,
     },
-  });
+  }));
 
   const after = await captureEventDeltaBaseline(options.repoRoot, options.eventPaths);
-  const targetSnapshot = await snapshotLocatorElement(target);
   return {
     action: options.action.kind,
     targetElementId: targetSnapshot.elementId,
@@ -165,8 +168,11 @@ export async function performPageAction(
     }
   }
 
+  validateActionSettlement(options);
+  await options.flushEvents?.();
   const before = await captureEventDeltaBaseline(options.repoRoot, options.eventPaths);
-  await executeActionOnLocator(locator.first(), options.action, {
+  const targetSnapshot = await snapshotLocatorElement(locator.first());
+  await settleAction(options.page, options, () => executeActionOnLocator(locator.first(), options.action, {
     notInteractableMessage: usedVisionAssist
       ? 'Matched element is not safely interactable after DOM confirmation.'
       : 'Matched element is not safely interactable.',
@@ -174,9 +180,8 @@ export async function performPageAction(
       query,
       usedVisionAssist,
     },
-  });
+  }));
   const after = await captureEventDeltaBaseline(options.repoRoot, options.eventPaths);
-  const targetSnapshot = await snapshotLocatorElement(locator.first());
 
   return {
     action: options.action.kind,
