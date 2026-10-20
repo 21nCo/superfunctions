@@ -7,6 +7,7 @@ import SQLite from 'better-sqlite3';
 import { Kysely, SqliteDialect } from 'kysely';
 import { memoryAdapter, kyselyAdapter } from '@superfunctions/db/adapters';
 import { wrapWithSchema } from '@superfunctions/db';
+import { SendfnError } from '../../../../../sendfn/typescript/src/errors';
 import { EmailService } from '../../../../../sendfn/typescript/src/email/service';
 import { ResendAdapter } from '../../../../../sendfn/typescript/src/email/resend-adapter';
 import { SendfnDb } from '../../../../../sendfn/typescript/src/database/sendfn-db';
@@ -52,7 +53,7 @@ async function fixture() {
       if (dropResponse) { dropResponse = false; req.socket.destroy(); return; }
       const returned = mode === 'wrong-key' ? { ...data, metadata: { idempotencyKey: 'other' } } : data;
       res.writeHead(201, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, data: returned }));
-    } catch { res.writeHead(500); res.end('{}'); }
+    } catch (error) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(error instanceof SendfnError ? { ok: false, error: { code: error.code, message: error.message, retryable: error.retryable, details: error.details } } : {})); }
   });
   return { db, providerKeys, requests, destination: { kind: 'sendfn-email' as const, url, userId: 'ci', to: 'owner@example.test', adminKey: 'admin-test-secret' },
     fail: () => { failProvider = true; }, drop: () => { dropResponse = true; }, wrongKey: () => { mode = 'wrong-key'; } };
@@ -135,3 +136,28 @@ it('bounds a stalled SendFn response without acknowledging delivery', async () =
   expect(await deliverSendFnEmail({ kind: 'sendfn-email', url, userId: 'ci', to: 'owner@example.test', adminKey: 'key' }, notification, 'event')).toEqual({ status: 'retry' });
   expect(Date.now() - before).toBeLessThan(5_000);
 }, 7_000);
+
+it('parks actual SendFn suppression before transaction creation using the router error envelope', async () => {
+  const f = await fixture();
+  await f.db.addToSuppressionList({ email: f.destination.to, reason: 'manual', source: 'test' } as any);
+  expect(await deliverSendFnEmail(f.destination, notification, 'suppressed-event')).toEqual({ status: 'reconciliation', reason: 'sendfn_suppressed' });
+  expect(f.providerKeys).toHaveLength(0);
+  expect(await f.db.findEmailTransactions({ userId: 'ci' })).toHaveLength(0);
+});
+it('retains retry for unrecognized, mismatched, malformed and oversized error envelopes', async () => {
+  let body = '{}';
+  const url = await serve(async (req, res) => { for await (const _chunk of req) {} res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(body); });
+  const destination = { kind: 'sendfn-email' as const, url, userId: 'ci', to: 'owner@example.test', adminKey: 'secret' };
+  for (const error of [
+    { code: 'SENDFN_SUPPRESSED', retryable: false },
+    { code: 'SENDFN_SUPPRESSED', retryable: false, details: { recipient: 'other@example.test' } },
+    { code: 'SENDFN_SUPPRESSED', retryable: true, details: { recipient: destination.to } },
+    { code: 'UNRELATED', retryable: false, details: { recipient: destination.to } },
+  ]) {
+    body = JSON.stringify({ ok: false, error });
+    expect(await deliverSendFnEmail(destination, notification, 'event')).toEqual({ status: 'retry' });
+  }
+  for (const value of ['not-json', JSON.stringify({ error: 'x'.repeat(70_000) })]) {
+    body = value; expect(await deliverSendFnEmail(destination, notification, 'event')).toEqual({ status: 'retry' });
+  }
+});

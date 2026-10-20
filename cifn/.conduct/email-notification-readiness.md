@@ -35,8 +35,12 @@ stopped. Prepared jobs, environments and secrets are not email content.
 
 A request has a three-second timeout and a 64 KiB response limit. The existing
 ten-second lease, CAS fencing and capped one-to-sixty-second retry backoff apply.
-Network uncertainty, timeout, 429/5xx, and a `pending` transaction retain the same
-identity for retry. A successful HTTP envelope is insufficient: the transaction
+Network uncertainty, timeout, 429/unknown 5xx, and a `pending` transaction retain
+the same identity for retry. SendFn suppression occurs before transaction creation:
+a bounded JSON HTTP 500 envelope with `ok: false`, `SENDFN_SUPPRESSED`,
+`retryable: false`, and the matching recipient is parked as `sendfn_suppressed`.
+Unknown codes, mismatched recipients, missing details, malformed JSON and oversized
+error bodies remain retryable; arbitrary error text is never persisted. A successful HTTP envelope is insufficient: the transaction
 must match the recipient, user, and event metadata, have a UUID identifier, and
 report `sent` or `delivered` with a nonempty provider message ID and valid sent
 time. The stored receipt preserves that status; `sent` is provider acceptance,
@@ -73,7 +77,9 @@ restart durability. CiFn's outbox tests use real file-backed SQLite, not memory.
 The tests demonstrate response loss after actual service/provider acceptance,
 replay returning one transaction with one provider call, pending suppression,
 provider failure followed by terminal failed replay, invalid receipt binding,
-invalid configuration/authentication, response size and timeout bounds, and
+invalid configuration/authentication, actual pre-transaction suppression with
+the router-shaped error envelope, hostile/unknown error-envelope handling,
+response size and timeout bounds, and
 CiFn SQLite close/reopen for uncertain and parked intents. Database bytes do not
 contain the snapshotted admin credential. Reopened delivery retains the event
 identity and stores a sanitized acceptance receipt.

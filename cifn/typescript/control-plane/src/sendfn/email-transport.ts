@@ -17,7 +17,19 @@ export async function deliverSendFnEmail(destination: SendFnEmailDestination, no
       signal: AbortSignal.timeout(3_000), redirect: 'error',
     });
     if (!response.ok) {
-      await response.body?.cancel();
+      if (response.status === 500 && response.headers.get('content-type')?.toLowerCase().includes('application/json')) {
+        const request = new Request('http://cifn.invalid/response', { method: 'POST', body: response.body, duplex: 'half' } as RequestInit & { duplex: 'half' });
+        const envelope = await createRouteContext(request, {}, { maxBodyBytes: 65_536 }).json() as {
+          ok?: unknown; error?: { code?: unknown; retryable?: unknown; details?: { recipient?: unknown } };
+        };
+        const error = envelope?.error;
+        // SendFn suppresses before creating a transaction. Only its documented,
+        // recipient-bound terminal code can park a 500; arbitrary errors cannot.
+        if (envelope?.ok === false && error?.code === 'SENDFN_SUPPRESSED' && error.retryable === false
+          && typeof error.details?.recipient === 'string' && error.details.recipient.toLowerCase() === destination.to.toLowerCase()) {
+          return { status: 'reconciliation', reason: 'sendfn_suppressed' };
+        }
+      } else await response.body?.cancel();
       return response.status === 429 || response.status >= 500 ? { status: 'retry' } : { status: 'reconciliation', reason: 'sendfn_request_rejected' };
     }
     const request = new Request('http://cifn.invalid/response', { method: 'POST', body: response.body, duplex: 'half' } as RequestInit & { duplex: 'half' });
