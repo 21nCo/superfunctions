@@ -1,0 +1,23 @@
+userfn/.conduct/flag-config-service-readiness.md
+  s_e1c5fc1a65c0cf::t_c22b9cd74e26d5 54,66-87
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_5e17545e0516ac 143-147
+userfn/service/scripts/verify-config-package.mjs
+  s_e1c5fc1a65c0cf::t_b563318a09aeb3 1-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a0d080827b2f6b31bd341a22309bc079818a3f85",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
