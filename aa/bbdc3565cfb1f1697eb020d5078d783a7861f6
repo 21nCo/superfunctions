@@ -1,0 +1,27 @@
+userfn/.conduct/flag-hash-parity-readiness.md
+  s_e1c5fc1a65c0cf::t_c0d7681b25ae9e 1-21
+userfn/python/src/userfn/utils/hash.py
+  s_e1c5fc1a65c0cf::t_e6214e6b390e3e 11-15
+userfn/python/tests/fixtures/hash-vectors.json
+  s_e1c5fc1a65c0cf::t_3b7cf4c8a0502d 1-50
+userfn/python/tests/test_hash_parity.py
+  s_e1c5fc1a65c0cf::t_0c13d42a666547 1-11
+userfn/typescript/src/__tests__/hash-parity.test.ts
+  s_e1c5fc1a65c0cf::t_b795412905ed6c 1-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aabbdc3565cfb1f1697eb020d5078d783a7861f6",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
