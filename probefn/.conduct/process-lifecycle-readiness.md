@@ -1,0 +1,13 @@
+# ProbeFn process lifecycle checkpoint
+
+2026-10-20 UTC. This extends the root workspace checkpoint; the original full specification remains the acceptance target.
+
+Startup reserves the session before asynchronous persistence. Stop cancels and joins startup, including pending attach HTTP requests and spawned-process readiness, before releasing session ownership. Cancelled startup reports E_SESSION_START_CANCELLED and finalizes a failed manifest. Invalid readiness expressions are rejected before process creation. If process cleanup fails, the session remains owned so a later stop can retry; startup and cleanup failures are both surfaced.
+
+Owned POSIX process groups receive SIGTERM, followed by SIGKILL after a configurable grace period (default 1000 ms). Completion requires both child stdio closure and disappearance of the process group, so a descendant with ignored stdio cannot escape cleanup merely because the shell exits. Readiness and attach timers are cleared. Output lines are serialized, split UTF-8 characters are decoded correctly, and both streams are drained on close. Sink failures propagate through stop and produce a failed manifest.
+
+Validation uses actual local subprocesses, a separate supervisor process that must exit naturally despite a two-minute readiness deadline, a hanging loopback HTTP server, real artifact files, and controlled persistence/signal failures. Regression cases cover timeout escalation, normal stop escalation, ignored-stdio descendants, concurrent duplicate starts, stop during initial persistence, stop during readiness, attach cancellation, retry after a signal failure, invalid patterns before spawn, output persistence failure, stderr draining, and split UTF-8/order preservation.
+
+Validation commands and final counts are recorded below after execution. The POSIX process tests run locally on macOS; Windows process-tree cleanup is not established. Descendants that deliberately create a new session/process group are outside this process-group mechanism. Hung storage operations are not bounded. Fixture setup failures elsewhere, full vectors, Firefox/WebKit, distribution/admin integration, security/performance/accessibility and deployment acceptance remain open. No full production-readiness claim or release.
+
+Final validation: `npm run typecheck --workspace=@probefn/workspace` passes. `npm exec --yes --package=node@22.23.3 -- node node_modules/vitest/vitest.mjs run --root probefn` passes all 72 tests in 19 files, including the existing real Chromium/CLI/MCP integration tests. `git diff --check` passes. No generated artifacts were added and no new ignore rule was needed for this slice.

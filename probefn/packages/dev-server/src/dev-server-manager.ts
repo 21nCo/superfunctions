@@ -18,7 +18,6 @@ import {
   detectInstability,
   toDevServerSinkEvent,
   type DevServerSinkEvent,
-  type LineProcessor,
 } from './process-events.js';
 import { compileReadyPattern, detectReadiness } from './readiness.js';
 
@@ -47,6 +46,11 @@ export interface ManagedSessionState {
   runId: string;
   child?: ChildProcess;
   exitMonitor?: Promise<void>;
+  closed?: Promise<void>;
+  outputFailure?: unknown;
+  cleanupFailure?: unknown;
+  startupAbort: AbortController;
+  startupDone: Promise<void>;
   manifest: RunManifest;
   manifestPath: string;
   stdoutSinkPath?: string;
@@ -59,15 +63,20 @@ export interface DevServerManagerOptions {
   repoRoot: string;
   artifactStore: ArtifactStore;
   now?: () => string;
+  /** Grace period before killing a spawned process group. Default 1000 ms. */
+  shutdownTimeoutMs?: number;
 }
 
 export class DevServerManager {
   private readonly repoRoot: string;
   private readonly artifactStore: ArtifactStore;
   private readonly now: () => string;
+  private readonly shutdownTimeoutMs: number;
   private readonly sessions = new Map<string, ManagedSessionState>();
 
   public constructor(options: DevServerManagerOptions) {
+    this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 1000;
+    if (!Number.isSafeInteger(this.shutdownTimeoutMs) || this.shutdownTimeoutMs < 1) throw new TypeError('Invalid shutdownTimeoutMs');
     this.repoRoot = options.repoRoot;
     this.artifactStore = options.artifactStore;
     this.now = options.now ?? (() => new Date().toISOString());
@@ -75,7 +84,7 @@ export class DevServerManager {
 
   public async startSession(options: StartSessionOptions): Promise<StartedSession> {
     const existingSession = this.sessions.get(options.sessionId);
-    if (existingSession && existingSession.manifest.status === 'running') {
+    if (existingSession) {
       throw createProbefnError({
         code: 'E_SESSION_ALREADY_RUNNING',
         message: `Session ${options.sessionId} already has an active run.`,
@@ -107,9 +116,11 @@ export class DevServerManager {
       },
     });
 
-    await this.artifactStore.writeRunManifest(options.runId, manifest);
-
+    let finishStartup!: () => void;
+    const startupDone = new Promise<void>(resolve => { finishStartup = resolve; });
     const session: ManagedSessionState = {
+      startupAbort: new AbortController(),
+      startupDone,
       sessionId: options.sessionId,
       runId: options.runId,
       manifest,
@@ -120,13 +131,17 @@ export class DevServerManager {
     this.sessions.set(options.sessionId, session);
 
     try {
+      await this.persistManifest(session);
+      session.startupAbort.signal.throwIfAborted();
       const resolvedUrl =
         options.devServer.mode === 'attach'
           ? await this.startAttachedSession(session, options.devServer)
           : await this.startSpawnedSession(session, options.devServer);
 
-      session.ready = true;
+      session.startupAbort.signal.throwIfAborted();
       await this.persistManifest(session);
+      session.startupAbort.signal.throwIfAborted();
+      session.ready = true;
 
       return {
         sessionId: session.sessionId,
@@ -139,8 +154,15 @@ export class DevServerManager {
         ...(session.stderrSinkPath ? { stderrSinkPath: session.stderrSinkPath } : {}),
       };
     } catch (error) {
-      await this.failSession(session, error);
+      try {
+        await this.failSession(session);
+      } catch (cleanupError) {
+        session.cleanupFailure = cleanupError;
+        throw new AggregateError([error, cleanupError], 'Session startup and cleanup failed');
+      }
       throw error;
+    } finally {
+      finishStartup();
     }
   }
 
@@ -157,19 +179,26 @@ export class DevServerManager {
       });
     }
 
-    if (session.child && session.child.exitCode === null && session.child.signalCode === null) {
-      session.stopping = true;
-      terminateChildProcessGroup(session.child);
-      await once(session.child, 'exit');
-      await session.exitMonitor;
-    } else {
-      await session.exitMonitor;
+    session.stopping = true;
+    session.startupAbort.abort(createProbefnError({
+      code: 'E_SESSION_START_CANCELLED',
+      message: 'Session startup was cancelled by stopSession.',
+      retryable: false,
+    }));
+    await session.startupDone;
+    if (this.sessions.get(sessionId) !== session) {
+      if (session.cleanupFailure) throw session.cleanupFailure;
+      return;
     }
+    if (session.child) await terminateChildProcessGroup(session.child, session.closed!, this.shutdownTimeoutMs);
+    await session.exitMonitor;
+    if (session.outputFailure) session.manifest.status = 'failed';
 
     session.manifest.status = session.manifest.status === 'failed' ? 'failed' : 'completed';
     session.manifest.endedAt = this.now();
     await this.persistManifest(session);
-    this.sessions.delete(sessionId);
+    if (this.sessions.get(sessionId) === session) this.sessions.delete(sessionId);
+    if (session.outputFailure) throw session.outputFailure;
   }
 
   private async startAttachedSession(
@@ -182,13 +211,19 @@ export class DevServerManager {
     let lastError: unknown;
 
     while (Date.now() < deadline) {
+      session.startupAbort.signal.throwIfAborted();
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 1000);
-        const response = await fetch(resolvedUrl, {
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
+        const cancelFetch = () => controller.abort(session.startupAbort.signal.reason);
+        session.startupAbort.signal.addEventListener('abort', cancelFetch, { once: true });
+        const timer = setTimeout(() => controller.abort(), Math.max(1, Math.min(1000, deadline - Date.now())));
+        let response: Response;
+        try { response = await fetch(resolvedUrl, { signal: controller.signal }); }
+        finally {
+          clearTimeout(timer);
+          session.startupAbort.signal.removeEventListener('abort', cancelFetch);
+        }
+        await response.body?.cancel();
 
         if (response.ok) {
           const currentDevServer = session.manifest.devServer;
@@ -207,7 +242,8 @@ export class DevServerManager {
         lastError = error;
       }
 
-      await delay(100);
+      session.startupAbort.signal.throwIfAborted();
+      await delay(Math.max(0, Math.min(100, deadline - Date.now())));
     }
 
     throw createProbefnError({
@@ -233,6 +269,9 @@ export class DevServerManager {
       });
     }
 
+    const readyPatterns = compileReadyPattern(devServer.readyPattern ?? 'Local:\\s+(https?:\\/\\/[^\\s]+)');
+    const timeoutMs = devServer.timeoutMs ?? 120000;
+
     const configuredUrl = devServer.url;
 
     const stdoutSink = this.artifactStore.createEventSink(session.runId, 'stdout', 'devserver');
@@ -247,6 +286,7 @@ export class DevServerManager {
       env: createAllowedEnvironment(devServer.envAllowlist),
     });
     session.child = child;
+    session.closed = new Promise<void>(resolve => child.once('close', () => resolve()));
     if (typeof child.pid === 'number') {
       session.manifest.devServer = {
         ...(session.manifest.devServer ?? {
@@ -258,10 +298,15 @@ export class DevServerManager {
       };
     }
 
-    const readyPatterns = compileReadyPattern(devServer.readyPattern ?? 'Local:\\s+(https?:\\/\\/[^\\s]+)');
-    const timeoutMs = devServer.timeoutMs ?? 120000;
     let resolvedUrl = configuredUrl;
     let settled = false;
+    let resolveReady!: (url: string) => void;
+    let rejectReady!: (error: unknown) => void;
+    const readinessPromise = new Promise<string>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+    const cancelReadiness = () => rejectReady(session.startupAbort.signal.reason);
+    session.startupAbort.signal.addEventListener('abort', cancelReadiness, { once: true });
+    const recordOutputFailure = (error: unknown) => { session.outputFailure ??= error; rejectReady(error); };
+
 
     const onLine = async (line: string, stream: 'stdout' | 'stderr'): Promise<void> => {
       const event: DevServerSinkEvent = toDevServerSinkEvent(this.now(), stream, line);
@@ -295,6 +340,8 @@ export class DevServerManager {
         };
       }
 
+      if (settled) resolveReady(resolvedUrl);
+
       const instability = detectInstability(line);
       if (instability.unstable) {
         session.manifest.unstable = true;
@@ -306,15 +353,16 @@ export class DevServerManager {
     const stderrProcessor = createLineProcessor('stderr', onLine);
 
     child.stdout?.on('data', (chunk) => {
-      void stdoutProcessor.push(chunk);
+      void stdoutProcessor.push(chunk).catch(recordOutputFailure);
     });
     child.stderr?.on('data', (chunk) => {
-      void stderrProcessor.push(chunk);
+      void stderrProcessor.push(chunk).catch(recordOutputFailure);
     });
 
-    const exitPromise = once(child, 'exit').then(async ([code, signal]) => {
-      await stdoutProcessor.flush();
-      await stderrProcessor.flush();
+    const exitPromise = once(child, 'close').then(async ([code, signal]) => {
+      const drains = await Promise.allSettled([stdoutProcessor.flush(), stderrProcessor.flush()]);
+      const failedDrain = drains.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failedDrain) throw failedDrain.reason;
 
       if (!settled) {
         throw createProbefnError({
@@ -334,56 +382,49 @@ export class DevServerManager {
       }
       return resolvedUrl;
     });
-    session.exitMonitor = exitPromise.then(() => undefined).catch(() => undefined);
+    session.exitMonitor = exitPromise.then(() => undefined).catch(error => { if (settled) session.outputFailure ??= error; });
 
-    const readinessPromise = new Promise<string>((resolve) => {
-      const interval = setInterval(() => {
-        if (settled) {
-          clearInterval(interval);
-          resolve(resolvedUrl);
-        }
-      }, 25);
-    });
+    let readinessTimer: ReturnType<typeof setTimeout> | undefined;
 
     try {
       const readyUrl = await Promise.race([
         readinessPromise,
         exitPromise,
-        delay(timeoutMs).then(() => {
-          throw createProbefnError({
+        new Promise<never>((_resolve, reject) => {
+          readinessTimer = setTimeout(() => reject(createProbefnError({
             code: 'E_DEVSERVER_START_TIMEOUT',
             message: `Dev server did not become ready within ${timeoutMs}ms.`,
             retryable: true,
             details: {
               timeoutMs,
             },
-          });
+          })), timeoutMs);
         }),
       ]);
 
       return readyUrl;
-    } catch (error) {
-      if (!child.killed) {
-        child.kill('SIGTERM');
-      }
-      await stdoutProcessor.flush();
-      await stderrProcessor.flush();
-      throw error;
+    } finally {
+      clearTimeout(readinessTimer);
+      session.startupAbort.signal.removeEventListener('abort', cancelReadiness);
     }
   }
 
-  private async failSession(session: ManagedSessionState, error: unknown): Promise<void> {
-    session.manifest.status = 'failed';
-    session.manifest.endedAt = this.now();
-    await this.persistManifest(session);
-
-    if (session.child && session.child.exitCode === null && session.child.signalCode === null) {
-      session.child.kill('SIGTERM');
-      await once(session.child, 'exit').catch(() => undefined);
+  private async failSession(session: ManagedSessionState): Promise<void> {
+    session.stopping = true;
+    let processCleanupComplete = false;
+    try {
+      if (session.child) await terminateChildProcessGroup(session.child, session.closed!, this.shutdownTimeoutMs);
       await session.exitMonitor;
+      processCleanupComplete = true;
+    } finally {
+      session.manifest.status = 'failed';
+      session.manifest.endedAt = this.now();
+      try {
+        await this.persistManifest(session);
+      } finally {
+        if (processCleanupComplete && this.sessions.get(session.sessionId) === session) this.sessions.delete(session.sessionId);
+      }
     }
-
-    this.sessions.delete(session.sessionId);
   }
 
   private async persistManifest(session: ManagedSessionState): Promise<void> {
@@ -406,16 +447,35 @@ function createAllowedEnvironment(envAllowlist: string[]): NodeJS.ProcessEnv {
   };
 }
 
-function terminateChildProcessGroup(child: ChildProcess): void {
-  const pid = child.pid;
-  if (typeof pid !== 'number') {
-    child.kill('SIGTERM');
-    return;
-  }
-
-  try {
-    process.kill(-pid, 'SIGTERM');
-  } catch {
-    child.kill('SIGTERM');
-  }
+async function terminateChildProcessGroup(child: ChildProcess, closed: Promise<void>, timeoutMs: number): Promise<void> {
+  const signal = (value: NodeJS.Signals) => {
+    try {
+      if (process.platform !== 'win32' && typeof child.pid === 'number') process.kill(-child.pid, value);
+      else child.kill(value);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    }
+  };
+  let processClosed = false;
+  void closed.then(() => { processClosed = true; });
+  const groupExists = (): boolean => {
+    if (process.platform === 'win32' || typeof child.pid !== 'number') return false;
+    try { process.kill(-child.pid, 0); return true; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+      throw error;
+    }
+  };
+  const waitForClose = async (): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs;
+    do {
+      if (processClosed && !groupExists()) return true;
+      await delay(Math.max(1, Math.min(10, deadline - Date.now())));
+    } while (Date.now() < deadline);
+    return processClosed && !groupExists();
+  };
+  signal('SIGTERM');
+  if (await waitForClose()) return;
+  signal('SIGKILL');
+  if (!await waitForClose()) throw new Error('Dev server process did not close after SIGKILL');
 }

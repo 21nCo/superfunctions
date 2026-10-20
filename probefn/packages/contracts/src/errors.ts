@@ -3,6 +3,7 @@ import { createErrorEnvelope, type ErrorEnvelope, type JsonObject } from './enve
 export const ERROR_CODES = [
   'E_CONFIG_INVALID',
   'E_SESSION_NOT_FOUND',
+  'E_SESSION_START_CANCELLED',
   'E_SESSION_ALREADY_RUNNING',
   'E_DEVSERVER_START_TIMEOUT',
   'E_DEVSERVER_EXIT_EARLY',

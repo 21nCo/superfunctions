@@ -1,3 +1,5 @@
+import { StringDecoder } from 'node:string_decoder';
+
 const INSTABILITY_PATTERNS = [
   /\bhmr update\b/i,
   /\bhmr invalidate\b/i,
@@ -29,25 +31,24 @@ export function createLineProcessor(
   onLine: (line: string, stream: 'stdout' | 'stderr') => Promise<void> | void,
 ): LineProcessor {
   let buffer = '';
-
+  const decoder = new StringDecoder('utf8');
+  let pending = Promise.resolve();
+  const consume = async (text: string) => {
+    buffer += text;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? '';
+    for (const line of lines) if (line.length > 0) await onLine(line, stream);
+  };
+  const enqueue = (operation: () => Promise<void>): Promise<void> => {
+    pending = pending.then(operation);
+    return pending;
+  };
   return {
-    async push(chunk: Buffer | string): Promise<void> {
-      buffer += chunk.toString();
-      const lines = buffer.split(/\r?\n/);
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        if (line.length > 0) {
-          await onLine(line, stream);
-        }
-      }
-    },
-    async flush(): Promise<void> {
-      if (buffer.length > 0) {
-        await onLine(buffer, stream);
-        buffer = '';
-      }
-    },
+    push(chunk) { return enqueue(() => consume(decoder.write(typeof chunk === 'string' ? Buffer.from(chunk) : chunk))); },
+    flush() { return enqueue(async () => {
+      await consume(decoder.end());
+      if (buffer.length > 0) { const line = buffer; buffer = ''; await onLine(line, stream); }
+    }); },
   };
 }
 

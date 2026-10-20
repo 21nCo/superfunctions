@@ -44,12 +44,13 @@ afterEach(async () => {
     attachedServers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))),
   );
   await Promise.all(
-    tempDirectories.splice(0).map((directory) =>
-      rm(path.resolve(projectRoot, '.artifacts-tests', path.basename(directory)), {
+    tempDirectories.splice(0).map(async (directory) => {
+      await rm(path.resolve(projectRoot, '.artifacts-tests', path.basename(directory)), {
         recursive: true,
         force: true,
-      }),
-    ),
+      });
+      await rm(directory, { recursive: true, force: true });
+    }),
   );
 });
 
