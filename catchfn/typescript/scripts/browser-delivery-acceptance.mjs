@@ -23,8 +23,10 @@ let mode='503'; let allowCors=true; let preflights=0; const arrivals=[];
 const close = async server => {if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}};
 try {
   let migration=sql.schema.createTable('watchfn_events');
-  for(const [name,field] of Object.entries(getWatchFnSchema().watchfn_events.fields)) migration=migration.addColumn(name,'text',column=>name==='id'?column.primaryKey():field.required?column.notNull():column);
-  await migration.execute(); watch.start();
+  for(const [name,field] of Object.entries(getWatchFnSchema().watchfn_events.fields)) migration=migration.addColumn(name,field.type==='number'?'real':'text',column=>name==='id'?column.primaryKey():field.required?column.notNull():column);
+  await migration.execute();
+  for(const index of getWatchFnSchema().watchfn_events.indexes??[]) await sql.schema.createIndex(index.name).on('watchfn_events').columns(index.fields).execute();
+  watch.start();
   api=createServer(async(req,res)=>{
     try {
       const cors=req.headers.origin===origin&&allowCors;

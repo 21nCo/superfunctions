@@ -65,8 +65,9 @@ try {
   connect();
   for (const [name, table] of Object.entries({ ...getWatchFnSchema(), ...getBugIssueSchema() })) {
     let migration = sql.schema.createTable(name);
-    for (const [field, options] of Object.entries(table.fields)) migration = migration.addColumn(field, options.type === 'number' ? 'integer' : 'text', column => field === 'id' ? column.primaryKey() : options.required ? column.notNull() : column);
+    for (const [field, options] of Object.entries(table.fields)) migration = migration.addColumn(field, options.type === 'number' ? (field === 'eventTimestamp' ? 'real' : 'integer') : 'text', column => field === 'id' ? column.primaryKey() : options.required ? column.notNull() : column);
     await migration.execute();
+    for (const index of table.indexes ?? []) await sql.schema.createIndex(index.name).on(name).columns(index.fields).execute();
   }
   api = createServer(async (req, res) => {
     try {

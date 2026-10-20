@@ -33,9 +33,10 @@ try {
   connect();
   let migration = sql.schema.createTable('watchfn_events');
   for (const [name, field] of Object.entries(getWatchFnSchema().watchfn_events.fields)) {
-    migration = migration.addColumn(name, 'text', column => name === 'id' ? column.primaryKey() : field.required ? column.notNull() : column);
+    migration = migration.addColumn(name, field.type === 'number' ? 'real' : 'text', column => name === 'id' ? column.primaryKey() : field.required ? column.notNull() : column);
   }
   await migration.execute();
+  for (const index of getWatchFnSchema().watchfn_events.indexes ?? []) await sql.schema.createIndex(index.name).on('watchfn_events').columns(index.fields).execute();
   server = createServer(async (incoming, outgoing) => {
     try {
       const chunks = [];
@@ -57,10 +58,10 @@ try {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/ingest`;
-  const query = async where => {
+  const query = async (where, options = {}) => {
     const response = await fetch(endpoint.replace('/ingest', '/query'), {
       method: 'POST', headers: { Authorization: 'Bearer acceptance-only', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ where }), signal: AbortSignal.timeout(2000),
+      body: JSON.stringify({ ...options, where }), signal: AbortSignal.timeout(2000),
     });
     assert.equal(response.status, 200);
     return (await response.json()).results;
@@ -86,6 +87,9 @@ try {
   const stored = await query({ type: 'bug_report', 'app.name': 'shop', 'report.severity': 'high' });
   assert.equal(stored.length, 1);
   assert.deepEqual(stored[0], requests[1][0]);
+  const indexed = await sql.selectFrom('watchfn_events').select(['projectionVersion', 'eventType', 'eventApp', 'eventTimestamp', 'eventSeverity', 'eventSessionId']).executeTakeFirstOrThrow();
+  assert.deepEqual(indexed, { projectionVersion: 1, eventType: 'bug_report', eventApp: 'shop', eventTimestamp: Date.parse(stored[0].timestamp), eventSeverity: 'high', eventSessionId: 'session-one' });
+  assert.deepEqual(await query({ type: 'bug_report', 'app.name': 'shop', 'report.severity': 'high' }, { timeRange: { from: stored[0].timestamp, to: stored[0].timestamp } }), stored);
 
   const invalid = client({ apiKey: 'invalid' });
   const count = requests.length;
@@ -100,7 +104,7 @@ try {
   await watch.stop();
   await sql.destroy(); sql = undefined;
   connect();
-  const reopened = await query({ id: report.id });
+  const reopened = await query({ id: report.id, type: 'bug_report', 'app.name': 'shop', 'report.severity': 'high', sessionId: 'session-one' }, { timeRange: { from: stored[0].timestamp, to: stored[0].timestamp } });
   assert.deepEqual(reopened, [requests[1][0]]);
   await sql.schema.dropTable('watchfn_events').execute();
   await assert.rejects(catcher.captureBug({ title: 'Storage down' }), error => error.status === 503);
