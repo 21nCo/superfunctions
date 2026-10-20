@@ -1,5 +1,5 @@
 import { finalizePageVideo } from '@probefn/browser-runner';
-import { readEventSinkFamily, assertArtifactIdentifier } from '@probefn/storage';
+import { readEventSinkFamily, readEventSinkPage, type EventPageOptions, assertArtifactIdentifier } from '@probefn/storage';
 import { createServer, type Server as NetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import type { Readable, Writable } from 'node:stream';
@@ -273,6 +273,18 @@ export class ProbefnRuntime {
         sessionId,
       },
     });
+  }
+
+  public async readEventPage(relativePath: string | undefined, options: EventPageOptions = {}) {
+    if (!relativePath) {
+      if (options.cursor) throw createProbefnError({ code: 'E_MCP_INVALID_ARGS', message: 'No sink exists for this cursor.', retryable: false });
+      return { events: [], provenance: [], nextCursor: null };
+    }
+    try { return await readEventSinkPage(this.repoRoot, relativePath, options); }
+    catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Requested event sink does not exist.', retryable: false });
+      throw error;
+    }
   }
 
   public async readEventSink(relativePath: string | undefined): Promise<Array<Record<string, JsonValue>>> {
@@ -874,37 +886,19 @@ export async function createCheckpointFromSession(
   return checkpointSuccessEnvelope(checkpoint.value as CreatedCheckpoint) as ProbefnEnvelope<JsonValue>;
 }
 
-export async function getConsoleEvents(
-  runtime: ProbefnRuntime,
-  sessionId: string,
-): Promise<ProbefnEnvelope<JsonValue>> {
+export async function getConsoleEvents(runtime: ProbefnRuntime, sessionId: string, options: EventPageOptions = {}): Promise<ProbefnEnvelope<JsonValue>> {
   const { session } = await runtime.resolveSessionContext(sessionId);
-  const events = await runtime.readEventSink(session.artifacts.consoleSinkPath);
-  return createSuccessEnvelope({
-    events: events as unknown as JsonValue,
-  });
+  return createSuccessEnvelope(await runtime.readEventPage(session.artifacts.consoleSinkPath, options) as unknown as JsonValue);
 }
 
-export async function getNetworkEvents(
-  runtime: ProbefnRuntime,
-  sessionId: string,
-): Promise<ProbefnEnvelope<JsonValue>> {
+export async function getNetworkEvents(runtime: ProbefnRuntime, sessionId: string, options: EventPageOptions = {}): Promise<ProbefnEnvelope<JsonValue>> {
   const { session } = await runtime.resolveSessionContext(sessionId);
-  const events = await runtime.readEventSink(session.artifacts.networkSinkPath);
-  return createSuccessEnvelope({
-    events: events as unknown as JsonValue,
-  });
+  return createSuccessEnvelope(await runtime.readEventPage(session.artifacts.networkSinkPath, options) as unknown as JsonValue);
 }
 
-export async function getPageErrors(
-  runtime: ProbefnRuntime,
-  sessionId: string,
-): Promise<ProbefnEnvelope<JsonValue>> {
+export async function getPageErrors(runtime: ProbefnRuntime, sessionId: string, options: EventPageOptions = {}): Promise<ProbefnEnvelope<JsonValue>> {
   const { session } = await runtime.resolveSessionContext(sessionId);
-  const events = await runtime.readEventSink(session.artifacts.pageErrorSinkPath);
-  return createSuccessEnvelope({
-    events: events as unknown as JsonValue,
-  });
+  return createSuccessEnvelope(await runtime.readEventPage(session.artifacts.pageErrorSinkPath, options) as unknown as JsonValue);
 }
 
 export async function getLayoutReport(

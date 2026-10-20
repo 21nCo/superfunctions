@@ -38,6 +38,8 @@ const pageActSchema = strictObjectSchema({
 
 const pageEventsSchema = strictObjectSchema({
   sessionId: z.string().trim().min(1),
+  limit: z.number().int().min(1).max(1000).optional(),
+  cursor: z.string().min(1).max(8192).optional(),
 });
 
 const pageLayoutSchema = strictObjectSchema({
@@ -115,44 +117,50 @@ export function getPageTools(): ToolDefinition[] {
     }),
     defineTool({
       name: 'probefn_page_get_console',
-      description: 'Read the console sink for a session.',
+      description: 'Read a bounded console page (default 100 events). Follow nextCursor until null for complete traversal.',
       inputSchema: jsonToolSchema({
         required: ['sessionId'],
         properties: {
           sessionId: { type: 'string' },
+          limit: { type: 'integer', minimum: 1, maximum: 1000 },
+          cursor: { type: 'string', minLength: 1, maxLength: 8192 },
         },
       }),
       schema: pageEventsSchema as z.ZodType<JsonObject>,
       async execute(args, context) {
-        return getConsoleEvents(context.runtime, String(args.sessionId));
+        return getConsoleEvents(context.runtime, String(args.sessionId), { ...(typeof args.limit === 'number' ? { limit: args.limit } : {}), ...(typeof args.cursor === 'string' ? { cursor: args.cursor } : {}) });
       },
     }),
     defineTool({
       name: 'probefn_page_get_network',
-      description: 'Read the network sink for a session.',
+      description: 'Read a bounded network page (default 100 events). Follow nextCursor until null for complete traversal.',
       inputSchema: jsonToolSchema({
         required: ['sessionId'],
         properties: {
           sessionId: { type: 'string' },
+          limit: { type: 'integer', minimum: 1, maximum: 1000 },
+          cursor: { type: 'string', minLength: 1, maxLength: 8192 },
         },
       }),
       schema: pageEventsSchema as z.ZodType<JsonObject>,
       async execute(args, context) {
-        return getNetworkEvents(context.runtime, String(args.sessionId));
+        return getNetworkEvents(context.runtime, String(args.sessionId), { ...(typeof args.limit === 'number' ? { limit: args.limit } : {}), ...(typeof args.cursor === 'string' ? { cursor: args.cursor } : {}) });
       },
     }),
     defineTool({
       name: 'probefn_page_get_page_errors',
-      description: 'Read the page-error sink for a session.',
+      description: 'Read a bounded page-error page (default 100 events). Follow nextCursor until null for complete traversal.',
       inputSchema: jsonToolSchema({
         required: ['sessionId'],
         properties: {
           sessionId: { type: 'string' },
+          limit: { type: 'integer', minimum: 1, maximum: 1000 },
+          cursor: { type: 'string', minLength: 1, maxLength: 8192 },
         },
       }),
       schema: pageEventsSchema as z.ZodType<JsonObject>,
       async execute(args, context) {
-        return getPageErrors(context.runtime, String(args.sessionId));
+        return getPageErrors(context.runtime, String(args.sessionId), { ...(typeof args.limit === 'number' ? { limit: args.limit } : {}), ...(typeof args.cursor === 'string' ? { cursor: args.cursor } : {}) });
       },
     }),
     defineTool({

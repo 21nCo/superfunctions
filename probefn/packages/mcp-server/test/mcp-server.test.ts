@@ -73,6 +73,25 @@ describe.sequential('mcp server', () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual([...expectedToolNames].sort());
   });
 
+  it('exposes bounded event schemas and traverses a canonical MCP cursor', async () => {
+    const listed = await client!.request('tools/list', {});
+    for (const name of ['probefn_page_get_console', 'probefn_page_get_network', 'probefn_page_get_page_errors']) {
+      const tool = (listed.result?.tools as any[]).find(tool => tool.name === name);
+      expect(tool.description).toContain('Follow nextCursor until null');
+      expect(tool.inputSchema.properties.limit.maximum).toBe(1000);
+      expect(tool.inputSchema.properties.cursor.maxLength).toBe(8192);
+      const invalid = await client!.request('tools/call', { name, arguments: { sessionId: 'sess_console_error', limit: 0 } });
+      expect((invalid.result?.structuredContent as any).error.code).toBe('E_MCP_INVALID_ARGS');
+    }
+    const first = await client!.request('tools/call', { name: 'probefn_page_get_console', arguments: { sessionId: 'sess_console_error', limit: 1 } });
+    const data = (first.result?.structuredContent as any).data;
+    expect(data.events).toHaveLength(1); expect(typeof data.nextCursor).toBe('string');
+    const last = await client!.request('tools/call', { name: 'probefn_page_get_console', arguments: { sessionId: 'sess_console_error', cursor: data.nextCursor } });
+    expect((last.result?.structuredContent as any).data).toEqual({ events: [], provenance: [], nextCursor: null });
+    const wrong = await client!.request('tools/call', { name: 'probefn_page_get_network', arguments: { sessionId: 'sess_console_error', cursor: data.nextCursor } });
+    expect((wrong.result?.structuredContent as any).error.code).toBe('E_MCP_INVALID_ARGS');
+  });
+
   it('returns the canonical console payload through MCP tool wrapping', async () => {
     const response = await client!.request('tools/call', {
       name: 'probefn_page_get_console',
@@ -97,6 +116,8 @@ describe.sequential('mcp server', () => {
                   pageUrl: 'http://127.0.0.1:4301/checkout',
                 },
               ],
+              provenance: [{ relativePath: '.artifacts/runs/run_console_error/events/console.ndjson', lineNumber: 1 }],
+              nextCursor: null,
             }),
             null,
             2,
@@ -114,6 +135,8 @@ describe.sequential('mcp server', () => {
             pageUrl: 'http://127.0.0.1:4301/checkout',
           },
         ],
+        provenance: [{ relativePath: '.artifacts/runs/run_console_error/events/console.ndjson', lineNumber: 1 }],
+        nextCursor: null,
       }),
       isError: false,
     });

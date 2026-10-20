@@ -74,3 +74,33 @@ npm run --silent probefn --workspace=@probefn/workspace -- run flow --session se
 npm run --silent probefn --workspace=@probefn/workspace -- auth profile save --session sess_auth --profile customer-admin --json
 npm run --silent probefn --workspace=@probefn/workspace -- mcp serve --stdio
 ```
+
+## Paginated MCP event reads
+
+`probefn_page_get_console`, `probefn_page_get_network`, and
+`probefn_page_get_page_errors` accept `{sessionId, limit?, cursor?}`. The default
+is 100 events; `limit` accepts 1–1000. Each successful data object contains
+`events`, parallel `provenance` entries (`relativePath`, physical `lineNumber`),
+and `nextCursor`. Preserve the session/tool and pass `nextCursor` as `cursor`
+until it is null, including after short pages. A full final page can require an
+extra empty terminal request. Event payloads retain their original JSON shape.
+
+Serialized page data, including provenance, field names and cursor, is capped at
+1 MiB; MCP's text and structured envelopes duplicate this bounded data and add
+formatting overhead. A single event that cannot fit returns
+`E_STORAGE_CAP_EXCEEDED` rather than truncation. Missing/corrupt rollover segments
+fail explicitly. Count/byte boundaries never skip an unreturned event.
+
+Cursors are authenticated, sink/repository-bound and process-local. A process
+restart invalidates them; restart traversal without a cursor. Reads assume
+append-only sink files, not a retained snapshot: later pages can include later
+appends. Inode/size/mtime and the last emitted record's hash detect replacement,
+shrinkage, same-size edits and changes at the resume record. They do not certify
+all earlier bytes against edits combined with growth. Do not modify historical
+segments during traversal. Extending a previously unterminated final record
+invalidates its cursor. Earlier segment contents are not reparsed per page;
+directory discovery still validates the complete numeric rollover sequence.
+
+The legacy array collector and final report document retain output-sized memory;
+this change bounds the three MCP event tools only. See
+[validation and remaining gates](.conduct/mcp-event-pagination-readiness.md).
