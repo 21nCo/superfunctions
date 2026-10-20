@@ -34,3 +34,7 @@ Production hosts must apply the exported schema, including a unique/primary key 
 Python uses stdlib HTTP on an asyncio worker. Its timeout bounds socket operations rather than a total slow-stream deadline; task cancellation does not terminate the worker or undo an accepted write. TypeScript uses an abort deadline per attempt. Both SDKs preserve a stable key during automatic retries; applications must reuse an explicit key for manual reconciliation. There is no durable offline retry queue. Client submission methods preserve their existing void/None return API; direct POST receipts and authenticated GET support service readback.
 
 No hosted changes or publication were performed for this checkpoint.
+
+## Follow-up: actual AuthFn provider
+
+The [AuthFn acceptance checkpoint](authfn-feedback-acceptance.md) subsequently exercises real API-key issuance and revocation through AuthFn routes and its actual provider, with trusted tenant mapping and UserFn SQLite reopen. This supersedes the earlier fixture-only provider limitation for repository-source integration. AuthFn durable storage, packed dependency compatibility and hosted acceptance remain open.
