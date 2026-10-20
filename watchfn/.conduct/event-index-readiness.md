@@ -56,3 +56,9 @@ Remaining original gates include retention defaults and bug-specific TTL, scalab
 Reproduce from the repository root: `npm test --workspace @watchfn/core`, `npm exec --workspace @watchfn/core -- tsc --noEmit`, `npm run build --workspace @watchfn/core`, and `npm exec --workspace @watchfn/core -- vitest run --config tests/storage/event-indexes-sqlite.config.ts`. The native BotFn regression uses `tests/integrations/botfn-sqlite.config.ts`. Native tests require local Kysely and a working better-sqlite3 binding.
 
 Canonical event retention and the bug TTL override are now implemented by the subsequent [arrival-time retention checkpoint](event-retention-readiness.md); its explicit policy, protected issue receipts and migration requirements apply. General non-app metric retention remains open.
+
+The subsequent [query streaming checkpoint](query-streaming-readiness.md) removes
+complete payload materialization for compatible scans and aggregates, with native
+cross-page and constrained-heap evidence. Ordered/unlimited raw output, exact
+sample/distinct/group cardinality, compatibility collation fallback and snapshot
+semantics remain explicit scalability gates.

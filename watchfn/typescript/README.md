@@ -90,3 +90,25 @@ Only conservative exact-field and time-range predicates are pushed down. Tags, b
 Configure `retention: { apps: ["shop"], defaultTtlMs: 30 * 86400000, bugReportTtlMs: 90 * 86400000 }` on shared transactional database storage, then schedule bounded `watch.cleanupRetention({ after, limit })` calls, following `nextCursor` until null. The default is 30 days; bugs inherit it unless overridden. TTL uses server arrival time and the fixed application allowlist. Cleanup has no public HTTP route or automatic timer.
 
 Apply the new nullable `receivedAt` column before starting the writer. Old rows remain protected until an explicit offline anchor backfill. Unresolved issue deliveries remain protected; linked payloads may expire while outbox receipts remain indefinitely to preserve exact-replay deduplication and verified status. See [migration, failure semantics and limits](../.conduct/event-retention-readiness.md). General non-app metrics, hybrid-tier retention and receipt archival remain open.
+
+### Query memory and ordering
+
+Shared-database queries now read bounded 128-row keyset pages. Projected and
+legacy compatibility candidates are merged in storage-ID order; no input limit
+is pushed ahead of residual filtering or aggregation. Queries with `limit` and
+no `orderBy` retain only the requested result rows while still completing the
+scan so a later storage failure cannot acknowledge an incomplete query.
+
+Count, sum, min, max and rate retain per-group counters rather than event
+payloads. Exact averages and percentiles retain finite numeric samples; distinct
+counts retain scalar sets. Group order, exact floating-point arithmetic, metric
+suffix fallback, filtering, and post-aggregation ordering/limits are preserved.
+
+This does not make every query bounded in memory. Unlimited raw results and
+ordered raw results still materialize output/candidates. Numeric sample counts,
+distinct cardinality, group cardinality and individual payload size can also
+consume memory. Projected scans perform an ID-only ordering preflight; incompatible
+custom database collations or legacy IDs use the original materialized sort
+before returning any rows. Legacy `queryEvents` adapters still return arrays.
+Keyset reads are live across pages, not a snapshot of concurrent writes or
+retention cleanup. See [native query acceptance and remaining limits](../.conduct/query-streaming-readiness.md).

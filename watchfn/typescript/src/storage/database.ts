@@ -60,28 +60,22 @@ export class DatabaseStorage implements StorageAdapter {
   }
 
   async getAll(): Promise<any[]> {
-    if (this.legacy) return this.legacy.queryEvents({});
-    const events: Record<string, unknown>[] = [];
-    const pageSize = 1000;
-    // Explicit pages avoid silent truncation by adapter default result limits.
-    for (let offset = 0; ; offset += pageSize) {
-      const rows = await this.db!.findMany<StoredEvent>({ model: this.tableName, where: [],
-        orderBy: [{ field: "id", direction: "asc" }], limit: pageSize, offset });
-      events.push(...rows.map(row => row.payload));
-      if (rows.length < pageSize) return events;
-    }
+    return this.executeQuery({});
   }
 
-  private async readRows(where: WhereClause[]): Promise<StoredEvent[]> {
-    const result: StoredEvent[] = [];
+  private async *readRows(where: WhereClause[], select?: string[]): AsyncGenerator<StoredEvent> {
     let after: string | undefined;
+    // A fixed small page bounds parsed payload memory independently of total rows.
+    const pageSize = 128;
     for (;;) {
       const rows = await this.db!.findMany<StoredEvent>({ model: this.tableName,
         where: [...where, ...(after === undefined ? [] : [{ field: "id", operator: "gt" as const, value: after }])],
-        orderBy: [{ field: "id", direction: "asc" }], limit: 1000 });
-      result.push(...rows);
-      if (rows.length < 1000) return result;
-      after = rows[rows.length - 1].id;
+        orderBy: [{ field: "id", direction: "asc" }], limit: pageSize, ...(select ? { select } : {}) });
+      for (const row of rows) yield row;
+      if (rows.length < pageSize) return;
+      const next = rows[rows.length - 1].id;
+      if (typeof next !== "string" || next === after) throw new Error("Storage keyset did not advance");
+      after = next;
     }
   }
 
@@ -114,19 +108,64 @@ export class DatabaseStorage implements StorageAdapter {
   }
 
   async executeQuery(options: any): Promise<any[]> {
+    const result: any[] = [];
+    for await (const event of this.iterateQuery(options)) result.push(event);
+    return result;
+  }
+
+  /** Live keyset scan, not a snapshot across concurrent inserts/updates/deletes. */
+  async *iterateQuery(options: any): AsyncGenerator<any> {
     if (this.legacy) {
-      if (!options || typeof options !== "object") return this.legacy.queryEvents(options);
-      const { resolvedTimeRange: _internalRange, ...legacyOptions } = options;
-      return this.legacy.queryEvents(legacyOptions);
+      const { resolvedTimeRange: _internalRange, ...legacyOptions } = options ?? {};
+      yield* await this.legacy.queryEvents(options && typeof options === "object" ? legacyOptions : options);
+      return;
     }
     const predicates = eventProjectionWhere(options);
-    if (!predicates.length) return this.getAll();
-    // The legacy path is deliberately unfiltered: incomplete/unknown versions
-    // cannot cause old matching events to disappear during a migration.
-    const indexed = await this.readRows([{ field: "projectionVersion", operator: "eq", value: EVENT_PROJECTION_VERSION }, ...predicates]);
-    const missing = await this.readRows([{ field: "projectionVersion", operator: "eq", value: null }]);
-    const unknown = await this.readRows([{ field: "projectionVersion", operator: "ne", value: EVENT_PROJECTION_VERSION }, { field: "projectionVersion", operator: "ne", value: null }]);
-    // Merge by storage ID; callers needing semantic ordering must set orderBy.
-    return [...indexed, ...missing, ...unknown].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map(row => row.payload);
+    if (!predicates.length) {
+      for await (const row of this.readRows([])) yield row.payload;
+      return;
+    }
+    // Disjoint projection versions are merged by storage ID. Each stream keeps
+    // one bounded page, including the unfiltered migration compatibility paths.
+    const clauses: WhereClause[][] = [
+      [{ field: "projectionVersion", operator: "eq", value: EVENT_PROJECTION_VERSION }, ...predicates],
+      [{ field: "projectionVersion", operator: "eq", value: null }],
+      [{ field: "projectionVersion", operator: "ne", value: EVENT_PROJECTION_VERSION }, { field: "projectionVersion", operator: "ne", value: null }],
+    ];
+    // The old projected union used JS string ordering after SQL retrieval. A
+    // metadata-only preflight checks each stream before any payload is yielded:
+    // custom collations/non-BMP legacy IDs need the exact materialized fallback.
+    let compatible = true;
+    for (const where of clauses) {
+      let previous: string | undefined;
+      for await (const row of this.readRows(where, ["id"])) {
+        if (previous !== undefined && row.id < previous) { compatible = false; break; }
+        previous = row.id;
+      }
+      if (!compatible) break;
+    }
+    if (!compatible) {
+      const rows: StoredEvent[] = [];
+      for (const where of clauses) for await (const row of this.readRows(where)) rows.push(row);
+      rows.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      for (const row of rows) yield row.payload;
+      return;
+    }
+    const sources = clauses.map(where => this.readRows(where));
+    try {
+      const heads = [];
+      for (const source of sources) heads.push(await source.next());
+      for (;;) {
+        let selected = -1;
+        for (let index = 0; index < heads.length; index++) {
+          if (!heads[index].done && (selected < 0 || heads[index].value!.id < heads[selected].value!.id)) selected = index;
+        }
+        if (selected < 0) return;
+        yield heads[selected].value!.payload;
+        heads[selected] = await sources[selected].next();
+      }
+    } finally {
+      for (const source of sources) await source.return(undefined);
+    }
   }
 }
