@@ -83,4 +83,10 @@ Authenticated clients can read `POST /issues/status` with `{app,reportId}` to ob
 
 The shared database schema includes type/app/time, type/app/severity, issue, session and replay indexes. Apply the additive nullable columns and indexes from `getWatchFnSchema()` before starting the new writer. Existing reports remain visible through a compatibility scan until an offline, idempotent `DatabaseStorage.backfillEventProjections({ after, limit })` traversal completes. Stop writers, workers and queries during backfill; continue with `nextCursor` until null. Never manually mark partial projections complete. See [the migration contract and tested SQLite DDL](../.conduct/event-index-readiness.md).
 
-Only conservative exact-field and time-range predicates are pushed down. Tags, broad result sets and aggregations can still require memory proportional to matching events. Indexes do not implement retention or a bug-report TTL policy.
+Only conservative exact-field and time-range predicates are pushed down. Tags, broad result sets and aggregations can still require memory proportional to matching events. Indexes alone do not implement retention; canonical arrival-time cleanup is available through the explicit policy below.
+
+### Canonical retention and bug-report TTL
+
+Configure `retention: { apps: ["shop"], defaultTtlMs: 30 * 86400000, bugReportTtlMs: 90 * 86400000 }` on shared transactional database storage, then schedule bounded `watch.cleanupRetention({ after, limit })` calls, following `nextCursor` until null. The default is 30 days; bugs inherit it unless overridden. TTL uses server arrival time and the fixed application allowlist. Cleanup has no public HTTP route or automatic timer.
+
+Apply the new nullable `receivedAt` column before starting the writer. Old rows remain protected until an explicit offline anchor backfill. Unresolved issue deliveries remain protected; linked payloads may expire while outbox receipts remain indefinitely to preserve exact-replay deduplication and verified status. See [migration, failure semantics and limits](../.conduct/event-retention-readiness.md). General non-app metrics, hybrid-tier retention and receipt archival remain open.

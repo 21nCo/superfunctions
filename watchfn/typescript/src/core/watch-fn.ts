@@ -2,6 +2,7 @@ import { compareDeploymentMetrics, DeploymentComparisonOptions } from "../analys
 import { WatchFnConfig, WatchFnConfigSchema, WatchFnInstance } from "./types";
 import { EventRouter } from "./event-router";
 import { MemoryStorage } from "../storage/memory-storage";
+import type { RetentionPageOptions, RetentionPageResult } from "../storage/event-retention";
 import { DatabaseStorage } from "../storage/database";
 import { StorageAdapter } from "../storage/types";
 import { ExceptionHandler } from "../collectors/errors/exception-handler";
@@ -87,6 +88,7 @@ export class WatchFn implements WatchFnInstance {
     if (this.config.botfn && (this.config.storage !== "database" || !this.config.database || this.config.auth?.enabled === false || !this.config.auth?.apiKey?.trim())) {
       throw new TypeError("BotFn issue ingestion requires database storage and a configured API key");
     }
+    if (this.config.retention && (this.config.storage !== "database" || !this.config.database)) throw new TypeError("Event retention requires shared database storage");
     this.eventRouter = new EventRouter();
     this.exceptionHandler = new ExceptionHandler(this);
     this.httpInterceptor = new HttpInterceptor(this);
@@ -101,7 +103,7 @@ export class WatchFn implements WatchFnInstance {
     
     // Storage initialization logic
     if (this.config.storage === "database" && this.config.database) {
-        this.storage = new DatabaseStorage(this.config.database, "watchfn_events", this.config.botfn);
+        this.storage = new DatabaseStorage(this.config.database, "watchfn_events", this.config.botfn, this.config.retention);
         this.queryEngine = new QueryEngine(this.storage);
     } else if (this.config.storage === "memory") {
         this.storage = new MemoryStorage();
@@ -137,6 +139,17 @@ export class WatchFn implements WatchFnInstance {
     const issues = this.requireBugIssues();
     let result!: { processed: number };
     const record = this.write(async () => { result = await issues.process(limit); });
+    await record.completion;
+    if (record.failed) throw record.error;
+    return result;
+  }
+
+  /** Privileged host scheduler only. No HTTP cleanup route is exposed. */
+  async cleanupRetention(options: RetentionPageOptions = {}): Promise<RetentionPageResult> {
+    if (!this.isStarted || !(this.storage instanceof DatabaseStorage)) throw new Error("WatchFn storage is unavailable");
+    const storage = this.storage; const page = { ...options };
+    let result!: RetentionPageResult;
+    const record = this.write(async () => { result = await storage.cleanupRetention(page); });
     await record.completion;
     if (record.failed) throw record.error;
     return result;

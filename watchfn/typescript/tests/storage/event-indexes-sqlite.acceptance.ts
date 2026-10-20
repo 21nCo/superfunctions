@@ -32,6 +32,7 @@ it("migrates an old SQLite table, keeps old HTTP matches, backfills bounded page
     // Old schemas fail instead of acknowledging payloads without their projections.
     await expect(storage.add(bug("must-not-commit"))).rejects.toThrow();
     await expect(storage.backfillEventProjections()).rejects.toThrow();
+    await expect(storage.backfillReceivedAt({ receivedAt: Date.now() })).rejects.toThrow();
     expect((await sql!.selectFrom("watchfn_events").selectAll().execute())).toHaveLength(1005);
     const schema = getWatchFnSchema().watchfn_events;
     for (const [field, definition] of Object.entries(schema.fields)) {
@@ -59,6 +60,17 @@ it("migrates an old SQLite table, keeps old HTTP matches, backfills bounded page
     do { const page = await storage.backfillEventProjections({ after, limit: 127 }); processed += page.processed; after = page.nextCursor ?? undefined; } while (after);
     expect(processed).toBe(1005);
     expect(await sql!.selectFrom("watchfn_events").select(["id", "payload"]).orderBy("id").execute()).toEqual(before);
+    // Arrival timestamps cannot be reconstructed from client event timestamps.
+    // An explicit offline migration anchor initializes legacy metadata once.
+    const anchor = Date.now(); let arrivalAfter: string | undefined; let initialized = 0;
+    do {
+      const page = await storage.backfillReceivedAt({ receivedAt: anchor, after: arrivalAfter, limit: 127 });
+      initialized += page.initialized; arrivalAfter = page.nextCursor ?? undefined;
+    } while (arrivalAfter);
+    expect(initialized).toBe(1005);
+    expect((await storage.backfillReceivedAt({ receivedAt: anchor - 1, limit: 1000 })).initialized).toBe(0);
+    expect((await sql!.selectFrom("watchfn_events").select("receivedAt").where("id", "=", "old-a").executeTakeFirst())?.receivedAt).toBe(anchor);
+
     const repeat = await storage.backfillEventProjections({ limit: 1000 });
     expect(repeat.processed).toBe(1000);
     expect(await storage.backfillEventProjections({ after: repeat.nextCursor!, limit: 1000 })).toEqual({ processed: 5, nextCursor: null });

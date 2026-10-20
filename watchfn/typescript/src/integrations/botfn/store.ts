@@ -68,7 +68,7 @@ export class BotFnBugIssues {
     const now = Date.now();
     try {
       await this.database.transaction(async tx => {
-        await tx.create({ model: this.eventTable, data: { id: `bug_${id}`, payload, ...projectEvent(payload) } });
+        await tx.create({ model: this.eventTable, data: { id: `bug_${id}`, payload, ...projectEvent(payload), receivedAt: now } });
         await tx.create({ model: BUG_ISSUES_TABLE, data: {
           id, namespace: this.namespace, ...ref, fingerprint, eventId: `bug_${id}`, routeKey: this.routeKey(route), target: route.target, project: route.project,
           state: "pending", revision: 0, attempts: 0, leaseToken: null, leaseExpiresAt: 0, createdAt: now, updatedAt: now,

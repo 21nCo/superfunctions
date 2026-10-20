@@ -161,3 +161,58 @@ it("atomically rolls back intake and fences two SQLite workers while preserving 
   expect(await instance.query({ where: { type: "bug_report", "app.name": "web", "integration.issueId": "8" } })).toHaveLength(1);
   expect(await instance.query({ where: { "integration.issueId": "missing" } })).toEqual([]);
 });
+
+it("expires only linked canonical payloads and preserves durable replay receipts across SQLite reopen", async () => {
+  const realNow = Date.now(); const clock = vi.spyOn(Date, "now").mockReturnValue(realNow);
+  try {
+    const keys = generateKeyPairSync("rsa", { modulusLength: 2048 }); vi.stubGlobal("crypto", webcrypto);
+    let creates = 0;
+    const provider = await serve(async (req, res) => {
+      if (req.url === "/app/installations/456/access_tokens") { json(res, { token: "fixture-token" }); return; }
+      if (req.url === "/repos/acme/bugs/issues") { creates++; const input = JSON.parse((await body(req)).toString()); json(res, { number: 91, html_url: "https://github.com/acme/bugs/issues/91", body: input.body }, 201); return; }
+      json(res, {}, 404);
+    });
+    vi.stubGlobal("fetch", (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+      if (url.origin !== "https://api.github.com") throw new Error("Unexpected external request");
+      return originalFetch(provider + url.pathname, init);
+    });
+    let db = await database();
+    const client = new GitHubClient({ appId: "123", installationId: "456", privateKey: keys.privateKey.export({ type: "pkcs1", format: "pem" }).toString() });
+    const start = () => {
+      const instance = new WatchFn({ name: "retention", storage: "database", database: db.adapter, infra: { enabled: false }, auth: { apiKey: "server-ingest" }, retention: { apps: ["web"], defaultTtlMs: 1000, bugReportTtlMs: 100 }, botfn: { namespace: "retention", routes: [{ app: "web", target: "github", project: "acme/bugs", client }] } } as any);
+      instance.start(); watches.push(instance); return instance;
+    };
+    let instance = start(); let url = await serveWatch(instance);
+    const linked = { ...bug("linked"), timestamp: "2100-01-01T00:00:00Z", receivedAt: 0 };
+    expect((await post(url, linked)).status).toBe(202);
+    await instance.processBugIssues(); expect(creates).toBe(1);
+    expect((await post(url, bug("pending"))).status).toBe(202);
+    // An ordinary arrival in a different app is never selected by this policy.
+    await instance.ingest([{ id: "other", type: "log", app: { name: "other" }, timestamp: 0 }]);
+    clock.mockReturnValue(realNow + 101);
+    expect((await instance.cleanupRetention()).deleted).toBe(1);
+    expect((await instance.query({})).map((row: any) => row.id).sort()).toEqual(["other", "pending"]);
+    await instance.stop(); await close(db.sql);
+    db = { ...db, ...connect(db.path) }; instance = start(); url = await serveWatch(instance);
+    expect((await post(url, linked)).status).toBe(202);
+    expect(await instance.query({ where: { id: "linked" } })).toEqual([]);
+    expect(await instance.getBugIssueStatus({ app: "web", reportId: "linked" })).toMatchObject({ state: "linked", issueId: "91", attempts: 1 });
+    const statusResponse = await originalFetch(url + "/issues/status", { method: "POST", headers: { authorization: "Bearer server-ingest", "content-type": "application/json" }, body: JSON.stringify({ app: "web", reportId: "linked" }) });
+    expect(statusResponse.status).toBe(200);
+    expect(await statusResponse.json()).toMatchObject({ app: "web", reportId: "linked", state: "linked", issueUrl: "https://github.com/acme/bugs/issues/91" });
+
+    expect((await post(url, { ...linked, report: { ...linked.report, title: "changed" } })).status).toBe(409);
+    await instance.flush().catch(() => {});
+    // Only the still-pending report may create a second issue. Expired replay does not.
+    await instance.processBugIssues(); expect(creates).toBe(2);
+    expect((await instance.cleanupRetention()).deleted).toBe(1);
+    expect((await instance.cleanupRetention()).deleted).toBe(0);
+    expect((await instance.query({})).map((row: any) => row.id)).toEqual(["other"]);
+    await instance.stop(); await close(db.sql);
+    db = { ...db, ...connect(db.path) }; instance = start();
+    expect((await instance.query({})).map((row: any) => row.id)).toEqual(["other"]);
+    expect(await instance.getBugIssueStatus({ app: "web", reportId: "linked" })).toMatchObject({ state: "linked", issueId: "91" });
+    expect(await db.sql.selectFrom(BUG_ISSUES_TABLE).selectAll().execute()).toHaveLength(2);
+  } finally { clock.mockRestore(); }
+});

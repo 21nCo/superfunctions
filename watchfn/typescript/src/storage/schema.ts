@@ -10,6 +10,7 @@ export function getWatchFnSchema(tableName = "watchfn_events"): Record<string, T
     payload: { type: "json", jsonStorageType: "json-text", required: true },
     // Nullable additive columns preserve old rows until the explicit backfill.
     projectionVersion: { type: "number" },
+    receivedAt: { type: "number" },
     eventType: { type: "string", maxLength: 255 }, eventApp: { type: "string", maxLength: 255 }, eventTimestamp: { type: "number" },
     eventSeverity: { type: "string", maxLength: 255 }, eventIssueId: { type: "string", maxLength: 255 },
     eventSessionId: { type: "string", maxLength: 255 }, eventReplayId: { type: "string", maxLength: 255 },
