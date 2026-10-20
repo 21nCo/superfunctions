@@ -51,8 +51,7 @@ Authorization. Key rotation preserves old stored signatures until republishing.
 - Existing service 10 tests, native feedback 4 acceptance cases and the AuthFn
   integration case pass after the schema extension (combined native suite: 10 before the additional segment wire case; config suite: 7). Service typecheck/build pass; SDK build exposes the existing
   validator via its operator entry point. The service tarball manifest includes
-  the built config runtime/types/schema; fresh installed service-package acceptance
-  was not performed for this checkpoint. No shared source changes.
+  the built config runtime/types/schema. No shared source changes.
 
 Reproduce after building the SDK and existing shared dependency closure:
 
@@ -62,6 +61,28 @@ npm run typecheck --workspace userfn/service
 npm run build --workspace userfn/service
 npm test --workspace userfn/service
 npm run test:native --workspace userfn/service
+```
+
+## Installed package acceptance
+
+`service/scripts/verify-config-package.mjs` packs six built tarballs (service,
+SDK, shared DB/HTTP/auth/observability), installs them in a fresh temporary consumer
+with normal npm dependency resolution, and runs actual local HTTP signed
+publication/conditional fetch plus SDK evaluation. It compiles installed service
+and memory-adapter declarations under strict NodeNext without skipLibCheck or peer
+bypass. Both runtime and declarations passed on Node 20.20.0/npm 10.8.2. This
+package-runtime fixture uses memory storage; durable SQLite evidence is the
+separate native acceptance above. Temporary directories are removed.
+
+The initial unconstrained optional-peer resolution hit npm Arborist's null
+`edgesOut` error while choosing the latest Vitest 4 graph. The reproducible
+consumer explicitly installs compatible repository versions `drizzle-orm@0.35.3`
+and `vitest@3.2.4`, alongside TypeScript5.6.3 and Node22 types; normal peer checking
+then passes. This is evidence for that dependency matrix, not all future peer
+versions. Shared dependency manifests were not changed.
+
+```sh
+node userfn/service/scripts/verify-config-package.mjs
 ```
 
 ## Original gates still open

@@ -140,3 +140,8 @@ This server boundary does not implement automatic SDK fetch/refresh, signature
 verification, persistent client caches, exposures, a flag administration UI or
 CDN integration. The Python HTTP acceptance fixture explicitly maps wire fields
 to native dataclasses; it is not an SDK transport or signature verifier.
+
+Built package acceptance is reproducible with
+`node userfn/service/scripts/verify-config-package.mjs` from the repository root
+after building SDK/service/shared dependencies. It installs fresh tarballs and
+checks signed HTTP behavior plus strict installed declaration consumption.
