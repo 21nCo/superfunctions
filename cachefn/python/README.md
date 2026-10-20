@@ -242,6 +242,24 @@ objects or cyclic data. Cache instances and synchronous wrappers are intended
 for use within one event loop or thread; cross-thread access requires external
 synchronization. Memory storage is process-local.
 
+Synchronous memoization checks an earliest-expiration hint before scanning entries.
+Warm hits before that deadline (including caches without TTL) do not scan the
+populated cache. When expiration is due, one linear sweep removes expired entries
+and finds the next deadline; deleting or evicting the earliest entry can cause an
+early conservative sweep. TTL still starts after computation and is not extended
+by hits. LRU eviction and statistics retain their existing semantics. This does
+not add cross-thread synchronization or change asynchronous memoization.
+
+For populated-hit measurements against source, run from the repository root:
+
+```sh
+PYTHONPATH=cachefn/python uv run --no-project --python 3.12 --with 'pydantic>=2.5' python cachefn/python/scripts/memoize_benchmark.py
+```
+
+The script measures warm hits at 100, 1,000 and 10,000 entries with default/custom
+keys and absent/long TTL. Local measurements are not a universal latency guarantee.
+
+
 ## Events
 
 CacheFn emits events for monitoring:

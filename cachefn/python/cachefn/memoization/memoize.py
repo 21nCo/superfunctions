@@ -158,6 +158,7 @@ class MemoizedSyncFunction:
         self._ttl = ttl
         self._hits = self._misses = self._evictions = 0
         self._cache: OrderedDict[str, tuple[Any, Optional[float]]] = OrderedDict()
+        self._next_expiration = float("inf")
         functools.update_wrapper(self, func)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -184,6 +185,8 @@ class MemoizedSyncFunction:
         expires = None if self._ttl is None else time.monotonic() + self._ttl / 1000
         self._purge_expired()
         self._cache[key] = (result, expires)
+        if expires is not None:
+            self._next_expiration = min(self._next_expiration, expires)
         self._cache.move_to_end(key)
         if len(self._cache) > self._max_size:
             self._cache.popitem(last=False)
@@ -192,13 +195,22 @@ class MemoizedSyncFunction:
 
     def _purge_expired(self) -> None:
         now = time.monotonic()
+        if now < self._next_expiration:
+            return
+        next_expiration = float("inf")
         for key, (_, expires) in list(self._cache.items()):
-            if expires is not None and expires <= now:
-                del self._cache[key]
+            if expires is not None:
+                if expires <= now:
+                    del self._cache[key]
+                else:
+                    next_expiration = min(next_expiration, expires)
+        # Deletion/eviction can leave an early hint; it only causes an extra sweep.
+        self._next_expiration = next_expiration
 
     def clear(self) -> None:
         """Clear all cached results."""
         self._cache.clear()
+        self._next_expiration = float("inf")
         self._hits = self._misses = self._evictions = 0
 
     def delete(self, *args: Any, **kwargs: Any) -> None:
