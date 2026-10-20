@@ -52,3 +52,13 @@ test('runs without ripgrep on PATH', t => {
   });
   assert.equal(result.status, 0, result.stderr);
 });
+
+test('skips tracked files deleted from the working tree before valid source', t => {
+  const root = fixture(t);
+  const deleted = path.join(root, 'langfn/python/a_deleted.py');
+  writeFileSync(deleted, 'print("old")');
+  writeFileSync(path.join(root, 'langfn/python/z_valid.py'), 'from superfunctions.http import Request');
+  execFileSync('git', ['add', '.'], { cwd: root });
+  rmSync(deleted);
+  assert.equal(checkSharedUsage(root).file, 'langfn/python/z_valid.py');
+});
