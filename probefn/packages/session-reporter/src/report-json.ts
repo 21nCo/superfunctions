@@ -1,4 +1,4 @@
-import { readEventSinkFamily } from '@probefn/storage';
+import { iterateEventSinkFamily } from '@probefn/storage';
 import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -352,19 +352,20 @@ async function readIndexedEvents(
   }
 
   try {
-    const records = await readEventSinkFamily(repoRoot, relativePath);
-    return records.map((record, index) => {
+    const records: IndexedRuntimeEvent[] = [];
+    for await (const record of iterateEventSinkFamily(repoRoot, relativePath)) {
       const payload = record.payload;
       const ts = typeof payload.ts === 'string' ? payload.ts : undefined;
-      return {
-        eventId: `${prefix}_${index + 1}`,
+      records.push({
+        eventId: `${prefix}_${records.length + 1}`,
         category,
         sinkPath: record.relativePath,
         lineNumber: record.lineNumber,
         payload,
         ...(ts ? { ts } : {}),
-      };
-    });
+      });
+    }
+    return records;
   } catch (error) {
     if (isMissing(error)) {
       return [];

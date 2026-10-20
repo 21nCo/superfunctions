@@ -1,4 +1,4 @@
-import { readEventSinkFamily } from '@probefn/storage';
+import { iterateEventSinkFamily } from '@probefn/storage';
 
 export interface EventDeltaBaseline {
   consoleErrors: number;
@@ -40,42 +40,29 @@ export function diffEventDeltaSummary(
   };
 }
 
-async function countConsoleErrors(
-  repoRoot: string,
-  relativePath: string | undefined,
-): Promise<number> {
-  const events = await readNdjson(repoRoot, relativePath);
-  return events.filter((event) => event.type === 'console' && event.level === 'error').length;
+async function countConsoleErrors(repoRoot: string, relativePath: string | undefined): Promise<number> {
+  return countMatchingEvents(repoRoot, relativePath, event => event !== null && typeof event === 'object' && event.type === 'console' && event.level === 'error');
 }
 
-async function countEvents(
-  repoRoot: string,
-  relativePath: string | undefined,
-): Promise<number> {
-  const events = await readNdjson(repoRoot, relativePath);
-  return events.length;
+async function countEvents(repoRoot: string, relativePath: string | undefined): Promise<number> {
+  return countMatchingEvents(repoRoot, relativePath, () => true);
 }
 
-async function readNdjson(
+async function countMatchingEvents(
   repoRoot: string,
   relativePath: string | undefined,
-): Promise<Array<Record<string, unknown>>> {
-  if (!relativePath) {
-    return [];
-  }
-
+  matches: (event: Record<string, unknown>) => boolean,
+): Promise<number> {
+  if (!relativePath) return 0;
+  let count = 0;
   try {
-    return (await readEventSinkFamily(repoRoot, relativePath)).map(record => record.payload);
-  } catch (error) {
-    if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      (error as { code?: string }).code === 'ENOENT'
-    ) {
-      return [];
+    for await (const record of iterateEventSinkFamily(repoRoot, relativePath)) {
+      if (matches(record.payload)) count++;
     }
-
+    return count;
+  } catch (error) {
+    // Only an absent anchor represents a sink with no events. Never discard a partial scan.
+    if (count === 0 && error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return 0;
     throw error;
   }
 }
