@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { memoryAdapter } from "@superfunctions/db/adapters/memory";
 import { WatchFn } from "../../src/core/watch-fn";
 const active: WatchFn[] = [];
@@ -23,3 +23,11 @@ it("returns absent, pending and verified linked state without exposing private d
   expect((await watch.httpRouter.handle(request({ ...ref, app: "other" }))).status).toBe(404);
 });
 it("reports disabled integration as unavailable, never as successful delivery", async () => { expect((await setup(false).httpRouter.handle(request(ref))).status).toBe(503); });
+
+it("fails closed for corrupt linkage shapes without serializing arbitrary stored objects", async () => {
+  const watch = setup();
+  for (const bad of [{ issueId: { nested: "private" }, issueUrl: "https://linear.app/acme/issue/ENG-7" }, { issueId: "7", issueUrl: "javascript:alert(1)" }]) {
+    vi.spyOn(watch, "getBugIssueStatus").mockResolvedValue({ ...ref, target: "linear", state: "linked", ...bad } as any);
+    const response = await watch.httpRouter.handle(request(ref)); expect(response.status).toBe(503); expect(await response.text()).not.toContain("private");
+  }
+});
