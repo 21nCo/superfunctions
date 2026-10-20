@@ -8,17 +8,11 @@ def fnv1a_hash(s: str) -> int:
     # 32-bit mask
     mask = 0xFFFFFFFF
 
-    for char in s:
-        # JS charCodeAt works on UTF-16 code units. 
-        # For standard ASCII/BMP, ord(char) corresponds well.
-        # Strict bitwise operations are needed to match JS behaviour.
-        
-        # hash ^= str.charCodeAt(i)
-        hash_val ^= ord(char)
-        hash_val &= mask
-        
-        # hash = Math.imul(hash, 0x01000193)
-        # Math.imul performs C-like 32-bit multiplication
+    # Match JS charCodeAt exactly, including surrogate pairs and lone surrogates.
+    encoded = s.encode("utf-16-le", errors="surrogatepass")
+    for offset in range(0, len(encoded), 2):
+        code_unit = encoded[offset] | (encoded[offset + 1] << 8)
+        hash_val ^= code_unit
         hash_val = (hash_val * 0x01000193) & mask
 
     # return hash >>> 0 (unsigned right shift)

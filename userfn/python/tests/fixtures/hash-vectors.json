@@ -1,0 +1,50 @@
+[
+  {
+    "key": "feature",
+    "userId": "user-123",
+    "hash": 697023443,
+    "bucket": 43
+  },
+  {
+    "key": "beta",
+    "userId": "Zoë",
+    "hash": 4193112393,
+    "bucket": 93
+  },
+  {
+    "key": "日本語",
+    "userId": "利用者",
+    "hash": 3807801792,
+    "bucket": 92
+  },
+  {
+    "key": "feature",
+    "userId": "user😀",
+    "hash": 314200103,
+    "bucket": 3
+  },
+  {
+    "key": "flag🚀",
+    "userId": "user",
+    "hash": 3816822211,
+    "bucket": 11
+  },
+  {
+    "key": "feature",
+    "userId": "\ud800",
+    "hash": 2625252319,
+    "bucket": 19
+  },
+  {
+    "key": "\udfff",
+    "userId": "user",
+    "hash": 1761900575,
+    "bucket": 75
+  },
+  {
+    "key": "accent",
+    "userId": "é",
+    "hash": 751324277,
+    "bucket": 77
+  }
+]
