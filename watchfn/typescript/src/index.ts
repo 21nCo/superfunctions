@@ -91,3 +91,7 @@ export type { Router } from "@superfunctions/http";
 export type { TableSchema } from "@superfunctions/db";
 
 export type { DeploymentComparisonOptions, ComparedMetric } from "./analysis/deployment-comparison";
+
+export type { BotFnIssueConfig, BotFnIssueRoute, BotFnGitHubClient, BotFnLinearClient, BugIssueStatus, BugReportReference } from "./integrations/botfn/types";
+export { getBugIssueSchema } from "./integrations/botfn/schema";
+export { BugIssueConflictError, BugIssueValidationError } from "./integrations/botfn/types";

@@ -49,9 +49,9 @@ async function check(WatchFn) {
   for (const version of ['18.18.0', '20.19.0', '22']) {
     for (const file of ['smoke.mjs', 'smoke.cjs']) console.log(npm(['exec', '--yes', `--package=node@${version}`, '--', 'node', file]).trim());
   }
-  writeFileSync(join(temporary, 'consumer.mts'), `import {WatchFn, getWatchFnSchema} from '@watchfn/core';
-export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema();`);
-  writeFileSync(join(temporary, 'consumer.cts'), `import {WatchFn, getWatchFnSchema} from '@watchfn/core'; export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema();`);
+  writeFileSync(join(temporary, 'consumer.mts'), `import {WatchFn, getWatchFnSchema, getBugIssueSchema} from '@watchfn/core';
+export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema(); export const bugSchema = getBugIssueSchema();`);
+  writeFileSync(join(temporary, 'consumer.cts'), `import {WatchFn, getWatchFnSchema, getBugIssueSchema} from '@watchfn/core'; export const watch = new WatchFn({name:'typed',storage:'memory'}); export const router = watch.httpRouter; export const schema = getWatchFnSchema(); export const bugSchema = getBugIssueSchema();`);
   for (const mode of ['Node16', 'NodeNext']) execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--declaration', '--emitDeclarationOnly', '--strict', '--target', 'ES2022', '--module', mode, '--moduleResolution', mode, 'consumer.mts', 'consumer.cts'], { cwd: temporary, stdio: 'pipe', encoding: 'utf8' });
   // Use Node declarations contemporary with the promised compiler floor;
   // current @types/node releases can independently require a newer compiler.

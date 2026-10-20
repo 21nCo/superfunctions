@@ -16,6 +16,8 @@ import { SyntheticScheduler } from "../synthetics/scheduler";
 import { Router } from "@superfunctions/http";
 import { createWatchFnRouter } from "../http/router";
 
+import type { BugReportReference } from "../integrations/botfn/types";
+
 interface StorageWrite {
   completion: Promise<void>;
   failed: boolean;
@@ -82,6 +84,9 @@ export class WatchFn implements WatchFnInstance {
 
   constructor(config: WatchFnConfig) {
     this.config = WatchFnConfigSchema.parse(config);
+    if (this.config.botfn && (this.config.storage !== "database" || !this.config.database || this.config.auth?.enabled === false || !this.config.auth?.apiKey?.trim())) {
+      throw new TypeError("BotFn issue ingestion requires database storage and a configured API key");
+    }
     this.eventRouter = new EventRouter();
     this.exceptionHandler = new ExceptionHandler(this);
     this.httpInterceptor = new HttpInterceptor(this);
@@ -96,7 +101,7 @@ export class WatchFn implements WatchFnInstance {
     
     // Storage initialization logic
     if (this.config.storage === "database" && this.config.database) {
-        this.storage = new DatabaseStorage(this.config.database);
+        this.storage = new DatabaseStorage(this.config.database, "watchfn_events", this.config.botfn);
         this.queryEngine = new QueryEngine(this.storage);
     } else if (this.config.storage === "memory") {
         this.storage = new MemoryStorage();
@@ -109,12 +114,45 @@ export class WatchFn implements WatchFnInstance {
     if (!this.isStarted || !this.storage) throw new Error("WatchFn storage is unavailable");
     const storage = this.storage;
     const batch = [...events];
+    // Validate every authorized route before admitting any member of the batch.
+    if (storage instanceof DatabaseStorage && storage.bugIssues) {
+      for (const event of batch) if (event.type === "bug_report") storage.bugIssues.validate(event);
+    }
     const record = this.write(async () => {
       // A batch admitted before stop remains owned until its entire operation settles.
       for (const event of batch) await storage.add(event);
     });
     await record.completion;
     if (record.failed) throw record.error;
+  }
+
+  private requireBugIssues() {
+    if (!(this.storage instanceof DatabaseStorage) || !this.storage.bugIssues) throw new Error("BotFn issue integration is unavailable");
+    return this.storage.bugIssues;
+  }
+
+  /** Server-owned worker; awaiting stop also waits for admitted delivery work. */
+  async processBugIssues(limit?: number): Promise<{ processed: number }> {
+    if (!this.isStarted) throw new Error("WatchFn storage is unavailable");
+    const issues = this.requireBugIssues();
+    let result!: { processed: number };
+    const record = this.write(async () => { result = await issues.process(limit); });
+    await record.completion;
+    if (record.failed) throw record.error;
+    return result;
+  }
+
+  getBugIssueStatus(ref: BugReportReference) { return this.requireBugIssues().status(ref); }
+
+  /** Privileged operator method; the provider verifies destination and report marker. */
+  async reconcileBugIssue(ref: BugReportReference, issueId: string): Promise<boolean> {
+    if (!this.isStarted) throw new Error("WatchFn storage is unavailable");
+    const issues = this.requireBugIssues();
+    let result = false;
+    const record = this.write(async () => { result = await issues.reconcile(ref, issueId); });
+    await record.completion;
+    if (record.failed) throw record.error;
+    return result;
   }
 
   authorizeIngest(request: Request): boolean {
