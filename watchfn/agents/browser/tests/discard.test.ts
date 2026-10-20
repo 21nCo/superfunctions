@@ -78,3 +78,31 @@ it("counts the in-flight batch and unsent tail once, without reopening a closed 
   await expect(client.capture({ id: 4 })).rejects.toThrow("closed");
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+it("rejects admission when toJSON discards its generation without sending the event", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 202 })); vi.stubGlobal("fetch", fetch);
+  const client = setup();
+  await expect(client.capture({ toJSON() { client.discardPending(); return { id: "withdrawn" }; } }))
+    .rejects.toBeInstanceOf(BrowserDeliveryDiscardedError);
+  expect(client.pendingCount).toBe(0); expect(client.discardedCount).toBe(0);
+  await client.flush(); expect(fetch).not.toHaveBeenCalled();
+  await client.capture({ id: "later" }); expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("rechecks queue capacity after serialization reenters capture", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 202 })); vi.stubGlobal("fetch", fetch);
+  const client = setup({ maxQueueSize: 1 }); let inner!: Promise<void>;
+  const outer = client.capture({ toJSON() { inner = client.capture({ id: "inner" }); return { id: "outer" }; } });
+  await expect(outer).rejects.toThrow("queue is full"); await inner;
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual([{ id: "inner" }]);
+  expect(client.pendingCount).toBe(0);
+});
+
+it("rechecks closed state after serialization reenters close", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 202 })); vi.stubGlobal("fetch", fetch);
+  const client = setup(); let closed!: Promise<void>;
+  await expect(client.capture({ toJSON() { closed = client.close(); return { id: "closed" }; } }))
+    .rejects.toThrow("closed");
+  await closed; expect(client.pendingCount).toBe(0); expect(fetch).not.toHaveBeenCalled();
+});

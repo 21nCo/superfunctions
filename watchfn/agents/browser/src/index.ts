@@ -173,12 +173,18 @@ export class BrowserClient {
   }
 
   private enqueue(event: Record<string, unknown>): string {
+    const signal = this.deliveryGeneration.signal;
     if (this.closed) throw new Error("WatchFn browser client is closed");
     if (!event || typeof event !== "object" || Array.isArray(event)) throw new TypeError("Event must be an object");
     if (this.queue.length >= this.config.maxQueueSize!) throw new Error("WatchFn event queue is full");
     const serialized = JSON.stringify(event);
     if (typeof serialized !== "string" || !serialized.startsWith("{")) throw new TypeError("Event must serialize to an object");
     if (new TextEncoder().encode(serialized).byteLength > 64 * 1024) throw new RangeError("WatchFn event exceeds 64 KiB");
+    // Serialization invokes user getters/toJSON, which may reenter this client.
+    // Admit only into the generation and state that began this operation.
+    assertDeliveryActive(signal);
+    if (this.closed) throw new Error("WatchFn browser client is closed");
+    if (this.queue.length >= this.config.maxQueueSize!) throw new Error("WatchFn event queue is full");
     this.queue.push(serialized);
     return serialized;
   }

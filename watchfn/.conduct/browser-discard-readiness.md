@@ -8,7 +8,7 @@ Each delivery cycle uses its own abort generation. Discard replaces that generat
 
 ## Validation
 
-- Browser suite: 36 tests pass, including 6 new discard cases. Covers pending microtask, permanently hung and abort-ignoring fetch, late202/503, identical-envelope recapture, pending-promise ownership, retry timer cancellation, unsent tail plus in-flight count, cumulative counts and closed-client behavior.
+- Browser suite: 39 tests pass, including 9 new discard cases. Covers pending microtask, permanently hung and abort-ignoring fetch, late202/503, identical-envelope recapture, pending-promise ownership, retry timer cancellation, unsent tail plus in-flight count, cumulative counts and closed-client behavior. Serialization reentrancy tests cover toJSON invoking discard, close, or nested capture at queue capacity; admission rechecks generation and state before pushing.
 - Strict TypeScript source check (`tsc --noEmit --strict`, ES2022/DOM) passes.
 - Browser CJS/ESM/IIFE and declaration builds pass; runtime checks confirm both module formats export the new subclass and public getters/method.
 - Chrome154.0.8037.58 against actual local HTTP: server receives first hanging request; discard settles it locally; immediate new capture succeeds; transient503 retry wait is discarded; later capture and close succeed. The server receipt explicitly demonstrates that discard cannot retract a handed-off request.
