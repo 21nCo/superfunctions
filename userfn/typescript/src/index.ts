@@ -1,3 +1,5 @@
+import { HttpConfigService } from './core/config-http';
+export { ConfigRefreshError } from './core/config-http';
 import { IdentityManager } from './core/identity';
 import { FlagEvaluator } from './core/flags';
 import { SegmentEvaluator } from './core/segments';
@@ -17,9 +19,13 @@ export class UserFnClient {
   private feedback: FeedbackEngine;
   private renderer: VanillaRenderer | null = null;
   private options: UserFnOptions;
+  private configService?: HttpConfigService;
+  private readonly configEnvironment?: string;
 
   constructor(options: UserFnOptions) {
     this.options = options;
+    this.configEnvironment = options.environment;
+    this.configService = options.config ? new HttpConfigService(options) : undefined;
     this.identity = new IdentityManager();
     this.segments = new SegmentEvaluator(); 
     this.flags = new FlagEvaluator([], this.segments, options.environment);
@@ -106,12 +112,27 @@ export class UserFnClient {
   }
 
   /** Replace all local flag definitions, including bootstrapped values. */
+  /** Returns true when a verified new snapshot was applied, false for verified 304 reuse. */
+  async refreshConfig(): Promise<boolean> {
+    if (!this.configService) throw new Error('Signed configuration is not configured');
+    return this.configService.refresh(value => {
+      const flags = new FlagEvaluator(value.flags, this.segments, this.configEnvironment);
+      this.segments.setSegments(value.segments);
+      this.flags = flags;
+    });
+  }
+
+  /** Permanently closes this client's config transport and prevents any late application. */
+  closeConfig(): void { this.configService?.close(); }
+
   setFlags(flags: FlagConfig[]) {
     this.flags.setFlags(flags);
+    this.configService?.invalidate();
   }
 
   setSegments(segments: Segment[]) {
     this.segments.setSegments(segments);
+    this.configService?.invalidate();
   }
 
 

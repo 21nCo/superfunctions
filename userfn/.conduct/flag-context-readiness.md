@@ -145,3 +145,7 @@ boundary replacing server-side access control.
 Subsequent server checkpoint: [signed configuration service](flag-config-service-readiness.md)
 adds authenticated durable publication and signed/ETagged fetch. SDK transport,
 verification, refresh and exposure requirements above remain open.
+
+Subsequent SDK checkpoint: [verified explicit refresh](flag-config-sdk-readiness.md)
+adds opt-in TS/Python signature verification, conditional fetch and atomic
+application. Automatic background scheduling and exposures remain open.

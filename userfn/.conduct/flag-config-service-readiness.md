@@ -98,3 +98,7 @@ operator-store bridge/UI, owner/tag administration, broader segment parity and
 operators, edge/CDN delivery and hosted/browser/load acceptance remain open.
 Existing messaging, survey, feedback source, roadmap/changelog and all other
 original requirements remain in scope. This checkpoint does not claim them ready.
+
+Subsequent SDK checkpoint: [verified explicit refresh](flag-config-sdk-readiness.md)
+adds opt-in TS/Python signature verification, conditional fetch and atomic
+application. Automatic background scheduling and exposures remain open.

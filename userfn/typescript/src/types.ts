@@ -82,7 +82,16 @@ export interface FlagConfig {
   environmentOverrides?: Record<string, FlagEnvironmentOverride>;
 }
 
+export interface SignedConfigOptions {
+  tenantId: string;
+  /** Trusted key ID to base64url Ed25519 SPKI DER public key, provisioned out of band. */
+  trustedKeys: Record<string, string>;
+  timeoutMs?: number;
+  /** Explicit opt-in for local HTTP acceptance; use HTTPS in production. */
+  allowInsecureHttp?: boolean;
+}
 export interface UserFnOptions {
+  config?: SignedConfigOptions;
   apiKey: string;
   /** Exact, case-sensitive local flag environment; omitted means base configuration. */
   environment?: string;

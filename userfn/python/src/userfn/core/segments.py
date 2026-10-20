@@ -10,9 +10,7 @@ class SegmentEvaluator:
                 self.segments[s.id] = s
 
     def set_segments(self, segments: List[Segment]):
-        self.segments.clear()
-        for s in segments:
-            self.segments[s.id] = s
+        self.segments = {segment.id: segment for segment in segments}
 
     def evaluate(self, segment_id: str, traits: UserTraits) -> bool:
         segment = self.segments.get(segment_id)

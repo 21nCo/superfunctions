@@ -86,6 +86,14 @@ class FlagConfig:
     environment_overrides: Dict[str, FlagEnvironmentOverride] = field(default_factory=dict)
 
 @dataclass
+class SignedConfigOptions:
+    tenant_id: str
+    trusted_keys: Dict[str, str]
+    timeout_ms: int = 10000
+    allow_insecure_http: bool = False
+
+
+@dataclass
 class UserFnOptions:
     api_key: str
     endpoint: Optional[str] = None
@@ -95,6 +103,7 @@ class UserFnOptions:
     feedback_max_attempts: int = 3
     feedback_timeout_ms: int = 10000
     environment: Optional[str] = None
+    config: Optional[SignedConfigOptions] = None
 
 EventProperties = Dict[str, Any]
 

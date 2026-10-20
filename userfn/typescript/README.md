@@ -173,8 +173,8 @@ values; `setSegments(segments)` configures the segment evaluator used by rules.
 Identity changes do not erase configuration. Bootstrap values are already
 resolved and have no audience rules: supply an appropriate bootstrap for the
 current user, or replace it with rule definitions before switching audiences.
-Automatic configuration fetch, ETag refresh and signed configuration delivery
-remain unimplemented; `refreshInterval` does not schedule them.
+Opt-in explicit verified remote refresh is described below; `refreshInterval`
+does not schedule background requests.
 
 ## Local flag prerequisites and environments
 
@@ -207,5 +207,48 @@ Variations and prerequisites remain shared and cannot be replaced by an override
 nonfinite numbers, duplicate keys, unknown variation IDs and malformed rules or
 overrides throw `TypeError`, preserving the previous configuration. Returned
 structured values are copies. Existing segment operators and rule ordering remain
-unchanged. No remote configuration fetch, ETag/signature delivery or exposure
+unchanged. See verified remote configuration below for explicit fetch; exposure
 transport is added here. See [configuration contract and evidence](../.conduct/flag-context-readiness.md).
+
+### Verified remote configuration
+
+Configure explicit trusted Ed25519 keys and expected tenant/environment, then
+await refresh; constructing the client makes no configuration request:
+
+```ts
+const client = new UserFnClient({
+  apiKey: readerKey,
+  endpoint: 'https://userfn.example',
+  environment: 'production',
+  bootstrapFlags: { checkout: false },
+  config: {
+    tenantId: 'tenant-a',
+    trustedKeys: { 'key-1': publicKeySpkiBase64url },
+    timeoutMs: 10_000,
+  },
+});
+await client.refreshConfig(); // true: new verified snapshot; false: verified 304 reuse
+client.getFlag('checkout', false);
+client.closeConfig(); // permanent config-transport close; no late application
+```
+
+Keys are base64url SPKI DER Ed25519 public keys provisioned out of band, not keys
+from the response. HTTPS is required; `allowInsecureHttp: true` is an explicit
+local-test option. WebCrypto with Ed25519 is required (Node20 acceptance passes;
+browser acceptance remains open). The SDK verifies exact UTF-8 bytes, fixed
+algorithm/version, expected tenant/environment, trusted key ID and the matching
+SHA-256 ETag before applying validated flags and segments synchronously.
+
+A total request deadline, 264 KiB response cap, 4,096 read-chunk cap and 20-level
+JSON depth bound protect fetching. Configuration responses must use identity
+content encoding; compressed responses are rejected before consuming the body.
+Redirects and ambient cookies are disabled. Concurrent refresh calls share one
+operation. A 304 is accepted only for the retained verified snapshot. Successful
+manual `setFlags/setSegments` calls invalidate conditional reuse. A manual change
+or close during a request prevents its late application, even if fetch ignores
+abort. Invalid signatures/definitions, authentication failures and timeouts reject
+with `ConfigRefreshError` and preserve bootstrap or the last good configuration.
+
+This API is explicit refresh only: `refreshInterval` still does not schedule
+requests. Persistent caches, monotonic anti-rollback/freshness policy, automatic
+key distribution, browser acceptance and WatchFn exposures remain open.

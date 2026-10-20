@@ -8,8 +8,7 @@ export class SegmentEvaluator {
   }
 
   setSegments(segments: Segment[]) {
-    this.segments.clear();
-    segments.forEach(s => this.segments.set(s.id, s));
+    this.segments = new Map(segments.map(segment => [segment.id, segment]));
   }
 
   evaluate(segmentId: string, traits: UserTraits): boolean {

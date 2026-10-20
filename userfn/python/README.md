@@ -188,8 +188,8 @@ bootstrap values, and `set_segments(segments)` supplies rule segments.
 Identity changes preserve configuration. Bootstrap values have no audience
 rules: supply values appropriate to the current user or replace them with rule
 definitions before switching audiences. No network request is made for this
-bootstrap. Automatic configuration fetch, ETag refresh and signed configuration
-delivery remain unimplemented; `refresh_interval` does not schedule them.
+bootstrap. Explicit verified remote refresh is described below;
+`refresh_interval` does not schedule background requests.
 
 ## Local flag prerequisites and environments
 
@@ -228,3 +228,49 @@ non-BMP identifiers. Existing Python assignments for such identifiers can change
 read the [hash migration note](../.conduct/flag-hash-parity-readiness.md) before
 upgrading mixed SDK deployments. See the [configuration contract and evidence](../.conduct/flag-context-readiness.md)
 for remaining remote configuration, exposure and other original gates.
+
+### Verified remote configuration
+
+Install the optional transport/verification dependencies with `pip install
+'userfn[config]'`. The core wheel remains dependency-free.
+
+```python
+from userfn import UserFnClient, UserFnOptions, SignedConfigOptions
+
+client = UserFnClient(UserFnOptions(
+    api_key=reader_key,
+    endpoint="https://userfn.example",
+    environment="production",
+    bootstrap_flags={"checkout": False},
+    config=SignedConfigOptions(
+        tenant_id="tenant-a",
+        trusted_keys={"key-1": public_key_spki_base64url},
+        timeout_ms=10_000,
+    ),
+))
+changed = await client.refresh_config()
+value = client.get_flag("checkout", False)
+client.close_config()
+```
+
+No configuration fetch starts at construction. Keys are host-pinned base64url
+SPKI DER Ed25519 public keys. The SDK checks exact signed bytes, fixed
+algorithm/version, tenant/environment/key identity, matching SHA-256 ETag and
+all definitions before applying flags/segments without an await between them.
+The camelCase service wire model maps to native dataclasses, including rules,
+prerequisites and environment overrides. Concurrent refresh calls coalesce.
+
+HTTPS is required; `allow_insecure_http=True` is an explicit local-test opt-in.
+The request has a total deadline, 264 KiB decoded response limit, 4,096 bounded
+read chunks and a 20-level JSON depth limit. Identity content encoding is required;
+compressed configuration is rejected. Redirects, ambient proxy configuration and
+cookies are not used. Transport clients/response streams close after each request.
+A 304 can retain only an already verified snapshot. Successful manual
+`set_flags/set_segments` calls invalidate it; in-flight results cannot overwrite
+manual changes or apply after `close_config`. Errors raise `ConfigRefreshError`
+and preserve bootstrap/last-good values. Closing config is permanent for that
+client and prevents late application, including cancellation-resistant work.
+
+`refresh_interval` still does not schedule background work. Persistent caches,
+monotonic anti-rollback/freshness policy, key distribution/rotation administration
+and WatchFn exposures remain separate requirements.

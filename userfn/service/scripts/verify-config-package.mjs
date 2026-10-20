@@ -31,7 +31,7 @@ try{
  const response=await fetch(endpoint,{method:'PUT',headers:{authorization:'Bearer key','if-none-match':'*','content-type':'application/json'},body:JSON.stringify({flags:[{key:'feature',enabled:true,defaultValue:false,variations:[],rules:[],environmentOverrides:{production:{defaultValue:true}}}],segments:[]})});
  assert.equal(response.status,201);const bytes=Buffer.from(await response.arrayBuffer());assert.equal(verify(null,bytes,keys.publicKey,Buffer.from(response.headers.get('x-userfn-signature'),'base64url')),true);
  const snapshot=JSON.parse(bytes);assert.equal(snapshot.tenantId,'tenant');assert.equal(snapshot.environment,'production');assert.equal(snapshot.algorithm,'Ed25519');assert.equal(snapshot.keyId,'key-1');
- const client=new UserFnClient({apiKey:'unused',environment:'production'});client.setFlags(snapshot.flags);client.setSegments(snapshot.segments);assert.equal(client.getFlag('feature'),true);
+ const client=new UserFnClient({apiKey:'key',endpoint:'http://127.0.0.1:'+server.address().port,environment:'production',config:{tenantId:'tenant',trustedKeys:{'key-1':keys.publicKey.export({type:'spki',format:'der'}).toString('base64url')},allowInsecureHttp:true}});assert.equal(await client.refreshConfig(),true);assert.equal(client.getFlag('feature'),true);assert.equal(await client.refreshConfig(),false);client.closeConfig();
  assert.equal((await fetch(endpoint,{headers:{authorization:'Bearer key','if-none-match':response.headers.get('etag')}})).status,304);
  console.log('Fresh installed service/shared/SDK signed HTTP publication and conditional fetch passed');
 }finally{await new Promise(resolve=>server.close(resolve));}

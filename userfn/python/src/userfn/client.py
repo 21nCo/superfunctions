@@ -1,3 +1,4 @@
+from .core.config_http import HttpConfigService, ConfigRefreshError
 from typing import Optional, List, Any
 from .types import UserFnOptions, FlagValue, FlagConfig, UserTraits, Campaign, Survey, FeedbackSubmission
 from .core.identity import IdentityManager
@@ -10,6 +11,8 @@ from .core.messaging import MessagingEngine
 class UserFnClient:
     def __init__(self, options: UserFnOptions):
         self.options = options
+        self._config_environment = options.environment
+        self.config_service = HttpConfigService(options) if options.config else None
         self.identity = IdentityManager()
         self.feedback = FeedbackEngine(options.feedback_service if options.feedback_service is not None else (HttpFeedbackService(options) if options.endpoint else None), self.identity.get_user)
         self.segments = SegmentEvaluator()
@@ -42,11 +45,29 @@ class UserFnClient:
         return self.messaging.get_eligible_messages(trigger_type, context, user)
 
     # Configuration setters (normally loaded from server)
+    async def refresh_config(self) -> bool:
+        if not self.config_service:
+            raise ConfigRefreshError('Signed configuration is not configured')
+        def apply(flags, segments):
+            evaluator = FlagEvaluator(flags, self.segments, self._config_environment)
+            self.segments.set_segments(segments)
+            self.flags = evaluator
+        return await self.config_service.refresh(apply)
+
+    def close_config(self):
+        """Permanently close config transport; in-flight work cannot apply later."""
+        if self.config_service:
+            self.config_service.close()
+
     def set_flags(self, flags):
         self.flags.set_flags(flags)
+        if self.config_service:
+            self.config_service.invalidate()
 
     def set_segments(self, segments):
         self.segments.set_segments(segments)
+        if self.config_service:
+            self.config_service.invalidate()
 
     def set_campaigns(self, campaigns):
         self.messaging.set_campaigns(campaigns)

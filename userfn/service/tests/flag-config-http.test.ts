@@ -1,7 +1,7 @@
-import { beforeEach, afterEach, it, expect } from 'vitest';
+import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { Readable } from 'node:stream';
-import { generateKeyPairSync, verify, createHash } from 'node:crypto';
+import { generateKeyPairSync, verify, createHash, sign, webcrypto } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -21,6 +21,7 @@ const auth: AuthProvider = { async authenticate(request) {
 } };
 const payload = (value: unknown = true) => ({ flags: [{ key: 'enabled', enabled: true, defaultValue: value, variations: [], rules: [] }], segments: [] });
 let directory: string; let endpoint: string; let server: Server;
+let transform: ((response: Response) => Promise<Response>) | undefined;
 let databases: Kysely<any>[]; let services: ReturnType<typeof createUserFnService>[];
 function connect() {
   const sqlite = new Database(join(directory, 'config.sqlite')); sqlite.pragma('journal_mode = WAL'); sqlite.pragma('busy_timeout = 100');
@@ -31,6 +32,8 @@ function connect() {
 }
 const request = (method: string, body?: unknown, headers: Record<string,string> = {}, environment = 'production') => fetch(endpoint + '/config/' + environment, { method, headers: { authorization: 'Bearer editor-a', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 beforeEach(async () => {
+  transform = undefined;
+  vi.stubGlobal('crypto', webcrypto);
   directory = await mkdtemp(join(tmpdir(), 'userfn-config-')); databases = []; services = [connect()];
   const table = getUserFnSchema().userfn_flag_config;
   let migration = databases[0].schema.createTable(table.modelName);
@@ -40,14 +43,15 @@ beforeEach(async () => {
     try {
       const headers = new Headers(); for (const [key,value] of Object.entries(incoming.headers)) if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(',') : value);
       const req = new Request('http://127.0.0.1' + incoming.url, { method: incoming.method, headers, ...(['PUT','POST'].includes(incoming.method!) ? { body: Readable.toWeb(incoming) as ReadableStream, duplex: 'half' } : {}) } as RequestInit);
-      const result = await services[headers.get('x-connection') === 'second' ? 1 : 0].router.handle(req);
+      let result = await services[headers.get('x-connection') === 'second' ? 1 : 0].router.handle(req);
+      if (transform) result = await transform(result);
       outgoing.writeHead(result.status, Object.fromEntries(result.headers)); outgoing.end(Buffer.from(await result.arrayBuffer()));
     } catch { outgoing.writeHead(500); outgoing.end('fixture failure'); }
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Missing address'); endpoint = `http://127.0.0.1:${address.port}`;
 });
-afterEach(async () => { await new Promise<void>(resolve => server.close(() => resolve())); await Promise.all(databases.map(db => db.destroy())); await rm(directory, { recursive: true, force: true }); });
+afterEach(async () => { vi.unstubAllGlobals(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await Promise.all(databases.map(db => db.destroy())); await rm(directory, { recursive: true, force: true }); });
 
 it('publishes exact signed bytes, evaluates wire flags, handles conditional fetch and survives SQLite reopen', async () => {
   const publication = await request('PUT', payload({ nested: [false, 0, '文'] }), { 'if-none-match': '*' }); expect(publication.status).toBe(201);
@@ -108,8 +112,8 @@ it('delivers JSON compatible with the Python SDK and preserves prerequisite/envi
     { key: 'enabled', enabled: true, defaultValue: { nested: [false, 0, '文'] }, variations: [], rules: [], prerequisites: [{ key: 'gate', expectedValue: true }] },
   ], segments: [] };
   expect((await request('PUT', definition, { 'if-none-match': '*' }, 'python')).status).toBe(201);
-  const result = await promisify(execFile)('python3', [resolve('tests/python_config_wire_acceptance.py'), endpoint], { env: { ...process.env, PYTHONPATH: resolve('../python/src') }, timeout: 10000 });
-  expect(result.stdout).toContain('Python SDK evaluates actual HTTP wire configuration');
+  const result = await promisify(execFile)('python3', [resolve('tests/python_config_wire_acceptance.py'), endpoint, keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url')], { env: { ...process.env, PYTHONPATH: resolve('../python/src') }, timeout: 10000 });
+  expect(result.stdout).toContain('Python SDK verifies actual signed HTTP configuration');
 });
 
 it('round-trips segment constraints and ordered flag rules through the signed wire snapshot', async () => {
@@ -118,4 +122,57 @@ it('round-trips segment constraints and ordered flag rules through the signed wi
   const snapshot = await response.json(); const client = new UserFnClient({ apiKey: 'unused' }); client.setFlags(snapshot.flags); client.setSegments(snapshot.segments);
   client.identify('one', { plan: 'paid' }); expect(client.getFlag('enabled')).toBe(true);
   client.identify('two', { plan: 'free' }); expect(client.getFlag('enabled')).toBe(false);
+});
+
+
+const signedOptions = (timeoutMs = 1000) => ({ endpoint, apiKey: 'editor-a', environment: 'production', bootstrapFlags: { enabled: 'bootstrap' }, config: { tenantId: 'a', trustedKeys: { 'key-1': keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url') }, allowInsecureHttp: true, timeoutMs } });
+const signedResponse = (body: string) => new Response(body, { headers: { etag: '"' + createHash('sha256').update(body).digest('hex') + '"', 'x-userfn-signature': sign(null, Buffer.from(body), keys.privateKey).toString('base64url') } });
+
+it('refreshes the TypeScript SDK from actual signed HTTP and invalidates conditional reuse after manual setters', async () => {
+  expect((await request('PUT', payload('remote'), { 'if-none-match': '*' })).status).toBe(201);
+  const client = new UserFnClient(signedOptions());
+  expect(client.getFlag('enabled')).toBe('bootstrap');
+  expect(await Promise.all([client.refreshConfig(), client.refreshConfig()])).toEqual([true, true]);
+  expect(client.getFlag('enabled')).toBe('remote'); expect(await client.refreshConfig()).toBe(false);
+  client.setFlags(payload('manual').flags); transform = async () => new Response(null, { status: 304, headers: { etag: '"bogus"' } });
+  await expect(client.refreshConfig()).rejects.toThrow(); expect(client.getFlag('enabled')).toBe('manual');
+  transform = undefined; expect(await client.refreshConfig()).toBe(true); expect(client.getFlag('enabled')).toBe('remote');
+  client.setSegments([]); expect(await client.refreshConfig()).toBe(true);
+  client.closeConfig(); await expect(client.refreshConfig()).rejects.toThrow('closed');
+});
+
+it('preserves bootstrap and atomic last-good flags/segments on identity, signature, ETag and definition errors', async () => {
+  const publication = await request('PUT', { flags: [{ key: 'enabled', enabled: true, defaultValue: false, variations: [{ id: 'on', value: true }], rules: [{ id: 'rule', segmentId: 'members', variationId: 'on' }] }], segments: [{ id: 'members', name: 'Members', rules: [] }] }, { 'if-none-match': '*' });
+  const original = await publication.text(); const snapshot = JSON.parse(original);
+  const client = new UserFnClient(signedOptions()); client.identify('member');
+  transform = async () => new Response(null, { status: 304, headers: { etag: publication.headers.get('etag')! } });
+  await expect(client.refreshConfig()).rejects.toThrow(); expect(client.getFlag('enabled')).toBe('bootstrap');
+  transform = undefined; expect(await client.refreshConfig()).toBe(true); expect(client.getFlag('enabled')).toBe(true);
+  for (const invalid of [
+    { ...snapshot, tenantId: 'other' }, { ...snapshot, environment: 'staging' }, { ...snapshot, keyId: 'unknown' }, { ...snapshot, version: 2 }, { ...snapshot, algorithm: 'none' },
+    { ...snapshot, flags: [{ ...snapshot.flags[0], defaultVariationId: 'missing' }], segments: [] },
+    { ...snapshot, segments: [{ id: 'members', name: 'Members', rules: [{ id: 'bad', field: 'x', operator: 'unknown' }] }] },
+  ]) { transform = async () => signedResponse(JSON.stringify(invalid)); await expect(client.refreshConfig()).rejects.toThrow(); expect(client.getFlag('enabled')).toBe(true); }
+  transform = async () => new Response(original, { headers: { etag: publication.headers.get('etag')!, 'x-userfn-signature': 'A'.repeat(86) } });
+  await expect(client.refreshConfig()).rejects.toThrow(); expect(client.getFlag('enabled')).toBe(true);
+  transform = async () => { const response = signedResponse(original); response.headers.set('etag', '"wrong"'); return response; };
+  await expect(client.refreshConfig()).rejects.toThrow(); expect(client.getFlag('enabled')).toBe(true);
+  transform = async () => new Response('x'.repeat(270337)); await expect(client.refreshConfig()).rejects.toThrow();
+  transform = undefined; expect(await client.refreshConfig()).toBe(false);
+});
+
+it('enforces total refresh deadline and prevents late application even when fetch ignores cancellation', async () => {
+  const publication = await request('PUT', payload('late'), { 'if-none-match': '*' }); const body = await publication.text();
+  const network = new UserFnClient(signedOptions(20));
+  transform = async response => { await new Promise(resolve => setTimeout(resolve, 70)); return response; };
+  await expect(network.refreshConfig()).rejects.toThrow();
+  await new Promise(resolve => setTimeout(resolve, 90)); expect(network.getFlag('enabled')).toBe('bootstrap'); transform = undefined;
+  const client = new UserFnClient(signedOptions(20));
+  vi.stubGlobal('fetch', () => new Promise(resolve => setTimeout(() => resolve(signedResponse(body)), 60)));
+  await expect(client.refreshConfig()).rejects.toThrow();
+  await new Promise(resolve => setTimeout(resolve, 100)); expect(client.getFlag('enabled')).toBe('bootstrap');
+  const manual = new UserFnClient(signedOptions(1000)); const replacing = manual.refreshConfig();
+  manual.setFlags(payload('manual-during-request').flags); await expect(replacing).rejects.toThrow(); expect(manual.getFlag('enabled')).toBe('manual-during-request');
+  const closed = new UserFnClient(signedOptions(1000)); const pending = closed.refreshConfig(); closed.closeConfig();
+  await expect(pending).rejects.toThrow(); await new Promise(resolve => setTimeout(resolve, 100)); expect(closed.getFlag('enabled')).toBe('bootstrap');
 });

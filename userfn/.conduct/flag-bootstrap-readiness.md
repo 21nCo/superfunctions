@@ -21,3 +21,7 @@ and environment overrides remain open original requirements. The broader
 UserFn specification is incomplete.
 
 The subsequent [flag context checkpoint](flag-context-readiness.md) implements local prerequisites and environment overrides; the other delivery and broader original requirements remain open.
+
+Subsequent SDK checkpoint: [verified explicit refresh](flag-config-sdk-readiness.md)
+adds opt-in TS/Python signature verification, conditional fetch and atomic
+application. Automatic background scheduling and exposures remain open.
