@@ -1,3 +1,4 @@
+import { readEventSinkFamily } from '@probefn/storage';
 import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -351,20 +352,15 @@ async function readIndexedEvents(
   }
 
   try {
-    const contents = await readFile(path.resolve(repoRoot, relativePath), 'utf8');
-    const lines = contents
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    return lines.map((line, index) => {
-      const payload = JSON.parse(line) as Record<string, unknown>;
+    const records = await readEventSinkFamily(repoRoot, relativePath);
+    return records.map((record, index) => {
+      const payload = record.payload;
       const ts = typeof payload.ts === 'string' ? payload.ts : undefined;
       return {
         eventId: `${prefix}_${index + 1}`,
         category,
-        sinkPath: relativePath,
-        lineNumber: index + 1,
+        sinkPath: record.relativePath,
+        lineNumber: record.lineNumber,
         payload,
         ...(ts ? { ts } : {}),
       };

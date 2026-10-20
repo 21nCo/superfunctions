@@ -1,3 +1,4 @@
+import { readEventSinkFamily } from '@probefn/storage';
 import { createServer, type Server as NetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import type { Readable, Writable } from 'node:stream';
@@ -279,15 +280,7 @@ export class ProbefnRuntime {
     }
 
     try {
-      const contents = await readFile(path.resolve(this.repoRoot, relativePath), 'utf8');
-      const trimmed = contents.trim();
-      if (trimmed.length === 0) {
-        return [];
-      }
-
-      return trimmed
-        .split('\n')
-        .map((line) => JSON.parse(line) as Record<string, JsonValue>);
+      return (await readEventSinkFamily(this.repoRoot, relativePath)).map(record => record.payload as Record<string, JsonValue>);
     } catch (error) {
       if (
         error &&

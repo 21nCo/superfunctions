@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
+import { readEventSinkFamily } from '@probefn/storage';
 
 export interface EventDeltaBaseline {
   consoleErrors: number;
@@ -66,13 +65,7 @@ async function readNdjson(
   }
 
   try {
-    const contents = await readFile(path.resolve(repoRoot, relativePath), 'utf8');
-    const trimmed = contents.trim();
-    if (trimmed.length === 0) {
-      return [];
-    }
-
-    return trimmed.split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    return (await readEventSinkFamily(repoRoot, relativePath)).map(record => record.payload);
   } catch (error) {
     if (
       error &&
