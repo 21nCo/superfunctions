@@ -30,7 +30,8 @@ Operator = Literal[
     'gte',
     'lt',
     'lte',
-    'regex'
+    'regex',
+    'startsWith'
 ]
 
 @dataclass

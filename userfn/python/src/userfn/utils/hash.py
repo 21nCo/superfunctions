@@ -1,3 +1,5 @@
+from .text import utf16_units
+
 def fnv1a_hash(s: str) -> int:
     """
     Simple FNV-1a hash implementation for deterministic bucketing.
@@ -9,10 +11,8 @@ def fnv1a_hash(s: str) -> int:
     mask = 0xFFFFFFFF
 
     # Match JS charCodeAt exactly, including surrogate pairs and lone surrogates.
-    encoded = s.encode("utf-16-le", errors="surrogatepass")
-    for offset in range(0, len(encoded), 2):
-        code_unit = encoded[offset] | (encoded[offset + 1] << 8)
-        hash_val ^= code_unit
+    for code_unit in utf16_units(s):
+        hash_val ^= ord(code_unit)
         hash_val = (hash_val * 0x01000193) & mask
 
     # return hash >>> 0 (unsigned right shift)

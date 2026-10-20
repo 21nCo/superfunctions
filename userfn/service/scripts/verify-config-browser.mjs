@@ -35,7 +35,7 @@ try {
       outgoing.writeHead(response.status, Object.fromEntries(response.headers)); outgoing.end(Buffer.from(await response.arrayBuffer()));
     } catch { outgoing.writeHead(500); outgoing.end('fixture failure'); }
   });
-  const publication = await fetch(endpoint + '/config/production', { method: 'PUT', headers: { authorization: 'Bearer key', 'content-type': 'application/json', 'if-none-match': '*' }, body: JSON.stringify({ flags: [{ key: 'feature', enabled: true, defaultValue: true, variations: [], rules: [] }], segments: [] }) });
+  const publication = await fetch(endpoint + '/config/production', { method: 'PUT', headers: { authorization: 'Bearer key', 'content-type': 'application/json', 'if-none-match': '*' }, body: JSON.stringify({ flags: [{ key: 'feature', enabled: true, defaultValue: true, variations: [], rules: [] }, { key: 'prefix', enabled: true, defaultValue: false, variations: [{ id: 'on', value: true }], rules: [{ id: 'prefix', segmentId: 'prefix', variationId: 'on' }] }], segments: [{ id: 'prefix', name: 'Prefix', rules: [{ id: 'prefix', field: 'plan', operator: 'startsWith', value: 'pro' }] }] }) });
   assert.equal(publication.status, 201);
   browser = await chromium.launch({ headless: true, executablePath: process.env.USERFN_CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' });
   const page = await browser.newPage(); await page.goto(origin);
@@ -43,9 +43,10 @@ try {
     const { UserFnClient } = await import('/sdk.js'); document.cookie = 'ambient=must-not-leak; path=/';
     globalThis.makeClient = (tenantId = 'tenant', timeoutMs = 1000) => new UserFnClient({ apiKey: 'key', endpoint, environment: 'production', refreshInterval: 100, bootstrapFlags: { feature: 'bootstrap' }, config: { tenantId, trustedKeys: { 'key-1': trustedKey }, allowInsecureHttp: true, timeoutMs } });
     globalThis.client = globalThis.makeClient();
-    return { crypto: !!crypto.subtle, first: await client.refreshConfig(), second: await client.refreshConfig(), value: client.getFlag('feature') };
+    const first=await client.refreshConfig(); const second=await client.refreshConfig(); client.identify('person',{plan:'professional'}); const prefix=client.getFlag('prefix'); client.identify('person',{plan:true}); const nonString=client.getFlag('prefix');
+    return { crypto: !!crypto.subtle, first, second, value: client.getFlag('feature'), prefix, nonString };
   }, { endpoint, trustedKey });
-  assert.deepEqual(result, { crypto: true, first: true, second: false, value: true });
+  assert.deepEqual(result, { crypto: true, first: true, second: false, value: true, prefix: true, nonString: false });
   assert.ok(seen.some(request => request.method === 'OPTIONS' && request.origin === origin));
   assert.ok(seen.some(request => request.method === 'GET' && request.conditional));
   assert.ok(seen.filter(request => request.method === 'GET').every(request => request.cookie === undefined));
@@ -61,7 +62,7 @@ try {
   const stoppedCount = seen.length; await new Promise(resolve => setTimeout(resolve, 150)); assert.equal(seen.length, stoppedCount);
   const blocked = await browser.newPage(); await blocked.goto(blockedOrigin);
   assert.equal(await blocked.evaluate(async ({ endpoint, trustedKey }) => { const { UserFnClient } = await import('/sdk.js'); const client = new UserFnClient({ apiKey: 'key', endpoint, environment: 'production', config: { tenantId: 'tenant', trustedKeys: { 'key-1': trustedKey }, allowInsecureHttp: true } }); try { await client.refreshConfig(); return false; } catch { return true; } }, { endpoint, trustedKey }), true);
-  console.log(JSON.stringify({ browser: await browser.version(), verifiedRefresh: true, conditional304: true, allowedAndBlockedCors: true, ambientCookiesOmitted: true, invalidSignatureAndTenantPreserveState: true, deadlinePreservesBootstrap: true, scheduledRefreshStopsCleanly: true }));
+  console.log(JSON.stringify({ browser: await browser.version(), verifiedRefresh: true, strictPrefixTargeting: true, conditional304: true, allowedAndBlockedCors: true, ambientCookiesOmitted: true, invalidSignatureAndTenantPreserveState: true, deadlinePreservesBootstrap: true, scheduledRefreshStopsCleanly: true }));
 } finally {
   await browser?.close();
   for (const server of servers) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

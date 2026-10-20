@@ -33,7 +33,8 @@ export type Operator =
   | 'gte'
   | 'lt'
   | 'lte'
-  | 'regex';
+  | 'regex'
+  | 'startsWith';
 
 export interface SegmentRule {
   id: string;

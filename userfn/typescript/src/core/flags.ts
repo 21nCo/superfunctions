@@ -1,3 +1,4 @@
+import { canonicalJson, jsonEqual } from '../utils/json';
 import { FlagConfig, FlagValue, UserIdentity, FlagRule } from '../types';
 import { SegmentEvaluator } from './segments';
 import { getBucket } from '../utils/hash';
@@ -54,7 +55,7 @@ export class FlagEvaluator {
         if (active.has(prerequisite.key)) { finish(unavailable); continue; }
         const result = resolved.get(prerequisite.key);
         if (!result) { stack.push({ key: prerequisite.key, next: 0 }); continue; }
-        if (!result.available || canonicalJson(result.value) !== canonicalJson(prerequisite.expectedValue)) { finish(unavailable); continue; }
+        if (!result.available || !jsonEqual(result.value, prerequisite.expectedValue)) { finish(unavailable); continue; }
         frame.next++;
       } else finish({ available: true, ...this.evaluateRules(frame.flag, user) });
     }
@@ -129,29 +130,6 @@ export class FlagEvaluator {
     return true;
   }
 }
-/** JSON structural equality: objects ignore key order; bool, number and string stay distinct. */
-function canonicalJson(value: unknown, ancestors = new Set<object>()): string {
-  if (value === null) return 'null';
-  if (typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
-  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
-  if (typeof value !== 'object' || ancestors.has(value)) throw new TypeError('Flag values must be finite, acyclic JSON values');
-  if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) throw new TypeError('Flag values must use plain JSON objects');
-  const keys = Object.keys(value);
-  if (Reflect.ownKeys(value).length !== keys.length + (Array.isArray(value) ? 1 : 0) || keys.some(key => {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
-    return descriptor.get !== undefined || descriptor.set !== undefined;
-  })) throw new TypeError('Flag values must use enumerable JSON data properties');
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      if (keys.length !== value.length) throw new TypeError('Flag arrays must not contain holes or extra properties');
-      for (let index = 0; index < value.length; index++) if (!own(value, String(index))) throw new TypeError('Flag arrays must not contain holes');
-      return '[' + value.map(item => canonicalJson(item, ancestors)).join(',') + ']';
-    }
-    return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonicalJson((value as Record<string, unknown>)[key], ancestors)).join(',') + '}';
-  } finally { ancestors.delete(value); }
-}
-
 // Inspect descriptors before reading values so accessors/toJSON cannot alter the snapshot.
 // Optional undefined data properties remain supported and are omitted during serialization.
 function validateConfigurationData(value: unknown, ancestors = new Set<object>()): void {
@@ -175,7 +153,7 @@ export function validateFlagDefinitions(flags: FlagConfig[]): void {
   const fail = (message: string): never => { throw new TypeError('Invalid flag configuration: ' + message); };
   const object = (value: unknown): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
   const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
-  const operators = new Set(['equals', 'does_not_equal', 'contains', 'does_not_contain', 'in', 'not_in', 'exists', 'does_not_exist', 'gt', 'gte', 'lt', 'lte', 'regex']);
+  const operators = new Set(['equals', 'does_not_equal', 'contains', 'does_not_contain', 'in', 'not_in', 'exists', 'does_not_exist', 'gt', 'gte', 'lt', 'lte', 'regex', 'startsWith']);
   if (!Array.isArray(flags)) fail('flags must be an array');
   const keys = new Set<string>();
   for (const flag of flags) {

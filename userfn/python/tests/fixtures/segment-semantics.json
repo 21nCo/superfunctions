@@ -1,0 +1,888 @@
+[
+  {
+    "id": "equal-bool-bool",
+    "operator": "equals",
+    "traits": {
+      "subject": true
+    },
+    "value": true,
+    "expected": true
+  },
+  {
+    "id": "unequal-bool-bool",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": true
+    },
+    "value": true,
+    "expected": false
+  },
+  {
+    "id": "equal-bool-number",
+    "operator": "equals",
+    "traits": {
+      "subject": true
+    },
+    "value": 1,
+    "expected": false
+  },
+  {
+    "id": "unequal-bool-number",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": true
+    },
+    "value": 1,
+    "expected": true
+  },
+  {
+    "id": "equal-bool-string",
+    "operator": "equals",
+    "traits": {
+      "subject": true
+    },
+    "value": "true",
+    "expected": false
+  },
+  {
+    "id": "unequal-bool-string",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": true
+    },
+    "value": "true",
+    "expected": true
+  },
+  {
+    "id": "equal-number-string",
+    "operator": "equals",
+    "traits": {
+      "subject": 1
+    },
+    "value": "1",
+    "expected": false
+  },
+  {
+    "id": "unequal-number-string",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": 1
+    },
+    "value": "1",
+    "expected": true
+  },
+  {
+    "id": "equal-zero",
+    "operator": "equals",
+    "traits": {
+      "subject": 0
+    },
+    "value": 0,
+    "expected": true
+  },
+  {
+    "id": "unequal-zero",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": 0
+    },
+    "value": 0,
+    "expected": false
+  },
+  {
+    "id": "equal-empty-string",
+    "operator": "equals",
+    "traits": {
+      "subject": ""
+    },
+    "value": "",
+    "expected": true
+  },
+  {
+    "id": "unequal-empty-string",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": ""
+    },
+    "value": "",
+    "expected": false
+  },
+  {
+    "id": "equal-object-order",
+    "operator": "equals",
+    "traits": {
+      "subject": {
+        "a": 1,
+        "b": [
+          false,
+          0
+        ]
+      }
+    },
+    "value": {
+      "b": [
+        false,
+        0
+      ],
+      "a": 1
+    },
+    "expected": true
+  },
+  {
+    "id": "unequal-object-order",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": {
+        "a": 1,
+        "b": [
+          false,
+          0
+        ]
+      }
+    },
+    "value": {
+      "b": [
+        false,
+        0
+      ],
+      "a": 1
+    },
+    "expected": false
+  },
+  {
+    "id": "equal-object-types",
+    "operator": "equals",
+    "traits": {
+      "subject": {
+        "a": 1
+      }
+    },
+    "value": {
+      "a": true
+    },
+    "expected": false
+  },
+  {
+    "id": "unequal-object-types",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": {
+        "a": 1
+      }
+    },
+    "value": {
+      "a": true
+    },
+    "expected": true
+  },
+  {
+    "id": "equal-array-order",
+    "operator": "equals",
+    "traits": {
+      "subject": [
+        1,
+        2
+      ]
+    },
+    "value": [
+      2,
+      1
+    ],
+    "expected": false
+  },
+  {
+    "id": "unequal-array-order",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": [
+        1,
+        2
+      ]
+    },
+    "value": [
+      2,
+      1
+    ],
+    "expected": true
+  },
+  {
+    "id": "equal-array-structural",
+    "operator": "equals",
+    "traits": {
+      "subject": [
+        {
+          "a": false
+        }
+      ]
+    },
+    "value": [
+      {
+        "a": false
+      }
+    ],
+    "expected": true
+  },
+  {
+    "id": "unequal-array-structural",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": [
+        {
+          "a": false
+        }
+      ]
+    },
+    "value": [
+      {
+        "a": false
+      }
+    ],
+    "expected": false
+  },
+  {
+    "id": "equal-large-number",
+    "operator": "equals",
+    "traits": {
+      "subject": 9007199254740992
+    },
+    "value": 9007199254740993,
+    "expected": true
+  },
+  {
+    "id": "unequal-large-number",
+    "operator": "does_not_equal",
+    "traits": {
+      "subject": 9007199254740992
+    },
+    "value": 9007199254740993,
+    "expected": false
+  },
+  {
+    "id": "missing-equals",
+    "operator": "equals",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-does_not_equal",
+    "operator": "does_not_equal",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-contains",
+    "operator": "contains",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-does_not_contain",
+    "operator": "does_not_contain",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-in",
+    "operator": "in",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-not_in",
+    "operator": "not_in",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-gt",
+    "operator": "gt",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-gte",
+    "operator": "gte",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-lt",
+    "operator": "lt",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-lte",
+    "operator": "lte",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-regex",
+    "operator": "regex",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "missing-startsWith",
+    "operator": "startsWith",
+    "traits": {},
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "null-equal",
+    "operator": "equals",
+    "traits": {
+      "subject": null
+    },
+    "value": null,
+    "expected": false
+  },
+  {
+    "id": "in-bool-number",
+    "operator": "in",
+    "traits": {
+      "subject": true
+    },
+    "value": [
+      1
+    ],
+    "expected": false
+  },
+  {
+    "id": "not-in-bool-number",
+    "operator": "not_in",
+    "traits": {
+      "subject": true
+    },
+    "value": [
+      1
+    ],
+    "expected": true
+  },
+  {
+    "id": "in-bool-string",
+    "operator": "in",
+    "traits": {
+      "subject": true
+    },
+    "value": [
+      "true"
+    ],
+    "expected": false
+  },
+  {
+    "id": "not-in-bool-string",
+    "operator": "not_in",
+    "traits": {
+      "subject": true
+    },
+    "value": [
+      "true"
+    ],
+    "expected": true
+  },
+  {
+    "id": "in-bool-bool",
+    "operator": "in",
+    "traits": {
+      "subject": true
+    },
+    "value": [
+      false,
+      true
+    ],
+    "expected": true
+  },
+  {
+    "id": "not-in-bool-bool",
+    "operator": "not_in",
+    "traits": {
+      "subject": true
+    },
+    "value": [
+      false,
+      true
+    ],
+    "expected": false
+  },
+  {
+    "id": "in-object",
+    "operator": "in",
+    "traits": {
+      "subject": {
+        "k": [
+          1,
+          false
+        ]
+      }
+    },
+    "value": [
+      {
+        "k": [
+          1,
+          false
+        ]
+      }
+    ],
+    "expected": true
+  },
+  {
+    "id": "not-in-object",
+    "operator": "not_in",
+    "traits": {
+      "subject": {
+        "k": [
+          1,
+          false
+        ]
+      }
+    },
+    "value": [
+      {
+        "k": [
+          1,
+          false
+        ]
+      }
+    ],
+    "expected": false
+  },
+  {
+    "id": "in-empty",
+    "operator": "in",
+    "traits": {
+      "subject": 0
+    },
+    "value": [],
+    "expected": false
+  },
+  {
+    "id": "not-in-empty",
+    "operator": "not_in",
+    "traits": {
+      "subject": 0
+    },
+    "value": [],
+    "expected": true
+  },
+  {
+    "id": "in-invalid-list",
+    "operator": "in",
+    "traits": {
+      "subject": "abc"
+    },
+    "value": "abc",
+    "expected": false
+  },
+  {
+    "id": "not-in-invalid-list",
+    "operator": "not_in",
+    "traits": {
+      "subject": "abc"
+    },
+    "value": "abc",
+    "expected": false
+  },
+  {
+    "id": "contains",
+    "operator": "contains",
+    "traits": {
+      "subject": "hello world"
+    },
+    "value": "world",
+    "expected": true
+  },
+  {
+    "id": "contains-case",
+    "operator": "contains",
+    "traits": {
+      "subject": "Hello"
+    },
+    "value": "hello",
+    "expected": false
+  },
+  {
+    "id": "contains-number",
+    "operator": "contains",
+    "traits": {
+      "subject": 123
+    },
+    "value": "2",
+    "expected": false
+  },
+  {
+    "id": "not-contains",
+    "operator": "does_not_contain",
+    "traits": {
+      "subject": "abc"
+    },
+    "value": "z",
+    "expected": true
+  },
+  {
+    "id": "not-contains-bool",
+    "operator": "does_not_contain",
+    "traits": {
+      "subject": true
+    },
+    "value": "x",
+    "expected": false
+  },
+  {
+    "id": "prefix",
+    "operator": "startsWith",
+    "traits": {
+      "subject": "prefix-value"
+    },
+    "value": "prefix-",
+    "expected": true
+  },
+  {
+    "id": "prefix-empty",
+    "operator": "startsWith",
+    "traits": {
+      "subject": "text"
+    },
+    "value": "",
+    "expected": true
+  },
+  {
+    "id": "prefix-unicode",
+    "operator": "startsWith",
+    "traits": {
+      "subject": "\u6587\ud83d\ude00test"
+    },
+    "value": "\u6587\ud83d\ude00",
+    "expected": true
+  },
+  {
+    "id": "prefix-case",
+    "operator": "startsWith",
+    "traits": {
+      "subject": "Prod"
+    },
+    "value": "prod",
+    "expected": false
+  },
+  {
+    "id": "prefix-number",
+    "operator": "startsWith",
+    "traits": {
+      "subject": 123
+    },
+    "value": "1",
+    "expected": false
+  },
+  {
+    "id": "regex-match",
+    "operator": "regex",
+    "traits": {
+      "subject": "abc123"
+    },
+    "value": "^[a-z]+[0-9]+$",
+    "expected": true
+  },
+  {
+    "id": "regex-invalid",
+    "operator": "regex",
+    "traits": {
+      "subject": "abc"
+    },
+    "value": "[",
+    "expected": false
+  },
+  {
+    "id": "regex-number",
+    "operator": "regex",
+    "traits": {
+      "subject": 123
+    },
+    "value": "123",
+    "expected": false
+  },
+  {
+    "id": "numeric-decimal-string",
+    "operator": "gte",
+    "traits": {
+      "subject": "25"
+    },
+    "value": 18,
+    "expected": true
+  },
+  {
+    "id": "numeric-trimmed-decimal",
+    "operator": "gt",
+    "traits": {
+      "subject": " \t+2.5e1\n"
+    },
+    "value": "24",
+    "expected": true
+  },
+  {
+    "id": "numeric-decimal-fraction",
+    "operator": "lt",
+    "traits": {
+      "subject": ".5"
+    },
+    "value": "1.",
+    "expected": true
+  },
+  {
+    "id": "numeric-negative",
+    "operator": "lte",
+    "traits": {
+      "subject": "-2"
+    },
+    "value": "-2",
+    "expected": true
+  },
+  {
+    "id": "numeric-empty",
+    "operator": "gte",
+    "traits": {
+      "subject": ""
+    },
+    "value": 0,
+    "expected": false
+  },
+  {
+    "id": "numeric-bool",
+    "operator": "gt",
+    "traits": {
+      "subject": true
+    },
+    "value": 0,
+    "expected": false
+  },
+  {
+    "id": "numeric-array",
+    "operator": "gte",
+    "traits": {
+      "subject": [
+        1
+      ]
+    },
+    "value": 0,
+    "expected": false
+  },
+  {
+    "id": "numeric-hex",
+    "operator": "gt",
+    "traits": {
+      "subject": "0x10"
+    },
+    "value": 2,
+    "expected": false
+  },
+  {
+    "id": "numeric-infinity",
+    "operator": "gt",
+    "traits": {
+      "subject": "Infinity"
+    },
+    "value": 0,
+    "expected": false
+  },
+  {
+    "id": "numeric-overflow",
+    "operator": "gt",
+    "traits": {
+      "subject": "1e999"
+    },
+    "value": 0,
+    "expected": false
+  },
+  {
+    "id": "numeric-underscore",
+    "operator": "gt",
+    "traits": {
+      "subject": "1_000"
+    },
+    "value": 0,
+    "expected": false
+  },
+  {
+    "id": "numeric-unicode-digit",
+    "operator": "gt",
+    "traits": {
+      "subject": "\u0662"
+    },
+    "value": 0,
+    "expected": false
+  },
+  {
+    "id": "numeric-nonascii-space",
+    "operator": "gte",
+    "traits": {
+      "subject": "\u00851"
+    },
+    "value": 0,
+    "expected": false
+  },
+  {
+    "id": "exists-false",
+    "operator": "exists",
+    "traits": {
+      "subject": false
+    },
+    "value": null,
+    "expected": true
+  },
+  {
+    "id": "not-exists-false",
+    "operator": "does_not_exist",
+    "traits": {
+      "subject": false
+    },
+    "value": null,
+    "expected": false
+  },
+  {
+    "id": "exists-zero",
+    "operator": "exists",
+    "traits": {
+      "subject": 0
+    },
+    "value": null,
+    "expected": true
+  },
+  {
+    "id": "not-exists-zero",
+    "operator": "does_not_exist",
+    "traits": {
+      "subject": 0
+    },
+    "value": null,
+    "expected": false
+  },
+  {
+    "id": "exists-empty",
+    "operator": "exists",
+    "traits": {
+      "subject": ""
+    },
+    "value": null,
+    "expected": true
+  },
+  {
+    "id": "not-exists-empty",
+    "operator": "does_not_exist",
+    "traits": {
+      "subject": ""
+    },
+    "value": null,
+    "expected": false
+  },
+  {
+    "id": "exists-null",
+    "operator": "exists",
+    "traits": {
+      "subject": null
+    },
+    "value": null,
+    "expected": false
+  },
+  {
+    "id": "not-exists-null",
+    "operator": "does_not_exist",
+    "traits": {
+      "subject": null
+    },
+    "value": null,
+    "expected": true
+  },
+  {
+    "id": "exists-missing",
+    "operator": "exists",
+    "traits": {},
+    "value": null,
+    "expected": false
+  },
+  {
+    "id": "not-exists-missing",
+    "operator": "does_not_exist",
+    "traits": {},
+    "value": null,
+    "expected": true
+  },
+  {
+    "id": "contains-high-surrogate",
+    "operator": "contains",
+    "traits": {
+      "subject": "\ud83d\ude00"
+    },
+    "value": "\ud83d",
+    "expected": true
+  },
+  {
+    "id": "contains-low-surrogate",
+    "operator": "contains",
+    "traits": {
+      "subject": "\ud83d\ude00"
+    },
+    "value": "\ude00",
+    "expected": true
+  },
+  {
+    "id": "prefix-high-surrogate",
+    "operator": "startsWith",
+    "traits": {
+      "subject": "\ud83d\ude00"
+    },
+    "value": "\ud83d",
+    "expected": true
+  },
+  {
+    "id": "prefix-low-surrogate",
+    "operator": "startsWith",
+    "traits": {
+      "subject": "\ud83d\ude00"
+    },
+    "value": "\ude00",
+    "expected": false
+  },
+  {
+    "id": "not-contains-surrogate",
+    "operator": "does_not_contain",
+    "traits": {
+      "subject": "\ud83d\ude00"
+    },
+    "value": "\ud83d",
+    "expected": false
+  },
+  {
+    "id": "equal-unicode",
+    "operator": "equals",
+    "traits": {
+      "subject": "\ud83d\ude00"
+    },
+    "value": "\ud83d\ude00",
+    "expected": true
+  },
+  {
+    "id": "equal-unicode-key",
+    "operator": "equals",
+    "traits": {
+      "subject": {
+        "\ud83d\ude00": true
+      }
+    },
+    "value": {
+      "\ud83d\ude00": true
+    },
+    "expected": true
+  }
+]

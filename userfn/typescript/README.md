@@ -322,3 +322,20 @@ Executable or unsupported schemes (including `javascript:`, `data:`, `file:` and
 `blob:`) and malformed URLs are rejected without navigation. URLs are checked
 again when clicked, including after campaign objects are mutated. Applications
 remain responsible for choosing trusted destinations and redirect behavior.
+
+### Targeting operator compatibility
+
+Segments and inline flag constraints use type-sensitive JSON equality for
+`equals`/`does_not_equal` and array membership `in`/`not_in`. Objects compare
+structurally (key order ignored), arrays retain order, and booleans never equal
+numbers or strings. Text operators `contains`, `does_not_contain`, `startsWith`
+and `regex` require string operands. Numeric comparisons retain decimal-string
+support (`"25" >= 18`), but reject booleans, empty strings and nonfinite/hex inputs.
+Missing/null traits remain absent; negative operators do not match invalid inputs.
+
+This changes assignments that relied on implicit coercion or object identity.
+Normalize traits/rule values explicitly and upgrade TS/Python together; see the
+[semantic contract and migration examples](../.conduct/targeting-semantics-readiness.md).
+`startsWith` is case-sensitive. Prefix/substring matching follows JS UTF-16 units
+in both SDKs. Regex still uses each language's native engine; range, geo and
+time-window operators and bounded regex execution remain unfinished.

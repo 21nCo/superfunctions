@@ -2,7 +2,7 @@ import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { Readable } from 'node:stream';
 import { generateKeyPairSync, verify, createHash, sign, webcrypto } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -208,4 +208,27 @@ it('runs one real HTTP background loop, retains verified conditional state on re
   const before = configReads; client.startConfigRefresh(); await until(() => configReads > before); await client.stopConfigRefresh();
   await new Promise(resolve => setTimeout(resolve, 200)); expect(client.getFlag('enabled')).toBe('scheduled');
   await client.closeConfig(); expect(() => client.startConfigRefresh()).toThrow('closed');
+});
+
+
+it('publishes and verifies the shared targeting semantics through both SDKs and inline constraints', async () => {
+  const fixture = resolve('../python/tests/fixtures/segment-semantics.json');
+  const vectors = JSON.parse(await readFile(fixture, 'utf8')) as Array<{id:string;operator:string;traits:Record<string,unknown>;value:unknown;expected:boolean}>;
+  const rules = vectors.map((vector,index) => ({id:'rule-'+index,field:'subject',operator:vector.operator,value:vector.value}));
+  const config = {flags: vectors.map((_,index) => ({key:'case-'+index,enabled:true,defaultValue:false,variations:[{id:'on',value:true}],rules:[{id:'matched',segmentId:'segment-'+index,constraints:[rules[index]],variationId:'on'}]})), segments:rules.map((rule,index) => ({id:'segment-'+index,name:'Fixture',rules:[rule]}))};
+  const published = await request('PUT', config, {'if-none-match':'*'}, 'segments');
+  expect(published.status).toBe(201);
+  const key=keys.publicKey.export({type:'spki',format:'der'}).toString('base64url');
+  const client=new UserFnClient({apiKey:'reader-a',endpoint,environment:'segments',config:{tenantId:'a',trustedKeys:{'key-1':key},allowInsecureHttp:true}});
+  expect(await client.refreshConfig()).toBe(true);
+  for (const [index,vector] of vectors.entries()) {
+    client.identify('fixture', vector.traits);
+    expect(client.getFlag('case-'+index),vector.id).toBe(vector.expected);
+  }
+  const python=await promisify(execFile)('python3',[resolve('tests/python_segment_wire_acceptance.py'),endpoint,key,fixture],{env:{...process.env,PYTHONPATH:resolve('../python/src')}});
+  expect(python.stdout).toContain('match shared vectors');
+  config.segments[0].rules[0].operator='unknown-operator';
+  expect((await request('PUT',config,{'if-match':published.headers.get('etag')!},'segments')).status).toBe(400);
+  expect(await client.refreshConfig()).toBe(false);
+  await client.closeConfig();
 });

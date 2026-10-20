@@ -1,3 +1,4 @@
+from ..utils.json import validate_json as _validate_json, json_equal as _json_equal
 from typing import List, Dict, Optional, Any
 from dataclasses import replace
 from copy import deepcopy
@@ -148,65 +149,6 @@ class FlagEvaluator:
         return True
 
 
-def _validate_json(value: Any, ancestors=None):
-    if value is None or isinstance(value, (bool, str)):
-        return
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        try:
-            if math.isfinite(value):
-                return
-        except OverflowError:
-            pass
-        raise TypeError("Flag values must contain finite JSON numbers")
-    if type(value) not in (dict, list):
-        raise TypeError("Flag values must use plain JSON objects and arrays")
-    ancestors = set() if ancestors is None else ancestors
-    if id(value) in ancestors:
-        raise TypeError("Flag values must be acyclic JSON values")
-    ancestors.add(id(value))
-    try:
-        if isinstance(value, dict):
-            if any(not isinstance(key, str) for key in value):
-                raise TypeError("Flag object keys must be strings")
-            values = value.values()
-        else:
-            values = value
-        for child in values:
-            _validate_json(child, ancestors)
-    finally:
-        ancestors.remove(id(value))
-
-
-def _json_equal(left: Any, right: Any) -> bool:
-    pairs = [(left, right)]
-    while pairs:
-        left, right = pairs.pop()
-        if isinstance(left, bool) or isinstance(right, bool):
-            if type(left) is not type(right) or left != right:
-                return False
-        elif isinstance(left, (int, float)) and isinstance(right, (int, float)):
-            # Shared JSON follows JavaScript IEEE-754 numbers, not arbitrary-precision ints.
-            try:
-                left_number, right_number = float(left), float(right)
-            except (OverflowError, ValueError):
-                return False
-            if not math.isfinite(left_number) or not math.isfinite(right_number) or left_number != right_number:
-                return False
-        elif type(left) is not type(right):
-            return False
-        elif isinstance(left, list):
-            if len(left) != len(right):
-                return False
-            pairs.extend(zip(left, right))
-        elif isinstance(left, dict):
-            if left.keys() != right.keys():
-                return False
-            pairs.extend((left[key], right[key]) for key in left)
-        elif left != right:
-            return False
-    return True
-
-
 def _validate_flags(flags: List[FlagConfig]):
     def fail(message: str):
         raise TypeError("Invalid flag configuration: " + message)
@@ -215,7 +157,7 @@ def _validate_flags(flags: List[FlagConfig]):
         return isinstance(value, str) and bool(value)
 
     operators = {"equals", "does_not_equal", "contains", "does_not_contain", "in", "not_in",
-                 "exists", "does_not_exist", "gt", "gte", "lt", "lte", "regex"}
+                 "exists", "does_not_exist", "gt", "gte", "lt", "lte", "regex", "startsWith"}
     if not isinstance(flags, list):
         fail("flags must be a list")
     keys = set()

@@ -30,10 +30,10 @@ const server=createServer(async(incoming,outgoing)=>{try{const chunks=[];for awa
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 try{
  const endpoint='http://127.0.0.1:'+server.address().port+'/config/production';
- const response=await fetch(endpoint,{method:'PUT',headers:{authorization:'Bearer key','if-none-match':'*','content-type':'application/json'},body:JSON.stringify({flags:[{key:'feature',enabled:true,defaultValue:false,variations:[],rules:[],environmentOverrides:{production:{defaultValue:true}}}],segments:[]})});
+ const response=await fetch(endpoint,{method:'PUT',headers:{authorization:'Bearer key','if-none-match':'*','content-type':'application/json'},body:JSON.stringify({flags:[{key:'feature',enabled:true,defaultValue:false,variations:[],rules:[],environmentOverrides:{production:{defaultValue:true}}},{key:'targeted',enabled:true,defaultValue:false,variations:[{id:'on',value:true}],rules:[{id:'prefix',segmentId:'prefix',variationId:'on'}]}],segments:[{id:'prefix',name:'Prefix',rules:[{id:'prefix',field:'plan',operator:'startsWith',value:'pro'}]}]})});
  assert.equal(response.status,201);const bytes=Buffer.from(await response.arrayBuffer());assert.equal(verify(null,bytes,keys.publicKey,Buffer.from(response.headers.get('x-userfn-signature'),'base64url')),true);
  const snapshot=JSON.parse(bytes);assert.equal(snapshot.tenantId,'tenant');assert.equal(snapshot.environment,'production');assert.equal(snapshot.algorithm,'Ed25519');assert.equal(snapshot.keyId,'key-1');
- const client=new UserFnClient({apiKey:'key',endpoint:'http://127.0.0.1:'+server.address().port,environment:'production',config:{tenantId:'tenant',trustedKeys:{'key-1':keys.publicKey.export({type:'spki',format:'der'}).toString('base64url')},allowInsecureHttp:true}});assert.equal(await client.refreshConfig(),true);assert.equal(client.getFlag('feature'),true);assert.equal(await client.refreshConfig(),false);client.startConfigRefresh();const deadline=Date.now()+1000;while(!client.getConfigRefreshStatus().lastSuccessAt){if(Date.now()>deadline)throw new Error('Scheduler timeout');await new Promise(resolve=>setTimeout(resolve,10));}await client.stopConfigRefresh();await client.closeConfig();
+ const client=new UserFnClient({apiKey:'key',endpoint:'http://127.0.0.1:'+server.address().port,environment:'production',config:{tenantId:'tenant',trustedKeys:{'key-1':keys.publicKey.export({type:'spki',format:'der'}).toString('base64url')},allowInsecureHttp:true}});assert.equal(await client.refreshConfig(),true);assert.equal(client.getFlag('feature'),true);client.identify('person',{plan:'professional'});assert.equal(client.getFlag('targeted'),true);client.identify('person',{plan:true});assert.equal(client.getFlag('targeted'),false);assert.equal(await client.refreshConfig(),false);client.startConfigRefresh();const deadline=Date.now()+1000;while(!client.getConfigRefreshStatus().lastSuccessAt){if(Date.now()>deadline)throw new Error('Scheduler timeout');await new Promise(resolve=>setTimeout(resolve,10));}await client.stopConfigRefresh();await client.closeConfig();
  assert.equal((await fetch(endpoint,{headers:{authorization:'Bearer key','if-none-match':response.headers.get('etag')}})).status,304);
  const exposed=new UserFnClient({apiKey:'unused',bootstrapFlags:{hello:0},exposures:{endpoint:'http://127.0.0.1:'+server.address().port+'/ingest',apiKey:'watch-key',app:'packed',allowInsecureHttp:true}});assert.equal(exposed.getFlag('hello'),0);await exposed.flushExposures();await exposed.closeExposures();assert.equal(exposures[0].properties.reason,'bootstrap');assert.equal(exposures[0].properties.flagKey,'hello');
  const {UserFnClient:CjsClient}=createRequire(import.meta.url)('userfn');const cjs=new CjsClient({apiKey:'unused',bootstrapFlags:{cjs:false},exposures:{endpoint:'http://127.0.0.1:'+server.address().port+'/ingest',apiKey:'watch-key',app:'packed',allowInsecureHttp:true}});assert.equal(cjs.getFlag('cjs'),false);await cjs.closeExposures();assert.equal(exposures[1].properties.flagKey,'cjs');
@@ -45,7 +45,8 @@ try{
   await writeFile(join(directory, 'consumer.mts'), `import { generateKeyPairSync } from 'node:crypto';
 import { createUserFnService, type FlagConfigSigningOptions } from '@userfn/service';
 import { memoryAdapter } from '@superfunctions/db/adapters/memory';
-import { UserFnClient, type ExposureOptions } from 'userfn';
+import { UserFnClient, type ExposureOptions, type SegmentRule } from 'userfn';
+const prefixRule:SegmentRule={id:'prefix',field:'plan',operator:'startsWith',value:'pro'};
 const exposure:ExposureOptions={endpoint:'https://watch.example/ingest',apiKey:'key',app:'app'};
 new UserFnClient({apiKey:'key',exposures:exposure}).flushExposures();
 const signing:FlagConfigSigningOptions={privateKey:generateKeyPairSync('ed25519').privateKey,keyId:'key'};
@@ -53,7 +54,7 @@ const service=createUserFnService({database:memoryAdapter(),auth:{async authenti
 service.router.handle(new Request('http://localhost/config/production'));
 `);
   process.stdout.write(run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', 'consumer.mts']));
-  await writeFile(join(directory, 'consumer.cts'), `import { UserFnClient, type ExposureOptions } from 'userfn'; const options:ExposureOptions={endpoint:'https://watch.example/ingest',apiKey:'key',app:'app'}; new UserFnClient({apiKey:'key',exposures:options}).flushExposures();`);
+  await writeFile(join(directory, 'consumer.cts'), `import { UserFnClient, type ExposureOptions, type SegmentRule } from 'userfn'; const rule:SegmentRule={id:'prefix',field:'plan',operator:'startsWith',value:'pro'}; const options:ExposureOptions={endpoint:'https://watch.example/ingest',apiKey:'key',app:'app'}; new UserFnClient({apiKey:'key',exposures:options}).flushExposures();`);
   process.stdout.write(run(process.execPath, ['node_modules/typescript/bin/tsc', '--strict', '--noEmit', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', 'consumer.cts']));
   console.log('Fresh installed strict service declarations passed without skipLibCheck or peer bypass');
 } finally { await rm(directory, { recursive: true, force: true }); }

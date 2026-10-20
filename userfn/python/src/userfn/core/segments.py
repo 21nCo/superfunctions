@@ -1,3 +1,6 @@
+from ..utils.text import utf16_units
+import math
+from ..utils.json import json_equal, validate_json
 import re
 from typing import Any, List, Optional, Dict
 from ..types import Segment, SegmentRule, UserTraits, Operator
@@ -30,60 +33,71 @@ class SegmentEvaluator:
             return all(self.matches_rule(rule, traits) for rule in segment.rules)
 
     def matches_rule(self, rule: SegmentRule, traits: UserTraits) -> bool:
-        trait_value = traits.get(rule.field)
-        operator = rule.operator
-        value = rule.value
-
+        if type(traits) is not dict or not isinstance(rule.field, str) or any(not isinstance(key, str) for key in traits):
+            return False
+        keys = {utf16_units(key): key for key in traits}
+        if len(keys) != len(traits):
+            return False
+        field = keys.get(utf16_units(rule.field))
+        trait_value = traits[field] if field is not None else None
+        operator, value = rule.operator, rule.value
         if operator == 'exists':
             return trait_value is not None
-        
         if operator == 'does_not_exist':
             return trait_value is None
-
         if trait_value is None:
             return False
-
-        # Convert to string for string comparisons if needed, 
-        # but keep original type for numbers if possible.
-        
-        str_trait = str(trait_value)
-        str_value = str(value) if value is not None else ""
-
-        if operator == 'equals':
-            return str_trait == str_value
-        
-        if operator == 'does_not_equal':
-            return str_trait != str_value
-        
-        if operator == 'contains':
-            return str_value in str_trait
-        
-        if operator == 'does_not_contain':
-            return str_value not in str_trait
-        
-        if operator == 'in':
-            return isinstance(value, list) and trait_value in value
-        
-        if operator == 'not_in':
-            return isinstance(value, list) and trait_value not in value
-        
-        # Numeric comparisons
-        if operator in ('gt', 'gte', 'lt', 'lte'):
-            try:
-                num_trait = float(trait_value)
-                num_value = float(value)
-                
-                if operator == 'gt': return num_trait > num_value
-                if operator == 'gte': return num_trait >= num_value
-                if operator == 'lt': return num_trait < num_value
-                if operator == 'lte': return num_trait <= num_value
-            except (ValueError, TypeError):
-                return False
-
-        if operator == 'regex':
-            try:
-                return bool(re.search(str_value, str_trait))
-            except re.error:
-                return False
-
+        try:
+            if operator == 'equals':
+                return json_equal(trait_value, value)
+            if operator == 'does_not_equal':
+                return not json_equal(trait_value, value)
+            if operator in ('in', 'not_in'):
+                if type(value) is not list:
+                    return False
+                validate_json(trait_value)
+                validate_json(value)
+                found = any(json_equal(trait_value, candidate) for candidate in value)
+                return found if operator == 'in' else not found
+            if operator in ('contains', 'does_not_contain', 'startsWith', 'regex'):
+                if not isinstance(trait_value, str) or not isinstance(value, str):
+                    return False
+                if operator == 'contains':
+                    return utf16_units(value) in utf16_units(trait_value)
+                if operator == 'does_not_contain':
+                    return utf16_units(value) not in utf16_units(trait_value)
+                if operator == 'startsWith':
+                    return utf16_units(trait_value).startswith(utf16_units(value))
+                return bool(re.search(value, trait_value))
+            if operator in ('gt', 'gte', 'lt', 'lte'):
+                left, right = _finite_number(trait_value), _finite_number(value)
+                if left is None or right is None:
+                    return False
+                if operator == 'gt':
+                    return left > right
+                if operator == 'gte':
+                    return left >= right
+                if operator == 'lt':
+                    return left < right
+                return left <= right
+        except (TypeError, ValueError, OverflowError, RecursionError, re.error):
+            return False
         return False
+
+
+def _finite_number(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            result = float(value)
+        except (OverflowError, ValueError):
+            return None
+        return result if math.isfinite(result) else None
+    if not isinstance(value, str):
+        return None
+    text = value.strip(' \t\r\n\f\v')
+    if not re.fullmatch(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?', text):
+        return None
+    result = float(text)
+    return result if math.isfinite(result) else None

@@ -331,3 +331,19 @@ must be flushed before shutdown; it does not run a background thread.
 
 Watch credentials are not tenant-scoped or ingestion-only. Use a trusted proxy or
 isolated Watch deployment for mutually untrusted tenants.
+
+### Targeting operator compatibility
+
+Segments and inline flag constraints now share the TS SDK's explicit JSON
+contract: boolean/number/string values stay distinct; `equals`/`does_not_equal`
+and `in`/`not_in` compare JSON structure. In particular, `True` does not match
+`1` in membership. Text `contains`, `does_not_contain`, `startsWith` and `regex`
+require strings. Numeric comparisons still accept decimal strings such as `"25"`,
+but reject booleans, empty strings, nonfinite values and nondecimal forms.
+
+Assignments relying on old coercion may change. Normalize traits/rules and upgrade
+both SDKs together; see the [migration examples](../.conduct/targeting-semantics-readiness.md).
+Shared numbers use finite JavaScript precision; exact large identifiers belong
+in strings. Prefix/substring matching uses JS UTF-16 units, reusing the rollout
+hash conversion. Native regex dialect differences and execution bounds, plus
+range/geo/time-window contracts, remain unfinished.

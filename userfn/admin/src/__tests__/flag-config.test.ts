@@ -44,3 +44,14 @@ describe('admin flag configuration round trip', () => {
     expect(await store.listFlags(scope)).toEqual([]);
   });
 });
+
+
+it('round trips startsWith through flag and segment admin operations',async()=>{
+ const store=new MemoryUserFnOperatorStore();const adapter=createUserFnAdminAdapter(createUserFnOperatorAdminService(new UserFnOperatorService(store)));
+ const rule={id:'prefix',field:'plan',operator:'startsWith' as const,value:'pro'};
+ const flag={...config,prerequisites:[],rules:[{id:'prefix-rule',constraints:[rule],variationId:'on'}]};
+ const saved=await adapter.invoke('userfn.flags.save',{flag},context);expect(saved.data).toEqual({item:flag});
+ const segment={id:'prefix-segment',name:'Prefix',rules:[rule]};
+ const savedSegment=await adapter.invoke('userfn.segments.save',{segment},context);expect(savedSegment.data).toEqual({item:segment});
+ expect(await store.listSegments(scope)).toEqual([segment]);
+});
