@@ -39,6 +39,28 @@ export interface CorrelateRootCauseInput {
 const UNDEFINED_PROPERTY_PATTERN =
   /Cannot read properties of undefined \(reading ['"](?<property>[^'"]+)['"]\)/i;
 
+/** Retain only the first witnesses used by the deterministic correlation rules. */
+export function createCorrelationAccumulator() {
+  const records = new Map<string, CorrelationEventRecord>();
+  return {
+    add(event: CorrelationEventRecord) {
+      for (const [key, rule] of Object.entries(correlationPredicates)) {
+        if (!records.has(key) && event.category === rule.category && rule.matches(event)) records.set(key, event);
+      }
+    },
+    events(): CorrelationEventRecord[] { return [...new Set(records.values())]; },
+  };
+}
+
+const correlationPredicates = {
+  consolePlan: { category: 'console', matches: (event: CorrelationEventRecord) => /reading ['"]plan['"]/i.test(getConsoleMessage(event)) },
+  pagePlan: { category: 'page-error', matches: (event: CorrelationEventRecord) => /reading ['"]plan['"]/i.test(getPageErrorMessage(event)) },
+  consoleProperty: { category: 'console', matches: (event: CorrelationEventRecord) => UNDEFINED_PROPERTY_PATTERN.test(getConsoleMessage(event)) },
+  pageProperty: { category: 'page-error', matches: (event: CorrelationEventRecord) => UNDEFINED_PROPERTY_PATTERN.test(getPageErrorMessage(event)) },
+  submitAction: { category: 'action', matches: (event: CorrelationEventRecord) => /\b(submit|order|checkout)\b/.test(`${getString(event.payload.action)} ${getString(event.payload.query)} ${getString(event.payload.targetElementId)}`.toLowerCase()) },
+  submitNetwork: { category: 'network', matches: (event: CorrelationEventRecord) => /\b(submit|order|checkout)\b/.test(`${getString(event.payload.url)} ${getString(event.payload.method)} ${getString(event.payload.pageUrl)}`.toLowerCase()) },
+};
+
 export function correlateRootCause(
   input: CorrelateRootCauseInput,
 ): RootCauseCorrelationResult {
@@ -47,22 +69,10 @@ export function correlateRootCause(
   );
   const latestCheckpoint = checkpoints.at(-1);
 
-  const planConsoleEvent = input.consoleEvents.find((event) =>
-    getConsoleMessage(event).match(/reading ['"]plan['"]/i),
-  );
-  const planPageError = input.pageErrors.find((event) =>
-    getPageErrorMessage(event).match(/reading ['"]plan['"]/i),
-  );
-  const submitAction = input.actions.find((event) =>
-    `${getString(event.payload.action)} ${getString(event.payload.query)} ${getString(event.payload.targetElementId)}`
-      .toLowerCase()
-      .match(/\b(submit|order|checkout)\b/),
-  );
-  const submitNetworkEvent = input.networkEvents.find((event) =>
-    `${getString(event.payload.url)} ${getString(event.payload.method)} ${getString(event.payload.pageUrl)}`
-      .toLowerCase()
-      .match(/\b(submit|order|checkout)\b/),
-  );
+  const planConsoleEvent = input.consoleEvents.find(correlationPredicates.consolePlan.matches);
+  const planPageError = input.pageErrors.find(correlationPredicates.pagePlan.matches);
+  const submitAction = input.actions.find(correlationPredicates.submitAction.matches);
+  const submitNetworkEvent = input.networkEvents.find(correlationPredicates.submitNetwork.matches);
 
   const submitPlanEvent = planConsoleEvent ?? planPageError;
   if (submitPlanEvent && submitNetworkEvent) {
@@ -83,9 +93,9 @@ export function correlateRootCause(
   }
 
   const genericPropertyEvent = planConsoleEvent
-    ?? input.consoleEvents.find((event) => UNDEFINED_PROPERTY_PATTERN.test(getConsoleMessage(event)))
+    ?? input.consoleEvents.find(correlationPredicates.consoleProperty.matches)
     ?? planPageError
-    ?? input.pageErrors.find((event) => UNDEFINED_PROPERTY_PATTERN.test(getPageErrorMessage(event)));
+    ?? input.pageErrors.find(correlationPredicates.pageProperty.matches);
 
   if (genericPropertyEvent) {
     const message = genericPropertyEvent.category === 'page-error'

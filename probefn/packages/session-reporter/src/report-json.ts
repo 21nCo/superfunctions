@@ -11,6 +11,7 @@ import {
 import {
   auditDesignBundle,
   correlateRootCause,
+  createCorrelationAccumulator,
   loadCheckpointAuditBundle,
   type CorrelationCheckpointRecord,
   type CorrelationEventRecord,
@@ -123,10 +124,16 @@ interface DiffManifest {
 
 const ACTION_SINK_PATH = 'events/actions.ndjson';
 
-export async function buildReportJson(
+export async function buildReportJson(input: { repoRoot: string; session: SessionStateLike }): Promise<BuildReportJsonResult> {
+  return assembleReportJson(input);
+}
+
+/** Metadata plus bounded correlation witnesses; event values are delivered with backpressure. */
+export async function assembleReportJson(
   input: {
     repoRoot: string;
     session: SessionStateLike;
+    eventConsumer?: (key: keyof ReportJsonDocument['eventIndex'], event: IndexedRuntimeEvent | null) => Promise<void>;
   },
 ): Promise<BuildReportJsonResult> {
   const runManifest = await readJson<RunManifest>(
@@ -141,36 +148,45 @@ export async function buildReportJson(
   const regressions = await readRegressionIndex(input.repoRoot, input.session.artifactRoot);
 
   const actionSinkPath = path.posix.join(input.session.artifactRoot, ACTION_SINK_PATH);
-  const actions = await readIndexedEvents(input.repoRoot, actionSinkPath, 'action', 'evt_action');
-  const consoleEvents = await readIndexedEvents(
-    input.repoRoot,
+  let actionCount = 0;
+  const readEvents = async (relativePath: string | undefined, category: CorrelationEventRecord['category'], prefix: string, key: keyof ReportJsonDocument['eventIndex']) => {
+    const accumulator = createCorrelationAccumulator();
+    const records: IndexedRuntimeEvent[] = [];
+    for await (const event of iterateIndexedEvents(input.repoRoot, relativePath, category, prefix)) {
+      if (key === 'actions') actionCount++;
+      if (input.eventConsumer) {
+        accumulator.add(event);
+        await input.eventConsumer(key, event);
+      } else records.push(event);
+    }
+    if (input.eventConsumer) await input.eventConsumer(key, null);
+    return input.eventConsumer ? accumulator.events() as IndexedRuntimeEvent[] : records;
+  };
+  const actions = await readEvents(actionSinkPath, 'action', 'evt_action', 'actions');
+  const consoleEvents = await readEvents(
     input.session.artifacts.consoleSinkPath,
     'console',
-    'evt_console',
+    'evt_console', 'console',
   );
-  const pageErrors = await readIndexedEvents(
-    input.repoRoot,
+  const pageErrors = await readEvents(
     input.session.artifacts.pageErrorSinkPath,
     'page-error',
-    'evt_page',
+    'evt_page', 'pageErrors',
   );
-  const network = await readIndexedEvents(
-    input.repoRoot,
+  const network = await readEvents(
     input.session.artifacts.networkSinkPath,
     'network',
-    'evt_network',
+    'evt_network', 'network',
   );
-  const devServerStdout = await readIndexedEvents(
-    input.repoRoot,
+  const devServerStdout = await readEvents(
     input.session.artifacts.devServerStdoutSinkPath,
     'devserver-stdout',
-    'evt_devserver_stdout',
+    'evt_devserver_stdout', 'devServerStdout',
   );
-  const devServerStderr = await readIndexedEvents(
-    input.repoRoot,
+  const devServerStderr = await readEvents(
     input.session.artifacts.devServerStderrSinkPath,
     'devserver-stderr',
-    'evt_devserver_stderr',
+    'evt_devserver_stderr', 'devServerStderr',
   );
 
   const tracePath = await resolveTracePath(
@@ -214,7 +230,7 @@ export async function buildReportJson(
         manifestPath: input.session.artifacts.manifestPath,
         tracePath,
         eventSinks: {
-          ...(actions.length > 0 ? { actions: actionSinkPath } : {}),
+          ...(actionCount > 0 ? { actions: actionSinkPath } : {}),
           ...(input.session.artifacts.consoleSinkPath ? { console: input.session.artifacts.consoleSinkPath } : {}),
           ...(input.session.artifacts.pageErrorSinkPath ? { pageErrors: input.session.artifacts.pageErrorSinkPath } : {}),
           ...(input.session.artifacts.networkSinkPath ? { network: input.session.artifacts.networkSinkPath } : {}),
@@ -341,34 +357,33 @@ async function readRegressionIndex(
   return regressions.sort((left, right) => left.baselineKey.localeCompare(right.baselineKey));
 }
 
-async function readIndexedEvents(
+async function* iterateIndexedEvents(
   repoRoot: string,
   relativePath: string | undefined,
   category: CorrelationEventRecord['category'],
   prefix: string,
-): Promise<IndexedRuntimeEvent[]> {
+): AsyncGenerator<IndexedRuntimeEvent> {
   if (!relativePath) {
-    return [];
+    return;
   }
 
   try {
-    const records: IndexedRuntimeEvent[] = [];
+    let index = 0;
     for await (const record of iterateEventSinkFamily(repoRoot, relativePath)) {
       const payload = record.payload;
       const ts = typeof payload.ts === 'string' ? payload.ts : undefined;
-      records.push({
-        eventId: `${prefix}_${records.length + 1}`,
+      yield {
+        eventId: `${prefix}_${++index}`,
         category,
         sinkPath: record.relativePath,
         lineNumber: record.lineNumber,
         payload,
         ...(ts ? { ts } : {}),
-      });
+      };
     }
-    return records;
   } catch (error) {
     if (isMissing(error)) {
-      return [];
+      return;
     }
 
     throw error;

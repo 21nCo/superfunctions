@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "tsc --noEmit -p tsconfig.json",
     "test:browsers": "vitest run --config vitest.browsers.config.ts",
-    "test:event-streaming": "jiti scripts/test-event-streaming.ts"
+    "test:event-streaming": "jiti scripts/test-event-streaming.ts",
+    "test:report-streaming": "jiti scripts/test-report-streaming.ts"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

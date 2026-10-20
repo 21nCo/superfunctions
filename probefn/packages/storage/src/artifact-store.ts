@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { mkdir, open, rename, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 
 import { createProbefnError } from '@probefn/contracts/errors';
 import type { CheckpointManifest, RunManifest } from '@probefn/contracts/manifests';
@@ -125,6 +127,40 @@ export class ArtifactStore {
   public async writeArtifact(relativePath: string, contents: string | Uint8Array): Promise<string> {
     await this.writeText(relativePath, contents);
     return assertRepositoryRelativePath(relativePath);
+  }
+
+  /** Atomically publish incrementally prepared bytes. Callers own content redaction. */
+  public async writeArtifactStream(
+    relativePath: string,
+    produce: (write: (chunk: string) => Promise<void>) => Promise<void>,
+  ): Promise<string> {
+    const normalizedPath = assertRepositoryRelativePath(relativePath);
+    const absolute = path.resolve(this.repoRoot, normalizedPath);
+    const temporary = `${absolute}.tmp-${randomUUID()}`;
+    const operation = this.writeQueue.then(async () => {
+      await mkdir(path.dirname(absolute), { recursive: true });
+      const handle = await open(temporary, 'wx');
+      try {
+        await produce(async chunk => {
+          const reservation = this.capTracker.reserve(Buffer.byteLength(chunk), normalizedPath);
+          try { await handle.writeFile(chunk); }
+          finally { reservation.commit(); }
+        });
+        await handle.sync();
+        await handle.close();
+        await rename(temporary, absolute);
+      } finally {
+        try { await handle.close(); }
+        finally { await rm(temporary, { force: true }); }
+      }
+    });
+    this.writeQueue = operation.then(() => undefined, () => undefined);
+    try { await operation; }
+    catch (error) {
+      if (error && typeof error === 'object' && 'code' in error && String(error.code).startsWith('E_')) throw error;
+      throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: `Could not stream artifact ${normalizedPath}.`, retryable: false, details: { path: normalizedPath }, cause: error });
+    }
+    return normalizedPath;
   }
 
   public createEventSink(

@@ -1,11 +1,11 @@
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { createRunManifest, type DeterministicSettings } from '@probefn/contracts';
-import { createCheckpoint, SessionManager } from '@probefn/core';
+import { createCheckpoint, ReportService, SessionManager } from '@probefn/core';
 import { ArtifactStore } from '@probefn/storage';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -184,6 +184,23 @@ describe('session reporter', () => {
       'Trace artifact was not recorded for this run.',
     ]);
   });
+});
+
+it('artifact-only export preserves checkpoint/analyzer metadata and trace behavior', async () => {
+  const manager = createSessionManager();
+  const service = new ReportService({ repoRoot: projectRoot, artifactStore: new ArtifactStore({ repoRoot: projectRoot }) });
+  for (const sessionId of ['sess_console_error', 'sess_unknown_failure', 'sess_trace', 'sess_trace_missing']) {
+    const session = await manager.read(sessionId);
+    for (const format of ['json', 'markdown'] as const) {
+      const full = await service.exportReport({ session, format });
+      const before = await readFile(path.join(projectRoot, full.reportPath), 'utf8');
+      const streamed = await service.exportReportArtifact({ session, format });
+      const after = await readFile(path.join(projectRoot, streamed.reportPath), 'utf8');
+      expect(format === 'json' ? JSON.parse(after) : after).toEqual(format === 'json' ? JSON.parse(before) : before);
+      const { reportData: _data, ...metadata } = full;
+      expect(streamed).toEqual(metadata);
+    }
+  }
 });
 
 function createSessionManager(): SessionManager {

@@ -172,6 +172,16 @@ export class SessionManager {
     };
   }
 
+  public async exportReportArtifact(input: { sessionId: string; format: 'json' | 'markdown' }): Promise<Omit<ExportReportResult, 'reportData'>> {
+    const state = await this.read(input.sessionId);
+    const service = new ReportService({ repoRoot: this.repoRoot, artifactStore: this.artifactStore });
+    const result = await service.exportReportArtifact({ session: state, format: input.format });
+    await this.writeState(this.withPatch(state, state.status, { artifacts: {
+      ...(input.format === 'json' ? { reportJsonPath: result.reportPath } : { reportMarkdownPath: result.reportPath }),
+    } }));
+    return result;
+  }
+
   public getStatePath(sessionId: string): string {
     assertArtifactIdentifier(sessionId, 'Session id');
     return path.posix.join(this.artifactStore.getArtifactRoot(), 'session-state', `${sessionId}.json`);

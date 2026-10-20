@@ -1057,9 +1057,14 @@ export async function exportSessionReport(
   input: {
     sessionId: string;
     format: 'json' | 'markdown';
+    artifactOnly?: boolean;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
   const { scope } = await runtime.resolveSessionContext(input.sessionId);
+  if (input.artifactOnly) {
+    const exported = await scope.sessionManager.exportReportArtifact({ sessionId: input.sessionId, format: input.format });
+    return createSuccessEnvelope({ reportPath: exported.reportPath, tracePath: exported.tracePath, includes: exported.includes as unknown as JsonValue }, exported.warnings);
+  }
   const exportedReport = await scope.sessionManager.exportReport({
     sessionId: input.sessionId,
     format: input.format,

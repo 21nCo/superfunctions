@@ -193,3 +193,5 @@ function toRepoRelative(repoRoot: string, absolutePath: string): string {
 async function readJson<T>(absolutePath: string): Promise<T> {
   return JSON.parse(await readFile(absolutePath, 'utf8')) as T;
 }
+
+export { createCorrelationAccumulator } from './correlation/root-cause.js';

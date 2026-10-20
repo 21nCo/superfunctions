@@ -104,3 +104,36 @@ directory discovery still validates the complete numeric rollover sequence.
 The legacy array collector and final report document retain output-sized memory;
 this change bounds the three MCP event tools only. See
 [validation and remaining gates](.conduct/mcp-event-pagination-readiness.md).
+
+### Artifact-only report export
+
+For large event histories, request an artifact-only response:
+
+```bash
+npm run --silent probefn --workspace=@probefn/workspace -- report export --session SESSION_ID --format json --artifact-only --json
+```
+
+The MCP `probefn_report_export` tool accepts `artifactOnly: true` with either
+`json` or `markdown`. TypeScript callers can use
+`SessionManager.exportReportArtifact({ sessionId, format })` or
+`ReportService.exportReportArtifact({ session, format })`.
+
+This mode writes the complete report and returns its path, trace reference and
+inclusion metadata instead of embedding the event index in the response. JSON
+values, event order and provenance, auth-profile exclusion, redaction and
+correlation results are preserved; JSON whitespace/property order may differ.
+Markdown output is unchanged. Output is prepared in a temporary file and renamed
+only after successful completion. Failed reads or byte-cap failures preserve an
+existing report and remove the temporary output.
+
+Event history is processed incrementally with awaited writes and at most six
+correlation witnesses. Memory still depends on individual record size,
+run/checkpoint/regression metadata, checkpoint audit bundles, and segment enumeration. The existing
+full-return APIs and default CLI/MCP behavior continue to retain output-sized
+memory. Artifact byte accounting retains its existing per-store cumulative
+attempted-write semantics; this mode does not establish durable per-run quota
+accounting or a snapshot across concurrent sink mutations.
+
+Run `npm run test:report-streaming --workspace=@probefn/workspace` for the actual
+160,000-event export acceptance under a 64 MiB V8 heap. It verifies every exported
+event and removes its disposable input/output directory.

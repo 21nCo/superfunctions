@@ -23,6 +23,7 @@ export async function runReportCommand(
   const envelope = await exportSessionReport(context.runtime, {
     sessionId: requireFlag(args.slice(1), '--session', 'Missing required --session flag.'),
     format,
+    ...(args.includes('--artifact-only') ? { artifactOnly: true } : {}),
   });
   const success = expectSuccess(envelope);
   const data = success.data as {

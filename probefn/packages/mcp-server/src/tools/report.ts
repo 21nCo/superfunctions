@@ -14,6 +14,7 @@ import {
 const reportExportSchema = strictObjectSchema({
   sessionId: z.string().trim().min(1),
   format: z.enum(['json', 'markdown']).default('json'),
+  artifactOnly: z.boolean().optional(),
 });
 
 const flowSchema = strictObjectSchema({
@@ -31,6 +32,7 @@ export function getReportTools(): ToolDefinition[] {
         properties: {
           sessionId: { type: 'string' },
           format: { type: 'string', enum: ['json', 'markdown'] },
+          artifactOnly: { type: 'boolean', description: 'Write the complete report but return only artifact references; avoid retaining the event index.' },
         },
       }),
       schema: reportExportSchema as z.ZodType<JsonObject>,
@@ -38,6 +40,7 @@ export function getReportTools(): ToolDefinition[] {
         return exportSessionReport(context.runtime, {
           sessionId: String(args.sessionId),
           format: (args.format as 'json' | 'markdown') ?? 'json',
+          ...(args.artifactOnly === true ? { artifactOnly: true } : {}),
         });
       },
     }),

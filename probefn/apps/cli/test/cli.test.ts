@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +44,18 @@ beforeAll(async () => {
 });
 
 describe.sequential('cli', () => {
+  it('exports complete artifacts with an opt-in metadata-only CLI response', async () => {
+    const result = await runCli(['report', 'export', '--session', 'sess_healthy', '--format', 'json', '--artifact-only', '--json']);
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.reportPath).toBe('.artifacts/runs/run_healthy/report.json');
+    expect(envelope.data).not.toHaveProperty('eventIndex');
+    const report = JSON.parse(await readFile(path.join(projectRoot, envelope.data.reportPath), 'utf8'));
+    expect(report).toHaveProperty('eventIndex.console');
+    expect(report).toHaveProperty('runMetadata');
+  });
+
   it('emits the canonical success envelope for page find', async () => {
     const result = await runCli([
       'page',

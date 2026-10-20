@@ -92,6 +92,16 @@ describe.sequential('mcp server', () => {
     expect((wrong.result?.structuredContent as any).error.code).toBe('E_MCP_INVALID_ARGS');
   });
 
+  it('accepts artifactOnly through the MCP schema without returning the event index', async () => {
+    const response = await client!.request('tools/call', { name: 'probefn_report_export', arguments: { sessionId: 'sess_console_error', format: 'json', artifactOnly: true } });
+    const envelope = response.result?.structuredContent as any;
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data.reportPath).toBe('.artifacts/runs/run_console_error/report.json');
+    expect(envelope.data).not.toHaveProperty('eventIndex');
+    const invalid = await client!.request('tools/call', { name: 'probefn_report_export', arguments: { sessionId: 'sess_console_error', artifactOnly: 'yes' } });
+    expect((invalid.result?.structuredContent as any).error.code).toBe('E_MCP_INVALID_ARGS');
+  });
+
   it('returns the canonical console payload through MCP tool wrapping', async () => {
     const response = await client!.request('tools/call', {
       name: 'probefn_page_get_console',
