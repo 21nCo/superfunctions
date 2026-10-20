@@ -1,0 +1,37 @@
+flowfn/.conduct/python-queue-clock-readiness.md
+  s_e1c5fc1a65c0cf::t_a5e454a34cf6b4 1-49
+flowfn/python/README.md
+  s_e1c5fc1a65c0cf::t_50a333f029fbfe 278-302
+flowfn/python/flowfn/adapters/durable_queues.py
+  s_e1c5fc1a65c0cf::t_0b0839d222d539 71-74,87-88,101,116-121,141
+flowfn/python/flowfn/adapters/postgres_queue_functions.py
+  s_e1c5fc1a65c0cf::t_694835fcf4a984 128-138
+flowfn/python/flowfn/adapters/postgres_queues.py
+  s_e1c5fc1a65c0cf::t_5e69d75c6ce254 104,145,152,160
+flowfn/python/flowfn/adapters/redis_queue_scripts.py
+  s_e1c5fc1a65c0cf::t_2fb1220871c94b 64-69,108,158-162
+flowfn/python/flowfn/adapters/redis_queues.py
+  s_e1c5fc1a65c0cf::t_c604c6fb5a429f 194,207
+flowfn/python/flowfn/queue/queue.py
+  s_e1c5fc1a65c0cf::t_1f069fcb0a310f 71,73-74,168-170,232-233,243,248,253
+flowfn/python/flowfn/queue/types.py
+  s_e1c5fc1a65c0cf::t_92f385a3007f15 81-83
+flowfn/python/tests/test_queue_clocks.py
+  s_e1c5fc1a65c0cf::t_1b48fbda6e5a7d 1-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4cd90802203c597019426cf9972c7bbdc0cb4c18",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
