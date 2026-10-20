@@ -24,3 +24,7 @@ Filters query tenant-scoped normalized indexes, bound matching candidates, then 
 This is bounded portable filtering, not arbitrary-scale query support. Larger matching sets and combined filters with a broad tag need indexed join/aggregate support rather than truncated scans. Product-area/tag editing after submission, duplicate merge, ranking, moderation history, browser board UI, external sources, full config service and hosted/provider matrices remain open. Migration is offline and single-worker; do not resume old writers or import legacy rows after the ready marker. DDL execution remains the host's shared schema migration responsibility; the exported helper performs transactional data backfill, not adapter-specific table creation.
 
 No shared edits, hosted changes or push were performed.
+
+## Follow-up: resumable scanning
+
+The [resumable filter pagination checkpoint](feedback-filter-pagination-readiness.md) removes the earlier total matching-candidate ceiling and overflow503. The same option now bounds candidates scanned per request; partial/empty progress pages remain traversable until a null cursor. Offline migration and broader readiness limitations remain unchanged.

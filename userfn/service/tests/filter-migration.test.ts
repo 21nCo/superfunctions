@@ -61,7 +61,9 @@ it('migrates old SQLite data resumably without changing receipts and gates incom
     expect(result.status).toBe(200);
     expect((await result.json()).items.map((row: { id: string }) => row.id)).toEqual([id]); // No whole-tenant500 ceiling.
     const limited = createUserFnService({ database: adapter, auth, maxFilterCandidates: 10 });
-    expect((await filtered(limited, 'tag=common&limit=1')).status).toBe(503);
+    const bounded = await filtered(limited, 'tag=common&limit=1');
+    expect(bounded.status).toBe(200);
+    expect(await bounded.json()).toMatchObject({ items: [expect.any(Object)], nextCursor: expect.any(String) });
     const broken: Adapter = { ...adapter, transaction: callback => adapter.transaction(tx => callback({ ...tx, upsert: async () => { throw new Error('normalization failure'); } })) };
     expect((await post(createUserFnService({ database: broken, auth }), 'rolled-back')).status).toBe(503);
     expect(await adapter.count({ model: 'userfn_feedback' })).toBe(501);

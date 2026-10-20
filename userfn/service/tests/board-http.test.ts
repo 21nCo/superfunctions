@@ -2,7 +2,9 @@ import { it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { Kysely, SqliteDialect } from 'kysely';
 import { kyselyAdapter } from '@superfunctions/db/adapters';
+import type { Adapter } from '@superfunctions/db';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -84,8 +86,51 @@ it('serves paginated boards, actor-owned votes and scoped status over both SDKs 
     expect(reopened.items).toHaveLength(1); expect(reopened.items[0]).toMatchObject({ id, votes: 20, viewerVote: 0, status: 'planned' });
     expect(await owner.setFeedbackStatus(id, 'done')).toEqual({ id, status: 'done' });
     expect((await owner.getFeedbackBoard({ status: 'planned' })).items).toEqual([]);
+    const broadIds: string[] = [];
+    const sparseIds: string[] = [];
+    for (let i = 0; i < 502; i++) {
+      const key = `broad-${i}`;
+      const feedbackId = 'uf_' + createHash('sha256').update(JSON.stringify(['a', key])).digest('hex');
+      broadIds.push(feedbackId);
+      await owner.submitFeedback({ title: `Broad ${i}`, body: 'Scan traversal', category: 'general', tags: ['broad'], productArea: i % 100 === 0 ? 'sparse' : 'wide' }, { idempotencyKey: key });
+      if (i === 200 || i === 400) await owner.setFeedbackStatus(feedbackId, 'planned');
+      else if (i % 100 === 0) sparseIds.push(feedbackId);
+    }
+    const scanSizes: number[] = [];
+    const measured: Adapter = { ...adapter, findMany: async params => {
+      if (params.model === 'userfn_feedback_tags') scanSizes.push(params.limit!);
+      return adapter.findMany(params);
+    } };
+    service = createUserFnService({ database: measured, auth, maxFilterCandidates: 250 });
+    const traverse = async (options: Parameters<UserFnClient['getFeedbackBoard']>[0]) => {
+      const found: string[] = []; let after: string | undefined; let emptyProgress = 0; let pages = 0;
+      do {
+        const page = await owner.getFeedbackBoard({ ...options, after }); pages++;
+        expect(pages).toBeLessThan(200);
+        found.push(...page.items.map(item => item.id));
+        if (!page.items.length && page.nextCursor) emptyProgress++;
+        if (page.nextCursor && after) expect(page.nextCursor > after).toBe(true);
+        after = page.nextCursor ?? undefined;
+      } while (after);
+      expect(new Set(found).size).toBe(found.length);
+      return { found, emptyProgress, pages };
+    };
+    // limit17 stops inside the100-ID candidate chunk; every unreturned match survives.
+    expect((await traverse({ tag: 'broad', limit: 17 })).found).toEqual([...broadIds].sort());
+    expect((await traverse({ productArea: 'wide', limit: 17 })).found).toEqual(broadIds.filter(id => ![0, 100, 200, 300, 400, 500].map(i => broadIds[i]).includes(id)).sort());
+    expect((await traverse({ tag: 'broad', productArea: 'sparse', status: 'open', limit: 100 })).found).toEqual([...sparseIds].sort());
+    scanSizes.length = 0;
+    const empty = await traverse({ tag: 'broad', productArea: 'absent', limit: 100 });
+    expect(scanSizes).toEqual([100, 100, 50, 100, 100, 50, 100]);
+    expect(empty).toEqual({ found: [], emptyProgress: 2, pages: 3 }); // 250+250+2 scanned across multiple chunks.
+    await adapter.close(); ({ sql, adapter } = connect());
+    service = createUserFnService({ database: adapter, auth, maxFilterCandidates: 7 });
+    const smallBudget = await traverse({ tag: 'broad', productArea: 'sparse', status: 'open', limit: 17 });
+    expect(smallBudget.found).toEqual([...sparseIds].sort()); expect(smallBudget.emptyProgress).toBeGreaterThan(0);
+    const traversal = await promisify(execFile)('uv', ['run', '--isolated', '--no-project', '--python', '3.10', 'python', resolve('tests/python_filter_traversal.py'), endpoint], { env: { ...process.env, PYTHONPATH: resolve('../python/src') }, timeout: 20000 });
+    expect(traversal.stdout).toContain('Python complete filter traversal passes');
     service = createUserFnService({ database: adapter, auth, maxVotesPerFeedback: 19 });
-    await expect(owner.getFeedbackBoard()).rejects.toMatchObject({ status: 503 });
+    await expect(owner.getFeedbackBoard({ status: 'done' })).rejects.toMatchObject({ status: 503 });
     service = createUserFnService({ database: adapter, auth });
     await sql.schema.dropTable('userfn_feedback_votes').execute();
     await expect(owner.voteFeedback(id, 1)).rejects.toMatchObject({ status: 503 });

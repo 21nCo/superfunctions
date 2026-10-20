@@ -141,7 +141,12 @@ After the host completes the service filter-table migration:
 
 ```typescript
 await client.submitFeedback({ title: 'Search', body: 'Improve matching', category: 'feature', tags: ['UI'], productArea: 'Search' });
-const matching = await client.getFeedbackBoard({ tag: 'UI', productArea: 'Search', status: 'open', limit: 20 });
+let after: string | undefined;
+do {
+  const page = await client.getFeedbackBoard({ tag: 'UI', productArea: 'Search', status: 'open', limit: 20, after });
+  consume(page.items); // May be empty while the cursor advances.
+  after = page.nextCursor ?? undefined;
+} while (after);
 ```
 
-Labels are trimmed, NFC-normalized and case-sensitive. Missing/incomplete backfill or matching-candidate overflow returns 503; the service never substitutes an incomplete board. Keep all filters unchanged when following `nextCursor`. See the service's explicit migration and candidate-bound contract.
+Labels are trimmed, NFC-normalized and case-sensitive. Missing/incomplete backfill returns 503. The scan budget can yield partial or empty pages with a progress cursor. Keep all filters unchanged when following `nextCursor`. Continue until `nextCursor` is null, regardless of page length. See the service's migration and per-request scan-budget contract; this is live pagination, not a snapshot.

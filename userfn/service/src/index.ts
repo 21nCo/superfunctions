@@ -18,7 +18,7 @@ export interface UserFnServiceOptions {
   maxBodyBytes?: number;
   /** Maximum vote rows read per item; overflow fails rather than reporting a partial score. Default 10,000. */
   maxVotesPerFeedback?: number;
-  /** Maximum normalized matching candidates before pagination; default500, range1–500. */
+  /** Maximum normalized candidates scanned per request; default500, range1–500. Continue with nextCursor. */
   maxFilterCandidates?: number;
   /** Explicit browser origins; credentials/cookies are never enabled. */
   allowedOrigins?: string[];
@@ -39,8 +39,8 @@ export function createUserFnService(options: UserFnServiceOptions) {
   if (options.allowedOrigins?.some(origin => {
     try { const url = new URL(origin); return !['http:', 'https:'].includes(url.protocol) || url.origin !== origin; } catch { return true; }
   })) throw new TypeError('UserFn allowedOrigins must contain explicit HTTP(S) origins');
-  const maxCandidates = options.maxFilterCandidates ?? 500;
-  if (!Number.isInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 500) throw new TypeError('maxFilterCandidates must be an integer from 1 to 500');
+  const maxScanCandidates = options.maxFilterCandidates ?? 500;
+  if (!Number.isInteger(maxScanCandidates) || maxScanCandidates < 1 || maxScanCandidates > 500) throw new TypeError('maxFilterCandidates must be an integer from 1 to 500');
   const maxVotes = options.maxVotesPerFeedback ?? 10000;
   if (!Number.isInteger(maxVotes) || maxVotes < 1 || maxVotes > 100000) throw new TypeError('maxVotesPerFeedback must be an integer from 1 to 100000');
   const database = wrapWithSchema(options.database, getUserFnSchema());
@@ -126,19 +126,45 @@ export function createUserFnService(options: UserFnServiceOptions) {
           const normalizedArea = area === null ? null : normalizeFilter(area, 100);
           if ((await readFilterMarker(database))?.status !== 'ready') throw new Error('Feedback filter backfill is incomplete');
           const tenant = { field: 'tenantId', operator: 'eq' as const, value: session.subject.tenantId! };
-          let ids: string[] | undefined;
-          if (normalizedTag !== null) {
-            const matches = await database.findMany<{ feedbackId: string }>({ model: 'userfn_feedback_tags', where: [tenant, { field: 'tag', operator: 'eq', value: normalizedTag }], select: ['feedbackId'], limit: maxCandidates + 1 });
-            if (matches.length > maxCandidates) throw new Error('Feedback filter candidate limit exceeded');
-            ids = matches.map(row => row.feedbackId);
+          let scanCursor = after;
+          let scanned = 0;
+          let nextCursor: string | null = null;
+          const selected: StoredFeedback[] = [];
+          while (scanned < maxScanCandidates) {
+            const chunkSize = Math.min(100, maxScanCandidates - scanned);
+            const driverField = normalizedTag === null ? 'id' : 'feedbackId';
+            const candidates = await database.findMany<{ id?: string; feedbackId?: string }>({
+              model: normalizedTag === null ? 'userfn_feedback_attributes' : 'userfn_feedback_tags',
+              where: [tenant, { field: normalizedTag === null ? 'productArea' : 'tag', operator: 'eq', value: normalizedTag ?? normalizedArea }, ...(scanCursor ? [{ field: driverField, operator: 'gt' as const, value: scanCursor }] : [])],
+              select: [driverField], orderBy: [{ field: driverField, direction: 'asc' }], limit: chunkSize,
+            });
+            const candidateIds = candidates.map(row => (normalizedTag === null ? row.id : row.feedbackId)!);
+            if (!candidateIds.length) break;
+            let ids = candidateIds;
+            if (normalizedTag !== null && normalizedArea !== null) {
+              const intersection = await database.findMany<{ id: string }>({ model: 'userfn_feedback_attributes',
+                where: [tenant, { field: 'productArea', operator: 'eq', value: normalizedArea }, { field: 'id', operator: 'in', value: candidateIds }], select: ['id'], limit: chunkSize });
+              ids = intersection.map(row => row.id);
+            }
+            const matches = ids.length ? await database.findMany<StoredFeedback>({ model: 'userfn_feedback',
+              where: [...where, { field: 'id', operator: 'in', value: ids }], limit: chunkSize, orderBy: [{ field: 'id', direction: 'asc' }] }) : [];
+            const remaining = limit - selected.length;
+            if (matches.length >= remaining) {
+              selected.push(...matches.slice(0, remaining));
+              // Stop at the last returned match, not the chunk boundary: subsequent
+              // requests must still see every unreturned match from this chunk.
+              nextCursor = selected[selected.length - 1].id;
+              break;
+            }
+            selected.push(...matches);
+            scanned += candidateIds.length;
+            scanCursor = candidateIds[candidateIds.length - 1];
+            if (candidateIds.length < chunkSize) break; // Driver exhausted.
+            if (scanned >= maxScanCandidates) nextCursor = scanCursor;
           }
-          if (normalizedArea !== null && (!ids || ids.length)) {
-            const matches = await database.findMany<{ id: string }>({ model: 'userfn_feedback_attributes', where: [tenant, { field: 'productArea', operator: 'eq', value: normalizedArea }, ...(ids ? [{ field: 'id', operator: 'in' as const, value: ids }] : [])], select: ['id'], limit: maxCandidates + 1 });
-            if (matches.length > maxCandidates) throw new Error('Feedback filter candidate limit exceeded');
-            ids = matches.map(row => row.id);
-          }
-          if (!ids?.length) return json({ items: [], nextCursor: null });
-          where.push({ field: 'id', operator: 'in', value: ids });
+          const items = [];
+          for (const row of selected) items.push(await boardItem(row, session.subject.actorId, session.subject.actorType));
+          return json({ items, nextCursor });
         }
         const rows = await database.findMany<StoredFeedback>({ model: 'userfn_feedback', where, limit: limit + 1, orderBy: [{ field: 'id', direction: 'asc' }] });
         const selected = rows.slice(0, limit);

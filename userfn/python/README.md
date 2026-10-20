@@ -156,7 +156,13 @@ await client.submit_feedback(FeedbackSubmission(
     title="Search", body="Improve matching", category="feature",
     tags=["UI"], product_area="Search",
 ))
-matching = await client.get_feedback_board(tag="UI", product_area="Search", status="open", limit=20)
+after = None
+while True:
+    page = await client.get_feedback_board(tag="UI", product_area="Search", status="open", limit=20, after=after)
+    consume(page["items"])  # Can be empty while scanning makes progress.
+    after = page["nextCursor"]
+    if after is None:
+        break
 ```
 
-The SDK maps `product_area` to the canonical HTTP `productArea` field. Labels are trimmed, NFC-normalized and case-sensitive. The host must complete the service's normalized-table migration; incomplete migration and matching-candidate overflow fail with 503. Preserve filters when following the cursor.
+The SDK maps `product_area` to the canonical HTTP `productArea` field. Labels are trimmed, NFC-normalized and case-sensitive. The host must complete the service's normalized-table migration; incomplete migration fails with 503. A per-request scan budget can return partial/empty pages with a non-null progress cursor. Preserve filters and continue until the cursor is null; this is live pagination, not a snapshot.
