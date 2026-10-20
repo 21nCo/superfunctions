@@ -10,7 +10,7 @@ import { requestLogger as honoLogger } from './hono.js';
 const headers = { authorization: 'Bearer private', cookie: 'session=private', 'x-custom-secret': 'private', traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01' };
 const capture = () => {
   const events: LogEvent[] = [];
-  return { events, logger: new Logger({ name: 'http', sinks: [batch => { events.push(...batch); }] }) };
+  return { events, logger: new Logger({ name: 'http', redaction: { allowlist: ['/userId', '/tenantId'] }, sinks: [batch => { events.push(...batch); }] }) };
 };
 const assertHeaders = (events: LogEvent[]) => {
   expect(events).toHaveLength(2);
@@ -84,7 +84,7 @@ it.each([NaN, Infinity, -1, 2])('rejects invalid sampling rates at setup %s', sa
 
 it('child correlation inherits parent fields without mutating the parent', () => {
   const events: LogEvent[] = [];
-  const logger = new Logger({ name: 'parent', correlation: { traceId: 'trace', tenantId: 'tenant' }, sinks: [batch => { events.push(...batch); }] });
+  const logger = new Logger({ name: 'parent', redaction: { allowlist: ['/tenantId'] }, correlation: { traceId: 'trace', tenantId: 'tenant' }, sinks: [batch => { events.push(...batch); }] });
   logger.child({ correlation: { requestId: 'child' } }).info('child'); logger.info('parent');
   expect(events[0]).toMatchObject({ traceId: 'trace', tenantId: 'tenant', requestId: 'child' });
   expect(events[1]).toMatchObject({ traceId: 'trace', tenantId: 'tenant' });

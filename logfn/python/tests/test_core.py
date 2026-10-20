@@ -36,7 +36,7 @@ class TestLogger(unittest.TestCase):
         logger.info("msg", user_id="123")
         
         self.assertEqual(sink.events[0]["ctx"]["env"], "prod")
-        self.assertEqual(sink.events[0]["ctx"]["user_id"], "123")
+        self.assertEqual(sink.events[0]["ctx"]["user_id"], "[redacted]")
 
     def test_child_logger(self):
         sink = MockSink()

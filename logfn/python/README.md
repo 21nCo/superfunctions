@@ -106,3 +106,37 @@ Values that exceed Python's configured integer-to-decimal conversion limit are
 replaced with `[unserializable]` during event sanitization. Other context fields
 are preserved, the original input is unchanged, and the interpreter's limit is
 never disabled or increased.
+
+## Default privacy boundary and migration
+
+Logger factories now apply terminal masking after custom stages and serialization
+and before every sink. Known secret keys (password/token/API-key/auth/cookie and
+common variants), user/tenant ID keys, credential assignments, bearer/basic text
+and email patterns are masked recursively. Quoted JSON credential fields are
+covered, but message text need not remain parseable JSON after masking; prefer
+structured context. Input objects are not modified by masking, and each sink
+receives an independent snapshot within the existing 64 KiB event limit.
+
+Intentional safe exceptions use exact JSON Pointer primitive leaves:
+
+```python
+logger = create_logger(
+    "service", [SinkConsole(json=True)],
+    correlation={"userId": "approved-pseudonymous-id", "tenantId": "private"},
+    redaction={"allowlist": ["/userId", "/ctx/publicToken"]},
+)
+```
+
+`DefaultRedactionOptions` is exported. Policies are copied at construction and
+inherited by children. Paths escape literal `/` as `~1` and `~` as `~0`.
+Allowlisting an object does not exempt its descendants, and secret containers
+remain masked as a whole. Existing `redact` patterns and selected roots continue
+to configure their explicit stage, without disabling this terminal boundary.
+This is a migration from previously unmasked default output: add only deliberate
+safe exceptions. Built-in diagnostic context is masked too; custom `on_error`
+callbacks and exceptions propagated by `flush()` remain caller-owned.
+
+Key/value matching is heuristic; arbitrary unlabelled credentials and all PII
+cannot be detected. Configure application-specific stages as needed. Direct sink
+calls assume already-processed events. This parity checkpoint does not implement
+the future v0.2 Python middleware surface or close all original readiness gates.

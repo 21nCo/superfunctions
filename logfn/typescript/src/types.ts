@@ -98,7 +98,14 @@ export interface Sink {
  */
 export type LogCorrelation = Pick<LogEvent, "traceId" | "spanId" | "requestId" | "userId" | "tenantId">;
 
+/** Default terminal masking policy; JSON Pointer allowlist applies only to exact primitive leaves. */
+export interface DefaultRedactionOptions {
+  allowlist?: string[];
+}
+
 export interface LoggerOptions {
+  /** Default secret/identity masking runs after user pipelines. Children inherit this policy. */
+  redaction?: DefaultRedactionOptions;
   /** Correlation fields emitted at the top level of each event. */
   correlation?: LogCorrelation;
   /** Receives pipeline and sink failures; callback failures never escape logging. */

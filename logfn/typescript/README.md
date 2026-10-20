@@ -71,7 +71,7 @@ const logger = createLogger({
   pipeline: [
     redactSecFn({
       patterns: [/api_key=\w+/gi, /password=\w+/gi],
-      allowlist: ["userId"], // Don't redact these fields
+      allowlist: ["userId"], // Exception for this stage; terminal policy still applies
     }),
   ],
   sinks: [sinkConsole()],
@@ -534,3 +534,49 @@ const router = createRouter<LogRequestContext>({
 ```
 
 Mount the router through the consumer's shared HTTP framework adapter. Completion records reflect the final response returned by the shared router, including configured error responses.
+
+## Default privacy boundary and migration
+
+Every `Logger`, `createLogger`, `devLogger` and `serverLogger` now applies a
+terminal masking policy after custom pipeline stages and serialization, before
+console/HTTP/custom sinks. Known secret-bearing keys (including password, token,
+API-key, authorization/cookie and common variants) are masked recursively, as are
+user/tenant ID keys. Credential assignments, bearer/basic text and email patterns
+are scrubbed from strings, including quoted JSON credential fields. Trace/span/
+request IDs remain usable unless their string values match a sensitive pattern.
+
+This changes output that previously reached sinks without a redaction stage.
+Safe identity/context exceptions require an explicit exact JSON Pointer leaf:
+
+```typescript
+const logger = createLogger({
+  name: "service",
+  sinks: [sinkConsole({ json: true })],
+  correlation: { userId: "approved-pseudonymous-id", tenantId: "private-tenant" },
+  redaction: { allowlist: ["/userId", "/ctx/publicToken"] },
+});
+```
+
+`DefaultRedactionOptions` is exported. The policy is copied at construction and
+inherited by children. `/ctx/publicToken` permits only that primitive value;
+parent/object entries never exempt a subtree. Paths use JSON Pointer escaping
+(`~1` for `/`, `~0` for `~`), so a literal key cannot accidentally authorize a
+nested unrelated secret. Secret containers remain masked as a whole. Nulls are
+preserved. A failed terminal conversion drops the event and reports a fixed
+internal failure instead of sending the unsafe value. Each sink receives an
+independent snapshot, and final events retain the 64 KiB wire bound.
+
+Existing `redactSecFn` custom patterns/allowlists still control that explicit
+pipeline stage; they do not disable the terminal policy. Move intentional safe
+field exceptions to `LoggerOptions.redaction.allowlist`. Built-in diagnostics
+also apply masking. Explicit `onError` callbacks and rejected `flush()` errors
+remain caller-owned and can contain raw exception information.
+
+The policy is a bounded set of key/value heuristics, not a detector for arbitrary
+unlabelled credentials or all PII. Prefer structured context over pre-serialized
+JSON messages; redacted message text need not remain parseable JSON. Add
+application-specific pipeline policies where needed. Calling sinks directly
+assumes the caller has already applied its privacy policy. Existing persisted
+IndexedDB events are not retroactively rewritten: handle pre-upgrade spool data
+under your retention/privacy policy before replaying it. New logger-generated
+events are masked before entering the durable queue.

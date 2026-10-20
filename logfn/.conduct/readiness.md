@@ -175,3 +175,13 @@ Fresh packed shared-HTTP consumers pass Node18.18/20.19/22.23, strict Node16/Nod
 Previous unchanged Python checkpoints include inherited correlation and failure-isolated callbacks, plus giant-integer serialization containment at3c71d7a24: Python3.12 source/fresh-wheel38tests, Python3.9 source37tests with the unavailable interpreter conversion-limit test skipped, and strict typing. Python source did not change in this merge and those matrices were not repeated.
 
 Existing root and Python .coverage files are preserved locally and now ignored, along with parallel coverage data. Generated files are not staged. Native browser history remains Chrome-only; Firefox/Safari, complete Python middleware parity, workload performance and full original SPEC acceptance remain open. No overall production-readiness claim.
+
+## Default privacy boundary
+
+The original secure-default requirement is now enforced at the terminal logger
+boundary in TypeScript and Python, including secret-key masking, identity opt-in,
+custom pipeline/serialization handling and built-in diagnostics. Independent sink
+snapshots and exact JSON Pointer leaf policies preserve caller data and prevent
+subtree exemptions. See [migration and native/package/browser evidence](default-redaction-readiness.md)
+for the changed defaults, 241 TS tests, fresh Python wheel checks, actual local
+HTTP/Chrome IndexedDB behavior and explicit heuristic/privacy limitations.

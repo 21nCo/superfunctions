@@ -6,7 +6,7 @@ import { requestLogger, type LogRequestContext } from './shared.js';
 
 it('shared router logs correlated request, application and completion events', async () => {
   const events: LogEvent[] = [];
-  const logger = new Logger({ name: 'shared', sinks: [batch => { events.push(...batch); }] });
+  const logger = new Logger({ name: 'shared', redaction: { allowlist: ['/userId'] }, sinks: [batch => { events.push(...batch); }] });
   const router = createRouter<LogRequestContext>({ middleware: [requestLogger({ logger, includeBody: true, captureUser: () => ({ userId: 'user' }) })], routes: [{ method: 'POST', path: '/echo', handler: async (_req, ctx) => {
     ctx.log!.info('application'); return new Response(await ctx.text());
   } }] });

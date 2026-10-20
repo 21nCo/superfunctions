@@ -5,10 +5,12 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union, Callable, Set
 
-from .serialization import bound_event
+from .serialization import bound_event, sanitize_value
+from .default_redaction import default_redactor
 
 from .types import (
     DEFAULT_VERSION,
+    DefaultRedactionOptions,
     ErrorHandler,
     LOG_LEVEL_VALUES,
     ChildLoggerOptions,
@@ -28,8 +30,9 @@ def get_default_level() -> LogLevel:
     return "info" if env == "production" else "debug"
 
 class _ErrorReporter:
-    def __init__(self, callback: Optional[ErrorHandler]) -> None:
+    def __init__(self, callback: Optional[ErrorHandler], redact: Callable[[Any], Any]) -> None:
         self.callback = callback
+        self.redact = redact
         self.reporting = False
 
     def report(self, error: BaseException, context: Dict[str, str]) -> None:
@@ -43,7 +46,10 @@ class _ErrorReporter:
                 except Exception:
                     print("[logfn internal error] error callback failed", file=sys.stderr)
             else:
-                print(f"[logfn internal error] {context}: {type(error).__name__}", file=sys.stderr)
+                try:
+                    print("[logfn internal error]", self.redact({"context": context, "errorType": type(error).__name__}), file=sys.stderr)
+                except Exception:
+                    print("[logfn internal error] diagnostic redaction failed", file=sys.stderr)
         finally:
             self.reporting = False
 
@@ -77,8 +83,11 @@ class Logger:
         base_tags: Optional[List[str]] = None,
         on_error: Optional[ErrorHandler] = None,
         correlation: Optional[LogCorrelation] = None,
+        redaction: Optional[DefaultRedactionOptions] = None,
     ):
-        self._reporter = _ErrorReporter(on_error)
+        self._redact = default_redactor(redaction)
+        self._redaction_allowlist = tuple((redaction or {}).get("allowlist", []))
+        self._reporter = _ErrorReporter(on_error, self._redact)
         self._delivery = _DeliveryState(self._reporter)
         self.name = name
         self.sinks = sinks
@@ -157,10 +166,14 @@ class Logger:
             return
 
         # Sinks
-        batch = [bound_event(current_event)]
+        try:
+            final_event = bound_event(self._redact(current_event))
+        except Exception:
+            self._reporter.report(RuntimeError("Log event could not be safely redacted"), {"stage": "defaultRedaction"})
+            return
         for sink in self.sinks:
             try:
-                res = sink(batch)
+                res = sink([sanitize_value(final_event)])
                 if inspect.isawaitable(res):
                     try:
                         asyncio.get_running_loop()
@@ -216,6 +229,7 @@ class Logger:
             base_context=new_ctx,
             base_tags=new_tags,
             correlation={**self.correlation, **(correlation or {})},
+            redaction={"allowlist": list(self._redaction_allowlist)},
         )
         child._reporter = self._reporter
         child._delivery = self._delivery
@@ -261,6 +275,7 @@ def create_logger(
     base_tags: Optional[List[str]] = None,
     on_error: Optional[ErrorHandler] = None,
     correlation: Optional[LogCorrelation] = None,
+    redaction: Optional[DefaultRedactionOptions] = None,
 ) -> Logger:
     return Logger(
         name=name,
@@ -271,4 +286,5 @@ def create_logger(
         base_tags=base_tags,
         on_error=on_error,
         correlation=correlation,
+        redaction=redaction,
     )

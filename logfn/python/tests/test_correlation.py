@@ -9,7 +9,7 @@ def test_top_level_correlation_inheritance_and_input_isolation():
         "traceId": "a" * 32, "spanId": "b" * 16, "requestId": "request",
         "userId": "parent", "tenantId": "tenant",
     }
-    logger = create_logger("app", [events.extend], correlation=ids)
+    logger = create_logger("app", [events.extend], correlation=ids, redaction={"allowlist": ["/userId", "/tenantId"]})
     ids["requestId"] = "mutated"
     override: LogCorrelation = {"userId": "child"}
     child = logger.child(correlation=override)

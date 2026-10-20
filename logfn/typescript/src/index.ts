@@ -12,6 +12,7 @@ export type {
   LogLevel,
   LogCorrelation,
   LoggerOptions,
+  DefaultRedactionOptions,
   ChildLoggerOptions,
   Sink,
   PipelineStage,

@@ -60,7 +60,12 @@ class Sink(Protocol):
     async def flush(self) -> None:
         ...
 
+class DefaultRedactionOptions(TypedDict, total=False):
+    allowlist: List[str]
+
+
 class LoggerOptions(TypedDict):
+    redaction: NotRequired[DefaultRedactionOptions]
     correlation: NotRequired[LogCorrelation]
     onError: NotRequired[ErrorHandler]
     name: str

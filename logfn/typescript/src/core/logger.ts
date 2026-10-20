@@ -10,7 +10,8 @@ import type {
   ErrorHandler,
 } from "../types.js";
 import { LOG_LEVEL_VALUES, DEFAULT_VERSION } from "../types.js";
-import { validateAndSerialize } from "../validation.js";
+import { defaultRedactor } from "../pipeline/default-redaction.js";
+import { sanitizeValue, validateAndSerialize } from "../validation.js";
 
 /**
  * Logger class for structured logging
@@ -23,14 +24,17 @@ export class Logger {
     baseTags?: string[];
     onError?: ErrorHandler;
   };
+  private readonly redact: (input: unknown) => unknown;
   private readonly errorHandler: ErrorHandler;
   private delivery: { pending: Set<Promise<void>>; failure?: { reason: unknown } } = {
     pending: new Set(),
   };
 
   constructor(options: LoggerOptions) {
+    this.redact = defaultRedactor(options.redaction);
     // Set defaults
     this.options = {
+      redaction: { allowlist: [...(options.redaction?.allowlist ?? [])] },
       correlation: { ...options.correlation },
       name: options.name,
       level: options.level ?? this.defaultLevel(),
@@ -49,7 +53,7 @@ export class Logger {
       reporting = true;
       try {
         if (options.onError) options.onError(error, context);
-        else console.error("[logfn internal error]", context, error);
+        else console.error("[logfn internal error]", this.redact({ context, error }));
       } catch {
         // Failure reporting must never interrupt application logging.
       } finally {
@@ -130,7 +134,15 @@ export class Logger {
     }
 
     // Validate and serialize
-    const { event: finalEvent, truncated } = validateAndSerialize(event);
+    let finalEvent: LogEvent;
+    try {
+      // Terminal policy also covers data introduced by enrichment/custom stages.
+      finalEvent = validateAndSerialize(this.redact(event) as LogEvent).event;
+    } catch {
+      this.errorHandler(new Error("Log event could not be safely redacted"), { stage: "defaultRedaction" });
+      return;
+    }
+    const truncated = finalEvent.ctx?._truncated === true;
 
     if (truncated) {
       // Note: we could emit a warning here, but that could cause recursion
@@ -138,10 +150,9 @@ export class Logger {
     }
 
     // Send to sinks
-    const batch = [finalEvent];
     for (const sink of this.options.sinks) {
       try {
-        const result = sink(batch);
+        const result = sink([sanitizeValue(finalEvent) as LogEvent]);
         if (result && typeof result.then === "function") {
           const task = Promise.resolve(result).then(
             () => { this.delivery.pending.delete(task); },
@@ -209,6 +220,7 @@ export class Logger {
       correlation: { ...this.options.correlation, ...overrides.correlation },
       name: overrides.name ?? this.options.name,
       level: overrides.level ?? this.options.level,
+      redaction: this.options.redaction,
       pipeline: this.options.pipeline,
       sinks: this.options.sinks,
       now: this.options.now,
