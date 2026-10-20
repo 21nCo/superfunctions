@@ -34,7 +34,7 @@
     "@probefn/contracts": "*",
     "@probefn/core": "*",
     "@probefn/storage": "*",
-    "@superfunctions/admin": "0.1.0"
+    "@superfunctions/admin": "0.1.5"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -34,7 +34,7 @@ interface ResolvedBinding {
 const safeIdentifierPattern = /^[a-zA-Z0-9._-]+$/;
 
 function requiredSafeIdentifier(value: string, name: string): string {
-  if (typeof value !== "string" || !safeIdentifierPattern.test(value)) {
+  if (typeof value !== "string" || !safeIdentifierPattern.test(value) || value === "." || value === "..") {
     throw new AdminError("invalid_argument", `${name} must contain only letters, numbers, dot, underscore, or hyphen.`);
   }
   return value;

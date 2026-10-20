@@ -11,7 +11,7 @@ import type {
 } from '@probefn/contracts/config';
 import { createProbefnError } from '@probefn/contracts/errors';
 import { createRunManifest, type RunManifest } from '@probefn/contracts/manifests';
-import { ArtifactStore } from '@probefn/storage';
+import { ArtifactStore, assertArtifactIdentifier } from '@probefn/storage';
 
 import {
   createLineProcessor,
@@ -83,6 +83,8 @@ export class DevServerManager {
   }
 
   public async startSession(options: StartSessionOptions): Promise<StartedSession> {
+    assertArtifactIdentifier(options.sessionId, 'Session id');
+    assertArtifactIdentifier(options.runId, 'Run id');
     const existingSession = this.sessions.get(options.sessionId);
     if (existingSession) {
       throw createProbefnError({

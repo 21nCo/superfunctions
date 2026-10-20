@@ -2,7 +2,7 @@ import { access, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { createProbefnError } from '@probefn/contracts/errors';
-import { ArtifactStore } from '@probefn/storage';
+import { ArtifactStore, assertArtifactIdentifier, assertRepositoryRelativePath } from '@probefn/storage';
 
 export interface PlaywrightStorageState {
   cookies: unknown[];
@@ -69,8 +69,8 @@ export class AuthProfileStore {
       sourceStorageStatePath: string;
     },
   ): Promise<SavedAuthProfile> {
-    await this.assertExists(input.sourceStorageStatePath, 'sourceStorageStatePath');
     const storageStatePath = this.getProfileStorageStatePath(input.profileId);
+    await this.assertExists(input.sourceStorageStatePath, 'sourceStorageStatePath');
     await this.copyRepoRelativeFile(input.sourceStorageStatePath, storageStatePath);
     return {
       profileId: input.profileId,
@@ -111,8 +111,8 @@ export class AuthProfileStore {
       runId: string;
     },
   ): Promise<SavedAuthProfile> {
-    const loaded = await this.loadProfile(input.profileId);
     const storageStatePath = this.getSessionStorageStatePath(input.runId);
+    const loaded = await this.loadProfile(input.profileId);
     await this.copyRepoRelativeFile(loaded.storageStatePath, storageStatePath);
     return {
       profileId: input.profileId,
@@ -163,6 +163,8 @@ export class AuthProfileStore {
   }
 
   private async copyRepoRelativeFile(sourceRelativePath: string, targetRelativePath: string): Promise<void> {
+    assertRepositoryRelativePath(sourceRelativePath);
+    assertRepositoryRelativePath(targetRelativePath);
     const targetPath = path.resolve(this.repoRoot, targetRelativePath);
     await mkdir(path.dirname(targetPath), {
       recursive: true,
@@ -174,6 +176,7 @@ export class AuthProfileStore {
   }
 
   private async assertExists(relativePath: string, pathLabel: string): Promise<void> {
+    assertRepositoryRelativePath(relativePath);
     try {
       await access(path.resolve(this.repoRoot, relativePath));
     } catch (error) {
@@ -205,6 +208,7 @@ function sanitizeSegment(value: string): string {
     });
   }
 
+  assertArtifactIdentifier(sanitized, 'Auth profile id');
   return sanitized;
 }
 

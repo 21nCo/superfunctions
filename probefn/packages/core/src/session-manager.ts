@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { BrowserEngine, DeterministicSettings, SessionMode } from '@probefn/contracts/config';
 import { createProbefnError } from '@probefn/contracts/errors';
 import type { ReportJsonDocument } from '@probefn/session-reporter';
-import { ArtifactStore } from '@probefn/storage';
+import { ArtifactStore, assertArtifactIdentifier } from '@probefn/storage';
 
 import { ReportService } from './report-service.js';
 import { createSessionState, type SessionArtifactsState, type SessionLifecycleStatus, type SessionState } from './session-state.js';
@@ -49,6 +49,8 @@ export class SessionManager {
   }
 
   public async initialize(input: InitializeSessionStateInput): Promise<SessionState> {
+    assertArtifactIdentifier(input.runId, 'Run id');
+    assertArtifactIdentifier(input.sessionId, 'Session id');
     const state = createSessionState({
       sessionId: input.sessionId,
       runId: input.runId,
@@ -171,6 +173,7 @@ export class SessionManager {
   }
 
   public getStatePath(sessionId: string): string {
+    assertArtifactIdentifier(sessionId, 'Session id');
     return path.posix.join(this.artifactStore.getArtifactRoot(), 'session-state', `${sessionId}.json`);
   }
 

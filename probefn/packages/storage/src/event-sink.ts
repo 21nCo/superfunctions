@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createProbefnError } from '@probefn/contracts/errors';
 import type { JsonObject, JsonValue } from '@probefn/contracts/envelopes';
 import { ArtifactCapTracker, DEFAULT_STORAGE_CAPS, type EventCapPolicy } from './caps.js';
-import { assertRepositoryRelativePath } from './manifest-writer.js';
+import { assertArtifactIdentifier, assertRepositoryRelativePath } from './manifest-writer.js';
 import { redactSensitiveData } from './redaction.js';
 
 export interface AppendEventResult {
@@ -35,6 +35,7 @@ export class NdjsonEventSink {
   private appendFailure: unknown;
 
   public constructor(options: EventSinkOptions) {
+    assertArtifactIdentifier(options.baseName, 'Event sink name');
     this.repoRoot = options.repoRoot;
     this.relativeDirectory = assertRepositoryRelativePath(options.relativeDirectory);
     this.baseName = options.baseName;

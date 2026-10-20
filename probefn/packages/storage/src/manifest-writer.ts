@@ -4,6 +4,14 @@ import path from 'node:path';
 import { createProbefnError } from '@probefn/contracts/errors';
 import type { JsonValue } from '@probefn/contracts/envelopes';
 
+/** An identifier must remain one path segment after normalization. */
+export function assertArtifactIdentifier(value: string, label = 'Artifact identifier'): void {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(value) || value === '.' || value === '..') {
+    throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED',
+      message: `${label} must be a non-reserved path segment.`, retryable: false });
+  }
+}
+
 export function assertRepositoryRelativePath(relativePath: string): string {
   if (
     relativePath.length === 0 ||

@@ -1,5 +1,5 @@
 import { finalizePageVideo } from '@probefn/browser-runner';
-import { readEventSinkFamily } from '@probefn/storage';
+import { readEventSinkFamily, assertArtifactIdentifier } from '@probefn/storage';
 import { createServer, type Server as NetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import type { Readable, Writable } from 'node:stream';
@@ -579,14 +579,18 @@ export async function startSessionFromConfig(
     runId?: string;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
+  if (input.sessionId !== undefined) assertArtifactIdentifier(input.sessionId, 'Session id');
+  if (input.runId !== undefined) assertArtifactIdentifier(input.runId, 'Run id');
   const config = await loadConfig(input.configPath, {
     cwd: runtime.getRepoRoot(),
   });
   const artifactRoot = config.artifactRoot;
-  const scope = runtime.createScope(artifactRoot);
   const derivedSuffix = deriveSessionSuffix(config.projectName);
   const sessionId = input.sessionId ?? (derivedSuffix ? `sess_${derivedSuffix}` : `sess_${Date.now()}`);
   const runId = input.runId ?? (derivedSuffix ? `run_${derivedSuffix}` : `run_${Date.now()}`);
+  assertArtifactIdentifier(sessionId, 'Session id');
+  assertArtifactIdentifier(runId, 'Run id');
+  const scope = runtime.createScope(artifactRoot);
   const mode = input.mode ?? config.defaultMode;
   const browser = input.browser ?? config.defaultBrowser;
   const authProfileStore = new AuthProfileStore({

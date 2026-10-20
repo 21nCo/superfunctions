@@ -7,7 +7,7 @@ import { chromium, firefox, webkit } from 'playwright';
 
 import type { BrowserEngine, DeterministicSettings } from '@probefn/contracts/config';
 import { createProbefnError } from '@probefn/contracts/errors';
-import { ArtifactStore } from '@probefn/storage';
+import { ArtifactStore, assertArtifactIdentifier } from '@probefn/storage';
 
 import { attachBrowserEventCapture, type BrowserEventCapture } from './event-capture.js';
 import { startTracing, stopTracing } from './trace.js';
@@ -78,6 +78,8 @@ export class BrowserRunner {
   }
 
   public async startSession(options: LaunchBrowserSessionOptions): Promise<StartedBrowserSession> {
+    assertArtifactIdentifier(options.sessionId, 'Session id');
+    assertArtifactIdentifier(options.runId, 'Run id');
     const browserType = resolveBrowserType(options.browser);
     if (this.sessions.has(options.sessionId)) {
       throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: `Session ${options.sessionId} already has an active browser.`, retryable: false });

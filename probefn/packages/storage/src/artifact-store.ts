@@ -4,7 +4,7 @@ import { createProbefnError } from '@probefn/contracts/errors';
 import type { CheckpointManifest, RunManifest } from '@probefn/contracts/manifests';
 import { ArtifactCapTracker, DEFAULT_STORAGE_CAPS, type StorageCaps } from './caps.js';
 import { NdjsonEventSink, type EventSinkOptions } from './event-sink.js';
-import { assertRepositoryRelativePath, writeAtomicFile } from './manifest-writer.js';
+import { assertArtifactIdentifier, assertRepositoryRelativePath, writeAtomicFile } from './manifest-writer.js';
 import { redactSensitiveData } from './redaction.js';
 
 export interface ArtifactStoreOptions {
@@ -195,18 +195,10 @@ function sanitizeSegment(value: string): string {
     });
   }
 
+  assertArtifactIdentifier(sanitized, 'Checkpoint name');
   return sanitized;
 }
 
 function assertRunId(runId: string): void {
-  if (!/^[a-zA-Z0-9._-]+$/.test(runId)) {
-    throw createProbefnError({
-      code: 'E_STORAGE_WRITE_FAILED',
-      message: `Run id ${runId} contains unsupported characters.`,
-      retryable: false,
-      details: {
-        runId,
-      },
-    });
-  }
+  assertArtifactIdentifier(runId, 'Run id');
 }
