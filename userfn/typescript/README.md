@@ -339,3 +339,61 @@ Normalize traits/rule values explicitly and upgrade TS/Python together; see the
 `startsWith` is case-sensitive. Prefix/substring matching follows JS UTF-16 units
 in both SDKs. Regex still uses each language's native engine; range, geo and
 time-window operators and bounded regex execution remain unfinished.
+
+## React and Svelte flags
+
+React 18 and 19 are optional peers. The vanilla `userfn` entry and the structural
+Svelte store adapter do not import either framework.
+
+```tsx
+import { UserFnClient } from 'userfn';
+import { UserFnProvider, useFlag } from 'userfn/react';
+
+// Own this client outside rendering; use a separate instance per SSR request.
+const client = new UserFnClient({ apiKey: '...', bootstrapFlags: { feature: false } });
+function Feature() {
+  const enabled = useFlag('feature', false);
+  return enabled === true ? <NewFeature /> : <OldFeature />;
+}
+<UserFnProvider client={client}><Feature /></UserFnProvider>;
+```
+
+For Svelte, use the readable-store contract with ordinary `$store` subscription:
+
+```svelte
+<script>
+  import { flagStore } from 'userfn/svelte';
+  export let client;
+  $: feature = flagStore(client, 'feature', false);
+</script>
+{#if $feature === true}<p>Feature enabled</p>{/if}
+```
+
+Both helpers update after `identify`, `reset`, `setFlags`, `setSegments`, and
+successful verified config refreshes. A verified 304 or failed refresh does not
+publish a change. Change traits and segment definitions through these methods;
+mutating previously supplied objects is not a notification mechanism. Snapshot
+JSON values are deeply frozen. Return types remain `FlagValue`: the fallback
+alone cannot guarantee the type of a remotely configured variation.
+
+React uses `useSyncExternalStore` and emits configured Watch exposures only in a
+committed effect. SSR and abandoned renders emit none; StrictMode effect replay
+emits once per observation snapshot. Svelte emits when it delivers a browser
+subscription value, not during SSR. Multiple subscribers to the same Svelte store
+share its exposure identity. A new committed client revision, including A→B→A
+or identity reset, is a new selection and can emit again. A remount/new store is
+also a new observation. These are selection exposures, not viewport visibility
+or exactly-once analytics.
+
+The provider and stores never start or close config refresh or exposure delivery.
+The application owns `startConfigRefresh`, `stopConfigRefresh`, `closeConfig`,
+`flushExposures`, and `closeExposures`. Use the same bootstrap and identity on the
+server and the browser for hydration, and do not share a mutable client between
+SSR requests.
+
+Other framework integrations can use `client.observeFlag(key, fallback)`. Its
+`getSnapshot()` is stable until a published client revision and has no exposure
+side effects; `subscribe(listener)` returns an idempotent unsubscribe. Call
+`track(snapshot)` only after consuming that exact snapshot. Tracking is idempotent
+per snapshot, retains its original identity/rule even if state changes before
+commit, and rejects a snapshot from a different observation.

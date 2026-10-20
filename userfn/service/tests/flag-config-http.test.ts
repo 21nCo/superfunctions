@@ -232,3 +232,16 @@ it('publishes and verifies the shared targeting semantics through both SDKs and 
   expect(await client.refreshConfig()).toBe(false);
   await client.closeConfig();
 });
+
+
+it('does not restore conditional identity when an observer overrides definitions during verified application', async () => {
+  expect((await request('PUT', payload('signed'), { 'if-none-match': '*' })).status).toBe(201);
+  const client = new UserFnClient({ apiKey: 'reader-a', endpoint, environment: 'production', config: { tenantId: 'a', trustedKeys: { 'key-1': keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url') }, allowInsecureHttp: true } });
+  const observation = client.observeFlag('enabled'); let once = false;
+  const stop = observation.subscribe(() => { if (!once) { once = true; client.setFlags(payload('manual').flags); } });
+  expect(await client.refreshConfig()).toBe(true); expect(observation.getSnapshot().value).toBe('manual');
+  stop(); expect(await client.refreshConfig()).toBe(true); expect(observation.getSnapshot().value).toBe('signed');
+  expect(configConditionals).toEqual([undefined, undefined]);
+  expect(await client.refreshConfig()).toBe(false); expect(configConditionals[2]).toMatch(/^"/);
+  await client.closeConfig();
+});

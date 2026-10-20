@@ -84,7 +84,8 @@ export class HttpConfigService {
       if (this.closed || generation !== this.generation || controller.signal.aborted) throw new ConfigRefreshError('Configuration changed during refresh');
       if (!result) return false;
       apply(result.value); // Synchronous validated replacement, with no await between flags and segments.
-      this.etag = result.etag;
+      // A synchronous subscriber may replace definitions or close the client during apply.
+      if (generation === this.generation && !this.closed && !controller.signal.aborted) this.etag = result.etag;
       return true;
     } catch (error) {
       if (error instanceof ConfigRefreshError) throw error;

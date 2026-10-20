@@ -5,6 +5,7 @@ import { HttpConfigService, ConfigRefreshError } from './core/config-http';
 export { ConfigRefreshError } from './core/config-http';
 import { IdentityManager } from './core/identity';
 import { FlagEvaluator } from './core/flags';
+import { createFlagObservation, type FlagObservation } from './core/flag-observation';
 import { SegmentEvaluator } from './core/segments';
 import { MessagingEngine } from './core/messaging';
 import { SurveyEngine } from './core/surveys';
@@ -27,6 +28,8 @@ export class UserFnClient {
   private bootstrapKeys = new Set<string>();
   private configRefreshLoop?: ConfigRefreshLoop;
   private readonly configEnvironment?: string;
+  private flagRevision = 0;
+  private readonly flagListeners = new Set<() => void>();
 
   constructor(options: UserFnOptions) {
     this.options = options;
@@ -127,6 +130,7 @@ export class UserFnClient {
       this.segments.setSegments(value.segments);
       this.flags = flags;
       this.bootstrapKeys.clear();
+      this.publishFlags();
     });
   }
 
@@ -154,21 +158,25 @@ export class UserFnClient {
     this.flags.setFlags(flags);
     this.bootstrapKeys.clear();
     this.configService?.invalidate();
+    this.publishFlags();
   }
 
   setSegments(segments: Segment[]) {
     this.segments.setSegments(segments);
     this.configService?.invalidate();
+    this.publishFlags();
   }
 
 
   identify(id: string, traits: UserTraits = {}) {
     this.identity.identify(id, traits);
+    this.publishFlags();
     // TODO: Send identify event to server
   }
 
   reset() {
     this.identity.reset();
+    this.publishFlags();
   }
 
   getFlag(key: string, defaultValue: FlagValue = false): FlagValue {
@@ -177,6 +185,35 @@ export class UserFnClient {
     if (this.bootstrapKeys.has(key) && result.reason === 'default_value') result.reason = 'bootstrap';
     this.exposures?.capture(key, result, user);
     return result.value;
+  }
+
+  /** Observe without exposure side effects. Track only the snapshot committed by a consumer. */
+  observeFlag(key: string, defaultValue: FlagValue = false): FlagObservation {
+    return createFlagObservation(key, defaultValue, {
+      revision: () => this.flagRevision,
+      subscribe: listener => {
+        const registered = () => listener();
+        this.flagListeners.add(registered);
+        return () => { this.flagListeners.delete(registered); };
+      },
+      evaluate: fallback => {
+        const user = this.identity.getUser();
+        const result = this.flags.evaluate(key, fallback, user);
+        if (this.bootstrapKeys.has(key) && result.reason === 'default_value') result.reason = 'bootstrap';
+        // Exposure needs identity only, never a mutable trait reference.
+        return { result, user: user ? { id: user.id, traits: {} } : null };
+      },
+      capture: (result, user) => this.exposures?.capture(key, result, user),
+    });
+  }
+
+  private publishFlags(): void {
+    this.flagRevision++;
+    for (const listener of [...this.flagListeners]) {
+      if (!this.flagListeners.has(listener)) continue;
+      // One subscriber cannot prevent other consumers observing a committed configuration.
+      try { listener(); } catch { console.error('UserFn flag subscriber failed'); }
+    }
   }
 
   flushExposures(): Promise<void> { return this.exposures?.flush() ?? Promise.resolve(); }
@@ -200,3 +237,5 @@ export * from './operator';
 export { FeedbackDeliveryError } from './core/feedback';
 
 export { FeedbackHTTPError } from './core/feedback-http';
+
+export type { FlagObservation, FlagSnapshot } from './core/flag-observation';
