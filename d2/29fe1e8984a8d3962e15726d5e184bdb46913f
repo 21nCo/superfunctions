@@ -1,0 +1,37 @@
+cifn/.conduct/secret-snapshot-readiness.md
+  s_e1c5fc1a65c0cf::t_8033ea0deb9de9 1-97
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_ec772f08d54c12 157-168
+cifn/typescript/control-plane/src/dispatch/prepare.ts
+  s_e1c5fc1a65c0cf::t_340cef3ac2275b 18-25,27,31,35-37
+cifn/typescript/control-plane/src/expressions/interpolate.test.ts
+  s_e1c5fc1a65c0cf::t_397158bee1ff5d 1-22
+cifn/typescript/control-plane/src/expressions/interpolate.ts
+  s_e1c5fc1a65c0cf::t_c6872dd49b3397 26-27,39-40,43-44,98-99,111-112,118-119
+cifn/typescript/control-plane/src/queue/flowfn-client.ts
+  s_e1c5fc1a65c0cf::t_e7269728ad40cf 14-15
+cifn/typescript/control-plane/src/secrets/discover.ts
+  s_e1c5fc1a65c0cf::t_861a1d2f2f4e54 61-63,66-67
+cifn/typescript/control-plane/src/store/database-store.test.ts
+  s_e1c5fc1a65c0cf::t_74e66677caf78b 1,184-230,338,342
+cifn/typescript/runner/src/remote-runner.test.ts
+  s_e1c5fc1a65c0cf::t_1d34c316481bdb 1,4,169-216
+cifn/typescript/runner/src/remote-runner.ts
+  s_e1c5fc1a65c0cf::t_d21d59fae63e3b 25-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d229fe1e8984a8d3962e15726d5e184bdb46913f",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
