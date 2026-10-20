@@ -11,7 +11,7 @@ import { allocateEphemeralPort, FilePortRegistry, withFileLock } from "@devfn/po
 import { processBirthSignature, processIdentityStatus } from "@devfn/processes";
 import { CaddyProxyController, proxyListenerPorts, registerDomain, type ProxyRoute } from "../src/index.js";
 import {
-  OAUTH_RELAY_OWNER_ID, OAuthRelayClient, oauthRelayStatus, readRelayService, recoverOAuthRelayRoute, startOAuthRelay, stopOAuthRelay, type OAuthRelayProxy,
+  OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayClient, oauthRelayStatus, readRelayService, recoverOAuthRelayRoute, startOAuthRelay, stopOAuthRelay, type OAuthRelayProxy,
 } from "../src/oauth-relay/index.js";
 import { createFakeProvider, createOAuthClientApp, FixtureBrowser } from "./fixtures/oauth.js";
 
@@ -292,6 +292,35 @@ it("stops by every recorded identity when the service record is unreadable, and 
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   expect((await registry.read()).invocations.filter((item) => item.instanceId === OAUTH_RELAY_OWNER_ID).map((item) => item.state)).toEqual(["stopped"]);
 }, 60_000);
+
+// A legal 251-character registered domain: auth.<domain> exceeds the 253-character hostname a service record holds.
+const LONG_DOMAIN = ["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(54), "test"].join(".");
+
+it.skipIf(process.platform === "win32")("refuses a relay hostname its service record cannot hold, or an unnormalized domain, before any claim, process or route", async () => {
+  const stateDir = await registeredState();
+  await registerDomain(stateDir, { domain: LONG_DOMAIN, projectId: "fixture", repositoryIdentity: stateDir, tls: "internal" }, loopback);
+  const proxy = fakeProxy([sibling]);
+  const start = (domain: string, host?: string) => startOAuthRelay({ stateDir, domain, host, projectId: "fixture", repositoryIdentity: stateDir, proxy, command: RELAY_COMMAND });
+  for (const host of [undefined, "h".repeat(40)]) await expect(start(LONG_DOMAIN, host)).rejects.toMatchObject({ code: "DEVFN_OAUTH_RELAY_REJECTED", reason: "malformed" });
+  await expect(start("Dev.Example.Test")).rejects.toMatchObject({ code: "DEVFN_DOMAIN_INVALID" });
+  expect(await readRelayService(stateDir)).toBeUndefined();
+  expect((await new FilePortRegistry(path.join(stateDir, "registry.json")).read()).invocations).toEqual([]);
+  expect(proxy.routes).toEqual([sibling]);
+  // A hostname of exactly 253 characters is served and stopped.
+  expect(await start(LONG_DOMAIN, "x")).toMatchObject({ running: true, routeActive: true, hostname: `x.${LONG_DOMAIN}` });
+  expect(await stopOAuthRelay(stateDir, proxy)).toEqual({ stopped: true, routeRemoved: true });
+}, 60_000);
+
+it("reports a pending relay route that stop withdraws as removed", async () => {
+  const stateDir = await registeredState();
+  const proxy = fakeProxy();
+  let pending: ProxyRoute[] | undefined = [{ id: OAUTH_RELAY_ROUTE_ID, instanceId: OAUTH_RELAY_OWNER_ID, hostname: `auth.${DOMAIN}`, targetHost: "127.0.0.1",
+    targetPort: 41001, tls: "internal", updatedAt: new Date().toISOString() }];
+  const journaled: OAuthRelayProxy = { upsert: proxy.upsert, async removeInstance(instanceId) { pending = undefined; await proxy.removeInstance(instanceId); },
+    async instanceRouteState(instanceId) { return { ...await proxy.instanceRouteState(instanceId), ...(pending ? { pending } : {}) }; } };
+  expect(await stopOAuthRelay(stateDir, journaled)).toEqual({ stopped: false, routeRemoved: true });
+  expect(pending).toBeUndefined();
+});
 
 it("stops nothing when Caddy cannot remove the relay route, so no callback can reach a freed port", async () => {
   const stateDir = await registeredState();

@@ -96,6 +96,13 @@ it("skips a relay whose command holds its lock, and ends a dead relay's claim af
     await registry.reserve({ projectId: "fixture", instanceId: OAUTH_RELAY_OWNER_ID, invocationId: "relay", profile: "oauth-relay", requests: [], proxyListenerPorts: [18080, 18443] });
     await registry.recordOwners("relay", "oauth-relay", [{ process: dead }]);
     await registry.markActive("relay");
+    // A lock timeout inside a relay recovery gc entered fails gc rather than skipping the relay.
+    const registryHeld = new Promise<void>((resolve) => { held = resolve; });
+    const registryHolder = withFileLock(path.join(stateDir, "registry.json.lock"), async () => { held(); await new Promise<void>((resolve) => { release = resolve; }); });
+    await registryHeld;
+    try {
+      await expect(recoverOrphanedProxyRoutes(stateDir)).rejects.toMatchObject({ code: "DEVFN_REGISTRY_LOCK_TIMEOUT" });
+    } finally { release(); await registryHolder; }
     expect(await recoverOrphanedProxyRoutes(stateDir)).toEqual([]);
     expect((await registry.read()).invocations.find((item) => item.id === "relay")).toMatchObject({ state: "stopped" });
     await expect(readFile(path.join(stateDir, "oauth-relay", "service.json"))).rejects.toMatchObject({ code: "ENOENT" });

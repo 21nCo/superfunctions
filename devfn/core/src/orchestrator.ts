@@ -378,10 +378,12 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Pro
   // record after a route transition already dropped its route. A relay
   // command holding its lock owns the relay, as a lifecycle command does.
   if (routed.includes(OAUTH_RELAY_OWNER_ID) || await lstat(relayPaths(stateDir).dir).then(() => true, () => false)) {
+    let entered = false;
     try {
-      if (await recoverOAuthRelayRoute(stateDir, proxy, { lockTimeoutMs: 1_000 })) recovered.push(OAUTH_RELAY_OWNER_ID);
+      if (await recoverOAuthRelayRoute(stateDir, proxy, { lockTimeoutMs: 1_000, onLocked: () => { entered = true; } })) recovered.push(OAUTH_RELAY_OWNER_ID);
     } catch (error) {
-      if (!(error && typeof error === "object" && "code" in error && error.code === "DEVFN_REGISTRY_LOCK_TIMEOUT")) throw error;
+      // Only a relay command holding the service lock is skipped; a lock timeout inside it fails recovery.
+      if (entered || !(error && typeof error === "object" && "code" in error && error.code === "DEVFN_REGISTRY_LOCK_TIMEOUT")) throw error;
     }
   }
   for (const instanceId of routed) {

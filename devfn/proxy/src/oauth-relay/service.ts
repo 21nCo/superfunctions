@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { ProcessError, processBirthSignature, processGroupStatus, stopProcessGroup } from "@devfn/processes";
 
-import { CaddyProxyController, DomainError, proxyListenerPorts, proxyListenerPortsFor, readRegisteredDomains, type ProxyRoute } from "../index.js";
+import { CaddyProxyController, DomainError, normalizeDomain, proxyListenerPorts, proxyListenerPortsFor, readRegisteredDomains, type ProxyRoute } from "../index.js";
 import {
   OAUTH_RELAY_OWNER_ID, OAUTH_RELAY_ROUTE_ID, OAuthRelayError, RELAY_LOCK_STALE_MS, readRelayService, relayDirectory, relayPaths, relayTicketSummary,
   writePrivateJson, type OAuthRelayService,
@@ -242,12 +242,15 @@ async function activateClaim(stateDir: string, service: OAuthRelayService): Prom
 export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAuthRelayStatus> {
   const host = input.host ?? "auth";
   if (!HOST_LABEL.test(host)) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_REJECTED", "The relay host must be one lowercase DNS label of at most 40 characters.", "malformed");
+  const domain = normalizeDomain(input.domain);
+  const hostname = `${host}.${domain}`;
+  // Refused before any claim, process or route exists: the service record admits no longer hostname.
+  if (hostname.length > 253) throw new OAuthRelayError("DEVFN_OAUTH_RELAY_REJECTED", `The relay hostname ${hostname} exceeds 253 characters.`, "malformed");
   // Registrations hold the canonical repository path, as domain unregistration compares.
   const repositoryIdentity = await realpath(input.repositoryIdentity).catch(() => input.repositoryIdentity);
-  const registration = (await readRegisteredDomains(input.stateDir)).find((item) => item.domain === input.domain &&
+  const registration = (await readRegisteredDomains(input.stateDir)).find((item) => item.domain === domain &&
     item.projectId === input.projectId && item.repositoryIdentity === repositoryIdentity);
-  if (!registration) throw new DomainError("DEVFN_DOMAIN_UNREGISTERED", `Domain ${input.domain} is not registered to this repository and project.`);
-  const hostname = `${host}.${registration.domain}`;
+  if (!registration) throw new DomainError("DEVFN_DOMAIN_UNREGISTERED", `Domain ${domain} is not registered to this repository and project.`);
   const httpsPort = proxyListenerPorts().httpsPort;
   const origin = `https://${hostname}${httpsPort === 443 ? "" : `:${httpsPort}`}`;
   const proxy = input.proxy ?? new CaddyProxyController(input.stateDir);
@@ -339,7 +342,7 @@ export async function startOAuthRelay(input: StartOAuthRelayInput): Promise<OAut
 export async function stopOAuthRelay(stateDir: string, proxy: OAuthRelayProxy = new CaddyProxyController(stateDir)): Promise<{ stopped: boolean; routeRemoved: boolean }> {
   await relayDirectory(stateDir);
   return await withFileLock(relayPaths(stateDir).serviceLock, async () => {
-    const routeRemoved = (await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID)).committed.length > 0;
+    const routeRemoved = relayRoutes(await proxy.instanceRouteState(OAUTH_RELAY_OWNER_ID)).length > 0;
     // Read before the route that carries one of them is removed.
     const identities = await recordedIdentities(stateDir, proxy);
     await withdrawRelayRoute(proxy);
@@ -394,10 +397,14 @@ export async function oauthRelayStatus(stateDir: string, proxy: Pick<OAuthRelayP
  * relay's record and listener claims end once every recorded relay process
  * is verifiably gone. Returns whether a route was removed. A relay command
  * holding the service lock past lockTimeoutMs fails with
- * DEVFN_REGISTRY_LOCK_TIMEOUT.
+ * DEVFN_REGISTRY_LOCK_TIMEOUT; onLocked runs once the service lock is held,
+ * so a caller can tell that timeout from one raised inside it.
  */
-export async function recoverOAuthRelayRoute(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "removeInstance">, options: { lockTimeoutMs?: number } = {}): Promise<boolean> {
+export async function recoverOAuthRelayRoute(stateDir: string, proxy: Pick<OAuthRelayProxy, "instanceRouteState" | "removeInstance">,
+  options: { lockTimeoutMs?: number; onLocked?: () => void } = {}): Promise<boolean> {
   await relayDirectory(stateDir);
-  return await withFileLock(relayPaths(stateDir).serviceLock, async () => await reconcileRelayRoute(stateDir, proxy, await serviceStatus(stateDir, proxy)),
-    { timeoutMs: options.lockTimeoutMs ?? SERVICE_LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
+  return await withFileLock(relayPaths(stateDir).serviceLock, async () => {
+    options.onLocked?.();
+    return await reconcileRelayRoute(stateDir, proxy, await serviceStatus(stateDir, proxy));
+  }, { timeoutMs: options.lockTimeoutMs ?? SERVICE_LOCK_TIMEOUT_MS, staleMs: RELAY_LOCK_STALE_MS });
 }
