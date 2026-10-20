@@ -1,0 +1,35 @@
+cifn/.conduct/email-notification-readiness.md
+  s_e1c5fc1a65c0cf::t_cd02a58e35b890 1-106
+cifn/.conduct/notification-outbox-readiness.md
+  s_e1c5fc1a65c0cf::t_7196614a9e8513 3-5,19-21,69,107-108
+cifn/README.md
+  s_e1c5fc1a65c0cf::t_81cc396c1b78af 106,129,131-156
+cifn/typescript/control-plane/src/api/routes.ts
+  s_e1c5fc1a65c0cf::t_d1e73a6f40c7aa 60-61
+cifn/typescript/control-plane/src/sendfn/email-transport.test.ts
+  s_e1c5fc1a65c0cf::t_90d69ba8cfebdc 1-137
+cifn/typescript/control-plane/src/sendfn/email-transport.ts
+  s_e1c5fc1a65c0cf::t_78a45b15e590f1 1-39
+cifn/typescript/control-plane/src/sendfn/outbox.ts
+  s_e1c5fc1a65c0cf::t_89a73ddb45d8a6 3-4,8,14-15,40-45
+cifn/typescript/control-plane/src/sendfn/sendfn-client.ts
+  s_e1c5fc1a65c0cf::t_f2416361b226ea 19-21,76-78,81-89,99
+cifn/typescript/control-plane/src/store/database-store.ts
+  s_e1c5fc1a65c0cf::t_4ae33f52f1d59c 1-2,21,40,178-182,185,190,195,199-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f4a08aaaa4796387dad16939730e7721d8f964fb",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
