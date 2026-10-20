@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { wrapWithSchema, type Adapter, type WhereClause } from "@superfunctions/db";
 import { bugReportSchema } from "../../core/bug-report";
+import { projectEvent } from "../../storage/projection";
 import { getWatchFnSchema } from "../../storage/schema";
 import { BUG_ISSUES_TABLE, getBugIssueSchema } from "./schema";
 import { createBotFnIssue, verifyBotFnIssue } from "./provider";
@@ -67,7 +68,7 @@ export class BotFnBugIssues {
     const now = Date.now();
     try {
       await this.database.transaction(async tx => {
-        await tx.create({ model: this.eventTable, data: { id: `bug_${id}`, payload } });
+        await tx.create({ model: this.eventTable, data: { id: `bug_${id}`, payload, ...projectEvent(payload) } });
         await tx.create({ model: BUG_ISSUES_TABLE, data: {
           id, namespace: this.namespace, ...ref, fingerprint, eventId: `bug_${id}`, routeKey: this.routeKey(route), target: route.target, project: route.project,
           state: "pending", revision: 0, attempts: 0, leaseToken: null, leaseExpiresAt: 0, createdAt: now, updatedAt: now,
@@ -109,7 +110,8 @@ export class BotFnBugIssues {
       if (!await this.cas(current, { state: "linked", issueId: result.issueId, issueUrl: result.issueUrl, failure: null, leaseToken: null, leaseExpiresAt: 0 }, tx)) return false;
       const event = await tx.findOne<{ payload: Record<string, unknown> }>({ model: this.eventTable, where: [{ field: "id", operator: "eq", value: current.eventId }] });
       if (!event) throw new Error("Canonical bug event is unavailable");
-      const updated = await tx.updateMany({ model: this.eventTable, where: [{ field: "id", operator: "eq", value: current.eventId }], data: { payload: { ...event.payload, integration: { target: current.target, project: current.project, ...result } } } });
+      const payload = { ...event.payload, integration: { target: current.target, project: current.project, ...result } };
+      const updated = await tx.updateMany({ model: this.eventTable, where: [{ field: "id", operator: "eq", value: current.eventId }], data: { payload, ...projectEvent(payload) } });
       if (updated !== 1) throw new Error("Canonical bug event update failed");
       return true;
     });

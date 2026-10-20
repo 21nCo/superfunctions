@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { wrapWithSchema, type Adapter } from "@superfunctions/db";
+import { wrapWithSchema, type Adapter, type WhereClause } from "@superfunctions/db";
 import { StorageAdapter } from "./types";
+import { projectEvent, eventProjectionWhere, EVENT_PROJECTION_VERSION } from "./projection";
 import { getWatchFnSchema } from "./schema";
 import { BotFnBugIssues } from "../integrations/botfn/store";
 import { getBugIssueSchema } from "../integrations/botfn/schema";
@@ -47,7 +48,7 @@ export class DatabaseStorage implements StorageAdapter {
     // Snapshot JSON before handing it to an asynchronous backend. Storage identity
     // is distinct from producer IDs; duplicate event IDs remain separate arrivals.
     const payload = JSON.parse(JSON.stringify(event));
-    await this.db!.create({ model: this.tableName, data: { id: randomUUID(), payload } });
+    await this.db!.create({ model: this.tableName, data: { id: randomUUID(), payload, ...projectEvent(payload) } });
   }
 
   async query(filter: (event: any) => boolean): Promise<any[]> {
@@ -67,8 +68,51 @@ export class DatabaseStorage implements StorageAdapter {
     }
   }
 
+  private async readRows(where: WhereClause[]): Promise<StoredEvent[]> {
+    const result: StoredEvent[] = [];
+    let after: string | undefined;
+    for (;;) {
+      const rows = await this.db!.findMany<StoredEvent>({ model: this.tableName,
+        where: [...where, ...(after === undefined ? [] : [{ field: "id", operator: "gt" as const, value: after }])],
+        orderBy: [{ field: "id", direction: "asc" }], limit: 1000 });
+      result.push(...rows);
+      if (rows.length < 1000) return result;
+      after = rows[rows.length - 1].id;
+    }
+  }
+
+  /** Offline migration step: stop all writers/workers; resume until nextCursor is null. */
+  async backfillEventProjections(options: { after?: string; limit?: number } = {}): Promise<{ processed: number; nextCursor: string | null }> {
+    if (!this.db) throw new Error("Event projection backfill requires a shared DB Adapter");
+    const limit = options.limit ?? 100;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000 || (options.after !== undefined && (typeof options.after !== "string" || !options.after.length || options.after.length > 512))) throw new TypeError("Invalid event projection backfill page");
+    // Explicitly select every projection column first: missing migrations fail
+    // before any updates, including an empty legacy table.
+    await this.db.findMany({ model: this.tableName, where: [], select: ["id", ...Object.keys(projectEvent({}))], limit: 1 });
+    const rows = await this.db.findMany<StoredEvent>({ model: this.tableName,
+      where: options.after === undefined ? [] : [{ field: "id", operator: "gt", value: options.after }],
+      orderBy: [{ field: "id", direction: "asc" }], limit });
+    for (const row of rows) {
+      const updated = await this.db.updateMany({ model: this.tableName, where: [{ field: "id", operator: "eq", value: row.id }], data: projectEvent(row.payload) });
+      if (updated !== 1) throw new Error("Event changed during offline projection backfill");
+    }
+    return { processed: rows.length, nextCursor: rows.length === limit ? rows[rows.length - 1].id : null };
+  }
+
   async executeQuery(options: any): Promise<any[]> {
-    // QueryEngine applies its canonical filters/sort/limit after loading events.
-    return this.legacy ? this.legacy.queryEvents(options) : this.getAll();
+    if (this.legacy) {
+      if (!options || typeof options !== "object") return this.legacy.queryEvents(options);
+      const { resolvedTimeRange: _internalRange, ...legacyOptions } = options;
+      return this.legacy.queryEvents(legacyOptions);
+    }
+    const predicates = eventProjectionWhere(options);
+    if (!predicates.length) return this.getAll();
+    // The legacy path is deliberately unfiltered: incomplete/unknown versions
+    // cannot cause old matching events to disappear during a migration.
+    const indexed = await this.readRows([{ field: "projectionVersion", operator: "eq", value: EVENT_PROJECTION_VERSION }, ...predicates]);
+    const missing = await this.readRows([{ field: "projectionVersion", operator: "eq", value: null }]);
+    const unknown = await this.readRows([{ field: "projectionVersion", operator: "ne", value: EVENT_PROJECTION_VERSION }, { field: "projectionVersion", operator: "ne", value: null }]);
+    // Merge by storage ID; callers needing semantic ordering must set orderBy.
+    return [...indexed, ...missing, ...unknown].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map(row => row.payload);
   }
 }
