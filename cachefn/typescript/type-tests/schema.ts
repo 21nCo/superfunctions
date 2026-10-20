@@ -46,3 +46,8 @@ cache.getOrFetch('user:123', { fetcher: async () => ({ id: '123', name: 'Alice' 
 // @ts-expect-error Queued values retain schema key/value correlation.
 cache.queueUpdate('user:123', { title: 'not a user' });
 void offlineFetched;
+
+const releasedFetcher: boolean = cache.unregisterFetcher('user:123');
+// @ts-expect-error Registration cleanup requires a known schema key.
+cache.unregisterFetcher('unknown');
+void releasedFetcher;

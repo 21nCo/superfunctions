@@ -39,6 +39,7 @@ export class CacheFn<T = any> {
   private offlineEnabled = false;
   private onlineListener?: () => void;
   private fetchers = new Map<string, FetchOptions<T>>();
+  private readonly maxRegisteredFetchers: number;
   private queue: Array<QueuedUpdateStatus & { value: T; sync: NonNullable<QueueUpdateOptions<T>['sync']>; durable: boolean; order: number }> = [];
   private queueStorage?: StorageBackend<any>;
   private queueHandler?: NonNullable<QueueUpdateOptions<T>['sync']>;
@@ -53,6 +54,8 @@ export class CacheFn<T = any> {
   private pendingPriorities = new WeakMap<Promise<T>, SetOptions["priority"]>();
 
   constructor(config: CacheFnConfig) {
+    this.maxRegisteredFetchers = config.maxRegisteredFetchers ?? 1000;
+    if (!Number.isSafeInteger(this.maxRegisteredFetchers) || this.maxRegisteredFetchers < 0) throw new RangeError('maxRegisteredFetchers must be a nonnegative safe integer');
     this.defaultTTL = config.defaultTTL;
     this.namespace = config.namespace;
     this.events = new EventEmitter();
@@ -93,6 +96,7 @@ export class CacheFn<T = any> {
     this.memoryTimer = undefined;
     if (this.onlineListener) globalThis.removeEventListener('online', this.onlineListener);
     this.onlineListener = undefined;
+    this.fetchers.clear();
     this.pending.clear();
   }
 
@@ -265,8 +269,21 @@ export class CacheFn<T = any> {
   getOrFetch(key: string, options: FetchOptions<T>): Promise<T>;
   getOrFetch(key: string, fetcherOrOptions: (() => Promise<T>) | FetchOptions<T>, options?: SetOptions): Promise<T> {
     const config = typeof fetcherOrOptions === 'function' ? { ...options, fetcher: fetcherOrOptions } : fetcherOrOptions;
-    if (this.offlineEnabled || typeof fetcherOrOptions !== 'function') this.fetchers.set(key, config);
+    if (!this.disposed && (this.offlineEnabled || typeof fetcherOrOptions !== 'function')) this.registerFetcher(key, config);
     return this.fetchValue(key, config, false);
+  }
+
+  private registerFetcher(key: string, config: FetchOptions<T>): void {
+    if (this.maxRegisteredFetchers === 0) return;
+    // Explicit reads update recency; refresh itself never promotes registrations.
+    this.fetchers.delete(key);
+    while (this.fetchers.size >= this.maxRegisteredFetchers) this.fetchers.delete(this.fetchers.keys().next().value!);
+    this.fetchers.set(key, config);
+  }
+
+  /** Stop future refreshes of a key without deleting its cached value or queued writes. */
+  unregisterFetcher(key: string): boolean {
+    return this.fetchers.delete(key);
   }
 
   private isOnline(): boolean {
@@ -305,11 +322,15 @@ export class CacheFn<T = any> {
     if (!this.isOnline()) return Promise.reject(new Error('CacheFn is offline'));
     const task = Promise.resolve().then(async () => {
       await this.loadQueue();
-      for (const [key, config] of this.fetchers) {
+      // Snapshot keys, not callbacks: additions wait for the next refresh and
+      // unregistered/evicted closures are not retained for the entire traversal.
+      const keys = [...this.fetchers.keys()];
+      for (const key of keys) {
         if (this.disposed || !this.isOnline()) break;
-        if (this.queue.some(update => update.key === key)) continue;
+        if (!this.fetchers.has(key) || this.queue.some(update => update.key === key)) continue;
         await this.pending.get(this.getFullKey(key));
-        if (!this.disposed && this.isOnline() && !this.queue.some(update => update.key === key)) await this.fetchValue(key, config, true);
+        const config = this.fetchers.get(key);
+        if (config && !this.disposed && this.isOnline() && !this.queue.some(update => update.key === key)) await this.fetchValue(key, config, true);
       }
     }).finally(() => { if (this.refreshing === task) this.refreshing = undefined; });
     this.refreshing = task;

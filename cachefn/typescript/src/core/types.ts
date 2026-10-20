@@ -21,6 +21,8 @@ export interface MemoryMonitoringOptions {
 export interface ClearOptions { priority?: CachePriority }
 
 export interface CacheFnConfig {
+  /** LRU-bound refresh registrations, independent of entry capacity. Default 1000; zero disables retention. */
+  maxRegisteredFetchers?: number;
   offlineStrategy?: 'cache-first';
   offlineQueue?: {
     /** Stable application handler restored when reopening a persistent queue. */
@@ -198,7 +200,7 @@ export type ExtractValueType<Schema extends CacheSchema, Key extends string> =
 /** Typed view over the same CacheFn implementation; no extra runtime cache. */
 export type SchemaCache<Schema extends CacheSchema> = Omit<
   import("./cache.js").CacheFn<Schema[keyof Schema]>,
-  "get" | "set" | "has" | "delete" | "invalidate" | "touch" | "getMany" | "setMany" | "deleteMany" | "getOrFetch" | "queueUpdate"
+  "get" | "set" | "has" | "delete" | "invalidate" | "touch" | "getMany" | "setMany" | "deleteMany" | "getOrFetch" | "queueUpdate" | "unregisterFetcher"
 > & {
   get<Key extends SchemaKeys<Schema>>(key: Key): Promise<ExtractValueType<Schema, Key> | undefined>;
   set<Key extends SchemaKeys<Schema>>(key: Key, value: NoInfer<ExtractValueType<Schema, Key>>, options?: SetOptions): Promise<void>;
@@ -215,5 +217,6 @@ export type SchemaCache<Schema extends CacheSchema> = Omit<
   deleteMany(keys: SchemaKeys<Schema>[]): Promise<void>;
   getOrFetch<Key extends SchemaKeys<Schema>>(key: Key, fetcher: () => Promise<NoInfer<ExtractValueType<Schema, Key>>>, options?: SetOptions): Promise<ExtractValueType<Schema, Key>>;
   getOrFetch<Key extends SchemaKeys<Schema>>(key: Key, options: FetchOptions<NoInfer<ExtractValueType<Schema, Key>>>): Promise<ExtractValueType<Schema, Key>>;
+  unregisterFetcher(key: SchemaKeys<Schema>): boolean;
   queueUpdate<Key extends SchemaKeys<Schema>>(key: Key, value: NoInfer<ExtractValueType<Schema, Key>>, options?: QueueUpdateOptions<NoInfer<ExtractValueType<Schema, Key>>>): Promise<string>;
 };

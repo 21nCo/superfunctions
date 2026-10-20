@@ -469,13 +469,32 @@ requiring the configuration flag. Online fetch failures propagate; navigator's
 online flag does not prove that a server is reachable. Node environments without
 navigator are treated as online.
 
-`refresh()` re-fetches keys registered by the object overload or cache-first
-`getOrFetch` calls, bypassing cache hits. Concurrent refresh calls share one run.
+**Refresh registration retention:** callbacks are now bounded independently of
+cached values. `maxRegisteredFetchers` defaults to 1000 (a nonnegative safe
+integer); zero disables retention without disabling `getOrFetch`. After more
+unique registered keys, the least recently requested callback is released. This
+changes refresh coverage from the previous unbounded registry: applications that
+must refresh a larger working set should set an appropriate finite limit and
+re-request keys when needed. Normal reads/fetches still succeed at capacity;
+registration eviction never deletes cached entries or durable queued writes.
+
+`refresh()` re-fetches the retained keys registered by the object overload or
+cache-first `getOrFetch` calls, bypassing cache hits. An explicit request or
+callback replacement updates registration recency; background refresh does not.
+Concurrent refresh calls share one run. Each traversal snapshots its keys, then
+checks the live registration before each fetch: removed/evicted keys are skipped,
+replacements use the latest callback, and newly added keys wait for the next
+traversal. `cache.unregisterFetcher(key)` releases a registration and returns
+whether one existed. It leaves the cached value and queued writes intact; an
+already-running request can still finish. A subsequent qualifying `getOrFetch`
+registers the key again.
 It stops on the first fetch error, preserves previous entries on error, and skips
 keys with pending updates. A newer local write/delete suppresses a fetch already
 in progress. Registered fetchers are instance-local, so register them again after
 reopening. Future explicit refreshes intentionally re-fetch registered keys,
-including previously invalidated keys. Offline/disposed refresh calls reject.
+including previously invalidated keys that remain registered. Offline/disposed
+refresh calls reject. The ordinary function overload does not retain a callback
+unless `offlineStrategy: 'cache-first'` is enabled.
 
 `queueUpdate` is an explicit remote-write operation; ordinary `set` changes only
 the cache. It persists a delivery record before applying the optimistic cache
@@ -514,8 +533,10 @@ overwrites newer optimistic local data. Cancellation refuses an active delivery,
 removes an undelivered record, and does not roll back its local value. Deleting a
 cache entry does not cancel a separately queued remote update.
 
-`dispose()` detaches online listeners and stops starting queued deliveries and
-refreshes. An already-running remote request may finish and acknowledge its job;
+`dispose()` detaches online listeners, clears retained refresh callbacks, and
+stops starting queued deliveries and refreshes. Later `getOrFetch` calls retain
+the existing one-shot read behavior but do not register callbacks or cache late
+results on the disposed instance. An already-running remote request may finish and acknowledge its job;
 remaining durable jobs survive for a reconstructed instance. It also prevents
 late refresh results from writing into the cache. Disposal cannot retract a
 remote operation that the server has already accepted.
