@@ -36,7 +36,7 @@ try {
       if(req.url==='/ingest'){
         if(!cors){res.writeHead(403);res.end();return;}
         arrivals.push({body:JSON.parse(body.toString()),auth:req.headers.authorization});
-        if(mode==='503'){res.writeHead(503);res.end();return;}
+        if(mode==='503'){await new Promise(resolve=>setTimeout(resolve,200));res.writeHead(503);res.end();return;}
       }
       const response=await watch.httpRouter.handle(new Request('http://fixture'+req.url,{method:req.method,headers:req.headers,body}));
       if(req.url==='/ingest'&&response.ok&&mode==='lost'){mode='ok';return; /* Client timeout aborts this accepted response. */}
@@ -62,7 +62,7 @@ try {
   await open('503 recovery');await submit();await failed();assert.equal(arrivals.length,1);
   assert.equal(await page.locator('input[name=title]').isDisabled(),true);
   const original=arrivals[0].body[0];assert.equal((await records(original.id)).length,0);
-  await retry();await failed();assert.equal(arrivals.length,2);assert.deepEqual(arrivals[1].body,[original]);
+  await retry();assert.equal(await page.getByRole('button',{name:'Retry same report',exact:true}).isDisabled(),true);await failed();assert.equal(arrivals.length,2);assert.deepEqual(arrivals[1].body,[original]);
   mode='ok';await retry();await success();assert.equal(arrivals.length,3);assert.deepEqual(arrivals[2].body,[original]);
   assert.deepEqual(await records(original.id),[original]);assert.equal(original.context.custom.password,'[REDACTED]');assert.equal(original.report.title,'503 recovery');
   assert.ok(arrivals.every(value=>value.auth==='Bearer browser-fixture-key'));
