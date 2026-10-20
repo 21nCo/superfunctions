@@ -11,6 +11,10 @@ behavior exists with the stated evidence; it does not close adjacent requirement
 Python is later in the original SDK heading, but its existing supported surfaces
 must retain parity; browser renderers are not implied Python requirements.
 
+Subsequent renderer checkpoint: [campaign content/navigation correction](renderer-content-readiness.md)
+resolves the raw toast HTML and executable CTA paths identified below. The
+remaining rich-content/accessibility and durable messaging work is still open.
+
 ## Resume priorities
 
 1. **Make existing messaging content safe before expanding rendering.**

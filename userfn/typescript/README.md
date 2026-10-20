@@ -309,3 +309,16 @@ The queue is in memory and is lost on process/page termination.
 Watch keys currently authorize more than ingestion and are not tenant-scoped.
 Use a trusted application proxy or an appropriately isolated Watch deployment;
 this option does not create a browser-safe, tenant-scoped credential.
+
+### Campaign content and CTA URLs
+
+Campaign title/body strings are rendered as literal text in modal and toast
+messages. HTML previously interpolated into toast strings is now displayed
+literally; the SDK does not currently implement the specification's safe
+rich-text/Markdown subset. Do not rely on embedded HTML for formatting.
+
+CTA URLs permit HTTP(S), relative/query/fragment links, `mailto:` and `tel:`.
+Executable or unsupported schemes (including `javascript:`, `data:`, `file:` and
+`blob:`) and malformed URLs are rejected without navigation. URLs are checked
+again when clicked, including after campaign objects are mutated. Applications
+remain responsible for choosing trusted destinations and redirect behavior.

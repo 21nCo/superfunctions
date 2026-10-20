@@ -1,3 +1,4 @@
+import { resolveCampaignUrl } from './ui/campaign-url';
 import { FlagExposures } from './core/exposures';
 import { ConfigRefreshLoop } from './core/config-refresh';
 import { HttpConfigService, ConfigRefreshError } from './core/config-http';
@@ -83,9 +84,8 @@ export class UserFnClient {
         () => this.messaging.trackDelivery(topCampaign.id, 'dismissed'),
         () => {
           this.messaging.trackDelivery(topCampaign.id, 'clicked');
-          if (topCampaign.content.ctaUrl) {
-            window.location.href = topCampaign.content.ctaUrl;
-          }
+          const destination = resolveCampaignUrl(topCampaign.content.ctaUrl, window.location.href);
+          if (destination) window.location.href = destination;
         }
       );
       this.messaging.trackDelivery(topCampaign.id, 'shown');

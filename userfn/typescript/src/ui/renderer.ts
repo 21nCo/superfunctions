@@ -1,3 +1,4 @@
+import { resolveCampaignUrl } from './campaign-url';
 import { Campaign, Survey, SurveyResponse, Question, FeedbackSubmission, FeedbackCategory } from '../types';
 import { injectStyles } from './styles';
 
@@ -230,10 +231,13 @@ export class VanillaRenderer {
     toast.appendChild(style);
 
     const content = document.createElement('div');
-    content.innerHTML = `
-      <div style="font-weight:bold; margin-bottom:4px">${campaign.content.title || 'New Message'}</div>
-      <div style="color:#666; font-size:0.9em">${campaign.content.body}</div>
-    `;
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:bold; margin-bottom:4px';
+    title.textContent = campaign.content.title || 'New Message';
+    const body = document.createElement('div');
+    body.style.cssText = 'color:#666; font-size:0.9em';
+    body.textContent = campaign.content.body;
+    content.append(title, body);
     toast.appendChild(content);
 
     const close = document.createElement('button');
@@ -245,9 +249,10 @@ export class VanillaRenderer {
     };
     toast.appendChild(close);
 
-    if (campaign.content.ctaUrl) {
+    if (resolveCampaignUrl(campaign.content.ctaUrl, window.location.href)) {
       toast.style.cursor = 'pointer';
       content.onclick = () => {
+        if (!resolveCampaignUrl(campaign.content.ctaUrl, window.location.href)) return;
         onAction();
         document.body.removeChild(toast);
       };
@@ -301,6 +306,7 @@ export class VanillaRenderer {
       cta.className = 'userfn-cta';
       cta.innerText = campaign.content.ctaText;
       cta.onclick = () => {
+        if (campaign.content.ctaUrl !== undefined && !resolveCampaignUrl(campaign.content.ctaUrl, window.location.href)) return;
         document.body.removeChild(overlay);
         onAction();
       };
