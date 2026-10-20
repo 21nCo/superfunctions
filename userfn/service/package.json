@@ -1,7 +1,7 @@
 {
   "name": "@userfn/service",
   "version": "0.0.1",
-  "description": "Tenant-scoped UserFn feedback HTTP and database service",
+  "description": "Tenant-scoped UserFn feedback and signed flag configuration HTTP service",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,13 +18,14 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run tests/service.test.ts",
-    "test:native": "vitest run tests/sqlite-http.test.ts tests/board-http.test.ts tests/filter-migration.test.ts tests/metadata-http.test.ts",
+    "test:native": "vitest run tests/sqlite-http.test.ts tests/board-http.test.ts tests/filter-migration.test.ts tests/metadata-http.test.ts tests/flag-config-http.test.ts",
     "test:authfn": "vitest run --config vitest.authfn.config.ts"
   },
   "dependencies": {
     "@superfunctions/auth": "0.1.2",
     "@superfunctions/db": "0.4.0",
-    "@superfunctions/http": "0.3.1"
+    "@superfunctions/http": "0.3.1",
+    "userfn": "0.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

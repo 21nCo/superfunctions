@@ -90,3 +90,53 @@ The normalized-table backfill must be complete before moderation; otherwise the 
 Successful receipts are `{id, tags, productArea}` with the current normalized metadata. Board items show these current values, and board filters immediately use the updated projections after commit. `GET /feedback/:id` adds `metadata: {tags, productArea}` while retaining the immutable original `payload`; submission fingerprints and idempotency receipts are unchanged. Replaying the original submission never restores old metadata. Do not restart old writers or rerun backfill with a deleted readiness marker after moderation: the original payload is submission history, not the current metadata source.
 
 Native SQLite acceptance covers both actual SDK transports, concurrent complete tag replacements and disjoint-field updates, failed transaction rollback, clearing, tenant/scope rejection, original submission replay and close/reopen persistence. Other adapter isolation/locking behavior remains unvalidated; deployment must validate the chosen shared adapter. No moderation audit history or arbitrary-scale vote aggregation is added here.
+
+
+## Signed flag configuration
+
+Pass `flagConfigSigning: { privateKey, keyId }` to `createUserFnService` to enable
+`GET/PUT /config/:environment`. The host supplies an Ed25519 private KeyObject or
+PEM string and a stable key ID; keys are not generated, persisted or logged by
+UserFn. Apply the additional `userfn_flag_config` table from `getUserFnSchema()`
+before enabling these routes. Existing feedback migrations do not create it.
+
+Authentication uses the same configured shared auth provider and trusted tenant
+mapping as feedback. Readers require `userfn:config:read`; publishers require
+`userfn:config:write`. Permissions cover environments within the authenticated
+tenant. Environment identifiers use 1–100 ASCII letters/digits/underscore/dot/
+hyphen and must begin with a letter or digit. No anonymous config endpoint is
+introduced.
+
+Publish a complete `{ flags: FlagConfig[], segments: Segment[] }` JSON snapshot.
+Use `If-None-Match: *` to create, then the prior strong `ETag` in `If-Match` to
+replace it. Missing conditions return 428, invalid conditions 400 and competing
+or stale writes 412. Writes use the database transaction and conditional update;
+there is no unconditional overwrite. A failed/lost response can be reconciled by
+an authenticated GET. This table stores the latest snapshot, not revision history.
+The router defaults to a 64 KiB streamed request limit; independently, canonical
+configuration is capped at 256 KiB, 1,000 flags, 1,000 segments and 20 JSON levels.
+Invalid definitions leave the previous snapshot intact.
+
+A successful publication/fetch returns exact canonical JSON bytes containing
+`version: 1`, `tenantId`, `environment`, UUID `revision`, `keyId`,
+`algorithm: "Ed25519"`, `flags` and `segments`. Object keys are sorted using
+JavaScript UTF-16 order; arrays preserve order and numbers follow JavaScript JSON
+semantics. The `X-UserFn-Signature` header is base64url Ed25519 over **the exact
+UTF-8 response bytes**, including all identity fields. Verify those bytes against
+a pinned public key selected from a trusted key-ID map, require the fixed
+algorithm/version and expected tenant/environment, and only then load values.
+Do not reserialize JSON for verification or trust a key delivered in the payload.
+Exact large identifiers belong in strings.
+
+The strong ETag is the quoted SHA-256 of those bytes. Authenticated GET supports
+`If-None-Match` and returns 304 with an empty body when unchanged. Responses use
+`private, no-cache` and `Vary: Authorization`; configured CORS exposes ETag and
+signature headers and permits conditional request headers. A 304 applies to an
+already verified locally retained snapshot. Key rotation affects subsequent
+publications; existing rows keep their original signature/key ID, so keep the
+corresponding trusted public key until republishing.
+
+This server boundary does not implement automatic SDK fetch/refresh, signature
+verification, persistent client caches, exposures, a flag administration UI or
+CDN integration. The Python HTTP acceptance fixture explicitly maps wire fields
+to native dataclasses; it is not an SDK transport or signature verifier.

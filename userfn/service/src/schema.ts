@@ -2,7 +2,17 @@ import type { TableSchemaMap } from '@superfunctions/db';
 
 /** Apply this migration metadata before serving requests; no schema is required on adapter construction. */
 export function getUserFnSchema(): TableSchemaMap {
-  return { userfn_feedback: {
+  return { userfn_flag_config: {
+    modelName: 'userfn_flag_config',
+    fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 64 },
+      tenantId: { type: 'string', required: true, maxLength: 200 },
+      environment: { type: 'string', required: true, maxLength: 100 },
+      etag: { type: 'string', required: true, maxLength: 66 },
+      body: { type: 'string', required: true },
+      signature: { type: 'string', required: true, maxLength: 100 },
+    },
+  }, userfn_feedback: {
     modelName: 'userfn_feedback',
     fields: {
       id: { type: 'string', required: true, unique: true, maxLength: 67 },

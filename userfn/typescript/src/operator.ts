@@ -1,4 +1,5 @@
 import { validateFlagDefinitions } from './core/flags';
+export { validateFlagDefinitions } from './core/flags';
 import type {
   Campaign,
   FlagConfig,

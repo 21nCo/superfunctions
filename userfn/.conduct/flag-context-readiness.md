@@ -141,3 +141,7 @@ messaging, surveys/forms, feedback source integrations, roadmap/changelog and
 other original UserFn requirements are not completed by this local evaluator
 checkpoint. Dependency gates are feature configuration, not an authorization
 boundary replacing server-side access control.
+
+Subsequent server checkpoint: [signed configuration service](flag-config-service-readiness.md)
+adds authenticated durable publication and signed/ETagged fetch. SDK transport,
+verification, refresh and exposure requirements above remain open.

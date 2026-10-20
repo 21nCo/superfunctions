@@ -1,3 +1,5 @@
+import { flagConfigRoutes, type FlagConfigSigningOptions } from './flag-config.js';
+export type { FlagConfigSigningOptions } from './flag-config.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { assertValidAuthSession, type AuthProvider, type AuthSession } from '@superfunctions/auth';
 import { wrapWithSchema, type Adapter, type WhereClause } from '@superfunctions/db';
@@ -11,6 +13,8 @@ export { getUserFnSchema } from './schema.js';
 
 export interface UserFnServiceOptions {
   database: Adapter;
+  /** Enables signed flag config routes; signing keys are host-managed. */
+  flagConfigSigning?: FlagConfigSigningOptions;
   /** Verifies bearer credentials. Cookie authentication is not accepted by this API. */
   auth: AuthProvider;
   /** Trusted server-side tenant/permission mapping after authentication; never use client claims. */
@@ -100,10 +104,11 @@ export function createUserFnService(options: UserFnServiceOptions) {
     maxBodyBytes: options.maxBodyBytes ?? 65536,
     onError: errorResponse,
     middleware: [
-      ...(options.allowedOrigins ? [corsMiddleware({ origin: options.allowedOrigins, methods: ['GET', 'POST', 'PATCH', 'OPTIONS'], allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'], credentials: false })] : []),
+      ...(options.allowedOrigins ? [corsMiddleware({ origin: options.allowedOrigins, methods: ['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS'], allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', 'If-Match', 'If-None-Match'], exposedHeaders: ['ETag', 'X-UserFn-Signature'], credentials: false })] : []),
       async (_request, _context, next) => { try { return await next(); } catch (error) { return errorResponse(error); } },
     ],
     routes: [
+      ...flagConfigRoutes(database, authorize, options.flagConfigSigning),
       { method: 'OPTIONS', path: '/feedback', handler: () => new Response(null, { status: 204 }) },
       { method: 'OPTIONS', path: '/feedback/:id', handler: () => new Response(null, { status: 204 }) },
       { method: 'OPTIONS', path: '/feedback/:id/vote', handler: () => new Response(null, { status: 204 }) },
