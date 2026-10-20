@@ -89,3 +89,7 @@ USERFN_PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs \
   USERFN_CHROME_PATH=/absolute/path/to/chrome \
   node userfn/service/scripts/verify-config-browser.mjs
 ```
+
+Subsequent lifecycle checkpoint: [background refresh scheduling](flag-config-scheduling-readiness.md)
+implements explicit start/stop and bounded backoff. Persistent caches, freshness,
+key administration and exposure requirements remain open.

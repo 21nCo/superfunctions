@@ -120,7 +120,7 @@ The SDK sends `POST <endpoint>/feedback` with bearer authentication and a stable
 
 `submitFeedback()` resolves only after a positive service receipt; the backend waits for its database write. The widget uses the same operation and retains its failure state on rejection. Current identity is submitted as client metadata, separate from the server-authenticated actor. Reset sends anonymous client metadata and does not change bearer permissions.
 
-An explicit `feedbackService` still overrides HTTP delivery and must implement the awaited `FeedbackService` receipt contract. Without either service or endpoint, submission rejects. Configuration sync, offline queues, external-source ingestion and browser end-to-end acceptance remain open. See [service setup](../service/README.md). Use narrowly scoped credentials in browser clients; never embed an administrative key.
+An explicit `feedbackService` still overrides HTTP delivery and must implement the awaited `FeedbackService` receipt contract. Without either service or endpoint, submission rejects. Signed configuration refresh is described below; offline feedback queues, external-source ingestion and browser feedback acceptance remain open. See [service setup](../service/README.md). Use narrowly scoped credentials in browser clients; never embed an administrative key.
 
 ### Board, votes and status
 
@@ -174,7 +174,7 @@ Identity changes do not erase configuration. Bootstrap values are already
 resolved and have no audience rules: supply an appropriate bootstrap for the
 current user, or replace it with rule definitions before switching audiences.
 Opt-in explicit verified remote refresh is described below; `refreshInterval`
-does not schedule background requests.
+is used only after explicit `startConfigRefresh()`.
 
 ## Local flag prerequisites and environments
 
@@ -229,7 +229,7 @@ const client = new UserFnClient({
 });
 await client.refreshConfig(); // true: new verified snapshot; false: verified 304 reuse
 client.getFlag('checkout', false);
-client.closeConfig(); // permanent config-transport close; no late application
+await client.closeConfig(); // permanent config-transport close; no late application
 ```
 
 Keys are base64url SPKI DER Ed25519 public keys provisioned out of band, not keys
@@ -249,6 +249,24 @@ or close during a request prevents its late application, even if fetch ignores
 abort. Invalid signatures/definitions, authentication failures and timeouts reject
 with `ConfigRefreshError` and preserve bootstrap or the last good configuration.
 
-This API is explicit refresh only: `refreshInterval` still does not schedule
-requests. Persistent caches, monotonic anti-rollback/freshness policy, automatic
+Persistent caches, monotonic anti-rollback/freshness policy, automatic
 key distribution, cross-browser/load acceptance and WatchFn exposures remain open.
+
+
+### Background refresh lifecycle
+
+Set `refreshInterval` in milliseconds (default30,000; allowed100–86,400,000), then
+call `client.startConfigRefresh()`. Start is idempotent and refreshes immediately;
+subsequent requests start only after the previous request settles plus the
+interval. Failures preserve values and back off exponentially up to five minutes
+(or the configured interval when longer), resetting after a verified success/304.
+`getConfigRefreshStatus()` exposes running state, consecutive failures, last error,
+last successful refresh time and next scheduled time. No rejection is left
+unobserved by the loop.
+
+Always `await client.stopConfigRefresh()` before restarting. Stop cancels active
+configuration work and awaits its settlement; it preserves the verified ETag for
+restart, but prevents late application. It also cancels any explicit refresh
+coalesced with the active request. `await client.closeConfig()` permanently closes
+configuration and stops the loop. Constructors still make no network requests.
+Node timers are unref'ed; the optional loop alone does not keep a process alive.

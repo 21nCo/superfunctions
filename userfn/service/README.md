@@ -136,10 +136,9 @@ already verified locally retained snapshot. Key rotation affects subsequent
 publications; existing rows keep their original signature/key ID, so keep the
 corresponding trusted public key until republishing.
 
-Automatic SDK refresh scheduling, persistent client caches, exposures, a flag
+Persistent client caches, exposures, a flag
 administration UI and CDN integration remain separate requirements. Both SDKs now offer opt-in explicit verified refresh; their acceptance fixtures
-verify this service response before applying it. Automatic refresh scheduling
-remains open.
+verify this service response before applying it. Both SDKs also provide explicit start/awaitable stop for periodic refresh.
 
 Built package acceptance is reproducible with
 `node userfn/service/scripts/verify-config-package.mjs` from the repository root

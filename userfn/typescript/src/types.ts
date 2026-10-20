@@ -82,6 +82,13 @@ export interface FlagConfig {
   environmentOverrides?: Record<string, FlagEnvironmentOverride>;
 }
 
+export interface ConfigRefreshStatus {
+  running: boolean;
+  consecutiveFailures: number;
+  lastSuccessAt?: number;
+  lastError?: string;
+  nextRefreshAt?: number;
+}
 export interface SignedConfigOptions {
   tenantId: string;
   /** Trusted key ID to base64url Ed25519 SPKI DER public key, provisioned out of band. */
@@ -102,6 +109,7 @@ export interface UserFnOptions {
   feedbackService?: FeedbackService;
   /** Local resolved values, used immediately without network access; setFlags replaces them. */
   bootstrapFlags?: Record<string, FlagValue>;
+  /** Milliseconds between settled background refreshes; explicit start required. Default 30000. */
   refreshInterval?: number;
 }
 

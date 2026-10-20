@@ -1,3 +1,4 @@
+from .core.config_refresh import ConfigRefreshLoop
 from .core.config_http import HttpConfigService, ConfigRefreshError
 from typing import Optional, List, Any
 from .types import UserFnOptions, FlagValue, FlagConfig, UserTraits, Campaign, Survey, FeedbackSubmission
@@ -12,6 +13,7 @@ class UserFnClient:
     def __init__(self, options: UserFnOptions):
         self.options = options
         self._config_environment = options.environment
+        self._config_refresh_loop = None
         self.config_service = HttpConfigService(options) if options.config else None
         self.identity = IdentityManager()
         self.feedback = FeedbackEngine(options.feedback_service if options.feedback_service is not None else (HttpFeedbackService(options) if options.endpoint else None), self.identity.get_user)
@@ -56,8 +58,32 @@ class UserFnClient:
 
     def close_config(self):
         """Permanently close config transport; in-flight work cannot apply later."""
+        if self._config_refresh_loop:
+            self._config_refresh_loop.state['running'] = False
+            self._config_refresh_loop.state.pop('next_refresh_at', None)
+            if self._config_refresh_loop.task:
+                self._config_refresh_loop.task.cancel()
         if self.config_service:
             self.config_service.close()
+
+    def start_config_refresh(self):
+        if not self.config_service or self.config_service.closed:
+            raise ConfigRefreshError('Signed configuration is unavailable or closed')
+        if self._config_refresh_loop is None:
+            interval = self.options.refresh_interval if self.options.refresh_interval is not None else 30000
+            self._config_refresh_loop = ConfigRefreshLoop(self.refresh_config, self.config_service.cancel, interval)
+        self._config_refresh_loop.start()
+
+    async def stop_config_refresh(self):
+        if self.config_service:
+            self.config_service.cancel_pending()
+        if self._config_refresh_loop:
+            await self._config_refresh_loop.stop()
+        elif self.config_service:
+            await self.config_service.cancel()
+
+    def get_config_refresh_status(self):
+        return self._config_refresh_loop.status() if self._config_refresh_loop else {'running': False, 'consecutive_failures': 0}
 
     def set_flags(self, flags):
         self.flags.set_flags(flags)

@@ -189,7 +189,7 @@ Identity changes preserve configuration. Bootstrap values have no audience
 rules: supply values appropriate to the current user or replace them with rule
 definitions before switching audiences. No network request is made for this
 bootstrap. Explicit verified remote refresh is described below;
-`refresh_interval` does not schedule background requests.
+`refresh_interval` is used only after explicit `start_config_refresh()`.
 
 ## Local flag prerequisites and environments
 
@@ -271,6 +271,25 @@ manual changes or apply after `close_config`. Errors raise `ConfigRefreshError`
 and preserve bootstrap/last-good values. Closing config is permanent for that
 client and prevents late application, including cancellation-resistant work.
 
-`refresh_interval` still does not schedule background work. Persistent caches,
+Persistent caches,
 monotonic anti-rollback/freshness policy, key distribution/rotation administration
 and WatchFn exposures remain separate requirements.
+
+
+### Background refresh lifecycle
+
+Set `refresh_interval` in milliseconds (default30,000; allowed100–86,400,000).
+Inside a running asyncio loop, call `client.start_config_refresh()`. Start is
+idempotent and refreshes immediately, then waits the interval after each settled
+request. Requests never overlap. Failures remain visible through
+`get_config_refresh_status()` (`last_error`, `consecutive_failures`,
+`last_success_at`, `next_refresh_at`, `running`) and back off exponentially to five
+minutes or the configured interval when longer. A verified success/304 resets
+backoff.
+
+`await client.stop_config_refresh()` cancels and settles active config work before
+restart, including an explicit refresh coalesced with it. It retains the verified
+ETag and prevents late application. `client.close_config()` synchronously fences
+and permanently closes config, cancelling its loop; await stop first when the
+caller needs to await settlement. No loop starts at construction, and synchronous
+start without a running asyncio loop rejects without leaving a scheduled task.

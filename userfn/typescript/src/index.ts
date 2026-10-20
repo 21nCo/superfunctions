@@ -1,4 +1,5 @@
-import { HttpConfigService } from './core/config-http';
+import { ConfigRefreshLoop } from './core/config-refresh';
+import { HttpConfigService, ConfigRefreshError } from './core/config-http';
 export { ConfigRefreshError } from './core/config-http';
 import { IdentityManager } from './core/identity';
 import { FlagEvaluator } from './core/flags';
@@ -20,6 +21,7 @@ export class UserFnClient {
   private renderer: VanillaRenderer | null = null;
   private options: UserFnOptions;
   private configService?: HttpConfigService;
+  private configRefreshLoop?: ConfigRefreshLoop;
   private readonly configEnvironment?: string;
 
   constructor(options: UserFnOptions) {
@@ -123,7 +125,24 @@ export class UserFnClient {
   }
 
   /** Permanently closes this client's config transport and prevents any late application. */
-  closeConfig(): void { this.configService?.close(); }
+  closeConfig(): Promise<void> {
+    this.configService?.close();
+    return this.configRefreshLoop?.stop() ?? this.configService?.cancel() ?? Promise.resolve();
+  }
+
+  startConfigRefresh(): void {
+    if (!this.configService || this.configService.isClosed) throw new ConfigRefreshError('Signed configuration is unavailable or closed');
+    this.configRefreshLoop ??= new ConfigRefreshLoop(() => this.refreshConfig(), () => this.configService!.cancel(), this.options.refreshInterval ?? 30000);
+    this.configRefreshLoop.start();
+  }
+
+  stopConfigRefresh(): Promise<void> {
+    return this.configRefreshLoop?.stop() ?? this.configService?.cancel() ?? Promise.resolve();
+  }
+
+  getConfigRefreshStatus() {
+    return this.configRefreshLoop?.status() ?? { running: false, consecutiveFailures: 0 };
+  }
 
   setFlags(flags: FlagConfig[]) {
     this.flags.setFlags(flags);

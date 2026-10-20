@@ -41,7 +41,7 @@ try {
   const page = await browser.newPage(); await page.goto(origin);
   const result = await page.evaluate(async ({ endpoint, trustedKey }) => {
     const { UserFnClient } = await import('/sdk.js'); document.cookie = 'ambient=must-not-leak; path=/';
-    globalThis.makeClient = (tenantId = 'tenant', timeoutMs = 1000) => new UserFnClient({ apiKey: 'key', endpoint, environment: 'production', bootstrapFlags: { feature: 'bootstrap' }, config: { tenantId, trustedKeys: { 'key-1': trustedKey }, allowInsecureHttp: true, timeoutMs } });
+    globalThis.makeClient = (tenantId = 'tenant', timeoutMs = 1000) => new UserFnClient({ apiKey: 'key', endpoint, environment: 'production', refreshInterval: 100, bootstrapFlags: { feature: 'bootstrap' }, config: { tenantId, trustedKeys: { 'key-1': trustedKey }, allowInsecureHttp: true, timeoutMs } });
     globalThis.client = globalThis.makeClient();
     return { crypto: !!crypto.subtle, first: await client.refreshConfig(), second: await client.refreshConfig(), value: client.getFlag('feature') };
   }, { endpoint, trustedKey });
@@ -56,9 +56,12 @@ try {
   mode = 'delay';
   assert.deepEqual(await page.evaluate(async () => { const slow = makeClient('tenant', 20); let rejected = false; try { await slow.refreshConfig(); } catch { rejected = true; } await new Promise(resolve => setTimeout(resolve, 250)); return { rejected, value: slow.getFlag('feature') }; }), { rejected: true, value: 'bootstrap' });
   mode = 'normal';
+  const scheduled = await page.evaluate(async () => { const loop = makeClient(); loop.startConfigRefresh(); loop.startConfigRefresh(); await new Promise(resolve => setTimeout(resolve, 350)); await loop.stopConfigRefresh(); const status = loop.getConfigRefreshStatus(); await loop.closeConfig(); return status; });
+  assert.equal(scheduled.running, false); assert.equal(scheduled.consecutiveFailures, 0); assert.ok(scheduled.lastSuccessAt);
+  const stoppedCount = seen.length; await new Promise(resolve => setTimeout(resolve, 150)); assert.equal(seen.length, stoppedCount);
   const blocked = await browser.newPage(); await blocked.goto(blockedOrigin);
   assert.equal(await blocked.evaluate(async ({ endpoint, trustedKey }) => { const { UserFnClient } = await import('/sdk.js'); const client = new UserFnClient({ apiKey: 'key', endpoint, environment: 'production', config: { tenantId: 'tenant', trustedKeys: { 'key-1': trustedKey }, allowInsecureHttp: true } }); try { await client.refreshConfig(); return false; } catch { return true; } }, { endpoint, trustedKey }), true);
-  console.log(JSON.stringify({ browser: await browser.version(), verifiedRefresh: true, conditional304: true, allowedAndBlockedCors: true, ambientCookiesOmitted: true, invalidSignatureAndTenantPreserveState: true, deadlinePreservesBootstrap: true }));
+  console.log(JSON.stringify({ browser: await browser.version(), verifiedRefresh: true, conditional304: true, allowedAndBlockedCors: true, ambientCookiesOmitted: true, invalidSignatureAndTenantPreserveState: true, deadlinePreservesBootstrap: true, scheduledRefreshStopsCleanly: true }));
 } finally {
   await browser?.close();
   for (const server of servers) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

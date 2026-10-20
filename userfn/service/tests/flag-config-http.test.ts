@@ -21,6 +21,8 @@ const auth: AuthProvider = { async authenticate(request) {
 } };
 const payload = (value: unknown = true) => ({ flags: [{ key: 'enabled', enabled: true, defaultValue: value, variations: [], rules: [] }], segments: [] });
 let directory: string; let endpoint: string; let server: Server;
+let configReads = 0;
+let configConditionals: Array<string | undefined> = [];
 let transform: ((response: Response) => Promise<Response>) | undefined;
 let databases: Kysely<any>[]; let services: ReturnType<typeof createUserFnService>[];
 function connect() {
@@ -32,7 +34,7 @@ function connect() {
 }
 const request = (method: string, body?: unknown, headers: Record<string,string> = {}, environment = 'production') => fetch(endpoint + '/config/' + environment, { method, headers: { authorization: 'Bearer editor-a', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 beforeEach(async () => {
-  transform = undefined;
+  transform = undefined; configReads = 0; configConditionals = [];
   vi.stubGlobal('crypto', webcrypto);
   directory = await mkdtemp(join(tmpdir(), 'userfn-config-')); databases = []; services = [connect()];
   const table = getUserFnSchema().userfn_flag_config;
@@ -41,6 +43,7 @@ beforeEach(async () => {
   await migration.execute(); services.push(connect());
   server = createServer(async (incoming, outgoing) => {
     try {
+      if (incoming.method === 'GET' && incoming.url?.startsWith('/config/')) { configReads++; configConditionals.push(incoming.headers['if-none-match'] as string | undefined); }
       const headers = new Headers(); for (const [key,value] of Object.entries(incoming.headers)) if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(',') : value);
       const req = new Request('http://127.0.0.1' + incoming.url, { method: incoming.method, headers, ...(['PUT','POST'].includes(incoming.method!) ? { body: Readable.toWeb(incoming) as ReadableStream, duplex: 'half' } : {}) } as RequestInit);
       let result = await services[headers.get('x-connection') === 'second' ? 1 : 0].router.handle(req);
@@ -171,6 +174,10 @@ it('enforces total refresh deadline and prevents late application even when fetc
   vi.stubGlobal('fetch', () => new Promise(resolve => setTimeout(() => resolve(signedResponse(body)), 60)));
   await expect(client.refreshConfig()).rejects.toThrow();
   await new Promise(resolve => setTimeout(resolve, 100)); expect(client.getFlag('enabled')).toBe('bootstrap');
+  const blocking = new UserFnClient(signedOptions(10));
+  vi.stubGlobal('fetch', () => { const until = performance.now() + 30; while (performance.now() < until) {} return Promise.resolve(signedResponse(body)); });
+  await expect(blocking.refreshConfig()).rejects.toThrow(); expect(blocking.getFlag('enabled')).toBe('bootstrap');
+  vi.stubGlobal('fetch', () => new Promise(resolve => setTimeout(() => resolve(signedResponse(body)), 60)));
   const manual = new UserFnClient(signedOptions(1000)); const replacing = manual.refreshConfig();
   manual.setFlags(payload('manual-during-request').flags); await expect(replacing).rejects.toThrow(); expect(manual.getFlag('enabled')).toBe('manual-during-request');
   const closed = new UserFnClient(signedOptions(1000)); const pending = closed.refreshConfig(); closed.closeConfig();
@@ -185,4 +192,20 @@ it('cancels a late response body even when fetch ignored abort and its body neve
   await expect(client.refreshConfig()).rejects.toThrow();
   await new Promise(resolve => setTimeout(resolve, 90));
   expect(cancelled).toHaveBeenCalledOnce(); expect(client.getFlag('enabled')).toBe('bootstrap');
+});
+
+
+it('runs one real HTTP background loop, retains verified conditional state on restart and stops active work', async () => {
+  const publication = await request('PUT', payload('scheduled'), { 'if-none-match': '*' });
+  const client = new UserFnClient({ ...signedOptions(), refreshInterval: 100 });
+  const until = async (condition: () => boolean) => { const deadline = Date.now() + 2000; while (!condition()) { if (Date.now() > deadline) throw new Error('Condition timeout'); await new Promise(resolve => setTimeout(resolve, 10)); } };
+  client.startConfigRefresh(); client.startConfigRefresh(); await until(() => configReads >= 2 && client.getConfigRefreshStatus().lastSuccessAt !== undefined);
+  expect(client.getFlag('enabled')).toBe('scheduled'); await client.stopConfigRefresh();
+  const stopped = configReads; await new Promise(resolve => setTimeout(resolve, 150)); expect(configReads).toBe(stopped); expect(client.getConfigRefreshStatus().running).toBe(false);
+  client.startConfigRefresh(); await until(() => configReads > stopped); await client.stopConfigRefresh(); expect(configConditionals.at(-1)).toBeTruthy();
+  await request('PUT', payload('must-not-apply'), { 'if-match': publication.headers.get('etag')! });
+  transform = async response => { await new Promise(resolve => setTimeout(resolve, 150)); return response; };
+  const before = configReads; client.startConfigRefresh(); await until(() => configReads > before); await client.stopConfigRefresh();
+  await new Promise(resolve => setTimeout(resolve, 200)); expect(client.getFlag('enabled')).toBe('scheduled');
+  await client.closeConfig(); expect(() => client.startConfigRefresh()).toThrow('closed');
 });

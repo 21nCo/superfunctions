@@ -128,6 +128,17 @@ def test_total_deadline_and_close_prevent_late_application(endpoint):
         with pytest.raises(ConfigRefreshError):
             await replacing
         assert manual.get_flag('enabled') == 'manual'
+        blocking = create(10)
+        async def blocks_loop(previous):
+            time.sleep(.03)
+            return [FlagConfig(key='enabled', enabled=True, default_value='late', variations=[], rules=[])], [], '"late"'
+        blocking.config_service._download = blocks_loop
+        with pytest.raises(ConfigRefreshError):
+            await blocking.refresh_config()
+        assert blocking.get_flag('enabled') == 'bootstrap'
+        immediate = create(); immediate_pending = asyncio.create_task(immediate.refresh_config()); await asyncio.sleep(0); immediate.close_config()
+        with pytest.raises(ConfigRefreshError):
+            await immediate_pending
         closing = create(); pending = asyncio.create_task(closing.refresh_config()); await asyncio.sleep(.01); closing.close_config()
         with pytest.raises(ConfigRefreshError):
             await pending
@@ -140,3 +151,48 @@ def test_https_required_unless_explicit_local_opt_in(endpoint):
     options = create().options; options.config.allow_insecure_http = False
     with pytest.raises(ValueError, match='HTTPS'):
         UserFnClient(options)
+
+
+def test_background_refresh_status_restart_and_stop(endpoint):
+    state, create = endpoint
+    async def run():
+        client = create(); client.options.refresh_interval = 100
+        async def until(predicate):
+            deadline = time.monotonic() + 2
+            while not predicate():
+                if time.monotonic() > deadline:
+                    raise AssertionError('Condition timeout')
+                await asyncio.sleep(.01)
+        client.start_config_refresh(); client.start_config_refresh()
+        await until(lambda: len(state['headers']) >= 2 and client.get_config_refresh_status().get('last_success_at'))
+        assert client.get_flag('enabled') == 'remote'
+        await client.stop_config_refresh(); count = len(state['headers'])
+        await asyncio.sleep(.15); assert len(state['headers']) == count
+        client.start_config_refresh(); await until(lambda: len(state['headers']) > count)
+        await client.stop_config_refresh(); assert state['headers'][-1].get('If-None-Match')
+        state['mode'] = 'signature'; client.start_config_refresh()
+        await until(lambda: client.get_config_refresh_status()['consecutive_failures'] >= 1)
+        status = client.get_config_refresh_status()
+        assert status['last_error'] and status['next_refresh_at'] - int(time.time() * 1000) <= 200
+        assert client.get_flag('enabled') == 'remote'
+        await client.stop_config_refresh()
+        state['mode'] = 'slow'; state['snapshot']['flags'][0]['defaultValue'] = 'must-not-apply'
+        count = len(state['headers']); client.start_config_refresh(); await until(lambda: len(state['headers']) > count)
+        await client.stop_config_refresh(); await asyncio.sleep(.25)
+        assert client.get_flag('enabled') == 'remote'
+        client.close_config()
+        with pytest.raises(ConfigRefreshError):
+            client.start_config_refresh()
+    asyncio.run(run())
+
+
+def test_scheduler_requires_event_loop_and_valid_interval(endpoint):
+    _, create = endpoint
+    client = create()
+    with pytest.raises(RuntimeError):
+        client.start_config_refresh()
+    assert client.get_config_refresh_status()['running'] is False
+    for interval in (True, 99, 86400001, 100.5):
+        client = create(); client.options.refresh_interval = interval
+        with pytest.raises(ValueError):
+            client.start_config_refresh()

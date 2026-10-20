@@ -11,7 +11,8 @@ from .flags import _validate_flags
 
 
 class ConfigRefreshError(Exception):
-    pass
+    def __init__(self, message='Configuration refresh failed'):
+        super().__init__(message)
 
 
 def _decode(value):
@@ -133,6 +134,19 @@ class HttpConfigService:
         self.closed = False
         self.inflight = None
 
+    def cancel_pending(self):
+        self.generation += 1
+        if self.inflight and not self.inflight.done():
+            self.inflight.cancel()
+
+    async def cancel(self):
+        self.cancel_pending()
+        if self.inflight and not self.inflight.done():
+            try:
+                await self.inflight
+            except (ConfigRefreshError, asyncio.CancelledError):
+                pass
+
     def invalidate(self):
         self.etag = None
         self.generation += 1
@@ -149,7 +163,13 @@ class HttpConfigService:
         if self.inflight is None or self.inflight.done():
             self.inflight = asyncio.create_task(self._perform(apply))
             self.inflight.add_done_callback(self._observe)
-        return await asyncio.shield(self.inflight)
+        generation = self.generation
+        try:
+            return await asyncio.shield(self.inflight)
+        except asyncio.CancelledError:
+            if self.closed or generation != self.generation:
+                raise ConfigRefreshError('Configuration request cancelled') from None
+            raise
 
     @staticmethod
     def _observe(task):
@@ -158,6 +178,7 @@ class HttpConfigService:
 
     async def _perform(self, apply):
         generation, previous = self.generation, self.etag
+        deadline = asyncio.get_running_loop().time() + self.timeout
         task = asyncio.create_task(self._download(previous))
         task.add_done_callback(self._observe)
         try:
@@ -165,6 +186,8 @@ class HttpConfigService:
             if not done:
                 raise ConfigRefreshError('Configuration request timed out')
             result = task.result()
+            if asyncio.get_running_loop().time() > deadline:
+                raise ConfigRefreshError('Configuration request timed out')
             if self.closed or generation != self.generation:
                 raise ConfigRefreshError('Configuration changed during refresh')
             if result is None:
@@ -184,7 +207,7 @@ class HttpConfigService:
                 task.cancel()
 
     async def _download(self, previous):
-        headers = {'Authorization': 'Bearer ' + self.key}
+        headers = {'Authorization': 'Bearer ' + self.key, 'Accept-Encoding': 'identity'}
         if previous:
             headers['If-None-Match'] = previous
         async with self.httpx.AsyncClient(timeout=self.timeout, follow_redirects=False, trust_env=False) as client:

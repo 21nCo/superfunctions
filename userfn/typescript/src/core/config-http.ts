@@ -54,6 +54,11 @@ export class HttpConfigService {
     this.url = endpoint.toString().replace(/\/$/, '') + '/config/' + encodeURIComponent(options.environment);
     this.key = options.apiKey; this.tenantId = config.tenantId; this.environment = options.environment;
   }
+  get isClosed(): boolean { return this.closed; }
+  async cancel(): Promise<void> {
+    this.generation++; this.active?.abort();
+    try { await this.inflight; } catch { /* Cancellation is observed by the refresh caller. */ }
+  }
   invalidate(): void { this.etag = undefined; this.generation++; }
   close(): void { this.closed = true; this.invalidate(); this.active?.abort(); }
   refresh(apply: (value: VerifiedConfig) => void): Promise<boolean> {
@@ -66,6 +71,7 @@ export class HttpConfigService {
   }
   private async perform(apply: (value: VerifiedConfig) => void): Promise<boolean> {
     const generation = this.generation; const previous = this.etag;
+    const deadline = performance.now() + this.timeout;
     const controller = new AbortController(); this.active = controller;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -74,6 +80,7 @@ export class HttpConfigService {
         new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new ConfigRefreshError('Configuration request timed out')); }, this.timeout); }),
         new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new ConfigRefreshError('Configuration request cancelled')), { once: true })),
       ]);
+      if (performance.now() > deadline) throw new ConfigRefreshError('Configuration request timed out');
       if (this.closed || generation !== this.generation || controller.signal.aborted) throw new ConfigRefreshError('Configuration changed during refresh');
       if (!result) return false;
       apply(result.value); // Synchronous validated replacement, with no await between flags and segments.
