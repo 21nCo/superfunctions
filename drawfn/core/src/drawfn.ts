@@ -1442,7 +1442,9 @@ export class Drawfn {
     if (!exportElements.ok) {
       return this.failExport(exportElements.error);
     }
-    const elementsToExport = exportElements.data;
+    const elementsToExport = deepClone(exportElements.data);
+    const camera = { ...this.scene.camera };
+    const backgroundColor = this.scene.background.color;
 
     const bounds = fitContent
       ? this.getContentBounds(elementsToExport)
@@ -1453,12 +1455,30 @@ export class Drawfn {
     const viewBoxH = fitContent ? bounds.h + padding * 2 : this.canvas.height;
 
     this.validateExportDimensions(viewBoxW * scale, viewBoxH * scale);
+    let imageSources = new Map<string, string>();
+    if (elementsToExport.some(element => element.type === "image")) {
+      const canvas = document.createElement("canvas");
+      let renderer: Renderer | undefined;
+      try {
+        renderer = new Renderer(canvas, this.getImageBitmap);
+        imageSources = await renderer.embedImages(elementsToExport);
+      } catch (error) {
+        const failure = typeof error === "object" && error !== null && "code" in error && "message" in error && "recoverable" in error
+          ? error as DrawfnError
+          : createDrawfnError("EXPORT_RENDER_FAILED", "Failed to export SVG image assets.");
+        return this.failExport(failure);
+      } finally {
+        renderer?.dispose();
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+    }
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${viewBoxW * scale}" height="${viewBoxH * scale}" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxW} ${viewBoxH}">`;
-    svg += `<rect x="${viewBoxX}" y="${viewBoxY}" width="${viewBoxW}" height="${viewBoxH}" fill="${this.escapeXml(this.scene.background.color)}"/>`;
+    svg += `<rect x="${viewBoxX}" y="${viewBoxY}" width="${viewBoxW}" height="${viewBoxH}" fill="${this.escapeXml(backgroundColor)}"/>`;
 
-    if (!fitContent) svg += `<g transform="translate(${this.scene.camera.x} ${this.scene.camera.y}) scale(${this.scene.camera.zoom})">`;
+    if (!fitContent) svg += `<g transform="translate(${camera.x} ${camera.y}) scale(${camera.zoom})">`;
     for (const element of elementsToExport) {
-      svg += this.elementToSVG(element);
+      svg += this.elementToSVG(element, imageSources);
     }
 
     if (!fitContent) svg += "</g>";
@@ -1466,7 +1486,7 @@ export class Drawfn {
     return svg;
   }
 
-  private elementToSVG(element: Element): string {
+  private elementToSVG(element: Element, imageSources: Map<string, string>): string {
     let transform = "";
     if (element.rotation !== 0) {
       const cx = element.x + element.w / 2;
@@ -1552,7 +1572,7 @@ export class Drawfn {
 
       case "image": {
         const img = element as any;
-        return `<image x="${element.x}" y="${element.y}" width="${element.w}" height="${element.h}" href="${this.escapeXml(img.src)}" opacity="${element.opacity}"${transform}/>`;
+        return `<image x="${element.x}" y="${element.y}" width="${element.w}" height="${element.h}" href="${this.escapeXml(imageSources.get(img.src)!)}" opacity="${element.opacity}"${transform}/>`;
       }
 
       case "node": {

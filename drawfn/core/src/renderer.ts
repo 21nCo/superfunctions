@@ -467,6 +467,41 @@ export class Renderer {
     await Promise.all([...this.activeImageSources].map((src) => this.loadImage(src)));
   }
 
+  async embedImages(elements: Element[]): Promise<Map<string, string>> {
+    await this.preloadImages(elements);
+    let totalPixels = 0;
+    for (const src of this.activeImageSources) {
+      const asset = this.imageCache.get(src)!;
+      const width = "naturalWidth" in asset ? asset.naturalWidth : asset.width;
+      const height = "naturalHeight" in asset ? asset.naturalHeight : asset.height;
+      totalPixels += width * height;
+      if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || width > 8192 || height > 8192 || totalPixels > 8192 * 8192) {
+        throw createDrawfnError("EXPORT_RENDER_FAILED", "SVG image assets exceed the 8192-per-side or 67108864-total-pixel limit.");
+      }
+    }
+    const embedded = new Map<string, string>();
+    for (const src of this.activeImageSources) {
+      const asset = this.imageCache.get(src)!;
+      const canvas = document.createElement("canvas");
+      try {
+        canvas.width = "naturalWidth" in asset ? asset.naturalWidth : asset.width;
+        canvas.height = "naturalHeight" in asset ? asset.naturalHeight : asset.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Missing 2D context");
+        context.drawImage(asset, 0, 0);
+        const data = canvas.toDataURL("image/png");
+        if (!data.startsWith("data:image/png;base64,")) throw new Error("Image encoding failed");
+        embedded.set(src, data);
+      } catch {
+        throw createDrawfnError("EXPORT_RENDER_FAILED", "Failed to encode an SVG image asset.");
+      } finally {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+    }
+    return embedded;
+  }
+
   private toImageLoadError(src: string, cause: unknown): DrawfnError {
     if (
       typeof cause === "object" &&

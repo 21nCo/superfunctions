@@ -19,7 +19,7 @@ Paths in the evidence column are relative to `drawfn/`. Vector names refer to `T
 | INPUT-002 | Canvas-scoped keyboard handling, space restoration and cursor-anchored wheel zoom; `camera-input.test.ts`, `readiness.test.ts`, browser CSS-scaled interactions; TV-INPUT-003/004 | Text-entry/outside-canvas shortcuts are excluded; no cross-browser/mobile matrix is claimed. |
 | TEXT-001 | `tools/text-tool.ts` create/edit/cleanup pipeline; `text-editing.test.ts`, browser focus/blur and CSS-scaled overlay; TV-TEXT-001/002 | Empty provisional text, clear/destroy cleanup, and text-commit metadata are covered. |
 | RENDER-001 | `renderer.ts` oriented bounds, locked rendering and zoom-normalized handles; `renderer-rotation.test.ts`, browser visual interactions; TV-RENDER-001/002 | `scripts/performance-acceptance.mjs` measures one concrete 2,000-element browser workload; see timings and limitations below. |
-| EXPORT-001 | Core PNG/SVG bounds, selection and error handling; `export-image.test.ts`, `image-capacity.test.ts`, actual browser decoded PNG pixels and native tainted-canvas failure; TV-EXPORT-001/002 | PNG uses the host loader. SVG still writes an image href rather than embedding host-loaded pixels; broad SVG loader parity/portable authenticated images remains open. |
+| EXPORT-001 | Core PNG/SVG bounds, selection and error handling; `export-image.test.ts`, `image-capacity.test.ts`, actual browser decoded PNG pixels and native tainted-canvas failure; TV-EXPORT-001/002 | PNG and SVG both use the host loader. SVG embeds owned loaded pixels as PNG data URLs; see source/pixel limits and native browser evidence below. |
 | REACT-001 | `drawfn-react/src/use-drawfn.ts`, component and hook tests; TV-REACT-001/002 | Deep-equal echoes and constructor-option replacement covered; baseline packed React 18/19 evidence retained. |
 | SVELTE-001 | Action/component/store sources and six tests; TV-SVELTE-001/002 | Supported peer is Svelte 5.57.2+, not original Svelte 4/5 target. Existing README records the intentional security-related restriction; this requirement is qualified, not silently satisfied for Svelte 4. |
 | OBS-001 | Core result/error event/export rejection paths; scene/export tests and source has no console-dependent recoverable behavior; TV-OBS-001/002 | Native PNG encoder throws and null results now emit one structured `EXPORT_RENDER_FAILED` event and reject. Image-capacity rejections are deduplicated while a source remains blocked. |
@@ -38,7 +38,7 @@ Paths in the evidence column are relative to `drawfn/`. Vector names refer to `T
 | 7: history/events | HISTORY-001 and EVENTS-001, including undoable clear and dedicated text-commit metadata. |
 | 8: selection/input | INPUT-001/002 and EVENTS-001. |
 | 9: text editing | TEXT-001. |
-| 10: rendering/image/export | RENDER-001 and EXPORT-001; authenticated SVG qualification retained. |
+| 10: rendering/image/export | RENDER-001 and EXPORT-001, including portable custom-loader SVG image assets. |
 | 11: controlled/uncontrolled wrappers | REACT-001 and SVELTE-001; original Svelte 4 target remains excluded. |
 | 12: release verification | QA-001 and both SURFACE requirements; hosted status separate. |
 | 13: no Nucleus migration | BOUNDARY-001. |
@@ -80,3 +80,13 @@ The recorded run (`/tmp/drawfn-performance.json`) measured initial load 4.4 ms; 
 ```sh
 PLAYWRIGHT_MODULE_PATH=/path/to/playwright BROWSER_EXECUTABLE_PATH=/path/to/chrome node drawfn/scripts/performance-acceptance.mjs
 ```
+
+## SVG image portability
+
+SVG export now resolves exported image sources through the configured host loader (or the same anonymous default loader used by the renderer), embeds PNG data URLs, and never falls back to an external href. Duplicate sources share loading and encoding. The scene elements, camera and background are snapshotted before asynchronous loading. Temporary canvases are zeroed after encoding and the temporary renderer is disposed on success/failure, including late image completions.
+
+Before allocating image-encoding canvases, native dimensions must be positive integers no larger than 8192 per side and the sum of native pixels across unique assets must not exceed 67,108,864. This is an additional SVG embedding budget, distinct from exported viewport dimensions and the 64-source cache/request bound. Host loaders still own the cost of obtaining their returned assets; the library cannot cancel their requests. Loader failure uses `EXPORT_IMAGE_LOAD_FAILED`; native taint, invalid encoding or dimension/pixel rejection uses `EXPORT_RENDER_FAILED`. Capacity failure uses `SCENE_LIMIT_EXCEEDED`.
+
+`core/__tests__/svg-images.test.ts` covers repeated sources, custom loader, rejected loader, tainted/null encoding, oversized assets, aggregate pixel budget, 65-source admission, disposal and concurrent scene edits. Chrome154 passed 54 assertions, including decoding the exported SVG into pixels with a custom private source, plus native cross-origin bitmap rejection without an href fallback. Receipts: `/tmp/drawfn-svg-tests.log`, `/tmp/drawfn-svg-types.log`, `/tmp/drawfn-svg-build.log`, `/tmp/drawfn-svg-browser.json`.
+
+Final SVG checks: 82 core, 6 React and 7 Svelte tests pass; all builds/typechecks pass; Chrome154 has zero page errors.

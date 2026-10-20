@@ -89,6 +89,22 @@ try{
   try{await drawing.exportPNG({scale:1});return{unexpectedSuccess:true}}catch(error){return{code:error.code,errors}}finally{drawing.destroy()}
  },`http://127.0.0.1:${imageServer.address().port}/image.png`);
  check(tainted.code==='EXPORT_RENDER_FAILED'&&tainted.errors.includes('EXPORT_RENDER_FAILED'),`native cross-origin canvas encoding failure is structured: ${JSON.stringify(tainted)}`);
+ const portable=await page.evaluate(async()=>{
+  const canvas=document.createElement('canvas');canvas.width=30;canvas.height=20;let loads=0;
+  const drawing=new Drawfn({canvas,getImageBitmap:async()=>{loads++;const asset=document.createElement('canvas');asset.width=2;asset.height=2;asset.getContext('2d').fillStyle='red';asset.getContext('2d').fillRect(0,0,2,2);return createImageBitmap(asset)}});
+  drawing.add({...rect,id:'private1',type:'image',src:'private://token-protected',x:0,y:0,w:10,h:10});
+  drawing.add({...rect,id:'private2',type:'image',src:'private://token-protected',x:10,y:0,w:10,h:10});
+  const svg=await drawing.exportSVG();drawing.destroy();
+  const url=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml'}));
+  try{const image=new Image();image.src=url;await image.decode();const output=document.createElement('canvas');output.width=30;output.height=20;const context=output.getContext('2d');context.drawImage(image,0,0);return{privateURL:svg.includes('private://'),embedded:(svg.match(/href="data:image\/png;base64,/g)||[]).length,pixel:[...context.getImageData(15,5,1,1).data],loads}}finally{URL.revokeObjectURL(url)}
+ });check(!portable.privateURL&&portable.embedded===2&&portable.pixel.join(',')==='255,0,0,255','custom-loader SVG images are portable and decode to expected pixels');
+ const svgTaint=await page.evaluate(async url=>{
+  const drawing=new Drawfn({canvas:document.createElement('canvas'),getImageBitmap:async()=>{const image=new Image();image.src=url;await image.decode();return createImageBitmap(image)}});
+  drawing.add({...rect,id:'taint',type:'image',src:url,x:0,y:0,w:10,h:10});
+  try{await drawing.exportSVG();return 'unexpected-success'}catch(error){return error.code}finally{drawing.destroy()}
+ },`http://127.0.0.1:${imageServer.address().port}/image.png`);
+ check(svgTaint==='EXPORT_RENDER_FAILED','native tainted SVG image rejects without external href fallback');
+
  await page.evaluate(()=>{a.destroy();a.destroy();b.destroy()});check(errors.length===0,`browser errors: ${errors.join(';')}`);
  await page.goto(`http://127.0.0.1:${server.address().port}/drawfn/core/example.html`);await page.locator('#rectangle').click();const box=await page.locator('#canvas').boundingBox();await drag(Math.max(box.x,0)+30,box.y+30,Math.max(box.x,0)+100,box.y+90);await page.waitForFunction(()=>document.querySelector('#element-count').textContent==='1',{},{timeout:3000}).catch(async error=>{throw Error(JSON.stringify({errors,box,state:await page.evaluate(()=>({tool:document.querySelector('#current-tool')?.textContent,count:document.querySelector('#element-count')?.textContent,canvas:document.querySelector('#canvas')?.outerHTML}))}))});check(true,'shipped vanilla example imports and draws');check(errors.length===0,'vanilla example browser errors');
  console.log(JSON.stringify({browser:await browser.version(),assertions,pageErrors:errors}));
