@@ -381,4 +381,10 @@ No worker is started by the browser: schedule `watch.processBugIssues()` on the 
 
 ### Existing Watch databases
 
-Canonical storage now has schema-owned indexes for type/app/time, severity, issue ID, session and replay. Hosts must apply the additive Watch schema migration before using the new writer, then run its bounded offline backfill to remove historical scan overhead. Keep writers/workers/queries stopped during backfill and continue until its cursor is null. See [the canonical indexing checkpoint](../.conduct/event-index-readiness.md) and its migration instructions. The browser SDK does not perform database migrations. Retention/bug-specific TTL remains separate unfinished work.
+Canonical storage now has schema-owned indexes for type/app/time, severity, issue ID, session and replay. Hosts must apply the additive Watch schema migration before using the new writer, then run its bounded offline backfill to remove historical scan overhead. Keep writers/workers/queries stopped during backfill and continue until its cursor is null. See [the canonical indexing checkpoint](../.conduct/event-index-readiness.md) and its migration instructions. The browser SDK does not perform database migrations. Canonical retention and a bug-specific TTL are available through the explicit host policy below.
+
+### Report retention
+
+On the Watch server, configure `retention: { apps: ["shop"], defaultTtlMs: 30 * 86400000, bugReportTtlMs: 90 * 86400000 }` and schedule bounded `cleanupRetention` passes until their cursor is null. Bugs inherit the 30-day default unless overridden. Apply the new nullable arrival-time column before starting writers; historical reports need an explicit offline anchor backfill before they become eligible. TTL uses the application host clock, not a client timestamp.
+
+Pending/uncertain issue deliveries stay protected. Linked payloads may expire while durable receipt fingerprints and links remain, allowing safe exact replay and verified status polling without another provider issue. Receipt archival and scheduling remain host responsibilities. See [canonical retention evidence and migration](../.conduct/event-retention-readiness.md).

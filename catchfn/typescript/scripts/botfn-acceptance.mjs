@@ -59,7 +59,7 @@ try {
   const connect = () => {
     sql = new Kysely({ dialect: new SqliteDialect({ database: new Database(join(temporary, 'bugs.sqlite')) }) });
     watch = new WatchFn({ name: 'shop', storage: 'database', database: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { watchfn_events: 'watchfn_events', watchfn_bug_issues: 'watchfn_bug_issues' } }),
-      infra: { enabled: false }, auth: { apiKey: 'full-watch-fixture-key' }, botfn: { namespace: 'shop-test', routes: [{ app: 'shop', target: 'github', project: 'acme/bugs', client: github }] } });
+      infra: { enabled: false }, auth: { apiKey: 'full-watch-fixture-key' }, retention: { apps: ['shop'], bugReportTtlMs: 1 }, botfn: { namespace: 'shop-test', routes: [{ app: 'shop', target: 'github', project: 'acme/bugs', client: github }] } });
     watch.start();
   };
   connect();
@@ -155,7 +155,23 @@ try {
   assert.equal((await query({ metric: 'bug_report' })).length, 6);
   assert.equal((await watch.getBugIssueStatus({ app: 'shop', reportId: browserReport.id })).issueUrl, 'https://github.com/acme/bugs/issues/2');
   await watch.processBugIssues(); assert.equal(issues.length, 6);
-  console.log('CatchFn built SDK and Chrome -> WatchFn HTTP -> SQLite reopen -> actual BotFn GitHub HTTP contract passed; lost intake replay deduplicated, auth/route denial, pending acknowledgment, verified durable linkage and mounted widget status polling/cancellation');
+  // Cleanup is explicitly host-scheduled. Expiration preserves durable receipt
+  // identity and the SDK's status path without recreating provider side effects.
+  let after; let deleted = 0;
+  do { const page = await watch.cleanupRetention({ after, limit: 2 }); deleted += page.deleted; after = page.nextCursor ?? undefined; } while (after !== undefined);
+  assert.equal(deleted, 6); assert.deepEqual(await query({ metric: 'bug_report' }), []);
+  assert.equal((await watch.cleanupRetention()).deleted, 0);
+  const replay = await originalFetch(endpoint, { method: 'POST', headers: { authorization: 'Bearer full-watch-fixture-key', 'content-type': 'application/json' }, body: JSON.stringify({ events: requests[0] }) });
+  assert.equal(replay.status, 202); await watch.processBugIssues(); assert.equal(issues.length, 6);
+  assert.deepEqual(await query({ metric: 'bug_report' }), []);
+  await watch.stop(); await sql.destroy(); sql = undefined; connect();
+  const statusCatcher = catchFn({ name: 'shop', issueStatus: { enabled: true, timeoutMs: 1000 }, watch: { endpoint, apiKey: 'full-watch-fixture-key', timeoutMs: 1000 } });
+  catchers.push(statusCatcher);
+  const retainedStatus = await statusCatcher.pollIssueStatus(report.id);
+  assert.equal(retainedStatus.state, 'linked'); assert.equal(retainedStatus.issueUrl, 'https://github.com/acme/bugs/issues/1');
+  assert.deepEqual(await query({ metric: 'bug_report' }), []);
+  assert.equal((await sql.selectFrom('watchfn_bug_issues').selectAll().execute()).length, 6);
+  console.log('CatchFn built SDK and Chrome -> WatchFn HTTP -> SQLite reopen -> actual BotFn GitHub HTTP contract passed; lost intake replay deduplicated, auth/route denial, verified widget links, bounded payload expiration and durable replay/status receipts');
 } finally {
   globalThis.fetch = originalFetch;
   for (const catcher of catchers) catcher.stop();
