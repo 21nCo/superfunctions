@@ -50,12 +50,7 @@ export {
 export * from "./storage/time-series/retention";
 export * from "./storage/events/index";
 
-// Adapters
-export * from "./adapters/express";
-export * from "./adapters/fastify";
-export * from "./adapters/hono";
-export * from "./adapters/next";
-export * from "./adapters/sveltekit";
+// Framework integrations are available through ./adapters/* subpaths.
 
 // APM
 export * from "./collectors/apm/database-tracer";
@@ -90,3 +85,9 @@ export * from "./business/metrics-tracker";
 
 // Analysis
 export * from "./analysis/anomaly-detection";
+
+// Public names let downstream libraries emit portable inferred declarations.
+export type { Router } from "@superfunctions/http";
+export type { TableSchema } from "@superfunctions/db";
+
+export type { DeploymentComparisonOptions, ComparedMetric } from "./analysis/deployment-comparison";

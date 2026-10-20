@@ -1,3 +1,4 @@
+import type { WatchFnDatabase } from "../storage/database";
 import { z } from "zod";
 
 export const WatchFnConfigSchema = z.object({
@@ -13,7 +14,7 @@ export const WatchFnConfigSchema = z.object({
     }),
   ]).optional().default("memory"),
   
-  database: z.any().optional(),
+  database: z.custom<WatchFnDatabase>().optional(),
   
   apm: z.object({
     enabled: z.boolean().default(true),
@@ -60,7 +61,8 @@ export type WatchFnConfig = z.infer<typeof WatchFnConfigSchema>;
 
 export interface WatchFnInstance {
   start(): void;
-  stop(): void;
+  stop(): Promise<void>;
+  flush(): Promise<void>;
   track(event: string, properties?: Record<string, any>): void;
   captureException(error: any, context?: Record<string, any>): void;
   captureMessage(message: string, context?: Record<string, any>): void;

@@ -49,7 +49,7 @@ describe("MetricAggregator", () => {
     });
 
     it("should aggregate with correct functions", () => {
-      const now = Date.now();
+      const now = Date.UTC(2026, 0, 1, 0, 0, 10);
       const values = [10, 20, 30, 40, 50];
 
       values.forEach((value, i) => {
@@ -74,9 +74,21 @@ describe("MetricAggregator", () => {
     });
   });
 
+  it("keeps distinct minute buckets when samples cross the boundary", () => {
+    const start = Date.UTC(2026, 0, 1);
+    for (const [offset, value] of [[59000, 10], [59999, 30], [60000, 80], [61000, 100]]) {
+      aggregator.add("boundary", { timestamp: start + offset, value });
+    }
+    const results = aggregator.get("boundary", "1m", start, start + 120000, "avg");
+    expect(results.map(({ timestamp, value }) => ({ timestamp, value }))).toEqual([
+      { timestamp: start, value: 20 },
+      { timestamp: start + 60000, value: 90 },
+    ]);
+  });
+
   describe("percentiles", () => {
     it("should calculate p95 correctly", () => {
-      const now = Date.now();
+      const now = Date.UTC(2026, 0, 1, 0, 0, 10);
 
       // Add 100 values
       for (let i = 1; i <= 100; i++) {

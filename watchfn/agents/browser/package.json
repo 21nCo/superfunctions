@@ -8,12 +8,13 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "node -e \"console.log('No tests configured')\""
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {},
   "devDependencies": {
     "tsup": "^8.0.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "vitest": "^3.2.4"
   },
   "author": "21n",
   "license": "MIT",
@@ -27,5 +28,20 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
   }
 }
