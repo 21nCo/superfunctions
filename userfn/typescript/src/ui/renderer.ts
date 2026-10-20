@@ -3,13 +3,24 @@ import { Campaign, Survey, SurveyResponse, Question, FeedbackSubmission, Feedbac
 import { injectStyles } from './styles';
 
 export class VanillaRenderer {
-  constructor() {
+  private readonly messages = new Set<HTMLElement>();
+  private readonly messageTimers = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
+  constructor(private readonly messagingAllowed: () => boolean = () => true) {
     if (typeof document !== 'undefined') {
       injectStyles();
     }
   }
 
+  dismissMessages(): void { for (const node of [...this.messages]) this.removeMessage(node); }
+  private removeMessage(node: HTMLElement): void {
+    node.remove(); this.messages.delete(node);
+    const timer = this.messageTimers.get(node); if (timer !== undefined) clearTimeout(timer);
+    this.messageTimers.delete(node);
+  }
+  private active(node: HTMLElement): boolean { return this.messagingAllowed() && this.messages.has(node); }
+
   render(campaign: Campaign, onDismiss: () => void, onAction: () => void) {
+    if (!this.messagingAllowed()) return;
     if (campaign.kind === 'modal') {
       this.renderModal(campaign, onDismiss, onAction);
     } else if (campaign.kind === 'inbox-item') {
@@ -18,6 +29,7 @@ export class VanillaRenderer {
   }
 
   renderSurvey(survey: Survey, onSubmit: (response: SurveyResponse) => void, onDismiss: () => void) {
+    if (!this.messagingAllowed()) return;
     // Start with first question
     this.renderQuestion(survey, 0, [], onSubmit, onDismiss);
   }
@@ -119,6 +131,7 @@ export class VanillaRenderer {
     onSubmit: (r: SurveyResponse) => void,
     onDismiss: () => void
   ) {
+    if (!this.messagingAllowed()) return;
     if (index >= survey.questions.length) {
       // Done
       onSubmit({
@@ -141,7 +154,8 @@ export class VanillaRenderer {
     closeBtn.className = 'userfn-close';
     closeBtn.innerHTML = '&times;';
     closeBtn.onclick = () => {
-      document.body.removeChild(overlay);
+      if (!this.active(overlay)) return;
+      this.removeMessage(overlay);
       onDismiss();
     };
     modal.appendChild(closeBtn);
@@ -173,6 +187,7 @@ export class VanillaRenderer {
         btn.innerText = String(i);
         btn.style.cssText = 'padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer;';
         btn.onclick = () => {
+          if (!this.active(overlay)) return;
           selected = i;
           btns.forEach(b => b.style.background = 'white');
           btn.style.background = '#e5e7eb';
@@ -200,17 +215,19 @@ export class VanillaRenderer {
     nextBtn.className = 'userfn-cta';
     nextBtn.innerText = index === survey.questions.length - 1 ? 'Submit' : 'Next';
     nextBtn.onclick = () => {
+      if (!this.active(overlay)) return;
       const val = getValue();
       if (question.required && (val === null || val === '')) {
         alert('Please answer the question'); // simple validation
         return;
       }
-      document.body.removeChild(overlay);
+      this.removeMessage(overlay);
       this.renderQuestion(survey, index + 1, [...answers, { questionId: question.id, value: val }], onSubmit, onDismiss);
     };
     modal.appendChild(nextBtn);
 
     overlay.appendChild(modal);
+    this.messages.add(overlay);
     document.body.appendChild(overlay);
   }
 
@@ -244,7 +261,8 @@ export class VanillaRenderer {
     close.innerHTML = '&times;';
     close.style.cssText = 'background:none; border:none; font-size:1.2em; cursor:pointer; color:#999;';
     close.onclick = () => {
-      document.body.removeChild(toast);
+      if (!this.active(toast)) return;
+      this.removeMessage(toast);
       onDismiss();
     };
     toast.appendChild(close);
@@ -252,21 +270,24 @@ export class VanillaRenderer {
     if (resolveCampaignUrl(campaign.content.ctaUrl, window.location.href)) {
       toast.style.cursor = 'pointer';
       content.onclick = () => {
+        if (!this.active(toast)) return;
         if (!resolveCampaignUrl(campaign.content.ctaUrl, window.location.href)) return;
         onAction();
-        document.body.removeChild(toast);
+        this.removeMessage(toast);
       };
     }
 
+    this.messages.add(toast);
     document.body.appendChild(toast);
     
     // Auto dismiss after 5s
-    setTimeout(() => {
-      if (document.body.contains(toast)) {
-        document.body.removeChild(toast);
+    const timer = setTimeout(() => {
+      if (this.active(toast) && document.body.contains(toast)) {
+        this.removeMessage(toast);
         onDismiss(); // Count as dismiss or passive?
       }
     }, 5000);
+    this.messageTimers.set(toast, timer);
   }
 
   private renderModal(campaign: Campaign, onDismiss: () => void, onAction: () => void) {
@@ -281,7 +302,8 @@ export class VanillaRenderer {
     closeBtn.className = 'userfn-close';
     closeBtn.innerHTML = '&times;';
     closeBtn.onclick = () => {
-      document.body.removeChild(overlay);
+      if (!this.active(overlay)) return;
+      this.removeMessage(overlay);
       onDismiss();
     };
     modal.appendChild(closeBtn);
@@ -306,14 +328,16 @@ export class VanillaRenderer {
       cta.className = 'userfn-cta';
       cta.innerText = campaign.content.ctaText;
       cta.onclick = () => {
+        if (!this.active(overlay)) return;
         if (campaign.content.ctaUrl !== undefined && !resolveCampaignUrl(campaign.content.ctaUrl, window.location.href)) return;
-        document.body.removeChild(overlay);
+        this.removeMessage(overlay);
         onAction();
       };
       modal.appendChild(cta);
     }
 
     overlay.appendChild(modal);
+    this.messages.add(overlay);
     document.body.appendChild(overlay);
 
     // Basic focus trap (very naive)

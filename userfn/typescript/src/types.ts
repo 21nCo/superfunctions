@@ -107,7 +107,14 @@ export interface ExposureOptions {
   timeoutMs?: number;
 }
 
+export interface ConsentOptions { analytics?: boolean; messaging?: boolean; }
+export interface ConsentPatch extends ConsentOptions { doNotTrack?: boolean; }
+export interface ConsentState { analytics: boolean; messaging: boolean; doNotTrack: boolean; }
+
 export interface UserFnOptions {
+  consent?: ConsentOptions;
+  /** Forwarded server/request signal; live browser DNT still vetoes grants. */
+  doNotTrack?: boolean;
   exposures?: ExposureOptions;
   config?: SignedConfigOptions;
   apiKey: string;

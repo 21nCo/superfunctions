@@ -23,6 +23,10 @@ Subsequent [framework flag checkpoint](framework-flags-readiness.md) adds option
 React hooks and Svelte readable stores with actual packed SSR/browser acceptance.
 Other UI components, accessibility and full product requirements remain open.
 
+Subsequent [consent checkpoint](consent-readiness.md) adds independent policy
+flags, DNT veto, queued-delivery withdrawal and owned messaging teardown in
+implemented runtime paths. Other privacy requirements remain open.
+
 ## Resume priorities
 
 1. **Make existing messaging content safe before expanding rendering.**
@@ -75,7 +79,7 @@ Other UI components, accessibility and full product requirements remain open.
 | Storage tables/indexes; shared DB wrapping | `service/src/schema.ts` owns config + feedback/votes/attributes/tags/migration schemas. SQLite transaction/reopen evidence for implemented routes. | Users, campaigns/deliveries, surveys/responses, sources, roadmap/changelog schemas absent; non-SQLite adapters and scale not certified. | Add only schemas required by next vertical slice; run actual adapter acceptance. |
 | Transport batching/retries/auth for all runtime events | TS exposures reuse current Watch browser package; Python optional HTTP transport batches, coalesces and retains failures for explicit retry. | Impressions/clicks/survey events not wired; no reconnect replay across process loss or durable event store. | Generalize deliberate event lifecycle after defining consent and event contracts; do not replace failures with logs. |
 | Tenancy/Auth: AuthFn, per-tenant keys, viewer/editor/admin | Service requires verified shared-auth subject/tenant/scopes before body parsing; scopes separate read/write/vote/moderate/config actions. Actual AuthFn source acceptance exists with tenant resolver and revocation. | Concrete role provisioning/UI absent. AuthFn acceptance uses in-memory key storage/source aliases; packed durable AuthFn closure and deployment enrollment/rotation remain open. Watch app name is not a tenant boundary. | Prove packaged AuthFn + supported durable provider, map roles to scopes, and separate ingestion credentials/proxy. |
-| Privacy/PII allow/block lists; consent/DNT | Exposure events deliberately omit values/traits; admin capability includes redaction metadata. | No SDK DNT/app consent gate; feedback traits/body lack configurable redaction policy. Admin descriptor redaction is not product PII enforcement. | Add consent before any analytics/messaging side effect and explicit feedback field policy tests. |
+| Privacy/PII allow/block lists; consent/DNT | Exposure events omit values/traits; TS/Python analytics/messaging consent and DNT veto, queued-delivery discard and owned UI teardown have actual HTTP/SQLite/browser evidence. | Feedback traits/body lack configurable redaction policy. Admin descriptor redaction is not product PII enforcement; future analytics paths must use the policy boundary. | Add explicit feedback field-policy tests and enforce policy in each new runtime-event path. |
 | Per-user/per-tenant rate limits; moderation | Request byte/depth bounds and scoped authorization exist. | No rate limiter or profanity toggle; local campaign counters are not service rate limits. | Define authoritative counters/rejection/retry contract and moderation behavior before public endpoints. |
 | UI theming/accessibility/offline | Vanilla stylesheet and modal/toast/form scaffolds exist. | Hard-coded styles, no full CSS-variable/light-dark/font API; no proper focus trap/ARIA/keyboard/reduced-motion acceptance; no durable cached messages/reconnect queue. | Browser accessibility/security suite, then theme contract and offline lifecycle. |
 | Service API sketch compatibility | Actual routes: feedback GET/POST, vote POST, metadata/status PATCH; config GET/PUT per environment, OPTIONS. | Campaign/survey/roadmap/changelog/webhook routes absent; `/flags` sketch is not exposed. Admin operation descriptors do not supply these routes. | Publish an explicit API mapping and implement missing product endpoints; avoid claiming descriptors as handlers. |
@@ -90,7 +94,7 @@ Other UI components, accessibility and full product requirements remain open.
 | 2. Messaging + Surveys | Local prototypes; incomplete | Durable campaigns/deliveries/responses, real caps and branching, safe accessible renderer, Watch events and browser submissions. |
 | 3. Unified feedback board | In-app backend/voting/status substantially implemented; incomplete | External sources, semantic merge, issue sync, board UI and screenshot/attachment flow. |
 | 4. Roadmap + Changelog | Not implemented | Models, APIs, widgets, relations, RSS/webhooks and impressions. |
-| 5. Hardening | Selected boundaries implemented; incomplete | Consent/PII/rate limits/moderation, full role provisioning, durable cache/edge deployment, load and provider matrix. ETag/auth/body bounds are not the entire milestone. |
+| 5. Hardening | Selected boundaries implemented; incomplete | PII/rate limits/moderation, full role provisioning, durable cache/edge deployment, load and provider matrix. ETag/auth/body bounds are not the entire milestone. |
 | 6. Nice-to-haves | Not implemented as complete features | Inbox list, localization, AI-assisted dedupe/triage and multi-product support. A toast called inbox-item is not an inbox. |
 
 Native mobile SDKs, a full CRM and billing/entitlements remain the original v1

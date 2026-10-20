@@ -397,3 +397,44 @@ side effects; `subscribe(listener)` returns an idempotent unsubscribe. Call
 `track(snapshot)` only after consuming that exact snapshot. Tracking is idempotent
 per snapshot, retains its original identity/rule even if state changes before
 commit, and rejects a snapshot from a different observation.
+
+## Consent and do-not-track
+
+```ts
+const client = new UserFnClient({
+  apiKey: '...',
+  consent: { analytics: false, messaging: false },
+  doNotTrack: false, // Forward a request/browser preference when using SSR.
+});
+client.setConsent({ analytics: true });
+client.setConsent({ messaging: true });
+client.setConsent({ analytics: false }); // Discard unsent exposures and cancel owned delivery.
+console.log(client.getConsent(), client.getExposureStatus().discarded);
+```
+
+Omitted consent flags retain enabled behavior for compatibility. Explicit `false`
+denies that category. A forwarded `doNotTrack: true`, or a live browser
+`navigator.doNotTrack`/`window.doNotTrack` equal to `"1"` or `"yes"`, vetoes both
+categories even when the application grants them. `setConsent` accepts validated
+boolean patches, including `doNotTrack`; invalid patches apply nothing. Identity
+`reset()` does not grant consent. Browser signals are checked at API, delivery
+and UI-interaction boundaries; there is no continuous DNT observer.
+
+Analytics denial leaves flag values and signed config refresh available but
+prevents new flag exposures, including framework committed effects. Revocation
+clears queued exposures and aborts owned in-flight delivery. An already-pending
+flush rejects when discarded; a later empty flush succeeds. `discarded` counts
+queued entries removed (including entries handed to an in-flight request), while
+`dropped` remains overflow/serialization failures. Denied evaluations increment
+neither count. Regranting does not replay discarded events or pre-withdrawal
+framework snapshots. New reads/selections can emit again.
+
+A request already handed to the network may have been accepted remotely; abort
+cannot retract it, and this API does not delete acknowledged server data.
+Messaging denial blocks campaign/survey triggers and callbacks and removes only
+this client's active campaign/survey elements and timers. It leaves other clients'
+UI and explicitly opened feedback forms intact. Local flags, configuration,
+identity and user-requested feedback are not treated as analytics. The existing
+`track`/`render` placeholders are gated but remain placeholders. Consent collection,
+storage across reloads, and selecting the application's initial flags are owned
+by the application.

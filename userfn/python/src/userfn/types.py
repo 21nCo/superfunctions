@@ -105,6 +105,12 @@ class ExposureOptions:
 
 
 @dataclass
+class ConsentOptions:
+    analytics: Optional[bool] = None
+    messaging: Optional[bool] = None
+
+
+@dataclass
 class UserFnOptions:
     api_key: str
     endpoint: Optional[str] = None
@@ -116,6 +122,8 @@ class UserFnOptions:
     environment: Optional[str] = None
     config: Optional[SignedConfigOptions] = None
     exposures: Optional[ExposureOptions] = None
+    consent: Optional[ConsentOptions] = None
+    do_not_track: bool = False
 
 EventProperties = Dict[str, Any]
 

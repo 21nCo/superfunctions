@@ -347,3 +347,36 @@ Shared numbers use finite JavaScript precision; exact large identifiers belong
 in strings. Prefix/substring matching uses JS UTF-16 units, reusing the rollout
 hash conversion. Native regex dialect differences and execution bounds, plus
 range/geo/time-window contracts, remain unfinished.
+
+## Consent and forwarded do-not-track
+
+```python
+from userfn import UserFnClient, UserFnOptions, ConsentOptions
+
+client = UserFnClient(UserFnOptions(
+    api_key="...",
+    consent=ConsentOptions(analytics=False, messaging=False),
+    do_not_track=False,  # Forward the applicable request preference explicitly.
+))
+client.set_consent(analytics=True)
+client.set_consent(analytics=False)
+print(client.get_consent(), client.get_exposure_status()["discarded"])
+```
+
+Omitted categories retain enabled behavior for compatibility; `False` denies.
+A forwarded `do_not_track=True` vetoes analytics and messaging. Python has no
+ambient browser DNT signal: pass it per client/request, and do not share clients
+across unrelated identities. `set_consent` validates boolean keyword patches
+atomically (`None` means omitted), including `do_not_track`. Resetting identity
+does not reset policy.
+
+Denied reads retain their flag value without queuing exposures. Revocation clears
+queued entries, cancels owned asynchronous delivery, and fences late completions
+from a new queue after regrant. An affected in-flight flush reports withdrawal;
+a subsequent empty flush succeeds. `discarded` counts removed queue entries,
+separately from overflow/serialization `dropped`; denied reads increment neither.
+Regranting never replays old events. Network requests already handed off may still
+be accepted remotely; no acknowledged data is retracted. Messaging denial makes
+`trigger` return no campaigns before eligibility is evaluated. Config refresh and
+explicit feedback remain available. There is no new Python survey renderer, and
+consent persistence/collection remains application-owned.

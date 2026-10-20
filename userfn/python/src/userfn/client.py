@@ -1,4 +1,5 @@
 from .core.exposures import FlagExposures
+from .core.consent import ConsentPolicy
 from .core.config_refresh import ConfigRefreshLoop
 from .core.config_http import HttpConfigService, ConfigRefreshError
 from typing import Optional, List, Any
@@ -13,6 +14,7 @@ from .core.messaging import MessagingEngine
 class UserFnClient:
     def __init__(self, options: UserFnOptions):
         self.options = options
+        self.consent = ConsentPolicy(options.consent, options.do_not_track)
         self.exposures = FlagExposures(options.exposures, options.environment) if options.exposures else None
         self._config_environment = options.environment
         self._config_refresh_loop = None
@@ -41,9 +43,18 @@ class UserFnClient:
         result = self.flags.evaluate(key, default_value, user)
         if key in self._bootstrap_keys and result["reason"] == "default_value":
             result["reason"] = "bootstrap"
-        if self.exposures:
+        if self.exposures and self.consent.state()['analytics']:
             self.exposures.capture(key, result, user)
         return result["value"]
+
+    def set_consent(self, *, analytics=None, messaging=None, do_not_track=None):
+        previous = self.consent.state()
+        self.consent.update(analytics=analytics, messaging=messaging, do_not_track=do_not_track)
+        if not self.consent.state()['analytics'] and self.exposures and (previous['analytics'] or self.exposures.queue):
+            self.exposures.discard_pending()
+
+    def get_consent(self):
+        return self.consent.state()
 
     async def flush_exposures(self):
         if self.exposures:
@@ -54,7 +65,7 @@ class UserFnClient:
             await self.exposures.close()
 
     def get_exposure_status(self):
-        return self.exposures.status() if self.exposures else {"pending": 0, "dropped": 0, "closed": False}
+        return self.exposures.status() if self.exposures else {"pending": 0, "dropped": 0, "discarded": 0, "closed": False}
 
     # Messaging
     def trigger(self, trigger_type: str, context: str) -> List[Campaign]:
@@ -62,6 +73,8 @@ class UserFnClient:
         Check for eligible campaigns. 
         Returns list of eligible campaigns (unlike TS which usually renders them).
         """
+        if not self.consent.state()['messaging']:
+            return []
         user = self.identity.get_user()
         return self.messaging.get_eligible_messages(trigger_type, context, user)
 

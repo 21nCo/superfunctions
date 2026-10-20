@@ -1,3 +1,5 @@
+import { ConsentPolicy } from './core/consent';
+import type { ConsentPatch, ConsentState } from './types';
 import { resolveCampaignUrl } from './ui/campaign-url';
 import { FlagExposures } from './core/exposures';
 import { ConfigRefreshLoop } from './core/config-refresh';
@@ -28,12 +30,18 @@ export class UserFnClient {
   private bootstrapKeys = new Set<string>();
   private configRefreshLoop?: ConfigRefreshLoop;
   private readonly configEnvironment?: string;
+  private readonly consent: ConsentPolicy;
+  private consentEpoch = 0;
+  private lastConsent?: ConsentState;
   private flagRevision = 0;
   private readonly flagListeners = new Set<() => void>();
 
   constructor(options: UserFnOptions) {
     this.options = options;
-    this.exposures = options.exposures ? new FlagExposures(options.exposures, options.environment) : undefined;
+    this.consent = new ConsentPolicy(options.consent);
+    this.consent.update({ doNotTrack: options.doNotTrack });
+    this.lastConsent = this.consent.state();
+    this.exposures = options.exposures ? new FlagExposures(options.exposures, options.environment, () => this.syncConsent().analytics) : undefined;
     this.configEnvironment = options.environment;
     this.configService = options.config ? new HttpConfigService(options) : undefined;
     this.identity = new IdentityManager();
@@ -44,7 +52,7 @@ export class UserFnClient {
     this.feedback = new FeedbackEngine(options.feedbackService ?? (options.endpoint ? new HttpFeedbackService(options) : undefined), () => this.identity.getUser());
     
     if (typeof window !== 'undefined') {
-      this.renderer = new VanillaRenderer();
+      this.renderer = new VanillaRenderer(() => this.syncConsent().messaging);
     }
 
     this.bootstrapKeys = new Set(Object.keys(options.bootstrapFlags ?? {}));
@@ -76,6 +84,7 @@ export class UserFnClient {
 
   // Trigger check for messaging and surveys
   trigger(type: 'url_match' | 'event', context: string) {
+    if (!this.syncConsent().messaging) return;
     const user = this.identity.getUser();
     
     // 1. Messaging
@@ -84,8 +93,9 @@ export class UserFnClient {
       const topCampaign = campaigns[0];
       this.renderer?.render(
         topCampaign,
-        () => this.messaging.trackDelivery(topCampaign.id, 'dismissed'),
+        () => { if (this.syncConsent().messaging) this.messaging.trackDelivery(topCampaign.id, 'dismissed'); },
         () => {
+          if (!this.syncConsent().messaging) return;
           this.messaging.trackDelivery(topCampaign.id, 'clicked');
           const destination = resolveCampaignUrl(topCampaign.content.ctaUrl, window.location.href);
           if (destination) window.location.href = destination;
@@ -102,6 +112,7 @@ export class UserFnClient {
       this.renderer?.renderSurvey(
         survey,
         (response) => {
+          if (!this.syncConsent().messaging) return;
           this.surveys.trackResponse(response);
           // TODO: emit to watchfn
         },
@@ -183,7 +194,7 @@ export class UserFnClient {
     const user = this.identity.getUser();
     const result = this.flags.evaluate(key, defaultValue, user);
     if (this.bootstrapKeys.has(key) && result.reason === 'default_value') result.reason = 'bootstrap';
-    this.exposures?.capture(key, result, user);
+    if (this.syncConsent().analytics) this.exposures?.capture(key, result, user);
     return result.value;
   }
 
@@ -201,9 +212,12 @@ export class UserFnClient {
         const result = this.flags.evaluate(key, fallback, user);
         if (this.bootstrapKeys.has(key) && result.reason === 'default_value') result.reason = 'bootstrap';
         // Exposure needs identity only, never a mutable trait reference.
-        return { result, user: user ? { id: user.id, traits: {} } : null };
+        const allowed = this.syncConsent().analytics;
+        return { result, user: user ? { id: user.id, traits: {} } : null, token: allowed ? this.consentEpoch : null };
       },
-      capture: (result, user) => this.exposures?.capture(key, result, user),
+      capture: (result, user, token) => {
+        if (this.syncConsent().analytics && token === this.consentEpoch) this.exposures?.capture(key, result, user);
+      },
     });
   }
 
@@ -216,16 +230,30 @@ export class UserFnClient {
     }
   }
 
-  flushExposures(): Promise<void> { return this.exposures?.flush() ?? Promise.resolve(); }
-  closeExposures(): Promise<void> { return this.exposures?.close() ?? Promise.resolve(); }
-  getExposureStatus() { return this.exposures?.status() ?? { pending: 0, dropped: 0, closed: false }; }
+  setConsent(patch: ConsentPatch): void { this.consent.update(patch); this.syncConsent(); }
+  getConsent(): ConsentState { return this.syncConsent(); }
+  private syncConsent(): ConsentState {
+    const state = this.consent.state();
+    const previous = this.lastConsent;
+    if (this.lastConsent?.analytics !== state.analytics) this.consentEpoch++;
+    this.lastConsent = state;
+    if (!state.analytics && (previous?.analytics !== false || (this.exposures?.status().pending ?? 0) > 0)) this.exposures?.discardPending();
+    if (!state.messaging) this.renderer?.dismissMessages();
+    return state;
+  }
+
+  flushExposures(): Promise<void> { this.syncConsent(); return this.exposures?.flush() ?? Promise.resolve(); }
+  closeExposures(): Promise<void> { this.syncConsent(); return this.exposures?.close() ?? Promise.resolve(); }
+  getExposureStatus() { this.syncConsent(); return this.exposures?.status() ?? { pending: 0, dropped: 0, discarded: 0, closed: false }; }
 
   track(event: string, properties?: EventProperties) {
+    if (!this.syncConsent().analytics) return;
     console.log(`[UserFn] Track: ${event}`, properties);
     // TODO: Send to watchfn
   }
 
   render(slotId: string): void {
+    if (!this.syncConsent().messaging) return;
     console.log(`[UserFn] Render slot: ${slotId}`);
     // TODO: Return/render content for slot
   }

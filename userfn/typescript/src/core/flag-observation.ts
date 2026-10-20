@@ -20,22 +20,22 @@ function freeze<T>(value: T): T {
 export function createFlagObservation(key: string, fallback: FlagValue, source: {
   revision(): number;
   subscribe(listener: () => void): () => void;
-  evaluate(fallback: FlagValue): { result: FlagEvaluation; user: UserIdentity | null };
-  capture(result: FlagEvaluation, user: UserIdentity | null): void;
+  evaluate(fallback: FlagValue): { result: FlagEvaluation; user: UserIdentity | null; token?: unknown };
+  capture(result: FlagEvaluation, user: UserIdentity | null, token?: unknown): void;
 }): FlagObservation {
   if (typeof key !== 'string' || !key) throw new TypeError('Flag key must be a non-empty string');
   const defaultValue: FlagValue = freeze(JSON.parse(canonicalJson(fallback)));
   let revision = -1;
   let snapshot: FlagSnapshot;
-  const identities = new WeakMap<FlagSnapshot, UserIdentity | null>();
+  const identities = new WeakMap<FlagSnapshot, { user: UserIdentity | null; token?: unknown }>();
   const tracked = new WeakSet<FlagSnapshot>();
   return {
     getSnapshot() {
       const nextRevision = source.revision();
       if (nextRevision !== revision) {
-        const { result, user } = source.evaluate(defaultValue);
+        const { result, user, token } = source.evaluate(defaultValue);
         snapshot = freeze({ ...result, key });
-        identities.set(snapshot, user);
+        identities.set(snapshot, { user, token });
         revision = nextRevision;
       }
       return snapshot;
@@ -45,7 +45,8 @@ export function createFlagObservation(key: string, fallback: FlagValue, source: 
       if (!identities.has(selection)) throw new TypeError('Snapshot belongs to a different flag observation');
       if (tracked.has(selection)) return;
       tracked.add(selection);
-      source.capture(selection, identities.get(selection)!);
+      const identity = identities.get(selection)!;
+      source.capture(selection, identity.user, identity.token);
     },
   };
 }
