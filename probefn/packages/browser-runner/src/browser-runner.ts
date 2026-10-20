@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { chromium, firefox, webkit } from 'playwright';
@@ -17,6 +19,7 @@ export interface LaunchBrowserSessionOptions {
   deterministic: DeterministicSettings;
   storageStatePath?: string;
   initialUrl?: string;
+  video?: { enabled: boolean };
   trace?: {
     enabled: boolean;
   };
@@ -50,6 +53,7 @@ export interface ClosedBrowserSession {
 }
 
 interface ManagedBrowserSession {
+  videoDirectory?: string;
   browser?: Browser;
   context?: BrowserContext;
   eventCapture?: BrowserEventCapture;
@@ -89,7 +93,10 @@ export class BrowserRunner {
       });
       session.browser = browser;
       checkCancelled();
+      if (options.video?.enabled) session.videoDirectory = await mkdtemp(path.join(tmpdir(), 'probefn-video-'));
+      checkCancelled();
       const context = await browser.newContext({
+        ...(session.videoDirectory ? { recordVideo: { dir: session.videoDirectory } } : {}),
         ...(options.deterministic.enabled ? { viewport: options.deterministic.viewport } : {}),
         ...(options.deterministic.enabled ? { locale: options.deterministic.locale } : {}),
         ...(options.deterministic.enabled ? { timezoneId: options.deterministic.timezone } : {}),
@@ -240,6 +247,10 @@ export class BrowserRunner {
       } catch (error) { errors.push(error); }
     }
     try { await session.browser?.close(); } catch (error) { errors.push(error); }
+    if (!session.browser?.isConnected() && session.videoDirectory) {
+      try { await rm(session.videoDirectory, { recursive: true, force: true }); delete session.videoDirectory; }
+      catch (error) { errors.push(error); }
+    }
     return { tracePath, errors };
   }
 

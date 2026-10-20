@@ -1,3 +1,4 @@
+import { finalizePageVideo } from '@probefn/browser-runner';
 import { readEventSinkFamily } from '@probefn/storage';
 import { createServer, type Server as NetServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
@@ -309,6 +310,7 @@ export class ProbefnRuntime {
       sinkPaths: Awaited<ReturnType<BrowserRunner['startSession']>>['sinkPaths'];
       flushEvents: () => Promise<void>;
     }) => Promise<TValue>,
+    options: { video?: boolean } = {},
   ): Promise<PlaybackSessionResult<TValue>> {
     if (!session.resolvedUrl) {
       throw createProbefnError({
@@ -343,6 +345,7 @@ export class ProbefnRuntime {
       deterministic: session.deterministic,
       ...(existingStorageStatePath ? { storageStatePath: existingStorageStatePath } : {}),
       initialUrl: session.resolvedUrl,
+      ...(options.video ? { video: { enabled: true } } : {}),
       trace: {
         enabled: false,
       },
@@ -818,6 +821,7 @@ export async function createCheckpointFromSession(
     name: string;
     includeTrace?: boolean;
     includeStyles?: boolean;
+    includeVideo?: boolean;
   },
 ): Promise<ProbefnEnvelope<JsonValue>> {
   const { scope, session } = await runtime.resolveSessionContext(input.sessionId);
@@ -830,6 +834,7 @@ export async function createCheckpointFromSession(
       runId: session.runId,
       browser: session.browser,
       name: input.name,
+      ...(input.includeVideo ? { includeVideo: true } : {}),
       ...(input.includeTrace !== undefined ? { includeTrace: input.includeTrace } : {}),
       ...(input.includeStyles !== undefined ? { includeStyles: input.includeStyles } : {}),
       tracePath: session.artifacts.tracePath ?? null,
@@ -838,6 +843,7 @@ export async function createCheckpointFromSession(
         await captureEventDeltaBaseline(runtime.getRepoRoot(), sinkPaths),
       ),
       source: {
+        ...(input.includeVideo ? { videoCapture: () => finalizePageVideo(page) } : {}),
         url: () => page.url(),
         viewportSize: () => page.viewportSize() ?? { width: 0, height: 0 },
         screenshot: async () => page.screenshot({ fullPage: true }),
@@ -852,7 +858,7 @@ export async function createCheckpointFromSession(
       },
     });
     return createdCheckpoint;
-  });
+  }, { video: input.includeVideo ?? false });
 
   await scope.sessionManager.markRunning(session.sessionId, {
     artifacts: {

@@ -8,3 +8,5 @@ export * from './page-model.js';
 export * from './semantic-find.js';
 export * from './trace.js';
 export * from './vision-ranker.js';
+
+export * from './video.js';

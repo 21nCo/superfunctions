@@ -33,6 +33,7 @@ export interface CheckpointPaths {
   axPath: string;
   layoutPath: string;
   stylesPath: string;
+  videoPath: string;
 }
 
 export class ArtifactStore {
@@ -83,6 +84,7 @@ export class ArtifactStore {
       axPath: path.posix.join(root, 'ax.json'),
       layoutPath: path.posix.join(root, 'layout.json'),
       stylesPath: path.posix.join(root, 'styles.json'),
+      videoPath: path.posix.join(root, 'video.webm'),
     };
   }
 

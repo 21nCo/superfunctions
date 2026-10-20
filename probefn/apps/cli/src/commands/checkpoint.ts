@@ -1,5 +1,4 @@
 import {
-  createSuccessEnvelope,
   createProbefnError,
   type JsonValue,
   type ProbefnEnvelope,
@@ -26,20 +25,16 @@ export async function runCheckpointCommand(
   const envelope = await createCheckpointFromSession(context.runtime, {
     sessionId,
     name,
-    ...(args.includes('--include-trace') ? { includeTrace: true } : {}),
+    ...(includeVideo ? { includeVideo: true } : {}),    ...(args.includes('--include-trace') ? { includeTrace: true } : {}),
     ...(args.includes('--include-styles') ? { includeStyles: true } : {}),
   });
   const success = expectSuccess(envelope);
-  const warnings = includeVideo
-    ? [...success.warnings, 'Video capture is not implemented in this phase.']
-    : success.warnings;
-  const finalEnvelope = createSuccessEnvelope(success.data, warnings);
   const data = success.data as {
     checkpointId: string;
   };
 
   return {
-    envelope: finalEnvelope,
+    envelope: success,
     human: data.checkpointId,
   };
 }

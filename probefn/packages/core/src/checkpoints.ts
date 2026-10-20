@@ -22,6 +22,7 @@ export interface CheckpointCaptureSource {
   accessibilitySnapshot(): Promise<unknown>;
   layoutSnapshot(): Promise<unknown>;
   stylesSnapshot?(): Promise<unknown>;
+  videoCapture?(): Promise<Uint8Array>;
 }
 
 export interface CreateCheckpointOptions {
@@ -34,6 +35,7 @@ export interface CreateCheckpointOptions {
   source: CheckpointCaptureSource;
   delta: EventDeltaSummary;
   includeStyles?: boolean;
+  includeVideo?: boolean;
   includeTrace?: boolean;
   unstable?: boolean;
   tracePath?: string | null;
@@ -59,6 +61,8 @@ export async function createCheckpoint(
   const writtenPaths: string[] = [];
 
   try {
+    const url = options.source.url();
+    const viewport = options.source.viewportSize();
     const screenshot = await options.source.screenshot();
     const domSnapshot = await options.source.domSnapshot();
     const accessibilitySnapshot = await options.source.accessibilitySnapshot();
@@ -94,6 +98,14 @@ export async function createCheckpoint(
       writtenPaths.push(checkpointPaths.stylesPath);
     }
 
+    if (options.includeVideo) {
+      if (!options.source.videoCapture) throw new Error('Requested video capture is unavailable');
+      const video = await options.source.videoCapture();
+      if (!video.byteLength) throw new Error('Requested video capture is empty');
+      await options.artifactStore.writeArtifact(checkpointPaths.videoPath, video);
+      writtenPaths.push(checkpointPaths.videoPath);
+    }
+
     const artifacts: CheckpointArtifact[] = [
       await buildArtifactRecord(options.repoRoot, checkpointPaths.screenshotPath, 'screenshot', screenshot),
       await buildArtifactRecord(options.repoRoot, checkpointPaths.domPath, 'dom'),
@@ -104,6 +116,8 @@ export async function createCheckpoint(
     if (stylesSnapshot !== undefined) {
       artifacts.push(await buildArtifactRecord(options.repoRoot, checkpointPaths.stylesPath, 'styles'));
     }
+
+    if (options.includeVideo) artifacts.push(await buildArtifactRecord(options.repoRoot, checkpointPaths.videoPath, 'video'));
 
     if (options.includeTrace && options.tracePath) {
       artifacts.push(await buildArtifactRecord(options.repoRoot, options.tracePath, 'trace'));
@@ -116,8 +130,8 @@ export async function createCheckpoint(
       runId: options.runId,
       browser: options.browser,
       name: options.name,
-      url: options.source.url(),
-      viewport: options.source.viewportSize(),
+      url,
+      viewport,
       ...(options.unstable ? { unstable: true } : {}),
       artifacts,
       createdAt: now(),

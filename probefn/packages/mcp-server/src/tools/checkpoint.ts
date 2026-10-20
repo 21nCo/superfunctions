@@ -15,6 +15,7 @@ const checkpointSchema = strictObjectSchema({
   name: z.string().trim().min(1),
   includeTrace: z.boolean().optional(),
   includeStyles: z.boolean().optional(),
+  includeVideo: z.boolean().optional(),
 });
 
 export function getCheckpointTools(): ToolDefinition[] {
@@ -29,6 +30,7 @@ export function getCheckpointTools(): ToolDefinition[] {
           name: { type: 'string' },
           includeTrace: { type: 'boolean' },
           includeStyles: { type: 'boolean' },
+          includeVideo: { type: 'boolean' },
         },
       }),
       schema: checkpointSchema as z.ZodType<JsonObject>,
@@ -36,6 +38,7 @@ export function getCheckpointTools(): ToolDefinition[] {
         return createCheckpointFromSession(context.runtime, {
           sessionId: String(args.sessionId),
           name: String(args.name),
+          ...(typeof args.includeVideo === 'boolean' ? { includeVideo: args.includeVideo } : {}),
           ...(typeof args.includeTrace === 'boolean'
             ? { includeTrace: args.includeTrace }
             : {}),

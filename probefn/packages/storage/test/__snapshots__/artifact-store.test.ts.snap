@@ -10,6 +10,7 @@ exports[`ArtifactStore > plans repository-relative run paths and writes grouped 
     "root": ".artifacts/runs/run_healthy/checkpoints/landing-page",
     "screenshotPath": ".artifacts/runs/run_healthy/checkpoints/landing-page/screenshot.png",
     "stylesPath": ".artifacts/runs/run_healthy/checkpoints/landing-page/styles.json",
+    "videoPath": ".artifacts/runs/run_healthy/checkpoints/landing-page/video.webm",
   },
   "manifestContents": {
     "artifactRoot": ".artifacts/runs/run_healthy",
