@@ -21,8 +21,15 @@ export function checkSharedUsage(repoRoot = process.cwd()) {
   for (const file of new Set(files)) {
     const absolute = path.join(repoRoot, file);
     // Match the former search's default: do not follow symbolic links.
-    if (!lstatSync(absolute).isFile()) continue;
-    const content = readFileSync(absolute);
+    let content;
+    try {
+      if (!lstatSync(absolute).isFile()) continue;
+      content = readFileSync(absolute);
+    } catch (error) {
+      // Git's index can still list a normally deleted working-tree file.
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
     if (content.includes(0)) continue;
     scannedFiles++;
     if (/@superfunctions\/|superfunctions\./.test(content.toString('utf8'))) {
