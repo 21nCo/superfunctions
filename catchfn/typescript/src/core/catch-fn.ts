@@ -22,10 +22,22 @@ import type {
   BugSeverity,
   WatchBugReportEvent,
   WatchBugReportClient,
+  BugIntegrationHint,
 } from "./types.js";
 
 function generateId(): string {
   return `bug_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+}
+
+function integrationHint(value: BugIntegrationHint | undefined): BugIntegrationHint | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).some(key => !["target", "project"].includes(key)) ||
+      (value.target !== undefined && !["github", "linear"].includes(value.target)) ||
+      (value.project !== undefined && (typeof value.project !== "string" || !value.project.trim() || value.project.length > 200))) {
+    throw new TypeError("Invalid issue integration hint; configure provider credentials on the server");
+  }
+  return { ...value };
 }
 
 export class CatchFn {
@@ -52,6 +64,7 @@ export class CatchFn {
   private hotkeyHandler?: (event: KeyboardEvent) => void;
 
   constructor(config: CatchFnConfig) {
+    integrationHint(config.integration);
     if (!config.name?.trim()) throw new TypeError("Application name is required");
     for (const value of [config.maxBreadcrumbs, config.maxConsoleLogs, config.maxNetworkRequests]) {
       if (value !== undefined && (!Number.isInteger(value) || value < 0)) throw new RangeError("Collector limits must be nonnegative integers");
@@ -79,6 +92,7 @@ export class CatchFn {
     }
     this.config = {
       ...config,
+      integration: integrationHint(config.integration),
       maxBreadcrumbs: config.maxBreadcrumbs ?? 50,
       maxConsoleLogs: config.maxConsoleLogs ?? 100,
       maxNetworkRequests: config.maxNetworkRequests ?? 20,
@@ -212,6 +226,7 @@ export class CatchFn {
       user: options.user || this.config.user,
       metadata: options.metadata,
       attachments: options.attachments,
+      integration: integrationHint(options.integration !== undefined ? options.integration : this.config.integration),
     };
 
     // Collect context

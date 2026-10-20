@@ -88,9 +88,13 @@ export interface AttachmentReference {
   annotationScene?: unknown;
 }
 
-/**
- * Bug report event - the main event sent to watchfn
- */
+/** Select an existing server-owned issue destination. */
+export interface BugIntegrationHint {
+  target?: "github" | "linear";
+  project?: string;
+}
+
+/** Bug report event carried by the canonical WatchFn transport. */
 export interface BugReportEvent {
   /** Local delivery outcome; omitted from the WatchFn envelope. */
   delivery?: "sent" | "local" | "dropped";
@@ -124,7 +128,7 @@ export interface BugReportEvent {
   attachments?: AttachmentReference[];
 
   // Integration
-  integration?: {
+  integration?: BugIntegrationHint & {
     issueId?: string;
     issueUrl?: string;
   };
@@ -137,6 +141,8 @@ export interface BugReportEvent {
  * Options for capturing a bug
  */
 export interface CaptureBugOptions {
+  /** Select an already authorized server route; never include provider credentials. */
+  integration?: BugIntegrationHint;
   includeConsoleLogs?: boolean;
   includeNetworkLogs?: boolean;
   title: string;
@@ -168,6 +174,8 @@ export type IgnorePattern = string | RegExp;
  * CatchFn configuration
  */
 export interface CatchFnConfig {
+  /** Default server route hint. The Watch API key authorizes all routes in its deployment. */
+  integration?: BugIntegrationHint;
   watch?: {client: WatchBugReportClient} | WatchEndpointConfig;
   sessionId?: string;
   appVersion?: string;

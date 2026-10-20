@@ -51,3 +51,27 @@ describe("WatchFn endpoint configuration", () => {
     expect(() => catchFn({ name: "shop", maxPayloadSize: 65537, watch: { endpoint: "https://watch.example/ingest" } })).toThrow("64 KiB");
   });
 });
+
+describe("server-owned issue integration hints", () => {
+  it("preserves a default hint and a per-report override without promising a provider issue on acknowledgment", async () => {
+    const capture = vi.fn(async () => undefined);
+    const catcher = catchFn({ name: "shop", integration: { target: "github", project: "acme/bugs" }, watch: { client: { capture } } });
+    try {
+      const report = await catcher.captureBug({ title: "Default" });
+      expect(report.delivery).toBe("sent");
+      expect(report.integration).toEqual({ target: "github", project: "acme/bugs" });
+      expect(report.integration?.issueUrl).toBeUndefined();
+      await catcher.captureBug({ title: "Override", integration: { target: "linear", project: "team-one" } });
+      expect(capture.mock.calls.map(call => (call[0] as any).integration)).toEqual([{ target: "github", project: "acme/bugs" }, { target: "linear", project: "team-one" }]);
+    } finally { catcher.stop(); }
+  });
+  it.each([{ target: "discord" }, { project: " " }, { target: "github", token: "provider-secret" }, { issueId: "forged" }, null])("rejects malformed hints and provider credentials before delivery", async integration => {
+    expect(() => catchFn({ name: "shop", integration } as any)).toThrow("integration hint");
+    const capture = vi.fn(async () => undefined); const catcher = catchFn({ name: "shop", watch: { client: { capture } } });
+    try {
+      // Null is also invalid rather than silently treated as an omitted hint.
+      await expect(catcher.captureBug({ title: "Invalid", integration } as any)).rejects.toThrow("integration hint");
+      expect(capture).not.toHaveBeenCalled();
+    } finally { catcher.stop(); }
+  });
+});

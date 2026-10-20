@@ -341,3 +341,30 @@ MIT © 21n
 ## Contributing
 
 See the main [superfunctions repository](https://github.com/21nCo/super-functions) for contribution guidelines.
+
+## Server-side GitHub/Linear issue delivery
+
+The canonical WatchFn endpoint can enable its transactional BotFn issue outbox. CatchFn supplies only a routing hint; configure provider clients, tokens/private keys, allowed repositories/teams and the durable database on the Watch server.
+
+```ts
+const catcher = catchFn({
+  name: 'shop',
+  watch: { endpoint: '/watch/ingest', apiKey: watchApiKey },
+  integration: { target: 'github', project: 'acme/bugs' },
+});
+const report = await catcher.captureBug({
+  title: 'Checkout failed',
+  // Optional per-report override, restricted by the Watch server's route allowlist:
+  integration: { target: 'linear', project: 'team-id' },
+});
+```
+
+The hint is optional when the server can select one route for the app. Invalid hints and provider-credential fields are rejected locally; unauthorized destinations are rejected by WatchFn. A provider issue ID or URL is a server result, not a client routing input.
+
+`report.delivery === 'sent'` means the canonical report and pending issue delivery were acknowledged by WatchFn. It does not mean the provider issue already exists. Watch's explicit server worker creates the issue; the linked canonical event then exposes `integration.issueId`/`issueUrl` through its authenticated query API. The reporter still displays an issue link when an injected client returns one, but automatic refresh of a later asynchronous issue link is not implemented. Do not fabricate a provider link from a successful HTTP 202.
+
+The configured Watch API key also authorizes Watch queries and every configured route; there is no ingestion-only key or per-app credential isolation in this integration. Use an authenticated application-backend proxy when exposing that key in the browser is unsuitable. All apps sharing one Watch deployment/key must share its trust boundary. Provider credentials remain server-only.
+
+Enabled outbox intake deduplicates the same canonical report ID/content, including a lost acknowledgment retried by the shared Watch browser transport. Modified content for an existing ID returns 409. The existing `CatchFnDeliveryError.retry()` retains the original report for retry; calling `captureBug()` again creates a new report. WatchFn without the outbox retains its original at-least-once arrival behavior.
+
+See [BotFn delivery acceptance and limits](../.conduct/botfn-delivery-readiness.md) and [WatchFn migration/worker setup](../../watchfn/.conduct/botfn-issue-readiness.md).
