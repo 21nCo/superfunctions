@@ -31,6 +31,8 @@ export class NdjsonEventSink {
   private readonly strategy: EventCapPolicy['strategy'];
   private eventCount = 0;
   private sinkIndex = 1;
+  private appendQueue: Promise<void> = Promise.resolve();
+  private appendFailure: unknown;
 
   public constructor(options: EventSinkOptions) {
     this.repoRoot = options.repoRoot;
@@ -39,6 +41,7 @@ export class NdjsonEventSink {
     this.capTracker = options.capTracker;
     this.maxEventsPerSink = options.policy?.maxEventsPerSink ?? DEFAULT_STORAGE_CAPS.maxEventsPerSink;
     this.strategy = options.policy?.strategy ?? 'rollover';
+    if (!Number.isSafeInteger(this.maxEventsPerSink) || this.maxEventsPerSink < 1) throw new TypeError('Event cap must be a positive safe integer.');
   }
 
   public getCurrentRelativePath(): string {
@@ -46,55 +49,57 @@ export class NdjsonEventSink {
   }
 
   public async append(event: JsonValue | JsonObject | object): Promise<AppendEventResult> {
-    let warning: string | undefined;
+    // Snapshot the payload when called, before waiting behind another append.
+    const payload = `${JSON.stringify(redactSensitiveData(event).value)}\n`;
+    const operation = this.appendQueue.then(() => this.appendPayload(payload));
+    this.appendQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
 
-    if (this.eventCount >= this.maxEventsPerSink) {
-      if (this.strategy === 'error') {
-        throw createProbefnError({
-          code: 'E_STORAGE_CAP_EXCEEDED',
-          message: `Event cap exceeded for ${this.getCurrentRelativePath()}.`,
-          retryable: false,
-          details: {
-            path: this.getCurrentRelativePath(),
-            maxEventsPerSink: this.maxEventsPerSink,
-          },
-        });
-      }
-
-      this.sinkIndex += 1;
-      this.eventCount = 0;
-      warning = `Event cap reached; rollover sink ${formatSinkName(this.baseName, this.sinkIndex)} created.`;
+  private async appendPayload(payload: string): Promise<AppendEventResult> {
+    if (this.appendFailure) throw this.appendFailure;
+    const rollover = this.eventCount >= this.maxEventsPerSink;
+    if (rollover && this.strategy === 'error') {
+      throw createProbefnError({
+        code: 'E_STORAGE_CAP_EXCEEDED',
+        message: `Event cap exceeded for ${this.getCurrentRelativePath()}.`,
+        retryable: false,
+        details: { path: this.getCurrentRelativePath(), maxEventsPerSink: this.maxEventsPerSink },
+      });
     }
-
-    const relativePath = this.getCurrentRelativePath();
+    const nextIndex = this.sinkIndex + (rollover ? 1 : 0);
+    const relativePath = path.posix.join(this.relativeDirectory, formatSinkName(this.baseName, nextIndex));
     const absolutePath = path.resolve(this.repoRoot, relativePath);
-    const redactedEvent = redactSensitiveData(event).value;
-    const payload = `${JSON.stringify(redactedEvent)}\n`;
-    const payloadBytes = Buffer.byteLength(payload);
-
-    this.capTracker.assertCanWrite(payloadBytes, relativePath);
-
+    const reservation = this.capTracker.reserve(Buffer.byteLength(payload), relativePath);
+    let appendStarted = false;
     try {
       await mkdir(path.dirname(absolutePath), { recursive: true });
+      appendStarted = true;
       await appendFile(absolutePath, payload, 'utf8');
-      this.capTracker.recordWrite(payloadBytes);
-      this.eventCount += 1;
+      reservation.commit();
+      this.sinkIndex = nextIndex;
+      this.eventCount = (rollover ? 0 : this.eventCount) + 1;
       return {
         relativePath,
-        ...(warning ? { warning } : {}),
+        ...(rollover ? { warning: `Event cap reached; rollover sink ${formatSinkName(this.baseName, nextIndex)} created.` } : {}),
         eventCount: this.eventCount,
         sinkIndex: this.sinkIndex,
       };
     } catch (error) {
-      throw createProbefnError({
+      const failure = createProbefnError({
         code: 'E_STORAGE_WRITE_FAILED',
         message: `Could not append to event sink ${relativePath}.`,
         retryable: false,
-        details: {
-          path: relativePath,
-        },
+        details: { path: relativePath },
         cause: error,
       });
+      if (appendStarted) {
+        // An append can fail after writing a prefix. Charge the whole reservation and
+        // stop this sink so a later event cannot silently extend a malformed NDJSON line.
+        reservation.commit();
+        this.appendFailure = failure;
+      } else reservation.release();
+      throw failure;
     }
   }
 }

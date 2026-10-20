@@ -16,19 +16,23 @@ export const DEFAULT_STORAGE_CAPS: StorageCaps = {
 };
 
 export class ArtifactCapTracker {
+  // Cumulative attempted payload budget, not exact disk usage (overwrites are charged again).
   private totalBytesWritten = 0;
+  private reservedBytes = 0;
 
-  public constructor(private readonly maxBytes: number = DEFAULT_STORAGE_CAPS.maxArtifactBytes) {}
+  public constructor(private readonly maxBytes: number = DEFAULT_STORAGE_CAPS.maxArtifactBytes) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new TypeError('Artifact byte cap must be a non-negative safe integer.');
+  }
 
   public getTotalBytesWritten(): number {
     return this.totalBytesWritten;
   }
 
   public assertCanWrite(nextBytes: number, targetPath: string): void {
-    if (nextBytes < 0) {
+    if (!Number.isSafeInteger(nextBytes) || nextBytes < 0) {
       throw createProbefnError({
         code: 'E_STORAGE_WRITE_FAILED',
-        message: `Refusing to write a negative byte count for ${targetPath}.`,
+        message: `Refusing to write a invalid byte count for ${targetPath}.`,
         retryable: false,
         details: {
           targetPath,
@@ -37,7 +41,7 @@ export class ArtifactCapTracker {
       });
     }
 
-    if (this.totalBytesWritten + nextBytes > this.maxBytes) {
+    if (this.totalBytesWritten + this.reservedBytes + nextBytes > this.maxBytes) {
       throw createProbefnError({
         code: 'E_STORAGE_CAP_EXCEEDED',
         message: `Artifact cap exceeded before ${targetPath} could be committed.`,
@@ -45,12 +49,33 @@ export class ArtifactCapTracker {
         details: {
           targetPath,
           maxArtifactBytes: this.maxBytes,
-          attemptedTotalBytes: this.totalBytesWritten + nextBytes,
+          attemptedTotalBytes: this.totalBytesWritten + this.reservedBytes + nextBytes,
         },
       });
     }
   }
 
+  /** Reserve synchronously before any asynchronous write. Settle exactly once. */
+  public reserve(bytes: number, targetPath: string): { commit(): void; release(): void } {
+    this.assertCanWrite(bytes, targetPath);
+    this.reservedBytes += bytes;
+    let settled = false;
+    return {
+      commit: () => {
+        if (settled) return;
+        settled = true;
+        this.reservedBytes -= bytes;
+        this.totalBytesWritten += bytes;
+      },
+      release: () => {
+        if (settled) return;
+        settled = true;
+        this.reservedBytes -= bytes;
+      },
+    };
+  }
+
+  /** Legacy accounting; asynchronous writers must use reserve() instead. */
   public recordWrite(bytesWritten: number): void {
     this.totalBytesWritten += bytesWritten;
   }

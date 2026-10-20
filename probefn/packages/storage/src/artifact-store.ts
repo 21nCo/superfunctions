@@ -4,7 +4,7 @@ import { createProbefnError } from '@probefn/contracts/errors';
 import type { CheckpointManifest, RunManifest } from '@probefn/contracts/manifests';
 import { ArtifactCapTracker, DEFAULT_STORAGE_CAPS, type StorageCaps } from './caps.js';
 import { NdjsonEventSink, type EventSinkOptions } from './event-sink.js';
-import { assertRepositoryRelativePath, writeAtomicFile, writeJsonManifestAtomic } from './manifest-writer.js';
+import { assertRepositoryRelativePath, writeAtomicFile } from './manifest-writer.js';
 import { redactSensitiveData } from './redaction.js';
 
 export interface ArtifactStoreOptions {
@@ -39,6 +39,7 @@ export class ArtifactStore {
   private readonly repoRoot: string;
   private readonly artifactRoot: string;
   private readonly capTracker: ArtifactCapTracker;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   public constructor(options: ArtifactStoreOptions) {
     this.repoRoot = options.repoRoot;
@@ -150,20 +151,27 @@ export class ArtifactStore {
   }
 
   private async writeJson(relativePath: string, value: object): Promise<void> {
-    const normalizedPath = assertRepositoryRelativePath(relativePath);
-    const bytes = Buffer.byteLength(`${JSON.stringify(value, null, 2)}\n`);
-    this.capTracker.assertCanWrite(bytes, normalizedPath);
-    const actualBytes = await writeJsonManifestAtomic(this.repoRoot, normalizedPath, value);
-    this.capTracker.recordWrite(actualBytes);
+    // Serialize once so the reserved byte count and persisted bytes are identical.
+    await this.writeText(relativePath, `${JSON.stringify(value, null, 2)}\n`);
   }
 
   private async writeText(relativePath: string, contents: string | Uint8Array): Promise<void> {
     const normalizedPath = assertRepositoryRelativePath(relativePath);
-    const bytes =
-      typeof contents === 'string' ? Buffer.byteLength(contents) : contents.byteLength;
-    this.capTracker.assertCanWrite(bytes, normalizedPath);
-    const actualBytes = await writeAtomicFile(this.repoRoot, normalizedPath, contents);
-    this.capTracker.recordWrite(actualBytes);
+    const snapshot = typeof contents === 'string' ? contents : new Uint8Array(contents);
+    const bytes = typeof snapshot === 'string' ? Buffer.byteLength(snapshot) : snapshot.byteLength;
+    const reservation = this.capTracker.reserve(bytes, normalizedPath);
+    // Also serialize replacements: atomic writer temp names are time based, and two
+    // simultaneous writes to one destination must not share a temporary file.
+    const operation = this.writeQueue.then(async () => {
+      try { await writeAtomicFile(this.repoRoot, normalizedPath, snapshot); }
+      finally {
+        // A failed atomic writer may have created a partial temporary file or renamed
+        // before failing its stat. Conservatively charge the attempt, including overwrites.
+        reservation.commit();
+      }
+    });
+    this.writeQueue = operation.then(() => undefined, () => undefined);
+    await operation;
   }
 }
 
