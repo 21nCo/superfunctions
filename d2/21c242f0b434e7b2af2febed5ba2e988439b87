@@ -1,0 +1,77 @@
+package-lock.json
+  s_e1c5fc1a65c0cf::t_9581887ee52510 68-69,29064-29067,64558-64584,64594,64611-64617
+package.json
+  s_e1c5fc1a65c0cf::t_a7ac8487e61475 63-64
+userfn/.conduct/feedback-readiness.md
+  s_e1c5fc1a65c0cf::t_d09e43ef8926c6 32-35
+userfn/.conduct/feedback-service-readiness.md
+  s_e1c5fc1a65c0cf::t_773c60809dc8f0 1-36
+userfn/python/README.md
+  s_e1c5fc1a65c0cf::t_09c884611b5bc0 118,120-133,135,137
+userfn/python/src/userfn/__init__.py
+  s_e1c5fc1a65c0cf::t_26584a36fc15ee 3,7
+userfn/python/src/userfn/client.py
+  s_e1c5fc1a65c0cf::t_184e30c4e52af1 5,14,53-54
+userfn/python/src/userfn/core/feedback.py
+  s_e1c5fc1a65c0cf::t_1a267f81fe335e 1,16,22-23,26
+userfn/python/src/userfn/core/feedback_http.py
+  s_e1c5fc1a65c0cf::t_d208afd73ad5a9 1-79
+userfn/python/src/userfn/types.py
+  s_e1c5fc1a65c0cf::t_c37275f06cb99e 73-74,186
+userfn/python/tests/test_feedback.py
+  s_e1c5fc1a65c0cf::t_b875281d5158ca 11
+userfn/python/tests/test_feedback_http.py
+  s_e1c5fc1a65c0cf::t_10b26b6ac19336 1-89
+userfn/service/README.md
+  s_e1c5fc1a65c0cf::t_02887a4121a7da 1-39
+userfn/service/package.json
+  s_e1c5fc1a65c0cf::t_0986d23f6332d7 1-36
+userfn/service/src/index.ts
+  s_e1c5fc1a65c0cf::t_7a7d83f727feae 1-122
+userfn/service/src/schema.ts
+  s_e1c5fc1a65c0cf::t_40a3da849c7b0d 1-19
+userfn/service/src/validation.ts
+  s_e1c5fc1a65c0cf::t_c71a35edb41b2a 1-48
+userfn/service/tests/python_http_acceptance.py
+  s_e1c5fc1a65c0cf::t_a97a41e36ae9a9 1-28
+userfn/service/tests/service.test.ts
+  s_e1c5fc1a65c0cf::t_9314c5c6271375 1-140
+userfn/service/tests/sqlite-http.test.ts
+  s_e1c5fc1a65c0cf::t_4e04b3ec90ac34 1-105
+userfn/service/tsconfig.json
+  s_e1c5fc1a65c0cf::t_6ec1c4704ad543 1-16
+userfn/service/vitest.config.ts
+  s_e1c5fc1a65c0cf::t_79a26d41669113 1-2
+userfn/typescript/README.md
+  s_e1c5fc1a65c0cf::t_5696ebf6d8c62f 97,102,104,106-121,123
+userfn/typescript/package.json
+  s_e1c5fc1a65c0cf::t_4b69231dbd841d 63-64
+userfn/typescript/src/__tests__/feedback-http.test.ts
+  s_e1c5fc1a65c0cf::t_19a3f8f7405d57 1-58
+userfn/typescript/src/__tests__/feedback.test.ts
+  s_e1c5fc1a65c0cf::t_514f2e38964c52 12
+userfn/typescript/src/core/feedback-http.ts
+  s_e1c5fc1a65c0cf::t_c5be03614b92c8 1-75
+userfn/typescript/src/core/feedback.ts
+  s_e1c5fc1a65c0cf::t_412e9908d8daa3 1,10,16,18
+userfn/typescript/src/index.ts
+  s_e1c5fc1a65c0cf::t_936f345d10add3 7,9,28,49-50,134-135
+userfn/typescript/src/types.ts
+  s_e1c5fc1a65c0cf::t_05a3989b120482 72-74,177-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d221c242f0b434e7b2af2febed5ba2e988439b87",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
