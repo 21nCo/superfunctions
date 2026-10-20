@@ -1,3 +1,4 @@
+import { queueClockContract } from '../storage/queue-clock-contract.js';
 import { workflowCancelContract } from '../storage/workflow-cancel-contract.js';
 import { streamFilterContract } from '../storage/stream-filter-contract.js';
 import { streamRenewalContract, streamLossContract, streamUnsubscribeContract } from '../storage/stream-lease-contract.js';
@@ -35,6 +36,10 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
     it('shares durable schedule ownership and preserves attempts across restart', async () => { await schedulerContract(adapter, 1000); });
     it('recovers a SIGKILL checkpoint in a new process without repeating effects', async () => { await workflowCrashContract(adapter, 'redis', prefix); });
     it('enforces durable workflow ownership and concurrent catalogs', async () => { await workflowControlContract(adapter, 1000); });
+    it.each([-3_600_000, 3_600_000])('uses storage queue clocks under client skew %s', async skew => {
+      await queueClockContract(adapter, skew, false);
+      await queueClockContract(adapter, skew, true);
+    });
     beforeEach(() => {
       redis = new Redis(process.env.FLOWFN_REDIS_URL!);
       prefix = `flowfn-test-${randomUUID()}:`;

@@ -175,8 +175,8 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
     if (job.deduplicationId === undefined) {
       // The primary key arbitrates IDs without serializing unrelated producers.
       for (let attempt = 0; attempt < 3; attempt++) {
-        const value = { ...job, state: job.opts.delay ? "delayed" : "waiting", timestamp: Date.now(), delay: job.opts.delay ?? 0 };
-        const inserted = await this.rows(sql`INSERT INTO ${this.table("flowfn_jobs")} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) VALUES (${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},${value.timestamp + value.delay},${value.timestamp},NULL,${JSON.stringify(value)}::jsonb) ON CONFLICT(queue,id) DO NOTHING RETURNING data`);
+        const value = { ...job, state: job.opts.delay ? "delayed" : "waiting", delay: job.opts.delay ?? 0 };
+        const inserted = await this.rows(sql`WITH clock AS MATERIALIZED (SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now) INSERT INTO ${this.table("flowfn_jobs")} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) SELECT ${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},clock.now + ${value.delay},clock.now,NULL,${JSON.stringify(value)}::jsonb || jsonb_build_object('timestamp',clock.now) FROM clock ON CONFLICT(queue,id) DO NOTHING RETURNING data`);
         if (inserted.length) return inserted[0].data as Job;
         const existing = await this.getJob(queue, job.id);
         if (existing) return existing;
@@ -189,16 +189,15 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       const jobs = this.table("flowfn_jobs");
       const existing = await this.rows(sql`SELECT data FROM ${jobs} WHERE queue=${queue} AND (id=${job.id} ${job.deduplicationId === undefined ? sql`` : sql`OR (data->>'deduplicationId'=${job.deduplicationId} AND state NOT IN ('completed','failed'))`}) ORDER BY CASE WHEN id=${job.id} THEN 0 ELSE 1 END LIMIT 1`, tx);
       if (existing.length) return existing[0].data as Job;
-      const value = { ...job, state: job.opts.delay ? "delayed" : "waiting", timestamp: Date.now(), delay: job.opts.delay ?? 0 };
-      await tx.execute(sql`INSERT INTO ${jobs} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) VALUES (${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},${value.timestamp + value.delay},${value.timestamp},NULL,${JSON.stringify(value)}::jsonb)`);
-      return value as Job;
+      const value = { ...job, state: job.opts.delay ? "delayed" : "waiting", delay: job.opts.delay ?? 0 };
+      const inserted = await this.rows(sql`WITH clock AS MATERIALIZED (SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now) INSERT INTO ${jobs} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) SELECT ${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},clock.now + ${value.delay},clock.now,NULL,${JSON.stringify(value)}::jsonb || jsonb_build_object('timestamp',clock.now) FROM clock RETURNING data`, tx);
+      return inserted[0].data as Job;
     });
   }
   async enqueue(queue: string, job: Job): Promise<string> {
     const value = {
       ...job,
       state: job.opts.delay ? "delayed" : "waiting",
-      timestamp: Date.now(),
       delay: job.opts.delay ?? 0,
     };
     await this.withLease(queue, job, async (tx: any) => {
@@ -208,7 +207,7 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
       if (matches.length) throw new Error("Active job already owns deduplication key");
     }
     await tx.execute(
-      sql`INSERT INTO ${this.table("flowfn_jobs")} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) VALUES (${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},${value.timestamp + value.delay},${value.timestamp},NULL,${JSON.stringify(value)}::jsonb) ON CONFLICT(queue,id) DO UPDATE SET name=EXCLUDED.name,state=EXCLUDED.state,priority=EXCLUDED.priority,available_at=EXCLUDED.available_at,timestamp=EXCLUDED.timestamp,finished_on=NULL,data=EXCLUDED.data`,
+      sql`WITH clock AS MATERIALIZED (SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now) INSERT INTO ${this.table("flowfn_jobs")} (queue,id,name,state,priority,available_at,timestamp,finished_on,data) SELECT ${queue},${job.id},${job.name},${value.state},${job.opts.priority ?? 0},clock.now + ${value.delay},clock.now,NULL,${JSON.stringify(value)}::jsonb || jsonb_build_object('timestamp',clock.now) FROM clock ON CONFLICT(queue,id) DO UPDATE SET name=EXCLUDED.name,state=EXCLUDED.state,priority=EXCLUDED.priority,available_at=EXCLUDED.available_at,timestamp=EXCLUDED.timestamp,finished_on=NULL,data=EXCLUDED.data`,
     );
     }, true);
     return job.id;
@@ -217,18 +216,14 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
     return this.db.transaction(async (tx: any) => {
       const jobs = this.table("flowfn_jobs");
       const rows = await this.rows(
-        sql`SELECT j.* FROM ${jobs} j WHERE j.queue=${queue} AND j.state IN ('waiting','delayed') AND j.available_at<=${Date.now()} ${name ? sql`AND j.name=${name}` : sql``} AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(j.data->'opts'->'waitFor','[]'::jsonb)) dependency WHERE NOT EXISTS (SELECT 1 FROM ${jobs} d WHERE d.queue=j.queue AND d.id=dependency AND d.state='completed')) ORDER BY j.priority DESC, CASE WHEN COALESCE((j.data->'opts'->>'lifo')::boolean,false) THEN -j.timestamp ELSE j.timestamp END ASC FOR UPDATE SKIP LOCKED LIMIT 1`,
+        sql`WITH clock AS MATERIALIZED (SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now) SELECT j.* FROM ${jobs} j CROSS JOIN clock WHERE j.queue=${queue} AND j.state IN ('waiting','delayed') AND j.available_at<=clock.now ${name ? sql`AND j.name=${name}` : sql``} AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(j.data->'opts'->'waitFor','[]'::jsonb)) dependency WHERE NOT EXISTS (SELECT 1 FROM ${jobs} d WHERE d.queue=j.queue AND d.id=dependency AND d.state='completed')) ORDER BY j.priority DESC, CASE WHEN COALESCE((j.data->'opts'->>'lifo')::boolean,false) THEN -j.timestamp ELSE j.timestamp END ASC FOR UPDATE OF j SKIP LOCKED LIMIT 1`,
         tx,
       );
       if (!rows.length) return null;
-      const job = rows[0].data as Job;
-      job.lease = { token: randomUUID(), expiresAt: await this.databaseNow(tx) + leaseDuration };
-      job.state = "active";
-      job.processedOn = Date.now();
-      await tx.execute(
-        sql`UPDATE ${jobs} SET state='active',data=${JSON.stringify(job)}::jsonb WHERE queue=${queue} AND id=${job.id}`,
-      );
-      return job;
+      const claimed = await this.rows(sql`WITH clock AS MATERIALIZED (SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now)
+        UPDATE ${jobs} SET state='active',data=data || jsonb_build_object('state','active','processedOn',clock.now,'lease',jsonb_build_object('token',${randomUUID()}::text,'expiresAt',clock.now+${leaseDuration}))
+        FROM clock WHERE queue=${queue} AND id=${rows[0].id} RETURNING data`, tx);
+      return claimed[0].data as Job;
     });
   }
   private async databaseNow(tx: any = this.db): Promise<number> {

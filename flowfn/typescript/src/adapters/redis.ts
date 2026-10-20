@@ -87,7 +87,7 @@ export class RedisAdapter implements FlowAdapter {
     return ["jobs", "delayed", "ready", "sequence", "queue-index"].map(kind => this.key(kind, queue));
   }
   async createJob(queue: string, job: Job): Promise<Job> {
-    const value = { ...job, timestamp: Date.now(), state: job.opts.delay ? "delayed" : "waiting", delay: job.opts.delay ?? 0 };
+    const value = { ...job, state: job.opts.delay ? "delayed" : "waiting", delay: job.opts.delay ?? 0 };
     const result = await this.executeScript(`${QUEUE_INDEX_LUA}
       local proposed = cjson.decode(ARGV[1])
       local existing = redis.call('HGET', KEYS[1], proposed.id)
@@ -99,6 +99,8 @@ export class RedisAdapter implements FlowAdapter {
           if job.deduplicationId == proposed.deduplicationId and job.state ~= 'completed' and job.state ~= 'failed' then return entry end
         end
       end
+      local time = redis.call('TIME')
+      proposed.timestamp = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
       indexJob(proposed)
       local encoded = cjson.encode(proposed)
       redis.call('HSET', KEYS[1], proposed.id, encoded)
@@ -109,7 +111,6 @@ export class RedisAdapter implements FlowAdapter {
   async enqueue(queue: string, job: Job): Promise<string> {
     const value = {
       ...job,
-      timestamp: Date.now(),
       state: job.opts.delay ? "delayed" : "waiting",
       delay: job.opts.delay ?? 0,
     };
@@ -120,7 +121,8 @@ export class RedisAdapter implements FlowAdapter {
     const result = await this.executeScript(
       `
       ${QUEUE_INDEX_LUA}
-      for _,id in ipairs(redis.call('ZRANGEBYSCORE',KEYS[2],'-inf',ARGV[1])) do
+      local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
+      for _,id in ipairs(redis.call('ZRANGEBYSCORE',KEYS[2],'-inf',now)) do
         local raw = redis.call('HGET',KEYS[1],id)
         if raw then
           local job = cjson.decode(raw)
@@ -151,7 +153,7 @@ export class RedisAdapter implements FlowAdapter {
         offset = offset + #members - removed
       end
       if not chosen then return nil end
-      chosen.state = 'active'; chosen.processedOn = tonumber(ARGV[1]); local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000); chosen.lease = {token=ARGV[3], expiresAt=now+tonumber(ARGV[4])}
+      chosen.state = 'active'; chosen.processedOn = now; chosen.lease = {token=ARGV[3], expiresAt=now+tonumber(ARGV[4])}
       local encoded = cjson.encode(chosen)
       redis.call('HSET',KEYS[1],chosen.id,encoded)
       redis.call('ZREM',KEYS[2],chosen.id)
@@ -160,7 +162,7 @@ export class RedisAdapter implements FlowAdapter {
     `,
       5,
       ...this.queueKeys(queue),
-      Date.now(),
+      0, // Reserved argument: queue time comes from Redis TIME.
       name ?? "",
       randomUUID(),
       leaseDuration,
@@ -186,11 +188,11 @@ export class RedisAdapter implements FlowAdapter {
       if ARGV[3] == '1' or value.state == 'completed' or value.state == 'failed' then value.lease = nil
       elseif old and old.lease then value.lease = old.lease end
       if old and old.queueMember then redis.call('ZREM',KEYS[3],old.queueMember) end
-      if ARGV[3] == '1' then value.queueMember = nil elseif old then value.queueMember = old.queueMember end
+      if ARGV[3] == '1' then value.queueMember = nil; value.timestamp = now elseif old then value.queueMember = old.queueMember end
       indexJob(value)
       redis.call('HSET',KEYS[1],value.id,cjson.encode(value))
       return 1
-    `, 5, ...this.queueKeys(queue), JSON.stringify(job), Date.now(), enqueue ? "1" : "0");
+    `, 5, ...this.queueKeys(queue), JSON.stringify(job), 0, enqueue ? "1" : "0");
     if (Number(result) === -1) throw new Error("Active job already owns deduplication key");
     if (Number(result) !== 1) throw new Error("Job lease lost");
   }

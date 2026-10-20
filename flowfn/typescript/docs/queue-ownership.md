@@ -71,3 +71,23 @@ NOSCRIPT reply falls back to EVAL, recovering after script flush/restart. Other
 errors propagate without source replay because a transport failure may follow a
 committed mutation. This reduces repeated source transmission but does not
 establish the original throughput/latency targets.
+
+## Delays and storage clocks
+
+Redis and PostgreSQL measure new job delays and re-enqueue delays from the storage
+clock at the atomic write, and compare due times against that clock when claiming.
+`timestamp` and `processedOn` use the same storage authority. A producer or worker
+whose wall clock is fast or slow cannot advance a newly scheduled delay or make
+it wait for that client's time. Redis samples TIME inside its existing Lua script;
+PostgreSQL samples clock_timestamp inside its existing insert/claim statements.
+No extra clock request is added. Claim lease tokens and expiration fencing remain
+unchanged.
+
+Existing Redis job JSON/delayed scores and PostgreSQL columns retain their layout
+and existing absolute due times. Jobs admitted by an older client with an already
+skewed due time are not silently rescheduled: explicitly re-enqueue them to start
+a new relative delay. This change does not make every timestamp in the library
+storage-authoritative; completion/retention and client telemetry are separate
+contracts. Native functional tests use both one-hour producer skews, fast and
+slow workers, deduplicated creation, and leased retries. They do not establish
+throughput targets or resilience to jumps in the storage server's own clock.
