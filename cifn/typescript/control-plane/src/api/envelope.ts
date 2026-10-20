@@ -7,6 +7,8 @@ import {
 
 /** Canonical error code set per SPEC.md (v1). */
 export type ErrorCode =
+  | 'CLAIM_CONFLICT'
+  | 'UNAVAILABLE'
   | 'PAYLOAD_TOO_LARGE'
   | 'BAD_REQUEST'
   | 'UNAUTHORIZED'
@@ -35,6 +37,8 @@ export interface ErrorEnvelope {
 export type Envelope<T> = SuccessEnvelope<T> | ErrorEnvelope;
 
 const errorRegistry = createErrorRegistry([
+  { code: 'CLAIM_CONFLICT', httpStatus: 409, retryable: false },
+  { code: 'UNAVAILABLE', httpStatus: 503, retryable: true },
   { code: 'PAYLOAD_TOO_LARGE', httpStatus: 413, retryable: false },
   { code: 'BAD_REQUEST', httpStatus: 400, retryable: false },
   { code: 'UNAUTHORIZED', httpStatus: 401, retryable: false },

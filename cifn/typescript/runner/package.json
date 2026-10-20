@@ -10,7 +10,8 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:remote": "vitest run src/remote-runner.test.ts && tsc -p tsconfig.remote.json"
   },
   "author": "21n",
   "license": "MIT",

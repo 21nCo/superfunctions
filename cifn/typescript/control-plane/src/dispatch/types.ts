@@ -11,10 +11,12 @@ export interface PreparedRun {
 export interface DispatchIntent {
   id: string;
   payload: JobPayload;
-  state: 'ready' | 'claimed';
+  state: 'blocked' | 'ready' | 'claimed' | 'completed';
   nextDeliveryAt: number;
   publication?: { token: string; expiresAt: number };
-  claim?: { token: string; runnerId: string; claimedAt: string };
+  claim?: { token: string; runnerId: string; claimedAt: string; protocolVersion?: 1; executionId?: string; acknowledgedAt?: string };
+  blockedByFailure?: boolean;
+  completion?: { digest: string; result: JobCompletion };
 }
 export interface DispatchDelivery { dispatchId: string; publicationToken: string; payload: JobPayload }
 export interface DispatchStore extends ControlPlaneStore {
@@ -28,4 +30,19 @@ export function isDispatchStore(store: ControlPlaneStore): store is DispatchStor
   const candidate = store as Partial<DispatchStore>;
   return ['createPreparedRun', 'listDispatchRuns', 'leaseDispatches', 'finishPublication', 'claimDispatch']
     .every(name => typeof candidate[name as keyof DispatchStore] === 'function');
+}
+
+export interface JobCompletion {
+  status: 'success' | 'failure' | 'skipped';
+  steps: Array<{ stepKey: string; status: 'success' | 'failure' | 'skipped' }>;
+}
+export interface ClaimIdentity { runId: string; dispatchId: string; runnerId: string; claimToken: string; executionId: string }
+export class ClaimConflictError extends Error { constructor() { super('Claim identity or completion conflicts with durable state'); } }
+export function validateCompletion(value: unknown): value is JobCompletion {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const result = value as Partial<JobCompletion>;
+  const terminal = ['success', 'failure', 'skipped'];
+  return Object.keys(value).every(key => key === 'status' || key === 'steps') && typeof result.status === 'string' && terminal.includes(result.status)
+    && Array.isArray(result.steps) && result.steps.length <= 100 && result.steps.every(step => step && typeof step === 'object'
+      && Object.keys(step).every(key => key === 'stepKey' || key === 'status') && typeof step.stepKey === 'string' && terminal.includes(step.status));
 }

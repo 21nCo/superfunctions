@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler", "lib": ["ES2020", "DOM", "DOM.Iterable"], "skipLibCheck": false, "noEmit": true },
+  "include": ["src/remote-runner.ts", "src/claim-journal.ts", "src/remote-runner.test.ts", "src/server.ts"],
+  "exclude": ["node_modules", "dist"]
+}

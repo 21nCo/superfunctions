@@ -13,7 +13,7 @@ import { publishRun } from './publisher.js';
 export async function prepareRun(input: CreateRunInput, secrets?: SecFnClient, github?: { ref: string; repository: string; sha: string; event_name: string }): Promise<PreparedRun> {
   input = JSON.parse(JSON.stringify(input)) as CreateRunInput;
   const spec = input.pipelineSpec;
-  const roots = new Set(resolveDAG(spec).rootJobs);
+  resolveDAG(spec);
   const names = Array.from(discoverSecrets(spec));
   const payload = input.trigger.payload?.github as { ref?: string; repository?: string; sha?: string } | undefined;
   const context = { secrets: secrets ?? { getSecret: async () => { throw new Error('Secret provider is not configured'); }, setSecret: async () => {}, listKeys: async () => [] }, github: github ?? {
@@ -24,7 +24,7 @@ export async function prepareRun(input: CreateRunInput, secrets?: SecFnClient, g
   for (const [jobKey, jobSpec] of Object.entries(spec.jobs)) {
     const { resolved, secretValues } = await resolveEnvMap({ ...spec.env, ...jobSpec.env }, context);
     result.secretValues.push(...secretValues);
-    if (roots.has(jobKey)) result.jobs.push({ jobKey, jobSpec, pipelineRef: input.pipelineRef, env: resolved, secretKeys: names });
+    result.jobs.push({ jobKey, jobSpec, pipelineRef: input.pipelineRef, env: resolved, secretKeys: names });
   }
   result.secretValues = [...new Set(result.secretValues)];
   return result;
@@ -38,9 +38,10 @@ export async function acceptRun(store: ControlPlaneStore, queue: QueueClient, pr
     return run;
   }
   const run = await store.createRun(prepared.input);
+  const roots = new Set(resolveDAG(prepared.input.pipelineSpec).rootJobs);
   for (const job of prepared.jobs) {
     await store.registerJobSecretValues(run.id, job.jobKey, prepared.secretValues);
-    await queue.enqueue(DEFAULT_QUEUE_NAME, { ...job, runId: run.id });
+    if (roots.has(job.jobKey)) await queue.enqueue(DEFAULT_QUEUE_NAME, { ...job, runId: run.id });
   }
   return run;
 }

@@ -1,6 +1,8 @@
 # CiFn durable root-job dispatch checkpoint
 
-2026-10-20. Extends the encrypted-record checkpoint with atomic prepared dispatch
+2026-10-20, initial dispatch checkpoint `0d246097e`. The later [remote execution checkpoint](remote-execution-readiness.md) supersedes root-only preparation and adds acknowledgement/completion for newly prepared runs. This document records the earlier dispatch scope.
+
+Extends the encrypted-record checkpoint with atomic prepared dispatch
 intent, transport retry and durable single-winner assignment. This is not
 exactly-once execution or a complete durable scheduler.
 

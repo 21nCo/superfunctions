@@ -1,11 +1,12 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash } from 'node:crypto';
 import type { Adapter, WhereClause } from '@superfunctions/db';
 import { wrapWithSchema } from '@superfunctions/db/schema';
 import type { Run, RunStatus, Job, JobStatus, Step, StepStatus } from '../pipeline/types.js';
 import type { Artifact, Runner, CreateRunInput, ListRunsOptions, ListRunsResult } from './memory-store.js';
 import type { ControlPlaneStore } from './store.js';
 import { createRunRecord } from './records.js';
-import type { PreparedRun, DispatchIntent, DispatchDelivery } from '../dispatch/types.js';
+import type { PreparedRun, DispatchIntent, DispatchDelivery, ClaimIdentity, JobCompletion } from '../dispatch/types.js';
+import { ClaimConflictError, validateCompletion } from '../dispatch/types.js';
 import type { JobPayload } from '../queue/flowfn-client.js';
 import { CIFN_STATE_TABLE, getCiFnStoreSchema } from './database-schema.js';
 
@@ -14,7 +15,7 @@ interface StateRow {
   id: string; namespace: string; kind: 'run' | 'runner' | 'meta'; status: string;
   createdAt: string; revision: number; payload: EncryptedPayload;
 }
-interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[] }
+interface RunState { run: Run; definition: CreateRunInput; artifacts: Artifact[]; secretValues: string[]; dispatches?: DispatchIntent[]; dispatchProtocolVersion?: 2 }
 export interface DatabaseStoreOptions {
   database: Adapter;
   /** Exactly 32 bytes supplied by the deployment. Never generated or persisted by CiFn. */
@@ -139,14 +140,14 @@ export class DatabaseStore implements ControlPlaneStore {
     const run = createRunRecord(definition);
     const dispatches: DispatchIntent[] = prepared.jobs.map(job => {
       const id = JSON.stringify([run.id, job.jobKey, 1]);
-      return { id, payload: { ...clone(job), runId: run.id, dispatchId: id }, state: 'ready', nextDeliveryAt: 0 };
+      return { id, payload: { ...clone(job), runId: run.id, dispatchId: id, trigger: clone(definition.trigger) }, state: (definition.pipelineSpec.jobs[job.jobKey].needs?.length ?? 0) > 0 ? 'blocked' : 'ready', nextDeliveryAt: 0 };
     });
-    const state: RunState = { run, definition, artifacts: [], secretValues: [...prepared.secretValues], dispatches };
+    const state: RunState = { run, definition, artifacts: [], secretValues: [...prepared.secretValues], dispatches, dispatchProtocolVersion: 2 };
     await this.database.create({ model: CIFN_STATE_TABLE, data: this.row('run', run.id, run.status, run.createdAt, state) });
     return clone(run);
   }
   /** Privileged reconciliation metadata; excludes job environments and secret values. */
-  async getDispatchStates(runId: string): Promise<Array<{ dispatchId: string; jobKey: string; state: 'ready' | 'claimed'; claim?: DispatchIntent['claim'] }>> {
+  async getDispatchStates(runId: string): Promise<Array<{ dispatchId: string; jobKey: string; state: DispatchIntent['state']; claim?: DispatchIntent['claim'] }>> {
     const state = await this.read<RunState>('run', runId);
     return (state?.dispatches ?? []).map(intent => ({ dispatchId: intent.id, jobKey: intent.payload.jobKey, state: intent.state, claim: intent.claim }));
   }
@@ -156,7 +157,7 @@ export class DatabaseStore implements ControlPlaneStore {
   }
   async leaseDispatches(runId: string, now: number, leaseMs: number): Promise<DispatchDelivery[]> {
     return await this.mutate<RunState, DispatchDelivery[]>('run', runId, state => {
-      if (TERMINAL.includes(state.run.status)) return { result: [], changed: false };
+      if (state.dispatchProtocolVersion !== 2 || TERMINAL.includes(state.run.status)) return { result: [], changed: false };
       const result: DispatchDelivery[] = [];
       for (const intent of state.dispatches ?? []) {
         if (state.run.jobs.find(job => job.jobKey === intent.payload.jobKey)?.status !== 'pending' || intent.state !== 'ready' || intent.nextDeliveryAt > now || (intent.publication && intent.publication.expiresAt > now)) continue;
@@ -179,15 +180,93 @@ export class DatabaseStore implements ControlPlaneStore {
     return this.mutate<RunState, JobPayload | undefined>('run', runId, state => {
       const intent = state.dispatches?.find(value => value.id === dispatchId);
       const job = intent && state.run.jobs.find(value => value.jobKey === intent.payload.jobKey);
-      if (TERMINAL.includes(state.run.status) || !intent || intent.state !== 'ready' || !job || job.status !== 'pending' || !labels.includes(intent.payload.jobSpec['runs-on'])) {
+      if (state.dispatchProtocolVersion !== 2 || TERMINAL.includes(state.run.status) || !intent || intent.state !== 'ready' || !job || job.status !== 'pending' || !labels.includes(intent.payload.jobSpec['runs-on'])) {
         return { result: undefined, changed: false };
       }
       const now = new Date().toISOString();
       const token = randomUUID();
-      intent.state = 'claimed'; intent.claim = { token, runnerId, claimedAt: now }; delete intent.publication;
+      intent.state = 'claimed'; intent.claim = { token, runnerId, claimedAt: now, protocolVersion: 1 }; delete intent.publication;
       job.status = 'running'; job.startedAt = now; state.run.status = 'running'; state.run.updatedAt = now;
       return { result: { ...clone(intent.payload), claimToken: token }, changed: true, status: 'running' };
     });
+  }
+  async acknowledgeDispatch(identity: ClaimIdentity): Promise<void> {
+    const changed = await this.mutate<RunState, true>('run', identity.runId, state => {
+      const intent = this.boundClaim(state, identity);
+      if (TERMINAL.includes(state.run.status) || intent.state !== 'claimed') throw new ClaimConflictError();
+      if (intent.claim!.executionId && intent.claim!.executionId !== identity.executionId) throw new ClaimConflictError();
+      if (intent.claim!.executionId) return { result: true, changed: false };
+      intent.claim!.executionId = identity.executionId;
+      intent.claim!.acknowledgedAt = new Date().toISOString();
+      return { result: true, changed: true };
+    });
+    if (!changed) throw new ClaimConflictError();
+  }
+  private boundClaim(state: RunState, identity: ClaimIdentity): DispatchIntent {
+    const intent = state.dispatches?.find(value => value.id === identity.dispatchId);
+    if (state.dispatchProtocolVersion !== 2 || !intent?.claim || intent.claim.protocolVersion !== 1 || intent.claim.runnerId !== identity.runnerId || intent.claim.token !== identity.claimToken) throw new ClaimConflictError();
+    return intent;
+  }
+  async listRunnerClaims(runnerId: string, cursor?: string) {
+    const page = await this.page({ limit: 100, cursor });
+    const claims: Array<{ runId: string; dispatchId: string; claimToken: string; executionId?: string; reconciliationRequired: boolean; payload?: JobPayload }> = [];
+    for (const row of page.rows) {
+      const state = this.decode<RunState>(row);
+      for (const intent of state.dispatches ?? []) {
+        if (intent.state !== 'claimed' || intent.claim?.runnerId !== runnerId) continue;
+        const reconciliationRequired = state.dispatchProtocolVersion !== 2 || TERMINAL.includes(state.run.status) || intent.claim.protocolVersion !== 1;
+        claims.push({ runId: state.run.id, dispatchId: intent.id, claimToken: intent.claim.token, executionId: intent.claim.executionId,
+          reconciliationRequired, payload: reconciliationRequired ? undefined : { ...intent.payload, claimToken: intent.claim.token } });
+      }
+    }
+    return { claims, nextCursor: page.nextCursor };
+  }
+  async completeDispatch(identity: ClaimIdentity, completion: JobCompletion): Promise<{ accepted: true }> {
+    if (!validateCompletion(completion)) throw new ClaimConflictError();
+    const canonical: JobCompletion = { status: completion.status, steps: completion.steps.map(step => ({ stepKey: step.stepKey, status: step.status })) };
+    const digest = createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+    const result = await this.mutate<RunState, { accepted: true }>('run', identity.runId, state => {
+      const intent = this.boundClaim(state, identity);
+      if (intent.claim!.executionId !== identity.executionId) throw new ClaimConflictError();
+      if (intent.completion) {
+        if (intent.completion.digest !== digest) throw new ClaimConflictError();
+        return { result: { accepted: true }, changed: false };
+      }
+      if (TERMINAL.includes(state.run.status) || intent.state !== 'claimed') throw new ClaimConflictError();
+      const job = state.run.jobs.find(value => value.jobKey === intent.payload.jobKey)!;
+      if (canonical.steps.length !== job.steps.length || canonical.steps.some((step, index) => step.stepKey !== job.steps[index].stepKey)
+        || (canonical.status === 'success' && canonical.steps.some(step => step.status === 'failure'))
+        || (canonical.status === 'skipped' && canonical.steps.some(step => step.status !== 'skipped'))
+        || (canonical.status === 'failure' && !canonical.steps.some(step => step.status === 'failure'))) throw new ClaimConflictError();
+      const now = new Date().toISOString();
+      canonical.steps.forEach((step, index) => { job.steps[index].status = step.status; job.steps[index].completedAt = now; });
+      job.status = canonical.status; job.completedAt = now;
+      intent.state = 'completed'; intent.completion = { digest, result: clone(canonical) };
+      // Dependency outcomes and newly ready intents commit with the completion.
+      let progressed = true;
+      while (progressed) {
+        progressed = false;
+        for (const next of state.dispatches ?? []) {
+          if (next.state !== 'blocked') continue;
+          const needs = state.definition.pipelineSpec.jobs[next.payload.jobKey].needs ?? [];
+          const dependencies = needs.map(key => state.run.jobs.find(value => value.jobKey === key)!);
+          if (dependencies.some(value => value.status === 'failure' || state.dispatches?.find(item => item.payload.jobKey === value.jobKey)?.blockedByFailure)) {
+            const blocked = state.run.jobs.find(value => value.jobKey === next.payload.jobKey)!;
+            blocked.status = 'skipped'; blocked.completedAt = now;
+            blocked.steps.forEach(step => { step.status = 'skipped'; step.completedAt = now; });
+            next.state = 'completed'; next.blockedByFailure = true; progressed = true;
+          } else if (dependencies.every(value => value.status === 'success' || value.status === 'skipped')) {
+            next.state = 'ready'; progressed = true;
+          }
+        }
+      }
+      const done = state.run.jobs.every(value => ['success', 'failure', 'skipped'].includes(value.status));
+      state.run.status = done ? (state.run.jobs.some(value => value.status === 'failure') ? 'failure' : 'success') : 'running';
+      state.run.updatedAt = now;
+      return { result: { accepted: true }, changed: true, status: state.run.status };
+    });
+    if (!result) throw new ClaimConflictError();
+    return result;
   }
   async getRun(runId: string): Promise<Run | undefined> { return (await this.read<RunState>('run', runId))?.run; }
 

@@ -210,7 +210,7 @@ describe('real SQLite durable control-plane state', () => {
     expect(assignments.find(Boolean)?.claimToken).toBeTypeOf('string');
     expect((await opened.store.getRun(run.id))?.status).toBe('running');
     await close(opened.sql); opened = await open(path);
-    expect(await opened.store.getDispatchStates(run.id)).toMatchObject([{ state: 'claimed', claim: { token: assignments.find(Boolean)?.claimToken } }]);
+    expect((await opened.store.getDispatchStates(run.id)).filter(value => value.jobKey === 'build')).toMatchObject([{ state: 'claimed', claim: { token: assignments.find(Boolean)?.claimToken } }]);
     expect(await opened.store.leaseDispatches(run.id, Date.now() + 60_000, 5_000)).toEqual([]);
     expect(await opened.store.claimDispatch(run.id, message.dispatchId!, runners[0].runnerId, ['default'])).toBeUndefined();
   });
@@ -247,12 +247,12 @@ describe('real SQLite durable control-plane state', () => {
     native.exec("CREATE TRIGGER fail_claim BEFORE UPDATE ON cifn_state WHEN NEW.status = 'running' BEGIN SELECT RAISE(ABORT, 'claim rejected'); END");
     expect((await heartbeat()).status).toBe(500);
     expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
-    expect(await store.getDispatchStates(run.id)).toMatchObject([{ state: 'ready' }]);
+    expect((await store.getDispatchStates(run.id)).filter(value => value.jobKey === 'build')).toMatchObject([{ state: 'ready' }]);
     native.exec('DROP TRIGGER fail_claim');
     await publishRun(store, queue, run.id, Date.now() + 31_000);
     const accepted = await heartbeat(); expect(accepted.status).toBe(200);
     expect(await accepted.json()).toMatchObject({ data: { job: { runId: run.id } } });
-    expect(await store.getDispatchStates(run.id)).toMatchObject([{ state: 'claimed' }]);
+    expect((await store.getDispatchStates(run.id)).filter(value => value.jobKey === 'build')).toMatchObject([{ state: 'claimed' }]);
   });
 
   it('shares encrypted prepared dispatch creation across webhook and cron triggers', async () => {
@@ -269,7 +269,7 @@ describe('real SQLite durable control-plane state', () => {
     expect(queue.peek(DEFAULT_QUEUE_NAME)).toHaveLength(2);
     for (const message of queue.peek(DEFAULT_QUEUE_NAME)) {
       expect(message.env?.TOKEN).toBe(secret);
-      expect(await store.getDispatchStates(message.runId)).toMatchObject([{ dispatchId: message.dispatchId, state: 'ready' }]);
+      expect((await store.getDispatchStates(message.runId)).filter(value => value.jobKey === 'build')).toMatchObject([{ dispatchId: message.dispatchId, state: 'ready' }]);
       expect(await store.getSecretValues(message.runId)).toEqual([secret]);
     }
     expect((await store.getRun(cronId))?.trigger.type).toBe('schedule');
@@ -291,6 +291,92 @@ describe('real SQLite durable control-plane state', () => {
       pipelineResolver: async () => ({ doc: JSON.stringify(input.pipelineSpec), resolvedConfigPath: 'ci.json' }) })).rejects.toThrow('provider unavailable');
     expect((await store.listRuns()).runs).toEqual([]);
     expect(queue.size(DEFAULT_QUEUE_NAME)).toBe(0);
+  });
+
+  it('binds claim acknowledgement and idempotent completion, atomically releases prepared dependencies and survives reopen', async () => {
+    const { path } = await location(); let opened = await open(path);
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('TOKEN', secret); await secrets.setSecret('CIFN_RUNNER_REGISTRATION_TOKEN', 'register');
+    const queue = new MemoryQueueClient(); const { app } = createApp({ store: opened.store, queue, secFn: secrets });
+    const register = async () => (await (await app.request('http://localhost/api/v1/runners/register', { method: 'POST', body: JSON.stringify({ token: 'register' }) })).json() as { data: { runnerId: string; runnerSecret: string } }).data;
+    const owner = await register(); const stranger = await register();
+    const run = await opened.store.createPreparedRun(await prepareRun(input, secrets));
+    const id = JSON.stringify([run.id, 'build', 1]);
+    const payload = await opened.store.claimDispatch(run.id, id, owner.runnerId, ['default']);
+    const identity = { runId: run.id, dispatchId: id, runnerId: owner.runnerId, claimToken: payload!.claimToken!, executionId: 'execution-one' };
+    const call = (action: string, body: unknown, token = owner.runnerSecret) => app.request(`http://localhost/api/v1/runners/claims/${action}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    const result = { status: 'success' as const, steps: [{ stepKey: 'step-0', status: 'success' as const }, { stepKey: 'step-1', status: 'success' as const }] };
+    expect((await call('complete', { ...identity, result })).status).toBe(409);
+    expect((await call('ack', identity, 'wrong-secret')).status).toBe(401);
+    expect((await call('ack', { ...identity, runnerId: stranger.runnerId }, stranger.runnerSecret)).status).toBe(409);
+    const resume = await call('resume', { runnerId: owner.runnerId });
+    expect(await resume.json()).toMatchObject({ data: { claims: [{ dispatchId: id, payload: { env: { TOKEN: secret } } }] } });
+    expect(await (await call('resume', { runnerId: stranger.runnerId }, stranger.runnerSecret)).json()).toMatchObject({ data: { claims: [] } });
+    expect((await call('ack', identity)).status).toBe(200);
+    expect((await call('ack', identity)).status).toBe(200);
+    expect((await call('ack', { ...identity, executionId: 'competing-owner' })).status).toBe(409);
+    expect((await call('complete', { ...identity, claimToken: 'wrong', result })).status).toBe(409);
+    expect((await call('complete', { ...identity, result: { status: 'success', steps: [] } })).status).toBe(409);
+    opened.native.exec("CREATE TRIGGER fail_completion BEFORE UPDATE ON cifn_state WHEN NEW.kind = 'run' BEGIN SELECT RAISE(ABORT, 'completion rejected'); END");
+    expect((await call('complete', { ...identity, result })).status).toBe(503);
+    expect((await opened.store.getDispatchStates(run.id)).map(value => value.state)).toEqual(['claimed', 'blocked']);
+    expect((await opened.store.getRun(run.id))?.jobs[0].status).toBe('running');
+    opened.native.exec('DROP TRIGGER fail_completion');
+    const completions = await Promise.all([call('complete', { ...identity, result }), call('complete', { ...identity, result })]);
+    expect(completions.map(value => value.status)).toEqual([200, 200]);
+    expect(await completions[0].json()).toEqual(await completions[1].json());
+    expect((await call('complete', { ...identity, result: { status: 'failure', steps: [{ stepKey: 'step-0', status: 'failure' }, { stepKey: 'step-1', status: 'skipped' }] } })).status).toBe(409);
+    expect((await opened.store.getDispatchStates(run.id)).map(value => value.state)).toEqual(['completed', 'ready']);
+    await secrets.setSecret('TOKEN', 'rotated-value');
+    await close(opened.sql); opened = await open(path);
+    const downstream = (await opened.store.leaseDispatches(run.id, Date.now(), 5_000))[0];
+    expect(downstream.payload.jobKey).toBe('test'); expect(downstream.payload.env?.TOKEN).toBe(secret);
+    const claim = await opened.store.claimDispatch(run.id, downstream.dispatchId, owner.runnerId, ['default']);
+    const nextIdentity = { ...identity, dispatchId: downstream.dispatchId, claimToken: claim!.claimToken!, executionId: 'execution-two' };
+    await opened.store.acknowledgeDispatch(nextIdentity);
+    await opened.store.completeDispatch(nextIdentity, { status: 'success', steps: [{ stepKey: 'step-0', status: 'success' }] });
+    expect((await opened.store.getRun(run.id))?.status).toBe('success');
+    expect(await opened.store.completeDispatch(identity, result)).toEqual({ accepted: true });
+  });
+
+  it('promotes a join once when independent root completions race', async () => {
+    const { path } = await location(); const [first, second] = await Promise.all([open(path), open(path)]);
+    const spec = { on: { workflow_dispatch: {} }, jobs: {
+      a: { 'runs-on': 'default', steps: [{ run: 'true' }] }, b: { 'runs-on': 'default', steps: [{ run: 'true' }] },
+      join: { 'runs-on': 'default', needs: ['a', 'b'], steps: [{ run: 'true' }] },
+    } };
+    const run = await first.store.createPreparedRun(await prepareRun({ trigger: { type: 'workflow_dispatch' }, pipelineSpec: spec }));
+    const identities = [];
+    for (const jobKey of ['a', 'b']) {
+      const dispatchId = JSON.stringify([run.id, jobKey, 1]);
+      const claim = await first.store.claimDispatch(run.id, dispatchId, 'runner', ['default']);
+      const identity = { runId: run.id, dispatchId, runnerId: 'runner', claimToken: claim!.claimToken!, executionId: jobKey };
+      await first.store.acknowledgeDispatch(identity); identities.push(identity);
+    }
+    const result = { status: 'success' as const, steps: [{ stepKey: 'step-0', status: 'success' as const }] };
+    await Promise.all([first.store.completeDispatch(identities[0], result), second.store.completeDispatch(identities[1], result)]);
+    expect((await first.store.getDispatchStates(run.id)).map(value => value.state)).toEqual(['completed', 'completed', 'ready']);
+    const deliveries = await first.store.leaseDispatches(run.id, Date.now(), 5_000);
+    expect(deliveries).toHaveLength(1); expect(deliveries[0].payload.jobKey).toBe('join');
+  });
+
+  it('does not run downstream jobs after failed dependencies or accept completion after cancellation', async () => {
+    const { path } = await location(); const { store } = await open(path);
+    const secrets = new MemorySecFnClient(); await secrets.setSecret('TOKEN', secret);
+    const run = await store.createPreparedRun(await prepareRun(input, secrets));
+    const id = JSON.stringify([run.id, 'build', 1]);
+    const claim = await store.claimDispatch(run.id, id, 'runner', ['default']);
+    const identity = { runId: run.id, dispatchId: id, runnerId: 'runner', claimToken: claim!.claimToken!, executionId: 'execution' };
+    await store.acknowledgeDispatch(identity);
+    await store.completeDispatch(identity, { status: 'failure', steps: [{ stepKey: 'step-0', status: 'failure' }, { stepKey: 'step-1', status: 'skipped' }] });
+    expect((await store.getRun(run.id))?.jobs.map(value => value.status)).toEqual(['failure', 'skipped']);
+    expect((await store.getRun(run.id))?.status).toBe('failure');
+    expect(await store.leaseDispatches(run.id, Date.now() + 60_000, 5_000)).toEqual([]);
+    const cancelled = await store.createPreparedRun(await prepareRun(input, secrets));
+    const cancelledId = JSON.stringify([cancelled.id, 'build', 1]);
+    const cancelledClaim = await store.claimDispatch(cancelled.id, cancelledId, 'runner', ['default']);
+    const cancelledIdentity = { ...identity, runId: cancelled.id, dispatchId: cancelledId, claimToken: cancelledClaim!.claimToken! };
+    await store.acknowledgeDispatch(cancelledIdentity); await store.cancelRun(cancelled.id);
+    await expect(store.completeDispatch(cancelledIdentity, { status: 'success', steps: [{ stepKey: 'step-0', status: 'success' }, { stepKey: 'step-1', status: 'success' }] })).rejects.toThrow('conflicts');
   });
 
   it('does not acknowledge failed persistence or dispatch a run after a native database failure', async () => {

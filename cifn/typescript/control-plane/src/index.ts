@@ -69,3 +69,4 @@ export { getCiFnStoreSchema, CIFN_STATE_TABLE, CIFN_SQLITE_SCHEMA } from './stor
 export { prepareRun, acceptRun } from './dispatch/prepare.js';
 export { DispatchPublisher } from './dispatch/publisher.js';
 export type { PreparedRun, DispatchStore } from './dispatch/types.js';
+export type { JobCompletion, ClaimIdentity } from './dispatch/types.js';

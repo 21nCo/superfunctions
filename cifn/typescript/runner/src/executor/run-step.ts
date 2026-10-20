@@ -7,8 +7,8 @@ export interface RunStepResult {
   lines: string[];
 }
 
-export function executeRunStep(command: string, workspacePath: string, env?: Record<string, string>): RunStepResult {
-  const execEnv = env ? { ...process.env, ...env } : process.env;
+export function executeRunStep(command: string, workspacePath: string, env?: Record<string, string>, baseEnv: NodeJS.ProcessEnv = process.env): RunStepResult {
+  const execEnv = env ? { ...baseEnv, ...env } : baseEnv;
   try {
     const stdout = execSync(command, {
       cwd: workspacePath,

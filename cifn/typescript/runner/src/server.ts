@@ -1,54 +1,20 @@
-import { Runner } from './runner.js';
+import { RemoteRunner } from './remote-runner.js';
 
-const CONTROL_PLANE_URL = process.env.CIFN_CONTROL_PLANE_URL;
-const RUNNER_SECRET = process.env.CIFN_RUNNER_SECRET;
-const RUNNER_ID = process.env.CIFN_RUNNER_ID;
-const LABELS = (process.env.CIFN_RUNNER_LABELS ?? 'default').split(',').map(l => l.trim());
-const POLL_INTERVAL = parseInt(process.env.CIFN_POLL_INTERVAL_MS ?? '5000', 10);
-
-const required: Record<string, string | undefined> = {
-  CIFN_CONTROL_PLANE_URL: CONTROL_PLANE_URL,
-  CIFN_RUNNER_SECRET: RUNNER_SECRET,
-  CIFN_RUNNER_ID: RUNNER_ID,
-};
-
-for (const [name, value] of Object.entries(required)) {
-  if (!value) {
-    console.error(`Missing required environment variable: ${name}`);
-    process.exit(1);
-  }
+const required = ['CIFN_CONTROL_PLANE_URL', 'CIFN_RUNNER_SECRET', 'CIFN_RUNNER_ID', 'CIFN_RUNNER_STATE_DIR'] as const;
+for (const name of required) {
+  if (!process.env[name]) { console.error(`Missing required environment variable: ${name}`); process.exit(1); }
 }
-
-async function poll(): Promise<void> {
-  try {
-    const res = await fetch(`${CONTROL_PLANE_URL}/api/v1/runners/heartbeat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${RUNNER_SECRET}`,
-      },
-      body: JSON.stringify({ runnerId: RUNNER_ID }),
-    });
-    const body = await res.json() as { ok: boolean; data?: { job: unknown } };
-    if (body.ok && body.data?.job) {
-      console.log(`Received job: ${JSON.stringify(body.data.job)}`);
-    }
-  } catch (err) {
-    console.error('Heartbeat failed:', err instanceof Error ? err.message : err);
-  }
-}
-
-console.log(`CiFn Runner starting (id=${RUNNER_ID}, labels=${LABELS.join(',')})`);
-console.log(`Polling ${CONTROL_PLANE_URL} every ${POLL_INTERVAL}ms`);
-
+const runner = new RemoteRunner({ baseUrl: process.env.CIFN_CONTROL_PLANE_URL!, runnerSecret: process.env.CIFN_RUNNER_SECRET!, runnerId: process.env.CIFN_RUNNER_ID!, stateDirectory: process.env.CIFN_RUNNER_STATE_DIR! });
+const interval = Number(process.env.CIFN_POLL_INTERVAL_MS ?? '1000');
+if (!Number.isFinite(interval) || interval < 10) throw new Error('Invalid runner poll interval');
+let stopping = false;
+process.once('SIGTERM', () => { stopping = true; });
+process.once('SIGINT', () => { stopping = true; });
 async function main() {
-  while (true) {
-    await poll();
-    await new Promise(r => setTimeout(r, POLL_INTERVAL));
+  console.log('CiFn remote shell runner started');
+  while (!stopping) {
+    try { await runner.tick(); } catch { console.error('CiFn runner request failed; saved work remains pending'); }
+    if (!stopping) await new Promise(resolve => setTimeout(resolve, interval));
   }
 }
-
-main().catch(err => {
-  console.error('Runner failed:', err);
-  process.exit(1);
-});
+void main().catch(() => { console.error('CiFn runner stopped unexpectedly'); process.exitCode = 1; });

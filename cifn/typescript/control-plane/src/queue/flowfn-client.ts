@@ -2,6 +2,7 @@ import type { JobSpec } from '../pipeline/types.js';
 import { MemoryQueueAdapter as SharedMemoryQueueAdapter } from '@superfunctions/queue';
 
 export interface JobPayload {
+  trigger?: { type: string; payload?: Record<string, unknown> };
   dispatchId?: string;
   claimToken?: string;
   runId: string;

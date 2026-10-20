@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "test:startup": "npm run build && node scripts/verify-startup.mjs",
-    "test:durable": "vitest run src/store/database-store.test.ts && tsc -p tsconfig.durable.json && npm run build && node scripts/verify-durable-startup.mjs"
+    "test:durable": "vitest run src/store/database-store.test.ts && tsc -p tsconfig.durable.json && npm run build && node scripts/verify-durable-startup.mjs",
+    "test:remote": "npm run build && npm run build --workspace=@testfn/core && npm run build --workspace=@cifn/runner && node scripts/verify-remote-execution.mjs"
   },
   "keywords": [
     "ci",

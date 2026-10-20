@@ -92,11 +92,18 @@ SQLite mode requires Node 20+ and the optional `better-sqlite3`/`kysely` package
 Keep the key backed up separately; no key is generated or saved by CiFn, and an
 invalid configuration fails startup rather than falling back to memory.
 
-New runs atomically persist prepared root-job dispatch intents with their records.
+New runs atomically persist prepared jobs and dispatch intents with their records.
 The built server republishes unclaimed intents after transport failure or restart;
-duplicate messages can produce only one durable assignment. Already claimed jobs
-are never silently reassigned. Remote completion, execution leases, dependency
-scheduling and notification outboxes remain required before durable end-to-end
-execution can be claimed. See the [dispatch contract](.conduct/durable-dispatch-readiness.md)
-and [storage contract](.conduct/durable-storage-readiness.md) for validation,
-migration and remaining requirements.
+duplicate messages can produce only one durable assignment. The remote shell
+runner acknowledges claims, saves a private metadata journal, executes real shell
+steps and reports idempotent completion. Completion atomically releases dependent
+jobs. Started work without a saved result is never silently re-executed.
+
+Run the built runner with `CIFN_CONTROL_PLANE_URL`, `CIFN_RUNNER_ID`,
+`CIFN_RUNNER_SECRET` and a persistent `CIFN_RUNNER_STATE_DIR`. This remote path
+supports shell steps; Docker and provider steps remain unsupported remotely.
+Execution leases/reassignment, cancellation delivery, remote logs/artifacts and
+durable notifications remain open. See the [remote execution contract](.conduct/remote-execution-readiness.md),
+[dispatch contract](.conduct/durable-dispatch-readiness.md), and
+[storage contract](.conduct/durable-storage-readiness.md) for validation and migration
+requirements. These checkpoints do not establish full production readiness.

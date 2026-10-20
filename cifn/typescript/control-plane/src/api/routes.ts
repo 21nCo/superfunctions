@@ -1,3 +1,4 @@
+import { registerClaimRoutes } from './claims.js';
 import { prepareRun, acceptRun } from '../dispatch/prepare.js';
 import { isDispatchStore } from '../dispatch/types.js';
 import { DispatchPublisher } from '../dispatch/publisher.js';
@@ -75,7 +76,7 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
   // Apply Auth Middleware to all /api/v1 routes
   // Exclude /runners/register (uses token in body) and /runners/heartbeat (custom runner auth)
   // Health check is handled in middleware but we can also exclude it here if needed.
-  api.use('/*', authMiddleware(secFn, ['/api/v1/runners/register', '/api/v1/runners/heartbeat']));
+  api.use('/*', authMiddleware(secFn, ['/api/v1/runners/register', '/api/v1/runners/heartbeat', '/api/v1/runners/claims/']));
 
   api.post('/runs', async (c) => {
     let body: Record<string, unknown>;
@@ -354,6 +355,7 @@ export function createApp<TStore extends ControlPlaneStore = MemoryStore>(option
     return c.json(success({ job: null }), 200);
   });
 
+  registerClaimRoutes(api, runStore);
   app.route('/api/v1', api);
 
   // Webhook

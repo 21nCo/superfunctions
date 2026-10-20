@@ -23,6 +23,7 @@ import { redactSecrets } from './reporting/redact.js';
 import { DockerExecutor } from './docker-executor.js';
 
 export interface RunnerOptions {
+  executionEnv?: NodeJS.ProcessEnv;
   store: MemoryStore;
   queue: QueueClient;
   logClient: LogFnClient;
@@ -48,6 +49,7 @@ export interface RunnerOptions {
 }
 
 export class Runner {
+  private executionEnv?: NodeJS.ProcessEnv;
   private store: MemoryStore;
   private queue: QueueClient;
   private logClient: LogFnClient;
@@ -66,6 +68,7 @@ export class Runner {
   private getSecret?: (runId: string, name: string) => Promise<string | null>;
 
   constructor(options: RunnerOptions) {
+    this.executionEnv = options.executionEnv;
     this.store = options.store;
     this.queue = options.queue;
     this.logClient = options.logClient;
@@ -572,7 +575,7 @@ export class Runner {
       });
     }
 
-    return executeRunStep(command, workspace, env);
+    return executeRunStep(command, workspace, env, this.executionEnv);
   }
 
   private shouldUseDocker(jobSpec: JobPayload['jobSpec']): boolean {

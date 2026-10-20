@@ -21,3 +21,5 @@ export { executeHostFnDeploy } from './steps/hostfn-deploy.js';
 export type { HostFnDeployOptions, HostFnDeployResult } from './steps/hostfn-deploy.js';
 export { DockerExecutor } from './docker-executor.js';
 export type { DockerExecutorOptions, DockerCommandRunner } from './docker-executor.js';
+export { RemoteRunner, executeRemoteShellJob } from './remote-runner.js';
+export type { RemoteRunnerOptions } from './remote-runner.js';
