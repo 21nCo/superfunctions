@@ -52,6 +52,7 @@ export class BrowserClient {
   async readBugIssueStatus(reference: BugIssueReference, options: { signal?: AbortSignal } = {}): Promise<BrowserBugIssueStatus | null> {
     if (this.closed) throw new Error("WatchFn browser client is closed");
     if (!reference || typeof reference.app !== "string" || !reference.app.trim() || reference.app.length > 200 || typeof reference.reportId !== "string" || !reference.reportId.trim() || reference.reportId.length > 256) throw new TypeError("Invalid bug reference");
+    const expected = Object.freeze({ app: reference.app, reportId: reference.reportId });
     const endpoint = new URL(this.config.issueStatusEndpoint ?? this.config.endpoint, typeof location === "undefined" ? undefined : location.href);
     if (!this.config.issueStatusEndpoint) {
       if (!endpoint.pathname.endsWith("/ingest") || endpoint.search || endpoint.hash) throw new TypeError("Configure issueStatusEndpoint for a noncanonical ingestion endpoint");
@@ -74,7 +75,7 @@ export class BrowserClient {
         headers.set("Content-Type", "application/json");
         const key = typeof this.config.apiKey === "function" ? this.config.apiKey() : this.config.apiKey;
         if (key) headers.set("Authorization", `Bearer ${key}`);
-        const response = await fetch(endpoint.href, { method: "POST", headers, body: JSON.stringify(reference), signal: controller.signal, redirect: "error" });
+        const response = await fetch(endpoint.href, { method: "POST", headers, body: JSON.stringify(expected), signal: controller.signal, redirect: "error" });
         if (controller.signal.aborted) { void response.body?.cancel().catch(() => {}); throw new BrowserDeliveryError("Issue status read canceled"); }
         if (response.status === 404) { void response.body?.cancel().catch(() => {}); return null; }
         if (!response.ok) { void response.body?.cancel().catch(() => {}); throw new BrowserDeliveryError(`Issue status returned HTTP ${response.status}`, response.status); }
@@ -86,7 +87,7 @@ export class BrowserClient {
         }
         const bytes = new Uint8Array(size); let offset = 0;
         for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-        return parseBugIssueStatus(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), reference);
+        return parseBugIssueStatus(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), expected);
       })()]);
     } finally {
       clearTimeout(timer); this.statusReadCancels.delete(abort); options.signal?.removeEventListener("abort", abort);
