@@ -19,10 +19,11 @@ try{
 import {DrawfnCanvas, useDrawfn, type UseDrawfnOptions} from '@drawfn/react';
 import {drawfn,createDrawfnStore,type DrawfnActionOptions} from '@drawfn/svelte';
 const options: DrawfnOptions={canvas:document.createElement('canvas'),getNodePreview:async()=>({title:'ok'})};
-const core=new Drawfn(options);const scene:Scene=core.getScene();
+const core=new Drawfn(options);core.resetHistory();const scene:Scene=core.getScene();
+function resetReact(api:ReturnType<typeof useDrawfn>){api.resetHistory()}
 const reactOptions:UseDrawfnOptions={scene};const actionOptions:DrawfnActionOptions={scene};
 void [DrawfnCanvas,useDrawfn,reactOptions,drawfn,createDrawfnStore,actionOptions];`;
- writeFileSync(join(directory,'consumer.mts'),fixture+`\nimport Canvas from '@drawfn/svelte/Canvas.svelte';import Drawing from '@drawfn/svelte/DrawfnCanvas.svelte';void [Canvas,Drawing];`);
+ writeFileSync(join(directory,'consumer.mts'),fixture+`\ncreateDrawfnStore().resetHistory();\nimport Canvas from '@drawfn/svelte/Canvas.svelte';import Drawing from '@drawfn/svelte/DrawfnCanvas.svelte';void [Canvas,Drawing];`);
  writeFileSync(join(directory,'consumer.cts'),fixture.replace("import {drawfn,createDrawfnStore,type DrawfnActionOptions} from '@drawfn/svelte';","type DrawfnActionOptions = import('@drawfn/svelte', { with: { 'resolution-mode': 'import' } }).DrawfnActionOptions; const {drawfn,createDrawfnStore} = await import('@drawfn/svelte');").replace("const {drawfn,createDrawfnStore} = await import('@drawfn/svelte');","const actionImport = import('@drawfn/svelte');").replace('void [DrawfnCanvas,useDrawfn,reactOptions,drawfn,createDrawfnStore,actionOptions];','void [DrawfnCanvas,useDrawfn,reactOptions,actionImport,actionOptions];'));
  for(const mode of ['Node16','NodeNext']){run(process.execPath,[req.resolve('typescript/bin/tsc'),'--noEmit','--strict','--target','ES2021','--module',mode,'--moduleResolution',mode,'--lib','ES2021,DOM','consumer.mts','consumer.cts']);console.log(`${mode} .mts/.cts and component declarations passed`)}
  const esm=`import assert from 'node:assert/strict';import {Drawfn} from 'drawfn';import {DrawfnCanvas} from '@drawfn/react';import {drawfn,createDrawfnStore} from '@drawfn/svelte';import React from 'react';import {renderToString} from 'react-dom/server';assert.equal(typeof Drawfn,'function');assert.equal(typeof drawfn,'function');assert.equal(typeof createDrawfnStore,'function');assert.match(renderToString(React.createElement(DrawfnCanvas,{width:321,height:123})),/<canvas[^>]*width="321"/);console.log('ESM imports and React SSR passed',process.version);`;

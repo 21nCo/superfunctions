@@ -10,7 +10,7 @@ Paths in the evidence column are relative to `drawfn/`. Vector names refer to `T
 | --- | --- | --- |
 | BOUNDARY-001 | `core/src/types.ts`, existing node tool and preview/click plumbing; `core/__tests__/readiness.test.ts` and browser node smoke; TV-BOUNDARY-001/002 | This change does not modify node-specific types/options/serialization. No Nucleus migration or external application integration is established. |
 | SURFACE-001 | Core/React/Svelte manifests, canonical imports and package READMEs; TV-SURFACE-001/002 | Names remain `drawfn`, `@drawfn/react`, `@drawfn/svelte`, MIT. |
-| SURFACE-002 | Package build/lint/test scripts and conditional exports; `scripts/packed-consumer.mjs`, `scripts/framework-browser-acceptance.mjs`; TV-SURFACE-003/004 | Packed matrix evidence is the baseline receipt in `pr-destination.md`, not a new packed run. Svelte root is ESM only and component subpaths ship Svelte source. |
+| SURFACE-002 | Package build/lint/test scripts and conditional exports; `scripts/packed-consumer.mjs`, `scripts/framework-browser-acceptance.mjs`; TV-SURFACE-003/004 | A fresh packed matrix was rerun after the API/export changes; see the final receipt below. Svelte root is ESM only and component subpaths ship Svelte source. |
 | SCENE-001 | `normalizeSceneData`, `normalizeElement`, `applyLoadedScene` in `core/src/drawfn.ts`; `scene-load.test.ts`; TV-SCENE-001/002 | Unknown fields are dropped, metadata cloned, malformed scene keeps prior state. Non-positive grid sizes now fail before entering rendering loops. Missing IDs are generated; repeated normalization of missing-ID input does not promise byte-identical IDs. |
 | SCENE-002 | Freedraw normalization, renderer and SVG local coordinates; `freedraw-normalization.test.ts`, browser pen smoke; TV-SCENE-003/004 | Legacy repair is restricted to the documented first-point corruption pattern. |
 | HISTORY-001 | Gesture snapshots and completion in core; `interaction-history.test.ts`, cancellation in `readiness.test.ts`, browser drag/resize/rotation/undo; TV-HISTORY-001/002 | Gesture granularity and undoable clear are covered by `clear-history.test.ts`; explicit `resetHistory()` preserves the ability to discard history without changing content. |
@@ -20,7 +20,7 @@ Paths in the evidence column are relative to `drawfn/`. Vector names refer to `T
 | TEXT-001 | `tools/text-tool.ts` create/edit/cleanup pipeline; `text-editing.test.ts`, browser focus/blur and CSS-scaled overlay; TV-TEXT-001/002 | Empty provisional text, clear/destroy cleanup, and text-commit metadata are covered. |
 | RENDER-001 | `renderer.ts` oriented bounds, locked rendering and zoom-normalized handles; `renderer-rotation.test.ts`, browser visual interactions; TV-RENDER-001/002 | `scripts/performance-acceptance.mjs` measures one concrete 2,000-element browser workload; see timings and limitations below. |
 | EXPORT-001 | Core PNG/SVG bounds, selection and error handling; `export-image.test.ts`, `image-capacity.test.ts`, actual browser decoded PNG pixels and native tainted-canvas failure; TV-EXPORT-001/002 | PNG and SVG both use the host loader. SVG embeds owned loaded pixels as PNG data URLs; see source/pixel limits and native browser evidence below. |
-| REACT-001 | `drawfn-react/src/use-drawfn.ts`, component and hook tests; TV-REACT-001/002 | Deep-equal echoes and constructor-option replacement covered; baseline packed React 18/19 evidence retained. |
+| REACT-001 | `drawfn-react/src/use-drawfn.ts`, component and hook tests; TV-REACT-001/002 | Deep-equal echoes and constructor-option replacement covered; fresh packed React 18/19 consumers pass. |
 | SVELTE-001 | Action/component/store sources and six tests; TV-SVELTE-001/002 | Supported peer is Svelte 5.57.2+, not original Svelte 4/5 target. Existing README records the intentional security-related restriction; this requirement is qualified, not silently satisfied for Svelte 4. |
 | OBS-001 | Core result/error event/export rejection paths; scene/export tests and source has no console-dependent recoverable behavior; TV-OBS-001/002 | Native PNG encoder throws and null results now emit one structured `EXPORT_RENDER_FAILED` event and reject. Image-capacity rejections are deduplicated while a source remains blocked. |
 | QA-001 | Root workspace tests/build/typechecks and repeatable browser/packed scripts; TV-QA-001/002 | Local gates pass as recorded below. Hosted PR51 JS run39142198276 is not green evidence; hosted workflow/billing completion remains a separate gate. |
@@ -50,7 +50,7 @@ Paths in the evidence column are relative to `drawfn/`. Vector names refer to `T
 - Renderer capacity counts unique cached and pending image sources together, with a maximum of 64. Repeated URLs share a request. Capacity errors are emitted once per blocked source, not each render. Existing admitted images remain available; this is deterministic admission, not LRU eviction.
 - A rendered scene releases cached sources absent from that scene. Removed pending requests retain their reservation until settlement because the host loader has no cancellation API. Their late bitmaps are closed; when capacity becomes available, a still-blocked source is scheduled again. Destroy closes loaded and late assets and suppresses completion callbacks.
 - Preloading more than 64 distinct sources rejects with `SCENE_LIMIT_EXCEEDED` before invoking loaders. A scene may contain more than 64 image elements if they share sources; source admission can depend on which images enter the viewport. Cache entries are bounded, not the byte size of individual images. This does not promise host-network cancellation.
-- `history.ts` caps past snapshots at 50; freedraw normalization caps stored points at 16,384. A 2,000-rectangle timing run is recorded below; maximum-length freedraw performance is not established. The pen tool's transient point buffer is not separately capped; sustained input after the persisted-point limit remains a performance/lifecycle qualification.
+- `history.ts` caps past snapshots at 50; freedraw normalization caps stored points at 16,384. A 2,000-rectangle timing run is recorded below; maximum-length freedraw performance is not established. The pen tool's transient buffer is also capped at 16,384; overflow reports one structured error per gesture, retains the last admitted stroke and preserves commit/cancel behavior. Maximum-length stroke performance remains unmeasured.
 
 ## Validation
 
@@ -90,3 +90,30 @@ Before allocating image-encoding canvases, native dimensions must be positive in
 `core/__tests__/svg-images.test.ts` covers repeated sources, custom loader, rejected loader, tainted/null encoding, oversized assets, aggregate pixel budget, 65-source admission, disposal and concurrent scene edits. Chrome154 passed 54 assertions, including decoding the exported SVG into pixels with a custom private source, plus native cross-origin bitmap rejection without an href fallback. Receipts: `/tmp/drawfn-svg-tests.log`, `/tmp/drawfn-svg-types.log`, `/tmp/drawfn-svg-build.log`, `/tmp/drawfn-svg-browser.json`.
 
 Final SVG checks: 82 core, 6 React and 7 Svelte tests pass; all builds/typechecks pass; Chrome154 has zero page errors.
+
+## SVG output and transient pen bounds
+
+The final SVG output is limited to 64 MiB of UTF-8 XML, counting repeated embedded data URLs and non-ASCII text. Fragments are byte-counted before retention and final joining; image URI expansion is checked before constructing each repeated image fragment. A duplicate 33 MiB encoded asset regression fails on its second reference with `EXPORT_RENDER_FAILED` rather than assembling a giant document. Native pixel checks happen after host-loader completion: callers must bound their loader's fetch/decode memory themselves; the SVG budget bounds generated output, not host decoding.
+
+The pen buffer stops accepting points at 16,384 and sends only the first rejected point through existing validation for a single `SCENE_LIMIT_EXCEEDED` event. Subsequent moves neither grow the buffer nor emit repeated errors. `pen-capacity.test.ts` seeds a valid full stroke, then exercises 50 overflow events, commit, cancellation and a subsequent new stroke through real core/tool state; it avoids replaying quadratic setup snapshots, and is not a performance benchmark.
+
+## Fresh package completion checks
+
+After the final runtime changes, 85 core, 6 React and 7 Svelte tests pass, all package builds/typechecks pass, and Chrome154 passes 54 core browser assertions with zero page errors. Fresh isolated tarball consumers passed React18.3.1, React19.3.1 and Svelte5.57.2 with 42 actual browser lifecycle assertions, including undoable clear and explicit history reset. Strict TypeScript5.9.3 Node16/NodeNext declarations include the new resetHistory API. Nine runtime/SSR cases passed across Node18.18.0, Node20.20.2 and Node22.23.3. The isolated production audit reports zero advisories for 29 production dependencies.
+
+Commands (repository root, trusted npm CLI supplied explicitly):
+
+```sh
+NPM_CLI=/absolute/path/to/npm/bin/npm-cli.js node drawfn/scripts/packed-consumer.mjs
+NPM_CLI=/absolute/path/to/npm/bin/npm-cli.js PLAYWRIGHT_MODULE_PATH=/path/to/playwright BROWSER_EXECUTABLE_PATH=/path/to/chrome node drawfn/scripts/framework-browser-acceptance.mjs
+```
+
+Both independent consumers used matching tarballs:
+
+| Package | SHA-256 |
+| --- | --- |
+| drawfn0.0.2 | ec6db7b9e29b4a0bfa9f81abb86f1d4d7a5c721f32cf6b093a2ec571b2385b1c |
+| @drawfn/react0.0.3 | 2dd5a1acd3a9a2c229d46459fef9a80391b4641ea50ad4d8042380fec7527473 |
+| @drawfn/svelte0.0.3 | 055dbb1c2a17a573ccf1bce37d089660e9f2b60b81c63764ec854fbaf8c41b42 |
+
+Receipts: `/tmp/drawfn-final-tests.log`, `/tmp/drawfn-final-types.log`, `/tmp/drawfn-final-build.log`, `/tmp/drawfn-final-browser.json`, `/tmp/drawfn-final-packed-consumer.log`, `/tmp/drawfn-final-packed-framework.log`. Tarballs/results/audit/hashes were retained under `/tmp/drawfn-final-receipt-1f420siw`; both disposable consumer installation directories were removed and absence checked. The last README clarification about SVG output/decode limits was written during this validation; runtime builds were stable throughout. Hosted checks remain a separate outstanding gate.

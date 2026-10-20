@@ -52,6 +52,8 @@ try{
   await page.evaluate(()=>harness.state.current.setTool('select'));await page.mouse.click(60,60);check(await page.evaluate(()=>harness.state.clicks.join(',')==='n'),'node click callback');
   check(await page.evaluate(()=>harness.state.current.getElements().length===1&&harness.state.current.getElements()[0].id==='node'),'controlled scene update');
   const exportSize=await page.evaluate(async()=>{const image=await createImageBitmap(await harness.state.current.exportPNG({fitContent:true,scale:1,padding:0}));const result=[image.width,image.height];image.close();return result});check(exportSize[0]===120&&exportSize[1]===80,'PNG export through binding instance');
+  check(await page.evaluate(()=>{const api=harness.state.current;const prior=JSON.stringify(api.getScene());api.clear();api.undo();return JSON.stringify(api.getScene())===prior}),'packed clear is undoable');
+  check(await page.evaluate(()=>{const api=harness.state.current;const prior=JSON.stringify(api.getScene());api.resetHistory();return !api.getHistoryState().canUndo&&JSON.stringify(api.getScene())===prior}),'packed resetHistory preserves content');
   await page.evaluate(()=>harness.unmount());check(await page.locator('canvas').count()===0,'unmount removes canvas');
   check(await page.evaluate(()=>harness.state.instances.every(api=>api.destroyed===true)),'all replaced/unmounted core instances disposed');check(errors.length===0,`browser errors ${errors.join(';')}`);
   const result={framework,version,assertions,readyCount,pageErrors:errors,consumer:directory};results.push(result);writeFileSync(join(evidence,'results.json'),JSON.stringify({browser:await browser.version(),results},null,2));console.log(JSON.stringify(result));await page.close();

@@ -51,4 +51,13 @@ describe("portable SVG images", () => {
     const svg = await pending; expect(svg).toContain('translate(10 20) scale(2)'); expect(svg).toContain('<image x="0"'); api.destroy();
   });
 
+  it("bounds repeated embedded URI expansion before producing a giant SVG", async () => {
+    const close = vi.fn();
+    const { api, error } = setup(async () => ({ width: 1, height: 1, close } as unknown as ImageBitmap));
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/png;base64," + "A".repeat(33 * 1024 * 1024));
+    api.add(image("one")); api.add(image("two"));
+    await expect(api.exportSVG()).rejects.toMatchObject({ code: "EXPORT_RENDER_FAILED", details: { limit: 64 * 1024 * 1024 } });
+    expect(error).toHaveBeenCalledOnce(); expect(close).toHaveBeenCalledOnce(); api.destroy();
+  });
+
 });

@@ -1473,16 +1473,30 @@ export class Drawfn {
         canvas.height = 0;
       }
     }
-    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${viewBoxW * scale}" height="${viewBoxH * scale}" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxW} ${viewBoxH}">`;
-    svg += `<rect x="${viewBoxX}" y="${viewBoxY}" width="${viewBoxW}" height="${viewBoxH}" fill="${this.escapeXml(backgroundColor)}"/>`;
-
-    if (!fitContent) svg += `<g transform="translate(${camera.x} ${camera.y}) scale(${camera.zoom})">`;
+    const maxSVGBytes = 64 * 1024 * 1024;
+    let svgBytes = 0;
+    const chunks: string[] = [];
+    const overflow = () => this.failExport(createDrawfnError("EXPORT_RENDER_FAILED", "SVG output exceeds the 64 MiB UTF-8 limit.", { limit: maxSVGBytes }));
+    const append = (chunk: string) => {
+      // Count UTF-8 without allocating a second encoded copy of the fragment.
+      for (const character of chunk) {
+        const code = character.codePointAt(0)!;
+        svgBytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+        if (svgBytes > maxSVGBytes) overflow();
+      }
+      chunks.push(chunk);
+    };
+    append(`<svg xmlns="http://www.w3.org/2000/svg" width="${viewBoxW * scale}" height="${viewBoxH * scale}" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxW} ${viewBoxH}">`);
+    append(`<rect x="${viewBoxX}" y="${viewBoxY}" width="${viewBoxW}" height="${viewBoxH}" fill="${this.escapeXml(backgroundColor)}"/>`);
+    if (!fitContent) append(`<g transform="translate(${camera.x} ${camera.y}) scale(${camera.zoom})">`);
     for (const element of elementsToExport) {
-      svg += this.elementToSVG(element, imageSources);
+      // Embedded base64 is ASCII; reject expansion before allocating repeated XML.
+      if (element.type === "image" && svgBytes + imageSources.get(element.src)!.length > maxSVGBytes) overflow();
+      append(this.elementToSVG(element, imageSources));
     }
-
-    if (!fitContent) svg += "</g>";
-    svg += "</svg>";
+    if (!fitContent) append("</g>");
+    append("</svg>");
+    const svg = chunks.join("");
     return svg;
   }
 
