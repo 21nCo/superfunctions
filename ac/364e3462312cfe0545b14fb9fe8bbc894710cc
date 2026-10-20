@@ -1,0 +1,23 @@
+_conduct/stacked-ci-shared-usage-readiness.md
+  s_e1c5fc1a65c0cf::t_5e145c71494afa 9
+scripts/check-shared-usage.mjs
+  s_e1c5fc1a65c0cf::t_c646c885a5b15c 24-32
+scripts/check-shared-usage.test.mjs
+  s_e1c5fc1a65c0cf::t_5ba98f92b2c842 55-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac364e3462312cfe0545b14fb9fe8bbc894710cc",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
