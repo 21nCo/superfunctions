@@ -42,29 +42,47 @@ export function executeNode(
       timedOut = false,
       aborted = false,
       overflow = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const kill = (signal: NodeJS.Signals) => {
-      try {
-        if (process.platform !== "win32" && child.pid)
-          process.kill(-child.pid, signal);
-        else child.kill(signal);
-      } catch {
-        /* Process already exited. */
+    let termination: Promise<void> | undefined;
+    let rejectTermination!: (error: unknown) => void;
+    const terminationFailure = new Promise<never>((_, fail) => { rejectTermination = fail; });
+    void terminationFailure.catch(() => {});
+    const uncertain = () => new Error("Framework process group termination could not be confirmed");
+    const alive = () => {
+      if (!child.pid) return false;
+      if (process.platform === "win32") return child.exitCode === null && child.signalCode === null;
+      try { process.kill(-child.pid, 0); return true; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+        throw uncertain();
       }
     };
+    const kill = (signal: NodeJS.Signals) => {
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw uncertain();
+      }
+    };
+    const pause = () => new Promise<void>(done => setTimeout(done, 20));
     const stop = () => {
-      kill("SIGTERM");
-      killTimer ??= setTimeout(() => kill("SIGKILL"), 1000);
+      if (!termination) {
+        termination = (async () => {
+          kill("SIGTERM");
+          const graceful = Date.now() + 1000;
+          while (alive() && Date.now() < graceful) await pause();
+          if (alive()) kill("SIGKILL");
+          const deadline = Date.now() + 5000;
+          while (alive() && Date.now() < deadline) await pause();
+          if (alive()) throw uncertain();
+        })();
+        void termination.catch(rejectTermination);
+      }
+      return termination;
     };
-    const onAbort = () => {
-      aborted = true;
-      stop();
-    };
+    const onAbort = () => { aborted = true; void stop(); };
     options.signal?.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      stop();
-    }, options.timeout ?? 30000);
+    const timer = setTimeout(() => { timedOut = true; void stop(); }, options.timeout ?? 30000);
     const append = (kind: "stdout" | "stderr", data: string) => {
       if (overflow) return;
       if (stdout.length + stderr.length + data.length > 16 * 1024 * 1024) {
@@ -82,17 +100,34 @@ export function executeNode(
     child.stderr.on("data", (data) => append("stderr", data));
     const cleanup = () => {
       clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
       options.signal?.removeEventListener("abort", onAbort);
+      child.stdout.destroy();
+      child.stderr.destroy();
     };
-    child.once("error", (error) => {
-      cleanup();
-      reject(error);
+    // Wait for process exit independently of stdio: descendants can keep pipes open.
+    let closed = false;
+    const exited = new Promise<number | null>((done, fail) => {
+      child.once("error", fail);
+      child.once("exit", done);
+      child.once("close", () => { closed = true; });
     });
-    child.once("close", (code) => {
-      if (timedOut || aborted || overflow) kill("SIGKILL");
-      cleanup();
-      resolve({ code: overflow ? 1 : code, stdout, stderr, timedOut, aborted });
-    });
+    if (options.signal?.aborted) onAbort();
+    const finish = async () => {
+      const code = await Promise.race([exited, terminationFailure]);
+      clearTimeout(timer); // Cleanup has its own deadline; it is not framework execution time.
+      let orphaned = false;
+      if (alive()) {
+        orphaned = !timedOut && !aborted && !overflow;
+        if (orphaned) stderr += "\nFramework exited with running descendants";
+        await stop();
+      }
+      if (termination) await termination;
+      if (alive()) throw uncertain();
+      const deadline = Date.now() + 1000;
+      while (!closed && Date.now() < deadline) await pause();
+      if (!closed) throw uncertain();
+      return { code: overflow || orphaned ? 1 : code, stdout, stderr, timedOut, aborted };
+    };
+    void finish().finally(cleanup).then(resolve, reject);
   });
 }
