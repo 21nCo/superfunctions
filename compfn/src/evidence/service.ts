@@ -55,7 +55,8 @@ function rowToEvidence(row: Record<string, unknown>): Evidence {
     evidence.frameworkRequirementId = String(row.frameworkRequirementId);
   }
   if (row.payload != null && typeof row.payload === "object") {
-    evidence.payload = row.payload as Record<string, unknown>;
+    // Shared adapters may return nested references to their stored rows.
+    evidence.payload = JSON.parse(JSON.stringify(row.payload)) as Record<string, unknown>;
   }
   if (row.artifactRef != null && row.artifactRef !== "") {
     evidence.artifactRef = String(row.artifactRef);
@@ -80,19 +81,6 @@ export function createEvidenceService(config: EvidenceServiceConfig) {
       }
       const value = validation.value;
 
-      const controlExists = await config.existsControl(value.controlId);
-      if (!controlExists.ok) return controlExists;
-      if (!controlExists.result) {
-        return {
-          ok: false,
-          error: {
-            code: "VALIDATION_FAILED",
-            message: "Control not found",
-            details: { controlId: value.controlId },
-          },
-        };
-      }
-
       if (value.payload != null) {
         let payloadJson: string;
         try {
@@ -112,6 +100,28 @@ export function createEvidenceService(config: EvidenceServiceConfig) {
             },
           };
         }
+        // Capture the exact JSON value before yielding to storage or control lookup.
+        // Persist this snapshot, not the caller's mutable object or toJSON hook.
+        const snapshot: unknown = JSON.parse(payloadJson);
+        if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+          return { ok: false, error: { code: "VALIDATION_FAILED", message: "Serialized payload must be a JSON object", details: { path: "payload" } } };
+        }
+        value.payload = snapshot as Record<string, unknown>;
+        const snapshotValidation = validateCreateEvidenceInput(value);
+        if (!snapshotValidation.ok) return { ok: false, error: snapshotValidation.error };
+      }
+
+      const controlExists = await config.existsControl(value.controlId);
+      if (!controlExists.ok) return controlExists;
+      if (!controlExists.result) {
+        return {
+          ok: false,
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "Control not found",
+            details: { controlId: value.controlId },
+          },
+        };
       }
 
       const id = generateId();

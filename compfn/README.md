@@ -723,3 +723,22 @@ Controls, frameworks and checks are ordered by `updatedAt` descending; evidence 
 Control, framework and evidence data use schema version 1. New optional fields are additive. Removing required fields or changing their semantics requires a new schema version, a documented migration/deprecation period, and an appropriate major API release. Existing evidence without a version field is treated as version 1.
 
 Secret-scan evidence accepts a nonnegative safe-integer `findings` count. When a client supplies `status`, only `completed`, `success`, `succeeded`, or `passed` (case-insensitive, surrounding whitespace ignored) certifies a completed scan. Failed, running, cancelled, or unknown statuses produce `unknown` evidence even when findings is zero. Clients that omit status retain the synchronous-summary contract: zero findings passes and a positive count fails. Missing or malformed counts produce `unknown`. These mappings describe evidence outcomes, not a certification that a live security scanner ran.
+
+### Evidence payload snapshots
+
+`evidence.create` captures the payload's JSON representation before its first
+asynchronous control lookup. The payload-size limit applies to that exact UTF-8
+serialization, and the stored object is detached from caller-owned objects.
+Custom `toJSON` hooks run once during ingestion; their output must remain a JSON
+object and satisfy scoping-decision validation. JSON serialization rules still
+apply, including omission of object properties whose values are `undefined`.
+
+Payloads returned by create, get, list and auditor-pack export are independent
+copies. Mutating an input or a returned payload cannot update the stored audit
+record, including with the shared memory adapter. Returned objects remain
+mutable for caller-local transformations. Callers previously relying on reference
+mutation to change evidence must instead create a new evidence record; evidence
+update/delete remain absent from the API. Existing records are not rewritten,
+previous mutations cannot be reconstructed, and references issued by an older
+in-process implementation cannot be revoked by this change. External artifact
+content referenced by `artifactRef` remains the application's storage responsibility.
