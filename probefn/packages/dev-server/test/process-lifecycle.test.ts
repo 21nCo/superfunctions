@@ -50,7 +50,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned-process ownership',
       expect(gone(Number(await readFile(path.join(root, 'pid'), 'utf8')))).toBe(true);
     });
   });
-  it('kills a surviving descendant after the shell and its stdio have closed', async () => {
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])('kills a surviving descendant after the shell and its stdio have closed (attempt %i)', async () => {
     const descendant = "import { writeFileSync } from 'node:fs'; process.on('SIGTERM', () => {}); writeFileSync('descendant.pid', String(process.pid)); setInterval(() => {}, 1000);";
     await fixture(`import { spawn } from 'node:child_process'; import { existsSync } from 'node:fs';
 spawn(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(descendant)}], { stdio: 'ignore' });
@@ -66,6 +66,43 @@ setInterval(() => {}, 1000);`, async (manager, options, root) => {
         pid ??= await readFile(path.join(root, 'descendant.pid'), 'utf8').then(Number).catch(() => undefined);
         if (pid) { try { process.kill(pid, 'SIGKILL'); } catch {} }
       }
+    });
+  });
+  it('waits for ESRCH after a transient permission error from the existence probe', async () => {
+    await fixture("console.log('Local: http://127.0.0.1:1'); setInterval(() => {}, 1000);", async (manager, options, root) => {
+      await manager.startSession({ ...options, devServer: { ...options.devServer, timeoutMs: 2000 } });
+      const kill = process.kill.bind(process);
+      let injected = false;
+      const spy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid < 0 && signal === 0 && !injected) {
+          injected = true;
+          throw Object.assign(new Error('transient existence probe denial'), { code: 'EPERM' });
+        }
+        return kill(pid, signal);
+      });
+      try {
+        await manager.stopSession('session');
+        expect(injected).toBe(true);
+        expect(gone(Number(await readFile(path.join(root, 'pid'), 'utf8')))).toBe(true);
+      } finally { spy.mockRestore(); }
+    });
+  });
+  it('surfaces persistent probe permission errors without releasing session ownership', async () => {
+    await fixture("console.log('Local: http://127.0.0.1:1'); setInterval(() => {}, 1000);", async (manager, options) => {
+      await manager.startSession({ ...options, devServer: { ...options.devServer, timeoutMs: 2000 } });
+      const kill = process.kill.bind(process);
+      let probes = 0;
+      const denied = Object.assign(new Error('persistent existence probe denial'), { code: 'EPERM' });
+      const spy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (pid < 0 && signal === 0) { probes++; throw denied; }
+        return kill(pid, signal);
+      });
+      try {
+        await expect(manager.stopSession('session')).rejects.toBe(denied);
+        expect(probes).toBeGreaterThan(1);
+      } finally { spy.mockRestore(); }
+      // Only a later successful disappearance check can release this session.
+      await manager.stopSession('session');
     });
   });
   it('joins and cancels startup when stop arrives during the first manifest write', async () => {

@@ -460,11 +460,18 @@ async function terminateChildProcessGroup(child: ChildProcess, closed: Promise<v
   };
   let processClosed = false;
   void closed.then(() => { processClosed = true; });
+  let lastProbeError: NodeJS.ErrnoException | undefined;
   const groupExists = (): boolean => {
     if (process.platform === 'win32' || typeof child.pid !== 'number') return false;
-    try { process.kill(-child.pid, 0); return true; }
+    try { process.kill(-child.pid, 0); lastProbeError = undefined; return true; }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') { lastProbeError = undefined; return false; }
+      if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+        // Darwin can briefly report EPERM while a successfully killed group is
+        // disappearing. This is uncertainty, never evidence of completed cleanup.
+        lastProbeError = error as NodeJS.ErrnoException;
+        return true;
+      }
       throw error;
     }
   };
@@ -479,5 +486,5 @@ async function terminateChildProcessGroup(child: ChildProcess, closed: Promise<v
   signal('SIGTERM');
   if (await waitForClose()) return;
   signal('SIGKILL');
-  if (!await waitForClose()) throw new Error('Dev server process did not close after SIGKILL');
+  if (!await waitForClose()) throw lastProbeError ?? new Error('Dev server process did not close after SIGKILL');
 }

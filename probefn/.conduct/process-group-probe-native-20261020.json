@@ -1,0 +1,666 @@
+{
+  "platform": "Darwin 27.0.0 arm64",
+  "runtime": "Node 22",
+  "rounds": 30,
+  "transientEpermRounds": 23,
+  "allTerminalGroupProbesESRCH": true,
+  "observations": [
+    {
+      "round": 0,
+      "leader": 61792,
+      "descendant": 61793,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "leader": 61822,
+      "descendant": 61823,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "leader": 61843,
+      "descendant": 61844,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "leader": 61874,
+      "descendant": 61875,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "leader": 61916,
+      "descendant": 61926,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 5,
+      "leader": 61959,
+      "descendant": 61960,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 6,
+      "leader": 61980,
+      "descendant": 61981,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 7,
+      "leader": 62000,
+      "descendant": 62001,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 8,
+      "leader": 62040,
+      "descendant": 62041,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 9,
+      "leader": 62061,
+      "descendant": 62062,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 10,
+      "leader": 62083,
+      "descendant": 62084,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 11,
+      "leader": 62095,
+      "descendant": 62096,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 12,
+      "leader": 62125,
+      "descendant": 62126,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 13,
+      "leader": 62145,
+      "descendant": 62146,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 14,
+      "leader": 62165,
+      "descendant": 62166,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 15,
+      "leader": 62196,
+      "descendant": 62197,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 16,
+      "leader": 62226,
+      "descendant": 62227,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 17,
+      "leader": 62247,
+      "descendant": 62248,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 18,
+      "leader": 62259,
+      "descendant": 62260,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 19,
+      "leader": 62279,
+      "descendant": 62280,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 20,
+      "leader": 62311,
+      "descendant": 62316,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 21,
+      "leader": 62335,
+      "descendant": 62336,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 22,
+      "leader": 62355,
+      "descendant": 62356,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 23,
+      "leader": 62375,
+      "descendant": 62376,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 24,
+      "leader": 62415,
+      "descendant": 62416,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 25,
+      "leader": 62417,
+      "descendant": 62418,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 26,
+      "leader": 62419,
+      "descendant": 62420,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "EPERM",
+          "descendant": "present",
+          "leader": "ESRCH"
+        },
+        {
+          "members": []
+        },
+        {
+          "poll": 2,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 27,
+      "leader": 62439,
+      "descendant": 62450,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 28,
+      "leader": 62462,
+      "descendant": 62463,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    },
+    {
+      "round": 29,
+      "leader": 62464,
+      "descendant": 62465,
+      "termState": "present",
+      "sent": "sent",
+      "states": [
+        {
+          "poll": 1,
+          "state": "ESRCH",
+          "descendant": "ESRCH",
+          "leader": "ESRCH"
+        }
+      ]
+    }
+  ]
+}
