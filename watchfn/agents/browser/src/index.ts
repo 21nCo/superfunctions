@@ -1,7 +1,11 @@
+import { parseBugIssueStatus, type BugIssueReference, type BrowserBugIssueStatus } from "./issue-status";
+export { parseBugIssueStatus, type BugIssueReference, type BrowserBugIssueStatus } from "./issue-status";
 import { onCLS, onFID, onLCP } from "./vitals";
 
 export interface BrowserConfig {
   endpoint: string;
+  /** Override when ingestion does not end in /ingest. Otherwise its mount prefix is retained. */
+  issueStatusEndpoint?: string;
   projectId: string;
   sampleRate?: number;
   autoTrack?: boolean;
@@ -25,6 +29,7 @@ export class BrowserClient {
   private readonly queue: string[] = [];
   private pending?: Promise<void>;
   private closed = false;
+  private readonly statusReadCancels = new Set<() => void>();
   private readonly disposers: Array<() => void> = [];
 
   constructor(config: BrowserConfig) {
@@ -42,6 +47,52 @@ export class BrowserClient {
   }
 
   get pendingCount(): number { return this.queue.length; }
+
+  /** One bounded authenticated read; does not enqueue, retry or mutate report delivery. */
+  async readBugIssueStatus(reference: BugIssueReference, options: { signal?: AbortSignal } = {}): Promise<BrowserBugIssueStatus | null> {
+    if (this.closed) throw new Error("WatchFn browser client is closed");
+    if (!reference || typeof reference.app !== "string" || !reference.app.trim() || reference.app.length > 200 || typeof reference.reportId !== "string" || !reference.reportId.trim() || reference.reportId.length > 256) throw new TypeError("Invalid bug reference");
+    const endpoint = new URL(this.config.issueStatusEndpoint ?? this.config.endpoint, typeof location === "undefined" ? undefined : location.href);
+    if (!this.config.issueStatusEndpoint) {
+      if (!endpoint.pathname.endsWith("/ingest") || endpoint.search || endpoint.hash) throw new TypeError("Configure issueStatusEndpoint for a noncanonical ingestion endpoint");
+      endpoint.pathname = endpoint.pathname.slice(0, -"/ingest".length) + "/issues/status";
+    }
+    if (!["https:", "http:"].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash) throw new TypeError("Invalid issue status endpoint");
+    const controller = new AbortController();
+    let rejectAbort!: (reason: unknown) => void;
+    const aborted = new Promise<never>((_, reject) => { rejectAbort = reject; });
+    const abort = () => { controller.abort(); rejectAbort(new BrowserDeliveryError("Issue status read canceled")); };
+    this.statusReadCancels.add(abort);
+    options.signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => { controller.abort(); rejectAbort(new BrowserDeliveryError("Issue status read timed out")); }, this.config.timeoutMs);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    if (options.signal?.aborted) abort();
+    try {
+      return await Promise.race([aborted, (async () => {
+        if (controller.signal.aborted) throw new BrowserDeliveryError("Issue status read canceled");
+        const headers = new Headers(typeof this.config.headers === "function" ? this.config.headers() : this.config.headers);
+        headers.set("Content-Type", "application/json");
+        const key = typeof this.config.apiKey === "function" ? this.config.apiKey() : this.config.apiKey;
+        if (key) headers.set("Authorization", `Bearer ${key}`);
+        const response = await fetch(endpoint.href, { method: "POST", headers, body: JSON.stringify(reference), signal: controller.signal, redirect: "error" });
+        if (controller.signal.aborted) { void response.body?.cancel().catch(() => {}); throw new BrowserDeliveryError("Issue status read canceled"); }
+        if (response.status === 404) { void response.body?.cancel().catch(() => {}); return null; }
+        if (!response.ok) { void response.body?.cancel().catch(() => {}); throw new BrowserDeliveryError(`Issue status returned HTTP ${response.status}`, response.status); }
+        if (!response.body || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) { void response.body?.cancel().catch(() => {}); throw new Error("Invalid issue status response"); }
+        reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+        for (;;) {
+          const { done, value } = await reader.read(); if (done) break;
+          size += value.byteLength; if (size > 16384) throw new Error("Issue status response too large"); chunks.push(value);
+        }
+        const bytes = new Uint8Array(size); let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+        return parseBugIssueStatus(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), reference);
+      })()]);
+    } finally {
+      clearTimeout(timer); this.statusReadCancels.delete(abort); options.signal?.removeEventListener("abort", abort);
+      controller.abort(); if (reader) void reader.cancel().catch(() => {});
+    }
+  }
 
   private initRUM() {
     const track = (metric: any) => { if (!this.closed) this.collect("web_vital", metric); };
@@ -106,6 +157,7 @@ export class BrowserClient {
   /** Stop collection and await delivery. After failure, close/flush can be retried. */
   close(): Promise<void> {
     this.closed = true;
+    for (const cancel of this.statusReadCancels) cancel();
     for (const dispose of this.disposers.splice(0)) dispose();
     return this.flush();
   }
