@@ -47,7 +47,8 @@ dev = [
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
-    "mypy>=1.0.0",
+    "mypy>=1.18.2,<1.19",
+    "types-psutil",
     "types-croniter",
     "opentelemetry-sdk>=1.20.0,<2",
 ]
@@ -82,7 +83,6 @@ select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
 [tool.mypy]
-python_version = "3.9"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

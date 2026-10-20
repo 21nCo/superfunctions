@@ -9,7 +9,7 @@ import json
 import time
 import uuid
 from dataclasses import asdict
-from typing import Any, Optional, Awaitable, cast, Callable
+from typing import Any, Optional, Callable, Awaitable
 from urllib.parse import quote
 
 from redis.asyncio import Redis
@@ -22,13 +22,37 @@ from flowfn.stream.types import ConsumerOptions, Message, StreamInfo, TrimStrate
 from flowfn.workflow.types import WorkflowExecution
 
 
+async def _eval(client: Redis, script: str, key_count: int, *args: Any) -> Any:
+    # Redis releases disagree on eval's sync/async overloads. This adapter owns
+    # an asyncio client; its raw command method is always awaitable.
+    execute: Callable[..., Awaitable[Any]] = client.execute_command
+    return await execute("EVAL", script, key_count, *args)
+
+
+def _stream_entries(rows: Any) -> list[tuple[str, dict[str, Any]]]:
+    """Narrow decoded RESP2 entries rather than assuming every Redis protocol shape."""
+    if rows is None:
+        return []
+    if not isinstance(rows, (list, tuple)):
+        raise TypeError("Expected Redis RESP2 stream entries")
+    result: list[tuple[str, dict[str, Any]]] = []
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) != 2:
+            raise TypeError("Invalid Redis stream entry")
+        identity, fields = row
+        if not isinstance(identity, str) or not isinstance(fields, dict):
+            raise TypeError("Expected decoded Redis stream entry")
+        result.append((identity, fields))
+    return result
+
+
 class RedisAdapter(DurableQueues):
     def __init__(self, url: str = 'redis://localhost:6379', *, namespace: str = 'flowfn',
                  reclaim_after_ms: int = 30000,
                  backoff_strategies: Optional[dict[str, Callable[[int], int]]] = None) -> None:
         if not namespace or reclaim_after_ms < 100:
             raise ValueError('A namespace and reclaim_after_ms >= 100 are required')
-        self.client: Redis = Redis.from_url(url, decode_responses=True)
+        self.client: Redis = Redis.from_url(url, decode_responses=True, protocol=2)
         self.namespace = namespace
         self.prefix = 'flowfn:' + quote(namespace, safe='')
         self.state_key = self.prefix + ':state'
@@ -124,7 +148,7 @@ class RedisAdapter(DurableQueues):
 
     async def get_stream_messages(self, stream: str) -> list[Message]:
         rows = await self.client.xrange(self._stream(stream))
-        return [Message.model_validate_json(fields['payload']) for _, fields in rows]
+        return [Message.model_validate_json(fields['payload']) for _, fields in _stream_entries(rows)]
 
     async def get_stream_info(self, stream: str) -> StreamInfo:
         key = self._stream(stream)
@@ -179,12 +203,12 @@ class RedisAdapter(DurableQueues):
         if not await self.client.exists(key):
             return 0
         age = strategy.max_age_seconds if strategy.max_age_seconds is not None else -1
-        result: int = await cast(Awaitable[Any], self.client.eval(script, 1, key,
-                                            str(strategy.max_length if strategy.max_length is not None else -1), str(age)))
+        result: int = await _eval(self.client, script, 1, key,
+                                            str(strategy.max_length if strategy.max_length is not None else -1), str(age))
         return result
 
     async def subscribe(self, stream: str, handler: Any) -> 'RedisSubscription':
-        rows = await self.client.xrevrange(self._stream(stream), count=1)
+        rows = _stream_entries(await self.client.xrevrange(self._stream(stream), count=1))
         cursor = rows[0][0] if rows else '0-0'
         subscription = RedisSubscription(self, stream, handler, cursor=cursor)
         self._subscriptions.add(subscription)
@@ -245,7 +269,11 @@ class RedisSubscription:
     async def _next(self, delivery_owner: str) -> Any:
         if not self.group:
             batches = await self.adapter.client.xread({self.key: self.cursor}, count=1, block=100)
-            return batches[0][1] if batches else []
+            if not batches:
+                return []
+            if not isinstance(batches, (list, tuple)):
+                raise TypeError("Expected Redis RESP2 stream batches")
+            return _stream_entries(batches[0][1])
         # Claim and record the attempt token atomically. Reusing a Redis consumer
         # name is safe because stale attempts cannot replace this token later.
         script = """
@@ -261,8 +289,8 @@ class RedisSubscription:
         for _,row in ipairs(rows) do redis.call('HSET',KEYS[2],row[1],ARGV[4]) end
         return {claimed[1],rows}
         """
-        reply = await cast(Awaitable[Any], self.adapter.client.eval(script,2,self.key,self._owners_key,
-                            self.group,self.consumer,str(self.adapter.reclaim_after_ms),delivery_owner,self._reclaim_cursor))
+        reply = await _eval(self.adapter.client,script,2,self.key,self._owners_key,
+                            self.group,self.consumer,str(self.adapter.reclaim_after_ms),delivery_owner,self._reclaim_cursor)
         self._reclaim_cursor = reply[0]
         return [(row[0],dict(zip(row[1][::2],row[1][1::2]))) for row in reply[1]]
 
@@ -327,9 +355,9 @@ class RedisSubscription:
         redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[2],0,ARGV[3],'JUSTID')
         return 1
         """
-        return bool(await cast(Awaitable[Any], self.adapter.client.eval(script,2,self.key,self._owners_key,
+        return bool(await _eval(self.adapter.client,script,2,self.key,self._owners_key,
                             self.group or '',self.consumer,identity,'ack' if acknowledge else 'renew',
-                            delivery_owner,str(self.adapter.reclaim_after_ms))))
+                            delivery_owner,str(self.adapter.reclaim_after_ms)))
 
     async def pause(self) -> None:
         self.running.clear()

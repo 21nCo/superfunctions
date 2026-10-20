@@ -253,7 +253,7 @@ imports FlowFn from `site-packages`, outside this checkout. Focused telemetry an
 propagation checks pass 13 tests, with four native-provider cases skipped. They
 cover producer-to-consumer queue/stream context, persisted workflow context,
 unrelated worker spans, missing/malformed/zero identifiers, and baggage exclusion.
-Strict mypy 1.18.2 on Python 3.9 passes all 47 source files. Older mypy 1.14
+At that checkpoint, strict mypy 1.18.2 on Python 3.9 passed all 47 source files. Older mypy 1.14
 reported an unchanged PostgreSQL Optional-narrowing diagnostic; running the
 Python 3.9 target against Python 3.12's newer Pydantic instead hit dependency
 syntax incompatibility. These tool configurations are not the passing gate.
@@ -262,6 +262,25 @@ The Docker sockets for both available contexts were unavailable, so this
 checkpoint does not establish native Redis/PostgreSQL propagation. Original
 provider, partition, persisted policy, throughput/latency, and deployment
 requirements remain separate readiness gates.
+
+### Reproducible type checks
+
+The dev extra pins mypy to the 1.18 series, which supports the declared Python
+3.9 floor, and includes the optional monitoring library's type stubs. Mypy uses
+the interpreter version of the environment being checked, so dependencies
+resolved for Python 3.12 are not parsed as Python 3.9 source. Check both runtimes
+from `flowfn/python`:
+
+```sh
+uv run --isolated --no-project --python 3.9 --with '.[dev,redis,postgres]' mypy flowfn
+uv run --isolated --no-project --python 3.12 --with '.[dev,redis,postgres]' mypy flowfn
+```
+
+Both pass all 47 source files. The Redis adapter explicitly selects decoded
+RESP2 responses, validates stream entry shapes, and uses a typed asynchronous
+command boundary for Lua rather than depending on version-specific sync/async
+overloads. Redis dependency versions remain unconstrained beyond the existing
+supported minimum; this does not claim every intervening version was tested.
 
 ### Disposable native-provider acceptance
 
