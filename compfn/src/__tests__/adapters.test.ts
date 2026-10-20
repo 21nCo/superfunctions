@@ -205,3 +205,40 @@ describe("requested adapter method isolation", () => {
     await db.close();
   });
 });
+
+describe("secret scan completion evidence", () => {
+  it.each(["failed", "running", "cancelled", "pending", "unrecognized"])("does not certify a control from a %s scan with zero findings", async status => {
+    const db = memoryAdapter();
+    await db.initialize();
+    try {
+      const api = compFn({ database: db, adapters: { secfn: createSecfnAdapter({ client: {
+        getSecretScanSummary: async () => ({ findings: 0, status, lastScanAt: Date.now() }),
+      } }) } });
+      const control = await api.controls.create({ name: "Secret scan", description: "Completed scan required", category: "security" });
+      if (!control.ok) throw new Error(control.error.message);
+      const check = await api.checks.create({ name: "Scan", controlId: control.result.id, adapterName: "secfn", adapterMethod: "getSecretScanSummary" });
+      if (!check.ok) throw new Error(check.error.message);
+      const result = await api.checks.run(check.result.id);
+      expect(result).toMatchObject({ ok: true, result: { outcome: "unknown" } });
+      const readiness = await api.readiness.forControl(control.result.id);
+      expect(readiness.ok).toBe(true);
+      if (readiness.ok) expect(readiness.result.status).not.toBe("compliant");
+    } finally { await db.close(); }
+  });
+});
+
+
+it.each([
+  [{ findings: 0 }, "pass"],
+  [{ findings: 0, status: " COMPLETED " }, "pass"],
+  [{ findings: 2, status: "succeeded" }, "fail"],
+  [{ findings: 2, status: "running" }, "unknown"],
+  [{ findings: -1, status: "completed" }, "unknown"],
+  [{ findings: 0.5, status: "completed" }, "unknown"],
+  [{ findings: Number.NaN, status: "completed" }, "unknown"],
+  [{ status: "completed" }, "unknown"],
+] as const)("validates secret scan completion and count: %j", async (summary, expected) => {
+  const adapter = createSecfnAdapter({ client: { getSecretScanSummary: async () => summary } });
+  const result = await adapter.runCheck({ checkId: "check", controlId: "control", method: "getSecretScanSummary" });
+  expect(result.outcome).toBe(expected);
+});

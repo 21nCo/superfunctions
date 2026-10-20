@@ -11,6 +11,7 @@ import type { EvidenceAdapter, AdapterCheckInput, AdapterEvidence } from "./type
  */
 export interface SecfnClient {
   getRbacStatus?(options?: { method?: string; customConfig?: Record<string, unknown> }): Promise<{ enabled: boolean; summary?: string }>;
+  /** If supplied, status must be completed/success/succeeded/passed to certify findings. */
   getSecretScanSummary?(options?: { method?: string; customConfig?: Record<string, unknown> }): Promise<{ lastScanAt?: number; findings?: number; status?: string }>;
   getSecurityEvents?(options?: { method?: string; customConfig?: Record<string, unknown> }): Promise<{ count?: number; recent?: unknown[] }>;
 }
@@ -39,7 +40,10 @@ export function createSecfnAdapter(config: SecfnAdapterConfig): EvidenceAdapter 
       try {
         if (method === "getSecretScanSummary" && client.getSecretScanSummary) {
           const summary = await client.getSecretScanSummary(opts);
-          const outcome = summary.findings === 0 ? "pass" : summary.findings != null && summary.findings > 0 ? "fail" : "unknown";
+          const completed = summary.status === undefined || (typeof summary.status === "string" &&
+            ["completed", "success", "succeeded", "passed"].includes(summary.status.trim().toLowerCase()));
+          const validCount = typeof summary.findings === "number" && Number.isSafeInteger(summary.findings) && summary.findings >= 0;
+          const outcome = !completed || !validCount ? "unknown" : summary.findings === 0 ? "pass" : "fail";
           return {
             type: "automated_secfn",
             outcome,
