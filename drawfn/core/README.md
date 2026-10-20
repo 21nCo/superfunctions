@@ -159,3 +159,11 @@ Canvas `width`/`height` attribute changes repaint the current scene without hist
 Canceled pointer gestures restore their pre-gesture content and selection without adding undo steps. Undo/redo applies to content and preserves the current camera. Pen taps produce dots; supplied pressure and taper settings apply consistently to canvas and SVG strokes.
 
 Packed acceptance scripts require `NPM_CLI` set to the absolute path of your trusted `npm/bin/npm-cli.js`. They invoke it through the current Node executable rather than searching `PATH`.
+
+### Runtime bounds and image ownership
+
+Scenes accept up to 2,000 elements and stored pen strokes up to 16,384 points. Grid spacing must be positive. PNG and SVG output dimensions, including padding and scale, must be between 1 and 8192 pixels per side; invalid dimensions reject with `EXPORT_RENDER_FAILED`. Native PNG encoding failures also emit an `error` event and reject with that code.
+
+Each renderer admits at most 64 distinct cached or pending image sources. Repeated URLs share a request. Excess sources report `SCENE_LIMIT_EXCEEDED`; an export needing more than 64 sources fails before loading. Existing images are retained rather than repeatedly evicted. Removing sources from the rendered scene releases their cached bitmaps; in-flight loaders keep their slot until completion, and late unused bitmaps are closed. Host loaders should return assets owned by that renderer, not shared with unrelated consumers. This is an entry-count limit, not a limit on individual image bytes.
+
+See [requirement evidence and remaining qualifications](../.conduct/requirement-readiness.md) for the complete original requirement mapping, including hosted verification, Svelte version support, SVG image portability and performance limits.

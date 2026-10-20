@@ -247,6 +247,7 @@ function normalizeBackground(backgroundData: unknown): DrawfnResult<Scene["backg
     "background.grid.size"
   );
   if (!size.ok) return size;
+  if (size.data <= 0) return invalidScene("Scene.background.grid.size must be positive.", { path: "background.grid.size" });
 
   const gridColor = normalizeOptionalString(
     backgroundData.grid.color,
@@ -1005,6 +1006,10 @@ export class Drawfn {
 
   add(element: Element): string {
     const id = element.id || generateId();
+    if (this.scene.elements.length >= MAX_SCENE_ELEMENTS) {
+      this.emit("error", createDrawfnError("SCENE_LIMIT_EXCEEDED", `Scenes cannot exceed ${MAX_SCENE_ELEMENTS} elements.`, { limit: MAX_SCENE_ELEMENTS }));
+      return id;
+    }
     const normalizedElement = normalizeElement({ ...element, id }, 0);
     if (!normalizedElement.ok) {
       this.emit("error", normalizedElement.error);
@@ -1220,6 +1225,10 @@ export class Drawfn {
   stageTextElement(element: Element): void {
     const existingIndex = this.scene.elements.findIndex((el) => el.id === element.id);
     if (existingIndex === -1) {
+      if (this.scene.elements.length >= MAX_SCENE_ELEMENTS) {
+        this.emit("error", createDrawfnError("SCENE_LIMIT_EXCEEDED", `Scenes cannot exceed ${MAX_SCENE_ELEMENTS} elements.`, { limit: MAX_SCENE_ELEMENTS }));
+        return;
+      }
       this.scene.elements.push(deepClone(element));
     } else {
       this.scene.elements[existingIndex] = deepClone(element);
@@ -1299,6 +1308,7 @@ export class Drawfn {
       offsetY = -(bounds.y - padding);
     }
 
+    this.validateExportDimensions(canvasWidth, canvasHeight);
     const tempCanvas = document.createElement("canvas");
     tempCanvas.width = canvasWidth;
     tempCanvas.height = canvasHeight;
@@ -1344,21 +1354,22 @@ export class Drawfn {
       tempRenderer.dispose();
     }
 
-    return new Promise((resolve, reject) => {
-      tempCanvas.toBlob((blob) => {
-        if (blob) {
-          resolve(blob);
-          return;
-        }
+    try {
+      return await new Promise<Blob>((resolve, reject) => {
+        tempCanvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("Canvas encoding returned no image."));
+        }, "image/png");
+      });
+    } catch {
+      return this.failExport(createDrawfnError("EXPORT_RENDER_FAILED", "Failed to encode PNG."));
+    }
+  }
 
-        const error = createDrawfnError(
-          "EXPORT_RENDER_FAILED",
-          "Failed to export PNG."
-        );
-        this.emit("error", error);
-        reject(error);
-      }, "image/png");
-    });
+  private validateExportDimensions(width: number, height: number): void {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1 || width > 8192 || height > 8192) {
+      this.failExport(createDrawfnError("EXPORT_RENDER_FAILED", "Export dimensions must be between 1 and 8192 pixels per side.", { width, height, limit: 8192 }));
+    }
   }
 
   private getContentBounds(elements: Element[]): Bounds {
@@ -1419,6 +1430,7 @@ export class Drawfn {
     const viewBoxW = fitContent ? bounds.w + padding * 2 : this.canvas.width;
     const viewBoxH = fitContent ? bounds.h + padding * 2 : this.canvas.height;
 
+    this.validateExportDimensions(viewBoxW * scale, viewBoxH * scale);
     let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${viewBoxW * scale}" height="${viewBoxH * scale}" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxW} ${viewBoxH}">`;
     svg += `<rect x="${viewBoxX}" y="${viewBoxY}" width="${viewBoxW}" height="${viewBoxH}" fill="${this.escapeXml(this.scene.background.color)}"/>`;
 

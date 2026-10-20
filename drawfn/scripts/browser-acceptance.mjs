@@ -11,6 +11,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH||'playwright');
 const bundle=await build({stdin:{contents:`import {Drawfn} from './src/index.ts';window.Drawfn=Drawfn;`,resolveDir:root},bundle:true,write:false,platform:'browser',format:'iife'});
 const server=createServer((req,res)=>{const files={'/drawfn/core/example.html':root+'example.html','/drawfn/core/dist/index.js':root+'dist/index.js','/node_modules/perfect-freehand/dist/esm/index.mjs':resolve(dirname(require.resolve('perfect-freehand')),'../esm/index.mjs')};const file=files[req.url];if(file){res.setHeader('Content-Type',file.endsWith('.html')?'text/html':'text/javascript');res.end(readFileSync(file));return}res.setHeader('Content-Type','text/html');res.end('<!doctype html><style>body{margin:0}canvas{display:block}</style><canvas id="a" width="640" height="480"></canvas><canvas id="b" width="640" height="480"></canvas><input id="input">')});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+const imageServer=createServer((req,res)=>{res.setHeader('Content-Type','image/png');res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==','base64'))});
+await new Promise(resolve=>imageServer.listen(0,'127.0.0.1',resolve));
 const browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE_PATH?{executablePath:process.env.BROWSER_EXECUTABLE_PATH}:{})});
 let assertions=0;const check=(value,message)=>{if(!value)throw Error(message);assertions++};
 try{
@@ -74,7 +76,17 @@ try{
  await page.mouse.move(80,60);const anchor=await page.evaluate(()=>a.screenToCanvas({x:80,y:60}));await page.mouse.wheel(0,-100);await page.waitForTimeout(50);
  check(await page.evaluate(anchor=>{const after=a.screenToCanvas({x:80,y:60});return Math.abs(after.x-anchor.x)<0.001&&Math.abs(after.y-anchor.y)<0.001},anchor),'CSS-scaled wheel anchor');
  await page.evaluate(()=>a.setTool('text'));await page.mouse.click(80,60);check(await page.evaluate(()=>{const t=document.querySelector('textarea');return t&&Math.abs(parseFloat(t.style.left)-80)<0.001&&Math.abs(parseFloat(t.style.top)-60)<0.001}),'CSS-scaled text overlay');
+ const limits=await page.evaluate(async()=>{
+  const codes=[];for(const method of ['exportPNG','exportSVG']){try{await a[method]({scale:Number.MAX_VALUE})}catch(error){codes.push(error.code)}}return codes;
+ });check(limits.join(',')==='EXPORT_RENDER_FAILED,EXPORT_RENDER_FAILED','both exports reject overflowing dimensions before allocation');
+ const tainted=await page.evaluate(async url=>{
+  const c=document.createElement('canvas');c.width=10;c.height=10;const errors=[];
+  const drawing=new Drawfn({canvas:c,getImageBitmap:async()=>{const image=new Image();image.src=url;await image.decode();return createImageBitmap(image)}});
+  drawing.on('error',error=>errors.push(error.code));drawing.add({...rect,id:'taint',type:'image',src:url,x:0,y:0,w:10,h:10});
+  try{await drawing.exportPNG({scale:1});return{unexpectedSuccess:true}}catch(error){return{code:error.code,errors}}finally{drawing.destroy()}
+ },`http://127.0.0.1:${imageServer.address().port}/image.png`);
+ check(tainted.code==='EXPORT_RENDER_FAILED'&&tainted.errors.includes('EXPORT_RENDER_FAILED'),`native cross-origin canvas encoding failure is structured: ${JSON.stringify(tainted)}`);
  await page.evaluate(()=>{a.destroy();a.destroy();b.destroy()});check(errors.length===0,`browser errors: ${errors.join(';')}`);
  await page.goto(`http://127.0.0.1:${server.address().port}/drawfn/core/example.html`);await page.locator('#rectangle').click();const box=await page.locator('#canvas').boundingBox();await drag(Math.max(box.x,0)+30,box.y+30,Math.max(box.x,0)+100,box.y+90);await page.waitForFunction(()=>document.querySelector('#element-count').textContent==='1',{},{timeout:3000}).catch(async error=>{throw Error(JSON.stringify({errors,box,state:await page.evaluate(()=>({tool:document.querySelector('#current-tool')?.textContent,count:document.querySelector('#element-count')?.textContent,canvas:document.querySelector('#canvas')?.outerHTML}))}))});check(true,'shipped vanilla example imports and draws');check(errors.length===0,'vanilla example browser errors');
  console.log(JSON.stringify({browser:await browser.version(),assertions,pageErrors:errors}));
-}finally{await browser.close();await new Promise(resolve=>server.close(resolve))}
+}finally{await browser.close();await Promise.all([new Promise(resolve=>server.close(resolve)),new Promise(resolve=>imageServer.close(resolve))])}

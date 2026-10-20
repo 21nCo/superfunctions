@@ -213,4 +213,33 @@ describe("scene loading", () => {
       recoverable: true,
     });
   });
+  it.each([0, -1, -100])("rejects grid size %s without replacing the active scene", (size) => {
+    const previous = drawfn.getScene();
+    const errors = vi.fn();
+    drawfn.on("error", errors);
+    expect(drawfn.loadScene({ ...previous, background: { color: "white", grid: { size, color: "black", alpha: 1 } } })).toMatchObject({ ok: false, error: { code: "INVALID_SCENE" } });
+    expect(drawfn.getScene()).toEqual(previous);
+    expect(errors).toHaveBeenCalledOnce();
+  });
+
+  it("rejects direct additions beyond the scene cap without history or content events", () => {
+    const scene = drawfn.getScene();
+    scene.elements = Array.from({ length: 2000 }, (_, i) => rectangle(`r${i}`));
+    drawfn.load(scene);
+    const errors = vi.fn();
+    const changed = vi.fn();
+    drawfn.on("error", errors);
+    drawfn.on("elementAdded", changed);
+    drawfn.add(rectangle("overflow"));
+    drawfn.stageTextElement({ ...rectangle("provisional"), type: "text", text: "", fontSize: 16, fontFamily: "sans-serif", align: "left" });
+    expect(drawfn.getElements()).toHaveLength(2000);
+    expect(drawfn.getHistoryState().depth).toBe(0);
+    expect(changed).not.toHaveBeenCalled();
+    expect(errors).toHaveBeenCalledWith(expect.objectContaining({ code: "SCENE_LIMIT_EXCEEDED" }));
+    drawfn.remove("r0");
+    drawfn.add(rectangle("replacement"));
+    expect(drawfn.getElementById("replacement")).toBeDefined();
+    drawfn.destroy();
+  });
+
 });

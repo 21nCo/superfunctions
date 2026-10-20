@@ -32,6 +32,9 @@ export type RenderOptions = {
 
 export class Renderer {
   private disposed = false;
+  private activeImageSources = new Set<string>();
+  private capacityErrors = new Set<string>();
+  private readonly maxImageEntries = 64;
   private ctx: CanvasRenderingContext2D;
   private canvas: HTMLCanvasElement;
   private imageCache: Map<string, HTMLImageElement | ImageBitmap> = new Map();
@@ -63,6 +66,7 @@ export class Renderer {
   render(scene: Scene, options: RenderOptions = {}): void {
     if (this.disposed) return;
     const { camera, background, elements } = scene;
+    this.retainImages(elements);
     const { selectedIds = new Set(), hoveredId = null } = options;
 
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -434,20 +438,33 @@ export class Renderer {
     }
     this.imageCache.clear();
     this.pendingImageLoads.clear();
+    this.activeImageSources.clear();
+    this.capacityErrors.clear();
     this.onImageLoaded = undefined;
     this.onImageError = undefined;
   }
 
-  async preloadImages(elements: Element[]): Promise<void> {
-    const sources = Array.from(
-      new Set(
-        elements
-          .filter((element): element is ImageElement => element.type === "image")
-          .map((element) => element.src)
-      )
-    );
+  private retainImages(elements: Element[]): void {
+    this.activeImageSources = new Set(elements.filter((element): element is ImageElement => element.type === "image").map(element => element.src));
+    for (const [src, asset] of this.imageCache) {
+      if (!this.activeImageSources.has(src)) {
+        this.imageCache.delete(src);
+        if ("close" in asset) asset.close();
+      }
+    }
+    for (const src of this.capacityErrors) {
+      if (!this.activeImageSources.has(src)) this.capacityErrors.delete(src);
+    }
+  }
 
-    await Promise.all(sources.map((src) => this.loadImage(src)));
+  private imageCapacityError(): DrawfnError {
+    return createDrawfnError("SCENE_LIMIT_EXCEEDED", "Renderer cannot retain more than 64 cached or pending image sources.", { limit: this.maxImageEntries });
+  }
+
+  async preloadImages(elements: Element[]): Promise<void> {
+    this.retainImages(elements);
+    if (this.activeImageSources.size > this.maxImageEntries) throw this.imageCapacityError();
+    await Promise.all([...this.activeImageSources].map((src) => this.loadImage(src)));
   }
 
   private toImageLoadError(src: string, cause: unknown): DrawfnError {
@@ -475,7 +492,24 @@ export class Renderer {
     const pending = this.pendingImageLoads.get(src);
     if (pending) return pending;
 
-    const request = (async () => {
+    if (this.imageCache.size + this.pendingImageLoads.size >= this.maxImageEntries) {
+      const error = this.imageCapacityError();
+      if (!this.capacityErrors.has(src)) {
+        this.capacityErrors.add(src);
+        this.onImageError?.(error, src);
+      }
+      throw error;
+    }
+    this.capacityErrors.delete(src);
+    // Install the reservation before invoking even a synchronously throwing host loader.
+    let resolveRequest!: (asset: HTMLImageElement | ImageBitmap) => void;
+    let rejectRequest!: (error: unknown) => void;
+    const request = new Promise<HTMLImageElement | ImageBitmap>((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+    this.pendingImageLoads.set(src, request);
+    void (async () => {
       try {
         let asset: HTMLImageElement | ImageBitmap;
         if (this.getImageBitmap) {
@@ -491,7 +525,7 @@ export class Renderer {
           asset = img;
         }
 
-        if (this.disposed) {
+        if (this.disposed || !this.activeImageSources.has(src)) {
           if ("close" in asset) asset.close();
           return asset;
         }
@@ -504,10 +538,14 @@ export class Renderer {
         throw drawfnError;
       } finally {
         this.pendingImageLoads.delete(src);
+        // A removed in-flight source may have held the last slot. Wake a
+        // blocked active source once capacity actually becomes available.
+        if (!this.disposed && this.imageCache.size + this.pendingImageLoads.size < this.maxImageEntries) {
+          const blocked = this.capacityErrors.values().next().value;
+          if (blocked !== undefined) this.onImageLoaded?.(blocked);
+        }
       }
-    })();
-
-    this.pendingImageLoads.set(src, request);
+    })().then(resolveRequest, rejectRequest);
     return request;
   }
 }
