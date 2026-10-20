@@ -21,6 +21,7 @@ export type {
   ContextCollector,
   WatchBugReportEvent,
   WatchBugReportClient,
+  WatchEndpointConfig,
 } from "./core/types.js";
 
 // Collector exports

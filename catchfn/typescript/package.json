@@ -70,7 +70,8 @@
   },
   "dependencies": {
     "drawfn": "0.0.2",
-    "html2canvas": "1.4.1"
+    "html2canvas": "1.4.1",
+    "@watchfn/browser": "0.0.2"
   },
   "peerDependencies": {
     "react": ">=18"

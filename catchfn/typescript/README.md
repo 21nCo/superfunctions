@@ -57,6 +57,28 @@ const report = await catcher.captureBug({
 console.log("Bug report ID:", report.id);
 ```
 
+## Deliver through WatchFn
+
+```typescript
+const catcher = catchFn({
+  name: "shop",
+  watch: {
+    endpoint: "https://watch.example/ingest",
+    apiKey: () => currentWatchKey,
+    retries: 2,
+    retryDelayMs: 250,
+    timeoutMs: 10000,
+  },
+});
+await catcher.captureBug({ title: "Checkout failed", severity: "high" });
+await catcher.flush();
+catcher.stop();
+```
+
+Endpoint configuration uses `@watchfn/browser`'s shared queue, bearer authentication and bounded retry transport. The canonical `bug_report` envelope is stored unchanged by WatchFn; ingestion must include canonical bug-report support. Successful capture waits for an HTTP acknowledgement. Failed events remain queued for an explicit `flush()` retry; capture rejects on authorization, exhausted transport or storage errors. Calling `captureBug` again creates a new report, so use `flush` to retry an existing queued report.
+
+This path defaults to WatchFn's 64 KiB per-event limit and rejects larger configured limits. Upload larger attachments through `uploadAttachment` and send references. Without `watch`, capture remains local. Existing `watch: { client }` injection remains supported with its own payload limit. Transport is at least once: retries after a lost response can store duplicate arrivals with the same report ID. WatchFn HTTP query filters can select `type: "bug_report"`, `app.name`, severity, tags and timestamp; per-report deduplication and retention policy are separate open gates.
+
 ## Configuration
 
 ```typescript

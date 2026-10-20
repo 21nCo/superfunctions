@@ -1,3 +1,5 @@
+import type { BrowserConfig } from "@watchfn/browser";
+
 /**
  * Core types and interfaces for CatchFn
  */
@@ -166,7 +168,7 @@ export type IgnorePattern = string | RegExp;
  * CatchFn configuration
  */
 export interface CatchFnConfig {
-  watch?: {client: WatchBugReportClient};
+  watch?: {client: WatchBugReportClient} | WatchEndpointConfig;
   sessionId?: string;
   appVersion?: string;
   env?: string;
@@ -292,6 +294,10 @@ export interface WatchBugReportEvent {
   attachments?: AttachmentReference[];
   integration?: BugReportEvent["integration"];
   replayId?: string;
+}
+/** Uses WatchFn's shared authenticated queue and retry transport. */
+export interface WatchEndpointConfig extends Omit<BrowserConfig, "projectId" | "autoTrack" | "sampleRate"> {
+  projectId?: string;
 }
 export interface WatchBugReportClient {
   capture(event: WatchBugReportEvent): Promise<{integration?: BugReportEvent["integration"]} | void>;

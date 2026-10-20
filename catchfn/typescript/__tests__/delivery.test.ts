@@ -28,3 +28,26 @@ describe("canonical delivery contract", () => {
     expect(result.attachments?.[0].dataUrl).toBeUndefined();catcher.stop();
   });
 });
+
+
+describe("WatchFn endpoint configuration", () => {
+  it("uses the shared browser transport without requiring a DOM", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ accepted: 1 }), { status: 202 }));
+    vi.stubGlobal("fetch", fetch);
+    const catcher = catchFn({ name: "shop", watch: { endpoint: "https://watch.example/ingest", apiKey: "key", retries: 0 } });
+    try {
+      expect(catcher.getConfig().maxPayloadSize).toBe(65536);
+      const report = await catcher.captureBug({ title: "Endpoint report" });
+      expect(report.delivery).toBe("sent");
+      expect(fetch).toHaveBeenCalledOnce();
+      const [url, request] = fetch.mock.calls[0] as unknown as [string, RequestInit];
+      expect(url).toBe("https://watch.example/ingest");
+      expect(new Headers(request.headers).get("authorization")).toBe("Bearer key");
+      expect(JSON.parse(request.body as string)).toMatchObject([{ id: report.id, type: "bug_report", app: { name: "shop" }, report: { title: "Endpoint report" } }]);
+      await catcher.flush();
+    } finally { catcher.stop(); vi.unstubAllGlobals(); }
+  });
+  it("rejects endpoint payload limits larger than WatchFn ingestion accepts", () => {
+    expect(() => catchFn({ name: "shop", maxPayloadSize: 65537, watch: { endpoint: "https://watch.example/ingest" } })).toThrow("64 KiB");
+  });
+});

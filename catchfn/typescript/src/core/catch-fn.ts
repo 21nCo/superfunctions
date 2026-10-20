@@ -2,6 +2,7 @@
  * Main CatchFn SDK class
  */
 
+import { BrowserClient } from "@watchfn/browser";
 import type { ReporterWidget } from "../reporter/widget.js";
 import { BreadcrumbCollector } from "../collectors/breadcrumbs.js";
 import { ConsoleCollector } from "../collectors/console.js";
@@ -19,6 +20,7 @@ import type {
   Breadcrumb,
   BugSeverity,
   WatchBugReportEvent,
+  WatchBugReportClient,
 } from "./types.js";
 
 function generateId(): string {
@@ -41,6 +43,7 @@ export class CatchFn {
   private beforeSendHooks: BeforeSendHook[] = [];
   private ignorePatterns: IgnorePattern[] = [];
   private sessionId: string;
+  private watchClient?: WatchBugReportClient;
   private reporter?: ReporterWidget;
   private opening?: Promise<void>;
   private reporterGeneration = 0;
@@ -53,6 +56,16 @@ export class CatchFn {
       if (value !== undefined && (!Number.isInteger(value) || value < 0)) throw new RangeError("Collector limits must be nonnegative integers");
     }
     if (config.maxPayloadSize !== undefined && (!Number.isInteger(config.maxPayloadSize) || config.maxPayloadSize <= 0)) throw new RangeError("maxPayloadSize must be positive");
+    const endpointWatch = config.watch && !("client" in config.watch) ? config.watch : undefined;
+    if (endpointWatch && config.maxPayloadSize !== undefined && config.maxPayloadSize > 65536) {
+      throw new RangeError("WatchFn ingestion permits at most 64 KiB per event");
+    }
+    if (endpointWatch) {
+      const client = new BrowserClient({ ...endpointWatch, projectId: endpointWatch.projectId ?? config.name, autoTrack: false, sampleRate: 1 });
+      this.watchClient = { capture: event => client.capture({ ...event }), flush: () => client.flush() };
+    } else if (config.watch && "client" in config.watch) {
+      this.watchClient = config.watch.client;
+    }
     this.config = {
       ...config,
       maxBreadcrumbs: config.maxBreadcrumbs ?? 50,
@@ -60,7 +73,7 @@ export class CatchFn {
       maxNetworkRequests: config.maxNetworkRequests ?? 20,
       defaultSeverity: config.defaultSeverity ?? "medium",
       ignorePatterns: config.ignorePatterns ?? [],
-      maxPayloadSize: config.maxPayloadSize ?? 262144, // 256KB
+      maxPayloadSize: config.maxPayloadSize ?? (endpointWatch ? 65536 : 262144),
       sensitiveFields: config.sensitiveFields ?? [],
       enableBreadcrumbs: config.enableBreadcrumbs ?? true,
       enableConsoleCapture: config.enableConsoleCapture ?? false,
@@ -262,14 +275,14 @@ export class CatchFn {
     if (!processedEvent?.title?.trim() || !["critical", "high", "medium", "low"].includes(processedEvent.severity)) throw new TypeError("beforeSend returned an invalid bug report");
     if (this.shouldIgnore(processedEvent)) return {...processedEvent, delivery:"dropped"};
 
-    if (this.config.watch) {
+    if (this.watchClient) {
       const envelope = this.toWatchEvent(processedEvent);
       if (new TextEncoder().encode(JSON.stringify(envelope)).byteLength > this.config.maxPayloadSize) throw new RangeError("Bug report envelope exceeds maxPayloadSize");
-      const result = await this.config.watch.client.capture(envelope);
+      const result = await this.watchClient.capture(envelope);
       if (result?.integration) processedEvent = {...processedEvent, integration:result.integration};
     }
 
-    return {...processedEvent, delivery:this.config.watch ? "sent" : "local"};
+    return {...processedEvent, delivery:this.watchClient ? "sent" : "local"};
   }
 
   /**
@@ -284,9 +297,9 @@ export class CatchFn {
   /**
    * Stop all collectors
    */
-  hasTransport(): boolean { return Boolean(this.config.watch); }
+  hasTransport(): boolean { return Boolean(this.watchClient); }
 
-  async flush(): Promise<void> { await this.config.watch?.client.flush?.(); }
+  async flush(): Promise<void> { await this.watchClient?.flush?.(); }
 
   private toWatchEvent(report: BugReportEvent): WatchBugReportEvent {
     const context: Record<string, unknown> = {
