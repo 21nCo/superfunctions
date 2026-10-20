@@ -1,0 +1,53 @@
+probefn/.conduct/report-streaming-readiness.md
+  s_e1c5fc1a65c0cf::t_1979cbe52e5bd4 1-24
+probefn/README.md
+  s_e1c5fc1a65c0cf::t_4074866a8f8c60 107-139
+probefn/apps/cli/src/commands/report.ts
+  s_e1c5fc1a65c0cf::t_aee2e0e9ce6ac2 26
+probefn/apps/cli/test/cli.test.ts
+  s_e1c5fc1a65c0cf::t_0476fc44456407 1,47-58
+probefn/package.json
+  s_e1c5fc1a65c0cf::t_ac2995ac99843d 14-15
+probefn/packages/analyzers/src/correlation/root-cause.ts
+  s_e1c5fc1a65c0cf::t_422bed9ffeb96d 42-63,72-75,96,98
+probefn/packages/analyzers/src/index.ts
+  s_e1c5fc1a65c0cf::t_4f2ffcc4d2a91e 196-197
+probefn/packages/analyzers/test/correlation-streaming.test.ts
+  s_e1c5fc1a65c0cf::t_6006cc1a5d234a 1-22
+probefn/packages/core/src/report-service.ts
+  s_e1c5fc1a65c0cf::t_4a83895433e8fe 3,12,38-93
+probefn/packages/core/src/session-manager.ts
+  s_e1c5fc1a65c0cf::t_40c21a0d9930e1 175-184
+probefn/packages/mcp-server/src/server.ts
+  s_e1c5fc1a65c0cf::t_2374214120e004 1060,1064-1067
+probefn/packages/mcp-server/src/tools/report.ts
+  s_e1c5fc1a65c0cf::t_daf35592c018ec 17,35,43
+probefn/packages/mcp-server/test/mcp-server.test.ts
+  s_e1c5fc1a65c0cf::t_c13c2fdf8d5b34 95-104
+probefn/packages/session-reporter/src/report-json.ts
+  s_e1c5fc1a65c0cf::t_080c69f4d4c668 14,127-132,136,151-166,169,171,174,176,179,181,184,186,189,233,360,365,367,371,375-376,382,386
+probefn/packages/session-reporter/test/report-streaming.test.ts
+  s_e1c5fc1a65c0cf::t_17af3faeab23c3 1-91
+probefn/packages/session-reporter/test/reporter.test.ts
+  s_e1c5fc1a65c0cf::t_b375d7fed882a4 1,8,189-205
+probefn/packages/storage/src/artifact-store.ts
+  s_e1c5fc1a65c0cf::t_be7445ec03fdef 2-3,132-165
+probefn/scripts/test-report-streaming.ts
+  s_e1c5fc1a65c0cf::t_fd90130cf55383 1-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "06721183eece9a26fdb6ea86b7f4717e90867982",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
