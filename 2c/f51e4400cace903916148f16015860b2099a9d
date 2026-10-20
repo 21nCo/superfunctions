@@ -1,0 +1,47 @@
+recfn/.conduct/external-deletion-readiness.md
+  s_e1c5fc1a65c0cf::t_6d00024bfc72f8 1-108
+recfn/README.md
+  s_e1c5fc1a65c0cf::t_03043452c4b32d 76-121
+recfn/client/__tests__/client.test.ts
+  s_e1c5fc1a65c0cf::t_729496d1aedd62 208-215
+recfn/client/src/resources/bots.ts
+  s_e1c5fc1a65c0cf::t_13ddac002347d4 54
+recfn/python/tests/test_client.py
+  s_e1c5fc1a65c0cf::t_0aca54dbdcc580 303-317
+recfn/server/__tests__/deletion-sqlite.test.ts
+  s_e1c5fc1a65c0cf::t_0ca9a858d3b62d 1-215
+recfn/server/src/deletion/service.ts
+  s_e1c5fc1a65c0cf::t_283f98df79f76e 1-33
+recfn/server/src/index.ts
+  s_e1c5fc1a65c0cf::t_a2608c74cd4d4f 112,299-301
+recfn/server/src/recording/storage.ts
+  s_e1c5fc1a65c0cf::t_77068a57eb4f00 87-88,96,157-158
+recfn/server/src/routes/bots.ts
+  s_e1c5fc1a65c0cf::t_4577c8d4d320e6 1-3,32-33,237-239
+recfn/server/src/store/db.ts
+  s_e1c5fc1a65c0cf::t_94e730d3285650 1,116-119,127-129,229-233,235-237,699
+recfn/server/src/store/deletion.ts
+  s_e1c5fc1a65c0cf::t_c11abc12b8cdde 1-141
+recfn/server/src/store/schema.ts
+  s_e1c5fc1a65c0cf::t_9e37face44c328 4-19
+recfn/server/src/store/types.ts
+  s_e1c5fc1a65c0cf::t_4bcee42710067e 43
+recfn/server/src/transcription/pipeline.ts
+  s_e1c5fc1a65c0cf::t_2d5630a96e73e0 128-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2cf51e4400cace903916148f16015860b2099a9d",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
