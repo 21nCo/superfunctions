@@ -24,11 +24,33 @@ export class BrowserDeliveryError extends Error {
   constructor(message: string, readonly status?: number) { super(message); }
 }
 
+export class BrowserDeliveryDiscardedError extends BrowserDeliveryError {
+  constructor() { super("WatchFn pending delivery was discarded"); this.name = "BrowserDeliveryDiscardedError"; }
+}
+
+function assertDeliveryActive(signal: AbortSignal): void {
+  if (signal.aborted) throw new BrowserDeliveryDiscardedError();
+}
+
+/** Race even transports that ignore AbortSignal; always detach the listener. */
+async function untilDiscarded<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  let abort!: () => void;
+  const discarded = new Promise<never>((_, reject) => {
+    abort = () => reject(new BrowserDeliveryDiscardedError());
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try { return await Promise.race([operation, discarded]); }
+  finally { signal.removeEventListener("abort", abort); }
+}
+
 export class BrowserClient {
   private readonly config: BrowserConfig;
   private readonly queue: string[] = [];
   private pending?: Promise<void>;
   private closed = false;
+  private deliveryGeneration = new AbortController();
+  private discarded = 0;
   private readonly statusReadCancels = new Set<() => void>();
   private readonly disposers: Array<() => void> = [];
 
@@ -47,6 +69,19 @@ export class BrowserClient {
   }
 
   get pendingCount(): number { return this.queue.length; }
+  get discardedCount(): number { return this.discarded; }
+
+  /** Forget pending delivery and cancel owned work. Already handed-off requests cannot be retracted. */
+  discardPending(): number {
+    const count = this.queue.length;
+    this.queue.length = 0;
+    this.discarded += count;
+    const previous = this.deliveryGeneration;
+    this.deliveryGeneration = new AbortController();
+    this.pending = undefined;
+    previous.abort();
+    return count;
+  }
 
   /** One bounded authenticated read; does not enqueue, retry or mutate report delivery. */
   async readBugIssueStatus(reference: BugIssueReference, options: { signal?: AbortSignal } = {}): Promise<BrowserBugIssueStatus | null> {
@@ -130,10 +165,11 @@ export class BrowserClient {
   /** Deliver a canonical envelope unchanged, independent of DOM availability and RUM sampling.
    * Rejected deliveries remain queued for an explicit flush/close retry. */
   async capture(event: Record<string, unknown>): Promise<void> {
+    const signal = this.deliveryGeneration.signal;
     const serialized = this.enqueue(event);
     // A capture can arrive as a previous drain is settling. Join that drain,
     // then start another if this snapshot has not yet been acknowledged.
-    do { await this.flush(); } while (this.queue.includes(serialized));
+    do { await this.flush(); assertDeliveryActive(signal); } while (this.queue.includes(serialized));
   }
 
   private enqueue(event: Record<string, unknown>): string {
@@ -150,9 +186,11 @@ export class BrowserClient {
   /** Join the current delivery attempt. Failed events stay queued for a later call. */
   flush(): Promise<void> {
     if (this.pending) return this.pending;
-    const operation = Promise.resolve().then(() => this.drain());
-    this.pending = operation.finally(() => { this.pending = undefined; });
-    return this.pending;
+    const signal = this.deliveryGeneration.signal;
+    const operation = Promise.resolve().then(() => { assertDeliveryActive(signal); return this.drain(signal); });
+    const pending = operation.finally(() => { if (this.pending === pending) this.pending = undefined; });
+    this.pending = pending;
+    return pending;
   }
 
   /** Stop collection and await delivery. After failure, close/flush can be retried. */
@@ -163,7 +201,8 @@ export class BrowserClient {
     return this.flush();
   }
 
-  private async drain(): Promise<void> {
+  private async drain(signal: AbortSignal): Promise<void> {
+    assertDeliveryActive(signal);
     while (this.queue.length) {
       // Bound both count and bytes for the ingestion endpoint's 8 MiB limit.
       const batch: string[] = [];
@@ -174,16 +213,20 @@ export class BrowserClient {
         batch.push(event); bytes += size;
       }
       const body = `[${batch.join(",")}]`;
-      await this.deliver(body);
+      await this.deliver(body, signal);
+      assertDeliveryActive(signal);
       this.queue.splice(0, batch.length);
     }
   }
 
-  private async deliver(body: string): Promise<void> {
+  private async deliver(body: string, signal: AbortSignal): Promise<void> {
     for (let attempt = 0; ; attempt++) {
+      assertDeliveryActive(signal);
       let failure: unknown;
       let retryable = true;
       const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal.addEventListener("abort", abort, { once: true });
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const headers = new Headers(typeof this.config.headers === "function" ? this.config.headers() : this.config.headers);
@@ -198,17 +241,29 @@ export class BrowserClient {
         });
         // keepalive is intentionally omitted: browser aggregate keepalive quotas
         // can reject batches above 64 KiB before they reach the endpoint.
-        const response = await Promise.race([fetch(this.config.endpoint, {
+        assertDeliveryActive(signal);
+        const request = fetch(this.config.endpoint, {
           method: "POST", headers, body, signal: controller.signal,
-        }), timeout]);
+        }).then(response => {
+          if (signal.aborted) void response.body?.cancel().catch(() => {});
+          return response;
+        });
+        const response = await untilDiscarded(Promise.race([request, timeout]), signal);
+        assertDeliveryActive(signal);
         void response.body?.cancel().catch(() => {});
         if (response.ok) return;
         retryable = response.status === 408 || response.status === 429 || response.status >= 500;
         failure = new BrowserDeliveryError(`WatchFn ingestion returned HTTP ${response.status}`, response.status);
       } catch (error) { failure = error; }
-      finally { if (timer !== undefined) clearTimeout(timer); }
+      finally { if (timer !== undefined) clearTimeout(timer); signal.removeEventListener("abort", abort); }
+      assertDeliveryActive(signal);
       if (!retryable || attempt >= this.config.retries!) throw failure;
-      await new Promise(resolve => setTimeout(resolve, Math.min(this.config.retryDelayMs! * 2 ** attempt, 60000)));
+      let retryTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await untilDiscarded(new Promise<void>(resolve => {
+          retryTimer = setTimeout(resolve, Math.min(this.config.retryDelayMs! * 2 ** attempt, 60000));
+        }), signal);
+      } finally { if (retryTimer !== undefined) clearTimeout(retryTimer); }
     }
   }
 }
