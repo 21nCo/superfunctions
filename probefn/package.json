@@ -9,7 +9,8 @@
     "test": "vitest run",
     "test:vectors": "jiti scripts/test-vectors.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "tsc --noEmit -p tsconfig.json"
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test:browsers": "vitest run --config vitest.browsers.config.ts"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
