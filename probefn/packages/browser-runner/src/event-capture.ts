@@ -80,33 +80,41 @@ export function attachBrowserEventCapture(
   const consoleSink = options.artifactStore.createEventSink(options.runId, 'console', 'events');
   const pageErrorSink = options.artifactStore.createEventSink(options.runId, 'page-errors', 'events');
   const networkSink = options.artifactStore.createEventSink(options.runId, 'network', 'events');
-  const pendingWrites = new Set<Promise<unknown>>();
-
-  const trackWrite = (promise: Promise<unknown>): void => {
-    pendingWrites.add(promise);
-    void promise.finally(() => {
-      pendingWrites.delete(promise);
-    });
+  type Write = { completion: Promise<void>; failed: boolean; error?: unknown };
+  const pendingWrites = new Set<Write>();
+  const failedWrites = new Set<Write>();
+  const trackWrite = (operation: () => Promise<unknown>): void => {
+    let finish!: () => void;
+    const record: Write = { failed: false, completion: new Promise<void>(resolve => { finish = resolve; }) };
+    pendingWrites.add(record);
+    const settle = (failed: boolean, error?: unknown) => {
+      record.failed = failed; record.error = error;
+      if (failed) failedWrites.add(record);
+      pendingWrites.delete(record);
+      finish();
+    };
+    try { Promise.resolve(operation()).then(() => settle(false), error => settle(true, error)); }
+    catch (error) { settle(true, error); }
   };
 
   const consoleHandler = (message: ConsoleMessage): void => {
     const event = toConsoleEvent(now(), options.page, message);
     if (shouldPersistConsoleEvent(event)) {
-      trackWrite(consoleSink.append(event));
+      trackWrite(() => consoleSink.append(event));
     }
   };
 
   const pageErrorHandler = (error: Error): void => {
-    trackWrite(pageErrorSink.append(toPageErrorEvent(now(), options.page, error)));
+    trackWrite(() => pageErrorSink.append(toPageErrorEvent(now(), options.page, error)));
   };
 
   const requestFailedHandler = (request: Request): void => {
-    trackWrite(networkSink.append(toRequestFailedEvent(now(), options.page, request)));
+    trackWrite(() => networkSink.append(toRequestFailedEvent(now(), options.page, request)));
   };
 
   const responseHandler = (response: Response): void => {
     if (response.status() >= 400) {
-      trackWrite(networkSink.append(toResponseFailureEvent(now(), options.page, response)));
+      trackWrite(() => networkSink.append(toResponseFailureEvent(now(), options.page, response)));
     }
   };
 
@@ -122,7 +130,11 @@ export function attachBrowserEventCapture(
       networkSinkPath: networkSink.getCurrentRelativePath(),
     },
     async flush(): Promise<void> {
-      await Promise.all([...pendingWrites]);
+      const records = new Set([...failedWrites, ...pendingWrites]);
+      await Promise.all([...records].map(record => record.completion));
+      const failures = [...records].filter(record => record.failed);
+      for (const record of failures) failedWrites.delete(record);
+      if (failures.length) throw new AggregateError(failures.map(record => record.error), 'Browser event persistence failed');
     },
     dispose(): void {
       options.page.off('console', consoleHandler);

@@ -49,22 +49,23 @@ export interface ClosedBrowserSession {
   sinkPaths: BrowserRuntimeSinkPaths;
 }
 
+interface ManagedBrowserSession {
+  browser?: Browser;
+  context?: BrowserContext;
+  eventCapture?: BrowserEventCapture;
+  traceEnabled: boolean;
+  runId: string;
+  sinkPaths?: BrowserRuntimeSinkPaths;
+  cancelled: boolean;
+  startDone: Promise<void>;
+  stopping?: Promise<ClosedBrowserSession>;
+}
+
 export class BrowserRunner {
   private readonly repoRoot: string;
   private readonly artifactStore: ArtifactStore;
   private readonly now: () => string;
-  private readonly sessions = new Map<
-    string,
-    {
-      browser: Browser;
-      context: BrowserContext;
-      page: Page;
-      eventCapture: BrowserEventCapture;
-      traceEnabled: boolean;
-      runId: string;
-      sinkPaths: BrowserRuntimeSinkPaths;
-    }
-  >();
+  private readonly sessions = new Map<string, ManagedBrowserSession>();
 
   public constructor(options: BrowserRunnerOptions) {
     this.repoRoot = options.repoRoot;
@@ -74,11 +75,20 @@ export class BrowserRunner {
 
   public async startSession(options: LaunchBrowserSessionOptions): Promise<StartedBrowserSession> {
     const browserType = resolveBrowserType(options.browser);
-
+    if (this.sessions.has(options.sessionId)) {
+      throw createProbefnError({ code: 'E_SESSION_ALREADY_RUNNING', message: `Session ${options.sessionId} already has an active browser.`, retryable: false });
+    }
+    let finishStart!: () => void;
+    const session: ManagedBrowserSession = { runId: options.runId, traceEnabled: false, cancelled: false,
+      startDone: new Promise<void>(resolve => { finishStart = resolve; }) };
+    this.sessions.set(options.sessionId, session);
+    const checkCancelled = () => { if (session.cancelled) throw new Error('Browser startup was cancelled'); };
     try {
       const browser = await browserType.launch({
         headless: true,
       });
+      session.browser = browser;
+      checkCancelled();
       const context = await browser.newContext({
         ...(options.deterministic.enabled ? { viewport: options.deterministic.viewport } : {}),
         ...(options.deterministic.enabled ? { locale: options.deterministic.locale } : {}),
@@ -90,6 +100,8 @@ export class BrowserRunner {
           : {}),
       });
 
+      session.context = context;
+      checkCancelled();
       if (options.deterministic.enabled && options.deterministic.animationPolicy === 'freeze') {
         await context.addInitScript(() => {
           const STYLE_ID = '__probefn_deterministic_style__';
@@ -121,6 +133,7 @@ export class BrowserRunner {
         });
       }
 
+      checkCancelled();
       const traceEnabled = options.trace?.enabled ?? true;
       await startTracing(context, {
         repoRoot: this.repoRoot,
@@ -129,19 +142,24 @@ export class BrowserRunner {
         enabled: traceEnabled,
       });
 
+      session.traceEnabled = traceEnabled;
+      checkCancelled();
       const page = await context.newPage();
+      checkCancelled();
       const eventCapture = attachBrowserEventCapture({
         page,
         artifactStore: this.artifactStore,
         runId: options.runId,
         now: this.now,
       });
+      session.eventCapture = eventCapture;
       const sinkPaths = {
         consoleSinkPath: eventCapture.sinkPaths.consoleSinkPath,
         pageErrorSinkPath: eventCapture.sinkPaths.pageErrorSinkPath,
         networkSinkPath: eventCapture.sinkPaths.networkSinkPath,
       };
 
+      session.sinkPaths = sinkPaths;
       if (options.initialUrl) {
         await page.goto(options.initialUrl, {
           waitUntil: 'load',
@@ -151,15 +169,7 @@ export class BrowserRunner {
         }
       }
 
-      this.sessions.set(options.sessionId, {
-        browser,
-        context,
-        page,
-        eventCapture,
-        traceEnabled,
-        runId: options.runId,
-        sinkPaths,
-      });
+      checkCancelled();
 
       return {
         sessionId: options.sessionId,
@@ -171,6 +181,8 @@ export class BrowserRunner {
         traceEnabled,
       };
     } catch (error) {
+      const cleanup = await this.cleanupSession(session, false);
+      if (!session.browser?.isConnected() && this.sessions.get(options.sessionId) === session) this.sessions.delete(options.sessionId);
       throw createProbefnError({
         code: 'E_BROWSER_LAUNCH_FAILED',
         message: `Could not launch ${options.browser} browser session.`,
@@ -178,9 +190,9 @@ export class BrowserRunner {
         details: {
           browser: options.browser,
         },
-        cause: error,
+        cause: cleanup.errors.length ? new AggregateError([error, ...cleanup.errors], 'Browser startup and cleanup failed') : error,
       });
-    }
+    } finally { finishStart(); }
   }
 
   public async stopSession(sessionId: string): Promise<ClosedBrowserSession> {
@@ -196,34 +208,41 @@ export class BrowserRunner {
       });
     }
 
-    try {
-      await activeSession.eventCapture.flush();
-      activeSession.eventCapture.dispose();
-      const tracePath = await stopTracing(activeSession.context, {
-        repoRoot: this.repoRoot,
-        artifactStore: this.artifactStore,
-        runId: activeSession.runId,
-        enabled: activeSession.traceEnabled,
-      });
-      await activeSession.browser.close();
-      return {
-        tracePath,
-        sinkPaths: activeSession.sinkPaths,
-      };
-    } catch (error) {
-      throw createProbefnError({
-        code: 'E_BROWSER_LAUNCH_FAILED',
-        message: `Could not close browser session ${sessionId} cleanly.`,
-        retryable: true,
-        details: {
-          sessionId,
-        },
-        cause: error,
-      });
-    } finally {
-      this.sessions.delete(sessionId);
-    }
+    if (activeSession.stopping) return activeSession.stopping;
+    activeSession.cancelled = true;
+    const stopping = (async () => {
+      await activeSession.startDone;
+      const result = await this.cleanupSession(activeSession, true);
+      if (!activeSession.browser?.isConnected() && this.sessions.get(sessionId) === activeSession) this.sessions.delete(sessionId);
+      if (result.errors.length || !activeSession.sinkPaths) {
+        throw createProbefnError({ code: 'E_BROWSER_LAUNCH_FAILED',
+          message: `Could not close browser session ${sessionId} cleanly.`, retryable: true,
+          details: { sessionId }, cause: new AggregateError(result.errors, 'Browser cleanup failed or startup was cancelled') });
+      }
+      return { tracePath: result.tracePath, sinkPaths: activeSession.sinkPaths };
+    })();
+    activeSession.stopping = stopping;
+    try { return await stopping; }
+    finally { delete activeSession.stopping; }
   }
+
+  /** Detach collection first; every cleanup stage runs even after a preceding failure. */
+  private async cleanupSession(session: ManagedBrowserSession, saveTrace: boolean): Promise<{ tracePath: string | null; errors: unknown[] }> {
+    const errors: unknown[] = [];
+    let tracePath: string | null = null;
+    try { session.eventCapture?.dispose(); } catch (error) { errors.push(error); }
+    try { await session.eventCapture?.flush(); } catch (error) { errors.push(error); }
+    if (saveTrace && session.context && session.traceEnabled) {
+      try {
+        tracePath = await stopTracing(session.context, { repoRoot: this.repoRoot, artifactStore: this.artifactStore,
+          runId: session.runId, enabled: true });
+        session.traceEnabled = false;
+      } catch (error) { errors.push(error); }
+    }
+    try { await session.browser?.close(); } catch (error) { errors.push(error); }
+    return { tracePath, errors };
+  }
+
 }
 
 function resolveBrowserType(engine: BrowserEngine) {
