@@ -54,6 +54,34 @@ export class HttpHandlers {
     return reply({ accepted: events.length }, 202);
   }
 
+  async issueStatus(request: Request) {
+    const reply = (body: unknown, status: number) => new Response(JSON.stringify(body), {
+      status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    });
+    if (!this.watch.authorizeIngest(request)) return reply({ error: "Unauthorized" }, 401);
+    let body: any;
+    try { body = await createRouteContext(request, {}, { maxBodyBytes: 4096 }).json(); }
+    catch (error) { return reply({ error: "Invalid status request" }, error instanceof PayloadTooLargeError ? 413 : 400); }
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["app", "reportId"].includes(key)) ||
+        typeof body.app !== "string" || !body.app.trim() || body.app.length > 200 ||
+        typeof body.reportId !== "string" || !body.reportId.trim() || body.reportId.length > 256) return reply({ error: "Invalid status request" }, 400);
+    try {
+      const status = await this.watch.getBugIssueStatus(body);
+      if (!status) return reply({ error: "Report not found" }, 404);
+      const { app, reportId, target, state, issueId, issueUrl } = status;
+      if (app !== body.app || reportId !== body.reportId || !["github", "linear"].includes(target) || !["pending", "processing", "reconciliation", "linked"].includes(state)) throw new Error("Invalid issue status");
+      if (state !== "linked" && (issueId !== null || issueUrl !== null)) throw new Error("Unverified issue link");
+      if (state === "linked") {
+        const url = new URL(issueUrl!);
+        if (!issueId || issueId.length > 128 || !issueUrl || issueUrl.length > 4096 || url.protocol !== "https:" || url.hostname !== (target === "github" ? "github.com" : "linear.app") || url.port || url.username || url.password || url.search || url.hash) throw new Error("Invalid issue link");
+        if (target === "github" && url.pathname !== `/${status.project}/issues/${issueId}`) throw new Error("Invalid issue destination");
+      }
+      const result = { app, reportId, target, state, issueId, issueUrl };
+      if (new TextEncoder().encode(JSON.stringify(result)).byteLength > 16384) throw new Error("Status too large");
+      return reply(result, 200);
+    } catch { return reply({ error: "Issue status unavailable" }, 503); }
+  }
+
   async query(request: Request) {
     const reply = (body: unknown, status: number) => new Response(JSON.stringify(body), {
       status, headers: { "Content-Type": "application/json" },

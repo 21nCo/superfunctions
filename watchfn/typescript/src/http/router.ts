@@ -17,6 +17,7 @@ export function createWatchFnRouter(watch: WatchFn) {
         method: "POST",
         handler: (req) => handlers.ingest(req),
       },
+      { path: "/issues/status", method: "POST", handler: (req) => handlers.issueStatus(req) },
       {
         path: "/query",
         method: "POST",
