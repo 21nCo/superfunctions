@@ -6,7 +6,7 @@ Original SPEC report semantics (lines 516–521) require lossless JSON and Markd
 
 The additive `exportReportArtifact` methods and CLI `--artifact-only` / MCP `artifactOnly: true` write the complete report but return artifact references instead of the full event index. Both JSON and Markdown are supported. JSON values, event order, rollover provenance, warnings, redacted-placeholder counts and correlation outcomes match the existing path; whitespace and property order are not promised byte-identical. Markdown bytes match.
 
-Event processing uses the storage iterator with awaited writes. Correlation retains the first witness for each existing rule (at most six events), using the same predicates as full-report correlation. Auth-profile filtering and redaction are applied to each persisted event and remaining metadata. The output is written to a unique temporary file, subject to the existing cumulative attempted-byte cap, and atomically renamed after completion. Malformed input, cap errors and filesystem failures preserve an existing report and remove temporary output. Raw `ArtifactStore.writeArtifactStream` is an internal building block whose callers own content redaction, like `writeArtifact`; report APIs enforce redaction.
+Event processing uses the storage iterator with awaited writes. Correlation retains the first witness for each existing rule (at most six events), using the same predicates as full-report correlation. Auth-profile filtering and redaction are applied to each persisted event and remaining metadata. The output is written to a unique temporary file, subject to the existing cumulative attempted-byte cap, and atomically renamed after completion. Malformed input, cap errors and filesystem failures preserve an existing report and remove temporary output. Raw `ArtifactStore.writeArtifactStream` is a low-level building block whose callers own content redaction, like `writeArtifact`; report APIs enforce redaction.
 
 ## Validation
 
@@ -16,6 +16,8 @@ Node 22:
 - Strict TypeScript checks pass: `/tmp/probe-report-types-final.log`.
 - `npm run test:report-streaming --workspace=@probefn/workspace`: exports 160,000 events to a 274,658,664-byte JSON artifact under a 64 MiB V8 heap. The same child streams the resulting artifact and validates every event ID, line number, Unicode payload and redacted password. Disposable input/output is removed. Log: `/tmp/probe-report-memory-final.log`.
 - The broader suite run before the final filesystem-error test passed 151 tests and failed one unchanged POSIX descendant-cleanup test with host `kill EPERM`; its isolated rerun passed all 12 process-lifecycle tests. No assertion or process ownership implementation was relaxed. Logs: `/tmp/probe-report-full-tests.log`, `/tmp/probe-report-lifecycle-isolated.log`.
+
+After integrating shared CI commit `f0d620096ea0f1733929574445db8434d33dd1d8`, all 153 Probe tests across 33 files and strict TypeScript checks pass. The eight shared CI/guard tests also pass. Logs: `/tmp/probe-report-merged-tests.log`, `/tmp/probe-report-merged-types.log`, `/tmp/probe-shared-ci-tests.log`. The prior intermittent process-group EPERM remains recorded above; a successful rerun does not prove that platform-sensitive behavior cannot recur.
 
 ## Remaining limits
 
