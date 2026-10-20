@@ -1,0 +1,21 @@
+flowfn/typescript/scripts/provider-acceptance.mjs
+  s_e1c5fc1a65c0cf::t_4568646d820784 6,10-13,17-20,71-81,99,101-106,109-118,121-122,140-143
+flowfn/.conduct/python-wheel-provider-readiness.md
+  s_e1c5fc1a65c0cf::t_fa50eaaa738e5c 1-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3b17bb14d111d60c81dccf06c47a4c6430e30b38",
+  "prompts": {},
+  "sessions": {
+    "s_e1c5fc1a65c0cf": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13e18-4241-7662-a24f-782076addabe",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
