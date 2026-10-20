@@ -594,12 +594,24 @@ From this monorepo, run `npm --prefix cachefn/typescript run test:ecosystem`.
 The script typechecks and bundles the current workspace source packages, then runs
 actual indexing, issued/revoked AuthFn sessions, and signed Slack requests without
 external services. It tests source integration, not registry publication or live
-provider delivery. No runtime dependencies are added to CacheFn itself. TestFn's
-integration remains pending its package being present on this development branch.
+provider delivery. No runtime dependencies are added to CacheFn itself. TestFn fixture integration uses Vitest's `beforeAll`/`afterAll` lifecycle hooks,
+with the public `testFn(config).run()` API executing the actual framework tests.
+The original specification's `testFn.beforeAll`/`afterAll` calls are not exported
+by TestFn. Run the fixture acceptance with built CacheFn and an explicit TestFn build:
+
+```sh
+CACHEFN_TESTFN_CORE=/absolute/path/to/testfn/typescript/dist/index.js node cachefn/typescript/scripts/testfn-acceptance.mjs
+```
+
+The script validates cached fixture reuse, concurrent consumers, cleanup after
+success and failure, and propagation of an intentional failed assertion. It uses
+the installed Vitest CLI; it does not replace the framework with a fake adapter.
+TestFn source is tracked but omitted from the current sparse checkout. The
+recorded run used the sibling TestFn readiness build, not a published package.
 
 Run `npm --prefix cachefn/typescript run test:coverage` for the four V8 coverage
 metrics; the V0 specification's general 95% claim does not identify a metric.
-Pending release checks include TestFn integration and native Safari/Firefox host acceptance; WebKit acceptance is not native Safari evidence.
+Pending release checks include the combined packaged TestFn dependency graph and native Safari/Firefox host acceptance; WebKit acceptance is not native Safari evidence.
 
 
 ### Unpublished dependency validation

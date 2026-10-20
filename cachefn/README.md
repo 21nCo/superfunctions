@@ -173,8 +173,10 @@ nodes, removed 239, and changed 43 existing entries. All 27 existing version
 changes are upgrades, including patched HTTP test dependencies and Rolldown's
 optional platform packages; no existing package version was downgraded.
 
-Remaining original acceptance gates are TestFn integration (the package is absent
-on this base), native Safari validation, and Firefox validation on a compatible
-host. Prior WebKit checks are engine evidence rather than native Safari evidence.
+Remaining original acceptance gates include native Safari validation and Firefox
+validation on a compatible host. TestFn fixture integration now has actual runner
+acceptance with an explicitly selected local TestFn build; see
+`.conduct/testfn-fixture-readiness.md` for its dependency boundary. TestFn source
+is tracked on this base but omitted from this worktree’s sparse checkout. Prior WebKit checks are engine evidence rather than native Safari evidence.
 The SDK READMEs define the implemented concurrency, storage, offline queue, and
 middleware boundaries; these remaining gates are not reclassified as roadmap.
