@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { wrapWithSchema, type Adapter } from "@superfunctions/db";
 import { StorageAdapter } from "./types";
 import { getWatchFnSchema } from "./schema";
+import { BotFnBugIssues } from "../integrations/botfn/store";
+import { getBugIssueSchema } from "../integrations/botfn/schema";
+import type { BotFnIssueConfig } from "../integrations/botfn/types";
 export { getWatchFnSchema } from "./schema";
 
 /** @deprecated Compatibility bridge; new applications should supply a shared DB Adapter. */
@@ -16,23 +19,27 @@ interface StoredEvent { id: string; payload: Record<string, unknown> }
 export class DatabaseStorage implements StorageAdapter {
   private readonly db?: Adapter;
   private readonly legacy?: DatabaseAdapter;
+  readonly bugIssues?: BotFnBugIssues;
 
-  constructor(database: WatchFnDatabase, private readonly tableName = "watchfn_events") {
+  constructor(database: WatchFnDatabase, private readonly tableName = "watchfn_events", botfn?: BotFnIssueConfig) {
     const schema = getWatchFnSchema(tableName);
     if (database && "create" in database && typeof database.create === "function" &&
         "findMany" in database && typeof database.findMany === "function") {
       this.db = wrapWithSchema(database as Adapter, schema);
+      if (botfn) this.bugIssues = new BotFnBugIssues(database as Adapter, botfn, tableName);
     } else if (database && "insertEvent" in database && typeof database.insertEvent === "function" &&
         "queryEvents" in database && typeof database.queryEvents === "function") {
+      if (botfn) throw new TypeError("BotFn issue ingestion requires a shared DB Adapter");
       this.legacy = database as DatabaseAdapter;
     } else {
       throw new TypeError("Database must be a shared DB Adapter or legacy insertEvent/queryEvents adapter");
     }
   }
 
-  getSchema() { return getWatchFnSchema(this.tableName); }
+  getSchema() { return { ...getWatchFnSchema(this.tableName), ...(this.bugIssues ? getBugIssueSchema() : {}) }; }
 
   async add(event: any): Promise<void> {
+    if (this.bugIssues && event?.type === "bug_report") return this.bugIssues.ingest(event);
     if (this.legacy) {
       await this.legacy.insertEvent(event);
       return;

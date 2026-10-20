@@ -1,4 +1,5 @@
 import type { WatchFnDatabase } from "../storage/database";
+import type { BotFnIssueConfig } from "../integrations/botfn/types";
 import { z } from "zod";
 
 export const WatchFnConfigSchema = z.object({
@@ -15,6 +16,7 @@ export const WatchFnConfigSchema = z.object({
   ]).optional().default("memory"),
   
   database: z.custom<WatchFnDatabase>().optional(),
+  botfn: z.custom<BotFnIssueConfig>(value => !!value && typeof value === "object" && !Array.isArray(value)).optional(),
   
   apm: z.object({
     enabled: z.boolean().default(true),
