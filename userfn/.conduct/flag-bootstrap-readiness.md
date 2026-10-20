@@ -19,3 +19,5 @@ supply appropriately scoped values or replace them with rules. Configuration
 fetch, ETag/signing, refresh scheduling, exposure delivery, flag prerequisites
 and environment overrides remain open original requirements. The broader
 UserFn specification is incomplete.
+
+The subsequent [flag context checkpoint](flag-context-readiness.md) implements local prerequisites and environment overrides; the other delivery and broader original requirements remain open.

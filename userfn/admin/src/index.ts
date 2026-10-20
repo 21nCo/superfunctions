@@ -124,8 +124,25 @@ const records = {
       key: { type: "string" },
       variations: { type: "array", items: entity },
       defaultValue: {},
+      defaultVariationId: { type: "string", minLength: 1 },
       rules: { type: "array", items: entity },
       enabled: { type: "boolean" },
+      prerequisites: {
+        type: "array",
+        items: { type: "object", properties: { key: { type: "string", minLength: 1 }, expectedValue: {} }, required: ["key", "expectedValue"], additionalProperties: false },
+      },
+      environmentOverrides: {
+        type: "object",
+        additionalProperties: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" }, defaultValue: {},
+            defaultVariationId: { type: ["string", "null"] },
+            rules: { type: "array", items: entity },
+          },
+          additionalProperties: false,
+        },
+      },
     },
     required: ["key", "variations", "defaultValue", "rules", "enabled"],
     additionalProperties: false,

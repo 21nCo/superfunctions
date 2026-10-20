@@ -175,3 +175,37 @@ resolved and have no audience rules: supply an appropriate bootstrap for the
 current user, or replace it with rule definitions before switching audiences.
 Automatic configuration fetch, ETag refresh and signed configuration delivery
 remain unimplemented; `refreshInterval` does not schedule them.
+
+## Local flag prerequisites and environments
+
+```ts
+const client = new UserFnClient({ apiKey: 'local-config', environment: 'production' });
+client.setFlags([
+  { key: 'billing-ready', enabled: true, defaultValue: false, variations: [], rules: [],
+    environmentOverrides: { production: { defaultValue: true } } },
+  { key: 'checkout', enabled: true, defaultValue: 'new', variations: [], rules: [],
+    prerequisites: [{ key: 'billing-ready', expectedValue: true }] },
+]);
+client.getFlag('checkout', 'disabled'); // 'new'
+```
+
+Prerequisites are ANDed and compare evaluated JSON values structurally, without
+coercing booleans, strings or numbers. All dependencies use the same current user
+and client environment. Missing, disabled, unmet or cyclic dependencies make the
+requested flag return its **caller-supplied fallback**; a dependency fallback
+never satisfies a prerequisite. Choose a safe fallback for gated features.
+
+Environment names are exact and case-sensitive. An omitted or unknown environment
+uses base configuration. An override can replace `enabled`, `defaultValue`,
+`defaultVariationId` and the complete ordered `rules` array. Omitted fields inherit;
+`defaultVariationId: null` clears the inherited variation so `defaultValue` can
+apply. A default variation still takes precedence if not cleared. Base
+`enabled: false` is a global kill switch that an override cannot re-enable.
+Variations and prerequisites remain shared and cannot be replaced by an override.
+
+`setFlags` validates and snapshots definitions atomically; malformed JSON values,
+nonfinite numbers, duplicate keys, unknown variation IDs and malformed rules or
+overrides throw `TypeError`, preserving the previous configuration. Returned
+structured values are copies. Existing segment operators and rule ordering remain
+unchanged. No remote configuration fetch, ETag/signature delivery or exposure
+transport is added here. See [configuration contract and evidence](../.conduct/flag-context-readiness.md).

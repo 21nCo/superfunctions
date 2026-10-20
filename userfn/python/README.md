@@ -190,3 +190,41 @@ rules: supply values appropriate to the current user or replace them with rule
 definitions before switching audiences. No network request is made for this
 bootstrap. Automatic configuration fetch, ETag refresh and signed configuration
 delivery remain unimplemented; `refresh_interval` does not schedule them.
+
+## Local flag prerequisites and environments
+
+```python
+from userfn import UserFnClient, UserFnOptions
+from userfn.types import FlagConfig, FlagPrerequisite, FlagEnvironmentOverride
+
+client = UserFnClient(UserFnOptions(api_key='local-config', environment='production'))
+client.set_flags([
+    FlagConfig(key='billing-ready', enabled=True, default_value=False,
+               variations=[], rules=[], environment_overrides={
+                   'production': FlagEnvironmentOverride(default_value=True)}),
+    FlagConfig(key='checkout', enabled=True, default_value='new', variations=[], rules=[],
+               prerequisites=[FlagPrerequisite(key='billing-ready', expected_value=True)]),
+])
+assert client.get_flag('checkout', 'disabled') == 'new'
+```
+
+Prerequisites are ANDed and compare evaluated JSON values without boolean/string
+coercion. Numbers compare using finite IEEE-754 representation for parity with
+JavaScript; use strings for exact identifiers beyond JavaScript numeric precision.
+Missing, disabled, unmet or cyclic dependencies return the requested flag's caller
+fallback. A dependency fallback cannot satisfy a prerequisite. All dependencies
+use the same user and exact, case-sensitive client environment.
+
+`FlagEnvironmentOverride` may replace `enabled`, `default_value`,
+`default_variation_id` and the complete `rules` list. Omitted fields inherit;
+explicit `default_variation_id=None` clears the inherited default variation.
+Base `enabled=False` remains a global kill switch. Prerequisites and variations
+are shared across environments. `set_flags` validates and snapshots replacements
+atomically, with malformed definitions raising `TypeError`; returned structured
+values are copies.
+
+Python rollout hashing now matches TypeScript UTF-16 semantics, including
+non-BMP identifiers. Existing Python assignments for such identifiers can change:
+read the [hash migration note](../.conduct/flag-hash-parity-readiness.md) before
+upgrading mixed SDK deployments. See the [configuration contract and evidence](../.conduct/flag-context-readiness.md)
+for remaining remote configuration, exposure and other original gates.

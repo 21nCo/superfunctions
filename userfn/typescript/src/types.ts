@@ -57,17 +57,35 @@ export interface FlagRule {
   variationId?: string; // If matched, force this variation
 }
 
+export interface FlagPrerequisite {
+  key: string;
+  expectedValue: FlagValue;
+}
+
+export interface FlagEnvironmentOverride {
+  enabled?: boolean;
+  defaultValue?: FlagValue;
+  /** null clears the inherited default variation. */
+  defaultVariationId?: string | null;
+  /** Replaces the base ordered rule list. */
+  rules?: FlagRule[];
+}
+
 export interface FlagConfig {
   key: string;
   variations: FlagVariation[];
-  defaultValue: FlagValue; // Fallback value if no rules match or flag disabled
+  defaultValue: FlagValue; // Evaluated fallback when enabled; unavailable flags use the caller fallback
   defaultVariationId?: string; // Fallback variation ID
   rules: FlagRule[];
   enabled: boolean;
+  prerequisites?: FlagPrerequisite[];
+  environmentOverrides?: Record<string, FlagEnvironmentOverride>;
 }
 
 export interface UserFnOptions {
   apiKey: string;
+  /** Exact, case-sensitive local flag environment; omitted means base configuration. */
+  environment?: string;
   endpoint?: string;
   feedbackMaxAttempts?: number;
   feedbackTimeoutMs?: number;

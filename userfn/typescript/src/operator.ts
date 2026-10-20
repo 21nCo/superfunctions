@@ -1,3 +1,4 @@
+import { validateFlagDefinitions } from './core/flags';
 import type {
   Campaign,
   FlagConfig,
@@ -164,6 +165,7 @@ export class UserFnOperatorService {
     return this.store.listFlags(scope);
   }
   async saveFlag(scope: UserFnOperatorScope, flag: FlagConfig) {
+    validateFlagDefinitions([flag]);
     await this.store.putFlag(scope, flag);
     return flag;
   }
@@ -177,6 +179,7 @@ export class UserFnOperatorService {
     );
     if (!flag) throw new Error(`UserFn flag not found: ${key}`);
     const value = { ...flag, enabled };
+    validateFlagDefinitions([value]);
     await this.store.putFlag(scope, value);
     return value;
   }

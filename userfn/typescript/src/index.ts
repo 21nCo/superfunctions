@@ -22,7 +22,7 @@ export class UserFnClient {
     this.options = options;
     this.identity = new IdentityManager();
     this.segments = new SegmentEvaluator(); 
-    this.flags = new FlagEvaluator([], this.segments);
+    this.flags = new FlagEvaluator([], this.segments, options.environment);
     this.messaging = new MessagingEngine(this.segments);
     this.surveys = new SurveyEngine(this.segments);
     this.feedback = new FeedbackEngine(options.feedbackService ?? (options.endpoint ? new HttpFeedbackService(options) : undefined), () => this.identity.getUser());

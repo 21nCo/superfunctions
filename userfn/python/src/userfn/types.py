@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Literal, Protocol
 
 UserTraits = Dict[str, Any]
@@ -55,6 +56,25 @@ class FlagRule:
     variation_id: Optional[str] = None
 
 @dataclass
+class FlagPrerequisite:
+    key: str
+    expected_value: FlagValue
+
+
+class _Unset(Enum):
+    VALUE = "unset"
+
+
+@dataclass
+class FlagEnvironmentOverride:
+    enabled: Optional[bool] = None
+    default_value: Union[FlagValue, _Unset] = _Unset.VALUE
+    # None explicitly clears the inherited default variation; omission inherits.
+    default_variation_id: Union[str, None, _Unset] = _Unset.VALUE
+    rules: Optional[List[FlagRule]] = None
+
+
+@dataclass
 class FlagConfig:
     key: str
     variations: List[FlagVariation]
@@ -62,6 +82,8 @@ class FlagConfig:
     rules: List[FlagRule]
     enabled: bool
     default_variation_id: Optional[str] = None
+    prerequisites: List[FlagPrerequisite] = field(default_factory=list)
+    environment_overrides: Dict[str, FlagEnvironmentOverride] = field(default_factory=dict)
 
 @dataclass
 class UserFnOptions:
@@ -72,6 +94,7 @@ class UserFnOptions:
     feedback_service: Optional["FeedbackService"] = None
     feedback_max_attempts: int = 3
     feedback_timeout_ms: int = 10000
+    environment: Optional[str] = None
 
 EventProperties = Dict[str, Any]
 

@@ -13,7 +13,7 @@ class UserFnClient:
         self.identity = IdentityManager()
         self.feedback = FeedbackEngine(options.feedback_service if options.feedback_service is not None else (HttpFeedbackService(options) if options.endpoint else None), self.identity.get_user)
         self.segments = SegmentEvaluator()
-        self.flags = FlagEvaluator([], self.segments)
+        self.flags = FlagEvaluator([], self.segments, options.environment)
         self.messaging = MessagingEngine(self.segments)
         # self.surveys = SurveyEngine(self.segments) # TODO: Implement SurveyEngine
 
