@@ -12,6 +12,8 @@ For the default table, the tested SQLite additive migration is:
 
 ```sql
 ALTER TABLE watchfn_events ADD COLUMN projectionVersion INTEGER;
+-- Also required by the subsequent canonical arrival-time retention writer:
+ALTER TABLE watchfn_events ADD COLUMN receivedAt INTEGER;
 ALTER TABLE watchfn_events ADD COLUMN eventType TEXT;
 ALTER TABLE watchfn_events ADD COLUMN eventApp TEXT;
 ALTER TABLE watchfn_events ADD COLUMN eventTimestamp REAL;
@@ -52,3 +54,5 @@ Each page is bounded to 1–1000 rows and resumes by storage ID, not producer re
 Remaining original gates include retention defaults and bug-specific TTL, scalable broad queries/aggregations/tag filtering, operational migration scheduling, hosted database/provider acceptance, and deployment. The original Catch specification explicitly labels the Python canonical SDK as future work; the existing Python flat-report server is not canonical Watch transport parity and is not promoted into a v1 requirement by this change.
 
 Reproduce from the repository root: `npm test --workspace @watchfn/core`, `npm exec --workspace @watchfn/core -- tsc --noEmit`, `npm run build --workspace @watchfn/core`, and `npm exec --workspace @watchfn/core -- vitest run --config tests/storage/event-indexes-sqlite.config.ts`. The native BotFn regression uses `tests/integrations/botfn-sqlite.config.ts`. Native tests require local Kysely and a working better-sqlite3 binding.
+
+Canonical event retention and the bug TTL override are now implemented by the subsequent [arrival-time retention checkpoint](event-retention-readiness.md); its explicit policy, protected issue receipts and migration requirements apply. General non-app metric retention remains open.

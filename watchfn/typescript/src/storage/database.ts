@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { wrapWithSchema, type Adapter, type WhereClause } from "@superfunctions/db";
 import { StorageAdapter } from "./types";
+import { EventRetention, backfillReceivedAt, type EventRetentionConfig, type ReceiptBackfillOptions, type RetentionPageOptions } from "./event-retention";
+export type { EventRetentionConfig, ReceiptBackfillOptions, RetentionPageOptions, RetentionPageResult } from "./event-retention";
 import { projectEvent, eventProjectionWhere, EVENT_PROJECTION_VERSION } from "./projection";
 import { getWatchFnSchema } from "./schema";
 import { BotFnBugIssues } from "../integrations/botfn/store";
@@ -21,16 +23,18 @@ export class DatabaseStorage implements StorageAdapter {
   private readonly db?: Adapter;
   private readonly legacy?: DatabaseAdapter;
   readonly bugIssues?: BotFnBugIssues;
+  private readonly retention?: EventRetention;
 
-  constructor(database: WatchFnDatabase, private readonly tableName = "watchfn_events", botfn?: BotFnIssueConfig) {
+  constructor(database: WatchFnDatabase, private readonly tableName = "watchfn_events", botfn?: BotFnIssueConfig, retention?: EventRetentionConfig) {
     const schema = getWatchFnSchema(tableName);
     if (database && "create" in database && typeof database.create === "function" &&
         "findMany" in database && typeof database.findMany === "function") {
-      this.db = wrapWithSchema(database as Adapter, schema);
+      this.db = wrapWithSchema(database as Adapter, { ...schema, ...(botfn ? getBugIssueSchema() : {}) });
       if (botfn) this.bugIssues = new BotFnBugIssues(database as Adapter, botfn, tableName);
+      if (retention) this.retention = new EventRetention(this.db, retention, tableName, botfn?.namespace);
     } else if (database && "insertEvent" in database && typeof database.insertEvent === "function" &&
         "queryEvents" in database && typeof database.queryEvents === "function") {
-      if (botfn) throw new TypeError("BotFn issue ingestion requires a shared DB Adapter");
+      if (botfn || retention) throw new TypeError("BotFn issue ingestion and retention require a shared DB Adapter");
       this.legacy = database as DatabaseAdapter;
     } else {
       throw new TypeError("Database must be a shared DB Adapter or legacy insertEvent/queryEvents adapter");
@@ -48,7 +52,7 @@ export class DatabaseStorage implements StorageAdapter {
     // Snapshot JSON before handing it to an asynchronous backend. Storage identity
     // is distinct from producer IDs; duplicate event IDs remain separate arrivals.
     const payload = JSON.parse(JSON.stringify(event));
-    await this.db!.create({ model: this.tableName, data: { id: randomUUID(), payload, ...projectEvent(payload) } });
+    await this.db!.create({ model: this.tableName, data: { id: randomUUID(), payload, ...projectEvent(payload), receivedAt: Date.now() } });
   }
 
   async query(filter: (event: any) => boolean): Promise<any[]> {
@@ -97,6 +101,16 @@ export class DatabaseStorage implements StorageAdapter {
       if (updated !== 1) throw new Error("Event changed during offline projection backfill");
     }
     return { processed: rows.length, nextCursor: rows.length === limit ? rows[rows.length - 1].id : null };
+  }
+
+  cleanupRetention(options: RetentionPageOptions = {}) {
+    if (!this.retention) throw new Error("Event retention is not configured");
+    return this.retention.cleanup(options);
+  }
+
+  backfillReceivedAt(options: ReceiptBackfillOptions) {
+    if (!this.db) throw new Error("Receipt backfill requires a shared DB Adapter");
+    return backfillReceivedAt(this.db, this.tableName, options);
   }
 
   async executeQuery(options: any): Promise<any[]> {
