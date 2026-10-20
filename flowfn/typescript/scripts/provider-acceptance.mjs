@@ -3,14 +3,21 @@
  * loopback-bound Redis/PostgreSQL containers, and removes them in finally.
  * Add --python for the complete Python source suite (requires uv; defaults to
  * Python 3.12, overridable with FLOWFN_PYTHON_VERSION).
+ * Use --python-wheel instead to test a fresh installed wheel outside the checkout.
  */
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { cpSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 const cwd = fileURLToPath(new URL("..", import.meta.url));
 const suffix = randomUUID();
 const containers = [];
-const python = process.argv.includes("--python");
+const pythonWheel = process.argv.includes("--python-wheel");
+const python = pythonWheel || process.argv.includes("--python");
+const pythonRoot = fileURLToPath(new URL("../../python/", import.meta.url));
+let wheelRoot;
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, {
     cwd,
@@ -61,6 +68,17 @@ async function start(kind, image, port, extra = []) {
   throw new Error(`${kind} did not become ready`);
 }
 try {
+  let pythonRequirement = ".[dev,redis,postgres]";
+  if (pythonWheel) {
+    wheelRoot = mkdtempSync(join(tmpdir(), "flowfn-wheel-acceptance-"));
+    const wheelDir = join(wheelRoot, "wheels");
+    command("uv", ["build", "--wheel", "--out-dir", wheelDir, pythonRoot], { stdio: "inherit" });
+    const wheels = readdirSync(wheelDir).filter(name => name.endsWith(".whl"));
+    if (wheels.length !== 1) throw new Error("Expected exactly one newly built FlowFn wheel");
+    pythonRequirement = `flowfn[dev,redis,postgres] @ ${pathToFileURL(join(wheelDir, wheels[0])).href}`;
+    cpSync(join(pythonRoot, "tests"), join(wheelRoot, "tests"), { recursive: true,
+      filter: source => !source.includes("__pycache__") && !source.endsWith(".pyc") });
+  }
   if (!python) command('npm', ['run', 'build'], { stdio: 'inherit' });
   const redis = await start("redis", "redis:7-alpine", 6379);
   const postgres = await start("postgres", "postgres:16-alpine", 5432, [
@@ -78,19 +96,30 @@ try {
     "30000",
     "src/adapters/redis.test.ts",
     "src/adapters/postgres/postgres.test.ts",
-    ...process.argv.slice(2).filter(arg => arg !== "--python"),
+    ...process.argv.slice(2).filter(arg => arg !== "--python" && arg !== "--python-wheel"),
   ];
+  const environment = {
+    ...process.env,
+    FLOWFN_REDIS_URL: `redis://127.0.0.1:${redis}`,
+    FLOWFN_POSTGRES_URL: `postgres://postgres:flowfn-local-acceptance@127.0.0.1:${postgres}/postgres`,
+  };
+  if (pythonWheel) delete environment.PYTHONPATH;
   command(python ? "uv" : process.env.FLOWFN_BENCHMARK ? process.execPath : npm ? process.execPath : "npm", python ? [
     "run", "--isolated", "--no-project", "--python", process.env.FLOWFN_PYTHON_VERSION ?? "3.12",
-    "--with", ".[dev,redis,postgres]", "python", "-m", "pytest", "tests", "-o", "addopts=", "-q",
+    "--with", pythonRequirement, "python", ...(pythonWheel ? ["-I", "-c", `
+import pathlib, sys
+import flowfn, pytest
+location = pathlib.Path(flowfn.__file__).resolve()
+assert "site-packages" in location.parts, location
+assert pathlib.Path.cwd() not in location.parents, location
+print("Installed wheel import verified:", location, flush=True)
+sys.path.insert(0, str(pathlib.Path.cwd()))
+raise SystemExit(pytest.main(["tests", "-o", "addopts=", "-o", "asyncio_mode=auto", "-q"]))
+`] : ["-m", "pytest", "tests", "-o", "addopts=", "-q"]),
   ] : process.env.FLOWFN_BENCHMARK ? ["--expose-gc", "scripts/queue-benchmark.mjs"] : npm ? [npm, ...args] : args, {
     stdio: "inherit",
-    ...(python ? { cwd: fileURLToPath(new URL("../../python/", import.meta.url)) } : {}),
-    env: {
-      ...process.env,
-      FLOWFN_REDIS_URL: `redis://127.0.0.1:${redis}`,
-      FLOWFN_POSTGRES_URL: `postgres://postgres:flowfn-local-acceptance@127.0.0.1:${postgres}/postgres`,
-    },
+    ...(python ? { cwd: wheelRoot ?? pythonRoot } : {}),
+    env: environment,
   });
 } finally {
   const cleanupErrors = [];
@@ -107,6 +136,10 @@ try {
       ]);
       if (remaining) throw new Error(`Container cleanup failed: ${name}`);
     } catch (error) { cleanupErrors.push(error); }
+  }
+  if (wheelRoot) {
+    try { rmSync(wheelRoot, { recursive: true, force: true }); }
+    catch (error) { cleanupErrors.push(error); }
   }
   if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "FlowFn acceptance container cleanup failed");
 }
