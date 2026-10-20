@@ -68,14 +68,31 @@ export class BrowserClient {
     if (typeof window === "undefined") return;
     if (!name.trim()) throw new TypeError("Event name is required");
     if (Math.random() >= this.config.sampleRate!) return;
-    if (this.queue.length >= this.config.maxQueueSize!) throw new Error("WatchFn event queue is full");
-    const event = JSON.stringify({ type: "track", name, properties, timestamp: new Date().toISOString(),
+    this.enqueue({ type: "track", name, properties, timestamp: new Date().toISOString(),
       projectId: this.config.projectId, url: window.location.href, userAgent: navigator.userAgent });
-    if (new TextEncoder().encode(event).byteLength > 64 * 1024) throw new RangeError("WatchFn event exceeds 64 KiB");
-    this.queue.push(event);
     // The shared promise is also available to callers through flush(). Automatic
     // errors are surfaced without creating an unhandled rejection or retry loop.
     if (!this.pending) void this.flush().catch(error => this.report(error));
+  }
+
+  /** Deliver a canonical envelope unchanged, independent of DOM availability and RUM sampling.
+   * Rejected deliveries remain queued for an explicit flush/close retry. */
+  async capture(event: Record<string, unknown>): Promise<void> {
+    const serialized = this.enqueue(event);
+    // A capture can arrive as a previous drain is settling. Join that drain,
+    // then start another if this snapshot has not yet been acknowledged.
+    do { await this.flush(); } while (this.queue.includes(serialized));
+  }
+
+  private enqueue(event: Record<string, unknown>): string {
+    if (this.closed) throw new Error("WatchFn browser client is closed");
+    if (!event || typeof event !== "object" || Array.isArray(event)) throw new TypeError("Event must be an object");
+    if (this.queue.length >= this.config.maxQueueSize!) throw new Error("WatchFn event queue is full");
+    const serialized = JSON.stringify(event);
+    if (typeof serialized !== "string" || !serialized.startsWith("{")) throw new TypeError("Event must serialize to an object");
+    if (new TextEncoder().encode(serialized).byteLength > 64 * 1024) throw new RangeError("WatchFn event exceeds 64 KiB");
+    this.queue.push(serialized);
+    return serialized;
   }
 
   /** Join the current delivery attempt. Failed events stay queued for a later call. */
