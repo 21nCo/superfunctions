@@ -61,6 +61,12 @@ if job.opts.prevent_duplicates and ARGV[4]=='1' then
   end
   if first then return {redis.call('HGET',base..':jobs',first),0} end
 end
+local relative=tonumber(ARGV[5])
+if relative and relative>=0 then
+  job.timestamp=now; job.available_at=now+relative
+  raw=patch(raw,'timestamp',tostring(now))
+  raw=patch(raw,'available_at',tostring(job.available_at))
+end
 local due=job.available_at
 if due==cjson.null then due=job.timestamp+job.delay end
 if job.delay==0 and due<=job.timestamp then
@@ -99,6 +105,7 @@ local job=cjson.decode(raw)
 if job.opts.backoff~=cjson.null and job.opts.backoff.type=='custom' then return {'fallback'} end
 local expires=now+tonumber(ARGV[2])
 raw=patch(raw,'state','"active"')
+raw=patch(raw,'processed_on',tostring(now))
 raw=patch(raw,'lease_token',cjson.encode(ARGV[1]))
 raw=patch(raw,'lease_expires_at',tostring(expires))
 local position=redis.call('ZSCORE',base..':sequence',id)
@@ -148,6 +155,11 @@ if policy==true then
   redis.call('ZREM',base..':sequence',incoming.id)
 else
   local raw=ARGV[1]
+  local relative=tonumber(ARGV[4])
+  if relative and relative>=0 and (incoming.state=='waiting' or incoming.state=='delayed') then
+    incoming.available_at=now+relative
+    raw=patch(raw,'available_at',tostring(incoming.available_at))
+  end
   if incoming.state=='active' then
     raw=patch(raw,'lease_expires_at',tostring(now+tonumber(ARGV[2])))
     redis.call('ZADD',base..':leases',now+tonumber(ARGV[2]),incoming.id)

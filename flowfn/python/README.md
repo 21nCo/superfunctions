@@ -275,3 +275,28 @@ not an installed-wheel or hosted deployment claim.
 A durable stream acknowledgment after its subscription loses ownership raises
 `RuntimeError("Stream delivery ownership changed")`; it does not release pending
 retention. A replacement consumer may reclaim and acknowledge that entry.
+
+### Relative queue delays and storage clocks
+
+`Queue.add(..., JobOptions(delay=...))` and automatic backoff retries measure the
+chosen delay from the Redis/PostgreSQL storage clock at admission. Retry backoff
+is passed separately from the job's original `delay`, so a different retry
+interval is not confused with the initial delay. Fractional custom backoff is
+rounded up to the next millisecond. Dependency-aware transactions follow the same
+rule. Claims record `processed_on` from storage; worker duration metrics compare
+worker-local start/end times instead of mixing the two clocks.
+
+The relative-duration intent is private, used once, and not serialized into job
+payloads. Existing stored schedules and legacy migration retain their absolute
+due times. Direct adapter callers that supply `Job.available_at` keep the
+existing absolute-schedule semantics; omitting it starts a relative `Job.delay`
+from storage time. Explicitly re-enqueue old incorrectly scheduled work rather
+than expecting this release to rewrite its due time. Memory/custom adapters keep
+their existing local-clock behavior.
+
+PostgreSQL automatically installs versioned enqueue/claim/update functions within
+its existing initialization transaction. Older function signatures remain
+available; table layout and stored payload fields are unchanged. New Redis
+scripts preserve JSON payloads and add the duration as a separate script argument.
+These changes do not fix jumps in the storage server's own clock or establish
+completion/retention timestamps as storage-authoritative.

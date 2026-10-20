@@ -125,3 +125,14 @@ _enqueue_receipt = _enqueue_receipt.replace('flowfn_py_enqueue_v2', 'flowfn_py_e
 _enqueue_receipt = _enqueue_receipt.replace('RETURN existing;', "RETURN jsonb_build_object('job',existing,'created',false);")
 _enqueue_receipt = _enqueue_receipt.replace('RETURN p_payload;', "RETURN jsonb_build_object('job',p_payload,'created',true);")
 SCHEMA += _enqueue_receipt
+
+# New signatures carry a one-shot relative duration separately from persisted JSON.
+# Existing clients retain their absolute schedule functions and stored layout.
+_relative_enqueue = _enqueue_receipt.replace('flowfn_py_enqueue_v3', 'flowfn_py_enqueue_v4').replace('p_payload JSONB)', 'p_payload JSONB,p_relative BIGINT)')
+_relative_enqueue = _relative_enqueue.replace("  due_at:=COALESCE", "  IF p_relative IS NOT NULL THEN\n    p_payload:=p_payload || jsonb_build_object('timestamp',stamp,'available_at',stamp+p_relative);\n  END IF;\n  due_at:=COALESCE", 1)
+_claim = SCHEMA[SCHEMA.index('CREATE OR REPLACE FUNCTION flowfn_py_dequeue_v2'):SCHEMA.index('CREATE OR REPLACE FUNCTION flowfn_py_renew_v2')]
+_claim = _claim.replace('flowfn_py_dequeue_v2', 'flowfn_py_dequeue_v3').replace("'state','active','lease_token'", "'state','active','processed_on',stamp,'lease_token'")
+_relative_update = SCHEMA[SCHEMA.index('CREATE OR REPLACE FUNCTION flowfn_py_update_v2'):SCHEMA.index('CREATE OR REPLACE FUNCTION flowfn_py_apply_v2')]
+_relative_update = _relative_update.replace('flowfn_py_update_v2', 'flowfn_py_update_v3').replace('p_dlq JSONB)', 'p_dlq JSONB,p_relative BIGINT)')
+_relative_update = _relative_update.replace("  policy:=CASE", "  IF p_relative IS NOT NULL AND status IN ('waiting','delayed') THEN\n    p_payload:=jsonb_set(p_payload,'{available_at}',to_jsonb(stamp+p_relative));\n  END IF;\n  policy:=CASE", 1)
+SCHEMA += _relative_enqueue + _claim + _relative_update

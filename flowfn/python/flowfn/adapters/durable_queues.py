@@ -68,7 +68,10 @@ class DurableQueues(ABC):
         adapter._now = lambda: now  # type: ignore[method-assign]
         if method == 'enqueue':
             incoming = args[1]
-            if incoming.delay == 0 and (incoming.available_at is None or incoming.available_at <= incoming.timestamp):
+            if incoming._relative_delay_ms is not None:
+                incoming.timestamp = now
+                incoming.available_at = now + incoming._relative_delay_ms
+            elif incoming.delay == 0 and (incoming.available_at is None or incoming.available_at <= incoming.timestamp):
                 incoming.available_at = now
         if method == 'dequeue':
             for candidate in adapter._queues[args[0]]:
@@ -81,6 +84,8 @@ class DurableQueues(ABC):
             stored = next((entry for entry in adapter._queues[queue] if entry.id == incoming.id), None)
             if stored is None or stored.state != JobStatus.ACTIVE or stored.lease_token != incoming.lease_token or (stored.lease_expires_at or 0) <= now:
                 raise JobLeaseError('Job lease has expired or ownership changed')
+        if method == 'update_job' and incoming._relative_delay_ms is not None and incoming.state in (JobStatus.WAITING, JobStatus.DELAYED):
+            incoming.available_at = now + incoming._relative_delay_ms
         if method == '_renew_job':
             assert stored is not None
             stored.lease_expires_at = now + self.reclaim_after_ms
@@ -93,6 +98,7 @@ class DurableQueues(ABC):
                 result._enqueue_created = args[1]._enqueue_created
         if method == 'dequeue' and result is not None:
             self._restore_backoff(result)
+            result.processed_on = now
             result.lease_token = uuid.uuid4().hex
             result.lease_expires_at = now + self.reclaim_after_ms
         return result
@@ -107,7 +113,12 @@ class DurableQueues(ABC):
     async def enqueue(self, queue: str, job: Job) -> Job:
         self._restore_backoff(job)
         json.dumps(job.model_dump(mode='json'),allow_nan=False)
-        result: Job = await self._transition('enqueue', queue, job.model_copy(deep=True))
+        incoming = job.model_copy(deep=True)
+        if incoming._relative_delay_ms is None and incoming.available_at is None:
+            incoming._relative_delay_ms = incoming.delay
+        result: Job = await self._transition('enqueue', queue, incoming)
+        job._relative_delay_ms = None
+        result._relative_delay_ms = None
         job._enqueue_created = result._enqueue_created
         return result
 
@@ -127,6 +138,7 @@ class DurableQueues(ABC):
         key = (queue,job.id,job.lease_token)
         try:
             await self._transition('update_job', queue, job.model_copy(deep=True))
+            job._relative_delay_ms = None
         except JobLeaseError:
             event = self._job_events.get(key)
             if event is not None:

@@ -68,7 +68,10 @@ class Queue:
                 state=JobStatus.DELAYED if job_options.delay else JobStatus.WAITING,
             )
 
+            job._relative_delay_ms = job_options.delay
             result = await self._adapter.enqueue(self.name, job)
+            job._relative_delay_ms = None
+            result._relative_delay_ms = None
             if job._enqueue_created is True:
                 await self._emit("job:created", {"job_id": result.id})
             return result
@@ -162,7 +165,9 @@ class Queue:
             await self._emit("job:active", {"job_id": current.id})
             return await self._observer.run("flowfn.job.execute", {"flowfn.queue.name": self.name, "flowfn.job.id": current.id}, lambda: original_handler(current), carrier=current.trace_context, consumer=True)
         handler = observed_handler
-        job.processed_on = self._now()
+        processing_started = self._now()
+        if job.lease_token is None or job.processed_on is None:
+            job.processed_on = processing_started
         lost = self._adapter.lease_loss_event(self.name,job)
         ownership_lost = False
 
@@ -224,7 +229,8 @@ class Queue:
                             return
                     if backoff.max_delay is not None:
                         delay = min(delay, backoff.max_delay)
-                job.available_at = self._now() + delay
+                job._relative_delay_ms = math.ceil(delay)
+                job.available_at = self._now() + job._relative_delay_ms
                 job.state = JobStatus.DELAYED if delay else JobStatus.WAITING
             else:
                 job.state = JobStatus.FAILED
@@ -234,16 +240,17 @@ class Queue:
                 if not ownership_lost and not (lost is not None and lost.is_set()):
                     try:
                         await self._adapter.update_job(self.name, job)
+                        job._relative_delay_ms = None
                     except JobLeaseError:
                         await self._emit("job:stalled", {"job_id": job.id})
                         raise
                     if job.state in (JobStatus.COMPLETED, JobStatus.FAILED):
-                        await self._emit("job:" + job.state.value, {"job_id": job.id, "duration": max(0, (job.finished_on or 0) - (job.processed_on or 0)), "error": job.failed_reason if job.state == JobStatus.FAILED else None})
+                        await self._emit("job:" + job.state.value, {"job_id": job.id, "duration": max(0, (job.finished_on or processing_started) - processing_started), "error": job.failed_reason if job.state == JobStatus.FAILED else None})
                     if self._metrics is not None and job.state in (JobStatus.COMPLETED,JobStatus.FAILED):
                         if job.state == JobStatus.COMPLETED:
                             self._metrics.increment('queue.throughput',{'queue':self.name})
                         if job.processed_on is not None and job.finished_on is not None:
-                            self._metrics.record('queue.job.duration',max(0,job.finished_on-job.processed_on),{'queue':self.name})
+                            self._metrics.record('queue.job.duration',max(0,job.finished_on-processing_started),{'queue':self.name})
             finally:
                 await self._adapter.release_job_lease(self.name,job)
 

@@ -191,7 +191,7 @@ async def transition(owner: Any, method: str, args: tuple[Any,...]) -> Any:
             raw=json.dumps([job.name,job.data],sort_keys=True,separators=(',',':'),allow_nan=False)
             job.opts.deduplication_key=hashlib.sha256(raw.encode()).hexdigest()
         dedup=quote(job.opts.deduplication_key,safe='') if job.opts.deduplication_key is not None else ''
-        raw=await owner._queue_scripts['enqueue'](keys=[base,owner.prefix+':queues'],args=[job.model_dump_json(),queue,dedup,'1' if job.opts.deduplication_key is not None else '0'])
+        raw=await owner._queue_scripts['enqueue'](keys=[base,owner.prefix+':queues'],args=[job.model_dump_json(),queue,dedup,'1' if job.opts.deduplication_key is not None else '0',job._relative_delay_ms if job._relative_delay_ms is not None else -1])
         result=Job.model_validate_json(raw[0])
         result._enqueue_created = bool(raw[1])
         owner._restore_backoff(result)
@@ -204,7 +204,7 @@ async def transition(owner: Any, method: str, args: tuple[Any,...]) -> Any:
             return Job.model_validate_json(reply[1])
     if method=='update_job' and not args[1].opts.wait_for:
         from flowfn.adapters.native_queues import failure_record
-        reply=await owner._queue_scripts['update'](keys=[base],args=[args[1].model_dump_json(),owner.reclaim_after_ms,await failure_record(queue,args[1])])
+        reply=await owner._queue_scripts['update'](keys=[base],args=[args[1].model_dump_json(),owner.reclaim_after_ms,await failure_record(queue,args[1]),args[1]._relative_delay_ms if args[1]._relative_delay_ms is not None else -1])
         if reply==0:
             raise JobLeaseError('Job lease has expired or ownership changed')
         if reply==1:

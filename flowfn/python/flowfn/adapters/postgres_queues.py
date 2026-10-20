@@ -101,7 +101,7 @@ async def ensure_native(owner: Any, migrate: bool = False) -> None:
         return
     pool = await owner._database()
     async with pool.acquire() as connection:
-        if not await connection.fetchval("SELECT to_regprocedure('flowfn_py_enqueue_v3(text,text,text,jsonb)')"):
+        if not await connection.fetchval("SELECT to_regprocedure('flowfn_py_enqueue_v4(text,text,text,jsonb,bigint)')"):
             async with connection.transaction():
                 await connection.execute('SELECT pg_advisory_xact_lock(490182736)')
                 await connection.execute(_SCHEMA)
@@ -142,14 +142,14 @@ async def transition(owner: Any, method: str, args: tuple[Any,...]) -> Any:
         if job.opts.prevent_duplicates and job.opts.deduplication_key is None:
             raw=json.dumps([job.name,job.data],sort_keys=True,separators=(',',':'),allow_nan=False)
             job.opts.deduplication_key=hashlib.sha256(raw.encode()).hexdigest()
-        raw=await pool.fetchval('SELECT flowfn_py_enqueue_v3($1,$2,$3,$4)',owner.namespace,queue,lock,job.model_dump_json())
+        raw=await pool.fetchval('SELECT flowfn_py_enqueue_v4($1,$2,$3,$4,$5)',owner.namespace,queue,lock,job.model_dump_json(),job._relative_delay_ms)
         receipt=json.loads(raw)
         result=Job.model_validate(receipt["job"])
         result._enqueue_created = bool(receipt["created"])
         owner._restore_backoff(result)
         return result
     if method=='dequeue':
-        raw=await pool.fetchval('SELECT flowfn_py_dequeue_v2($1,$2,$3,$4,$5)',owner.namespace,queue,lock,uuid.uuid4().hex,owner.reclaim_after_ms)
+        raw=await pool.fetchval('SELECT flowfn_py_dequeue_v3($1,$2,$3,$4,$5)',owner.namespace,queue,lock,uuid.uuid4().hex,owner.reclaim_after_ms)
         reply=json.loads(raw)
         if reply['kind']=='empty':
             return None
@@ -157,7 +157,7 @@ async def transition(owner: Any, method: str, args: tuple[Any,...]) -> Any:
             return Job.model_validate(reply['job'])
     if method=='update_job' and not args[1].opts.wait_for:
         from flowfn.adapters.native_queues import failure_record
-        reply=await pool.fetchval('SELECT flowfn_py_update_v2($1,$2,$3,$4,$5,$6)',owner.namespace,queue,lock,args[1].model_dump_json(),owner.reclaim_after_ms,await failure_record(queue,args[1]))
+        reply=await pool.fetchval('SELECT flowfn_py_update_v3($1,$2,$3,$4,$5,$6,$7)',owner.namespace,queue,lock,args[1].model_dump_json(),owner.reclaim_after_ms,await failure_record(queue,args[1]),args[1]._relative_delay_ms)
         if reply==0:
             raise JobLeaseError('Job lease has expired or ownership changed')
         if reply==1:

@@ -78,6 +78,9 @@ class Job(BaseModel):
     # Transient receipt from the atomic enqueue operation; never persisted.
     _enqueue_created: Optional[bool] = PrivateAttr(default=None)
 
+    # One-shot relative scheduling intent; never serialized into stored jobs.
+    _relative_delay_ms: Optional[int] = PrivateAttr(default=None)
+
     trace_context: Optional[dict[str, str]] = None
 
     # Timing
