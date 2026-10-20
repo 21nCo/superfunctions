@@ -1,6 +1,6 @@
 import { DeliveryLease } from '../stream/delivery-lease.js';
 import { boundedShutdown, shutdownTimeout, type ShutdownOptions } from '../core/shutdown.js';
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { validateWorkflowMutation, type WorkflowMutation } from '../storage/workflow-control.js';
 import { FlowAdapter } from "./base.js";
 import { Job, QueueStats } from "../queue/types.js";
@@ -61,6 +61,24 @@ export class RedisAdapter implements FlowAdapter {
     this.prefix = options.prefix || "flowfn:";
   }
 
+  private readonly scriptHashes = new Map<string, string>();
+
+  private async executeScript(script: string, keyCount: number, ...args: Array<string | number | Buffer>): Promise<unknown> {
+    let hash = this.scriptHashes.get(script);
+    if (!hash) {
+      hash = createHash("sha1").update(script).digest("hex");
+      this.scriptHashes.set(script, hash);
+    }
+    try {
+      return await this.redis.evalsha(hash, keyCount, ...args);
+    } catch (error) {
+      // Only NOSCRIPT proves the command did not execute. A transport failure
+      // may follow a committed mutation and must never cause blind replay.
+      if (!(error instanceof Error) || !error.message.startsWith("NOSCRIPT ")) throw error;
+      return this.redis.eval(script, keyCount, ...args);
+    }
+  }
+
   private key(type: string, name: string): string {
     return `${this.prefix}${type}:${name}`;
   }
@@ -70,7 +88,7 @@ export class RedisAdapter implements FlowAdapter {
   }
   async createJob(queue: string, job: Job): Promise<Job> {
     const value = { ...job, timestamp: Date.now(), state: job.opts.delay ? "delayed" : "waiting", delay: job.opts.delay ?? 0 };
-    const result = await this.redis.eval(`${QUEUE_INDEX_LUA}
+    const result = await this.executeScript(`${QUEUE_INDEX_LUA}
       local proposed = cjson.decode(ARGV[1])
       local existing = redis.call('HGET', KEYS[1], proposed.id)
       if existing then return existing end
@@ -99,7 +117,7 @@ export class RedisAdapter implements FlowAdapter {
     return job.id;
   }
   async dequeue(queue: string, name?: string, leaseDuration = 30_000): Promise<Job | null> {
-    const result = await this.redis.eval(
+    const result = await this.executeScript(
       `
       ${QUEUE_INDEX_LUA}
       for _,id in ipairs(redis.call('ZRANGEBYSCORE',KEYS[2],'-inf',ARGV[1])) do
@@ -150,7 +168,7 @@ export class RedisAdapter implements FlowAdapter {
     return result ? JSON.parse(String(result)) : null;
   }
   private async writeJob(queue: string, job: Job, enqueue = false): Promise<void> {
-    const result = await this.redis.eval(`${QUEUE_INDEX_LUA}
+    const result = await this.executeScript(`${QUEUE_INDEX_LUA}
       local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
       local value = cjson.decode(ARGV[1])
       local raw = redis.call('HGET', KEYS[1], value.id)
@@ -178,7 +196,7 @@ export class RedisAdapter implements FlowAdapter {
   }
   async saveJob(queue: string, job: Job): Promise<void> { await this.writeJob(queue, job); }
   async renewJobLease(queue: string, id: string, token: string, duration: number): Promise<boolean> {
-    return Number(await this.redis.eval(`
+    return Number(await this.executeScript(`
       local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
       local raw = redis.call('HGET',KEYS[1],ARGV[1]); if not raw then return 0 end
       local job = cjson.decode(raw)
@@ -188,7 +206,7 @@ export class RedisAdapter implements FlowAdapter {
     `, 1, this.key("jobs", queue), id, token, Date.now(), duration)) === 1;
   }
   async recoverStalledJobs(queue: string, maxStalledCount: number): Promise<Job[]> {
-    const result = await this.redis.eval(`${QUEUE_INDEX_LUA}
+    const result = await this.executeScript(`${QUEUE_INDEX_LUA}
       local time = redis.call('TIME'); local now = tonumber(time[1])*1000 + math.floor(tonumber(time[2])/1000)
       local recovered = {}
       for _,raw in ipairs(redis.call('HVALS',KEYS[1])) do
@@ -205,7 +223,7 @@ export class RedisAdapter implements FlowAdapter {
     return result.map(raw => JSON.parse(raw));
   }
   async removeJob(queue: string, id: string): Promise<void> {
-    await this.redis.eval(`
+    await this.executeScript(`
       local raw = redis.call('HGET',KEYS[1],ARGV[1])
       if raw then local job = cjson.decode(raw); if job.queueMember then redis.call('ZREM',KEYS[3],job.queueMember) end end
       redis.call('HDEL',KEYS[1],ARGV[1]); redis.call('ZREM',KEYS[2],ARGV[1]); return 1
@@ -354,7 +372,7 @@ export class RedisAdapter implements FlowAdapter {
     const pending = new Map<string, string>(),
       commits = new Set<ReturnType<typeof setTimeout>>();
     const release = async (id: string, token: string, requeue: boolean) => {
-      return Boolean(await this.redis.eval(`
+      return Boolean(await this.executeScript(`
 if redis.call('EXISTS',KEYS[1])==0 then redis.call('HDEL',KEYS[2],ARGV[2]); return 0 end
 local p=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[2],ARGV[2],1)
 if #p==0 or p[1][2]~=ARGV[3] or redis.call('HGET',KEYS[2],ARGV[2])~=ARGV[4] then return 0 end
@@ -367,7 +385,7 @@ return redis.call('XACK',KEYS[1],ARGV[1],ARGV[2])
     const deliver = (id: string, fields: string[], token: string, acquiredAt: number) => {
       pending.set(id, token);
       callbacks.add(token);
-      const lease = new DeliveryLease(options.visibilityTimeout ?? 30000, acquiredAt, async () => Boolean(await this.redis.eval(`
+      const lease = new DeliveryLease(options.visibilityTimeout ?? 30000, acquiredAt, async () => Boolean(await this.executeScript(`
 -- flowfn renew stream delivery
 if redis.call('HGET',KEYS[2],ARGV[2])~=ARGV[4] then return 0 end
 local p=redis.call('XPENDING',KEYS[1],ARGV[1],ARGV[2],ARGV[2],1)
@@ -422,7 +440,7 @@ return #claimed
           if (room > 0) {
             const attempt = randomUUID();
             const acquiredAt = performance.now();
-            const messages = await this.redis.eval(`
+            const messages = await this.executeScript(`
 local messages={}
 -- A retry is claimable only after its previous token was released atomically.
 for i=1,tonumber(ARGV[3]) do
@@ -533,7 +551,7 @@ return messages
       );
     }
     if (strategy.maxAgeSeconds !== undefined) {
-      removed += Number(await this.redis.eval(`
+      removed += Number(await this.executeScript(`
 local time=redis.call('TIME')
 local cutoff=math.floor(tonumber(time[1])*1000+tonumber(time[2])/1000-tonumber(ARGV[1])*1000)
 if cutoff<0 then return 0 end
@@ -545,7 +563,7 @@ return redis.call('XTRIM',KEYS[1],'MINID',string.format('%.0f',cutoff+1)..'-0')
 
   async mutateWorkflowState(id: string, change: WorkflowMutation): Promise<WorkflowExecution | null> {
     validateWorkflowMutation(change, id);
-    const encoded = await this.redis.eval(`
+    const encoded = await this.executeScript(`
 local raw=redis.call('GET',KEYS[1]); local stored=raw and cjson.decode(raw) or nil
 local current=stored
 if stored and stored.__flowfnState then current=cjson.decode(stored.__flowfnState); current.revision=stored.revision; current.lease=stored.lease end
@@ -582,7 +600,7 @@ local output=cjson.encode(next); redis.call('SET',KEYS[1],output); return output
     workflowId: string,
     state: WorkflowExecution,
   ): Promise<void> {
-    const saved = await this.redis.eval(`local raw=redis.call('GET',KEYS[1]); if raw and cjson.decode(raw).revision then return 0 end; redis.call('SET',KEYS[1],ARGV[1]); return 1`, 1, this.key('workflow', workflowId), JSON.stringify(state));
+    const saved = await this.executeScript(`local raw=redis.call('GET',KEYS[1]); if raw and cjson.decode(raw).revision then return 0 end; redis.call('SET',KEYS[1],ARGV[1]); return 1`, 1, this.key('workflow', workflowId), JSON.stringify(state));
     if (!saved) throw new Error('Workflow requires a revision-checked mutation');
   }
 

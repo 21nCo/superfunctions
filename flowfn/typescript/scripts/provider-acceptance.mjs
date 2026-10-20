@@ -1,6 +1,8 @@
 /** Run from any directory: node flowfn/typescript/scripts/provider-acceptance.mjs.
  * Requires Docker and the workspace npm installation. Creates only disposable
  * loopback-bound Redis/PostgreSQL containers, and removes them in finally.
+ * Add --python for the complete Python source suite (requires uv; defaults to
+ * Python 3.12, overridable with FLOWFN_PYTHON_VERSION).
  */
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -8,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const cwd = fileURLToPath(new URL("..", import.meta.url));
 const suffix = randomUUID();
 const containers = [];
+const python = process.argv.includes("--python");
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, {
     cwd,
@@ -58,7 +61,7 @@ async function start(kind, image, port, extra = []) {
   throw new Error(`${kind} did not become ready`);
 }
 try {
-  command('npm', ['run', 'build'], { stdio: 'inherit' });
+  if (!python) command('npm', ['run', 'build'], { stdio: 'inherit' });
   const redis = await start("redis", "redis:7-alpine", 6379);
   const postgres = await start("postgres", "postgres:16-alpine", 5432, [
     "-e",
@@ -75,10 +78,14 @@ try {
     "30000",
     "src/adapters/redis.test.ts",
     "src/adapters/postgres/postgres.test.ts",
-    ...process.argv.slice(2),
+    ...process.argv.slice(2).filter(arg => arg !== "--python"),
   ];
-  command(process.env.FLOWFN_BENCHMARK ? process.execPath : npm ? process.execPath : "npm", process.env.FLOWFN_BENCHMARK ? ["--expose-gc", "scripts/queue-benchmark.mjs"] : npm ? [npm, ...args] : args, {
+  command(python ? "uv" : process.env.FLOWFN_BENCHMARK ? process.execPath : npm ? process.execPath : "npm", python ? [
+    "run", "--isolated", "--no-project", "--python", process.env.FLOWFN_PYTHON_VERSION ?? "3.12",
+    "--with", ".[dev,redis,postgres]", "python", "-m", "pytest", "tests", "-o", "addopts=", "-q",
+  ] : process.env.FLOWFN_BENCHMARK ? ["--expose-gc", "scripts/queue-benchmark.mjs"] : npm ? [npm, ...args] : args, {
     stdio: "inherit",
+    ...(python ? { cwd: fileURLToPath(new URL("../../python/", import.meta.url)) } : {}),
     env: {
       ...process.env,
       FLOWFN_REDIS_URL: `redis://127.0.0.1:${redis}`,
@@ -86,16 +93,20 @@ try {
     },
   });
 } finally {
+  const cleanupErrors = [];
   for (const name of containers.reverse()) {
-    command("docker", ["rm", "-f", name]);
-    const remaining = command("docker", [
-      "ps",
-      "-a",
-      "--filter",
-      `name=^/${name}$`,
-      "--format",
-      "{{.Names}}",
-    ]);
-    if (remaining) throw new Error(`Container cleanup failed: ${name}`);
+    try {
+      command("docker", ["rm", "-f", name]);
+      const remaining = command("docker", [
+        "ps",
+        "-a",
+        "--filter",
+        `name=^/${name}$`,
+        "--format",
+        "{{.Names}}",
+      ]);
+      if (remaining) throw new Error(`Container cleanup failed: ${name}`);
+    } catch (error) { cleanupErrors.push(error); }
   }
+  if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "FlowFn acceptance container cleanup failed");
 }

@@ -41,9 +41,31 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
       adapter = new RedisAdapter({ connection: redis, prefix });
     });
     afterEach(async () => {
+      vi.restoreAllMocks();
       const keys = await redis.keys(`${prefix}*`);
       if (keys.length) await redis.del(...keys);
       await adapter.cleanup();
+    });
+    it("uses cached Lua and recovers after Redis forgets scripts", async () => {
+      await redis.script("FLUSH");
+      const source = vi.spyOn(redis, "eval");
+      const cached = vi.spyOn(redis, "evalsha");
+      await adapter.createJob("scripts", new JobImpl("work", 1));
+      expect(source).toHaveBeenCalledTimes(1);
+      await adapter.createJob("scripts", new JobImpl("work", 2));
+      expect(source).toHaveBeenCalledTimes(1);
+      await redis.script("FLUSH");
+      await adapter.createJob("scripts", new JobImpl("work", 3));
+      expect(source).toHaveBeenCalledTimes(2);
+      expect(cached).toHaveBeenCalledTimes(3);
+      expect(await redis.hlen(`${prefix}jobs:scripts`)).toBe(3);
+    });
+    it("does not replay Lua source after an ambiguous transport error", async () => {
+      const source = vi.spyOn(redis, "eval");
+      const failure = new Error("connection lost after write");
+      vi.spyOn(redis, "evalsha").mockRejectedValueOnce(failure);
+      await expect(adapter.createJob("scripts", new JobImpl("work", 1))).rejects.toBe(failure);
+      expect(source).not.toHaveBeenCalled();
     });
     it("preserves FIFO ties and LIFO priority without scanning completed history", async () => {
       const sameTime = vi.spyOn(Date, "now").mockReturnValue(Date.now());

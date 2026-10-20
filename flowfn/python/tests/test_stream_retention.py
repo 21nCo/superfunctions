@@ -64,7 +64,7 @@ async def test_memory_stream_age_policy():
         await adapter.cleanup()
 
 
-async def assert_pending_retention(adapter):
+async def assert_pending_retention(adapter, *, rejects_stale_ack=False):
     stream=Stream('protected',adapter,{'max_length':0,'retention':0})
     delivered=[]
     received=asyncio.Event()
@@ -78,7 +78,13 @@ async def assert_pending_retention(adapter):
     await asyncio.wait_for(received.wait(),5)
     assert (await stream.get_info()).length==2
     await old.close()
-    await delivered[0].ack()  # Disconnected delivery must not release pending retention.
+    # Durable delivery attempts explicitly reject stale ownership. In-memory
+    # subscriptions retain their no-op behavior. Neither may release retention.
+    if rejects_stale_ack:
+        with pytest.raises(RuntimeError, match='ownership changed'):
+            await delivered[0].ack()
+    else:
+        await delivered[0].ack()
     assert (await stream.get_info()).length==2
     received.clear()
     resumed=[]
@@ -96,7 +102,7 @@ async def assert_pending_retention(adapter):
 
 
 async def test_durable_retention_preserves_unread_and_pending(adapters):
-    await assert_pending_retention(adapters[0])
+    await assert_pending_retention(adapters[0], rejects_stale_ack=True)
 
 
 async def test_memory_retention_preserves_unread_and_pending():

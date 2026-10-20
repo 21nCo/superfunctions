@@ -262,3 +262,16 @@ The Docker sockets for both available contexts were unavailable, so this
 checkpoint does not establish native Redis/PostgreSQL propagation. Original
 provider, partition, persisted policy, throughput/latency, and deployment
 requirements remain separate readiness gates.
+
+### Disposable native-provider acceptance
+
+Run `node flowfn/typescript/scripts/provider-acceptance.mjs --python` from the
+repository root with Docker and uv installed. It creates loopback-only Redis and
+PostgreSQL containers, runs the complete Python source suite with declared native
+extras, and removes/verifies its own containers. Set `FLOWFN_PYTHON_VERSION=3.9`
+to test the minimum Python version (default: 3.12). This is source acceptance,
+not an installed-wheel or hosted deployment claim.
+
+A durable stream acknowledgment after its subscription loses ownership raises
+`RuntimeError("Stream delivery ownership changed")`; it does not release pending
+retention. A replacement consumer may reclaim and acknowledge that entry.

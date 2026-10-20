@@ -65,3 +65,9 @@ and dequeue p99, queue-to-handler p99 and GC-controlled heap deltas. Heap deltas
 include runtime and metrics overhead, so they are not isolated job allocations.
 These local trials currently miss the original durable-provider throughput
 requirements. Keep the thresholds above as release gates.
+
+Redis operations use EVALSHA with per-adapter hashes of fixed Lua scripts. A
+NOSCRIPT reply falls back to EVAL, recovering after script flush/restart. Other
+errors propagate without source replay because a transport failure may follow a
+committed mutation. This reduces repeated source transmission but does not
+establish the original throughput/latency targets.
