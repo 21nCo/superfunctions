@@ -77,3 +77,12 @@ it('defaults to100 and validates direct iterator guard ranges before reading', a
     await expect(broken.next()).rejects.toMatchObject({ code: 'E_MCP_INVALID_ARGS' });
   }
 });
+
+it('keeps absolute repository paths out of cursor payloads while rejecting cross-repository reuse', async () => {
+  const root = await fixture('{}\n{}\n'); const other = await fixture('{}\n{}\n');
+  const first = await readEventSinkPage(root, 'events.ndjson', { limit: 1 });
+  const payload = Buffer.from(first.nextCursor!.split('.')[0]!, 'base64url').toString();
+  expect(payload).not.toContain(root); expect(payload).not.toContain(tmpdir());
+  expect(JSON.parse(payload).anchor).toBe('events.ndjson');
+  await expect(readEventSinkPage(other, 'events.ndjson', { cursor: first.nextCursor! })).rejects.toMatchObject({ code: 'E_MCP_INVALID_ARGS' });
+});

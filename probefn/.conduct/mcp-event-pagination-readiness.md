@@ -42,3 +42,9 @@ restart-persistent cursors are not implemented. Guard hashing adds per-record CP
 to streaming aggregations; no throughput improvement is claimed. Browser/platform, packaging,
 external artifact accounting, hosted providers and other existing original
 readiness gates remain open.
+
+Cursor privacy follow-up: the encoded payload contains only the repository-relative
+anchor and physical position metadata. The absolute repository path participates
+only in the HMAC input and is never serialized. The decoded-payload privacy and
+cross-repository rejection regression passes; final strict TypeScript and 16
+focused pagination/MCP tests pass.
