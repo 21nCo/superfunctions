@@ -1,6 +1,9 @@
 /** Local queue measurements, not certification of production performance. */
 import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
+import { Session } from 'node:inspector';
+import { writeFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { createFlow, MemoryAdapter, RedisAdapter, PostgresAdapter } from '../dist/index.mjs';
 import { Redis } from 'ioredis';
 import { Pool } from 'pg';
@@ -26,6 +29,17 @@ if (process.env.FLOWFN_POSTGRES_URL) cases.push({ name: 'postgres', setup: async
   await adapter.initialize();
   return { adapter, cleanup: async () => { await pool.query(`DROP SCHEMA "${schema}" CASCADE`); await pool.end(); } };
 } });
+const profilePath = process.env.FLOWFN_BENCHMARK_CPU_PROFILE;
+const profiler = profilePath ? new Session() : undefined;
+const profileCommand = profiler ? promisify(profiler.post.bind(profiler)) : undefined;
+let profiling = false;
+try {
+if (profiler) {
+  profiler.connect();
+  await profileCommand('Profiler.enable');
+  await profileCommand('Profiler.start');
+  profiling = true;
+}
 for (const entry of cases) {
   const { adapter, cleanup } = await entry.setup();
   const enqueue = [], dequeue = [], latency = [];
@@ -67,5 +81,16 @@ for (const entry of cases) {
     // Redis owns its connection: delete owned keys before flow.close disconnects it.
     await cleanup();
     await flow.close();
+  }
+}
+
+} finally {
+  if (profiler) {
+    try {
+      if (profiling) {
+        const { profile } = await profileCommand('Profiler.stop');
+        await writeFile(profilePath, JSON.stringify(profile));
+      }
+    } finally { profiler.disconnect(); }
   }
 }

@@ -67,9 +67,11 @@ These local trials currently miss the original durable-provider throughput
 requirements. Keep the thresholds above as release gates.
 
 Redis operations use EVALSHA with per-adapter hashes of fixed Lua scripts. A
-NOSCRIPT reply falls back to EVAL, recovering after script flush/restart. Other
-errors propagate without source replay because a transport failure may follow a
-committed mutation. This reduces repeated source transmission but does not
+NOSCRIPT reply coalesces concurrent SCRIPT LOAD requests for the same script,
+then retries EVALSHA. Existing ACLs that deny SCRIPT LOAD with NOPERM retain the
+EVAL fallback; a second confirmed NOSCRIPT after a concurrent script flush also
+falls back to EVAL once. Other errors propagate without mutation replay because a
+transport failure may follow a committed mutation. This reduces repeated source transmission but does not
 establish the original throughput/latency targets.
 
 ## Delays and storage clocks
@@ -91,3 +93,20 @@ storage-authoritative; completion/retention and client telemetry are separate
 contracts. Native functional tests use both one-hour producer skews, fast and
 slow workers, deduplicated creation, and leased retries. They do not establish
 throughput targets or resilience to jumps in the storage server's own clock.
+
+
+PostgreSQL queue claims now use one atomic SQL statement: a candidate CTE acquires
+`FOR UPDATE SKIP LOCKED`, then an update persists the active state and unique lease
+before returning the job. The lease timestamp is sampled after candidate locking.
+Priority, LIFO, dependencies, queue scoping and storage-clock delay checks remain
+in that statement. This removes the separate BEGIN/SELECT/UPDATE/COMMIT request
+sequence. Native contention tests use independent pools and verify one persisted
+lease per claimed job.
+
+For opt-in CPU profiling of the unchanged benchmark, set
+`FLOWFN_BENCHMARK_CPU_PROFILE=/absolute/path/queue.cpuprofile` alongside
+`FLOWFN_BENCHMARK=1 FLOWFN_BENCHMARK_PRODUCERS=32`. Profiling has overhead; compare
+unprofiled results when assessing thresholds. Local repeated measurements after
+the atomic claim exceeded PostgreSQL's 1,000 jobs/sec throughput target, but its
+latency targets and Redis's 10,000 jobs/sec/enqueue latency targets remain unmet.
+See `flowfn/.conduct/queue-claim-performance-readiness.md` for bounded evidence.

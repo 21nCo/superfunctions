@@ -62,7 +62,7 @@ export class RedisAdapter implements FlowAdapter {
   }
 
   private readonly scriptHashes = new Map<string, string>();
-
+  private readonly scriptLoads = new Map<string, Promise<void>>();
   private async executeScript(script: string, keyCount: number, ...args: Array<string | number | Buffer>): Promise<unknown> {
     let hash = this.scriptHashes.get(script);
     if (!hash) {
@@ -72,10 +72,30 @@ export class RedisAdapter implements FlowAdapter {
     try {
       return await this.redis.evalsha(hash, keyCount, ...args);
     } catch (error) {
-      // Only NOSCRIPT proves the command did not execute. A transport failure
-      // may follow a committed mutation and must never cause blind replay.
+      // Only NOSCRIPT proves this command did not execute. Transport
+      // ambiguity never retries a mutation.
       if (!(error instanceof Error) || !error.message.startsWith("NOSCRIPT ")) throw error;
-      return this.redis.eval(script, keyCount, ...args);
+      let loading = this.scriptLoads.get(hash);
+      if (!loading) {
+        loading = this.redis.script("LOAD", script).then(() => undefined);
+        this.scriptLoads.set(hash, loading);
+        const clear = () => { if (this.scriptLoads.get(hash!) === loading) this.scriptLoads.delete(hash!); };
+        void loading.then(clear, clear);
+      }
+      try { await loading; }
+      catch (loadError) {
+        // Existing ACLs may permit EVAL/EVALSHA but not SCRIPT LOAD. The
+        // original NOSCRIPT still proves the mutation has not executed.
+        if (!(loadError instanceof Error) || !loadError.message.startsWith("NOPERM ")) throw loadError;
+        return this.redis.eval(script, keyCount, ...args);
+      }
+      try { return await this.redis.evalsha(hash, keyCount, ...args); }
+      catch (retryError) {
+        // A concurrent SCRIPT FLUSH may invalidate the load. This second
+        // confirmed NOSCRIPT can safely execute source once, without a loop.
+        if (!(retryError instanceof Error) || !retryError.message.startsWith("NOSCRIPT ")) throw retryError;
+        return this.redis.eval(script, keyCount, ...args);
+      }
     }
   }
 

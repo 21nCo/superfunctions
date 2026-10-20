@@ -171,16 +171,19 @@ describe.skipIf(!process.env.FLOWFN_POSTGRES_URL)(
         "other",
         new JobImpl("work", { secret: true }, { jobId: "0" }),
       );
-      const claimed = await Promise.all(
-        Array.from({ length: 30 }, () => adapter.dequeue("queue")),
-      );
-      expect(claimed.filter(Boolean)).toHaveLength(20);
-      expect(new Set(claimed.filter(Boolean).map((job) => job!.id)).size).toBe(
-        20,
-      );
-      expect((await adapter.getJob("other", "0"))!.data).toEqual({
-        secret: true,
-      });
+      const independentPool = new Pool({ connectionString: process.env.FLOWFN_POSTGRES_URL });
+      const independent = new PostgresAdapter({ db: drizzle(independentPool), schema });
+      try {
+        const claimed = await Promise.all(
+          Array.from({ length: 30 }, (_, index) => (index % 2 ? independent : adapter).dequeue("queue")),
+        );
+        const jobs = claimed.filter((job): job is NonNullable<typeof job> => job !== null);
+        expect(jobs).toHaveLength(20);
+        expect(new Set(jobs.map(job => job.id)).size).toBe(20);
+        expect(new Set(jobs.map(job => job.lease!.token)).size).toBe(20);
+        for (const job of jobs) expect((await independent.getJob("queue", job.id))?.lease?.token).toBe(job.lease!.token);
+        expect((await adapter.getJob("other", "0"))!.data).toEqual({ secret: true });
+      } finally { await independent.cleanup(); await independentPool.end(); }
     });
     it("persists actual job failure, retry and result through queue workers", async () => {
       const queue = new QueueImpl<number>("queue", adapter);

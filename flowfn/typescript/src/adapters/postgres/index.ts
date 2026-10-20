@@ -213,18 +213,26 @@ CREATE TABLE IF NOT EXISTS "${this.schema}".flowfn_workflow_executions (id text 
     return job.id;
   }
   async dequeue(queue: string, name?: string, leaseDuration = 30_000): Promise<Job | null> {
-    return this.db.transaction(async (tx: any) => {
-      const jobs = this.table("flowfn_jobs");
-      const rows = await this.rows(
-        sql`WITH clock AS MATERIALIZED (SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now) SELECT j.* FROM ${jobs} j CROSS JOIN clock WHERE j.queue=${queue} AND j.state IN ('waiting','delayed') AND j.available_at<=clock.now ${name ? sql`AND j.name=${name}` : sql``} AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(j.data->'opts'->'waitFor','[]'::jsonb)) dependency WHERE NOT EXISTS (SELECT 1 FROM ${jobs} d WHERE d.queue=j.queue AND d.id=dependency AND d.state='completed')) ORDER BY j.priority DESC, CASE WHEN COALESCE((j.data->'opts'->>'lifo')::boolean,false) THEN -j.timestamp ELSE j.timestamp END ASC FOR UPDATE OF j SKIP LOCKED LIMIT 1`,
-        tx,
-      );
-      if (!rows.length) return null;
-      const claimed = await this.rows(sql`WITH clock AS MATERIALIZED (SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now)
-        UPDATE ${jobs} SET state='active',data=data || jsonb_build_object('state','active','processedOn',clock.now,'lease',jsonb_build_object('token',${randomUUID()}::text,'expiresAt',clock.now+${leaseDuration}))
-        FROM clock WHERE queue=${queue} AND id=${rows[0].id} RETURNING data`, tx);
-      return claimed[0].data as Job;
-    });
+    const jobs = this.table("flowfn_jobs");
+    // Candidate row ownership and the lease update share one SQL statement.
+    // Sample the lease clock only after the candidate has acquired its row lock.
+    const rows = await this.rows(sql`WITH ready_clock AS MATERIALIZED (
+        SELECT floor(extract(epoch from clock_timestamp())*1000)::bigint AS now
+      ), candidate AS MATERIALIZED (
+        SELECT j.id FROM ${jobs} j CROSS JOIN ready_clock
+        WHERE j.queue=${queue} AND j.state IN ('waiting','delayed') AND j.available_at<=ready_clock.now
+          ${name ? sql`AND j.name=${name}` : sql``}
+          AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(j.data->'opts'->'waitFor','[]'::jsonb)) dependency
+            WHERE NOT EXISTS (SELECT 1 FROM ${jobs} d WHERE d.queue=j.queue AND d.id=dependency AND d.state='completed'))
+        ORDER BY j.priority DESC, CASE WHEN COALESCE((j.data->'opts'->>'lifo')::boolean,false) THEN -j.timestamp ELSE j.timestamp END ASC
+        FOR UPDATE OF j SKIP LOCKED LIMIT 1
+      ), claim AS MATERIALIZED (
+        SELECT candidate.id,floor(extract(epoch from clock_timestamp())*1000)::bigint AS now FROM candidate
+      )
+      UPDATE ${jobs} j SET state='active',data=j.data || jsonb_build_object('state','active','processedOn',claim.now,
+        'lease',jsonb_build_object('token',${randomUUID()}::text,'expiresAt',claim.now+${leaseDuration}))
+      FROM claim WHERE j.queue=${queue} AND j.id=claim.id RETURNING j.data`);
+    return rows.length ? rows[0].data as Job : null;
   }
   private async databaseNow(tx: any = this.db): Promise<number> {
     const rows = await this.rows(sql`SELECT floor(extract(epoch from clock_timestamp()) * 1000)::bigint AS now`, tx);

@@ -51,26 +51,46 @@ describe.skipIf(!process.env.FLOWFN_REDIS_URL)(
       if (keys.length) await redis.del(...keys);
       await adapter.cleanup();
     });
-    it("uses cached Lua and recovers after Redis forgets scripts", async () => {
+    it("loads cold Lua once for concurrent callers and recovers after Redis forgets scripts", async () => {
       await redis.script("FLUSH");
       const source = vi.spyOn(redis, "eval");
-      const cached = vi.spyOn(redis, "evalsha");
-      await adapter.createJob("scripts", new JobImpl("work", 1));
-      expect(source).toHaveBeenCalledTimes(1);
-      await adapter.createJob("scripts", new JobImpl("work", 2));
-      expect(source).toHaveBeenCalledTimes(1);
-      await redis.script("FLUSH");
-      await adapter.createJob("scripts", new JobImpl("work", 3));
-      expect(source).toHaveBeenCalledTimes(2);
-      expect(cached).toHaveBeenCalledTimes(3);
-      expect(await redis.hlen(`${prefix}jobs:scripts`)).toBe(3);
-    });
-    it("does not replay Lua source after an ambiguous transport error", async () => {
-      const source = vi.spyOn(redis, "eval");
-      const failure = new Error("connection lost after write");
-      vi.spyOn(redis, "evalsha").mockRejectedValueOnce(failure);
-      await expect(adapter.createJob("scripts", new JobImpl("work", 1))).rejects.toBe(failure);
+      const scripts = vi.spyOn(redis, "script");
+      await Promise.all(Array.from({ length: 32 }, (_, i) => adapter.createJob("scripts", new JobImpl("work", i))));
+      expect(scripts.mock.calls.filter(call => call[0] === "LOAD")).toHaveLength(1);
       expect(source).not.toHaveBeenCalled();
+      await redis.script("FLUSH");
+      await adapter.createJob("scripts", new JobImpl("work", 32));
+      expect(scripts.mock.calls.filter(call => call[0] === "LOAD")).toHaveLength(2);
+      expect(await redis.hlen(`${prefix}jobs:scripts`)).toBe(33);
+    });
+    it("preserves EVAL-only script-loading ACLs after a confirmed NOSCRIPT", async () => {
+      await redis.script("FLUSH");
+      const username = `flowfn_${randomUUID().replaceAll("-", "")}`;
+      const password = randomUUID();
+      await redis.acl("SETUSER", username, "on", `>${password}`, "allkeys", "+@all", "-script|load");
+      const client = new Redis(process.env.FLOWFN_REDIS_URL!, { username, password });
+      const restricted = new RedisAdapter({ connection: client, prefix });
+      try {
+        const source = vi.spyOn(client, "eval");
+        expect((await restricted.createJob("acl", new JobImpl("work", "first"))).data).toBe("first");
+        expect(source).toHaveBeenCalledTimes(1);
+        expect((await restricted.createJob("acl", new JobImpl("work", "cached"))).data).toBe("cached");
+        expect(source).toHaveBeenCalledTimes(1);
+        expect(await redis.hlen(`${prefix}jobs:acl`)).toBe(2);
+      } finally { await restricted.cleanup(); await redis.acl("DELUSER", username); }
+    });
+    it("does not replay after an ambiguous transport error even when writes committed", async () => {
+      await adapter.createJob("scripts", new JobImpl("work", "warm"));
+      const source = vi.spyOn(redis, "eval");
+      const scripts = vi.spyOn(redis, "script");
+      const failure = new Error("connection lost after write");
+      const execute = redis.evalsha.bind(redis);
+      const cached = vi.spyOn(redis, "evalsha").mockImplementation(async (...args) => { await execute(...args); throw failure; });
+      const results = await Promise.allSettled([adapter.createJob("scripts", new JobImpl("work", 1)), adapter.createJob("scripts", new JobImpl("work", 2))]);
+      expect(results).toEqual([{ status: "rejected", reason: failure }, { status: "rejected", reason: failure }]);
+      expect(cached).toHaveBeenCalledTimes(2);
+      expect(source).not.toHaveBeenCalled(); expect(scripts).not.toHaveBeenCalled();
+      expect(await redis.hlen(`${prefix}jobs:scripts`)).toBe(3);
     });
     it("preserves FIFO ties and LIFO priority without scanning completed history", async () => {
       const sameTime = vi.spyOn(Date, "now").mockReturnValue(Date.now());
