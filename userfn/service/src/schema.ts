@@ -26,5 +26,24 @@ export function getUserFnSchema(): TableSchemaMap {
       direction: { type: 'number', required: true },
     },
     indexes: [{ name: 'userfn_votes_feedback_direction', fields: ['tenantId', 'feedbackId', 'direction'] }],
+  }, userfn_feedback_attributes: {
+    modelName: 'userfn_feedback_attributes', fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 67 },
+      tenantId: { type: 'string', required: true, maxLength: 200 },
+      productArea: { type: 'string', maxLength: 100 },
+    }, indexes: [{ name: 'userfn_feedback_area', fields: ['tenantId', 'productArea', 'id'] }],
+  }, userfn_feedback_tags: {
+    modelName: 'userfn_feedback_tags', fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 67 },
+      tenantId: { type: 'string', required: true, maxLength: 200 },
+      feedbackId: { type: 'string', required: true, maxLength: 67 },
+      tag: { type: 'string', required: true, maxLength: 64 },
+    }, indexes: [{ name: 'userfn_feedback_tag', fields: ['tenantId', 'tag', 'feedbackId'] }],
+  }, userfn_feedback_migrations: {
+    modelName: 'userfn_feedback_migrations', fields: {
+      id: { type: 'string', required: true, unique: true, maxLength: 64 },
+      status: { type: 'string', required: true, maxLength: 16 },
+      cursor: { type: 'string', maxLength: 67 },
+    },
   } };
 }

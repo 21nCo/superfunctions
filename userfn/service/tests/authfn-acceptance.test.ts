@@ -18,7 +18,7 @@ it('accepts actual AuthFn-issued keys, preserves tenant/actor authority, and rej
   const directory = await mkdtemp(join(tmpdir(), 'userfn-authfn-'));
   const connect = () => {
     const sql = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(join(directory, 'feedback.sqlite')) }) });
-    return { sql, adapter: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { userfn_feedback: 'userfn_feedback', userfn_feedback_votes: 'userfn_feedback_votes' } }) };
+    return { sql, adapter: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: Object.fromEntries(Object.keys(getUserFnSchema()).map(key => [key, key])) }) };
   };
   let { sql, adapter } = connect();
   try {

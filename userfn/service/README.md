@@ -40,7 +40,7 @@ This checkpoint implements feedback submission/readback, not the complete UserFn
 
 ## Feedback board, voting and moderation
 
-`GET /feedback?limit=20&after=<cursor>&status=planned` requires `userfn:feedback:read` and returns `{items, nextCursor}`. Limit is 1–100; the default is 20. `after` is the prior page's cursor. Items are sorted by ID ascending and contain title, body, category, tags, status, createdAt, votes and viewerVote. They exclude client identity/traits and the authenticated actor. Unknown/repeated query parameters and invalid filters return 400. Status is optional and uses `open`, `planned`, `in_progress`, `done`, `closed`. Pagination is a live view, not a retained snapshot: keep filters fixed across pages; newly inserted earlier IDs or concurrent status changes can change the visible set. Tag/product-area filtering and vote-ranked sorting remain unimplemented.
+`GET /feedback?limit=20&after=<cursor>&status=planned` requires `userfn:feedback:read` and returns `{items, nextCursor}`. Limit is 1–100; the default is 20. `after` is the prior page's cursor. Items are sorted by ID ascending and contain title, body, category, tags, status, createdAt, votes and viewerVote. They exclude client identity/traits and the authenticated actor. Unknown/repeated query parameters and invalid filters return 400. Status is optional and uses `open`, `planned`, `in_progress`, `done`, `closed`. Pagination is a live view, not a retained snapshot: keep filters fixed across pages; newly inserted earlier IDs or concurrent status changes can change the visible set. Tag and product-area filters are available after the migration below. Vote-ranked sorting remains unimplemented.
 
 `POST /feedback/:id/vote` takes `{direction: -1 | 0 | 1}` and requires `userfn:feedback:vote`. A unique row per tenant, feedback item and authenticated actor type/ID stores the current direction. Zero removes the row. Repeating a direction/removal is idempotent; concurrent changes use the last committed mutation. Response is `{id, votes, viewerVote}`. Client `identify()` and traits never select the voter. An API-key actor gets one vote **per key**, not per human; use verified user bearer principals for per-user voting. Anonymous voting is not enabled, and merely sharing a tenant credential does not establish individual users.
 
@@ -51,3 +51,27 @@ Apply the new `userfn_feedback_votes` table before upgrading an existing feedbac
 Scores and viewer votes come from one projected database query, avoiding independently racing positive/negative counts or denormalized counter increments. `maxVotesPerFeedback` bounds that projection: default 10,000, configurable integer range 1–100,000. Exceeding it returns 503 rather than a truncated total. A vote may already have committed before its response projection exceeds the bound; reconcile through idempotent direction/removal or increase the configured bound. Listing fails rather than omitting an item's unavailable score. Scalable database aggregation is an outstanding gate; this is not an arbitrary-scale voting implementation. Board SDK responses are capped at 16 MiB; mutation receipts retain the 64 KiB bound.
 
 The native suite now also exercises 20 concurrent actors, duplicate same-actor submissions, concurrent direction flips, repeated removals, cursor continuity, scope denial, status filtering, both SDKs, and scores/status surviving SQLite reopen. Other adapter concurrency guarantees remain unvalidated.
+
+## Tag and product-area filters: migration required
+
+Submissions accept optional `productArea` (1–100 characters) alongside existing tags. Filter keys and displayed values use Unicode NFC normalization and surrounding-whitespace trimming, with case-sensitive matching. Tags deduplicate after normalization. The original submission payload/fingerprint remains unchanged so retries of earlier submissions keep their original receipt identity.
+
+Both new and existing installations must apply the three additive tables from `getUserFnSchema()`: `userfn_feedback_attributes`, `userfn_feedback_tags`, and `userfn_feedback_migrations`, including their unique IDs and indexes. No existing feedback columns or payloads are rewritten.
+
+Run the migration in maintenance mode with **all writers stopped**, including older service versions. Use one migration worker:
+
+```typescript
+import { backfillFeedbackFilters } from '@userfn/service';
+// First apply getUserFnSchema() through the shared database migration workflow.
+for (;;) {
+  const progress = await backfillFeedbackFilters(database, { batchSize: 100 });
+  if (progress.done) break;
+}
+// Start the new service only after completion. Do not resume older writers.
+```
+
+Each bounded batch (1–500 rows) commits normalized data and a persisted cursor together. Failed batches roll back; rerunning resumes from the last committed cursor. Repeated calls after completion are harmless. The global readiness marker changes to `ready` only after the complete scan. Filtered reads fail with 503 while the marker is absent/incomplete, and submissions are blocked when a committed migration marker says `building`. Existing submission replay remains available. New submissions atomically write feedback and normalized rows through shared DB transactions; adapters without transaction support fail closed. An empty installation still needs the migration call to mark filters ready. Restoring/importing legacy rows after completion or running multiple migration workers is outside this migration contract.
+
+Use `GET /feedback?tag=UI&productArea=Search&status=open`; each filter is optional and combines with status and the existing cursor. Each normalized lookup is tenant-scoped. `maxFilterCandidates` defaults to 500 and accepts 1–500. Matching IDs are bounded **before pagination**, with overflow503 instead of an incomplete page. With both filters, the tag lookup is bounded first, then product area intersects it; a broad tag can exceed the bound even if the area would narrow the final intersection. This is a matching-candidate bound, not a whole-tenant feedback limit. A tenant with more than 500 total rows can still filter a rare matching tag or area. Efficient unbounded joins/aggregate queries remain a separate scaling requirement.
+
+The SQLite migration acceptance starts with only the prior tables and 501 legacy rows, checks fail-closed reads before/partway through backfill, interrupts and resumes a batch, verifies atomic rollback, reopens the database, and confirms unchanged payloads/fingerprints and original receipt replay. Both SDKs exercise tag/product-area/status combinations over actual HTTP. Existing tags/product areas cannot yet be edited after submission; metadata editing, ranking and moderation history are separate work.

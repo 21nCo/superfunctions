@@ -134,3 +134,14 @@ await client.setFeedbackStatus(page.items[0].id, 'planned');
 ```
 
 These operations require independent read, vote and moderate bearer scopes. The server counts one vote per authenticated actor; changing client identity does not create another voter. API keys count as key principals, so use verified user principals for human voting. HTTP errors reject and malformed results are not acknowledged. Operations use the same bounded retry/timeout policy; repeated directions/statuses are idempotent, with last committed update winning concurrent changes. Board results are limited to 100 items and 16 MiB. Custom `feedbackService` implementations may optionally implement `list`, `vote` and `setStatus`; missing methods fail explicitly. See service documentation for schema migration, projection limits and live cursor semantics.
+
+### Filter by tag and product area
+
+After the host completes the service filter-table migration:
+
+```typescript
+await client.submitFeedback({ title: 'Search', body: 'Improve matching', category: 'feature', tags: ['UI'], productArea: 'Search' });
+const matching = await client.getFeedbackBoard({ tag: 'UI', productArea: 'Search', status: 'open', limit: 20 });
+```
+
+Labels are trimmed, NFC-normalized and case-sensitive. Missing/incomplete backfill or matching-candidate overflow returns 503; the service never substitutes an incomplete board. Keep all filters unchanged when following `nextCursor`. See the service's explicit migration and candidate-bound contract.

@@ -148,3 +148,15 @@ await client.set_feedback_status(feedback_id, "planned")
 ```
 
 Results are dictionaries using the HTTP field names (`items`, `nextCursor`, `viewerVote`). Read, vote and moderate scopes are independent. Voting identity is the verified server principal, not `identify()` metadata; an API key represents one key actor rather than one human. Repeated direction/removal/status writes are idempotent; concurrent changes use the last committed update. Custom services may provide async `list(options)`, `vote(id, direction)` and `set_status(id, status)`; otherwise these operations fail explicitly. Board results are capped at 16 MiB and 100 items. See the service documentation for live pagination and the configurable bounded score projection.
+
+### Filter by tag and product area
+
+```python
+await client.submit_feedback(FeedbackSubmission(
+    title="Search", body="Improve matching", category="feature",
+    tags=["UI"], product_area="Search",
+))
+matching = await client.get_feedback_board(tag="UI", product_area="Search", status="open", limit=20)
+```
+
+The SDK maps `product_area` to the canonical HTTP `productArea` field. Labels are trimmed, NFC-normalized and case-sensitive. The host must complete the service's normalized-table migration; incomplete migration and matching-candidate overflow fail with 503. Preserve filters when following the cursor.

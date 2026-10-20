@@ -90,11 +90,13 @@ export interface FeedbackSubmission {
   category: FeedbackCategory;
   priority?: 'low' | 'medium' | 'high';
   tags?: string[];
+  productArea?: string;
   attachments?: string[]; // URLs or base64
   score?: number; // For surveys
 }
 
 export interface FeedbackItem {
+  productArea?: string | null;
   tags?: string[];
   id: string;
   title: string;
@@ -185,7 +187,7 @@ export interface FeedbackService {
   submit(feedback: FeedbackSubmission, context: FeedbackContext): Promise<FeedbackReceipt>;
 }
 
-export interface FeedbackBoardOptions { limit?: number; after?: string; status?: FeedbackStatus; }
+export interface FeedbackBoardOptions { limit?: number; after?: string; status?: FeedbackStatus; tag?: string; productArea?: string; }
 export interface FeedbackBoardPage { items: FeedbackItem[]; nextCursor: string | null; }
 export interface FeedbackVote { id: string; votes: number; viewerVote: -1 | 0 | 1; }
 export interface FeedbackStatusResult { id: string; status: FeedbackStatus; }

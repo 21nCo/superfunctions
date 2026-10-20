@@ -24,7 +24,7 @@ describe('UserFn authenticated persistence', () => {
     const raw = memoryAdapter();
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
-    const database: Adapter = { ...raw, create: async params => { await gate; return raw.create(params); } };
+    const database: Adapter = { ...raw, transaction: callback => raw.transaction(tx => callback({ ...tx, create: async params => { await gate; return tx.create(params); } })) };
     const service = createUserFnService({ database, auth });
     let completed = false;
     const pending = service.router.handle(request()).then(response => { completed = true; return response; });
@@ -69,7 +69,7 @@ describe('UserFn authenticated persistence', () => {
     const raw = memoryAdapter();
     const create = vi.fn(raw.create);
     const service = createUserFnService({ database: { ...raw, create }, auth, maxBodyBytes: 1024 });
-    for (const bad of [null, [], { ...payload, feedback: { ...payload.feedback, category: 'invalid' } }, { ...payload, feedback: { ...payload.feedback, tags: [42] } }, { ...payload, context: { source: 'spoof', user: null } }]) {
+    for (const bad of [null, [], { ...payload, feedback: { ...payload.feedback, category: 'invalid' } }, { ...payload, feedback: { ...payload.feedback, tags: [42] } }, { ...payload, feedback: { ...payload.feedback, productArea: 42 } }, { ...payload, context: { source: 'spoof', user: null } }]) {
       expect((await service.router.handle(request(bad))).status).toBe(400);
     }
     expect((await service.router.handle(request(payload, 'bad key'))).status).toBe(400);
@@ -79,7 +79,7 @@ describe('UserFn authenticated persistence', () => {
 
   it('returns sanitized failures without acknowledging lost writes', async () => {
     const raw = memoryAdapter();
-    const service = createUserFnService({ database: { ...raw, create: async () => { throw new Error('secret-database-password'); } }, auth });
+    const service = createUserFnService({ database: { ...raw, transaction: callback => raw.transaction(tx => callback({ ...tx, create: async () => { throw new Error('secret-database-password'); } })) }, auth });
     const response = await service.router.handle(request());
     expect(response.status).toBe(503);
     expect(await response.text()).not.toContain('secret');

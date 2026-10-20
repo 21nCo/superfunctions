@@ -26,3 +26,7 @@ Tag/product-area filtering requires a portable indexed representation; shared cr
 Pagination is a live keyset view, not a retained snapshot; inserts before an existing cursor and concurrent filter/status changes can alter subsequent pages. Votes/status updates use last committed mutation semantics; the service does not impose client-issued sequence ordering. A response can be lost after a successful mutation; idempotent reconciliation must use the same actor/item/direction or status. Python's socket-timeout/cancellation limitations documented in the earlier checkpoint still apply.
 
 No shared package edits, hosted changes or push were performed.
+
+## Follow-up: normalized required filters
+
+The [feedback filter checkpoint](feedback-filter-readiness.md) implements tag/product-area/status filtering and an explicit resumable migration gate, superseding the earlier missing-filter finding. Candidate scaling and metadata editing remain open; ranking/history extensions stay deferred.

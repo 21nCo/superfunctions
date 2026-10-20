@@ -9,7 +9,7 @@ import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AuthProvider } from '@superfunctions/auth';
-import { createUserFnService, getUserFnSchema } from '../src/index.js';
+import { createUserFnService, getUserFnSchema, backfillFeedbackFilters } from '../src/index.js';
 import { UserFnClient } from '../../typescript/src/index';
 
 it('serves paginated boards, actor-owned votes and scoped status over both SDKs with SQLite reopen', async () => {
@@ -42,12 +42,17 @@ it('serves paginated boards, actor-owned votes and scoped status over both SDKs 
       });
       await migration.execute();
     }
+    await backfillFeedbackFilters(adapter);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('No address');
     const endpoint = `http://127.0.0.1:${address.port}`;
     const client = (actor: string) => new UserFnClient({ endpoint, apiKey: actor, feedbackMaxAttempts: 1 });
     const owner = client('owner');
-    for (let i = 0; i < 5; i++) await owner.submitFeedback({ title: `Item ${i}`, body: 'Details', category: 'general' }, { idempotencyKey: `item-${i}` });
+    for (let i = 0; i < 5; i++) await owner.submitFeedback({ title: `Item ${i}`, body: 'Details', category: 'general', tags: i === 0 ? ['UI', ' UI ', 'Cafe\u0301'] : ['misc'], ...(i === 0 ? { productArea: ' Search ' } : {}) }, { idempotencyKey: `item-${i}` });
+    const filtered = await owner.getFeedbackBoard({ tag: ' UI ', productArea: 'Search', status: 'open', limit: 1 });
+    expect((await owner.getFeedbackBoard({ tag: 'Café' })).items).toHaveLength(1);
+    expect(filtered.items).toHaveLength(1); expect(filtered.items[0].productArea).toBe('Search');
+    expect((await owner.getFeedbackBoard({ tag: 'UI', productArea: 'Other' })).items).toEqual([]);
     const first = await owner.getFeedbackBoard({ limit: 2 });
     const second = await owner.getFeedbackBoard({ limit: 2, after: first.nextCursor! });
     const third = await owner.getFeedbackBoard({ limit: 2, after: second.nextCursor! });

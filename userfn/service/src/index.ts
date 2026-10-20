@@ -5,6 +5,8 @@ import { createRouter, PayloadTooLargeError, RouterError } from '@superfunctions
 import { corsMiddleware } from '@superfunctions/http/middleware';
 import { getUserFnSchema } from './schema.js';
 import { canonical, FeedbackConflictError, FeedbackValidationError, validateKey, validatePayload, object } from './validation.js';
+import { readFilterMarker, writeFeedbackFilters, normalizeFilter } from './feedback-filters.js';
+export { backfillFeedbackFilters } from './feedback-filters.js';
 export { getUserFnSchema } from './schema.js';
 
 export interface UserFnServiceOptions {
@@ -16,6 +18,8 @@ export interface UserFnServiceOptions {
   maxBodyBytes?: number;
   /** Maximum vote rows read per item; overflow fails rather than reporting a partial score. Default 10,000. */
   maxVotesPerFeedback?: number;
+  /** Maximum normalized matching candidates before pagination; default500, range1–500. */
+  maxFilterCandidates?: number;
   /** Explicit browser origins; credentials/cookies are never enabled. */
   allowedOrigins?: string[];
 }
@@ -35,6 +39,8 @@ export function createUserFnService(options: UserFnServiceOptions) {
   if (options.allowedOrigins?.some(origin => {
     try { const url = new URL(origin); return !['http:', 'https:'].includes(url.protocol) || url.origin !== origin; } catch { return true; }
   })) throw new TypeError('UserFn allowedOrigins must contain explicit HTTP(S) origins');
+  const maxCandidates = options.maxFilterCandidates ?? 500;
+  if (!Number.isInteger(maxCandidates) || maxCandidates < 1 || maxCandidates > 500) throw new TypeError('maxFilterCandidates must be an integer from 1 to 500');
   const maxVotes = options.maxVotesPerFeedback ?? 10000;
   if (!Number.isInteger(maxVotes) || maxVotes < 1 || maxVotes > 100000) throw new TypeError('maxVotesPerFeedback must be an integer from 1 to 100000');
   const database = wrapWithSchema(options.database, getUserFnSchema());
@@ -76,7 +82,7 @@ export function createUserFnService(options: UserFnServiceOptions) {
   };
   const boardItem = async (row: StoredFeedback, actorId: string, actorType: string) => {
     const feedback = row.payload.feedback as Record<string, unknown>;
-    return { id: row.id, title: feedback.title, body: feedback.body, category: feedback.category, tags: feedback.tags ?? [],
+    return { id: row.id, title: feedback.title, body: feedback.body, category: feedback.category, productArea: typeof feedback.productArea === 'string' ? normalizeFilter(feedback.productArea, 100) : null, tags: [...new Set(((feedback.tags as string[] | undefined) ?? []).map(tag => normalizeFilter(tag, 64)))],
       status: row.status, createdAt: row.createdAt, ...await votes(row.tenantId, row.id, actorId, actorType) };
   };
   const errorResponse = (error: unknown): Response => {
@@ -106,7 +112,7 @@ export function createUserFnService(options: UserFnServiceOptions) {
         const session = await authorize(request, 'userfn:feedback:read');
         if (session instanceof Response) return session;
         const query = new URL(request.url).searchParams;
-        if ([...query.keys()].some(key => !['limit', 'after', 'status'].includes(key) || query.getAll(key).length !== 1)) throw new FeedbackValidationError();
+        if ([...query.keys()].some(key => !['limit', 'after', 'status', 'tag', 'productArea'].includes(key) || query.getAll(key).length !== 1)) throw new FeedbackValidationError();
         const rawLimit = query.get('limit') ?? '20';
         const limit = Number(rawLimit);
         const after = query.get('after'); const status = query.get('status');
@@ -114,6 +120,26 @@ export function createUserFnService(options: UserFnServiceOptions) {
         const where: WhereClause[] = [{ field: 'tenantId', operator: 'eq', value: session.subject.tenantId! }];
         if (after) where.push({ field: 'id', operator: 'gt', value: after });
         if (status) where.push({ field: 'status', operator: 'eq', value: status });
+        const tag = query.get('tag'); const area = query.get('productArea');
+        if (tag !== null || area !== null) {
+          const normalizedTag = tag === null ? null : normalizeFilter(tag, 64);
+          const normalizedArea = area === null ? null : normalizeFilter(area, 100);
+          if ((await readFilterMarker(database))?.status !== 'ready') throw new Error('Feedback filter backfill is incomplete');
+          const tenant = { field: 'tenantId', operator: 'eq' as const, value: session.subject.tenantId! };
+          let ids: string[] | undefined;
+          if (normalizedTag !== null) {
+            const matches = await database.findMany<{ feedbackId: string }>({ model: 'userfn_feedback_tags', where: [tenant, { field: 'tag', operator: 'eq', value: normalizedTag }], select: ['feedbackId'], limit: maxCandidates + 1 });
+            if (matches.length > maxCandidates) throw new Error('Feedback filter candidate limit exceeded');
+            ids = matches.map(row => row.feedbackId);
+          }
+          if (normalizedArea !== null && (!ids || ids.length)) {
+            const matches = await database.findMany<{ id: string }>({ model: 'userfn_feedback_attributes', where: [tenant, { field: 'productArea', operator: 'eq', value: normalizedArea }, ...(ids ? [{ field: 'id', operator: 'in' as const, value: ids }] : [])], select: ['id'], limit: maxCandidates + 1 });
+            if (matches.length > maxCandidates) throw new Error('Feedback filter candidate limit exceeded');
+            ids = matches.map(row => row.id);
+          }
+          if (!ids?.length) return json({ items: [], nextCursor: null });
+          where.push({ field: 'id', operator: 'in', value: ids });
+        }
         const rows = await database.findMany<StoredFeedback>({ model: 'userfn_feedback', where, limit: limit + 1, orderBy: [{ field: 'id', direction: 'asc' }] });
         const selected = rows.slice(0, limit);
         const items = [];
@@ -159,9 +185,14 @@ export function createUserFnService(options: UserFnServiceOptions) {
         const existing = await find(tenantId, id);
         if (existing) return duplicate(existing);
         try {
-          await database.create({ model: 'userfn_feedback', data: {
-            id, tenantId, actorId, fingerprint, payload, createdAt: new Date().toISOString(), status: 'open', votes: 0,
-          } });
+          if (!database.capabilities.transactions.supported) throw new Error('Feedback persistence requires transactions');
+          await database.transaction(async tx => {
+            if ((await readFilterMarker(tx))?.status === 'building') throw new Error('Feedback filter migration is running');
+            await tx.create({ model: 'userfn_feedback', data: {
+              id, tenantId, actorId, fingerprint, payload, createdAt: new Date().toISOString(), status: 'open', votes: 0,
+            } });
+            await writeFeedbackFilters(tx, { id, tenantId, payload });
+          });
         } catch (error) {
           // The primary key resolves concurrent retries atomically; never overwrite the winning payload.
           const winner = await find(tenantId, id);

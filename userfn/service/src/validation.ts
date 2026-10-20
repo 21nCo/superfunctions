@@ -24,10 +24,11 @@ export function validatePayload(value: unknown): Record<string, unknown> {
   const feedback = value.feedback;
   const context = value.context;
   if (!object(feedback) || !object(context)) invalid();
-  keys(feedback, ['title', 'body', 'category', 'priority', 'tags', 'attachments', 'score']);
+  keys(feedback, ['title', 'body', 'category', 'priority', 'tags', 'attachments', 'score', 'productArea']);
   keys(context, ['source', 'user']);
   if (!text(feedback.title, 200) || !text(feedback.body, 20000) ||
       !['bug', 'feature', 'general'].includes(feedback.category as string) || context.source !== 'in_app') invalid();
+  if (feedback.productArea !== undefined && !text(feedback.productArea, 100)) invalid();
   if (feedback.priority !== undefined && !['low', 'medium', 'high'].includes(feedback.priority as string)) invalid();
   if (feedback.score !== undefined && (typeof feedback.score !== 'number' || !Number.isFinite(feedback.score))) invalid();
   for (const field of ['tags', 'attachments']) {

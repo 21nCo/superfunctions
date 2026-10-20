@@ -42,6 +42,8 @@ class HttpFeedbackService:
     async def submit(self, feedback: FeedbackSubmission, context: FeedbackContext) -> FeedbackReceipt:
         # Serialize before entering a worker, keeping payload and idempotency stable for all attempts.
         submission = {key: value for key, value in asdict(feedback).items() if value is not None}
+        if 'product_area' in submission:
+            submission['productArea'] = submission.pop('product_area')
         body = json.dumps({'feedback': submission, 'context': {
             'source': context.source, 'user': asdict(context.user) if context.user else None,
         }}, ensure_ascii=False, allow_nan=False).encode('utf-8')

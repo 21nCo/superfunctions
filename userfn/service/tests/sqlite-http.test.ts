@@ -24,7 +24,7 @@ it('persists actual TS/Python HTTP submissions and retry races across SQLite clo
   const directory = await mkdtemp(join(tmpdir(), 'userfn-feedback-'));
   const connect = () => {
     const sql = new Kysely<any>({ dialect: new SqliteDialect({ database: new Database(join(directory, 'feedback.sqlite')) }) });
-    return { sql, adapter: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: { userfn_feedback: 'userfn_feedback', userfn_feedback_votes: 'userfn_feedback_votes' } }) };
+    return { sql, adapter: kyselyAdapter({ db: sql, dialect: 'sqlite', schema: Object.fromEntries(Object.keys(getUserFnSchema()).map(key => [key, key])) }) };
   };
   let { sql, adapter } = connect();
   let service = createUserFnService({ database: adapter, auth });

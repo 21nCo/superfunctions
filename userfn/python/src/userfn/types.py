@@ -87,6 +87,7 @@ class FeedbackSubmission:
     tags: Optional[List[str]] = None
     attachments: Optional[List[str]] = None
     score: Optional[int] = None
+    product_area: Optional[str] = None
 
 @dataclass
 class FeedbackItem:
