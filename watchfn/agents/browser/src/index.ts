@@ -80,10 +80,10 @@ export class BrowserClient {
         if (response.status === 404) { void response.body?.cancel().catch(() => {}); return null; }
         if (!response.ok) { void response.body?.cancel().catch(() => {}); throw new BrowserDeliveryError(`Issue status returned HTTP ${response.status}`, response.status); }
         if (!response.body || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) { void response.body?.cancel().catch(() => {}); throw new Error("Invalid issue status response"); }
-        reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+        reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0; let reads = 0;
         for (;;) {
           const { done, value } = await reader.read(); if (done) break;
-          size += value.byteLength; if (size > 16384) throw new Error("Issue status response too large"); chunks.push(value);
+          size += value.byteLength; reads++; if (size > 16384 || reads > 16384) throw new Error("Issue status response too large"); chunks.push(value);
         }
         const bytes = new Uint8Array(size); let offset = 0;
         for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }

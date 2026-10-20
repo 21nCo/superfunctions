@@ -43,3 +43,15 @@ it("cancels a status body read and ignores a late fetch response", async () => {
   const waiting = client.readBugIssueStatus(ref, { signal: abort.signal }); const rejected = expect(waiting).rejects.toThrow("canceled"); abort.abort(); await rejected;
   const cancel = vi.fn(); release(new Response(new ReadableStream({ cancel }))); await vi.waitFor(() => expect(cancel).toHaveBeenCalled());
 });
+it("snapshots caller identity while a response is pending", async () => {
+  const reference = { ...ref }; let release!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(resolve => { release = resolve; })));
+  const client = new BrowserClient({ endpoint: "https://example.test/ingest", projectId: "shop", autoTrack: false });
+  const result = client.readBugIssueStatus(reference); reference.reportId = "changed"; release(Response.json(linked));
+  expect(await result).toEqual(linked); await client.close();
+});
+it("bounds empty stream chunks as well as bytes", async () => {
+  const cancel = vi.fn(); vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array()); }, cancel }), { headers: { "content-type": "application/json" } })));
+  const client = new BrowserClient({ endpoint: "https://example.test/ingest", projectId: "shop", autoTrack: false });
+  await expect(client.readBugIssueStatus(ref)).rejects.toThrow("too large"); expect(cancel).toHaveBeenCalled(); await client.close();
+});

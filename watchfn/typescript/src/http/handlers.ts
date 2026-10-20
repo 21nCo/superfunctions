@@ -72,8 +72,9 @@ export class HttpHandlers {
       if (app !== body.app || reportId !== body.reportId || !["github", "linear"].includes(target) || !["pending", "processing", "reconciliation", "linked"].includes(state)) throw new Error("Invalid issue status");
       if (state !== "linked" && (issueId !== null || issueUrl !== null)) throw new Error("Unverified issue link");
       if (state === "linked") {
-        const url = new URL(issueUrl!);
-        if (!issueId || issueId.length > 128 || !issueUrl || issueUrl.length > 4096 || url.protocol !== "https:" || url.hostname !== (target === "github" ? "github.com" : "linear.app") || url.port || url.username || url.password || url.search || url.hash) throw new Error("Invalid issue link");
+        if (typeof issueId !== "string" || !issueId || issueId.length > 128 || typeof issueUrl !== "string" || !issueUrl || issueUrl.length > 4096) throw new Error("Invalid issue link");
+        const url = new URL(issueUrl);
+        if (url.protocol !== "https:" || url.hostname !== (target === "github" ? "github.com" : "linear.app") || url.port || url.username || url.password || url.search || url.hash) throw new Error("Invalid issue link");
         if (target === "github" && url.pathname !== `/${status.project}/issues/${issueId}`) throw new Error("Invalid issue destination");
       }
       const result = { app, reportId, target, state, issueId, issueUrl };
