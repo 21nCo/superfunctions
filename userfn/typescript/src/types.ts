@@ -178,7 +178,7 @@ export interface Campaign {
   triggers: CampaignTrigger[];
   priority?: number;
   caps?: {
-    global?: number; // Max times to show globally per user
+    global?: number; // Maximum shown count in this engine; zero blocks, omission is uncapped
     session?: number; // Max times per session
   };
   enabled: boolean;

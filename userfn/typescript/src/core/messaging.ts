@@ -54,7 +54,8 @@ export class MessagingEngine {
       // 3. Check Frequency Caps (Simple global cap for now)
       const campaignDeliveries = this.deliveries.get(campaign.id) || [];
       const shownCount = campaignDeliveries.filter(d => d.status === 'shown').length;
-      if (campaign.caps?.global && shownCount >= campaign.caps.global) {
+      const globalCap = campaign.caps?.global;
+      if (globalCap != null && shownCount >= globalCap) {
         continue;
       }
 

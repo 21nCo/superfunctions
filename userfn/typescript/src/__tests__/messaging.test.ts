@@ -72,3 +72,20 @@ describe('MessagingEngine', () => {
      expect(eligible).toHaveLength(0);
   });
 });
+
+
+describe('campaign cap parity', () => {
+  it.each([
+    [undefined, [1, 1, 1]], [{}, [1, 1, 1]],
+    [{ global: 0 }, [0, 0, 0]], [{ global: 1 }, [1, 0, 0]], [{ global: 2 }, [1, 1, 0]],
+  ] as Array<[Campaign['caps'], number[]]>)('uses an explicit maximum shown count for %j', (caps, expected) => {
+    const engine = new MessagingEngine(new SegmentEvaluator());
+    engine.setCampaigns([{ ...CAMPAIGNS[1], caps }]);
+    const eligible = () => engine.getEligibleMessages('event', 'login', { id: 'u1', traits: {} }).length;
+    engine.trackDelivery('camp-2', 'dismissed');
+    engine.trackDelivery('camp-2', 'clicked');
+    expect(eligible()).toBe(expected[0]);
+    engine.trackDelivery('camp-2', 'shown'); expect(eligible()).toBe(expected[1]);
+    engine.trackDelivery('camp-2', 'shown'); expect(eligible()).toBe(expected[2]);
+  });
+});
