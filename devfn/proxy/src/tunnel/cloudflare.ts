@@ -119,6 +119,10 @@ export class CloudflareTunnelProvider implements TunnelProvider {
     return "created";
   }
 
+  public async ownsDns(binding: TunnelBinding, hostname: string): Promise<boolean> {
+    return (await this.records(binding, hostname)).some((record) => owned(binding, record));
+  }
+
   public async verifyDns(binding: TunnelBinding, hostname: string): Promise<void> {
     const records = await this.records(binding, hostname);
     if (records.length !== 1 || !owned(binding, records[0]) || records[0].proxied !== true) {

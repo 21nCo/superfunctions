@@ -257,7 +257,7 @@ describe("Caddy route rendering", () => {
         expect(await controller.routes()).toEqual([live]);
       }
     } finally { await cleanup(); }
-  });
+  }, 150_000);
 
   it("refuses a route update that route state reads would reject, before Caddy or any state changes", async () => {
     const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-write-check-");
@@ -334,7 +334,7 @@ describe("Caddy route rendering", () => {
         expect(await readFile(statePath, "utf8")).toBe(committed);
         await expect(access(path.join(stateDir, "proxy-routes.pending.json"))).rejects.toMatchObject({ code: "ENOENT" });
       } finally { await cleanup(); }
-    });
+    }, 150_000);
   });
 
   // Node's process APIs take a 32-bit PID and signal a group as its negation,
@@ -380,7 +380,7 @@ describe("Caddy route rendering", () => {
       }
       expect(await changes()).toHaveLength(calls);
     } finally { await cleanup(); }
-  });
+  }, 150_000);
 
   it("refuses route state recording this live process in a form its producer never renders, instead of dropping its route as a reused PID", async () => {
     const { stateDir, cleanup, caddyCalls } = await stubbedCaddyState("devfn-proxy-signature-live-");

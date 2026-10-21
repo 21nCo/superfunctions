@@ -171,9 +171,16 @@ async function portsCommand(args: ParsedArgs, cwd: string, stateDir: string, loa
   if (action === "gc") {
     // Orphaned routes go first so their target ports and listener claims can
     // be collected in the same run.
-    const recoveredRoutes = await recoverOrphanedProxyRoutes(stateDir);
+    // An owner whose public withdrawal fails keeps its routes, which hold its
+    // ports; every other lease is still collected before that is reported.
+    const recovery: { recovered: string[]; error?: DevFnError } = await recoverOrphanedProxyRoutes(stateDir).then((recovered) => ({ recovered }), (error: unknown) => {
+      if (!(error instanceof DevFnError) || !Array.isArray(error.details?.recovered)) throw error;
+      return { recovered: error.details.recovered as string[], error };
+    });
     await registry.reconcile();
-    return { ok: true, removed: await registry.gc(), recoveredRoutes };
+    const removed = await registry.gc();
+    if (recovery.error) throw new DevFnError(recovery.error.code, recovery.error.message, { ...recovery.error.details, removed });
+    return { ok: true, removed, recoveredRoutes: recovery.recovered };
   }
   if (action !== undefined && action !== "report") throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown ports action ${action}. Expected gc or report.`);
   const state = await registry.reconcile();

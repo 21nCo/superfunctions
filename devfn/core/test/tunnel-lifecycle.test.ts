@@ -19,7 +19,7 @@ vi.mock("@devfn/proxy", async (importOriginal) => {
 import { validateDevFnConfig } from "@devfn/config";
 import { withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
-import { publishTunnelRoutes, readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelServiceOptions } from "@devfn/proxy/tunnel";
+import { markOwnerBinding, publishTunnelRoutes, readOwnerBindings, readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelServiceOptions } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, planPublicUrls, recoverOrphanedProxyRoutes, resolveInstanceIdentity, type TunnelOverrides } from "../src/index.js";
 import { publishLifecycleTunnel, withdrawLifecycleTunnel } from "../src/tunnel.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
@@ -120,7 +120,7 @@ it("withdraws an orphaned owner's public routes during recovery and leaves an ow
 });
 
 it("withdraws public routes before stopping processes, also for a replacement, and stops nothing while withdrawal fails", async () => {
-  await registerPreview();
+  const tunnel = await registerPreview();
   await stubLifecycleHost();
   const orchestrator = new DevFnOrchestrator(overrides);
   const started = await orchestrator.up({ config, root, stateDir, profile: "share", allowPublic: true });
@@ -132,14 +132,36 @@ it("withdraws public routes before stopping processes, also for a replacement, a
   expect(provider.calls.indexOf(`remove ${hostname}`)).toBeLessThan(provider.calls.lastIndexOf(`ensure ${hostname}`));
   expect(replaced).toMatchObject({ state: "ready", tunnel: { hostnames: [hostname] } });
 
+  // Exposure cannot be shown ended: DNS removal fails and the connector another owner shares cannot be replaced.
+  await publishTunnelRoutes(tunnel, "other-worktree", [OTHER]);
   provider.failRemove.add(hostname);
+  provider.connector = "exit";
   const degraded = await orchestrator.down({ config, root, stateDir });
   expect(degraded.state).toBe("degraded");
   expect(degraded.cleanup).toMatchObject({ stoppedProcesses: [], releasedPorts: false, removedProxy: false });
   expect(process.kill(replaced.processes[0].pid, 0)).toBe(true);
   provider.failRemove.clear();
+  provider.connector = "ready";
   expect((await orchestrator.down({ config, root, stateDir })).state).toBe("stopped");
   expect(provider.records.has(hostname)).toBe(false);
+  expect(provider.records.has(OTHER)).toBe(true);
+}, 90_000);
+
+it("completes local teardown once the connector no longer routes the names, reporting a DNS removal that keeps failing", async () => {
+  await registerPreview();
+  await stubLifecycleHost();
+  const orchestrator = new DevFnOrchestrator(overrides);
+  const started = await orchestrator.up({ config, root, stateDir, profile: "share", allowPublic: true });
+  const hostname = started.tunnel!.hostnames[0];
+  provider.failRemove.add(hostname);
+  const degraded = await orchestrator.down({ config, root, stateDir });
+  expect(degraded).toMatchObject({ state: "degraded", cleanup: { stoppedProcesses: ["web"], releasedPorts: true, removedProxy: true, errors: [],
+    publicOutstanding: [`preview: ${hostname}: public DNS removal is not confirmed`, `preview: provider failure removing ${hostname}`] } });
+  expect(await readOwnerBindings(stateDir, started.instanceId)).toEqual(["preview"]);
+  provider.failRemove.clear();
+  expect(await orchestrator.down({ config, root, stateDir })).toMatchObject({ state: "stopped", cleanup: { errors: [] } });
+  expect(provider.records.size).toBe(0);
+  expect(await readOwnerBindings(stateDir, started.instanceId)).toEqual([]);
 }, 90_000);
 
 /** A second binding of the same repository on its own tunnel and domain. */
@@ -156,33 +178,43 @@ it("moves an owner's routes off a binding it no longer selects", async () => {
   const staging = (await registerStaging(preview)).binding;
   await publishTunnelRoutes(preview, "owner", [OTHER]);
   const moved = STAGED;
-  await publishLifecycleTunnel(stateDir, { instanceId: "owner" }, { binding: staging, routes: [{ id: "owner:public:web", instanceId: "owner", hostname: moved, targetHost: "127.0.0.1", targetPort: 1, tls: "internal" }], urls: {} }, overrides);
+  await publishLifecycleTunnel(stateDir, "owner", { binding: staging, routes: [{ id: "owner:public:web", instanceId: "owner", hostname: moved, targetHost: "127.0.0.1", targetPort: 1, tls: "internal" }], urls: {} }, overrides);
   expect((await readTunnelState(stateDir, "preview")).hostnames).toEqual([]);
   expect((await readTunnelState(stateDir, "staging")).hostnames.map((item) => item.hostname)).toEqual([moved]);
 });
 
-it("keeps lifecycles that never published independent of malformed tunnel state", async () => {
-  await mkdir(stateDir, { recursive: true });
-  await writeFile(path.join(stateDir, "tunnels.json"), "{ not json");
-  expect(await withdrawLifecycleTunnel(stateDir, { instanceId: "never-published", projectId: "fixture" }, overrides)).toEqual([]);
-  // A binding's unreadable state fails only owners of the project it is registered to.
-  const tunnel = await (async () => { await rm(path.join(stateDir, "tunnels.json")); return await registerPreview(); })();
+it("reads no tunnel state for a lifecycle that never published and fails closed for one that may have", async () => {
+  const tunnel = await registerPreview();
   await mkdir(tunnelPaths(stateDir, "preview").dir, { recursive: true });
   await writeFile(tunnelPaths(stateDir, "preview").state, "{ not json");
-  expect(await withdrawLifecycleTunnel(stateDir, { instanceId: "other", projectId: "another-project" }, overrides)).toEqual([]);
-  await expect(withdrawLifecycleTunnel(stateDir, { instanceId: "mine", projectId: "fixture" }, overrides)).rejects.toThrow("unreadable");
-  expect(tunnel.binding.name).toBe("preview");
-});
+  await writeFile(path.join(stateDir, "tunnels.json"), "{ not json");
+  // A never-published lifecycle of the binding's own project starts and stops as in DevFn v0.1.
+  await stubLifecycleHost();
+  const orchestrator = new DevFnOrchestrator(overrides);
+  expect(await orchestrator.up({ config, root, stateDir, allowPublic: true })).toMatchObject({ state: "ready" });
+  expect(await orchestrator.down({ config, root, stateDir })).toMatchObject({ state: "stopped", cleanup: { errors: [] } });
+  // An owner with a publish-intent marker is not skipped: its withdrawal and recovery fail and are reported.
+  await writeFile(path.join(stateDir, "tunnels.json"), JSON.stringify({ version: 1, bindings: [tunnel.binding] }));
+  await markOwnerBinding(stateDir, "marked-owner", "preview", true);
+  await expect(withdrawLifecycleTunnel(stateDir, "marked-owner", overrides)).rejects.toThrow("is invalid");
+  await expect(recoverOrphanedProxyRoutes(stateDir, overrides)).rejects.toMatchObject({ details: { recovered: [], failures: [expect.stringContaining("marked-owner: Public tunnel routes could not be fully withdrawn")] } });
+}, 60_000);
 
 it("recovers every other orphan when one orphan's withdrawal fails", async () => {
   const tunnel = await registerPreview();
   const staging = await registerStaging(tunnel);
+  const live = "web-live-0123456789abcdef0123.staging.example.test";
+  await publishTunnelRoutes(staging, "live-owner", [live]);
   await publishTunnelRoutes(staging, "orphan-a", [STAGED]);
   await publishTunnelRoutes(tunnel, "orphan-b", [OTHER]);
+  // orphan-a's exposure cannot be shown ended: its DNS removal fails and the connector it shares with a live owner cannot be replaced.
   provider.failRemove.add(STAGED);
-  await expect(recoverOrphanedProxyRoutes(stateDir, overrides)).rejects.toMatchObject({ details: { recovered: ["orphan-b"] } });
-  expect([...provider.records.keys()]).toEqual([STAGED]);
+  provider.connector = "exit";
+  const recover = async () => await withFileLock(path.join(await realpath(stateDir), "lifecycle-live-owner.lock"), async () => await recoverOrphanedProxyRoutes(stateDir, overrides));
+  await expect(recover()).rejects.toMatchObject({ details: { recovered: ["orphan-b"], failures: [expect.stringContaining("orphan-a: Public tunnel routes could not be fully withdrawn")] } });
+  expect([...provider.records.keys()].sort()).toEqual([live, STAGED].sort());
   provider.failRemove.clear();
-  expect(await recoverOrphanedProxyRoutes(stateDir, overrides)).toEqual(["orphan-a"]);
-  expect(provider.records.size).toBe(0);
+  provider.connector = "ready";
+  expect(await recover()).toEqual(["orphan-a"]);
+  expect([...provider.records.keys()]).toEqual([live]);
 });

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { processGroupStatus } from "@devfn/processes";
 import { registerDomain } from "../src/domains.js";
-import { publishTunnelRoutes, readTunnelBindings, readTunnelState, recoverTunnel, registerTunnelBinding, tunnelPaths, tunnelStatus, unregisterTunnelBinding, withdrawTunnelRoutes, type TunnelServiceOptions } from "../src/tunnel/index.js";
+import { publishTunnelRoutes, readOwnerBindings, readTunnelBindings, readTunnelState, recoverTunnel, registerTunnelBinding, tunnelPaths, tunnelStatus, unregisterTunnelBinding, withdrawTunnelRoutes, type TunnelServiceOptions } from "../src/tunnel/index.js";
 import { writeTunnelState } from "../src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "./fixtures/tunnel.js";
 
@@ -81,14 +81,16 @@ describe("tunnel lifecycle", () => {
     expect(await processGroupStatus(first.pid, first.birthSignature)).toBe("exited");
     expect(await connectorHostnames()).toEqual([B2, A, B].sort());
 
-    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual([A]);
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual(["preview"]);
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [] });
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual([]);
     expect([...provider.records.keys()].sort()).toEqual([B2, B].sort());
     expect(await connectorHostnames()).toEqual([B2, B].sort());
     expect((await tunnelStatus(options)).hostnames).toEqual([{ hostname: B2, ownerId: "owner-b" }, { hostname: B, ownerId: "owner-b" }]);
 
-    expect(await withdrawTunnelRoutes(options, "owner-b")).toEqual([B2, B].sort());
+    expect(await withdrawTunnelRoutes(options, "owner-b")).toEqual({ withdrawn: [B2, B].sort(), outstanding: [] });
     const last = await readTunnelState(dir, "preview");
-    expect(last).toMatchObject({ hostnames: [], retired: [] });
+    expect(last).toMatchObject({ hostnames: [], retired: [], residue: [] });
     expect(last.connector).toBeUndefined();
     expect(provider.records.size).toBe(0);
   });
@@ -159,19 +161,100 @@ describe("tunnel lifecycle", () => {
     expect(Object.fromEntries(provider.records)).toEqual({ [A]: "devfn", [B2]: "foreign" });
   });
 
-  it("removes public DNS on withdrawal even when no connector can serve the remaining routes", async () => {
+  it("withdraws without reducing another owner's service when the connector replacement fails", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     await publishTunnelRoutes(options, "owner-b", [B]);
     const before = (await readTunnelState(dir, "preview")).connector!;
     provider.connector = "exit";
-    // The owner's exposure ended; the other owner's outage is not its failure.
-    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual([A]);
+    // DNS removal ended the owner's exposure; the running connector keeps serving the other owner.
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [`${A}: a connector that may route them has not stopped`, expect.stringContaining("kept for the other public routes")] });
     expect([...provider.records.keys()]).toEqual([B]);
-    // Nothing keeps serving the withdrawn name; the remaining owner is restored by recovery.
-    expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("exited");
+    expect((await readTunnelState(dir, "preview")).connector).toEqual(before);
+    expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("running");
+    expect((await tunnelStatus(options)).outstanding).toEqual([{ ownerId: "owner-a", detail: `${A}: a connector that may route them has not stopped` }]);
+    // The stale connector is replaced by the next transition with public consent.
     provider.connector = "ready";
-    expect(await recoverTunnel(options)).toMatchObject({ connector: "running", hostnames: [{ hostname: B, ownerId: "owner-b" }] });
+    expect(await recoverTunnel(options)).toMatchObject({ connector: "running", hostnames: [{ hostname: B, ownerId: "owner-b" }], outstanding: [] });
     expect(await connectorHostnames()).toEqual([B]);
+    expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("exited");
+  });
+
+  it("starts no connector during a withdrawal when the recorded one exited", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    process.kill(-(await readTunnelState(dir, "preview")).connector!.pid, "SIGKILL");
+    provider.calls.length = 0;
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [] });
+    expect(provider.calls).toEqual([`remove ${A}`]);
+    expect((await readTunnelState(dir, "preview")).connector).toBeUndefined();
+    expect([...provider.records.keys()]).toEqual([B]);
+  });
+
+  it("fails a withdrawal while both DNS removal and the connector change fail, keeping it journaled for retry", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    provider.failRemove.add(A);
+    provider.connector = "exit";
+    await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toThrow("public DNS removal is not confirmed and a connector that may route them has not stopped");
+    expect((await readTunnelState(dir, "preview")).residue).toEqual([{ ownerId: "owner-a", hostnames: [A], dnsRemoved: false }]);
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual(["preview"]);
+    provider.failRemove.clear();
+    provider.connector = "ready";
+    // The owner publishes nothing any more, but its journaled withdrawal is found and finished.
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
+    expect([...provider.records.keys()]).toEqual([B]);
+    expect(await connectorHostnames()).toEqual([B]);
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual([]);
+  });
+
+  it("ends exposure once the connector stopped although DNS removal keeps failing, reporting it until it is removed", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const connector = (await readTunnelState(dir, "preview")).connector!;
+    provider.failRemove.add(A);
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [`${A}: public DNS removal is not confirmed`, `provider failure removing ${A}`] });
+    expect(await processGroupStatus(connector.pid, connector.birthSignature)).toBe("exited");
+    expect((await withdrawTunnelRoutes(options, "owner-a")).outstanding).toHaveLength(2);
+    await expect(unregisterTunnelBinding(dir, "preview", "fixture", dir)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_IN_USE" });
+    provider.failRemove.clear();
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
+    expect(provider.records.size).toBe(0);
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual([]);
+  });
+
+  it("reports and retries a withdrawn owner's connector that cannot be verified stopped", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const connector = (await readTunnelState(dir, "preview")).connector!;
+    // The wrapper that leads the group is gone; its connector child remains, so the group is unverifiable.
+    process.kill(connector.pid, "SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [`${A}: a connector that may route them has not stopped`] });
+    expect(provider.records.size).toBe(0);
+    expect((await withdrawTunnelRoutes(options, "owner-a")).outstanding).toHaveLength(1);
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual(["preview"]);
+    process.kill(-connector.pid, "SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual([]);
+  });
+
+  it("never journals, and so never rolls back, a DevFn-owned record that existed before the publish", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    // A failed read aborts before anything is journaled.
+    provider.records.set(B, "devfn");
+    provider.failRead.add(B);
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow("provider failure reading");
+    provider.failRead.clear();
+    // A record that appears between the read and the create is reported "existing" and not journaled.
+    provider.unseen.add(B);
+    provider.connector = "exit";
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
+    // An owned record that does not verify fails the publish without being journaled.
+    provider.connector = "ready";
+    provider.records.set(B2, "unproxied");
+    await expect(publishTunnelRoutes(options, "owner-b", [B2])).rejects.toThrow(`no DevFn record for ${B2}`);
+    expect(Object.fromEntries(provider.records)).toEqual({ [A]: "devfn", [B]: "devfn", [B2]: "unproxied" });
+    expect(provider.calls.filter((call) => call.startsWith("remove"))).toEqual([]);
+    expect((await readTunnelState(dir, "preview")).residue).toEqual([]);
   });
 
   it("keeps a DevFn-owned record it did not create and repairs a committed name's missing record", async () => {
@@ -191,9 +274,9 @@ describe("tunnel lifecycle", () => {
     provider.failRemove.add(A2);
     expect(await publishTunnelRoutes(options, "owner-a", [A])).toEqual([expect.objectContaining({ hostname: A })]);
     expect(await connectorHostnames()).toEqual([A]);
-    expect(await tunnelStatus(options)).toMatchObject({ pending: true, hostnames: [{ hostname: A, ownerId: "owner-a" }] });
+    expect(await tunnelStatus(options)).toMatchObject({ outstanding: [{ ownerId: "owner-a", detail: `${A2}: public DNS removal is not confirmed` }], hostnames: [{ hostname: A, ownerId: "owner-a" }] });
     provider.failRemove.clear();
-    expect(await recoverTunnel(options)).toMatchObject({ pending: false, connector: "running" });
+    expect(await recoverTunnel(options)).toMatchObject({ outstanding: [], connector: "running" });
     expect([...provider.records.keys()]).toEqual([A]);
   });
 
@@ -201,7 +284,7 @@ describe("tunnel lifecycle", () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     process.kill(-(await readTunnelState(dir, "preview")).connector!.pid, "SIGKILL");
     provider.calls.length = 0;
-    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual([A]);
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [] });
     expect(provider.calls).toEqual([`remove ${A}`]);
     expect((await readTunnelState(dir, "preview")).connector).toBeUndefined();
   });

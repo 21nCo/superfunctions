@@ -33,7 +33,7 @@ export interface LifecyclePlan {
   proxy: boolean;
 }
 
-export interface CleanupResult { stoppedProcesses: string[]; stoppedServices: string[]; removedProxy: boolean; releasedPorts: boolean; errors: string[]; withdrawnPublicHostnames?: string[] }
+export interface CleanupResult { stoppedProcesses: string[]; stoppedServices: string[]; removedProxy: boolean; releasedPorts: boolean; errors: string[]; withdrawnPublicHostnames?: string[]; publicOutstanding?: string[] }
 
 export interface LifecycleReceipt {
   version: 1;

@@ -33,10 +33,14 @@ export function fixtureBinding(repositoryIdentity: string, credentialsFile: stri
  * test can prove which mutations happened.
  */
 export class FakeTunnelProvider implements TunnelProvider {
-  public readonly records = new Map<string, "devfn" | "foreign">();
+  /** A DevFn-owned record is "devfn", or "unproxied" when it does not verify. */
+  public readonly records = new Map<string, "devfn" | "unproxied" | "foreign">();
   public readonly calls: string[] = [];
   public failEnsure = new Set<string>();
   public failRemove = new Set<string>();
+  public failRead = new Set<string>();
+  /** Records the next read misses, as if they were created right after it. */
+  public unseen = new Set<string>();
   public connector: "ready" | "exit" = "ready";
   public tunnel: "local" | "remote" = "local";
   /** Runs when a connector command is requested, just before it launches. */
@@ -57,9 +61,16 @@ export class FakeTunnelProvider implements TunnelProvider {
     }
     const record = this.records.get(hostname);
     if (record === "foreign") throw Object.assign(new Error(`${hostname} has a foreign record`), { code: "DEVFN_TUNNEL_CONFLICT" });
-    if (record === "devfn") return "existing";
+    if (record) { await this.verifyDns(_binding, hostname); return "existing"; }
     this.records.set(hostname, "devfn");
     return "created";
+  }
+
+  public async ownsDns(_binding: TunnelBinding, hostname: string): Promise<boolean> {
+    this.calls.push(`read ${hostname}`);
+    if (this.failRead.has(hostname)) throw new Error(`provider failure reading ${hostname}`);
+    if (this.unseen.delete(hostname)) return false;
+    return this.records.get(hostname) === "devfn" || this.records.get(hostname) === "unproxied";
   }
 
   public async verifyDns(_binding: TunnelBinding, hostname: string): Promise<void> {
@@ -70,7 +81,7 @@ export class FakeTunnelProvider implements TunnelProvider {
   public async removeDns(_binding: TunnelBinding, hostname: string): Promise<void> {
     this.calls.push(`remove ${hostname}`);
     if (this.failRemove.has(hostname)) throw new Error(`provider failure removing ${hostname}`);
-    if (this.records.get(hostname) === "devfn") this.records.delete(hostname);
+    if (this.records.get(hostname) !== "foreign") this.records.delete(hostname);
   }
 
   public renderConnectorConfig(_binding: TunnelBinding, hostnames: readonly string[], origin: PublicOrigin): string {

@@ -25,6 +25,8 @@ export function proxyListenerPorts(): { httpPort: number; httpsPort: number } { 
  * routes, which never render on it, are unreachable through a tunnel.
  */
 export const PUBLIC_ORIGIN_PORT = 8444;
+/** Marks the public origin's own responses: "fallback" on an allowlisted host's unrouted paths, "deny" for any other name. */
+export const PUBLIC_ORIGIN_HEADER = "Devfn-Public-Origin";
 
 /** Deterministic, locale-independent ordering of identifiers and hostnames. */
 const compareText = (a: string, b: string): number => {
@@ -169,14 +171,14 @@ export function renderCaddyfile(routes: readonly ProxyRoute[], ipv6Loopback = fa
   // TLS server name is refused (421), and any other name Caddy holds a
   // certificate for, including every local route, is denied (403).
   for (const [hostname, hostRoutes] of [...publicHosts].sort(([a], [b]) => compareText(a, b))) {
-    lines.push(`https://${hostname}:${publicPort} {`, "  tls internal", ...pathRoutes(hostRoutes), "}", "");
+    lines.push(`https://${hostname}:${publicPort} {`, "  tls internal", ...pathRoutes(hostRoutes, `header ${PUBLIC_ORIGIN_HEADER} fallback`), "}", "");
   }
-  if (publicHosts.size) lines.push(`https://:${publicPort} {`, "  tls internal", "  respond 403", "}", "");
+  if (publicHosts.size) lines.push(`https://:${publicPort} {`, "  tls internal", `  header ${PUBLIC_ORIGIN_HEADER} deny`, "  respond 403", "}", "");
   return lines.join("\n");
 }
 
 /** Path routes of one host, exact before prefix and longer before shorter, with a 404 fallback. */
-function pathRoutes(hostRoutes: readonly ProxyRoute[]): string[] {
+function pathRoutes(hostRoutes: readonly ProxyRoute[], fallbackHeader?: string): string[] {
   const exactRank = (route: ProxyRoute) => ((route.match ?? "prefix") === "exact" ? 1 : 0);
   const ordered = [...hostRoutes].sort((a, b) => exactRank(b) - exactRank(a) || (b.path ?? "/").length - (a.path ?? "/").length);
   const pathMatcher = (route: ProxyRoute): string => {
@@ -191,7 +193,7 @@ function pathRoutes(hostRoutes: readonly ProxyRoute[]): string[] {
     const targetHost = route.targetHost === "::1" ? "[::1]" : route.targetHost;
     lines.push(`    @route${index} path ${pathMatcher(route)}`, `    handle @route${index} {`, ...(route.stripPrefix ? [`      uri strip_prefix ${routePath.replace(/\/$/, "")}`] : []), `      reverse_proxy ${targetHost}:${route.targetPort}`, "    }");
   });
-  lines.push("    handle {", "      respond 404", "    }", "  }");
+  lines.push("    handle {", ...(fallbackHeader ? [`      ${fallbackHeader}`] : []), "      respond 404", "    }", "  }");
   return lines;
 }
 

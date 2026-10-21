@@ -21,7 +21,10 @@ describe("public origin rendering", () => {
     const config = renderCaddyfile([route({}), publicRoute()], true);
     expect(config).toContain(`  servers 127.0.0.1:${PUBLIC_ORIGIN_PORT} {\n    strict_sni_host on\n  }`);
     expect(config).toContain(`https://${PUBLIC_HOST}:${PUBLIC_ORIGIN_PORT} {\n  tls internal\n  route {`);
-    expect(config).toContain(`https://:${PUBLIC_ORIGIN_PORT} {\n  tls internal\n  respond 403\n}`);
+    expect(config).toContain(`https://:${PUBLIC_ORIGIN_PORT} {\n  tls internal\n  header Devfn-Public-Origin deny\n  respond 403\n}`);
+    // DevFn's own fallback on an allowlisted host is distinguishable from any application response.
+    expect(config).toContain("    handle {\n      header Devfn-Public-Origin fallback\n      respond 404\n    }");
+    expect(config.match(/Devfn-Public-Origin fallback/g)).toHaveLength(1);
     expect(config).not.toMatch(new RegExp(`web-w1\\.localhost:${PUBLIC_ORIGIN_PORT}`));
     expect(config).not.toMatch(new RegExp(`^${PUBLIC_HOST.replaceAll(".", "\\.")} \\{`, "m"));
     // A profile without public routes renders exactly as before.
@@ -64,6 +67,7 @@ describe("Cloudflare DNS adapter", () => {
     expect(await provider.ensureDns(binding, PUBLIC_HOST)).toBe("created");
     expect(records).toEqual([expect.objectContaining({ type: "CNAME", name: PUBLIC_HOST, content: target, proxied: true, comment: ownershipMarker(binding) })]);
     expect(await provider.ensureDns(binding, PUBLIC_HOST)).toBe("existing");
+    expect(await provider.ownsDns(binding, PUBLIC_HOST)).toBe(true);
     records[0].proxied = false;
     await expect(provider.verifyDns(binding, PUBLIC_HOST)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_VALIDATION_FAILED" });
   });
@@ -72,6 +76,7 @@ describe("Cloudflare DNS adapter", () => {
     const records: Array<Record<string, unknown>> = [{ id: "foreign", type: "CNAME", name: PUBLIC_HOST, content: target, proxied: true, comment: "someone else" }];
     const { calls, provider } = zone(records);
     await expect(provider.ensureDns(binding, PUBLIC_HOST)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
+    expect(await provider.ownsDns(binding, PUBLIC_HOST)).toBe(false);
     await provider.removeDns(binding, PUBLIC_HOST);
     expect(records).toHaveLength(1);
     expect(calls.filter((call) => !call.startsWith("GET"))).toEqual([]);
@@ -144,14 +149,17 @@ async function rawRequest(port: number, servername: string, host: string): Promi
 it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("denies private routes, forged Host and unknown names on a real Caddy public origin", async () => {
   await withFileLock(path.join(os.tmpdir(), "devfn-test-caddy-admin.lock"), async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "devfn-public-origin-"));
+    // The public application refuses anonymous requests at /: routing is verified independently of its status.
     const upstreams = await Promise.all(["PRIVATE", "PUBLIC"].map(async (body) => {
-      const server = http.createServer((_request, response) => response.end(body));
+      const server = http.createServer((_request, response) => { response.statusCode = body === "PUBLIC" ? 403 : 200; response.end(body); });
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       return { server, port: (server.address() as net.AddressInfo).port };
     }));
     const [httpPort, httpsPort, publicPort] = [await freePort(), await freePort(), await freePort()];
     const config = path.join(dir, "Caddyfile");
-    await writeFile(config, renderCaddyfile([route({ targetPort: upstreams[0].port }), publicRoute({ targetPort: upstreams[1].port })], false, { httpPort, httpsPort }, publicPort));
+    const pathOnly = "app-w1-0123456789abcdef0123.tunnel.example.test";
+    await writeFile(config, renderCaddyfile([route({ targetPort: upstreams[0].port }), publicRoute({ targetPort: upstreams[1].port }),
+      publicRoute({ id: "w1:public:app", hostname: pathOnly, path: "/app", targetPort: upstreams[1].port })], false, { httpPort, httpsPort }, publicPort));
     const child = spawn("caddy", ["run", "--config", config, "--adapter", "caddyfile"], { env: { ...process.env, XDG_DATA_HOME: path.join(dir, "data"), XDG_CONFIG_HOME: path.join(dir, "config") }, stdio: "ignore" });
     try {
       let root: string | undefined;
@@ -161,7 +169,12 @@ it.skipIf(process.env.DEVFN_REAL_PROXY !== "1")("denies private routes, forged H
       }
       // Verified TLS for the allowlisted name, with a forged Host refused.
       await probePublicOrigin(PUBLIC_HOST, publicPort, root!);
-      expect(await rawRequest(publicPort, PUBLIC_HOST, PUBLIC_HOST)).toEqual({ status: 200, body: "PUBLIC" });
+      expect(await rawRequest(publicPort, PUBLIC_HOST, PUBLIC_HOST)).toEqual({ status: 403, body: "PUBLIC" });
+      // A host routing only /app answers / with its own marked fallback, which still proves it is allowlisted.
+      await probePublicOrigin(pathOnly, publicPort, root!);
+      // A name Caddy holds a certificate for but the public origin does not serve gets the marked deny response.
+      await expect(probePublicOrigin("web-w1.localhost", publicPort, root!)).rejects.toThrow("does not serve");
+      await expect(probePublicOrigin("unknown.tunnel.example.test", publicPort, root!)).rejects.toThrow("TLS verification");
       expect(await rawRequest(publicPort, PUBLIC_HOST, "web-w1.localhost")).toMatchObject({ status: 421 });
       // A private name Caddy holds a certificate for is denied on the public origin.
       expect(await rawRequest(publicPort, "web-w1.localhost", "web-w1.localhost")).toEqual({ status: 403, body: "" });

@@ -37,31 +37,37 @@ export interface TunnelBinding {
 /** One public hostname a lifecycle owner publishes through a binding. */
 export interface TunnelHostname { hostname: string; ownerId: string; publishedAt: string }
 
-/** A connector process DevFn started; it leads its own process group. */
-export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number }
+/** A connector process DevFn started for exactly these hostnames; it leads its own process group. */
+export interface ConnectorRecord { pid: number; birthSignature: string; startedAt: string; configDigest: string; metricsPort: number; hostnames: string[] }
 
 /**
- * An in-flight transition, written before any provider or connector
- * mutation. A publish is rolled back by recovery (only the DNS records it
- * created are removed); a withdraw is rolled forward.
+ * An in-flight publish, written before any provider or connector mutation.
+ * Recovery rolls it back: only the DNS records it created are removed.
  */
 export interface TunnelTransition {
-  kind: "publish" | "withdraw";
+  kind: "publish";
   ownerId: string;
   hostnames: string[];
   next: TunnelHostname[];
   createdDns: string[];
-  launched?: ConnectorRecord;
 }
+
+/**
+ * Names an owner stopped publishing whose public reachability has not fully
+ * ended: their DNS removal is not yet confirmed, or a recorded connector may
+ * still route them. Retried by every later transition of the binding.
+ */
+export interface TunnelResidue { ownerId: string; hostnames: string[]; dnsRemoved: boolean }
 
 export interface TunnelState {
   version: 1;
   binding: string;
   hostnames: TunnelHostname[];
   connector?: ConnectorRecord;
-  /** Replaced connectors whose stop has not been confirmed yet. */
+  /** Connectors that are not, or are no longer, committed and whose stop has not been confirmed yet. */
   retired: ConnectorRecord[];
   pending?: TunnelTransition;
+  residue: TunnelResidue[];
 }
 
 /** The loopback origin a connector forwards to and the root that verifies its certificates. */
@@ -77,6 +83,8 @@ export interface TunnelProvider {
   ensureDns(binding: TunnelBinding, hostname: string): Promise<"created" | "existing">;
   /** Confirm the binding's tunnel exists in its account, is not deleted and takes its ingress from the local connector configuration. */
   verifyTunnel(binding: TunnelBinding): Promise<void>;
+  /** Read public DNS: whether a DevFn-owned record for hostname exists. A failed read throws; it never reports absence. */
+  ownsDns(binding: TunnelBinding, hostname: string): Promise<boolean>;
   /** Read back public DNS: hostname must route to this binding's tunnel through a DevFn-owned record. */
   verifyDns(binding: TunnelBinding, hostname: string): Promise<void>;
   /** Delete only the DevFn-owned record for hostname; an absent record is success. */
@@ -213,7 +221,7 @@ export async function unregisterTunnelBinding(stateDir: string, name: string, pr
     // holds while it revalidates its binding (assertBindingRegistered).
     await withFileLock(tunnelPaths(stateDir, name).lock, async () => {
       const state = await readTunnelState(stateDir, name);
-      if (state.hostnames.length || state.connector || state.retired.length || state.pending) throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Tunnel binding ${name} still has public routes or a connector.`);
+      if (state.hostnames.length || state.connector || state.retired.length || state.pending || state.residue.length) throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Tunnel binding ${name} still has public routes or a connector.`);
       await writeBindings(stateDir, bindings.filter((item) => item.name !== name));
     }, { timeoutMs: LOCK_TIMEOUT_MS });
   }, { timeoutMs: LOCK_TIMEOUT_MS });
@@ -247,11 +255,12 @@ export async function writePrivateJson(file: string, value: unknown): Promise<vo
   finally { await rm(temp, { force: true }); }
 }
 
+const isNames = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
 const isConnector = (value: unknown): value is ConnectorRecord => {
   const item = value as Partial<ConnectorRecord> | undefined;
   return Boolean(item) && Number.isInteger(item!.pid) && item!.pid! > 0 && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 &&
     typeof item!.startedAt === "string" && typeof item!.configDigest === "string" && /^[a-f0-9]{64}$/.test(item!.configDigest) &&
-    Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536;
+    Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && isNames(item!.hostnames);
 };
 const isHostnames = (value: unknown): value is TunnelHostname[] => Array.isArray(value) && value.every((item: Partial<TunnelHostname>) =>
   item && typeof item.hostname === "string" && typeof item.ownerId === "string" && item.ownerId.length > 0 && typeof item.publishedAt === "string") &&
@@ -262,7 +271,7 @@ export async function readTunnelState(stateDir: string, name: string): Promise<T
   let raw: string;
   try { raw = await readFile(tunnelPaths(stateDir, name).state, "utf8"); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, binding: name, hostnames: [], retired: [] };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, binding: name, hostnames: [], retired: [], residue: [] };
     throw new TunnelError("DEVFN_TUNNEL_STATE_INVALID", `Tunnel state for ${name} is unreadable.`);
   }
   let state: TunnelState;
@@ -270,9 +279,9 @@ export async function readTunnelState(stateDir: string, name: string): Promise<T
   const pending = state?.pending;
   if (!state || state.version !== 1 || state.binding !== name || !isHostnames(state.hostnames) || !Array.isArray(state.retired) || !state.retired.every(isConnector) ||
     (state.connector !== undefined && !isConnector(state.connector)) ||
-    (pending !== undefined && (!["publish", "withdraw"].includes(pending.kind) || typeof pending.ownerId !== "string" || !Array.isArray(pending.hostnames) ||
-      !pending.hostnames.every((item) => typeof item === "string") || !isHostnames(pending.next) || !Array.isArray(pending.createdDns) ||
-      !pending.createdDns.every((item) => typeof item === "string") || (pending.launched !== undefined && !isConnector(pending.launched))))) {
+    !Array.isArray(state.residue) || !state.residue.every((item) => item && typeof item.ownerId === "string" && isNames(item.hostnames) && typeof item.dnsRemoved === "boolean") ||
+    (pending !== undefined && (pending.kind !== "publish" || typeof pending.ownerId !== "string" || !isNames(pending.hostnames) ||
+      !isHostnames(pending.next) || !isNames(pending.createdDns)))) {
     throw new TunnelError("DEVFN_TUNNEL_STATE_INVALID", `Tunnel state for ${name} is invalid.`);
   }
   return state;
@@ -282,28 +291,53 @@ export async function writeTunnelState(stateDir: string, state: TunnelState): Pr
   await writePrivateJson(tunnelPaths(stateDir, state.binding).state, state);
 }
 
-/** Binding names with tunnel state on this machine; none without a tunnel state directory. */
-export async function tunnelStateNames(stateDir: string): Promise<string[]> {
-  try { return (await readdir(path.join(stateDir, "tunnels"))).filter((name) => BINDING_NAME.test(name)).sort(); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw new TunnelError("DEVFN_TUNNEL_STATE_INVALID", "The tunnel state directory is unreadable.");
-  }
+const OWNER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const ownersDir = (stateDir: string) => path.join(stateDir, "tunnel-owners");
+
+export function ownerMarkerFile(stateDir: string, ownerId: string): string {
+  if (!OWNER_ID.test(ownerId)) throw invalid("A tunnel owner ID must be a filename-safe identifier.");
+  return path.join(ownersDir(stateDir), `${ownerId}.json`);
 }
 
 /**
- * Lock-free: the bindings whose state records a public hostname of this
- * owner, or an in-flight transition for it, found from binding state rather
- * than the registry. A binding whose state cannot be read is listed in
- * unreadable instead, so it never hides or blocks the others.
+ * The bindings an owner may publish on, from its publish-intent marker: it
+ * is written before the owner's first provider or connector mutation on a
+ * binding and cleared once its public reachability there has ended. An
+ * owner without a marker never published, so no tunnel state is read for
+ * it; a malformed marker fails closed.
  */
-export async function tunnelOwnerBindings(stateDir: string, ownerId: string): Promise<{ names: string[]; unreadable: string[] }> {
-  const names: string[] = [];
-  const unreadable: string[] = [];
-  for (const name of await tunnelStateNames(stateDir)) {
-    const state = await readTunnelState(stateDir, name).catch(() => undefined);
-    if (!state) unreadable.push(name);
-    else if (state.hostnames.some((item) => item.ownerId === ownerId) || state.pending?.ownerId === ownerId) names.push(name);
+export async function readOwnerBindings(stateDir: string, ownerId: string): Promise<string[]> {
+  let raw: string;
+  try { raw = await readFile(ownerMarkerFile(stateDir, ownerId), "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new TunnelError("DEVFN_TUNNEL_STATE_INVALID", `The tunnel publish marker of ${ownerId} is unreadable.`);
   }
-  return { names, unreadable };
+  const marker = (() => { try { return JSON.parse(raw) as { version?: unknown; bindings?: unknown }; } catch { return undefined; } })();
+  if (marker?.version !== 1 || !isNames(marker.bindings) || !marker.bindings.every((name) => BINDING_NAME.test(name))) {
+    throw new TunnelError("DEVFN_TUNNEL_STATE_INVALID", `The tunnel publish marker of ${ownerId} is invalid.`);
+  }
+  return marker.bindings;
+}
+
+/** Add or remove one binding in an owner's publish-intent marker; the marker is removed once it names none. */
+export async function markOwnerBinding(stateDir: string, ownerId: string, name: string, present: boolean): Promise<void> {
+  const file = ownerMarkerFile(stateDir, ownerId);
+  await mkdir(ownersDir(stateDir), { recursive: true, mode: 0o700 });
+  await withFileLock(`${file}.lock`, async () => {
+    const current = await readOwnerBindings(stateDir, ownerId);
+    const bindings = [...new Set([...current.filter((item) => item !== name), ...(present ? [name] : [])])].sort();
+    if (bindings.length === current.length && bindings.every((item) => current.includes(item))) return;
+    if (bindings.length) await writePrivateJson(file, { version: 1, bindings });
+    else await rm(file, { force: true });
+  }, { timeoutMs: LOCK_TIMEOUT_MS });
+}
+
+/** Every owner with a publish-intent marker on this machine. */
+export async function tunnelOwners(stateDir: string): Promise<string[]> {
+  try { return (await readdir(ownersDir(stateDir))).filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -5)).filter((name) => OWNER_ID.test(name)).sort(); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new TunnelError("DEVFN_TUNNEL_STATE_INVALID", "The tunnel owner directory is unreadable.");
+  }
 }
