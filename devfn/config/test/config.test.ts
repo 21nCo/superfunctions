@@ -8,6 +8,17 @@ import { describe, expect, it } from "vitest";
 import { classifyLegacyDarwinIdentity, classifyProcessIdentity, processBirthSignature, processIdentityStatus, discoverProject, isCredentialKey, loadTrustedDevFnConfig, trustProject, validateDevFnConfig, validateDevFnPolicy } from "../src/index.js";
 
 describe("DevFn configuration", () => {
+  it("accepts only selected proxy routes as tunnel routes and keeps provider credentials out of the manifest", () => {
+    const base = { version: 1, project: { id: "fixture" }, ports: { web: {} }, hostnames: { web: { target: "web" }, admin: { target: "web", profiles: ["default"] } } };
+    const profile = (tunnel: unknown, proxy = true) => validateDevFnConfig({ ...base, profiles: { default: { proxy: true }, share: { proxy, tunnel } } });
+    expect(profile({ binding: "preview", routes: ["web"] }).profiles.share.tunnel).toEqual({ binding: "preview", routes: ["web"] });
+    expect(() => profile({ binding: "preview", routes: ["web"] }, false)).toThrow("requires proxy: true");
+    expect(() => profile({ binding: "preview", routes: ["admin"] })).toThrow("not a hostname route of this profile");
+    expect(() => profile({ binding: "preview", routes: [] })).toThrow("each public route once");
+    expect(() => profile({ binding: "preview", routes: ["web"], apiToken: "x" })).toThrow("belong to the machine binding");
+    expect(() => profile({ binding: "Preview", routes: ["web"] })).toThrow("registered tunnel binding name");
+  });
+
   it("treats a recorded process as gone only when its PID is absent or a readable birth signature differs", () => {
     expect(classifyProcessIdentity(false, "birth")).toBe("exited");
     expect(classifyProcessIdentity(true, "birth", "birth")).toBe("running");

@@ -33,7 +33,7 @@ export interface LifecyclePlan {
   proxy: boolean;
 }
 
-export interface CleanupResult { stoppedProcesses: string[]; stoppedServices: string[]; removedProxy: boolean; releasedPorts: boolean; errors: string[] }
+export interface CleanupResult { stoppedProcesses: string[]; stoppedServices: string[]; removedProxy: boolean; releasedPorts: boolean; errors: string[]; withdrawnPublicHostnames?: string[] }
 
 export interface LifecycleReceipt {
   version: 1;
@@ -58,6 +58,10 @@ export interface LifecycleReceipt {
   startupFingerprints?: Record<string, string>;
   /** Selected non-secret port declarations at startup; absent in legacy receipts. */
   portSpecFingerprints?: Record<string, string>;
+  /** Public hostnames this lifecycle published through a machine tunnel binding. */
+  tunnel?: { binding: string; hostnames: string[] };
+  /** Deterministic public URLs by route name, present only after an explicitly public start. */
+  publicUrls?: Record<string, string>;
   cleanup?: CleanupResult;
   error?: { code: string; message: string };
 }

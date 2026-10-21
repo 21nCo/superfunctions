@@ -309,6 +309,37 @@ describe("devfn CLI", () => {
     expect((await registry.read()).allocations.find((item) => item.invocationId === "stale-invocation")?.state).toBe("active");
   });
 
+  it("previews public tunnel URLs, refuses a binding without the nonproduction assertion and keeps tunnel profiles behind --allow-public", async () => {
+    const cwd = await realpath(await mkdtemp(path.join(tmpdir(), "devfn-tunnel-cli-")));
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-tunnel-state-"));
+    try {
+      await writeFile(path.join(cwd, "credentials.json"), "{}", { mode: 0o600 });
+      await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "fixture" }, ports: { web: {} },
+        processes: { web: { adapter: "command", command: [process.execPath, "-e", "setInterval(() => {}, 1000)"], ports: ["web"] } },
+        profiles: { default: { processes: ["web"], proxy: true, tunnel: { binding: "preview", routes: ["web"] } } }, hostnames: { web: { target: "web", path: "/app" } } }));
+      const run = async (...args: string[]) => {
+        let output = "";
+        const code = await runCli([...args, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { output += text; }, stderr: () => undefined });
+        return { code, result: JSON.parse(output) as Record<string, any> };
+      };
+      const fields = ["--domain", "tunnel.example.test", "--account-id", "a".repeat(32), "--zone-id", "b".repeat(32), "--tunnel-id", "00000000-0000-4000-8000-000000000001",
+        "--credentials-file", "credentials.json", "--api-token-env", "DEVFN_FIXTURE_TOKEN"];
+      expect(await run("tunnel", "register", "preview", ...fields)).toMatchObject({ code: 1, result: { error: { message: expect.stringContaining("--nonproduction") } } });
+      expect(await run("tunnel", "urls")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_RUNTIME_INVALID" } } });
+      expect(await run("tunnel", "register", "preview", ...fields, "--nonproduction")).toMatchObject({ code: 0, result: { binding: { name: "preview", nonproduction: true } } });
+      const urls = await run("tunnel", "urls");
+      expect(urls.result).toEqual({ ok: true, binding: "preview", urls: { web: expect.stringMatching(/^https:\/\/web-[a-z0-9-]+\.tunnel\.example\.test\/app$/) } });
+      expect(JSON.stringify(await run("tunnel", "list"))).not.toContain("DEVFN_FIXTURE_TOKEN=");
+      expect(await run("up")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
+      expect(await run("tunnel", "recover", "preview")).toMatchObject({ code: 1, result: { error: { code: "DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED" } } });
+      expect(await run("tunnel", "status", "preview")).toEqual({ code: 0, result: { ok: true, tunnel: { binding: "preview", connector: "stopped", hostnames: [], pending: false, retired: 0 } } });
+      expect(await run("tunnel", "unregister", "preview")).toMatchObject({ code: 0, result: { removed: true } });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
   it("requires a separate confirmation for public exposure", async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), "devfn-public-"));
     const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-state-"));

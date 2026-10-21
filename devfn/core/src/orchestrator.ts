@@ -8,12 +8,13 @@ import { ComposeController, composeProjectName, createComposeEnvironment, create
 import { defaultStateDir, isCredentialKey, loadDevFnPolicy, validateDevFnConfig, type DevFnConfig, type HealthCheck } from "@devfn/config";
 import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePolicy, scanListenerState, withFileLock, withRoutingLock, type ListenerInfo, type ListenerScanResult, type PortAllocation, type RegistryInvocation } from "@devfn/ports";
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
-import { CaddyProxyController, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
+import { CaddyProxyController, PUBLIC_ORIGIN_PORT, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
 import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute, relayPaths, STATE_DIR_ENV } from "@devfn/proxy/oauth-relay";
 
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
 import { createPlan } from "./planner.js";
+import { profileTunnel, publishLifecycleTunnel, publishedTunnelOwners, selectedPublicRoutes, withdrawLifecycleTunnel, type TunnelOverrides } from "./tunnel.js";
 import { readReceipt, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
 
@@ -219,6 +220,8 @@ async function selectedProxyRoutes(config: DevFnConfig, plan: LifecyclePlan, ide
         ...(registration.certificateFile ? { certificateFile: registration.certificateFile, keyFile: registration.keyFile } : {}) });
     }
   }
+  // Public origin routes are validated against their tunnel binding, never by local loopback DNS.
+  routes.push(...(await selectedPublicRoutes(config, plan, identity, ports, stateDir))?.routes ?? []);
   renderCaddyfile(routes.map((route) => ({ ...route, updatedAt: "preflight" })));
   return routes;
 }
@@ -362,7 +365,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
  * lifecycles recorded must then be verified dead. Live or ambiguous
  * instances keep their routes.
  */
-export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Promise<string[]> {
+export async function recoverOrphanedProxyRoutes(requestedStateDir: string, tunnelOverrides: TunnelOverrides = {}): Promise<string[]> {
   let stateDir: string;
   try { stateDir = await realpath(requestedStateDir); }
   catch (error) {
@@ -372,7 +375,8 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Pro
   const proxy = new CaddyProxyController(stateDir);
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   const recovered: string[] = [];
-  const routed = await proxy.routedInstanceIds();
+  // An owner whose proxy routes are gone may still publish tunnel hostnames.
+  const routed = [...new Set([...await proxy.routedInstanceIds(), ...await publishedTunnelOwners(stateDir)])].sort();
   // The OAuth relay has no lifecycle lock; its recorded identities show
   // whether it may still run. Recovery also ends a dead relay's claim and
   // record after a route transition already dropped its route. A relay
@@ -392,11 +396,13 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Pro
     try {
       await withFileLock(path.join(stateDir, `lifecycle-${instanceId}.lock`), async () => {
         entered = true;
-        await withRoutingLock(stateDir, async () => {
-          if (await registry.instanceMayRun(instanceId)) return;
-          await proxy.removeInstance(instanceId);
-          recovered.push(instanceId);
-        });
+        if (await withRoutingLock(stateDir, async () => await registry.instanceMayRun(instanceId))) return;
+        // The held lifecycle lock keeps this instance from starting, so its
+        // public routes are withdrawn, and only then its proxy routes removed,
+        // without holding the shared routing lock across provider calls.
+        await withdrawLifecycleTunnel(stateDir, instanceId, tunnelOverrides);
+        await withRoutingLock(stateDir, async () => await proxy.removeInstance(instanceId));
+        recovered.push(instanceId);
       }, { timeoutMs: 1_000 });
     } catch (error) {
       // A lifecycle command of this instance is running; it owns its routes.
@@ -475,13 +481,18 @@ async function stopJournaledOwners(receipt: LifecycleReceipt, registry: FilePort
 }
 
 export class DevFnOrchestrator {
+  public constructor(private readonly tunnelOverrides: TunnelOverrides = {}) {}
+
   public async up(options: UpOptions): Promise<LifecycleReceipt> {
     validateDevFnConfig(options.config);
     const plan = createPlan(options.config, options.profile);
     const publicNodes = plan.nodes.filter((node) => node.kind === "process" && options.config.processes?.[node.name]?.exposure === "public").map((node) => node.name);
     const publicPorts = plan.portNames.filter((name) => options.config.ports?.[name]?.exposure === "public");
-    if ((publicNodes.length || publicPorts.length) && !options.allowPublic) {
-      throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "This profile declares public exposure. Review it and rerun with --allow-public.", { processes: publicNodes, ports: publicPorts });
+    // A selected tunnel binding is an external resource, not consent: public
+    // routes need the same explicit confirmation before any state is read.
+    const tunnel = profileTunnel(options.config, plan);
+    if ((publicNodes.length || publicPorts.length || tunnel) && !options.allowPublic) {
+      throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "This profile declares public exposure. Review it and rerun with --allow-public.", { processes: publicNodes, ports: publicPorts, ...(tunnel ? { tunnel } : {}) });
     }
     const requestedStateDir = options.stateDir ?? defaultStateDir();
     const identity = await resolveInstanceIdentity(options.config.project.id, options.root);
@@ -514,14 +525,17 @@ export class DevFnOrchestrator {
     const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
     const plan = createPlan(options.config, options.profile);
     const profileHostnames = Object.entries(options.config.hostnames ?? {}).filter(([, spec]) => !spec.profiles || spec.profiles.includes(plan.profile));
-    const listenerPorts = plan.proxy && profileHostnames.length ? Object.values(proxyListenerPorts()) : [];
+    const listenerPorts = plan.proxy && profileHostnames.length ? [...Object.values(proxyListenerPorts()), ...(profileTunnel(options.config, plan) ? [PUBLIC_ORIGIN_PORT] : [])] : [];
     const preflightPorts = Object.fromEntries(plan.portNames.map((name) => [name, 1]));
     const routes = await selectedProxyRoutes(options.config, plan, identity, preflightPorts,
       loadedPolicy?.policy.hostnameSuffix ?? ".localhost", stateDir);
     const publicNodes = plan.nodes.filter((node) => node.kind === "process" && options.config.processes?.[node.name]?.exposure === "public").map((node) => node.name);
     const publicPorts = plan.portNames.filter((name) => options.config.ports?.[name]?.exposure === "public");
-    if ((publicNodes.length || publicPorts.length) && !options.allowPublic) {
-      throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "This profile declares public exposure. Review it and rerun with --allow-public.", { processes: publicNodes, ports: publicPorts });
+    // A selected tunnel binding is an external resource, not consent: public
+    // routes need the same explicit confirmation before any state is read.
+    const tunnel = profileTunnel(options.config, plan);
+    if ((publicNodes.length || publicPorts.length || tunnel) && !options.allowPublic) {
+      throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "This profile declares public exposure. Review it and rerun with --allow-public.", { processes: publicNodes, ports: publicPorts, ...(tunnel ? { tunnel } : {}) });
     }
     const invocationId = randomUUID();
     const runtimeDir = await secureRuntimeDirectory(options.config, options.root, identity.instanceId);
@@ -673,6 +687,15 @@ export class DevFnOrchestrator {
           receipt.routes = await proxy.upsert(routes, identity.instanceId);
         } else if (activatedRoutes) receipt.routes = activatedRoutes;
         receipt.urls = resolveAllocationUrls(allocations, receipt.routes, selectedHttpPorts(options.config, plan), resolved.directUrls);
+        // Public exposure starts last, once every node is ready and the
+        // public origin routes are active; a profile without a tunnel
+        // withdraws any this owner still publishes.
+        const publicSelection = await selectedPublicRoutes(options.config, plan, identity, ports, stateDir);
+        if (publicSelection) {
+          await writeReceipt(receipt);
+          receipt.tunnel = { binding: publicSelection.binding.name, hostnames: await publishLifecycleTunnel(stateDir, identity.instanceId, publicSelection, this.tunnelOverrides) };
+          receipt.publicUrls = publicSelection.urls;
+        } else await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides);
         if (!receipt.routes.length && await proxy.hasInstanceRoutes(identity.instanceId)) await proxy.removeInstance(identity.instanceId);
         clearInterval(heartbeat);
         await registry.markActive(invocationId, startupOwners(options.config, receipt));
@@ -803,6 +826,12 @@ export class DevFnOrchestrator {
 
   private async cleanup(receipt: LifecycleReceipt, registry: FilePortRegistry, supervisor: ProcessSupervisor, compose: ComposeController, proxy: CaddyProxyController, failed: boolean, preserveRoutes = false, preserveLeases = false): Promise<CleanupResult> {
     const result: CleanupResult = { stoppedProcesses: [], stoppedServices: [], removedProxy: false, releasedPorts: false, errors: [] };
+    // Public exposure ends before any process stops, so no public hostname
+    // reaches a port this lifecycle is about to free.
+    if (!preserveRoutes) {
+      try { result.withdrawnPublicHostnames = await withdrawLifecycleTunnel(receipt.stateDir ?? defaultStateDir(), receipt.instanceId, this.tunnelOverrides); }
+      catch (error) { result.errors.push(error instanceof Error ? error.message : String(error)); }
+    }
     const historical = [
       ...receipt.processes.map((value) => ({ kind: "process" as const, value })),
       ...receipt.services.map((value) => ({ kind: "service" as const, value })),

@@ -54,11 +54,24 @@ export interface ComposeServiceSpec {
   secretEnv?: string[];
 }
 
+/**
+ * Routes a profile publishes through a machine-registered public tunnel
+ * binding. Selecting it never authorizes exposure: every start still needs
+ * --allow-public.
+ */
+export interface ProfileTunnelSpec {
+  /** Name of a machine tunnel binding registered to this repository and project. */
+  binding: string;
+  /** Keys of `hostnames` entries selected by this profile; only these are public. */
+  routes: string[];
+}
+
 export interface ProfileSpec {
   processes?: string[];
   services?: string[];
   environment?: Record<string, string>;
   proxy?: boolean;
+  tunnel?: ProfileTunnelSpec;
 }
 
 /**
