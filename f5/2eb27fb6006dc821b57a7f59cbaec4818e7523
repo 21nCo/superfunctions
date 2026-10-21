@@ -1,0 +1,21 @@
+devfn/core/test/tunnel-real-origin.test.ts
+  s_496a99f031142a::t_e099a792c8a767 1-136
+devfn/docs/configuration.md
+  s_496a99f031142a::t_dc5cda3f551387 123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f52eb27fb6006dc821b57a7f59cbaec4818e7523",
+  "prompts": {},
+  "sessions": {
+    "s_496a99f031142a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_496a99f031142a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
