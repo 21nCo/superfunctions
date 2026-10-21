@@ -195,7 +195,8 @@ function routeOrigin(route: PersistedProxyRoute): string {
 /** Caddy's own precedence: exact before prefix, then the longest path. */
 function routeFor(routes: readonly PersistedProxyRoute[], url: URL): PersistedProxyRoute | undefined {
   const matches = routes.filter((route) => {
-    if (routeOrigin(route) !== url.origin) return false;
+    // A public tunnel origin route is not served on the local listeners.
+    if (route.exposure === "public" || routeOrigin(route) !== url.origin) return false;
     const routePath = (route.path ?? "/").toLowerCase();
     const requestPath = url.pathname.toLowerCase();
     if ((route.match ?? "prefix") === "exact") return requestPath === routePath;

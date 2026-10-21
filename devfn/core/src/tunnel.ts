@@ -3,7 +3,7 @@ import { realpath } from "node:fs/promises";
 import { defaultStateDir, validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import type { ProxyRoute } from "@devfn/proxy";
 import {
-  publishTunnelRoutes, readTunnelBindings, readTunnelState, resolveTunnelBinding, TunnelError, tunnelOwnerBindings, withdrawTunnelRoutes,
+  publishTunnelRoutes, readTunnelBindings, readTunnelState, resolveTunnelBinding, TunnelError, tunnelOwnerBindings, tunnelStateNames, withdrawTunnelRoutes,
   type TunnelBinding, type TunnelServiceOptions,
 } from "@devfn/proxy/tunnel";
 
@@ -63,38 +63,58 @@ export async function planPublicUrls(options: { config: DevFnConfig; root: strin
   return selection ? { binding: selection.binding.name, urls: selection.urls } : { urls: {} };
 }
 
-export async function publishLifecycleTunnel(stateDir: string, ownerId: string, selection: PublicSelection, overrides: TunnelOverrides = {}): Promise<string[]> {
+/** The lifecycle a withdrawal is for; with a project, only bindings registered to it can hold the owner. */
+export interface TunnelOwner { instanceId: string; projectId?: string }
+
+/**
+ * Publish the selection for this owner after withdrawing it from every other
+ * binding, so a profile that changes binding leaves nothing on the old one.
+ */
+export async function publishLifecycleTunnel(stateDir: string, owner: TunnelOwner, selection: PublicSelection, overrides: TunnelOverrides = {}): Promise<string[]> {
+  await withdrawLifecycleTunnel(stateDir, owner, overrides, selection.binding.name);
   const hostnames = [...new Set(selection.routes.map((route) => route.hostname))];
-  return (await publishTunnelRoutes({ ...overrides, stateDir, binding: selection.binding }, ownerId, hostnames)).map((item) => item.hostname);
+  return (await publishTunnelRoutes({ ...overrides, stateDir, binding: selection.binding }, owner.instanceId, hostnames)).map((item) => item.hostname);
 }
 
 /**
- * Withdraw every public hostname this owner publishes on any binding. Each
- * binding is attempted; failures are reported together. Returns the
- * withdrawn hostnames.
+ * Withdraw every public hostname this owner publishes on any binding but
+ * except. Owners are found from binding state, so a lifecycle that never
+ * published reads nothing else; a binding whose state is unreadable fails
+ * only the owners it may hold (any owner of its project while it is
+ * registered). Each binding is attempted; failures are reported together.
+ * Returns the withdrawn hostnames.
  */
-export async function withdrawLifecycleTunnel(stateDir: string, ownerId: string, overrides: TunnelOverrides = {}): Promise<string[]> {
-  const names = await tunnelOwnerBindings(stateDir, ownerId);
-  if (!names.length) return [];
-  const bindings = await readTunnelBindings(stateDir);
+export async function withdrawLifecycleTunnel(stateDir: string, owner: TunnelOwner, overrides: TunnelOverrides = {}, except?: string): Promise<string[]> {
+  const { names, unreadable } = await tunnelOwnerBindings(stateDir, owner.instanceId);
+  if (!names.length && !unreadable.length) return [];
+  let registry: Promise<TunnelBinding[]> | undefined;
+  const registered = async () => await (registry ??= readTunnelBindings(stateDir));
   const withdrawn: string[] = [];
   const failures: string[] = [];
-  for (const name of names) {
-    const binding = bindings.find((item) => item.name === name)!;
-    try { withdrawn.push(...await withdrawTunnelRoutes({ ...overrides, stateDir, binding }, ownerId)); }
-    catch (error) { failures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`); }
+  for (const name of unreadable.filter((item) => item !== except)) {
+    const bindings = await registered().catch(() => undefined);
+    const binding = bindings?.find((item) => item.name === name);
+    if (bindings && (!binding || (owner.projectId !== undefined && binding.projectId !== owner.projectId))) continue;
+    failures.push(`${name}: its tunnel state is unreadable.`);
+  }
+  for (const name of names.filter((item) => item !== except)) {
+    try {
+      const binding = (await registered()).find((item) => item.name === name);
+      if (!binding) throw new TunnelError("DEVFN_TUNNEL_UNREGISTERED", "the binding is no longer registered.");
+      withdrawn.push(...await withdrawTunnelRoutes({ ...overrides, stateDir, binding }, owner.instanceId));
+    } catch (error) { failures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`); }
   }
   if (failures.length) throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `Public tunnel routes could not be fully withdrawn: ${failures.join(" ")}`);
   return withdrawn;
 }
 
-/** Lock-free: every owner that a binding's state records as publishing, or mid-transition. */
+/** Lock-free: every owner a readable binding state records as publishing, or mid-transition. */
 export async function publishedTunnelOwners(stateDir: string): Promise<string[]> {
   const owners = new Set<string>();
-  for (const binding of await readTunnelBindings(stateDir)) {
-    const state = await readTunnelState(stateDir, binding.name);
-    for (const item of state.hostnames) owners.add(item.ownerId);
-    if (state.pending) owners.add(state.pending.ownerId);
+  for (const name of await tunnelStateNames(stateDir)) {
+    const state = await readTunnelState(stateDir, name).catch(() => undefined);
+    for (const item of state?.hostnames ?? []) owners.add(item.ownerId);
+    if (state?.pending) owners.add(state.pending.ownerId);
   }
   return [...owners];
 }

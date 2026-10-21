@@ -18,6 +18,8 @@ const tunnelTarget = (binding: TunnelBinding): string => `${binding.cloudflare.t
 const owned = (binding: TunnelBinding, record: DnsRecord): boolean =>
   record.type === "CNAME" && record.content === tunnelTarget(binding) && record.comment === ownershipMarker(binding);
 
+const zone = (binding: TunnelBinding): string => `/zones/${binding.cloudflare.zoneId}`;
+
 /** cloudflared from an absolute PATH directory; the working directory cannot supply it. */
 export async function cloudflaredCommand(env: NodeJS.ProcessEnv = process.env): Promise<string> {
   const name = process.platform === "win32" ? "cloudflared.exe" : "cloudflared";
@@ -65,7 +67,7 @@ export class CloudflareTunnelProvider implements TunnelProvider {
     if (!token) throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `The Cloudflare API token reference ${binding.cloudflare.apiTokenEnv} is unset.`);
     let response: Response;
     try {
-      response = await this.fetcher(`${API}/zones/${binding.cloudflare.zoneId}${route}`, {
+      response = await this.fetcher(`${API}${route}`, {
         method, headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15_000),
       });
@@ -83,9 +85,26 @@ export class CloudflareTunnelProvider implements TunnelProvider {
 
   private async records(binding: TunnelBinding, hostname: string): Promise<DnsRecord[]> {
     if (!isPublicHostname(hostname, binding.domain)) throw new TunnelError("DEVFN_TUNNEL_INVALID", `${hostname} is not one label under ${binding.domain}.`);
-    const result = await this.api<DnsRecord[]>(binding, "GET", `/dns_records?name=${encodeURIComponent(hostname)}&per_page=100`);
+    const result = await this.api<DnsRecord[]>(binding, "GET", `${zone(binding)}/dns_records?name=${encodeURIComponent(hostname)}&per_page=100`);
     if (!Array.isArray(result)) throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", "Cloudflare returned an unreadable DNS record list.");
     return result.filter((record) => record.name?.toLowerCase() === hostname);
+  }
+
+  /**
+   * The tunnel must exist in the binding's account and be locally
+   * configured: a remotely managed tunnel's dashboard configuration would
+   * replace the generated ingress allowlist.
+   */
+  public async verifyTunnel(binding: TunnelBinding): Promise<void> {
+    const tunnel = await this.api<{ id?: unknown; deleted_at?: unknown; remote_config?: unknown; config_src?: unknown } | undefined>(binding, "GET",
+      `/accounts/${binding.cloudflare.accountId}/cfd_tunnel/${binding.cloudflare.tunnelId}`);
+    if (tunnel?.id !== binding.cloudflare.tunnelId || tunnel.deleted_at) {
+      throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `Tunnel ${binding.cloudflare.tunnelId} does not exist in account ${binding.cloudflare.accountId}.`);
+    }
+    const local = (tunnel.remote_config === false || tunnel.config_src === "local") && tunnel.remote_config !== true && tunnel.config_src !== "cloudflare";
+    if (!local) {
+      throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `Tunnel ${binding.cloudflare.tunnelId} is remotely managed; DevFn runs only locally configured tunnels.`);
+    }
   }
 
   public async ensureDns(binding: TunnelBinding, hostname: string): Promise<"created" | "existing"> {
@@ -95,7 +114,7 @@ export class CloudflareTunnelProvider implements TunnelProvider {
       return "existing";
     }
     if (records.length) throw new TunnelError("DEVFN_TUNNEL_CONFLICT", `${hostname} already has DNS records DevFn does not own; they were left unchanged.`);
-    await this.api(binding, "POST", "/dns_records", { type: "CNAME", name: hostname, content: tunnelTarget(binding), proxied: true, ttl: 1, comment: ownershipMarker(binding) });
+    await this.api(binding, "POST", `${zone(binding)}/dns_records`, { type: "CNAME", name: hostname, content: tunnelTarget(binding), proxied: true, ttl: 1, comment: ownershipMarker(binding) });
     await this.verifyDns(binding, hostname);
     return "created";
   }
@@ -109,7 +128,7 @@ export class CloudflareTunnelProvider implements TunnelProvider {
 
   public async removeDns(binding: TunnelBinding, hostname: string): Promise<void> {
     for (const record of (await this.records(binding, hostname)).filter((item) => owned(binding, item))) {
-      await this.api(binding, "DELETE", `/dns_records/${encodeURIComponent(record.id)}`);
+      await this.api(binding, "DELETE", `${zone(binding)}/dns_records/${encodeURIComponent(record.id)}`);
     }
     if ((await this.records(binding, hostname)).some((item) => owned(binding, item))) {
       throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `The DevFn-owned DNS record for ${hostname} is still present after deletion.`);

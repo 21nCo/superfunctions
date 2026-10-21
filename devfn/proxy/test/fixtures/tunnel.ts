@@ -3,10 +3,16 @@ import path from "node:path";
 
 import type { PublicOrigin, TunnelBinding, TunnelProvider } from "../../src/tunnel/index.js";
 
-/** A connector stand-in: answers GET /ready on its metrics port until stopped, like cloudflared's metrics server. */
+/**
+ * A connector stand-in: answers GET /ready on its metrics port until stopped,
+ * like cloudflared's metrics server, and records the environment it ran with.
+ */
 const READY_CONNECTOR = `
+const fs = require("node:fs");
 const http = require("node:http");
-const [port] = process.argv.slice(2);
+const path = require("node:path");
+const [port, config] = process.argv.slice(2);
+fs.writeFileSync(path.join(path.dirname(config), "connector-env.json"), JSON.stringify(process.env));
 http.createServer((request, response) => { response.writeHead(request.url === "/ready" ? 200 : 404); response.end(); }).listen(Number(port), "127.0.0.1");
 `;
 
@@ -30,9 +36,18 @@ export class FakeTunnelProvider implements TunnelProvider {
   public readonly records = new Map<string, "devfn" | "foreign">();
   public readonly calls: string[] = [];
   public failEnsure = new Set<string>();
+  public failRemove = new Set<string>();
   public connector: "ready" | "exit" = "ready";
+  public tunnel: "local" | "remote" = "local";
+  /** Runs when a connector command is requested, just before it launches. */
+  public beforeLaunch?: () => Promise<void>;
 
   public constructor(private readonly script: string) {}
+
+  public async verifyTunnel(binding: TunnelBinding): Promise<void> {
+    this.calls.push(`tunnel ${binding.name}`);
+    if (this.tunnel !== "local") throw new Error("the tunnel is remotely managed");
+  }
 
   public async ensureDns(_binding: TunnelBinding, hostname: string): Promise<"created" | "existing"> {
     this.calls.push(`ensure ${hostname}`);
@@ -54,6 +69,7 @@ export class FakeTunnelProvider implements TunnelProvider {
 
   public async removeDns(_binding: TunnelBinding, hostname: string): Promise<void> {
     this.calls.push(`remove ${hostname}`);
+    if (this.failRemove.has(hostname)) throw new Error(`provider failure removing ${hostname}`);
     if (this.records.get(hostname) === "devfn") this.records.delete(hostname);
   }
 
@@ -67,6 +83,8 @@ export class FakeTunnelProvider implements TunnelProvider {
   }
 
   public async connectorCommand(_binding: TunnelBinding, configFile: string, metricsPort: number): Promise<string[]> {
+    this.calls.push("launch");
+    await this.beforeLaunch?.();
     return this.connector === "ready" ? [process.execPath, this.script, String(metricsPort), configFile] : [process.execPath, "-e", "process.exit(3)"];
   }
 }

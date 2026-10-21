@@ -1,22 +1,23 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
+import path from "node:path";
 import tls from "node:tls";
 
 import { withFileLock } from "@devfn/ports";
-import { ProcessError, processBirthSignature, processGroupStatus, stopProcessGroup } from "@devfn/processes";
+import { ProcessError, ProcessSupervisor, processGroupStatus, stopProcessGroup } from "@devfn/processes";
 
 import { PUBLIC_ORIGIN_PORT } from "../index.js";
 import { CloudflareTunnelProvider } from "./cloudflare.js";
 import {
-  TunnelError, isPublicHostname, readTunnelState, tunnelDirectory, tunnelPaths, writeTunnelState,
+  TunnelError, assertBindingRegistered, isPublicHostname, readTunnelState, tunnelDirectory, tunnelPaths, writeTunnelState,
   type ConnectorRecord, type TunnelBinding, type TunnelHostname, type TunnelProvider, type TunnelState,
 } from "./state.js";
 
 const LOCK_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 5_000;
+const LOG_LIMIT_BYTES = 1024 * 1024;
 
 export interface TunnelServiceOptions {
   stateDir: string;
@@ -112,14 +113,6 @@ async function freeLoopbackPort(): Promise<number> {
   return typeof address === "object" && address ? address.port : 0;
 }
 
-async function connectorReady(port: number): Promise<boolean> {
-  return await new Promise<boolean>((resolve) => {
-    const request = http.get({ host: "127.0.0.1", port, path: "/ready", timeout: 1_000 }, (response) => { response.resume(); resolve(response.statusCode === 200); });
-    request.once("timeout", () => request.destroy());
-    request.once("error", () => resolve(false));
-  });
-}
-
 const connectorStatus = async (record: ConnectorRecord) => await processGroupStatus(record.pid, record.birthSignature, record.startedAt);
 
 /** Stop a connector's process group through its verified leader; returns why it may still run. */
@@ -142,12 +135,6 @@ async function originRoot(ctx: Context): Promise<string> {
   }
 }
 
-/**
- * Run a connector for exactly these hostnames. The configuration is
- * validated before it runs; the connector leads its own process group and is
- * recorded through onLaunched before readiness is awaited, so an interrupted
- * start leaves a recorded process for recovery to stop.
- */
 /** The connector configuration for hostnames and its digest, which also covers the origin root it trusts. */
 async function connectorConfig(ctx: Context, hostnames: readonly string[]): Promise<{ config: string; digest: string }> {
   const root = await originRoot(ctx);
@@ -155,6 +142,15 @@ async function connectorConfig(ctx: Context, hostnames: readonly string[]): Prom
   return { config, digest: createHash("sha256").update(config).update("\0").update(root).digest("hex") };
 }
 
+/**
+ * Run a connector for exactly these hostnames once its configuration is
+ * validated. It runs through the DevFn process wrapper, which leads its own
+ * process group and starts the connector only after onLaunched has durably
+ * recorded the wrapper's identity: an interrupted start leaves nothing
+ * running or a recorded process for recovery to stop. Its environment is
+ * explicit, as in validation: a private empty HOME and no ambient
+ * credentials or TUNNEL_* settings that could select another tunnel.
+ */
 async function launchConnector(ctx: Context, hostnames: readonly string[], onLaunched: (record: ConnectorRecord) => Promise<void>): Promise<ConnectorRecord> {
   const paths = tunnelPaths(ctx.stateDir, ctx.binding.name);
   const { config, digest: configDigest } = await connectorConfig(ctx, hostnames);
@@ -163,32 +159,21 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], onLau
   await ctx.provider.validateConnectorConfig(ctx.binding, configFile, hostnames);
   const metricsPort = await freeLoopbackPort();
   const command = await ctx.provider.connectorCommand(ctx.binding, configFile, metricsPort);
-  const log = await open(paths.log, "a", 0o600);
-  let child;
-  try { child = spawn(command[0], command.slice(1), { detached: process.platform !== "win32", stdio: ["ignore", "ignore", log.fd], windowsHide: true }); }
-  finally { await log.close(); }
-  child.once("error", () => undefined);
-  let birthSignature: string | undefined;
-  for (let attempt = 0; child.pid && attempt < 20 && !birthSignature; attempt += 1) {
-    birthSignature = await processBirthSignature(child.pid);
-    if (!birthSignature) await new Promise((resolve) => setTimeout(resolve, 25));
+  const home = path.join(paths.dir, "home");
+  await mkdir(home, { recursive: true, mode: 0o700 });
+  if (((await stat(paths.log).catch(() => undefined))?.size ?? 0) > LOG_LIMIT_BYTES) await rename(paths.log, `${paths.log}.1`);
+  let record: ConnectorRecord | undefined;
+  try {
+    await new ProcessSupervisor().start({ name: "connector", root: paths.dir, runtimeDir: paths.dir,
+      spec: { adapter: "command", command, env: { HOME: home }, health: { type: "http", url: `http://127.0.0.1:${metricsPort}/ready`, timeoutMs: ctx.readyTimeoutMs } },
+      onStarted: async (managed) => {
+        record = { pid: managed.pid, birthSignature: managed.birthSignature!, startedAt: managed.startedAt, configDigest, metricsPort };
+        await onLaunched(record);
+      } });
+  } catch (error) {
+    throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `The tunnel connector did not become ready (${message(error)}); see ${paths.log}.`, record ? { pid: record.pid } : undefined);
   }
-  if (!child.pid || !birthSignature) {
-    if (child.pid) child.kill("SIGKILL");
-    throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", "The tunnel connector did not start.");
-  }
-  child.unref();
-  const record: ConnectorRecord = { pid: child.pid, birthSignature, startedAt: new Date().toISOString(), configDigest, metricsPort };
-  try { await onLaunched(record); }
-  catch (error) { await stopConnector(record); throw error; }
-  const deadline = Date.now() + ctx.readyTimeoutMs;
-  while (Date.now() < deadline) {
-    if (await connectorStatus(record) !== "running") break;
-    if (await connectorReady(metricsPort)) return record;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  const running = await stopConnector(record);
-  throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `The tunnel connector did not become ready${running ? ` and did not stop (${running})` : ""}; see ${paths.log}.`, { pid: record.pid });
+  return record!;
 }
 
 /**
@@ -215,16 +200,14 @@ async function swapConnector(ctx: Context, state: TunnelState, hostnames: readon
   await stopRetired(ctx, state);
 }
 
-/** Stop every retired connector; one that does not stop stays recorded and is reported. */
-async function stopRetired(ctx: Context, state: TunnelState): Promise<string[]> {
-  const failures: string[] = [];
+/** Stop every retired connector; one that does not stop stays recorded. Configurations no recorded connector runs are removed. */
+async function stopRetired(ctx: Context, state: TunnelState): Promise<void> {
   const kept: ConnectorRecord[] = [];
-  for (const record of state.retired) {
-    const running = await stopConnector(record);
-    if (running) { kept.push(record); failures.push(`PID ${record.pid}: ${running}`); }
-  }
+  for (const record of state.retired) if (await stopConnector(record)) kept.push(record);
   if (kept.length !== state.retired.length) { state.retired = kept; await writeTunnelState(ctx.stateDir, state); }
-  return failures;
+  const paths = tunnelPaths(ctx.stateDir, ctx.binding.name);
+  const used = new Set([state.connector, state.pending?.launched, ...state.retired].flatMap((item) => item ? [path.basename(paths.config(item.configDigest))] : []));
+  for (const name of await readdir(paths.dir)) if (/^connector-[a-f0-9]{64}\.yml$/.test(name) && !used.has(name)) await rm(path.join(paths.dir, name), { force: true });
 }
 
 /** Whether the recorded connector runs exactly the allowlist for hostnames; none runs for no hostnames. */
@@ -236,53 +219,61 @@ async function connectorServes(ctx: Context, state: TunnelState, hostnames: read
 }
 
 /**
+ * Run a connector for exactly hostnames, replacing one that exited or serves
+ * another allowlist (make before break). When strict, the running connector
+ * may serve names that are no longer committed, so it is stopped as well if
+ * its replacement cannot start.
+ */
+async function converge(ctx: Context, state: TunnelState, hostnames: readonly string[], strict: boolean): Promise<void> {
+  if (await connectorServes(ctx, state, hostnames)) return;
+  if (state.connector && await connectorStatus(state.connector) !== "running") { state.retired.push(state.connector); delete state.connector; }
+  try { await swapConnector(ctx, state, hostnames); }
+  catch (error) {
+    if (strict && state.connector) { state.retired.push(state.connector); delete state.connector; await writeTunnelState(ctx.stateDir, state); await stopRetired(ctx, state); }
+    throw error;
+  }
+}
+
+/**
  * Bring a binding back to its committed hostnames before any transition:
  * an interrupted publish is rolled back (only DNS records it created are
- * removed), an interrupted withdraw is completed, retired connectors are
- * stopped, and a connector that exited while hostnames are committed is
- * restarted with the committed allowlist.
+ * removed), an interrupted withdraw is completed and retired connectors are
+ * stopped. With repair, the connector is then converged to the committed
+ * allowlist, strictly after an interrupted transition.
  */
-async function settle(ctx: Context, state: TunnelState): Promise<TunnelState> {
+async function settle(ctx: Context, state: TunnelState, repair = true): Promise<TunnelState> {
   const pending = state.pending;
-  if (pending?.kind === "publish") {
-    if (pending.launched) state.retired.push(pending.launched);
-    for (const hostname of pending.createdDns) await ctx.provider.removeDns(ctx.binding, hostname);
-    delete state.pending;
-    await writeTunnelState(ctx.stateDir, state);
-  } else if (pending?.kind === "withdraw") {
+  if (pending) {
+    // A connector an unfinished transition launched is never committed.
     if (pending.launched) state.retired.push(pending.launched);
     delete pending.launched;
-    const dnsFailures: string[] = [];
-    for (const hostname of pending.hostnames) await ctx.provider.removeDns(ctx.binding, hostname).catch((error: unknown) => { dnsFailures.push(message(error)); });
-    if (dnsFailures.length) throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `An interrupted withdrawal could not remove public DNS: ${dnsFailures.join(" ")}`);
-    state.hostnames = pending.next;
+    for (const hostname of pending.kind === "publish" ? pending.createdDns : pending.hostnames) await ctx.provider.removeDns(ctx.binding, hostname);
+    if (pending.kind === "withdraw") state.hostnames = pending.next;
     delete state.pending;
-    if (state.connector) { state.retired.push(state.connector); delete state.connector; }
     await writeTunnelState(ctx.stateDir, state);
   }
   await stopRetired(ctx, state);
-  const committed = state.hostnames.map((item) => item.hostname);
-  if (!await connectorServes(ctx, state, committed)) {
-    // A connector that exited is replaced; one running another allowlist is
-    // stopped only once the committed allowlist is served again.
-    if (state.connector && await connectorStatus(state.connector) !== "running") { state.retired.push(state.connector); delete state.connector; }
-    await swapConnector(ctx, state, committed);
-  }
+  if (repair) await converge(ctx, state, state.hostnames.map((item) => item.hostname), pending !== undefined);
   return state;
 }
 
 async function locked<T>(ctx: Context, action: (state: TunnelState) => Promise<T>): Promise<T> {
   await tunnelDirectory(ctx.stateDir, ctx.binding.name);
-  return await withFileLock(tunnelPaths(ctx.stateDir, ctx.binding.name).lock, async () => await action(await readTunnelState(ctx.stateDir, ctx.binding.name)), { timeoutMs: LOCK_TIMEOUT_MS });
+  return await withFileLock(tunnelPaths(ctx.stateDir, ctx.binding.name).lock, async () => {
+    await assertBindingRegistered(ctx.stateDir, ctx.binding);
+    return await action(await readTunnelState(ctx.stateDir, ctx.binding.name));
+  }, { timeoutMs: LOCK_TIMEOUT_MS });
 }
 
 /**
  * Publish exactly these public hostnames for one lifecycle owner, replacing
- * the owner's previous set. The origin is checked first; then DNS records are
- * created (or confirmed) and read back, and a connector for the full
- * allowlist replaces the running one. Any failure removes only the records
- * this call created and keeps the previous connector and other owners'
- * hostnames serving. Callers must have the user's explicit public consent.
+ * the owner's previous set. The origin and the provider tunnel are checked
+ * first; then a DevFn-owned DNS record is confirmed or created for every
+ * hostname and read back, and a connector for the full allowlist replaces
+ * the running one. Any failure removes only the records this call created
+ * and keeps the previous connector and every committed hostname serving.
+ * Names the owner no longer publishes lose their DNS only once the new set
+ * is committed. Callers must have the user's explicit public consent.
  */
 export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId: string, hostnames: readonly string[]): Promise<TunnelHostname[]> {
   const ctx = context(options);
@@ -300,15 +291,18 @@ export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId
       ...wanted.map((hostname) => before.find((item) => item.hostname === hostname) ?? { hostname, ownerId, publishedAt: now })]
       .sort((a, b) => a.hostname < b.hostname ? -1 : a.hostname > b.hostname ? 1 : 0);
     const dropped = before.map((item) => item.hostname).filter((hostname) => !wanted.includes(hostname));
-    const added = wanted.filter((hostname) => !before.some((item) => item.hostname === hostname));
     const root = await originRoot(ctx);
     for (const hostname of wanted) await ctx.probeOrigin(hostname, ctx.port, root);
-    state.pending = { kind: "publish", ownerId, hostnames: added, next, createdDns: [] };
+    await ctx.provider.verifyTunnel(ctx.binding);
+    state.pending = { kind: "publish", ownerId, hostnames: wanted, next, createdDns: [] };
     await writeTunnelState(ctx.stateDir, state);
     try {
-      for (const hostname of added) {
-        // Recorded before the call, so an interrupted create is still removed;
-        // removal touches only DevFn-owned records.
+      for (const hostname of wanted) {
+        // A DevFn-owned record already routing here (including a committed
+        // name's) is kept by rollback. A create is journaled before the
+        // call, so an interrupted one is still removed; removal touches only
+        // DevFn-owned records.
+        if (await ctx.provider.verifyDns(ctx.binding, hostname).then(() => true, () => false)) continue;
         state.pending.createdDns.push(hostname);
         await writeTunnelState(ctx.stateDir, state);
         try { await ctx.provider.ensureDns(ctx.binding, hostname); }
@@ -319,8 +313,7 @@ export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId
         }
       }
       for (const hostname of wanted) await ctx.provider.verifyDns(ctx.binding, hostname);
-      if (!await connectorServes(ctx, state, next.map((item) => item.hostname))) await swapConnector(ctx, state, next.map((item) => item.hostname));
-      for (const hostname of dropped) await ctx.provider.removeDns(ctx.binding, hostname);
+      await converge(ctx, state, next.map((item) => item.hostname), false);
     } catch (error) {
       try { await settle(ctx, state); }
       catch (rollbackError) {
@@ -329,48 +322,48 @@ export async function publishTunnelRoutes(options: TunnelServiceOptions, ownerId
       throw error;
     }
     state.hostnames = next;
-    delete state.pending;
+    // Dropped names are no longer served; their DNS removal is a journaled
+    // withdrawal the next tunnel command finishes if it fails now.
+    if (dropped.length) state.pending = { kind: "withdraw", ownerId, hostnames: dropped, next, createdDns: [] };
+    else delete state.pending;
     await writeTunnelState(ctx.stateDir, state);
+    if (dropped.length) await settle(ctx, state, false).catch(() => undefined);
     return next.filter((item) => item.ownerId === ownerId);
   });
 }
 
 /**
- * Stop publishing every hostname of one owner. The connector is first
- * replaced by one without them (other owners keep being served), then their
- * DNS records are removed; public DNS is removed even when the replacement
- * connector cannot start, and the remaining work is retried by the next
- * tunnel command. Other owners' records are never touched.
+ * Stop publishing every hostname of one owner. Interrupted transitions are
+ * finished without restarting any connector; the connector is then replaced
+ * by one without the owner's names (other owners keep being served) and
+ * their DNS records are removed. If that replacement cannot start, the old
+ * connector is stopped too, so nothing serves a withdrawn name; the other
+ * owners are restored by the next publish or recovery. Fails only while a
+ * connector that may serve a withdrawn name could not be stopped or public
+ * DNS could not be removed. Other owners' records are never touched.
  */
 export async function withdrawTunnelRoutes(options: TunnelServiceOptions, ownerId: string): Promise<string[]> {
   const ctx = context(options);
   return await locked(ctx, async (current) => {
-    let state = current;
-    try { state = await settle(ctx, current); }
-    catch (error) {
-      // Withdrawal must not wait for another owner's connector to recover.
-      if (!(error instanceof TunnelError) || error.code !== "DEVFN_TUNNEL_UNAVAILABLE") throw error;
-    }
+    const interrupted = current.pending !== undefined;
+    const state = await settle(ctx, current, false);
     const withdrawn = state.hostnames.filter((item) => item.ownerId === ownerId).map((item) => item.hostname);
-    if (!withdrawn.length) return [];
+    if (!withdrawn.length && !interrupted) return [];
     const next = state.hostnames.filter((item) => item.ownerId !== ownerId);
-    state.pending = { kind: "withdraw", ownerId, hostnames: withdrawn, next, createdDns: [] };
-    await writeTunnelState(ctx.stateDir, state);
-    let swapFailure: unknown;
-    try { await swapConnector(ctx, state, next.map((item) => item.hostname)); }
-    catch (error) {
-      swapFailure = error;
-      // Nothing may keep serving the withdrawn names: the old connector is
-      // stopped as well when its replacement cannot start.
-      if (state.connector) { state.retired.push(state.connector); delete state.connector; await writeTunnelState(ctx.stateDir, state); await stopRetired(ctx, state); }
+    if (withdrawn.length) {
+      state.pending = { kind: "withdraw", ownerId, hostnames: withdrawn, next, createdDns: [] };
+      await writeTunnelState(ctx.stateDir, state);
     }
+    let failed = false;
+    await converge(ctx, state, next.map((item) => item.hostname), true).catch(() => { failed = true; });
     for (const hostname of withdrawn) await ctx.provider.removeDns(ctx.binding, hostname);
     state.hostnames = next;
     delete state.pending;
     await writeTunnelState(ctx.stateDir, state);
-    const unstopped = state.retired.map((item) => item.pid);
-    if (swapFailure || unstopped.length) {
-      throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `Public DNS for ${withdrawn.join(", ")} is removed, but ${swapFailure ? `the connector for the remaining routes did not start (${message(swapFailure)})` : `connector PID ${unstopped.join(", ")} did not stop`}; the next tunnel command retries it.`);
+    // A connector left recorded after a failed change cannot be verified and may serve a withdrawn name.
+    const unstopped = [...state.retired, ...(failed && state.connector ? [state.connector] : [])];
+    if (unstopped.length) {
+      throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `Public DNS for ${withdrawn.join(", ") || "the interrupted transition"} is removed, but connector PID ${unstopped.map((item) => item.pid).join(", ")} did not stop; the next tunnel command retries it.`);
     }
     return withdrawn;
   });

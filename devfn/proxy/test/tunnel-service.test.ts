@@ -1,16 +1,18 @@
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { processGroupStatus } from "@devfn/processes";
-import { publishTunnelRoutes, readTunnelBindings, readTunnelState, recoverTunnel, registerTunnelBinding, tunnelPaths, tunnelStatus, withdrawTunnelRoutes, type TunnelServiceOptions } from "../src/tunnel/index.js";
+import { registerDomain } from "../src/domains.js";
+import { publishTunnelRoutes, readTunnelBindings, readTunnelState, recoverTunnel, registerTunnelBinding, tunnelPaths, tunnelStatus, unregisterTunnelBinding, withdrawTunnelRoutes, type TunnelServiceOptions } from "../src/tunnel/index.js";
 import { writeTunnelState } from "../src/tunnel/state.js";
 import { FakeTunnelProvider, fixtureBinding, writeConnectorScript } from "./fixtures/tunnel.js";
 
 const A = "web-a-0123456789abcdef0123.tunnel.example.test";
 const B = "web-b-0123456789abcdef0123.tunnel.example.test";
 const B2 = "api-b-0123456789abcdef0123.tunnel.example.test";
+const A2 = "api-a-0123456789abcdef0123.tunnel.example.test";
 
 let dir: string;
 let provider: FakeTunnelProvider;
@@ -26,7 +28,8 @@ beforeEach(async () => {
   dir = await mkdtemp(path.join(os.tmpdir(), "devfn-tunnel-"));
   provider = new FakeTunnelProvider(await writeConnectorScript(dir));
   probed = [];
-  options = { stateDir: dir, binding: fixtureBinding(dir, path.join(dir, "credentials.json")), provider, readyTimeoutMs: 5_000,
+  await writeFile(path.join(dir, "credentials.json"), "{}", { mode: 0o600 });
+  options = { stateDir: dir, binding: await registerTunnelBinding(dir, fixtureBinding(dir, path.join(dir, "credentials.json"))), provider, readyTimeoutMs: 5_000,
     originCa: async () => "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n", probeOrigin: async (hostname) => { probed.push(hostname); } };
 });
 
@@ -38,6 +41,8 @@ afterEach(async () => {
 
 describe("tunnel bindings", () => {
   it("registers only nonproduction bindings with owner-only credential references outside loopback domains", async () => {
+    dir = path.join(dir, "machine");
+    await mkdir(dir);
     const credentials = path.join(dir, "credentials.json");
     const binding = fixtureBinding(dir, credentials);
     await writeFile(credentials, "{}", { mode: 0o644 });
@@ -50,6 +55,18 @@ describe("tunnel bindings", () => {
     await registerTunnelBinding(dir, binding);
     expect(await readTunnelBindings(dir)).toEqual([{ ...binding, repositoryIdentity: await realpath(dir) }]);
     expect(await readFile(path.join(dir, "tunnels.json"), "utf8")).not.toContain("{}");
+    // One tunnel has one DevFn connector and allowlist.
+    await expect(registerTunnelBinding(dir, { ...binding, name: "second", domain: "second.example.test" })).rejects.toThrow("already bound");
+    // A loopback domain may not later overlap a public binding domain either.
+    const loopback = (async () => [{ address: "127.0.0.1", family: 4 }]) as unknown as Parameters<typeof registerDomain>[2];
+    await expect(registerDomain(dir, { domain: "local.tunnel.example.test", projectId: "fixture", repositoryIdentity: dir, tls: "internal" }, loopback))
+      .rejects.toThrow("public tunnel binding");
+  });
+
+  it("publishes nothing on a binding unregistered after it was resolved", async () => {
+    await unregisterTunnelBinding(dir, "preview", "fixture", dir);
+    await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNREGISTERED" });
+    expect(provider.calls).toEqual([]);
   });
 });
 
@@ -76,11 +93,15 @@ describe("tunnel lifecycle", () => {
     expect(provider.records.size).toBe(0);
   });
 
-  it("validates the origin before any provider mutation", async () => {
+  it("validates the origin and the provider tunnel before any provider mutation", async () => {
     options.probeOrigin = async () => { throw new Error("origin certificate does not verify"); };
     await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toThrow("origin certificate");
     expect(provider.calls).toEqual([]);
     expect((await readTunnelState(dir, "preview")).pending).toBeUndefined();
+    options.probeOrigin = async () => undefined;
+    provider.tunnel = "remote";
+    await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toThrow("remotely managed");
+    expect(provider.calls).toEqual(["tunnel preview"]);
   });
 
   it("refuses a foreign DNS record and a name outside the binding without changing anything", async () => {
@@ -143,7 +164,8 @@ describe("tunnel lifecycle", () => {
     await publishTunnelRoutes(options, "owner-b", [B]);
     const before = (await readTunnelState(dir, "preview")).connector!;
     provider.connector = "exit";
-    await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toThrow(`Public DNS for ${A} is removed`);
+    // The owner's exposure ended; the other owner's outage is not its failure.
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual([A]);
     expect([...provider.records.keys()]).toEqual([B]);
     // Nothing keeps serving the withdrawn name; the remaining owner is restored by recovery.
     expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("exited");
@@ -152,8 +174,61 @@ describe("tunnel lifecycle", () => {
     expect(await connectorHostnames()).toEqual([B]);
   });
 
+  it("keeps a DevFn-owned record it did not create and repairs a committed name's missing record", async () => {
+    provider.records.set(B, "devfn");
+    provider.connector = "exit";
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });
+    expect(provider.records.get(B)).toBe("devfn");
+    provider.connector = "ready";
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    provider.records.delete(A);
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    expect(provider.records.get(A)).toBe("devfn");
+  });
+
+  it("removes a dropped name's DNS only after the smaller set is committed, retrying a failed removal", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A, A2]);
+    provider.failRemove.add(A2);
+    expect(await publishTunnelRoutes(options, "owner-a", [A])).toEqual([expect.objectContaining({ hostname: A })]);
+    expect(await connectorHostnames()).toEqual([A]);
+    expect(await tunnelStatus(options)).toMatchObject({ pending: true, hostnames: [{ hostname: A, ownerId: "owner-a" }] });
+    provider.failRemove.clear();
+    expect(await recoverTunnel(options)).toMatchObject({ pending: false, connector: "running" });
+    expect([...provider.records.keys()]).toEqual([A]);
+  });
+
+  it("withdraws without restarting the connector for the names it removes", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    process.kill(-(await readTunnelState(dir, "preview")).connector!.pid, "SIGKILL");
+    provider.calls.length = 0;
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual([A]);
+    expect(provider.calls).toEqual([`remove ${A}`]);
+    expect((await readTunnelState(dir, "preview")).connector).toBeUndefined();
+  });
+
+  it("runs the connector with an explicit environment, only once its identity is journaled", async () => {
+    process.env.TUNNEL_TOKEN = "ambient-tunnel-token";
+    process.env.DEVFN_FIXTURE_TOKEN = "dns-api-token";
+    try { await publishTunnelRoutes(options, "owner-a", [A]); }
+    finally { delete process.env.TUNNEL_TOKEN; delete process.env.DEVFN_FIXTURE_TOKEN; }
+    const envFile = path.join(tunnelPaths(dir, "preview").dir, "connector-env.json");
+    const environment = JSON.parse(await readFile(envFile, "utf8")) as Record<string, string>;
+    expect(environment.TUNNEL_TOKEN).toBeUndefined();
+    expect(environment.DEVFN_FIXTURE_TOKEN).toBeUndefined();
+    expect(environment.HOME).toBe(path.join(tunnelPaths(dir, "preview").dir, "home"));
+    await rm(envFile);
+    // The state write that journals the connector fails: it never runs.
+    const stateFile = tunnelPaths(dir, "preview").state;
+    const saved = await readFile(stateFile, "utf8");
+    provider.beforeLaunch = async () => { await rm(stateFile); await mkdir(stateFile); await writeFile(path.join(stateFile, "blocker"), ""); };
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await expect(access(envFile)).rejects.toThrow();
+    await rm(stateFile, { recursive: true });
+    await writeFile(stateFile, saved);
+  });
+
   it("fails closed on malformed state and leaves it for inspection", async () => {
-    await writeFile(path.join(dir, "credentials.json"), "{}");
     await publishTunnelRoutes(options, "owner-a", [A]);
     const file = tunnelPaths(dir, "preview").state;
     const saved = await readFile(file, "utf8");

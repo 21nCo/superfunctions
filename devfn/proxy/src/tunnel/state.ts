@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { withFileLock } from "@devfn/ports";
+import { withFileLock, withRoutingLock } from "@devfn/ports";
 
 import { domainContains, normalizeDomain, readRegisteredDomains } from "../domains.js";
 
@@ -75,6 +75,8 @@ export interface PublicOrigin { port: number; caFile: string }
 export interface TunnelProvider {
   /** Create, or confirm, the DevFn-owned record routing hostname to the tunnel; "created" only when this call created it. */
   ensureDns(binding: TunnelBinding, hostname: string): Promise<"created" | "existing">;
+  /** Confirm the binding's tunnel exists in its account, is not deleted and takes its ingress from the local connector configuration. */
+  verifyTunnel(binding: TunnelBinding): Promise<void>;
   /** Read back public DNS: hostname must route to this binding's tunnel through a DevFn-owned record. */
   verifyDns(binding: TunnelBinding, hostname: string): Promise<void>;
   /** Delete only the DevFn-owned record for hostname; an absent record is success. */
@@ -173,7 +175,9 @@ export async function registerTunnelBinding(stateDir: string, input: TunnelBindi
     throw invalid("The tunnel credentials file must be a regular file readable only by its owner (mode 0600).");
   }
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
-  return await withFileLock(bindingsLock(stateDir), async () => {
+  // Domain registration holds the same proxy lock and reads this registry,
+  // so the two kinds of domain never overlap in either order.
+  return await withFileLock(bindingsLock(stateDir), async () => await withRoutingLock(stateDir, async () => await withFileLock(path.join(stateDir, "proxy.lock"), async () => {
     if ((await readRegisteredDomains(stateDir)).some((item) => domainContains(item.domain, binding.domain) || domainContains(binding.domain, item.domain))) {
       throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Public domain ${binding.domain} overlaps a loopback development domain registration.`);
     }
@@ -186,9 +190,14 @@ export async function registerTunnelBinding(stateDir: string, input: TunnelBindi
     if (bindings.some((item) => domainContains(item.domain, binding.domain) || domainContains(binding.domain, item.domain))) {
       throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Public domain ${binding.domain} overlaps another tunnel binding.`);
     }
+    // Two connectors with different allowlists on one tunnel would each
+    // receive the other's requests.
+    if (bindings.some((item) => item.cloudflare.tunnelId === binding.cloudflare.tunnelId)) {
+      throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Tunnel ${binding.cloudflare.tunnelId} is already bound; one tunnel has one DevFn connector.`);
+    }
     await writeBindings(stateDir, [...bindings, binding]);
     return binding;
-  }, { timeoutMs: LOCK_TIMEOUT_MS });
+  }, { timeoutMs: LOCK_TIMEOUT_MS })), { timeoutMs: LOCK_TIMEOUT_MS });
 }
 
 /** Remove a binding of this repository and project; refused while it records any public hostname or connector. */
@@ -200,19 +209,27 @@ export async function unregisterTunnelBinding(stateDir: string, name: string, pr
     const binding = bindings.find((item) => item.name === name);
     if (!binding || binding.projectId !== projectId || binding.repositoryIdentity !== canonical) throw new TunnelError("DEVFN_TUNNEL_UNREGISTERED", `Tunnel binding ${name} is not registered to this repository.`);
     await tunnelDirectory(stateDir, name);
+    // The registry changes under the binding's lock, which every transition
+    // holds while it revalidates its binding (assertBindingRegistered).
     await withFileLock(tunnelPaths(stateDir, name).lock, async () => {
       const state = await readTunnelState(stateDir, name);
       if (state.hostnames.length || state.connector || state.retired.length || state.pending) throw new TunnelError("DEVFN_TUNNEL_IN_USE", `Tunnel binding ${name} still has public routes or a connector.`);
+      await writeBindings(stateDir, bindings.filter((item) => item.name !== name));
     }, { timeoutMs: LOCK_TIMEOUT_MS });
-    await writeBindings(stateDir, bindings.filter((item) => item.name !== name));
   }, { timeoutMs: LOCK_TIMEOUT_MS });
+}
+
+/** Under the binding's lock: binding is still registered exactly as resolved, so nothing is published on a removed or changed binding. */
+export async function assertBindingRegistered(stateDir: string, binding: TunnelBinding): Promise<void> {
+  const current = (await readTunnelBindings(stateDir)).find((item) => item.name === binding.name);
+  if (!current || JSON.stringify(current) !== JSON.stringify(binding)) throw new TunnelError("DEVFN_TUNNEL_UNREGISTERED", `Tunnel binding ${binding.name} is no longer registered as resolved.`);
 }
 
 export function tunnelPaths(stateDir: string, name: string): { dir: string; state: string; lock: string; originCa: string; log: string; config: (digest: string) => string } {
   if (!BINDING_NAME.test(name)) throw invalid("Invalid tunnel binding name.");
   const dir = path.join(stateDir, "tunnels", name);
   return { dir, state: path.join(dir, "state.json"), lock: path.join(dir, "tunnel.lock"), originCa: path.join(dir, "origin-ca.pem"),
-    log: path.join(dir, "connector.log"), config: (digest) => path.join(dir, `connector-${digest}.yml`) };
+    log: path.join(dir, "logs", "connector.log"), config: (digest) => path.join(dir, `connector-${digest}.yml`) };
 }
 
 export async function tunnelDirectory(stateDir: string, name: string): Promise<string> {
@@ -265,12 +282,28 @@ export async function writeTunnelState(stateDir: string, state: TunnelState): Pr
   await writePrivateJson(tunnelPaths(stateDir, state.binding).state, state);
 }
 
-/** Lock-free: binding names whose state records a public hostname of this owner, or an in-flight transition for it. */
-export async function tunnelOwnerBindings(stateDir: string, ownerId: string): Promise<string[]> {
-  const names: string[] = [];
-  for (const binding of await readTunnelBindings(stateDir)) {
-    const state = await readTunnelState(stateDir, binding.name);
-    if (state.hostnames.some((item) => item.ownerId === ownerId) || state.pending?.ownerId === ownerId) names.push(binding.name);
+/** Binding names with tunnel state on this machine; none without a tunnel state directory. */
+export async function tunnelStateNames(stateDir: string): Promise<string[]> {
+  try { return (await readdir(path.join(stateDir, "tunnels"))).filter((name) => BINDING_NAME.test(name)).sort(); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new TunnelError("DEVFN_TUNNEL_STATE_INVALID", "The tunnel state directory is unreadable.");
   }
-  return names;
+}
+
+/**
+ * Lock-free: the bindings whose state records a public hostname of this
+ * owner, or an in-flight transition for it, found from binding state rather
+ * than the registry. A binding whose state cannot be read is listed in
+ * unreadable instead, so it never hides or blocks the others.
+ */
+export async function tunnelOwnerBindings(stateDir: string, ownerId: string): Promise<{ names: string[]; unreadable: string[] }> {
+  const names: string[] = [];
+  const unreadable: string[] = [];
+  for (const name of await tunnelStateNames(stateDir)) {
+    const state = await readTunnelState(stateDir, name).catch(() => undefined);
+    if (!state) unreadable.push(name);
+    else if (state.hostnames.some((item) => item.ownerId === ownerId) || state.pending?.ownerId === ownerId) names.push(name);
+  }
+  return { names, unreadable };
 }

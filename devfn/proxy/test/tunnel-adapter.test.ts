@@ -77,6 +77,21 @@ describe("Cloudflare DNS adapter", () => {
     expect(calls.filter((call) => !call.startsWith("GET"))).toEqual([]);
   });
 
+  it("accepts only an existing, locally configured tunnel of the binding's account", async () => {
+    const urls: string[] = [];
+    const account = (tunnel: Record<string, unknown> | null) => new CloudflareTunnelProvider({ env: { DEVFN_FIXTURE_TOKEN: "secret-token" },
+      fetch: (async (input: string | URL) => { urls.push(String(input)); return new Response(JSON.stringify({ success: true, errors: [], result: tunnel }), { status: 200 }); }) as typeof fetch });
+    const id = binding.cloudflare.tunnelId;
+    await account({ id, deleted_at: null, remote_config: false, config_src: "local" }).verifyTunnel(binding);
+    expect(urls).toEqual([`https://api.cloudflare.com/client/v4/accounts/${binding.cloudflare.accountId}/cfd_tunnel/${id}`]);
+    // A remotely managed tunnel's dashboard ingress would replace the DevFn allowlist.
+    await expect(account({ id, remote_config: true }).verifyTunnel(binding)).rejects.toThrow("remotely managed");
+    await expect(account({ id, config_src: "cloudflare" }).verifyTunnel(binding)).rejects.toThrow("remotely managed");
+    await expect(account({ id }).verifyTunnel(binding)).rejects.toThrow("remotely managed");
+    await expect(account({ id, remote_config: false, deleted_at: "2026-01-01T00:00:00Z" }).verifyTunnel(binding)).rejects.toThrow("does not exist");
+    await expect(account(null).verifyTunnel(binding)).rejects.toThrow("does not exist");
+  });
+
   it("keeps the API token out of every error", async () => {
     const failing = new CloudflareTunnelProvider({ env: { DEVFN_FIXTURE_TOKEN: "secret-token" },
       fetch: (async () => new Response(JSON.stringify({ success: false, errors: [{ code: 10000, message: "Authentication error secret-token" }] }), { status: 403 })) as typeof fetch });

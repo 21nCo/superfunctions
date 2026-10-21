@@ -177,7 +177,8 @@ export function resolveAllocationUrls(allocations: readonly PortAllocation[], ro
   for (const allocation of allocations) {
     // A service can have several aliases and paths. Prefer a root URL, then
     // choose by stable route ID instead of the persisted route order.
-    const route = allocation.protocol === "tcp" ? routes.filter((item) => item.targetPort === allocation.port)
+    // Public tunnel origin routes are reached only through their public URLs.
+    const route = allocation.protocol === "tcp" ? routes.filter((item) => item.targetPort === allocation.port && item.exposure !== "public")
       .sort((a, b) => {
         const rootA = (a.path ?? "/") === "/" ? 0 : 1;
         const rootB = (b.path ?? "/") === "/" ? 0 : 1;
@@ -375,6 +376,9 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string, tunn
   const proxy = new CaddyProxyController(stateDir);
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   const recovered: string[] = [];
+  const failures: string[] = [];
+  // A known project limits which bindings with unreadable state can hold an owner.
+  const projects = new Map((await registry.read().catch(() => undefined))?.allocations.map((item) => [item.instanceId, item.projectId]) ?? []);
   // An owner whose proxy routes are gone may still publish tunnel hostnames.
   const routed = [...new Set([...await proxy.routedInstanceIds(), ...await publishedTunnelOwners(stateDir)])].sort();
   // The OAuth relay has no lifecycle lock; its recorded identities show
@@ -400,7 +404,9 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string, tunn
         // The held lifecycle lock keeps this instance from starting, so its
         // public routes are withdrawn, and only then its proxy routes removed,
         // without holding the shared routing lock across provider calls.
-        await withdrawLifecycleTunnel(stateDir, instanceId, tunnelOverrides);
+        // A failed withdrawal keeps this owner's routes and fails only its recovery.
+        try { await withdrawLifecycleTunnel(stateDir, { instanceId, projectId: projects.get(instanceId) }, tunnelOverrides); }
+        catch (error) { failures.push(`${instanceId}: ${error instanceof Error ? error.message : String(error)}`); return; }
         await withRoutingLock(stateDir, async () => await proxy.removeInstance(instanceId));
         recovered.push(instanceId);
       }, { timeoutMs: 1_000 });
@@ -410,6 +416,7 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string, tunn
       throw error;
     }
   }
+  if (failures.length) throw new DevFnError("DEVFN_RUNTIME_INVALID", `Public routes of some orphaned owners could not be withdrawn; their routes are kept: ${failures.join(" ")}`, { recovered, failures });
   return recovered;
 }
 
@@ -691,11 +698,12 @@ export class DevFnOrchestrator {
         // public origin routes are active; a profile without a tunnel
         // withdraws any this owner still publishes.
         const publicSelection = await selectedPublicRoutes(options.config, plan, identity, ports, stateDir);
+        const owner = { instanceId: identity.instanceId, projectId: identity.projectId };
         if (publicSelection) {
           await writeReceipt(receipt);
-          receipt.tunnel = { binding: publicSelection.binding.name, hostnames: await publishLifecycleTunnel(stateDir, identity.instanceId, publicSelection, this.tunnelOverrides) };
+          receipt.tunnel = { binding: publicSelection.binding.name, hostnames: await publishLifecycleTunnel(stateDir, owner, publicSelection, this.tunnelOverrides) };
           receipt.publicUrls = publicSelection.urls;
-        } else await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides);
+        } else await withdrawLifecycleTunnel(stateDir, owner, this.tunnelOverrides);
         if (!receipt.routes.length && await proxy.hasInstanceRoutes(identity.instanceId)) await proxy.removeInstance(identity.instanceId);
         clearInterval(heartbeat);
         await registry.markActive(invocationId, startupOwners(options.config, receipt));
@@ -826,12 +834,11 @@ export class DevFnOrchestrator {
 
   private async cleanup(receipt: LifecycleReceipt, registry: FilePortRegistry, supervisor: ProcessSupervisor, compose: ComposeController, proxy: CaddyProxyController, failed: boolean, preserveRoutes = false, preserveLeases = false): Promise<CleanupResult> {
     const result: CleanupResult = { stoppedProcesses: [], stoppedServices: [], removedProxy: false, releasedPorts: false, errors: [] };
-    // Public exposure ends before any process stops, so no public hostname
-    // reaches a port this lifecycle is about to free.
-    if (!preserveRoutes) {
-      try { result.withdrawnPublicHostnames = await withdrawLifecycleTunnel(receipt.stateDir ?? defaultStateDir(), receipt.instanceId, this.tunnelOverrides); }
-      catch (error) { result.errors.push(error instanceof Error ? error.message : String(error)); }
-    }
+    // Public exposure ends on every binding before any process stops, also
+    // for a replacement, which republishes once it is ready. While it cannot
+    // end, nothing stops and no port is freed for another process to take.
+    try { result.withdrawnPublicHostnames = await withdrawLifecycleTunnel(receipt.stateDir ?? defaultStateDir(), { instanceId: receipt.instanceId, projectId: receipt.projectId }, this.tunnelOverrides); }
+    catch (error) { result.errors.push(error instanceof Error ? error.message : String(error)); return result; }
     const historical = [
       ...receipt.processes.map((value) => ({ kind: "process" as const, value })),
       ...receipt.services.map((value) => ({ kind: "service" as const, value })),
