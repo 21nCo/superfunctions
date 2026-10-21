@@ -17,7 +17,7 @@ vi.mock("@devfn/proxy", async (importOriginal) => {
 });
 
 import { validateDevFnConfig } from "@devfn/config";
-import { withFileLock } from "@devfn/ports";
+import { FilePortRegistry, withFileLock } from "@devfn/ports";
 import { processBirthSignature } from "@devfn/processes";
 import { markOwnerBinding, publishTunnelRoutes, readOwnerBindings, readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelServiceOptions } from "@devfn/proxy/tunnel";
 import { DevFnOrchestrator, planPublicUrls, recoverOrphanedProxyRoutes, resolveInstanceIdentity, type TunnelOverrides } from "../src/index.js";
@@ -159,6 +159,54 @@ it("withdraws public routes before stopping processes, also for a replacement, a
   expect((await orchestrator.down({ config, root, stateDir })).state).toBe("stopped");
   expect(provider.records.has(hostname)).toBe(false);
   expect(provider.records.has(OTHER)).toBe(true);
+}, 90_000);
+
+it("ends a receiptless owner's public exposure before a private start takes a lease, starting nothing while it cannot end", async () => {
+  const tunnel = await registerPreview();
+  await publishTunnelRoutes(tunnel, "other-worktree", [OTHER]);
+  // The owner published, then its worktree receipts were removed (git clean -fdx).
+  const identity = await resolveInstanceIdentity("fixture", root);
+  const hostname = new URL((await planPublicUrls({ config, root, profile: "share", stateDir })).urls.web).hostname;
+  await publishTunnelRoutes(tunnel, identity.instanceId, [hostname]);
+  await stubLifecycleHost();
+  const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
+  const leased = async () => (await registry.read()).invocations.some((item) => item.instanceId === identity.instanceId);
+  const orchestrator = new DevFnOrchestrator(overrides);
+  provider.failRemove.add(hostname);
+  provider.connector = "exit";
+  await expect(orchestrator.up({ config, root, stateDir })).rejects.toThrow("could not be withdrawn before startup");
+  expect(await leased()).toBe(false);
+  await expect(access(path.join(root, ".devfn"))).rejects.toThrow();
+  expect((await readTunnelState(stateDir, "preview")).connector!.hostnames).toEqual([OTHER, hostname].sort());
+
+  provider.failRemove.clear();
+  provider.connector = "ready";
+  const removeDns = provider.removeDns.bind(provider);
+  const leasedAtRemoval: boolean[] = [];
+  provider.removeDns = async (binding, name) => { leasedAtRemoval.push(await leased()); await removeDns(binding, name); };
+  expect(await orchestrator.up({ config, root, stateDir })).toMatchObject({ state: "ready" });
+  expect(leasedAtRemoval).toEqual([false]);
+  expect([...provider.records.keys()]).toEqual([OTHER]);
+  const state = await readTunnelState(stateDir, "preview");
+  expect(state.hostnames).toEqual([expect.objectContaining({ hostname: OTHER, ownerId: "other-worktree" })]);
+  expect(state.connector!.hostnames).toEqual([OTHER]);
+  expect(await readOwnerBindings(stateDir, identity.instanceId)).toEqual([]);
+  await orchestrator.down({ config, root, stateDir });
+}, 60_000);
+
+it.skipIf(process.platform === "win32")("republishes, rather than reports already running, a ready public lifecycle whose connector exited", async () => {
+  await registerPreview();
+  await stubLifecycleHost();
+  const orchestrator = new DevFnOrchestrator(overrides);
+  const started = await orchestrator.up({ config, root, stateDir, profile: "share", allowPublic: true });
+  await expect(orchestrator.up({ config, root, stateDir, profile: "share", allowPublic: true })).rejects.toMatchObject({ code: "DEVFN_ALREADY_RUNNING" });
+  const crashed = (await readTunnelState(stateDir, "preview")).connector!;
+  process.kill(-crashed.pid, "SIGKILL");
+  expect(await orchestrator.up({ config, root, stateDir, profile: "share", allowPublic: true })).toMatchObject({ state: "ready", tunnel: started.tunnel });
+  const state = await readTunnelState(stateDir, "preview");
+  expect(state.connector!.pid).not.toBe(crashed.pid);
+  expect(state.connector!.hostnames).toEqual(started.tunnel!.hostnames);
+  await orchestrator.down({ config, root, stateDir });
 }, 90_000);
 
 it("completes local teardown once the connector no longer routes the names, reporting a DNS removal that keeps failing", async () => {

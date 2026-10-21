@@ -218,6 +218,7 @@ const sameConnector = (a: ConnectorRecord, b: ConnectorRecord): boolean => a.pid
 async function swapConnector(ctx: Context, state: TunnelState, hostnames: readonly string[]): Promise<void> {
   const previous = state.connector;
   if (hostnames.length) {
+    await assertSoleConnector(state);
     const launched = await launchConnector(ctx, hostnames, async (record) => {
       state.retired.push(record);
       await writeTunnelState(ctx.stateDir, state);
@@ -228,6 +229,16 @@ async function swapConnector(ctx: Context, state: TunnelState, hostnames: readon
   if (previous) state.retired.push(previous);
   await writeTunnelState(ctx.stateDir, state);
   await stopRetired(ctx, state);
+}
+
+/** The launch predicate: no recorded connector but a verifiably running predecessor (replaced make before break) may still run, as two connectors on one tunnel split its requests. */
+async function assertSoleConnector(state: TunnelState): Promise<void> {
+  for (const record of [state.connector, ...state.retired]) {
+    const status = record ? await connectorStatus(record) : "exited";
+    if (status === "unverified" || (status === "running" && record !== state.connector)) {
+      throw new TunnelError("DEVFN_TUNNEL_UNAVAILABLE", `A previous tunnel connector (PID ${record!.pid}) may still run; stop its process group before another connector starts.`);
+    }
+  }
 }
 
 /** Stop every retired connector; one that does not stop stays recorded. Configurations no recorded connector runs are removed. */
@@ -307,8 +318,9 @@ const outstandingFor = (state: TunnelState, ownerId: string): string[] => state.
  * break by one for the committed names it already routes when it verifiably
  * runs, so the replacement makes no name newly reachable; it is kept
  * running for the other owners if that replacement fails, and stopped when
- * no committed name remains or it no longer verifiably runs. No connector is
- * started where none runs. Returns the errors met.
+ * no committed name remains or it exited; an unverifiable one stays the
+ * recorded connector. No connector is started where none runs. Returns the
+ * errors met.
  */
 async function finishResidue(ctx: Context, state: TunnelState): Promise<string[]> {
   const errors: string[] = [];
@@ -320,9 +332,11 @@ async function finishResidue(ctx: Context, state: TunnelState): Promise<string[]
   const withdrawn = state.residue.flatMap((item) => item.hostnames);
   if (state.connector?.hostnames.some((hostname) => withdrawn.includes(hostname))) {
     const committed = state.hostnames.map((item) => item.hostname).filter((hostname) => state.connector!.hostnames.includes(hostname));
-    if (committed.length && await connectorStatus(state.connector) === "running") {
+    const status = await connectorStatus(state.connector);
+    // An unverifiable connector stays recorded, so no other connector starts beside it.
+    if (committed.length && status === "running") {
       await swapConnector(ctx, state, committed).catch((error: unknown) => { errors.push(`the running connector was kept for the other public routes (${message(error)})`); });
-    } else { state.retired.push(state.connector); delete state.connector; }
+    } else if (status !== "unverified") { state.retired.push(state.connector); delete state.connector; }
   }
   await stopRetired(ctx, state);
   state.residue = state.residue.filter((item) => !residueDone(state, item));

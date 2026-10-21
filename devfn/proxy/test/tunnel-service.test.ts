@@ -232,6 +232,37 @@ describe("tunnel lifecycle", () => {
     expect(await readOwnerBindings(dir, "owner-b")).toEqual([]);
   });
 
+  posixIt("starts no second connector while one that may still run cannot be verified, then exactly one once it is stopped", async () => {
+    options.ownerMayRun = async () => true;
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    const connector = (await readTunnelState(dir, "preview")).connector!;
+    // The wrapper that leads the group is gone; its connector child remains, so the group is unverifiable.
+    process.kill(connector.pid, "SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [A], outstanding: [`${A}: a connector that may route them has not stopped`] });
+    expect((await readTunnelState(dir, "preview")).connector).toEqual(connector);
+    provider.calls.length = 0;
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow("cannot be verified");
+    await expect(recoverTunnel(options)).rejects.toThrow("cannot be verified");
+    // A retired record that may still run blocks a launch the same way.
+    const state = await readTunnelState(dir, "preview");
+    state.retired = [state.connector!];
+    delete state.connector;
+    await writeTunnelState(dir, state);
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow(`connector (PID ${connector.pid}) may still run`);
+    await expect(recoverTunnel(options)).rejects.toThrow(`connector (PID ${connector.pid}) may still run`);
+    expect(provider.calls).not.toContain("launch");
+    expect((await readTunnelState(dir, "preview")).hostnames).toMatchObject([{ hostname: B, ownerId: "owner-b" }]);
+    process.kill(-connector.pid, "SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    expect(provider.calls.filter((call) => call === "launch")).toHaveLength(1);
+    expect(await connectorHostnames()).toEqual([B]);
+    expect(await withdrawTunnelRoutes(options, "owner-a")).toEqual({ withdrawn: [], outstanding: [] });
+    expect(await readOwnerBindings(dir, "owner-a")).toEqual([]);
+  });
+
   it("keeps another owner's routes that the running connector serves when it is replaced", async () => {
     await publishTunnelRoutes(options, "owner-a", [A]);
     await publishTunnelRoutes(options, "owner-b", [B]);

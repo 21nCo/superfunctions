@@ -15,7 +15,7 @@ import { tunnelOwners } from "@devfn/proxy/tunnel";
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
 import { createPlan } from "./planner.js";
-import { profileTunnel, publishLifecycleTunnel, selectedPublicRoutes, withdrawLifecycleTunnel, type TunnelOverrides } from "./tunnel.js";
+import { profileTunnel, publicUrlsLive, publishLifecycleTunnel, selectedPublicRoutes, withdrawLifecycleTunnel, type TunnelOverrides } from "./tunnel.js";
 import { readReceipt, secureRuntimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 import { DevFnError, type CleanupResult, type InstanceIdentity, type RoutingIdentity, type LifecyclePlan, type LifecycleReceipt, type UpOptions } from "./types.js";
 
@@ -320,6 +320,8 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     // listener or routes switched by an interrupted replacement all mean the
     // recorded URLs no longer reach this lifecycle.
     if (!await new CaddyProxyController(receipt.stateDir ?? defaultStateDir()).instanceRoutesLive(receipt.instanceId, receipt.routes)) return false;
+    // Public URLs are live only while the binding's connector runs and still publishes them.
+    if (receipt.tunnel && !await publicUrlsLive(receipt.stateDir ?? defaultStateDir(), receipt.instanceId, receipt.tunnel)) return false;
     const currentUrls = resolveAllocationUrls(receipt.allocations, receipt.routes, selectedHttpPorts(config, plan), resolved.directUrls);
     if (Object.keys(currentUrls).length !== Object.keys(receipt.urls).length ||
       Object.entries(currentUrls).some(([name, url]) => receipt.urls[name] !== url)) return false;
@@ -524,6 +526,12 @@ export class DevFnOrchestrator {
       // shared routing lock below.
       const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
       const oldReady = await this.prepareExisting(options, stateDir, identity, loadedPolicy, registry, true);
+      // Unless a ready lifecycle is kept for replacement, public exposure this
+      // owner still has, also without a receipt, ends before any lease or
+      // node start; a public profile republishes once it is ready.
+      if (!oldReady) await withdrawLifecycleTunnel(stateDir, identity.instanceId, this.tunnelOverrides).catch((error: unknown) => {
+        throw new DevFnError("DEVFN_RUNTIME_INVALID", `Public routes of this lifecycle could not be withdrawn before startup: ${error instanceof Error ? error.message : String(error)}`);
+      });
       const start = await this.prepareUpLocked(options, stateDir, identity, loadedPolicy, oldReady);
       return await start();
     }, { timeoutMs: 30_000 });
@@ -772,7 +780,7 @@ export class DevFnOrchestrator {
       throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unable to stop prior invocation ${existing.invocationId}; it was not replaced: ${recovered.errors.join(" ")}`, { cleanup: recovered, priorStopped: false });
     }
     existing.cleanup = recovered;
-    existing.state = "stopped";
+    existing.state = recovered.publicOutstanding?.length ? "degraded" : "stopped";
     existing.updatedAt = new Date().toISOString();
     await writeReceipt(existing);
   }

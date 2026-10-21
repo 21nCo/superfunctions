@@ -5,7 +5,7 @@ import { defaultStateDir, validateDevFnConfig, type DevFnConfig } from "@devfn/c
 import { FilePortRegistry } from "@devfn/ports";
 import type { ProxyRoute } from "@devfn/proxy";
 import {
-  markOwnerBinding, publishTunnelRoutes, readOwnerBindings, readTunnelBindings, resolveTunnelBinding, TunnelError, withdrawTunnelRoutes,
+  markOwnerBinding, publishTunnelRoutes, readOwnerBindings, readTunnelBindings, resolveTunnelBinding, TunnelError, tunnelStatus, withdrawTunnelRoutes,
   type TunnelBinding, type TunnelServiceOptions, type TunnelWithdrawal,
 } from "@devfn/proxy/tunnel";
 
@@ -66,6 +66,13 @@ export async function planPublicUrls(options: { config: DevFnConfig; root: strin
   const stateDir = await realpath(options.stateDir ?? defaultStateDir()).catch(() => options.stateDir ?? defaultStateDir());
   const selection = await selectedPublicRoutes(options.config, plan, identity, Object.fromEntries(plan.portNames.map((name) => [name, 1])), stateDir);
   return selection ? { binding: selection.binding.name, urls: selection.urls } : { urls: {} };
+}
+
+/** Whether the binding's connector runs and still publishes every hostname of this owner's tunnel receipt. */
+export async function publicUrlsLive(stateDir: string, ownerId: string, tunnel: { binding: string; hostnames: string[] }): Promise<boolean> {
+  const binding = (await readTunnelBindings(stateDir)).find((item) => item.name === tunnel.binding);
+  const status = binding ? await tunnelStatus({ stateDir, binding }) : undefined;
+  return status?.connector === "running" && tunnel.hostnames.every((hostname) => status.hostnames.some((item) => item.hostname === hostname && item.ownerId === ownerId));
 }
 
 /**
