@@ -1,0 +1,29 @@
+devfn/core/src/orchestrator.ts
+  s_2061fcf2018980::t_f3afe338367fb4 18,323-324,529-534,783
+devfn/core/src/tunnel.ts
+  s_2061fcf2018980::t_8a2f7f876b507d 8,71-77
+devfn/core/test/tunnel-lifecycle.test.ts
+  s_2061fcf2018980::t_4265907d8f13bd 20,164-211
+devfn/docs/configuration.md
+  s_2061fcf2018980::t_af1891406a2744 127,129
+devfn/proxy/src/tunnel/service.ts
+  s_2061fcf2018980::t_fb566658274160 221,234-243,321-323,335-337,339
+devfn/proxy/test/tunnel-service.test.ts
+  s_2061fcf2018980::t_248644a9240947 235-265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0476dcb0b6813992a1a9a99b1a1fe7cc87afebb5",
+  "prompts": {},
+  "sessions": {
+    "s_2061fcf2018980": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_2061fcf2018980",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
