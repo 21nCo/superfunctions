@@ -1,0 +1,29 @@
+devfn/docs/configuration.md
+  s_181cec59d65095::t_325bdc33a342ef 125,127
+devfn/proxy/src/tunnel/cloudflare.ts
+  s_181cec59d65095::t_10a323054d3375 88-92,94-99,140-143,153
+devfn/proxy/src/tunnel/service.ts
+  s_181cec59d65095::t_5131db291bea0b 15,21,97-113,125,259-261,265-266,275,287,300,306-335,339-344,348,351-352
+devfn/proxy/src/tunnel/state.ts
+  s_181cec59d65095::t_41cfbeaabecad9 56-61,63,285
+devfn/proxy/test/tunnel-adapter.test.ts
+  s_181cec59d65095::t_2e068b7c935df6 85-99
+devfn/proxy/test/tunnel-service.test.ts
+  s_181cec59d65095::t_be0c560edf912c 22-33,157,194,236,252-326,370
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9fb86532ecef42ae6f170188bee9ac0e922498de",
+  "prompts": {},
+  "sessions": {
+    "s_181cec59d65095": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_181cec59d65095",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
