@@ -82,6 +82,21 @@ describe("Cloudflare DNS adapter", () => {
     expect(calls.filter((call) => !call.startsWith("GET"))).toEqual([]);
   });
 
+  it("neither publishes nor reports removed a name a wildcard record to the tunnel keeps routed", async () => {
+    const wildcard = { id: "wild", type: "CNAME", name: `*.${binding.domain}`, content: target, proxied: true, comment: "user" };
+    const records: Array<Record<string, unknown>> = [wildcard];
+    const { calls, provider } = zone(records);
+    await expect(provider.ensureDns(binding, PUBLIC_HOST)).rejects.toThrow(`wildcard record *.${binding.domain}`);
+    await expect(provider.removeDns(binding, PUBLIC_HOST)).rejects.toThrow("still routed to the tunnel by the wildcard");
+    // The removal deleted DevFn's own record only; the user's wildcard is unchanged.
+    expect(records).toEqual([wildcard]);
+    expect(calls.filter((call) => call.startsWith("DELETE"))).toEqual([`DELETE /r1`]);
+    // A wildcard to another target does not route to the tunnel.
+    wildcard.content = "elsewhere.example.test";
+    expect(await provider.ensureDns(binding, PUBLIC_HOST)).toBe("created");
+    await provider.removeDns(binding, PUBLIC_HOST);
+  });
+
   it("accepts only an existing, locally configured tunnel of the binding's account", async () => {
     const urls: string[] = [];
     const account = (tunnel: Record<string, unknown> | null) => new CloudflareTunnelProvider({ env: { DEVFN_FIXTURE_TOKEN: "secret-token" },

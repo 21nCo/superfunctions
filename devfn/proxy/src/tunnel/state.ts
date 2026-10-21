@@ -53,11 +53,14 @@ export interface TunnelTransition {
 }
 
 /**
- * Names an owner stopped publishing whose public reachability has not fully
- * ended: their DNS removal is not yet confirmed, or a recorded connector may
- * still route them. Retried by every later transition of the binding.
+ * Names an owner stopped publishing, or an interrupted publish left
+ * routable, whose public reachability has not fully ended: their DNS
+ * removal is not yet confirmed, or a recorded connector may still route
+ * them. keepDns marks names whose DevFn-owned record the publish did not
+ * create: it is kept, and their reachability ends once no connector routes
+ * them. Retried by every later transition of the binding.
  */
-export interface TunnelResidue { ownerId: string; hostnames: string[]; dnsRemoved: boolean }
+export interface TunnelResidue { ownerId: string; hostnames: string[]; dnsRemoved: boolean; keepDns?: true }
 
 export interface TunnelState {
   version: 1;
@@ -279,7 +282,7 @@ export async function readTunnelState(stateDir: string, name: string): Promise<T
   const pending = state?.pending;
   if (!state || state.version !== 1 || state.binding !== name || !isHostnames(state.hostnames) || !Array.isArray(state.retired) || !state.retired.every(isConnector) ||
     (state.connector !== undefined && !isConnector(state.connector)) ||
-    !Array.isArray(state.residue) || !state.residue.every((item) => item && typeof item.ownerId === "string" && isNames(item.hostnames) && typeof item.dnsRemoved === "boolean") ||
+    !Array.isArray(state.residue) || !state.residue.every((item) => item && typeof item.ownerId === "string" && isNames(item.hostnames) && typeof item.dnsRemoved === "boolean" && (item.keepDns === undefined || item.keepDns === true)) ||
     (pending !== undefined && (pending.kind !== "publish" || typeof pending.ownerId !== "string" || !isNames(pending.hostnames) ||
       !isHostnames(pending.next) || !isNames(pending.createdDns)))) {
     throw new TunnelError("DEVFN_TUNNEL_STATE_INVALID", `Tunnel state for ${name} is invalid.`);

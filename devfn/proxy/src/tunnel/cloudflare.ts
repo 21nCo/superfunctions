@@ -85,9 +85,18 @@ export class CloudflareTunnelProvider implements TunnelProvider {
 
   private async records(binding: TunnelBinding, hostname: string): Promise<DnsRecord[]> {
     if (!isPublicHostname(hostname, binding.domain)) throw new TunnelError("DEVFN_TUNNEL_INVALID", `${hostname} is not one label under ${binding.domain}.`);
-    const result = await this.api<DnsRecord[]>(binding, "GET", `${zone(binding)}/dns_records?name=${encodeURIComponent(hostname)}&per_page=100`);
+    return await this.named(binding, hostname);
+  }
+
+  private async named(binding: TunnelBinding, name: string): Promise<DnsRecord[]> {
+    const result = await this.api<DnsRecord[]>(binding, "GET", `${zone(binding)}/dns_records?name=${encodeURIComponent(name)}&per_page=100`);
     if (!Array.isArray(result)) throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", "Cloudflare returned an unreadable DNS record list.");
-    return result.filter((record) => record.name?.toLowerCase() === hostname);
+    return result.filter((record) => record.name?.toLowerCase() === name);
+  }
+
+  /** A wildcard record under the binding domain that routes to its tunnel keeps every name there routed whatever DevFn removes. */
+  private async coveredByWildcard(binding: TunnelBinding): Promise<boolean> {
+    return (await this.named(binding, `*.${binding.domain}`)).some((record) => record.type === "CNAME" && record.content === tunnelTarget(binding));
   }
 
   /**
@@ -128,6 +137,10 @@ export class CloudflareTunnelProvider implements TunnelProvider {
     if (records.length !== 1 || !owned(binding, records[0]) || records[0].proxied !== true) {
       throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `Public DNS for ${hostname} does not route only to tunnel binding ${binding.name} through a proxied DevFn-owned record.`);
     }
+    // Removing the name's record could not end its reachability.
+    if (await this.coveredByWildcard(binding)) {
+      throw new TunnelError("DEVFN_TUNNEL_VALIDATION_FAILED", `A wildcard record *.${binding.domain} routes every name to tunnel binding ${binding.name}; DevFn publishes only names it can withdraw.`);
+    }
   }
 
   public async removeDns(binding: TunnelBinding, hostname: string): Promise<void> {
@@ -137,6 +150,7 @@ export class CloudflareTunnelProvider implements TunnelProvider {
     if ((await this.records(binding, hostname)).some((item) => owned(binding, item))) {
       throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `The DevFn-owned DNS record for ${hostname} is still present after deletion.`);
     }
+    if (await this.coveredByWildcard(binding)) throw new TunnelError("DEVFN_TUNNEL_PROVIDER_FAILED", `${hostname} is still routed to the tunnel by the wildcard record *.${binding.domain}.`);
   }
 
   public renderConnectorConfig(binding: TunnelBinding, hostnames: readonly string[], origin: PublicOrigin): string {
