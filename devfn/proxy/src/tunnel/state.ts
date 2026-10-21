@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { withFileLock, withRoutingLock } from "@devfn/ports";
+import { canonicalBirthSignature, withFileLock, withRoutingLock } from "@devfn/ports";
 
 import { domainContains, normalizeDomain, readRegisteredDomains } from "../domains.js";
 
@@ -261,7 +261,7 @@ export async function writePrivateJson(file: string, value: unknown): Promise<vo
 const isNames = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
 const isConnector = (value: unknown): value is ConnectorRecord => {
   const item = value as Partial<ConnectorRecord> | undefined;
-  return Boolean(item) && Number.isInteger(item!.pid) && item!.pid! > 0 && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 &&
+  return Boolean(item) && Number.isInteger(item!.pid) && item!.pid! > 0 && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 && canonicalBirthSignature(item!.birthSignature) &&
     typeof item!.startedAt === "string" && typeof item!.configDigest === "string" && /^[a-f0-9]{64}$/.test(item!.configDigest) &&
     Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && isNames(item!.hostnames);
 };

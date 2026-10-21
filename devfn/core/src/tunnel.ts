@@ -1,6 +1,8 @@
 import { realpath } from "node:fs/promises";
+import path from "node:path";
 
 import { defaultStateDir, validateDevFnConfig, type DevFnConfig } from "@devfn/config";
+import { FilePortRegistry } from "@devfn/ports";
 import type { ProxyRoute } from "@devfn/proxy";
 import {
   markOwnerBinding, publishTunnelRoutes, readOwnerBindings, readTunnelBindings, resolveTunnelBinding, TunnelError, withdrawTunnelRoutes,
@@ -12,7 +14,10 @@ import { createPlan } from "./planner.js";
 import { DevFnError, type LifecyclePlan, type RoutingIdentity } from "./types.js";
 
 /** Provider, origin and readiness substitutes for the tunnel service; production uses the defaults. */
-export type TunnelOverrides = Pick<TunnelServiceOptions, "provider" | "originCa" | "probeOrigin" | "readyTimeoutMs" | "originPort">;
+export type TunnelOverrides = Pick<TunnelServiceOptions, "provider" | "originCa" | "probeOrigin" | "readyTimeoutMs" | "originPort" | "ownerMayRun">;
+
+/** Whether a lifecycle may still run by its registry evidence, so a new connector may route its published names again. */
+export const lifecycleOwnerMayRun = (stateDir: string) => async (ownerId: string): Promise<boolean> => await new FilePortRegistry(path.join(stateDir, "registry.json")).instanceMayRun(ownerId);
 
 export interface PublicSelection { binding: TunnelBinding; routes: Array<Omit<ProxyRoute, "updatedAt">>; urls: Record<string, string> }
 
@@ -70,7 +75,7 @@ export async function planPublicUrls(options: { config: DevFnConfig; root: strin
 export async function publishLifecycleTunnel(stateDir: string, ownerId: string, selection: PublicSelection, overrides: TunnelOverrides = {}): Promise<string[]> {
   await withdrawLifecycleTunnel(stateDir, ownerId, overrides, selection.binding.name);
   const hostnames = [...new Set(selection.routes.map((route) => route.hostname))];
-  return (await publishTunnelRoutes({ ...overrides, stateDir, binding: selection.binding }, ownerId, hostnames)).map((item) => item.hostname);
+  return (await publishTunnelRoutes({ ownerMayRun: lifecycleOwnerMayRun(stateDir), ...overrides, stateDir, binding: selection.binding }, ownerId, hostnames)).map((item) => item.hostname);
 }
 
 /**

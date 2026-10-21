@@ -154,7 +154,8 @@ describe("tunnel lifecycle", () => {
     expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("running");
   });
 
-  posixIt("restarts an exited connector for the committed routes and rolls back an interrupted publish", async () => {
+  posixIt("restarts an exited connector for a live owner's routes once the tunnel is verified and rolls back an interrupted publish", async () => {
+    options.ownerMayRun = async (ownerId) => ownerId === "owner-a";
     await publishTunnelRoutes(options, "owner-a", [A]);
     const crashed = (await readTunnelState(dir, "preview")).connector!;
     process.kill(-crashed.pid, "SIGKILL");
@@ -165,8 +166,12 @@ describe("tunnel lifecycle", () => {
     state.pending = { kind: "publish", ownerId: "owner-b", hostnames: [B, B2], next: [], createdDns: [B, B2] };
     await writeTunnelState(dir, state);
 
+    probed.length = 0;
+    provider.calls.length = 0;
     const status = await recoverTunnel(options);
     expect(status).toMatchObject({ connector: "running", pending: false, hostnames: [{ hostname: A, ownerId: "owner-a" }] });
+    expect(probed).toEqual([A]);
+    expect(provider.calls.filter((call) => call === "tunnel preview" || call === "launch")).toEqual(["tunnel preview", "launch"]);
     expect(status.pid).not.toBe(crashed.pid);
     expect(await connectorHostnames()).toEqual([A]);
     // Only the DevFn-owned record the interrupted publish created is gone.
@@ -189,6 +194,52 @@ describe("tunnel lifecycle", () => {
     expect(await recoverTunnel(options)).toMatchObject({ connector: "running", hostnames: [{ hostname: B, ownerId: "owner-b" }], outstanding: [] });
     expect(await connectorHostnames()).toEqual([B]);
     expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("exited");
+  });
+
+  posixIt("launches nothing for committed routes whose tunnel or origin does not verify", async () => {
+    options.ownerMayRun = async () => true;
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    const crashed = (await readTunnelState(dir, "preview")).connector!;
+    process.kill(-crashed.pid, "SIGKILL");
+    provider.tunnel = "remote";
+    provider.calls.length = 0;
+    probed.length = 0;
+    // The binding is verified before any launch, after the origins are probed.
+    await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toThrow("remotely managed");
+    expect(probed).toEqual([B, A]);
+    await expect(recoverTunnel(options)).rejects.toThrow("remotely managed");
+    expect(provider.calls).not.toContain("launch");
+    expect((await readTunnelState(dir, "preview")).connector).toEqual(crashed);
+    // An origin that no longer verifies is withdrawn, not made public again.
+    provider.tunnel = "local";
+    options.probeOrigin = async () => { throw new Error("origin certificate does not verify"); };
+    expect(await recoverTunnel(options)).toMatchObject({ connector: "stopped", hostnames: [], outstanding: [] });
+    expect(provider.calls).not.toContain("launch");
+    expect(provider.records.size).toBe(0);
+  });
+
+  posixIt("withdraws a dead owner's routes instead of relaunching them for another owner's publish", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    process.kill(-(await readTunnelState(dir, "preview")).connector!.pid, "SIGKILL");
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    expect(await connectorHostnames()).toEqual([A]);
+    expect([...provider.records.keys()]).toEqual([A]);
+    expect(await tunnelStatus(options)).toMatchObject({ connector: "running", hostnames: [{ hostname: A, ownerId: "owner-a" }], outstanding: [] });
+    // The dead owner's own withdrawal then finds nothing outstanding and clears its marker.
+    expect(await readOwnerBindings(dir, "owner-b")).toEqual(["preview"]);
+    expect(await withdrawTunnelRoutes(options, "owner-b")).toEqual({ withdrawn: [], outstanding: [] });
+    expect(await readOwnerBindings(dir, "owner-b")).toEqual([]);
+  });
+
+  it("keeps another owner's routes that the running connector serves when it is replaced", async () => {
+    await publishTunnelRoutes(options, "owner-a", [A]);
+    await publishTunnelRoutes(options, "owner-b", [B]);
+    const before = (await readTunnelState(dir, "preview")).connector!;
+    await publishTunnelRoutes(options, "owner-a", [A, A2]);
+    expect(await connectorHostnames()).toEqual([A2, A, B].sort());
+    expect(await processGroupStatus(before.pid, before.birthSignature)).toBe("exited");
+    expect([...provider.records.keys()].sort()).toEqual([A2, A, B].sort());
   });
 
   posixIt("starts no connector during a withdrawal when the recorded one exited", async () => {
@@ -406,6 +457,12 @@ describe("tunnel lifecycle", () => {
     await expect(publishTunnelRoutes(options, "owner-b", [B])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_STATE_INVALID" });
     expect(await readFile(file, "utf8")).not.toBe(saved);
     expect(provider.calls.filter((call) => call.includes(B))).toEqual([]);
+    // A connector identity in a known format that is not its canonical rendering could never be verified stopped.
+    const state = JSON.parse(saved) as { connector: { birthSignature: string; pid: number } };
+    const live = state.connector;
+    await writeFile(file, JSON.stringify({ ...state, connector: { ...live, birthSignature: "linux:0042" } }));
+    await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toMatchObject({ code: "DEVFN_TUNNEL_STATE_INVALID" });
+    expect(await processGroupStatus(live.pid, live.birthSignature)).toBe("running");
     await writeFile(file, saved);
   });
 });

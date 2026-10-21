@@ -54,7 +54,7 @@ const canonicalBirthSignatures: Record<string, (text: string) => boolean> = {
 // Node's process APIs take a 32-bit PID and probe a group as the negated PID,
 // so a service PID beyond int32 can never be judged and would keep its route forever.
 const MAX_SERVICE_PID = 2 ** 31 - 1;
-const canonicalBirthSignature = (signature: string): boolean => {
+export const canonicalBirthSignature = (signature: string): boolean => {
   const format = signature.includes(":") ? signature.slice(0, signature.indexOf(":")) : "";
   return !Object.hasOwn(canonicalBirthSignatures, format) || canonicalBirthSignatures[format](signature.slice(format.length + 1));
 };

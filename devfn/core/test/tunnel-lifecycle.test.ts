@@ -108,6 +108,20 @@ it("publishes the pre-start public URL after readiness and withdraws only its ow
   expect(state.connector).toBeDefined();
 }, 60_000);
 
+it.skipIf(process.platform === "win32")("withdraws, rather than relaunches, the routes of an owner with no lifecycle that may run once their connector exited", async () => {
+  const tunnel = await registerPreview();
+  await publishTunnelRoutes(tunnel, "other-worktree", [OTHER]);
+  process.kill(-(await readTunnelState(stateDir, "preview")).connector!.pid, "SIGKILL");
+  await stubLifecycleHost();
+  const orchestrator = new DevFnOrchestrator(overrides);
+  const started = await orchestrator.up({ config, root, stateDir, profile: "share", allowPublic: true });
+  const state = await readTunnelState(stateDir, "preview");
+  expect(state.hostnames.map((item) => item.hostname)).toEqual(started.tunnel!.hostnames);
+  expect(state.connector!.hostnames).toEqual(started.tunnel!.hostnames);
+  expect([...provider.records.keys()]).toEqual(started.tunnel!.hostnames);
+  await orchestrator.down({ config, root, stateDir });
+}, 60_000);
+
 it("withdraws an orphaned owner's public routes during recovery and leaves an owner whose command runs", async () => {
   const tunnel = await registerPreview();
   const live = "web-live-0123456789abcdef0123.tunnel.example.test";

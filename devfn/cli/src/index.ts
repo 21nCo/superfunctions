@@ -14,7 +14,7 @@ import {
   trustProject,
 } from "@devfn/config";
 import {
-  DevFnError, DevFnOrchestrator, oauthRelayStatus, planPublicUrls, readRegisteredDomains, readTunnelBindings, recoverOrphanedProxyRoutes, recoverTunnel, registerDomain, registerTunnelBinding,
+  DevFnError, DevFnOrchestrator, lifecycleOwnerMayRun, oauthRelayStatus, planPublicUrls, readRegisteredDomains, readTunnelBindings, recoverOrphanedProxyRoutes, recoverTunnel, registerDomain, registerTunnelBinding,
   resolveInstanceIdentity, resolveTunnelBinding, startOAuthRelay, stopOAuthRelay, tunnelStatus, unregisterDomain, unregisterTunnelBinding,
 } from "@devfn/core";
 import { FilePortRegistry, renderPortInventory } from "@devfn/ports";
@@ -256,9 +256,9 @@ async function tunnelCommand(args: ParsedArgs, cwd: string, stateDir: string, lo
   const binding = await resolveTunnelBinding(stateDir, name!, identity.projectId, identity.repositoryIdentity);
   if (action === "status") return { ok: true, tunnel: await tunnelStatus({ stateDir, binding }) };
   if (action === "recover") {
-    // Recovery may restart the connector for every owner's published routes.
+    // Recovery may restart the connector for the published routes of owners that may still run.
     if (!args.allowPublic) throw new DevFnError("DEVFN_PUBLIC_EXPOSURE_CONFIRMATION_REQUIRED", "tunnel recover restarts public exposure. Review it and rerun with --allow-public.");
-    return { ok: true, tunnel: await recoverTunnel({ stateDir, binding }) };
+    return { ok: true, tunnel: await recoverTunnel({ stateDir, binding, ownerMayRun: lifecycleOwnerMayRun(stateDir) }) };
   }
   throw new DevFnError("DEVFN_RUNTIME_INVALID", `Unknown tunnel action ${action}. Expected list, register, unregister, urls, status or recover.`);
 }
