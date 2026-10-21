@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -9,6 +9,7 @@ import { defaultStateDir, isCredentialKey, loadDevFnPolicy, validateDevFnConfig,
 import { FilePortRegistry, inspectContainerRunning, isPortAvailable, resolvePolicy, scanListenerState, withFileLock, withRoutingLock, type ListenerInfo, type ListenerScanResult, type PortAllocation, type RegistryInvocation } from "@devfn/ports";
 import { checkReadinessNow, createProcessEnvironment, resolveAdapterCommand, ProcessSupervisor, processExists, type ManagedProcess } from "@devfn/processes";
 import { CaddyProxyController, proxyListenerPorts, readRegisteredDomains, renderCaddyfile, verifyCertificate, verifyLocalDns, type ProxyRoute, type ProxyRouteSnapshot } from "@devfn/proxy";
+import { OAUTH_RELAY_OWNER_ID, recoverOAuthRelayRoute, relayPaths, STATE_DIR_ENV } from "@devfn/proxy/oauth-relay";
 
 import { domainAliases, resolveInstanceIdentity } from "./identity.js";
 import { resolveEndpointTemplates, resolveLocalHostname } from "./endpoints.js";
@@ -41,6 +42,13 @@ function assertReceiptStateDir(receipt: LifecycleReceipt, stateDir: string): voi
   if (receipt.stateDir && path.resolve(receipt.stateDir) !== path.resolve(stateDir)) {
     throw new DevFnError("DEVFN_RUNTIME_INVALID", `This invocation was started with state directory ${receipt.stateDir}; rerun cleanup with that same --state-dir.`);
   }
+}
+
+// The one lifecycle environment a process sees: generated endpoint values plus the
+// lifecycle's state directory, so in-process DevFn clients read the same machine
+// state as this command. Start, readiness and status all build it here.
+function lifecycleGeneratedEnvironment(receipt: Pick<LifecycleReceipt, "stateDir">, generated: Readonly<Record<string, string>>): Record<string, string> {
+  return { ...generated, ...(receipt.stateDir ? { [STATE_DIR_ENV]: receipt.stateDir } : {}) };
 }
 
 function resolvedHealth(health: HealthCheck | undefined, command: string[] | undefined, url?: string): HealthCheck | undefined {
@@ -327,7 +335,7 @@ async function receiptIsReady(config: DevFnConfig, root: string, receipt: Lifecy
     if (!spec || processStates[index] !== "running") return false;
     try {
       const ready = await checkReadinessNow({
-        health: resolvedHealth(spec.health, resolved.nodes[managed.name]?.healthCommand, resolved.nodes[managed.name]?.healthUrl), ports, logPath: managed.logPath, cwd: managed.cwd, environment: createProcessEnvironment({ ...spec, env: resolved.nodes[managed.name]?.environment }, resolved.generated),
+        health: resolvedHealth(spec.health, resolved.nodes[managed.name]?.healthCommand, resolved.nodes[managed.name]?.healthUrl), ports, logPath: managed.logPath, cwd: managed.cwd, environment: createProcessEnvironment({ ...spec, env: resolved.nodes[managed.name]?.environment }, lifecycleGeneratedEnvironment(receipt, resolved.generated)),
         previouslyReady: Boolean(managed.readyAt || receipt.state === "ready"), isAlive: async () => await supervisor.status(managed) === "running",
       });
       if (!ready || spec.exposure === "public") return ready;
@@ -364,7 +372,22 @@ export async function recoverOrphanedProxyRoutes(requestedStateDir: string): Pro
   const proxy = new CaddyProxyController(stateDir);
   const registry = new FilePortRegistry(path.join(stateDir, "registry.json"));
   const recovered: string[] = [];
-  for (const instanceId of await proxy.routedInstanceIds()) {
+  const routed = await proxy.routedInstanceIds();
+  // The OAuth relay has no lifecycle lock; its recorded identities show
+  // whether it may still run. Recovery also ends a dead relay's claim and
+  // record after a route transition already dropped its route. A relay
+  // command holding its lock owns the relay, as a lifecycle command does.
+  if (routed.includes(OAUTH_RELAY_OWNER_ID) || await lstat(relayPaths(stateDir).dir).then(() => true, () => false)) {
+    let entered = false;
+    try {
+      if (await recoverOAuthRelayRoute(stateDir, proxy, { lockTimeoutMs: 1_000, onLocked: () => { entered = true; } })) recovered.push(OAUTH_RELAY_OWNER_ID);
+    } catch (error) {
+      // Only a relay command holding the service lock is skipped; a lock timeout inside it fails recovery.
+      if (entered || !(error && typeof error === "object" && "code" in error && error.code === "DEVFN_REGISTRY_LOCK_TIMEOUT")) throw error;
+    }
+  }
+  for (const instanceId of routed) {
+    if (instanceId === OAUTH_RELAY_OWNER_ID) continue;
     let entered = false;
     try {
       await withFileLock(path.join(stateDir, `lifecycle-${instanceId}.lock`), async () => {
@@ -762,7 +785,8 @@ export class DevFnOrchestrator {
     }
     const spec = options.config.processes![node.name];
     const managed = await supervisor.start({
-      name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir: receipt.runtimeDir, ports, environment: resolved.generated,
+      name: node.name, spec: { ...spec, env: resolved.nodes[node.name].environment, command: resolved.nodes[node.name].command, script: resolved.nodes[node.name].script, health: resolvedHealth(spec.health, resolved.nodes[node.name].healthCommand, resolved.nodes[node.name].healthUrl) }, root: options.root, runtimeDir: receipt.runtimeDir, ports,
+      environment: lifecycleGeneratedEnvironment(receipt, resolved.generated),
       onStarted: async (started) => {
         receipt.processes.push(started);
         receipt.startedNodes?.push({ name: node.name, kind: node.kind });
