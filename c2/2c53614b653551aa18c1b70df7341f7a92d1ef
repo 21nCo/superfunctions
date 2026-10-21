@@ -1,0 +1,65 @@
+devfn/SPEC.md
+  s_e486e37e89216a::t_ce145ad19c5a1c 21
+devfn/cli/README.md
+  s_e486e37e89216a::t_99fd16607eacf3 18-19,25
+devfn/cli/SECURITY.md
+  s_e486e37e89216a::t_8e8502104bfc8c 6
+devfn/cli/src/index.ts
+  s_e486e37e89216a::t_0c5de274738b47 16-19,39-40,61-62,69,78-80,83-84,88,96,118-119,233-258,261
+devfn/cli/test/cli.test.ts
+  s_e486e37e89216a::t_480f5eee626d42 312-342
+devfn/config/src/schema.ts
+  s_e486e37e89216a::t_4299da5d0629b4 14,235,241,245-254,357-366
+devfn/config/src/types.ts
+  s_e486e37e89216a::t_7fd458b9bb6acf 57-68,74
+devfn/config/test/config.test.ts
+  s_e486e37e89216a::t_ee4dcaea910794 11-21
+devfn/core/src/index.ts
+  s_e486e37e89216a::t_da36cf48089963 6-7
+devfn/core/src/orchestrator.ts
+  s_e486e37e89216a::t_78bd0108e96126 11,17,223-224,368,378-379,399-405,484-485,491-495,528,534-538,690-698,829-834
+devfn/core/src/tunnel.ts
+  s_e486e37e89216a::t_d8c3f987039125 1-100
+devfn/core/src/types.ts
+  s_e486e37e89216a::t_d0d05dea8aed18 36,61-64
+devfn/core/test/tunnel-lifecycle.test.ts
+  s_e486e37e89216a::t_aab58f2173d59d 1-110
+devfn/docs/configuration.md
+  s_e486e37e89216a::t_4dd4cfbb3d0904 111-128
+devfn/ports/src/proxy-state.ts
+  s_e486e37e89216a::t_ce92179f3827d5 13-16,68,91-98,111-112,114
+devfn/proxy/package.json
+  s_e486e37e89216a::t_a01430262eb587 8
+devfn/proxy/src/index.ts
+  s_e486e37e89216a::t_67c0acd5a675ab 22-28,65-68,94-102,104-105,110,113-116,131-132,139-140,143,162-163,167-174,178-205,438
+devfn/proxy/src/tunnel/cloudflare.ts
+  s_e486e37e89216a::t_49dd7b63454d33 1-169
+devfn/proxy/src/tunnel/index.ts
+  s_e486e37e89216a::t_736d4c647c31e7 1-6
+devfn/proxy/src/tunnel/service.ts
+  s_e486e37e89216a::t_eb2bd86f8182c4 1-398
+devfn/proxy/src/tunnel/state.ts
+  s_e486e37e89216a::t_e61fa8f48ad001 1-276
+devfn/proxy/test/fixtures/tunnel.ts
+  s_e486e37e89216a::t_a56f1f02f7dd3a 1-72
+devfn/proxy/test/tunnel-adapter.test.ts
+  s_e486e37e89216a::t_a55a4545f288f3 1-165
+devfn/proxy/test/tunnel-service.test.ts
+  s_e486e37e89216a::t_7cbb4d62758579 1-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c22c53614b653551aa18c1b70df7341f7a92d1ef",
+  "prompts": {},
+  "sessions": {
+    "s_e486e37e89216a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_e486e37e89216a",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
