@@ -1,0 +1,49 @@
+devfn/cli/src/index.ts
+  s_8c71798adaf1c5::t_514719baa7da00 174-179,181-183
+devfn/cli/test/cli.test.ts
+  s_8c71798adaf1c5::t_f02727cbf3ca18 335-348
+devfn/core/src/orchestrator.ts
+  s_8c71798adaf1c5::t_75045eac976fb7 13,18,381-383,407-409,420,704,706,839-845,910
+devfn/core/src/tunnel.ts
+  s_8c71798adaf1c5::t_982f3c1b0527b0 6-7,70-71,73,78-83,85-89,91,93-98,102
+devfn/core/src/types.ts
+  s_8c71798adaf1c5::t_edff457a5b1562 36
+devfn/core/test/tunnel-lifecycle.test.ts
+  s_8c71798adaf1c5::t_f495b1eb588b04 22,123,135-136,138,144,147-164,181,186-187,190-201,206-207,210,212-215,217-219
+devfn/docs/configuration.md
+  s_8c71798adaf1c5::t_bb4ab39366149b 121,125,127-131
+devfn/proxy/src/index.ts
+  s_8c71798adaf1c5::t_06f1ff0018e0a9 28-29,174,176,181,196
+devfn/proxy/src/tunnel/cloudflare.ts
+  s_8c71798adaf1c5::t_f58eecaf36cfab 122-125
+devfn/proxy/src/tunnel/index.ts
+  s_8c71798adaf1c5::t_a7181a21911962 2,4-5
+devfn/proxy/src/tunnel/service.ts
+  s_8c71798adaf1c5::t_e3419f732b0302 11,14,41-42,76-77,84-89,98-102,105,112-113,178,187-188,192-195,201,204,218,230-231,234-275,277-280,285-287,289,292-294,299,314-320,325-326,331-332,343,348-352,355-356,362-363,366,368-370,375-379,381,386-387,389-397,399,405-406,409-412,414-415,419,422,426,437
+devfn/proxy/src/tunnel/state.ts
+  s_8c71798adaf1c5::t_2a49ccbafb7430 40-41,44-45,48,55-61,67,70,86-87,224,258,263,274,282-284,294-311,314,316-320,323-341
+devfn/proxy/test/fixtures/tunnel.ts
+  s_8c71798adaf1c5::t_a314879ed591e3 36-37,41-43,64,69-75,84
+devfn/proxy/test/proxy.test.ts
+  s_8c71798adaf1c5::t_0e8b6cacc228e2 260,337,383
+devfn/proxy/test/tunnel-adapter.test.ts
+  s_8c71798adaf1c5::t_31ebdbb700bdc6 24-27,70,79,152,154,160-162,172-177
+devfn/proxy/test/tunnel-service.test.ts
+  s_8c71798adaf1c5::t_e509e627a05c9a 8,84-86,91,93,164,169-170,172-178,180-201,203-205,207-257,277,279,287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b52f773da5cd128771bafbdc3b67b01d57b859be",
+  "prompts": {},
+  "sessions": {
+    "s_8c71798adaf1c5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_8c71798adaf1c5",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
