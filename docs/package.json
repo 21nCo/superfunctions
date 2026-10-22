@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev -p 6010",
     "predev": "node ./scripts/ensure-styled-jsx.mjs && npx fumadocs-mdx",
-    "prebuild": "node ./scripts/ensure-styled-jsx.mjs && npx fumadocs-mdx",
+    "prebuild": "npm run build --workspace=@superfunctions/docs-theme && node ./scripts/ensure-styled-jsx.mjs && npx fumadocs-mdx",
     "build": "next build",
     "start": "next start",
     "check:coverage": "tsx ./scripts/check-docs-catalog.mjs",
