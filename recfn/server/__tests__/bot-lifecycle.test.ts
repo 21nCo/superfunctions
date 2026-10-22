@@ -115,6 +115,8 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
   let queue: MemoryQueueAdapter;
   let logger: MemoryLogger;
   let temporaryDirectory: string;
+  const workers: ReturnType<typeof createBotWorker>[] = [];
+  const trackedWorker = (config: Parameters<typeof createBotWorker>[0]) => { const worker = createBotWorker(config); workers.push(worker); return worker; };
 
   beforeEach(async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'recfn-worker-test-'));
@@ -125,6 +127,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
 
   afterEach(async () => {
     vi.useRealTimers();
+    await Promise.all(workers.splice(0).map(worker => worker.cancelCaptures()));
     await vi.waitFor(async () => expect(await readdir(temporaryDirectory)).toEqual([]), { timeout: 10000 });
     await rm(temporaryDirectory, { recursive: true, force: true });
   });
@@ -154,7 +157,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     });
 
     const adapter = createMockPlatformAdapter();
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,
@@ -205,7 +208,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
       createdAt: new Date().toISOString(),
     });
 
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,
@@ -266,7 +269,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
         createdAt: new Date().toISOString(),
       });
 
-      const worker = createBotWorker({
+      const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
         store,
         queue,
@@ -327,7 +330,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     });
 
     const adapter = createMockPlatformAdapter();
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,
@@ -518,7 +521,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
       createdAt: new Date().toISOString(),
     });
 
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,
@@ -569,7 +572,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     // Platform adapter that takes longer than the configured timeout and its
     // five-second connection grace period.
     const adapter = createMockPlatformAdapter({ joinDelay: 10_000 });
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,
@@ -615,7 +618,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     const adapter = createMockPlatformAdapter({
       joinError: 'Meeting not found',
     });
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,
@@ -655,7 +658,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
     });
 
     // No 'meet' adapter registered
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,
@@ -671,7 +674,7 @@ describe('Bot lifecycle (TV-BOT-003)', () => {
   });
 
   it('processNext returns false when queue is empty', async () => {
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,

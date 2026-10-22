@@ -1,0 +1,44 @@
+{
+  "hour": {
+    "generatedSeconds": 3600,
+    "generatedVideoFrames": 108000,
+    "width": 64,
+    "height": 64,
+    "fps": 30,
+    "rawIngressBytes": 1442304000,
+    "captureElapsedSeconds": 42.665629416,
+    "afterBothProducerEofSeconds": 4.073945333000004,
+    "v8HeapLimitBytes": 184549376,
+    "totalElapsedSeconds": 43.734851458,
+    "observedPeakNodeRssBytes": 108183552,
+    "observedPeakChildRssBytes": 37289984,
+    "outputBytes": 30749416,
+    "encodedDurationSeconds": 3600.064063,
+    "decodedVideoFrames": 108000,
+    "storageSha256": "22009a7ae5c2f615af4246c02a15bfa6fcc74a4bb7015bd169bbf947ad14523e",
+    "residualEntriesBeforeStorageCleanup": [
+      "storage"
+    ]
+  },
+  "1080": {
+    "generatedSeconds": 30,
+    "generatedVideoFrames": 900,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "rawIngressBytes": 5599680000,
+    "captureElapsedSeconds": 3.097647958,
+    "afterBothProducerEofSeconds": 0.2184880830000002,
+    "v8HeapLimitBytes": 184549376,
+    "totalElapsedSeconds": 3.901578042,
+    "observedPeakNodeRssBytes": 143015936,
+    "observedPeakChildRssBytes": 157270016,
+    "outputBytes": 608985,
+    "encodedDurationSeconds": 30.064063,
+    "decodedVideoFrames": 900,
+    "storageSha256": "a127feaac9ec60c777199823c062dd0754ebfa878665f255c05a2a80908bbe20",
+    "residualEntriesBeforeStorageCleanup": [
+      "storage"
+    ]
+  }
+}

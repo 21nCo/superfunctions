@@ -123,17 +123,29 @@ providers require their own acceptance; this is not live-provider evidence.
 ### Bot media finalization
 
 Bot workers require `ffmpeg` (PCM/AAC and libx264 encoders) and `ffprobe` on
-`PATH`. They encode and fully decode-check media before storing a recording.
-`BotWorkerConfig.captureOptions` can select executable paths, a private temporary
-parent directory, and capture limits. Defaults are 256 MiB combined input,
-64 MiB output, and a four-hour capture deadline; output can be configured up to
-256 MiB. Exceeding a limit fails the recording instead of publishing truncated
-media. At 1920×1080 RGB24, the default input cap holds at most 43 video
-frames (about 1.4 seconds at 30 fps, before audio). This spool-first video path
-is a valid-media checkpoint and cannot yet record ordinary meetings; streaming
-encoding with bounded backpressure/storage is still required. Each encoder/decoder invocation has a 60-second deadline. Temporary files
-are removed on success or failure. The final bounded result is held in memory
-for the existing storage API; this is not unlimited-duration streaming storage.
+`PATH`. Audio/video are encoded concurrently through bounded pipes into a
+quota-limited temporary artifact; raw media is not spooled. Validated artifacts
+stream to shared storage and are disposed on success/failure. The worker uses
+`captureToFile`; `captureFromStream` remains a bounded buffer convenience API.
+
+`BotWorkerConfig.captureOptions` selects executable paths, a private temporary
+parent directory, and limits. File capture defaults to a 1 GiB encoded-output
+quota, 64 MiB maximum individual input chunk, and four-hour capture deadline.
+There is no default cumulative raw-byte quota; callers can set `maxInputBytes`.
+The buffer API defaults to 64 MiB output and caps configuration at 256 MiB. File
+output may be configured below 4 GiB. Quota/deadline failures reject the recording
+instead of publishing truncated media. Encoder draining after input EOF, probing,
+and full decoder validation each have a 60-second deadline. Stop dequeuing jobs,
+then call `worker.cancelCaptures()` to abort active capture and release artifacts.
+
+Zoom queues copy SDK buffers and cap each stream at 32 MiB. Browser capture caps
+queued blob bytes and its Node stream queue at 8 MiB each. A coordinated bounded
+audio split applies backpressure to both recording and real-time ASR consumers.
+Overflow is an explicit capture failure, not frame dropping. Provider internals
+and custom producers retain their own backpressure obligations. Low-complexity
+one-hour generated-media acceptance is documented in
+[streaming readiness](.conduct/media-streaming-readiness.md); live provider and
+representative workload acceptance remain unfinished.
 
 Adapters must declare `AudioChunk.encoding`: interleaved signed 16-bit
 little-endian PCM (`pcm_s16le`), or consecutive bytes from one WebM/Ogg audio

@@ -1,3 +1,4 @@
+import { createError, ErrorCode } from '@recfn/core';
 import type { VideoChunk } from '@recfn/core';
 import type { ZoomMeetingSdk, ZoomVideoFrame } from './meeting-sdk.js';
 
@@ -20,7 +21,12 @@ export function createVideoStream(
           width: frame.width,
           height: frame.height,
         };
-        controller.enqueue(chunk);
+        if (chunk.data.byteLength > (controller.desiredSize ?? 0)) {
+          cleanup();
+          controller.error(createError(ErrorCode.PLATFORM_CAPTURE_UNAVAILABLE, 'Zoom media buffer overflow.'));
+          return;
+        }
+        controller.enqueue({ ...chunk, data: new Uint8Array(chunk.data) });
       };
       const onMeetingEnded = () => {
         if (closed) {
@@ -41,5 +47,5 @@ export function createVideoStream(
       sdk.on('meeting-ended', onMeetingEnded);
     },
     cancel() { cleanup(); },
-  });
+  }, { highWaterMark: 32 * 1024 * 1024, size: chunk => chunk?.data.byteLength ?? 0 });
 }

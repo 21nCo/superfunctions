@@ -129,6 +129,17 @@ describe('RealtimeTranscriptionPipeline', () => {
     expect(logger.error).toHaveBeenCalled();
   });
 
+  it('does not drain audio when an ASR consumer never reads and releases it on completion', async () => {
+    let produced = 0, canceled = false;
+    const source = new ReadableStream<AudioChunk>({ pull(c) { produced++; c.enqueue({ data: new Uint8Array(1024), timestamp: 0, sampleRate: 16000, channels: 1 }); }, cancel() { canceled = true; } }, { highWaterMark: 0 });
+    asrAdapter.transcribeStream = async function* () {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(produced).toBe(0);
+    };
+    await pipeline.start('unread', source, { platform: 'zoom', asrProvider: 'deepgram' });
+    await vi.waitFor(() => { expect(canceled).toBe(true); expect(source.locked).toBe(false); });
+  });
+
   it('rejects unsupported real-time provider combinations before work starts', () => {
     expect(() =>
       assertRealtimeTranscriptionSupported('meet', 'assemblyai'),

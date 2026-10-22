@@ -60,38 +60,38 @@ export function assertRealtimeTranscriptionSupported(
 
 function normalizeRealtimeAudioStream(
   audioStream: ReadableStream<AudioChunk | Uint8Array>,
+  signal: AbortSignal,
 ): ReadableStream<Uint8Array> {
+  const reader = audioStream.getReader();
+  let ended = false;
+  let controller: ReadableStreamDefaultController<Uint8Array>;
+  const release = () => { signal.removeEventListener('abort', abort); reader.releaseLock(); };
+  const abort = () => {
+    if (ended) return;
+    ended = true;
+    controller?.close();
+    void reader.cancel().catch(() => {}).finally(release);
+  };
   return new ReadableStream<Uint8Array>({
-    start(controller) {
-      const reader = audioStream.getReader();
-
-      const pump = async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              controller.close();
-              break;
-            }
-            if (!value) {
-              continue;
-            }
-            if (value instanceof Uint8Array) {
-              controller.enqueue(value);
-              continue;
-            }
-            controller.enqueue((value as AudioChunk).data);
-          }
-        } catch (error) {
-          controller.error(error);
-        } finally {
-          reader.releaseLock();
-        }
-      };
-
-      void pump();
+    start(value) {
+      controller = value;
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
     },
-  });
+    async pull(value) {
+      try {
+        const { done, value: chunk } = await reader.read();
+        if (ended) return;
+        if (done) { ended = true; value.close(); release(); }
+        else value.enqueue(chunk instanceof Uint8Array ? chunk : chunk.data);
+      } catch (error) { if (!ended) { ended = true; value.error(error); release(); } }
+    },
+    async cancel(reason) {
+      if (ended) return;
+      ended = true;
+      try { await reader.cancel(reason); } finally { release(); }
+    },
+  }, { highWaterMark: 0 });
 }
 
 export class RealtimeTranscriptionPipeline {
@@ -126,7 +126,7 @@ export class RealtimeTranscriptionPipeline {
       this.deps.logger.info('realtime_transcription.start', { botId, language });
 
       const segments = this.deps.asrAdapter.transcribeStream(
-        normalizeRealtimeAudioStream(audioStream),
+        normalizeRealtimeAudioStream(audioStream, abortController.signal),
         {
           language,
           speakerDiarization: true,
@@ -158,7 +158,10 @@ export class RealtimeTranscriptionPipeline {
         });
       }
     } finally {
-      this.abortControllers.delete(botId);
+      abortController.abort();
+      // Unsupported providers can fail before normalization acquires a reader.
+      void audioStream.cancel().catch(() => {});
+      if (this.abortControllers.get(botId) === abortController) this.abortControllers.delete(botId);
       this.deps.logger.info('realtime_transcription.stop', { botId });
     }
   }

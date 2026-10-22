@@ -2,7 +2,7 @@ import { ErrorCode, createError, type Recording, type RecordingFormat } from '@r
 import type { StorageAdapter } from '../integrations/storage.js';
 import type { RecFnStore } from '../store/types.js';
 import type { Logger } from '../integrations/logfn.js';
-import type { CaptureResult } from './capture.js';
+import type { CaptureResult, CaptureArtifact } from './capture.js';
 import type { WebhookDeliverer } from '../worker/lifecycle.js';
 import type { MetricsEmitter } from '../integrations/watchfn.js';
 import { uploadObject } from '../integrations/storage.js';
@@ -47,7 +47,7 @@ function contentTypeForFormat(format: RecordingFormat): string {
 export interface UploadRecordingInput {
   botId: string;
   namespace: string;
-  capture: CaptureResult;
+  capture: CaptureResult | CaptureArtifact;
   source?: 'bot_finalization' | 'manual_upload';
 }
 
@@ -55,7 +55,7 @@ export interface UploadRecordingResult {
   recording: Recording;
 }
 
-export async function uploadRecording(
+async function uploadRecordingInner(
   input: UploadRecordingInput,
   deps: {
     storage: StorageAdapter;
@@ -88,7 +88,7 @@ export async function uploadRecording(
   let externalSettled = false;
   const startTime = Date.now();
   try {
-    await uploadObject(storage, key, capture.data, {
+    await uploadObject(storage, key, 'data' in capture ? capture.data : capture, {
       contentType: contentTypeForFormat(capture.format),
       encryption: true,
     });
@@ -157,4 +157,10 @@ export async function uploadRecording(
   } finally {
     await store.finishBotProducer(producer.id, namespace, externalSettled);
   }
+}
+
+/** Upload consumes a file artifact; always release it, including preflight failures. */
+export async function uploadRecording(input: UploadRecordingInput, deps: Parameters<typeof uploadRecordingInner>[1]): Promise<UploadRecordingResult> {
+  try { return await uploadRecordingInner(input, deps); }
+  finally { if ('dispose' in input.capture) await input.capture.dispose(); }
 }

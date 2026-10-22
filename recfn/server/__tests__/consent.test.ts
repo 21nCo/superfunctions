@@ -64,6 +64,8 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
   let queue: MemoryQueueAdapter;
   let logger: MemoryLogger;
   let temporaryDirectory: string;
+  const workers: ReturnType<typeof createBotWorker>[] = [];
+  const trackedWorker = (config: Parameters<typeof createBotWorker>[0]) => { const worker = createBotWorker(config); workers.push(worker); return worker; };
 
   beforeEach(async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'recfn-worker-test-'));
@@ -74,6 +76,7 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
 
   afterEach(async () => {
     vi.useRealTimers();
+    await Promise.all(workers.splice(0).map(worker => worker.cancelCaptures()));
     await vi.waitFor(async () => expect(await readdir(temporaryDirectory)).toEqual([]), { timeout: 10000 });
     await rm(temporaryDirectory, { recursive: true, force: true });
   });
@@ -103,7 +106,7 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
     });
 
     const { adapter, sendChatMessage } = createMockPlatformAdapter();
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,
@@ -158,7 +161,7 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
     });
 
     const { adapter, sendChatMessage } = createMockPlatformAdapter();
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,
@@ -196,7 +199,7 @@ describe('Consent mechanism (TV-BOT-010, BOT-008, SEC-006)', () => {
     });
 
     const { adapter } = createMockPlatformAdapter({ sendChatMessageError: true });
-    const worker = createBotWorker({
+    const worker = trackedWorker({
       captureOptions: { temporaryDirectory },
       store,
       queue,

@@ -3,7 +3,7 @@ import { createMeetAudioStream } from '../../platforms/meet/src/audio-capture.js
 import { createTeamsAudioStream } from '../../platforms/teams/src/audio-capture.js';
 afterEach(() => vi.unstubAllGlobals());
 describe.each([['Meet', createMeetAudioStream], ['Teams', createTeamsAudioStream]] as const)('%s MediaRecorder completion', (_name, createStream) => {
-  it('preserves final asynchronous blobs in event order and declares the container', async () => {
+  it.each([false, true])('preserves final blobs or reports overflow=%s', async (overflow) => {
     let recorder: any;
     class Recorder {
       static isTypeSupported() { return true; }
@@ -25,6 +25,16 @@ describe.each([['Meet', createMeetAudioStream], ['Teams', createTeamsAudioStream
     const page = { evaluate: async (fn: any, args: any) => fn(args) } as any;
     const stream = createStream(page);
     await vi.waitFor(() => expect(recorder).toBeDefined());
+    if (overflow) {
+      const arrayBuffer = vi.fn();
+      recorder.ondataavailable({ data: { size: 9 * 1024 * 1024, arrayBuffer } });
+      const reader = stream.getReader();
+      await expect(reader.read()).rejects.toThrow('overflow');
+      expect(arrayBuffer).not.toHaveBeenCalled();
+      reader.releaseLock();
+      await vi.waitFor(() => expect(track.stop).toHaveBeenCalled());
+      return;
+    }
     let finish!: (value: ArrayBuffer) => void;
     const delayed = new Promise<ArrayBuffer>(resolve => { finish = resolve; });
     recorder.ondataavailable({ data: { size: 2, arrayBuffer: () => delayed } });

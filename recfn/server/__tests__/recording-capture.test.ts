@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { captureFromStream } from '../src/recording/capture.js';
+import { captureFromStream, captureToFile } from '../src/recording/capture.js';
 import type { AudioChunk, VideoChunk } from '@recfn/core';
 import { mkdtemp, writeFile, readFile, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -66,6 +66,37 @@ describe('bounded real media finalization', () => {
     const stalled = new ReadableStream<VideoChunk>({ cancel() { canceled = true; } });
     await expect(captureFromStream(stream([{ ...audio(), encoding: undefined }]), { recordingFormat: 'mp4', videoStream: stalled })).rejects.toThrow('explicitly declared');
     expect(canceled).toBe(true); expect(stalled.locked).toBe(false);
+  });
+  it.each([0, 1])('stops stalled pumps on encoder exit %s and releases file readers', async (exitCode) => {
+    let canceled = 0;
+    const a = new ReadableStream<AudioChunk>({ start(c) { c.enqueue(audio()); }, cancel() { canceled++; } });
+    const v = new ReadableStream<VideoChunk>({ start(c) { c.enqueue(video()[0]); }, cancel() { canceled++; } });
+    const binaryDirectory = await mkdtemp(join(tmpdir(), 'recfn-exit-test-'));
+    const binary = join(binaryDirectory, 'encoder');
+    await writeFile(binary, '#!/bin/sh\nexit ' + exitCode + '\n', { mode: 0o700 });
+    const started = performance.now();
+    try {
+      await expect(captureToFile(a, { recordingFormat: 'mp4', videoStream: v, ffmpegPath: binary, maxCaptureMs: 30000 })).rejects.toThrow();
+      expect(performance.now() - started).toBeLessThan(2000);
+    } finally { await rm(binaryDirectory, { recursive: true, force: true }); }
+    expect(canceled).toBe(2);
+    const temporaryDirectory = await mkdtemp(join(tmpdir(), 'recfn-file-test-'));
+    try {
+      const artifact = await captureToFile(stream([audio()]), { recordingFormat: 'audio_only', temporaryDirectory });
+      const reader = artifact.openStream().getReader();
+      await reader.read();
+      await artifact.dispose();
+      expect(await readdir(temporaryDirectory)).toEqual([]);
+      await reader.cancel().catch(() => {}); reader.releaseLock();
+      expect(() => artifact.openStream()).toThrow('disposed');
+    } finally { await rm(temporaryDirectory, { recursive: true, force: true }); }
+  });
+  it('cancels explicit AbortSignal capture without turning it into a complete artifact', async () => {
+    const abort = new AbortController(); let canceled = false;
+    const a = new ReadableStream<AudioChunk>({ start(c) { c.enqueue(audio()); }, cancel() { canceled = true; } });
+    const pending = captureToFile(a, { recordingFormat: 'audio_only', signal: abort.signal });
+    setTimeout(() => abort.abort(), 20);
+    await expect(pending).rejects.toThrow(); expect(canceled).toBe(true);
   });
   it('enforces input/output and stalled capture limits, canceling producers and removing spools', async () => {
     const temporaryDirectory = await mkdtemp(join(tmpdir(), 'recfn-cleanup-test-'));

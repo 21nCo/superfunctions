@@ -118,6 +118,7 @@ export function createMeetAudioStream(
                 string,
                 {
                   queue: number[][];
+                  queuedBytes?: number;
                   done: boolean;
                   error: string | null;
                   sampleRate: number;
@@ -229,6 +230,14 @@ export function createMeetAudioStream(
                 if (!activeSession) {
                   return;
                 }
+                if (activeSession.error || activeSession.done) return;
+                activeSession.queuedBytes = (activeSession.queuedBytes ?? 0) + event.data.size;
+                if (activeSession.queuedBytes > 8 * 1024 * 1024) {
+                  activeSession.error = 'Browser media buffer overflow.';
+                  activeSession.done = true;
+                  if (recorder.state !== 'inactive') recorder.stop();
+                  return;
+                }
                 pendingData = pendingData.then(async () => {
                   const buffer = await event.data.arrayBuffer();
                   activeSession.queue.push(Array.from(new Uint8Array(buffer)));
@@ -312,11 +321,12 @@ export function createMeetAudioStream(
                     string,
                     {
                       queue: number[][];
+                      queuedBytes?: number;
                       done: boolean;
                       error: string | null;
                       sampleRate: number;
                       channels: number;
-                  encoding?: AudioChunk['encoding'];
+                      encoding?: AudioChunk['encoding'];
                     }
                   >;
                 };
@@ -336,6 +346,7 @@ export function createMeetAudioStream(
                   0,
                   activeSession.queue.length,
                 );
+                activeSession.queuedBytes = Math.max(0, (activeSession.queuedBytes ?? 0) - chunks.reduce((sum, chunk) => sum + chunk.length, 0));
                 const snapshot: MeetCapturePollResult = {
                   chunks,
                   done: activeSession.done && chunks.length === 0,
@@ -357,6 +368,7 @@ export function createMeetAudioStream(
 
             if (result.error) {
               closed = true;
+              stopCapture();
               controller.error(
                 createMeetCaptureUnavailableError(result.error, {
                   sessionId: activeSessionId,
@@ -368,6 +380,11 @@ export function createMeetAudioStream(
             for (const rawChunk of result.chunks) {
               if (rawChunk.length === 0) {
                 continue;
+              }
+              if (rawChunk.length > (controller.desiredSize ?? 0)) {
+                closed = true; stopCapture();
+                controller.error(createMeetCaptureUnavailableError('Browser media buffer overflow.'));
+                return;
               }
               sawData = true;
               controller.enqueue({
@@ -464,5 +481,5 @@ export function createMeetAudioStream(
           .catch(() => {});
       activeSessionId = undefined;
     },
-  });
+  }, { highWaterMark: 8 * 1024 * 1024, size: chunk => chunk.data.byteLength });
 }

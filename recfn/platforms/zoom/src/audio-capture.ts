@@ -1,3 +1,4 @@
+import { createError, ErrorCode } from '@recfn/core';
 import type { AudioChunk } from '@recfn/core';
 import type { ZoomMeetingSdk, ZoomAudioFrame } from './meeting-sdk.js';
 
@@ -24,7 +25,12 @@ export function createAudioStream(
           sampleRate: frame.sampleRate,
           channels: frame.channels,
         };
-        controller.enqueue(chunk);
+        if (chunk.data.byteLength > (controller.desiredSize ?? 0)) {
+          cleanup();
+          controller.error(createError(ErrorCode.PLATFORM_CAPTURE_UNAVAILABLE, 'Zoom media buffer overflow.'));
+          return;
+        }
+        controller.enqueue({ ...chunk, data: new Uint8Array(chunk.data) });
       };
       const onMeetingEnded = () => {
         if (closed) {
@@ -47,7 +53,7 @@ export function createAudioStream(
     cancel() {
       cleanup();
     },
-  });
+  }, { highWaterMark: 32 * 1024 * 1024, size: chunk => chunk?.data.byteLength ?? 0 });
 }
 
 export function createPerParticipantAudioStream(
@@ -65,12 +71,17 @@ export function createPerParticipantAudioStream(
         if (frame.participantId === participantId) {
           const chunk: AudioChunk = {
             data: frame.buffer,
-          encoding: frame.encoding,
+            encoding: frame.encoding,
             timestamp: frame.timestamp ?? Date.now(),
             sampleRate: frame.sampleRate,
             channels: frame.channels,
           };
-          controller.enqueue(chunk);
+          if (chunk.data.byteLength > (controller.desiredSize ?? 0)) {
+            cleanup();
+            controller.error(createError(ErrorCode.PLATFORM_CAPTURE_UNAVAILABLE, 'Zoom media buffer overflow.'));
+            return;
+          }
+          controller.enqueue({ ...chunk, data: new Uint8Array(chunk.data) });
         }
       };
       const onMeetingEnded = () => {
@@ -95,5 +106,5 @@ export function createPerParticipantAudioStream(
       sdk.on('meeting-ended', onMeetingEnded);
     },
     cancel() { cleanup(); },
-  });
+  }, { highWaterMark: 32 * 1024 * 1024, size: chunk => chunk?.data.byteLength ?? 0 });
 }

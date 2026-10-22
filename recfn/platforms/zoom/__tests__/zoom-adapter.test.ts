@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ZoomAdapter } from '../src/index.js';
+import { ZoomAdapter, createVideoStream } from '../src/index.js';
 import type {
   ZoomMeetingSdk,
   ZoomMeetingSdkConfig,
@@ -445,5 +445,25 @@ describe('ZoomAdapter', () => {
       await adapter.leave();
       expect(adapter.isConnected()).toBe(false);
     });
+  });
+});
+
+describe('bounded SDK video ingress', () => {
+  it('copies reused provider buffers and propagates media timestamps', async () => {
+    const sdk = createMockSdk(); const stream = createVideoStream(sdk);
+    const buffer = new Uint8Array([1, 2, 3]);
+    sdk.emit('video-frame', { buffer, width: 1, height: 1, encoding: 'rgb24', frameRate: 30, timestamp: 123 });
+    buffer.fill(0);
+    const reader = stream.getReader(); const frame = (await reader.read()).value!;
+    expect(Array.from(frame.data)).toEqual([1, 2, 3]); expect(frame.timestamp).toBe(123);
+    await reader.cancel(); reader.releaseLock();
+  });
+  it('reports bounded-queue overflow rather than dropping frames', async () => {
+    const sdk = createMockSdk(); const stream = createVideoStream(sdk);
+    const buffer = new Uint8Array(16 * 1024 * 1024);
+    for (let i = 0; i < 3; i++) sdk.emit('video-frame', { buffer, width: 1, height: 1 });
+    const reader = stream.getReader(); await expect(reader.read()).rejects.toThrow('overflow');
+    reader.releaseLock();
+    expect(() => sdk.emit('video-frame', { buffer, width: 1, height: 1 })).not.toThrow();
   });
 });

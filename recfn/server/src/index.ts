@@ -238,8 +238,8 @@ export {
   assertProductionStorage,
 } from './integrations/storage.js';
 export type { StorageAdapter, UploadOptions } from './integrations/storage.js';
-export { captureFromStream } from './recording/capture.js';
-export type { CaptureResult, CaptureOptions } from './recording/capture.js';
+export { captureFromStream, captureToFile } from './recording/capture.js';
+export type { CaptureResult, CaptureOptions, CaptureArtifact } from './recording/capture.js';
 export { uploadRecording } from './recording/storage.js';
 export type { UploadRecordingInput, UploadRecordingResult } from './recording/storage.js';
 export { generateSignedUrl } from './recording/signed-url.js';

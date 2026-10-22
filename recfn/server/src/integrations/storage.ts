@@ -2,6 +2,11 @@ import { getStorageCapabilities, type StorageAdapter as SharedStorageAdapter } f
 
 export type StorageAdapter = SharedStorageAdapter;
 
+export interface StreamingUploadData {
+  size: number;
+  openStream(): ReadableStream<Uint8Array>;
+}
+
 export interface UploadOptions {
   contentType?: string;
   encryption?: boolean;
@@ -37,7 +42,7 @@ async function writeStream(
 export async function uploadObject(
   storage: StorageAdapter,
   key: string,
-  data: Uint8Array,
+  data: Uint8Array | StreamingUploadData,
   options?: UploadOptions,
 ): Promise<void> {
   if (storage.openUploadStream) {
@@ -46,7 +51,8 @@ export async function uploadObject(
       target: options?.target,
       contentType: options?.contentType,
     });
-    await writeStream(writable, data);
+    if (data instanceof Uint8Array) await writeStream(writable, data);
+    else await data.openStream().pipeTo(writable);
     return;
   }
 
@@ -57,7 +63,7 @@ export async function uploadObject(
       expiresInSeconds: 300,
       constraints: {
         contentType: options?.contentType,
-        contentLength: data.byteLength,
+        contentLength: data instanceof Uint8Array ? data.byteLength : data.size,
       },
     });
     const response = await fetch(signed.url, {
@@ -66,8 +72,9 @@ export async function uploadObject(
         ...(signed.headers ?? {}),
         ...(options?.contentType ? { 'Content-Type': options.contentType } : {}),
       },
-      body: data,
-    });
+      body: (data instanceof Uint8Array ? data : data.openStream()) as RequestInit['body'],
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
     if (!response.ok) {
       throw new Error(
         `Storage upload failed with status ${response.status} for ${key}.`,

@@ -1,5 +1,9 @@
 # Media finalization — 2026-10-22
 
+Historical valid-media checkpoint. The raw spool and full-result worker path
+are superseded by `media-streaming-readiness.md`; evidence below describes the
+earlier implementation.
+
 Original REC-001 requires configured MP4/audio-only recordings containing actual
 meeting media, with valid duration, size, and storage. The previous finalizer
 concatenated arbitrary audio bytes, labeled them MP4/WAV, and computed duration

@@ -17,10 +17,12 @@ import type { TranscriptStreamManager } from '../ws/transcript-stream.js';
 import type { StorageAdapter } from '../integrations/storage.js';
 import {
   assertCaptureHasData,
-  captureFromStream,
+  captureToFile,
   type CaptureResult,
+  type CaptureArtifact,
   type CaptureOptions,
 } from '../recording/capture.js';
+import { splitAudio } from '../recording/bounded-audio-split.js';
 import { uploadRecording } from '../recording/storage.js';
 
 export type PlatformAdapterFactory = () => PlatformAdapter;
@@ -41,6 +43,8 @@ export interface BotWorkerConfig {
 
 export interface BotWorker {
   processNext(): Promise<boolean>;
+  /** Stop dequeuing first, then cancel active media and release retained artifacts. */
+  cancelCaptures(): Promise<void>;
   getAutoLeaveTimer(): AutoLeaveTimer;
 }
 
@@ -48,8 +52,9 @@ interface ActiveBotSession {
   botId: string;
   namespace: string;
   adapter: PlatformAdapter;
-  capturePromise: Promise<CaptureResult>;
+  capturePromise: Promise<CaptureResult | CaptureArtifact>;
   recordingRequired: boolean;
+  captureAbort?: AbortController;
 }
 
 export function createBotWorker(config: BotWorkerConfig): BotWorker {
@@ -137,13 +142,13 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     }
   }
 
-  async function startCaptureSession(bot: Bot, adapter: PlatformAdapter): Promise<CaptureResult> {
+  async function startCaptureSession(bot: Bot, adapter: PlatformAdapter, signal: AbortSignal): Promise<CaptureResult | CaptureArtifact> {
     const videoStream = (bot.config.recordingFormat ?? 'mp4') === 'mp4' ? adapter.getVideoStream?.() : undefined;
     let recordingStream;
     try { recordingStream = adapter.getAudioStream(); }
     catch (error) { void videoStream?.cancel().catch(() => {}); throw error; }
     if (bot.config.enableRealTimeTranscript && config.realtimePipeline) {
-      const [realtimeStream, finalizedRecordingStream] = recordingStream.tee();
+      const [realtimeStream, finalizedRecordingStream] = splitAudio(recordingStream, signal);
       recordingStream = finalizedRecordingStream;
       void config.realtimePipeline.start(bot.id, realtimeStream, {
         language: bot.config.language ?? 'en-US',
@@ -152,8 +157,9 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       });
     }
 
-    return captureFromStream(recordingStream, {
+    return captureToFile(recordingStream, {
       ...config.captureOptions,
+      signal: config.captureOptions?.signal ? AbortSignal.any([signal, config.captureOptions.signal]) : signal,
       recordingFormat: bot.config.recordingFormat ?? 'mp4',
       videoStream,
     });
@@ -229,6 +235,8 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     }
 
     if (!storage) {
+      session.captureAbort?.abort();
+      await session.capturePromise.then(capture => 'dispose' in capture ? capture.dispose() : undefined).catch(() => {});
       logger.error('recording.finalization.failed', {
         botId,
         namespace,
@@ -299,6 +307,8 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
         }`,
       );
     } finally {
+      session.captureAbort?.abort();
+      await session.capturePromise.then(capture => 'dispose' in capture ? capture.dispose() : undefined).catch(() => {});
       activeSessions.delete(botId);
     }
   }
@@ -399,7 +409,8 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
     // Transition to recording (only after consent message sent)
     await transitionBot(lifecycleDeps, botId, namespace, 'recording');
     await persistMetadataSnapshot(bot, adapter, 'recording');
-    const capturePromise = startCaptureSession(bot, adapter);
+    const captureAbort = new AbortController();
+    const capturePromise = startCaptureSession(bot, adapter, captureAbort.signal);
     void capturePromise.catch(async (error) => {
       const errorMessage =
         error instanceof Error ? error.message : 'Could not start audio capture.';
@@ -417,6 +428,7 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
       namespace,
       adapter,
       capturePromise,
+      captureAbort,
       recordingRequired: true,
     });
 
@@ -475,6 +487,16 @@ export function createBotWorker(config: BotWorkerConfig): BotWorker {
   }
 
   return {
+    async cancelCaptures() {
+      autoLeaveTimer.cancelAll();
+      const sessions = [...activeSessions.values()];
+      for (const session of sessions) { session.captureAbort?.abort(); realtimePipeline?.stop(session.botId); }
+      await Promise.all(sessions.map(async session => {
+        try { const capture = await session.capturePromise; if ('dispose' in capture) await capture.dispose(); }
+        catch { /* Capture already records its deterministic failure. */ }
+        finally { activeSessions.delete(session.botId); }
+      }));
+    },
     async processNext(): Promise<boolean> {
       const job =
         (await queue.dequeue(QUEUE_NAMES.BOT_JOIN)) ??
