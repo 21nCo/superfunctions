@@ -22,7 +22,7 @@ Python's existing synchronous `trigger` now reserves before returning the highes
 
 ## Evidence
 
-Final local runs after the admission-selection follow-up: 218 SDK tests, 184 Python tests, and 29 service/native tests pass. SDK/admin/service TypeScript checks and SDK/service builds pass. The built Chrome/Python acceptance reports all three browser reload, native SQLite and Python reconciliation checks passed.
+Final local runs after the admission and transport follow-ups: 219 SDK tests, 185 Python tests, and 29 service/native tests pass. SDK/admin/service TypeScript checks and SDK/service builds pass. The built Chrome/Python acceptance reports all three browser reload, native SQLite and Python reconciliation checks passed.
 
 - Native HTTP test uses two independent SQLite connections and service instances, racing distinct and duplicate keys; checks user/session/tenant isolation, stable replay, conflict denial, explicit zero/disabled/missing policy, oversized/spoofed requests, shown confirmation and SQLite close/reopen.
 - Actual Chrome test drops an admission ACK after the SQLite commit, reloads the page, verifies exact-key replay and one modal, then reloads again and observes the durable cap. Python clients exercise private journal restart, no repeated handoff, shown confirmation and cap enforcement against that same real service.
@@ -64,3 +64,19 @@ and `/tmp/userfn-inspect-browser.log`. Native service validation uses Node20.20.
 matching this checkout's existing SQLite binding. No dependencies were changed.
 These remain local checkpoint guarantees, with the original open requirements
 and deployment gates above unchanged.
+
+## Messaging bearer transport
+
+Both SDKs require HTTPS before initializing durable messaging. Plaintext HTTP is
+rejected by default before any bearer request. An explicit local-test-only option
+is available: TypeScript `messaging.allowInsecureHttp: true`, or Python
+`messaging_allow_insecure_http=True`. This follows signed-config transport policy
+without changing feedback or exposure transport configuration. The native browser
+and Python fixture explicitly opts into its owned loopback HTTP server.
+
+The TypeScript regression failed before the change because an HTTP constructor
+accepted the bearer credential. Final validation includes 219 SDK tests, 185 Python
+tests, SDK typecheck/build, and the built Chrome/SQLite/Python restart fixture with
+its explicit local opt-in. Logs: `/tmp/userfn-https-sdk-tests.log`,
+`/tmp/userfn-https-python-tests.log`, `/tmp/userfn-https-sdk-types.log`,
+`/tmp/userfn-https-sdk-build.log`, and `/tmp/userfn-https-browser.log`.

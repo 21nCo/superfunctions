@@ -20,8 +20,8 @@ class HttpMessaging:
     def __init__(self, options):
         self.path = Path(options.messaging_state_path)
         endpoint = urlsplit(options.endpoint or '')
-        if endpoint.scheme not in ('http', 'https') or not endpoint.hostname or endpoint.username or endpoint.password or endpoint.query or endpoint.fragment or not options.api_key.strip():
-            raise ValueError('Invalid messaging endpoint/credential')
+        if endpoint.scheme not in ('http', 'https') or not endpoint.hostname or endpoint.username or endpoint.password or endpoint.query or endpoint.fragment or not options.api_key.strip() or (endpoint.scheme == 'http' and options.messaging_allow_insecure_http is not True):
+            raise ValueError('Messaging requires HTTPS (or explicit local HTTP opt-in), endpoint and credential')
         self.url = options.endpoint.rstrip('/')
         self.token = options.api_key
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)

@@ -1,6 +1,6 @@
 import type { UserFnOptions } from '../types';
 export interface MessageStorage { getItem(key: string): string | null; setItem(key: string, value: string): void; }
-export interface DurableMessagingOptions { storageKey: string; storage?: MessageStorage; }
+export interface DurableMessagingOptions { storageKey: string; storage?: MessageStorage; /** Explicit local-test opt-in; bearer credentials otherwise require HTTPS. */ allowInsecureHttp?: boolean; }
 type Entry = { key: string; phase: 'pending' | 'presenting' | 'shown'; user: string };
 type Journal = Record<string, Entry>;
 export class MessagingDeliveryError extends Error {}
@@ -14,7 +14,7 @@ export class HttpMessaging {
     const config = options.messaging!;
     if (!config.storageKey || config.storageKey.length > 200) throw new TypeError('Messaging storageKey is required');
     const url = new URL(options.endpoint ?? '');
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || !options.apiKey.trim()) throw new TypeError('Invalid messaging endpoint/credential');
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || !options.apiKey.trim() || (url.protocol === 'http:' && config.allowInsecureHttp !== true)) throw new TypeError('Messaging requires HTTPS (or explicit local HTTP opt-in), endpoint and credential');
     this.endpoint = url.toString().replace(/\/$/, '');
     this.storageKey = 'userfn.messages.' + config.storageKey;
     this.storage = config.storage ?? globalThis.localStorage;

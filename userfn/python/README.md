@@ -392,3 +392,6 @@ request or display is uncertain. Capped campaigns require this configuration.
 Service-owned `perUser`/`perSession` policy is authoritative; SDK metadata uses
 `CampaignCaps(per_user=..., session_cap=...)`. See the
 [delivery contract](../.conduct/durable-campaign-caps-readiness.md).
+
+
+Messaging bearer requests require HTTPS by default. For an owned local HTTP test only, set `messaging_allow_insecure_http=True`; never enable this for production credentials.

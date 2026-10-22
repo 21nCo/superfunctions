@@ -125,6 +125,7 @@ class UserFnOptions:
     consent: Optional[ConsentOptions] = None
     do_not_track: bool = False
     messaging_state_path: Optional[str] = None
+    messaging_allow_insecure_http: bool = False
 
 EventProperties = Dict[str, Any]
 

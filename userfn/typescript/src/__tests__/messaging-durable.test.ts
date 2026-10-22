@@ -80,3 +80,12 @@ it('checks consent again after writing the durable presentation fence', async ()
   expect(render).not.toHaveBeenCalled();
   expect(client.status()).toEqual({ campaign: 'uncertain' });
 });
+it('requires HTTPS unless messaging explicitly opts into insecure local HTTP', () => {
+  const options = { apiKey: 'secret', endpoint: 'http://127.0.0.1:4321', messaging: { storageKey: 'session', storage: storage() } };
+  const send = vi.fn(); vi.stubGlobal('fetch', send);
+  expect(() => new HttpMessaging(options)).toThrow(/HTTPS/);
+  expect(() => new HttpMessaging({ ...options, messaging: { ...options.messaging, allowInsecureHttp: false } })).toThrow(/HTTPS/);
+  expect(() => new HttpMessaging({ ...options, messaging: { ...options.messaging, allowInsecureHttp: true } })).not.toThrow();
+  expect(() => new HttpMessaging({ ...options, endpoint: 'https://user.example' })).not.toThrow();
+  expect(send).not.toHaveBeenCalled();
+});

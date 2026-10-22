@@ -461,3 +461,6 @@ responses retain a stable reservation; `getMessageDeliveryStatus()` reports
 pending/shown/uncertain states. An uncertain presentation is not redisplayed
 or refunded automatically. Handle trigger rejection and preserve the journal
 across reloads. See [the migration contract](../.conduct/durable-campaign-caps-readiness.md).
+
+
+Messaging bearer requests require HTTPS by default. For an owned local HTTP test only, set `messaging.allowInsecureHttp: true`; never enable this for production credentials.

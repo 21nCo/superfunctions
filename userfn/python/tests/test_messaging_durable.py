@@ -31,3 +31,14 @@ def test_identity_change_during_durable_fence_never_hands_off_old_campaign(tmp_p
     monkeypatch.setattr(client.durable_messaging, 'save', change_identity_during_save)
     assert client.trigger('event', 'show') == []
     assert client.get_message_delivery_status() == {'campaign': 'uncertain'}
+
+
+def test_messaging_requires_https_unless_local_http_is_explicit(tmp_path):
+    import pytest
+    from userfn.core.messaging_http import HttpMessaging
+    path = str(tmp_path / 'journal.json')
+    with pytest.raises(ValueError, match='HTTPS'):
+        HttpMessaging(UserFnOptions('secret', endpoint='http://127.0.0.1:4321', messaging_state_path=path))
+    assert not (tmp_path / 'journal.json').exists()
+    HttpMessaging(UserFnOptions('secret', endpoint='http://127.0.0.1:4321', messaging_state_path=path, messaging_allow_insecure_http=True))
+    HttpMessaging(UserFnOptions('secret', endpoint='https://user.example', messaging_state_path=path))

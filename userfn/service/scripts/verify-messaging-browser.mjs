@@ -51,7 +51,7 @@ try {
   const page = await browser.newPage(); await page.goto(origin);
   const setup = () => page.evaluate(async () => {
     const { UserFnClient } = await import('/sdk.js');
-    globalThis.client = new UserFnClient({ apiKey: 'browser', endpoint: location.origin, messaging: { storageKey: 'verified-browser-session' } });
+    globalThis.client = new UserFnClient({ apiKey: 'browser', endpoint: location.origin, messaging: { storageKey: 'verified-browser-session', allowInsecureHttp: true } });
     client.identify('local-browser'); client.setCampaigns([{ id: 'campaign', kind: 'modal', enabled: true, content: { title: 'Once', body: 'Persisted admission' }, triggers: [{ type: 'event', pattern: 'show' }], caps: { perUser: 1, session: 1 } }]);
   });
   await setup();
@@ -62,7 +62,7 @@ try {
   assert.equal(reserveKeys[0], reserveKeys[1], 'Reload replays the persisted reservation key');
   await page.reload(); await setup(); await page.evaluate(() => client.trigger('event', 'show'));
   assert.equal(await page.locator('.userfn-modal').count(), 0, 'New instance remains capped');
-  const python = `from userfn.client import UserFnClient\nfrom userfn.types import UserFnOptions, Campaign, CampaignTrigger, MessageContent, CampaignCaps\nimport sys\no=UserFnOptions('python',endpoint=sys.argv[1],messaging_state_path=sys.argv[2])\ndef make():\n c=UserFnClient(o); c.identify('local-python'); c.set_campaigns([Campaign(id='campaign',kind='modal',content=MessageContent(body='once'),triggers=[CampaignTrigger(type='event',pattern='show')],enabled=True,caps=CampaignCaps(per_user=1,session_cap=1))]); return c\nc=make(); assert len(c.trigger('event','show'))==1\nassert make().trigger('event','show')==[]\nc.confirm_message_shown('campaign')\nassert make().trigger('event','show')==[]\nprint('Python persisted admission passed')\n`;
+  const python = `from userfn.client import UserFnClient\nfrom userfn.types import UserFnOptions, Campaign, CampaignTrigger, MessageContent, CampaignCaps\nimport sys\no=UserFnOptions('python',endpoint=sys.argv[1],messaging_state_path=sys.argv[2],messaging_allow_insecure_http=True)\ndef make():\n c=UserFnClient(o); c.identify('local-python'); c.set_campaigns([Campaign(id='campaign',kind='modal',content=MessageContent(body='once'),triggers=[CampaignTrigger(type='event',pattern='show')],enabled=True,caps=CampaignCaps(per_user=1,session_cap=1))]); return c\nc=make(); assert len(c.trigger('event','show'))==1\nassert make().trigger('event','show')==[]\nc.confirm_message_shown('campaign')\nassert make().trigger('event','show')==[]\nprint('Python persisted admission passed')\n`;
   const result = await promisify(execFile)('uv', ['run', '--isolated', '--no-project', '--python', '3.10', 'python', '-c', python, origin, join(directory,'python','journal.json')], { env: { ...process.env, PYTHONPATH: join(root,'userfn/python/src') }, timeout: 20000 });
   assert.ok(result.stdout.includes('Python persisted admission passed'));
   console.log(JSON.stringify({ passed: true, browserReloadStableReplay: true, nativeSQLite: true, pythonRestartReconciliation: true }));
