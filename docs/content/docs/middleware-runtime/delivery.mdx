@@ -1,0 +1,106 @@
+---
+title: Delivery
+description: Provider-neutral TypeScript contracts for email, SMS and push delivery.
+---
+
+## What It Is
+
+`@superfunctions/delivery` is a small set of TypeScript delivery contracts. It
+exports request shapes, provider interfaces and result types that libraries can
+share without depending on one messaging vendor. The package does not contain a
+mail server, SMS transport, push gateway or delivery worker. An application
+supplies the implementation that actually communicates with its chosen service.
+
+## When To Use It
+
+Use these contracts when several functions need to request notifications through
+one application-owned provider. A reusable authentication library can request an
+email without knowing the host application's credentials or vendor SDK. The host
+can then replace that vendor, route messages through a queue or record local
+fixture requests without changing the library's delivery interface. If you need
+an operational sending service, compose a concrete provider with these types.
+
+## Install
+
+```bash
+npm install @superfunctions/delivery
+```
+
+Type-only imports keep the contract separate from runtime provider code. Put the
+actual vendor dependency in the application or adapter package that sends the
+message, where its credentials and operational behavior can be configured.
+
+## Quick Start
+
+A domain helper can accept a typed email provider and return its real result.
+The caller supplies the provider; this helper makes no assumption that a message
+was sent merely because it was constructed.
+
+```ts
+import type {
+  DeliveryProvider, EmailDeliveryRequest,
+} from "@superfunctions/delivery";
+
+export async function sendReceipt(
+  provider: DeliveryProvider<EmailDeliveryRequest>,
+  address: string,
+  orderId: string,
+) {
+  return await provider.send({
+    channel: "email", to: address, subject: "Order receipt",
+    text: `Your order reference is ${orderId}.`, kind: "receipt",
+  });
+}
+```
+
+## Core Concepts
+
+Every request has a `channel` discriminator, optional `kind`, and optional
+metadata. Email requests support recipients, subject, HTML or text, carbon-copy
+and blind-copy recipients, attachments and tags. SMS requests require a recipient
+and message. Push requests identify users and carry a title, body and optional
+payload and platform hints. `CommunicationDeliveryRequest` is the union of these
+three standard message types; the base channel type also permits custom channels.
+
+`DeliveryProvider.send` may return synchronously or asynchronously. Its result
+contains `sent` and optional metadata. That boolean is defined by the adapter's
+contract; it is not proof that a human received or read a message. An optional
+`emit` method can carry a separately typed event. Neither method adds automatic
+retries, persistence, recipient consent or rate limiting.
+
+## Real-World Example
+
+An SMS adapter can wrap an application-owned transport while preserving the
+provider's acceptance result. Returning the provider message identifier helps the
+application connect a subsequent delivery callback to its original operation.
+
+```ts
+import type {
+  DeliveryProvider, SmsDeliveryRequest,
+} from "@superfunctions/delivery";
+
+export function smsProvider(
+  sendText: (to: string, message: string) => Promise<string>,
+): DeliveryProvider<SmsDeliveryRequest> {
+  return { async send(input) {
+    const providerId = await sendText(input.to, input.message);
+    return { sent: true, metadata: { providerId } };
+  } };
+}
+```
+
+## Related Packages
+
+[Queue](/docs/middleware-runtime/queue) supplies background-work contracts.
+[Observability](/docs/middleware-runtime/observability) supplies common events and
+metrics. [Webhooks](/docs/middleware-runtime/webhooks) supports webhook-related
+workflows when the sending provider reports delivery status asynchronously.
+
+## Troubleshooting
+
+If nothing is delivered, check the injected provider implementation: this package
+contains no default transport. Document whether `sent` means accepted, queued or
+confirmed by the underlying system. Avoid logging full request metadata or bodies
+when they contain personal data or one-time credentials. Retries and duplicate
+suppression belong in the adapter or application workflow, and transport failures
+should remain visible to the caller rather than being converted into success.

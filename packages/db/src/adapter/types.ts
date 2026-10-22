@@ -218,6 +218,8 @@ export interface FieldSchema {
   dateStorageType?: DateFieldStorageType;
   /** Explicit JSON representation. Native preserves driver behavior; json-text serializes JSON into TEXT columns. */
   jsonStorageType?: "native" | "json-text";
+  /** Boolean storage representation; inferred from adapter capabilities when omitted. */
+  booleanStorageType?: "native" | "integer";
   references?: {
     model: string;
     field: string;
