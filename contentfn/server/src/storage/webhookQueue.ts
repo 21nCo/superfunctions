@@ -72,6 +72,19 @@ export async function markDelivered(
 
 const MAX_RETRIES = 5;
 
+/** A crashed worker may have reserved the final attempt without recording its result. */
+export async function failExhaustedDelivery(config: WebhookQueueConfig, entry: WebhookQueueEntry): Promise<boolean | undefined> {
+  if (entry.attempt < (config.maxAttempts ?? MAX_RETRIES)) return undefined;
+  const count = await config.db.updateMany({ model: CONTENTFN_TABLE_NAMES.webhookQueue, where: [
+    { field: "eventId", operator: "eq", value: entry.eventId },
+    { field: "webhookId", operator: "eq", value: entry.webhookId },
+    { field: "status", operator: "eq", value: entry.status },
+    { field: "attempt", operator: "eq", value: entry.attempt },
+    { field: "nextRunAt", operator: "eq", value: entry.nextRunAt },
+  ], data: { status: "failed", lastError: "Attempt limit reached; the last delivery outcome may be unknown" } });
+  return count === 1;
+}
+
 export function computeBackoffMs(attempt: number): number {
   return Math.min(1000 * Math.pow(2, attempt), 60_000);
 }

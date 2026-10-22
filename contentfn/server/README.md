@@ -17,4 +17,6 @@ Schema updates reject changes that invalidate stored content unless an explicit 
 
 Assets require durable object storage in production. Exports contain metadata, not asset binaries. Database and object-storage transactions are separate; reconcile orphan objects after SQL failures. Webhook delivery is at least once with expiring leases; receivers must deduplicate eventId. SSE is a bounded live feed without persistent replay.
 
+Webhook `maxAttempts` counts reserved attempts, including attempts interrupted by a worker crash. An expired final lease becomes failed without another request; its last outcome may be unknown, so operators should reconcile with the receiver before manually resending. Concurrent workers use compare-and-swap updates to settle the exhausted lease once.
+
 See the [complete ContentFn documentation](https://github.com/21nCo/super-functions/tree/dev/contentfn) for contracts, migration details and deployment configuration.

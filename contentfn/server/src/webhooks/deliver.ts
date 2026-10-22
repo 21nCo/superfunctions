@@ -4,6 +4,7 @@ import type { ContentfnEvent } from "../storage/events.js";
 import {
   fetchDueEntries,
   claimDelivery,
+  failExhaustedDelivery,
   markDelivered,
   markFailed,
 } from "../storage/webhookQueue.js";
@@ -82,6 +83,11 @@ export async function processWebhookQueue(config: DeliveryConfig): Promise<{
   let failed = 0;
 
   for (const entry of dueEntries) {
+    const exhausted = await failExhaustedDelivery(config, entry);
+    if (exhausted !== undefined) {
+      if (exhausted) failed++;
+      continue;
+    }
     const leaseUntil = new Date(Date.now() + (config.timeoutMs ?? 10_000) + 5000).toISOString();
     if (!await claimDelivery({ db: config.db }, entry, leaseUntil)) continue;
     const webhookRow = await config.db.findOne({
