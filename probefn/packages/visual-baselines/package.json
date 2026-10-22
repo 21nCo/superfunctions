@@ -9,6 +9,7 @@
   "dependencies": {
     "@probefn/analyzers": "*",
     "@probefn/contracts": "*",
+    "@probefn/storage": "*",
     "pngjs": "^7.0.0"
   },
   "devDependencies": {

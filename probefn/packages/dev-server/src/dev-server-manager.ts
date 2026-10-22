@@ -361,7 +361,11 @@ export class DevServerManager {
       void stderrProcessor.push(chunk).catch(recordOutputFailure);
     });
 
+    let readinessTimer: ReturnType<typeof setTimeout> | undefined;
     const exitPromise = once(child, 'close').then(async ([code, signal]) => {
+      // Readiness has ended when the owned process closes. Durable evidence
+      // draining may take longer than its startup deadline.
+      clearTimeout(readinessTimer);
       const drains = await Promise.allSettled([stdoutProcessor.flush(), stderrProcessor.flush()]);
       const failedDrain = drains.find((result): result is PromiseRejectedResult => result.status === 'rejected');
       if (failedDrain) throw failedDrain.reason;
@@ -385,8 +389,6 @@ export class DevServerManager {
       return resolvedUrl;
     });
     session.exitMonitor = exitPromise.then(() => undefined).catch(error => { if (settled) session.outputFailure ??= error; });
-
-    let readinessTimer: ReturnType<typeof setTimeout> | undefined;
 
     try {
       const readyUrl = await Promise.race([

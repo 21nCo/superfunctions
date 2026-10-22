@@ -20,6 +20,7 @@ export interface EventSinkOptions {
   baseName: string;
   capTracker: ArtifactCapTracker;
   policy?: Partial<EventCapPolicy>;
+  appendPersisted?: (payload: string, policy: EventCapPolicy) => Promise<AppendEventResult>;
 }
 
 export class NdjsonEventSink {
@@ -33,6 +34,7 @@ export class NdjsonEventSink {
   private sinkIndex = 1;
   private appendQueue: Promise<void> = Promise.resolve();
   private appendFailure: unknown;
+  private readonly appendPersisted?: EventSinkOptions['appendPersisted'];
 
   public constructor(options: EventSinkOptions) {
     assertArtifactIdentifier(options.baseName, 'Event sink name');
@@ -40,6 +42,7 @@ export class NdjsonEventSink {
     this.relativeDirectory = assertRepositoryRelativePath(options.relativeDirectory);
     this.baseName = options.baseName;
     this.capTracker = options.capTracker;
+    this.appendPersisted = options.appendPersisted;
     this.maxEventsPerSink = options.policy?.maxEventsPerSink ?? DEFAULT_STORAGE_CAPS.maxEventsPerSink;
     this.strategy = options.policy?.strategy ?? 'rollover';
     if (!Number.isSafeInteger(this.maxEventsPerSink) || this.maxEventsPerSink < 1) throw new TypeError('Event cap must be a positive safe integer.');
@@ -59,6 +62,11 @@ export class NdjsonEventSink {
 
   private async appendPayload(payload: string): Promise<AppendEventResult> {
     if (this.appendFailure) throw this.appendFailure;
+    if (this.appendPersisted) {
+      const result = await this.appendPersisted(payload, { maxEventsPerSink: this.maxEventsPerSink, strategy: this.strategy });
+      this.sinkIndex = result.sinkIndex; this.eventCount = result.eventCount;
+      return result;
+    }
     const rollover = this.eventCount >= this.maxEventsPerSink;
     if (rollover && this.strategy === 'error') {
       throw createProbefnError({

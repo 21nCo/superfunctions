@@ -130,10 +130,18 @@ Event history is processed incrementally with awaited writes and at most six
 correlation witnesses. Memory still depends on individual record size,
 run/checkpoint/regression metadata, checkpoint audit bundles, and segment enumeration. The existing
 full-return APIs and default CLI/MCP behavior continue to retain output-sized
-memory. Artifact byte accounting retains its existing per-store cumulative
-attempted-write semantics; this mode does not establish durable per-run quota
-accounting or a snapshot across concurrent sink mutations.
+memory. Run artifacts now use durable per-run retained-volume accounting; see
+[artifact quotas](docs/artifacts.md#durable-run-quotas). Report input still is not
+an immutable snapshot across concurrent sink mutations.
 
 Run `npm run test:report-streaming --workspace=@probefn/workspace` for the actual
 160,000-event export acceptance under a 64 MiB V8 heap. It verifies every exported
 event and removes its disposable input/output directory.
+
+
+## Runtime compatibility
+
+Probe requires **Node.js 22.13.0 or newer**. Its artifact quota coordinator uses
+built-in `node:sqlite`; this replaces the previous 22.0 minimum without adding a
+native package dependency. Use the same supported Node runtime on the PATH of
+CLI/MCP subprocesses. Node 22 emits an experimental SQLite warning on stderr.

@@ -57,11 +57,11 @@ afterEach(async () => {
 describe.sequential('semantic navigation', () => {
   it('resolves and acts on a unique semantic query without vision assistance', async () => {
     const context = await createEphemeralContext({
-      port: '4186',
+      port: '0',
       sessionId: 'sess_semantic_unique',
       runId: 'run_semantic_unique',
-      command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port 4186`,
-      url: 'http://127.0.0.1:4186',
+      command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port 0`,
+      url: 'http://127.0.0.1:0',
     });
 
     try {

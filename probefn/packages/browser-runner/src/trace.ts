@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 import type { BrowserContext } from 'playwright';
 
@@ -36,8 +38,11 @@ export async function stopTracing(
   }
 
   const relativeTracePath = options.artifactStore.getRunPaths(options.runId).tracePath;
-  await context.tracing.stop({
-    path: path.resolve(options.repoRoot, relativeTracePath),
-  });
-  return relativeTracePath;
+  const scratch = await mkdtemp(path.join(tmpdir(), 'probefn-trace-'));
+  try {
+    const filename = path.join(scratch, 'trace.zip');
+    await context.tracing.stop({ path: filename });
+    await options.artifactStore.importArtifactFile(relativeTracePath, filename);
+    return relativeTracePath;
+  } finally { await rm(scratch, { recursive: true, force: true }); }
 }

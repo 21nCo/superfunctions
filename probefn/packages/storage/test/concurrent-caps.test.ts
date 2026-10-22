@@ -88,10 +88,10 @@ describe('artifact reservations', () => {
   it('shares reservations between artifact replacements, JSON writes and event sinks', async () => {
     const repoRoot = await root(); const store = new ArtifactStore({ repoRoot, caps: { maxArtifactBytes: 10 } });
     const sink = store.createEventSink('run-test', 'console', 'events');
-    const results = await Promise.allSettled([store.writeArtifact('one.txt', '123456'), store.writeReport('run-test', 'json', {}), sink.append({})]);
+    const results = await Promise.allSettled([store.writeArtifact('.artifacts/runs/run-test/one.txt', '123456'), store.writeReport('run-test', 'json', {}), sink.append({})]);
     expect(fulfilled<unknown>(results)).toHaveLength(2); // Text6 + JSON3 reserves first; event3 cannot fit.
     expect(results[2]).toMatchObject({ status: 'rejected', reason: { code: 'E_STORAGE_CAP_EXCEEDED' } });
-    expect(await fs.readFile(path.join(repoRoot, 'one.txt'), 'utf8')).toBe('123456');
+    expect(await fs.readFile(path.join(repoRoot, '.artifacts/runs/run-test/one.txt'), 'utf8')).toBe('123456');
   });
 
   it('serializes same-path replacements and charges cumulative bytes, not final disk size', async () => {

@@ -1,5 +1,6 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { ArtifactStore, assertRepositoryRelativePath } from '@probefn/storage';
 
 import { createProbefnError, type DeterministicSettings } from '@probefn/contracts';
 
@@ -176,7 +177,7 @@ export function buildDeterministicBaselineKey(input: {
 async function writeDiffArtifacts(
   repoRoot: string,
   artifactRoot: string,
-  _runId: string,
+  runId: string,
   baselineKey: string,
   pixelDiff: {
     diffPng: Buffer;
@@ -185,33 +186,17 @@ async function writeDiffArtifacts(
     totalPixels: number;
   },
 ): Promise<string> {
-  const diffDirectory = path.resolve(
-    repoRoot,
-    artifactRoot,
-    'diffs',
-    sanitizeBaselineKey(baselineKey),
-  );
-  await mkdir(diffDirectory, { recursive: true });
-
-  const diffPngPath = path.join(diffDirectory, 'diff.png');
-  const diffJsonPath = path.join(diffDirectory, 'diff.json');
-  await writeFile(diffPngPath, pixelDiff.diffPng);
-  await writeFile(
-    diffJsonPath,
-    `${JSON.stringify(
-      {
-        baselineKey,
-        pixelDiffPercent: pixelDiff.pixelDiffPercent,
-        changedPixels: pixelDiff.changedPixels,
-        totalPixels: pixelDiff.totalPixels,
-      },
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  );
-
-  return toRepoRelative(repoRoot, diffPngPath);
+  const normalizedRoot = assertRepositoryRelativePath(artifactRoot);
+  const store = new ArtifactStore({ repoRoot, artifactRoot: path.posix.dirname(path.posix.dirname(normalizedRoot)) });
+  if (store.getRunPaths(runId).runRoot !== normalizedRoot) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Visual diff artifact root must match its run.', retryable: false });
+  const directory = path.posix.join(normalizedRoot, 'diffs', sanitizeBaselineKey(baselineKey));
+  const diffPngPath = path.posix.join(directory, 'diff.png');
+  await store.writeArtifact(diffPngPath, pixelDiff.diffPng);
+  await store.writeArtifact(path.posix.join(directory, 'diff.json'), `${JSON.stringify({
+    baselineKey, pixelDiffPercent: pixelDiff.pixelDiffPercent,
+    changedPixels: pixelDiff.changedPixels, totalPixels: pixelDiff.totalPixels,
+  }, null, 2)}\n`);
+  return diffPngPath;
 }
 
 function assertMatchingDimensions(
@@ -247,8 +232,4 @@ function assertMatchingDimensions(
 
 function sanitizeBaselineKey(baselineKey: string): string {
   return baselineKey.replace(/[^a-zA-Z0-9._-]+/g, '-');
-}
-
-function toRepoRelative(repoRoot: string, absolutePath: string): string {
-  return path.relative(repoRoot, absolutePath).split(path.sep).join(path.posix.sep);
 }

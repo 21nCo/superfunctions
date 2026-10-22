@@ -141,7 +141,7 @@ const server = http.createServer((_request, response) => {
 
 server.listen(port, '127.0.0.1', () => {
   process.stdout.write('  VITE v5.0.0  ready in 11 ms\n');
-  process.stdout.write(`  ➜  Local:   http://127.0.0.1:${port}/\n`);
+  process.stdout.write(`  ➜  Local:   http://127.0.0.1:${server.address().port}/\n`);
 });
 
 const shutdown = () => {

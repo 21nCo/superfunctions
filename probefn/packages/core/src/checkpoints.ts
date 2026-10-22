@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, rm } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { createProbefnError } from '@probefn/contracts/errors';
@@ -152,7 +152,7 @@ export async function createCheckpoint(
       newNetworkFailures: options.delta.newNetworkFailures,
     };
   } catch (error) {
-    await cleanupArtifacts(options.repoRoot, writtenPaths);
+    await cleanupArtifacts(options.artifactStore, writtenPaths);
     throw createProbefnError({
       code: 'E_CHECKPOINT_CAPTURE_FAILED',
       message: 'Required checkpoint artifacts could not be captured.',
@@ -187,14 +187,8 @@ async function buildArtifactRecord(
   };
 }
 
-async function cleanupArtifacts(repoRoot: string, relativePaths: string[]): Promise<void> {
-  await Promise.all(
-    relativePaths.map((relativePath) =>
-      rm(path.resolve(repoRoot, relativePath), {
-        force: true,
-      }),
-    ),
-  );
+async function cleanupArtifacts(store: ArtifactStore, relativePaths: string[]): Promise<void> {
+  await Promise.all(relativePaths.map(relativePath => store.deleteArtifact(relativePath)));
 }
 
 function sanitizeCheckpointName(value: string): string {

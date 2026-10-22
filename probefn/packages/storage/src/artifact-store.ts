@@ -1,4 +1,6 @@
 import path from 'node:path';
+import { createReadStream } from 'node:fs';
+import { RunQuota } from './run-quota.js';
 import { mkdir, open, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
@@ -42,11 +44,16 @@ export class ArtifactStore {
   private readonly repoRoot: string;
   private readonly artifactRoot: string;
   private readonly capTracker: ArtifactCapTracker;
+  private readonly runQuota: RunQuota;
+  private readonly maxEventsPerSink: number;
   private writeQueue: Promise<void> = Promise.resolve();
 
   public constructor(options: ArtifactStoreOptions) {
     this.repoRoot = options.repoRoot;
     this.artifactRoot = assertRepositoryRelativePath(options.artifactRoot ?? '.artifacts');
+    this.maxEventsPerSink = options.caps?.maxEventsPerSink ?? DEFAULT_STORAGE_CAPS.maxEventsPerSink;
+    if (!Number.isSafeInteger(this.maxEventsPerSink) || this.maxEventsPerSink < 1) throw new TypeError('Event cap must be a positive safe integer.');
+    this.runQuota = new RunQuota(this.repoRoot, this.artifactRoot, options.caps?.maxArtifactBytes ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes);
     this.capTracker = new ArtifactCapTracker(
       options.caps?.maxArtifactBytes ?? DEFAULT_STORAGE_CAPS.maxArtifactBytes,
     );
@@ -124,17 +131,20 @@ export class ArtifactStore {
     return relativePath;
   }
 
-  public async writeArtifact(relativePath: string, contents: string | Uint8Array): Promise<string> {
-    await this.writeText(relativePath, contents);
+  public async writeArtifact(relativePath: string, contents: string | Uint8Array, scope?: { runId: string }): Promise<string> {
+    await this.writeText(relativePath, contents, scope);
     return assertRepositoryRelativePath(relativePath);
   }
 
   /** Atomically publish incrementally prepared bytes. Callers own content redaction. */
   public async writeArtifactStream(
     relativePath: string,
-    produce: (write: (chunk: string) => Promise<void>) => Promise<void>,
+    produce: (write: (chunk: string | Uint8Array) => Promise<void>) => Promise<void>,
+    scope?: { runId: string },
   ): Promise<string> {
-    const normalizedPath = assertRepositoryRelativePath(relativePath);
+    const normalizedPath = this.validateDestination(relativePath);
+    const runId = this.resolveScope(normalizedPath, scope);
+    if (runId) return this.writeManaged(normalizedPath, runId, produce, !this.runIdForPath(normalizedPath));
     const absolute = path.resolve(this.repoRoot, normalizedPath);
     const temporary = `${absolute}.tmp-${randomUUID()}`;
     const operation = this.writeQueue.then(async () => {
@@ -142,7 +152,7 @@ export class ArtifactStore {
       const handle = await open(temporary, 'wx');
       try {
         await produce(async chunk => {
-          const reservation = this.capTracker.reserve(Buffer.byteLength(chunk), normalizedPath);
+          const reservation = this.capTracker.reserve(typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.byteLength, normalizedPath);
           try { await handle.writeFile(chunk); }
           finally { reservation.commit(); }
         });
@@ -179,13 +189,90 @@ export class ArtifactStore {
           ? runPaths.eventRoot
         : path.posix.join(runPaths.runRoot, directory);
 
+    if (!relativeDirectory.startsWith(`${runPaths.runRoot}/`) || relativeDirectory.split('/').includes('.probefn-staging')) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Event directory must remain within its run.', retryable: false });
     return new NdjsonEventSink({
       repoRoot: this.repoRoot,
       relativeDirectory,
       baseName,
       capTracker: this.capTracker,
-      ...(options?.policy ? { policy: options.policy } : {}),
+      appendPersisted: (payload, policy) => this.runQuota.transaction(runId, relativeDirectory,
+        quota => quota.append(relativeDirectory, baseName, payload, policy)),
+      policy: { maxEventsPerSink: this.maxEventsPerSink, ...options?.policy },
     });
+  }
+
+  /** Admit a completed external producer file incrementally; caller owns its scratch cleanup. */
+  public async importArtifactFile(relativePath: string, sourcePath: string): Promise<string> {
+    return this.writeArtifactStream(relativePath, async write => {
+      for await (const chunk of createReadStream(sourcePath)) await write(chunk as Buffer);
+    });
+  }
+
+  public async deleteArtifact(relativePath: string): Promise<void> {
+    const normalized = assertRepositoryRelativePath(relativePath);
+    const runId = this.runIdForPath(normalized);
+    if (!runId) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Deletion requires a run-scoped artifact path.', retryable: false });
+    await this.runQuota.transaction(runId, normalized, async quota => {
+      await rm(await quota.prepare(normalized), { force: true });
+    });
+  }
+
+  private resolveScope(relative: string, scope?: { runId: string }): string | undefined {
+    const pathRunId = this.runIdForPath(relative);
+    const sessionState = relative.startsWith(`${path.posix.join(this.artifactRoot, 'session-state')}/`);
+    if (sessionState && !scope) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Session-state writes require an explicit run scope.', retryable: false });
+    if (scope && pathRunId && scope.runId !== pathRunId) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact run scope does not match its path.', retryable: false });
+    if (scope && !pathRunId && !sessionState) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'External run accounting is restricted to session-state artifacts.', retryable: false });
+    return scope?.runId ?? pathRunId;
+  }
+
+  private validateDestination(relative: string): string {
+    const normalized = assertRepositoryRelativePath(relative);
+    if (normalized.startsWith(path.posix.join(this.artifactRoot, '.quota.sqlite')) || normalized.split('/').includes('.probefn-staging')) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path uses reserved accounting storage.', retryable: false });
+    return normalized;
+  }
+
+  private runIdForPath(relative: string): string | undefined {
+    const prefix = `${path.posix.join(this.artifactRoot, 'runs')}/`;
+    if (!relative.startsWith(prefix)) return undefined;
+    const [runId, ...rest] = relative.slice(prefix.length).split('/');
+    assertArtifactIdentifier(runId!, 'Run id');
+    if (rest.includes('.probefn-staging')) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path uses the reserved staging directory.', retryable: false });
+    if (!rest.length) throw createProbefnError({ code: 'E_STORAGE_WRITE_FAILED', message: 'Artifact path requires a file within its run.', retryable: false });
+    return runId;
+  }
+
+  private async writeManaged(relative: string, runId: string,
+    produce: (write: (chunk: string | Uint8Array) => Promise<void>) => Promise<void>, external = false): Promise<string> {
+    await this.runQuota.transaction(runId, relative, async quota => {
+      const absolute = await quota.prepare(relative);
+      const temporary = await quota.prepare(path.posix.join(this.getRunPaths(runId).runRoot, '.probefn-staging', `${randomUUID()}.probefn-tmp-${randomUUID()}`));
+      const handle = await open(temporary, 'wx', 0o600);
+      let writes: Promise<void> = Promise.resolve();
+      let closed = false;
+      let writeError: unknown;
+      const write = (chunk: string | Uint8Array): Promise<void> => {
+        if (closed) return Promise.reject(new Error('Artifact producer is already closed.'));
+        const snapshot = typeof chunk === 'string' ? chunk : new Uint8Array(chunk);
+        const operation = writes.then(async () => {
+          if (writeError) throw writeError;
+          quota.reserve(typeof snapshot === 'string' ? Buffer.byteLength(snapshot) : snapshot.byteLength, relative);
+          await handle.writeFile(snapshot);
+        });
+        writes = operation.catch(error => { writeError = error; });
+        return operation;
+      };
+      try {
+        try { await produce(write); } finally { closed = true; await writes; }
+        if (writeError) throw writeError;
+        await handle.sync(); await handle.close();
+        await rename(temporary, absolute);
+      } finally {
+        await handle.close();
+        await rm(temporary, { force: true });
+      }
+    }, external);
+    return relative;
   }
 
   private async writeJson(relativePath: string, value: object): Promise<void> {
@@ -193,9 +280,11 @@ export class ArtifactStore {
     await this.writeText(relativePath, `${JSON.stringify(value, null, 2)}\n`);
   }
 
-  private async writeText(relativePath: string, contents: string | Uint8Array): Promise<void> {
-    const normalizedPath = assertRepositoryRelativePath(relativePath);
+  private async writeText(relativePath: string, contents: string | Uint8Array, scope?: { runId: string }): Promise<void> {
+    const normalizedPath = this.validateDestination(relativePath);
     const snapshot = typeof contents === 'string' ? contents : new Uint8Array(contents);
+    const runId = this.resolveScope(normalizedPath, scope);
+    if (runId) { await this.writeManaged(normalizedPath, runId, write => write(snapshot), !!scope && !this.runIdForPath(normalizedPath)); return; }
     const bytes = typeof snapshot === 'string' ? Buffer.byteLength(snapshot) : snapshot.byteLength;
     const reservation = this.capTracker.reserve(bytes, normalizedPath);
     // Also serialize replacements: atomic writer temp names are time based, and two

@@ -1,5 +1,6 @@
-import { readFile, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -36,16 +37,16 @@ const mobileDeterministic: DeterministicSettings = {
 beforeAll(async () => {
   await Promise.all([
     rm(path.resolve(projectRoot, '.artifacts', 'baselines'), { recursive: true, force: true }),
-    removeRun('run_baseline_healthy', 'sess_healthy'),
+    removeRun('run_baseline_healthy', 'sess_baseline_healthy'),
     removeRun('run_mobile_reference', 'sess_mobile_reference'),
     removeRun('run_regression', 'sess_regression'),
   ]);
 
   await seedRun({
-    sessionId: 'sess_healthy',
+    sessionId: 'sess_baseline_healthy',
     runId: 'run_baseline_healthy',
-    command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port 4211`,
-    url: 'http://127.0.0.1:4211',
+    command: `${process.execPath} test/fixtures/vite-healthy/server.mjs --port 0`,
+    url: 'http://127.0.0.1:0',
     deterministic: desktopDeterministic,
     checkpointName: 'landing',
   });
@@ -53,8 +54,8 @@ beforeAll(async () => {
   const mobileReference = await seedRun({
     sessionId: 'sess_mobile_reference',
     runId: 'run_mobile_reference',
-    command: `${process.execPath} test/fixtures/vite-regression/server.mjs --port 4212 --variant baseline`,
-    url: 'http://127.0.0.1:4212',
+    command: `${process.execPath} test/fixtures/vite-regression/server.mjs --port 0 --variant baseline`,
+    url: 'http://127.0.0.1:0',
     deterministic: mobileDeterministic,
     checkpointName: 'mobile',
   });
@@ -73,8 +74,8 @@ beforeAll(async () => {
   await seedRun({
     sessionId: 'sess_regression',
     runId: 'run_regression',
-    command: `${process.execPath} test/fixtures/vite-regression/server.mjs --port 4213 --variant regression`,
-    url: 'http://127.0.0.1:4213',
+    command: `${process.execPath} test/fixtures/vite-regression/server.mjs --port 0 --variant regression`,
+    url: 'http://127.0.0.1:0',
     deterministic: mobileDeterministic,
     checkpointName: 'mobile',
   });
@@ -87,7 +88,7 @@ describe.sequential('baseline comparison', () => {
       artifactRoot: '.artifacts/runs/run_baseline_healthy',
       checkpointId: 'chk_landing',
       baselineKey: 'home.desktop.chromium.light.1440x900.utc',
-      sessionId: 'sess_healthy',
+      sessionId: 'sess_baseline_healthy',
       runId: 'run_baseline_healthy',
       deterministic: desktopDeterministic,
       now: () => '2026-04-16T04:31:00Z',
@@ -146,6 +147,25 @@ describe.sequential('baseline comparison', () => {
       ),
     );
     expect(diffManifest.pixelDiffPercent).toBeGreaterThan(0);
+  });
+
+  it('enforces the persisted run cap when producing visual diff artifacts', async () => {
+    const isolated = await mkdtemp(path.join(tmpdir(), 'probe-visual-quota-'));
+    try {
+      await cp(path.join(projectRoot, '.artifacts/baselines'), path.join(isolated, '.artifacts/baselines'), { recursive: true });
+      await cp(path.join(projectRoot, '.artifacts/runs/run_regression'), path.join(isolated, '.artifacts/runs/run_regression'), { recursive: true });
+      await rm(path.join(isolated, '.artifacts/runs/run_regression/diffs'), { recursive: true, force: true });
+      const limited = new ArtifactStore({ repoRoot: isolated, caps: { maxArtifactBytes: 1 } });
+      await expect(limited.writeArtifact('.artifacts/runs/run_regression/extra', '')).rejects.toMatchObject({ code: 'E_STORAGE_CAP_EXCEEDED' });
+      await expect(compareBaseline({
+        repoRoot: isolated,
+        artifactRoot: '.artifacts/runs/run_regression',
+        checkpointId: 'chk_mobile',
+        baselineKey: 'home.mobile.chromium.light.390x844.utc',
+        runId: 'run_regression',
+      })).rejects.toMatchObject({ code: 'E_STORAGE_CAP_EXCEEDED' });
+      await expect(readFile(path.join(isolated, '.artifacts/runs/run_regression/diffs/home.mobile.chromium.light.390x844.utc/diff.png'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(isolated, { recursive: true, force: true }); }
   });
 
   it('returns a missing-baseline error for unknown keys', async () => {

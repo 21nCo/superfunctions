@@ -315,7 +315,7 @@ describe.sequential('mcp server', () => {
         );
       }
     }
-  });
+  }, 15_000); // Native Chromium plus durable artifact fsync can exceed Vitest's 5s default.
 
   it('rejects normalized flow paths that escape the repository root', async () => {
     const response = await client!.request('tools/call', {
