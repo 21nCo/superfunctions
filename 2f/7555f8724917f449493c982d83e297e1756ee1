@@ -1,0 +1,29 @@
+devfn/core/test/domain-routing.test.ts
+  s_604b5079d1e148::t_cd57584f1c20e5 565-567,569
+devfn/docs/configuration.md
+  s_604b5079d1e148::t_5fbade880edbe8 127
+devfn/proxy/src/tunnel/service.ts
+  s_604b5079d1e148::t_96cb2c540fe0e1 218-228,235-239,241-242,245,249-255,287,289-291,494-495,498-503,512-513,553-557,568
+devfn/proxy/src/tunnel/state.ts
+  s_604b5079d1e148::t_277c62779f8502 2,255-264,267-276
+devfn/proxy/test/tunnel-service.test.ts
+  s_604b5079d1e148::t_975917be1b86db 12-13,16-20,60,97-98,251-306
+devfn/proxy/test/tunnel-state.test.ts
+  s_604b5079d1e148::t_d2e835517009bf 1-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2f7555f8724917f449493c982d83e297e1756ee1",
+  "prompts": {},
+  "sessions": {
+    "s_604b5079d1e148": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "s_604b5079d1e148",
+        "model": "unknown"
+      },
+      "human_author": "Aravind Samala <samalaaravind02@gmail.com>"
+    }
+  }
+}
