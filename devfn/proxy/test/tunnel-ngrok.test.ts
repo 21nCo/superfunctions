@@ -667,7 +667,8 @@ describe("ngrok connector lifecycle", () => {
       const agentFile = tunnelPaths(stateDir, "eph").agent((await readTunnelState(stateDir, "eph")).connector!.launchId!);
       const orphan = await killConnectorOnly(stateDir, "eph");
       const original = await readFile(agentFile, "utf8");
-      for (const malformed of ["{", JSON.stringify({ ...JSON.parse(original) as object, pid: "not-a-pid" })]) {
+      // A PID beyond int32 cannot be probed, so it is malformed, never an exited agent.
+      for (const malformed of ["{", ...["not-a-pid", 2 ** 31].map((pid) => JSON.stringify({ ...JSON.parse(original) as object, pid }))]) {
         await writeFile(agentFile, malformed);
         expect(await tunnelStatus(options)).toMatchObject({ connector: "unverified" });
         await expect(recoverTunnel(options)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_UNAVAILABLE" });

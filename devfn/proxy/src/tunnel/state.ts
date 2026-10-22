@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
-import { canonicalBirthSignature, withFileLock, withRoutingLock } from "@devfn/ports";
+import { canonicalBirthSignature, isProcessId, withFileLock, withRoutingLock } from "@devfn/ports";
 
 import { domainContains, normalizeDomain, readRegisteredDomains } from "../domains.js";
 
@@ -349,7 +349,7 @@ export async function readAgentIdentity(file: string): Promise<AgentRecord> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "absent" };
     return { status: "unreadable", reason: error instanceof SyntaxError ? "it is not valid JSON" : (error as NodeJS.ErrnoException).code ?? "it cannot be read" };
   }
-  if (!value || value.version !== 1 || !Number.isInteger(value.pid) || value.pid! <= 0 || typeof value.birthSignature !== "string" || !canonicalBirthSignature(value.birthSignature) ||
+  if (!value || value.version !== 1 || !isProcessId(value.pid) || typeof value.birthSignature !== "string" || !canonicalBirthSignature(value.birthSignature) ||
     typeof value.startedAt !== "string" || typeof value.configFile !== "string") return { status: "unreadable", reason: "it is not a complete agent record" };
   return { status: "recorded", agent: { pid: value.pid!, birthSignature: value.birthSignature, startedAt: value.startedAt, configFile: value.configFile } };
 }
@@ -429,7 +429,7 @@ export function compareNames(a: string, b: string): number {
 const isNames = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
 const isConnector = (value: unknown): value is ConnectorRecord => {
   const item = value as Partial<ConnectorRecord> | undefined;
-  return Boolean(item) && Number.isInteger(item!.pid) && item!.pid! > 0 && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 && canonicalBirthSignature(item!.birthSignature) &&
+  return Boolean(item) && isProcessId(item!.pid) && typeof item!.birthSignature === "string" && item!.birthSignature.length > 0 && canonicalBirthSignature(item!.birthSignature) &&
     typeof item!.startedAt === "string" && typeof item!.configDigest === "string" && /^[a-f0-9]{64}$/.test(item!.configDigest) &&
     Number.isInteger(item!.metricsPort) && item!.metricsPort! > 0 && item!.metricsPort! < 65536 && (item!.launchId === undefined || (typeof item!.launchId === "string" && LAUNCH_ID.test(item!.launchId))) && isNames(item!.hostnames) &&
     (item!.readBack === undefined || item!.readBack === true) &&

@@ -728,6 +728,10 @@ describe("tunnel lifecycle", { timeout: 30_000 }, () => {
     await writeFile(file, JSON.stringify({ ...state, connector: { ...live, birthSignature: "linux:0042" } }));
     await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toMatchObject({ code: "DEVFN_TUNNEL_STATE_INVALID" });
     expect(await processGroupStatus(live.pid, live.birthSignature)).toBe("running");
+    // Neither could a connector PID beyond int32, which no process signal reaches.
+    await writeFile(file, JSON.stringify({ ...state, connector: { ...live, pid: 2 ** 31 } }));
+    await expect(withdrawTunnelRoutes(options, "owner-a")).rejects.toMatchObject({ code: "DEVFN_TUNNEL_STATE_INVALID" });
+    expect(await processGroupStatus(live.pid, live.birthSignature)).toBe("running");
     await writeFile(file, saved);
   });
 });
