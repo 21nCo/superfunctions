@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import https from "node:https";
@@ -6,7 +6,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -98,7 +98,7 @@ describe("ngrok bindings", () => {
     expect(urlTiming(reserved)).toBe("pre-start");
     expect(urlTiming(ngrokFixtureBinding(repo, "ephemeral"))).toBe("post-start");
     // Reserved URLs are read back through the API, so a key reference is required.
-    expect(() => parseTunnelBinding({ ...reserved, ngrok: { endpoints: "reserved", authtokenEnv: "TOKEN" } })).toThrow("API key environment variable name");
+    expect(() => parseTunnelBinding({ ...reserved, ngrok: { endpoints: "reserved", authtokenEnv: "TOKEN", registrationId: "c".repeat(32) } })).toThrow("API key environment variable name");
     expect(() => parseTunnelBinding({ ...reserved, ngrok: { ...reserved.ngrok, endpoints: "random" } })).toThrow("reserved or ephemeral");
     // An ephemeral binding cannot claim a public domain it does not control.
     expect(() => parseTunnelBinding({ ...ngrokFixtureBinding(repo, "ephemeral"), domain: DOMAIN })).toThrow("no public domain");
@@ -107,8 +107,14 @@ describe("ngrok bindings", () => {
     expect(() => parseTunnelBinding({ ...reserved, cloudflare: {} })).toThrow("credential references only");
     expect(() => parseTunnelBinding({ ...reserved, ngrok: { ...reserved.ngrok, authtokenEnv: "lower-case" } })).toThrow("environment variable names");
     expect(() => parseTunnelBinding({ ...reserved, provider: "other" })).toThrow("cloudflare or ngrok");
+    expect(() => parseTunnelBinding({ ...reserved, ngrok: { ...reserved.ngrok, registrationId: "short" } })).toThrow("32-hex registration ID");
     const stateDir = path.join(dir, "state");
-    await expect(registerTunnelBinding(stateDir, reserved)).resolves.toEqual(reserved);
+    // Registration assigns its own random registration ID, so a same-named binding registered on another machine never shares a marker.
+    const registered = await registerTunnelBinding(stateDir, reserved);
+    expect(registered).toEqual({ ...reserved, ngrok: { ...reserved.ngrok, registrationId: expect.stringMatching(/^[a-f0-9]{32}$/) } });
+    const elsewhere = await registerTunnelBinding(path.join(dir, "elsewhere"), reserved);
+    expect(registered.provider === "ngrok" && elsewhere.provider === "ngrok" && registered.ngrok.registrationId !== elsewhere.ngrok.registrationId).toBe(true);
+    expect(ngrokMarker(registered)).not.toBe(ngrokMarker(elsewhere));
     await expect(registerTunnelBinding(stateDir, ngrokFixtureBinding(repo, "ephemeral", "eph"))).resolves.toMatchObject({ domain: "eph.ngrok.devfn.internal" });
     // Public domains still never overlap.
     await expect(registerTunnelBinding(stateDir, { ...reserved, name: "again", domain: `sub.${DOMAIN}` })).rejects.toMatchObject({ code: "DEVFN_TUNNEL_IN_USE" });
@@ -116,11 +122,11 @@ describe("ngrok bindings", () => {
   });
 
   it("render an agent configuration of exactly the selected endpoints, validated offline", async () => {
-    const config: NgrokConnectorConfig = { version: 1, binding: "share", endpoints: "reserved", marker: "devfn-tunnel:share", hostnames: [B, A], origin: { port: 8444, caFile: "/ca.pem" } };
+    const config: NgrokConnectorConfig = { version: 1, binding: "share", endpoints: "reserved", marker: `devfn-tunnel:share:${"c".repeat(32)}`, hostnames: [B, A], origin: { port: 8444, caFile: "/ca.pem" } };
     const reserved = renderNgrokAgentConfig(config, 41000);
     expect(reserved).toContain("agent:\n  web_addr: false\n  update_check: false\n  console_ui: false\n  log: stdout\n  log_format: json");
     expect([...reserved.matchAll(/^ {2}"(.+)":$/gm)].map((match) => match[1])).toEqual([A, B]);
-    expect(reserved).toContain(`  "${A}":\n    proto: http\n    addr: "http://127.0.0.1:41000"\n    schemes:\n      - https\n    host_header: "${A}"\n    inspect: false\n    metadata: "devfn-tunnel:share"\n    domain: "${A}"\n    pooling_enabled: true\n`);
+    expect(reserved).toContain(`  "${A}":\n    proto: http\n    addr: "http://127.0.0.1:41000"\n    schemes:\n      - https\n    host_header: "${A}"\n    inspect: false\n    metadata: "devfn-tunnel:share:${"c".repeat(32)}"\n    domain: "${A}"\n    pooling_enabled: true\n`);
     const ephemeral = renderNgrokAgentConfig({ ...config, endpoints: "ephemeral" }, 41000);
     expect(ephemeral).not.toMatch(/domain:|pooling_enabled/);
     expect(ephemeral).toContain(`host_header: "${A}"`);
@@ -161,9 +167,12 @@ describe("ngrok bindings", () => {
     requests.length = 0;
     await provider.removeDns(binding, A);
     expect(requests).toEqual([]);
-    // Another agent serving the name, pooled or not, would receive its requests.
+    // Another agent serving the name, pooled or not, would receive its requests: an unmarked one, or a same-named binding registered elsewhere.
     fixture.tunnels.push({ public_url: `https://${B}`, metadata: "someone else" });
     await expect(provider.ensureDns(binding, B)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
+    const C = `web-c-0123456789abcdef0123.${DOMAIN}`;
+    fixture.tunnels.push({ public_url: `https://${C}`, metadata: ngrokMarker(ngrokFixtureBinding("/repo", "reserved", "share", "d".repeat(32))) });
+    await expect(provider.ensureDns(binding, C)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
     await expect(provider.verifyDns(binding, `web.other.example.test`)).rejects.toMatchObject({ code: "DEVFN_TUNNEL_INVALID" });
     fixture.reserved = [DOMAIN];
     await expect(provider.verifyTunnel(binding)).rejects.toThrow(`does not reserve *.${DOMAIN}`);
@@ -337,6 +346,10 @@ describe("ngrok connector lifecycle", () => {
     try {
       await publishTunnelRoutes(options, "owner-a", [A]);
       await publishTunnelRoutes(options, "owner-b", [B]);
+      // The replacement started on a fresh log; the predecessor's history, which it kept writing until stopped, is intact beside it.
+      const started = (text: string) => [...text.matchAll(/"msg":"started tunnel".*?"name":"([^"]+)"/g)].map((match) => match[1]);
+      expect(started(await readFile(`${tunnelPaths(stateDir, "share").log}.1`, "utf8"))).toEqual([A]);
+      expect(started(await readFile(tunnelPaths(stateDir, "share").log, "utf8"))).toEqual([A, B]);
       let status = await tunnelStatus(options);
       expect(status).toMatchObject({ connector: "running", routed: [A, B], urls: { [A]: `https://${A}`, [B]: `https://${B}` },
         capabilities: { provider: "ngrok", urlTiming: "pre-start", dns: "connector-only" } });
@@ -410,6 +423,72 @@ describe("ngrok connector lifecycle", () => {
       await rm(path.join(record, "same-url"));
       expect(await tunnelStatus(options)).toMatchObject({ connector: "running", pid: second.pid, urls: second.urls });
     } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("starts no agent for a hostname a same-named binding registered elsewhere already serves", { timeout: 60_000 }, async () => {
+    const { stateDir, options, api, agents, fixtureOrigin, binding } = await setup("reserved");
+    try {
+      // Same binding name and worktree path on another machine derive the same hostname; only the registration differs.
+      for (const metadata of [`devfn-tunnel:${binding.name}`, `devfn-tunnel:${binding.name}:${"d".repeat(32)}`]) {
+        api.tunnels = [{ public_url: `https://${A}`, metadata }];
+        await expect(publishTunnelRoutes(options, "owner-a", [A])).rejects.toMatchObject({ code: "DEVFN_TUNNEL_CONFLICT" });
+      }
+      expect(await agents()).toEqual([]);
+      expect(await readTunnelState(stateDir, "share")).toMatchObject({ hostnames: [] });
+      expect((await readTunnelState(stateDir, "share")).connector).toBeUndefined();
+      // This registration's own running endpoint, as a pooled predecessor, is not a conflict.
+      api.tunnels = [{ public_url: `https://${A}`, metadata: ngrokMarker(binding) }];
+      await publishTunnelRoutes(options, "owner-a", [A]);
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "running", routed: [A] });
+    } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("keeps serving after upgrade clients reset their connections, denied or allowed", { timeout: 60_000 }, async () => {
+    const { options, agents, fixtureOrigin } = await setup("reserved");
+    try {
+      await publishTunnelRoutes(options, "owner-a", [A]);
+      const before = await tunnelStatus(options);
+      const bridgePort = Number(/addr: "http:\/\/127\.0\.0\.1:(\d+)"/.exec((await agents()).at(-1)!.config)![1]);
+      const reset = async (host: string) => await new Promise<void>((resolve) => {
+        const socket = net.connect(bridgePort, "127.0.0.1", () => {
+          socket.write(`GET /socket HTTP/1.1\r\nHost: ${host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`);
+          socket.resetAndDestroy();
+        });
+        socket.once("close", () => resolve());
+        socket.on("error", () => undefined);
+      });
+      for (let round = 0; round < 10; round += 1) await Promise.all(Array.from({ length: 20 }, async (_, index) => await reset(index % 4 ? B : A)));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(await tunnelStatus(options)).toMatchObject({ connector: "running", pid: before.pid, routed: [A] });
+      expect(await viaBridge(bridgePort, A)).toMatchObject({ status: 207 });
+    } finally { fixtureOrigin.server.close(); }
+  });
+
+  posixIt("stops its agent whenever the connector itself fails", { timeout: 60_000 }, async () => {
+    const record = path.join(dir, "record");
+    await mkdir(record);
+    const caFile = path.join(dir, "ca.pem");
+    await writeFile(caFile, issue([`*.${DOMAIN}`], "origin").cert);
+    const configFile = path.join(dir, "connector.json");
+    await writeFile(configFile, new NgrokTunnelProvider({ env: SECRETS }).renderConnectorConfig(ngrokFixtureBinding("/repo"), [A], { port: 1, caFile }));
+    // A fault injected into the connector process once its agent runs.
+    const preload = path.join(dir, "fail-after-agent.mjs");
+    await writeFile(preload, `import { readdirSync } from "node:fs";\nconst timer = setInterval(() => { if (readdirSync(${JSON.stringify(record)}).some((name) => name.startsWith("agent-"))) { clearInterval(timer); throw new Error("injected connector fault"); } }, 20);\n`);
+    const home = path.join(dir, "home");
+    await mkdir(home);
+    const readyPort = await new Promise<number>((resolve) => { const probe = net.createServer().listen(0, "127.0.0.1", () => { const { port } = probe.address() as net.AddressInfo; probe.close(() => resolve(port)); }); });
+    const [node, importFlag, tsx, entry] = CONNECTOR;
+    const child = spawn(node, [importFlag, tsx, "--import", pathToFileURL(preload).href, entry, configFile, String(readyPort), await writeFakeNgrok(dir, record)],
+      { env: { PATH: process.env.PATH, HOME: home, NGROK_AUTHTOKEN: SECRETS.DEVFN_FIXTURE_NGROK_AUTHTOKEN }, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+    const agentPid = Number(/^agent-(\d+)\.json$/.exec((await readdir(record)).find((name) => name.startsWith("agent-"))!)![1]);
+    try {
+      expect(code).toBe(1);
+      await vi.waitFor(() => expect(() => process.kill(agentPid, 0)).toThrow(), { timeout: 3_000 });
+      expect(stderr).toContain("DevFn ngrok connector failed: injected connector fault");
+    } finally { try { process.kill(agentPid, "SIGKILL"); } catch { /* gone */ } }
   });
 });
 

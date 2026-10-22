@@ -228,7 +228,10 @@ async function launchConnector(ctx: Context, hostnames: readonly string[], onLau
   const secrets = ctx.provider.connectorSecrets?.(ctx.binding) ?? {};
   const home = path.join(paths.dir, "home");
   await mkdir(home, { recursive: true, mode: 0o700 });
-  if (((await stat(paths.log).catch(() => undefined))?.size ?? 0) > LOG_LIMIT_BYTES) await rename(paths.log, `${paths.log}.1`);
+  // A connector with secrets starts on a truncated log; moving the old one aside first keeps the
+  // make-before-break predecessor writing into its own history rather than over the new log.
+  const previousLog = await stat(paths.log).catch(() => undefined);
+  if (previousLog && (Object.keys(secrets).length || previousLog.size > LOG_LIMIT_BYTES)) await rename(paths.log, `${paths.log}.1`);
   let record: ConnectorRecord | undefined;
   try {
     await new ProcessSupervisor().start({ name: "connector", root: paths.dir, runtimeDir: paths.dir,

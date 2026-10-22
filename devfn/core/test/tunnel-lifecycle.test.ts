@@ -252,12 +252,12 @@ it("reports public URLs live only while the running connector routes every one o
   const tunnel = await registerPreview();
   const added = "api-other-0123456789abcdef0123.tunnel.example.test";
   await publishTunnelRoutes(tunnel, "owner", [OTHER]);
-  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER] })).toBe(true);
+  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER] }, undefined, undefined)).toBe(true);
   // A name committed for the owner that the running connector does not route is not live.
   const state = await readTunnelState(stateDir, "preview");
   state.hostnames.push({ hostname: added, ownerId: "owner", publishedAt: "now" });
   await writeTunnelState(stateDir, state);
-  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER, added] })).toBe(false);
+  expect(await publicUrlsLive(stateDir, "owner", { binding: "preview", hostnames: [OTHER, added] }, undefined, undefined)).toBe(false);
 });
 
 it("reads no tunnel state for a lifecycle that never published and fails closed for one that may have", async () => {

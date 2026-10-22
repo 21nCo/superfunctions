@@ -124,19 +124,23 @@ export async function planPublicUrls(options: { config: DevFnConfig; root: strin
 /**
  * Whether every hostname of this owner's tunnel receipt is still published
  * for it and routed by the binding's running connector, and, for URLs
- * assigned after start, whether the receipt's URLs are still the ones that
- * connector serves: a connector restart assigns new ones.
+ * assigned after start, whether the receipt's URLs are exactly what the
+ * current selection would publish from the URLs that connector serves now:
+ * each route against its own hostname's URL, so a reassigned, swapped,
+ * missing or extra route URL is stale. A connector restart assigns new ones.
  */
 export async function publicUrlsLive(stateDir: string, ownerId: string, tunnel: { binding: string; hostnames: string[]; urlTiming?: UrlTiming },
-  publicUrls: Readonly<Record<string, string>> | undefined): Promise<boolean> {
+  publicUrls: Readonly<Record<string, string>> | undefined, current: ((assigned: Readonly<Record<string, string>>) => Record<string, string>) | undefined): Promise<boolean> {
   const binding = (await readTunnelBindings(stateDir)).find((item) => item.name === tunnel.binding);
   const status = binding ? await tunnelStatus({ stateDir, binding }) : undefined;
   if (status?.connector !== "running" || !tunnel.hostnames.every((hostname) =>
     status.routed.includes(hostname) && status.hostnames.some((item) => item.hostname === hostname && item.ownerId === ownerId))) return false;
   if (tunnel.urlTiming !== "post-start") return true;
-  const live = new Set(tunnel.hostnames.map((hostname) => status.urls[hostname]));
-  const recorded = Object.values(publicUrls ?? {}).map((url) => new URL(url).origin);
-  return recorded.length === tunnel.hostnames.length && recorded.every((origin) => live.has(origin));
+  if (!current) return false;
+  let expected: Record<string, string>;
+  try { expected = current(status.urls); } catch { return false; }
+  const recorded = Object.entries(publicUrls ?? {});
+  return recorded.length === Object.keys(expected).length && recorded.every(([route, url]) => expected[route] === url);
 }
 
 /**

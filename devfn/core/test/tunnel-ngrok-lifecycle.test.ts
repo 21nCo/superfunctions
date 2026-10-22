@@ -7,9 +7,11 @@ vi.mock("@devfn/proxy", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@devfn/proxy")>();
   return {
     ...actual,
+    // Registered fixture domains resolve to loopback.
+    verifyLocalDns: async () => undefined,
     // The command stub stands in for a Caddy that holds its listeners and serves what it is given.
     CaddyProxyController: class extends actual.CaddyProxyController {
-      constructor(stateDir: string) { super(stateDir, undefined, undefined, async () => true, async () => true); }
+      constructor(stateDir: string) { super(stateDir, (async () => [{ address: "127.0.0.1", family: 4 }]) as never, undefined, async () => true, async () => true); }
       // Physical owner and listener preflight is covered by the proxy suites.
       override async assertActivationReady(): Promise<void> {}
     },
@@ -19,7 +21,7 @@ vi.mock("@devfn/proxy", async (importOriginal) => {
 import { validateDevFnConfig, type DevFnConfig } from "@devfn/config";
 import { processBirthSignature } from "@devfn/processes";
 import { readTunnelState, registerTunnelBinding, tunnelPaths, type TunnelBinding } from "@devfn/proxy/tunnel";
-import { DevFnOrchestrator, planPublicUrls, resolveInstanceIdentity, type TunnelOverrides } from "../src/index.js";
+import { DevFnOrchestrator, planPublicUrls, readReceipt, registerDomain, resolveInstanceIdentity, writeReceipt, type TunnelOverrides } from "../src/index.js";
 import { FakeTunnelProvider, ngrokFixtureBinding, writeConnectorScript } from "../../proxy/test/fixtures/tunnel.js";
 
 const CADDY_STUB = "#!/bin/sh\ncase \"$1\" in version|validate|reload) exit 0;; esac\nexit 1\n";
@@ -41,10 +43,10 @@ let provider: AssigningProvider;
 let overrides: TunnelOverrides;
 let originalPath: string | undefined;
 
-const manifest = (tunnel: Record<string, unknown>, env: Record<string, string> = {}): DevFnConfig => validateDevFnConfig({ version: 1, project: { id: "fixture" }, ports: { web: {} },
+const manifest = (tunnel: Record<string, unknown>, env: Record<string, string> = {}, hostnames: Record<string, Record<string, string>> = { web: { target: "web", path: "/app" } }): DevFnConfig => validateDevFnConfig({ version: 1, project: { id: "fixture" }, ports: { web: {} },
   processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], env, health: { type: "http", port: "web", timeoutMs: 20_000 } } },
   profiles: { default: { processes: ["web"], proxy: true }, share: { processes: ["web"], proxy: true, tunnel } },
-  hostnames: { web: { target: "web", path: "/app" } } });
+  hostnames });
 
 beforeEach(async () => {
   root = await realpath(await mkdtemp(path.join(tmpdir(), "devfn-ngrok-lifecycle-")));
@@ -141,6 +143,43 @@ it("publishes an ephemeral endpoint's URL only to runtime outputs once its conne
   await orchestrator.down({ config, root, stateDir });
 }, 60_000);
 
+it("judges ephemeral receipt URLs route by route, including routes that share one host label", async () => {
+  // Routes share a host label through a registered local domain; the public hostname follows the label.
+  const identity = await resolveInstanceIdentity("fixture", root);
+  await registerDomain(stateDir, { domain: "dev.example.test", projectId: "fixture", repositoryIdentity: identity.repositoryIdentity, tls: "internal" },
+    (async () => [{ address: "127.0.0.1", family: 4 }]) as never);
+  const domain = "dev.example.test";
+  const config = manifest({ binding: "eph", routes: ["web", "api", "admin"], ephemeral: true }, {},
+    { web: { target: "web", domain, host: "web", path: "/app" }, api: { target: "web", domain, host: "web", path: "/api" }, admin: { target: "web", domain, host: "admin" } });
+  await stubLifecycleHost();
+  const orchestrator = new DevFnOrchestrator(overrides);
+  const started = await orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true });
+  const connector = (await readTunnelState(stateDir, "eph")).connector!;
+  const host = (prefix: string) => started.tunnel!.hostnames.find((name) => name.startsWith(`${prefix}-`))!;
+  expect(started.tunnel!.hostnames).toHaveLength(2);
+  expect(started.publicUrls).toEqual({ web: `${connector.urls![host("web")]}/app`, api: `${connector.urls![host("web")]}/api`, admin: connector.urls![host("admin")] });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready" });
+  // A ready lifecycle is kept by a plain up, not replaced: the shared connector and every worktree's URLs stay.
+  await expect(orchestrator.up({ config, root, profile: "share", stateDir, allowPublic: true })).rejects.toThrow("is already running");
+  expect((await readReceipt(config, root, started.instanceId))!.invocationId).toBe(started.invocationId);
+  expect((await readTunnelState(stateDir, "eph")).connector).toMatchObject({ pid: connector.pid, urls: connector.urls });
+  // Swapped route URLs, or a missing route, are stale although every URL is still served.
+  const receipt = (await readReceipt(config, root, started.instanceId))!;
+  await writeReceipt({ ...receipt, publicUrls: { ...receipt.publicUrls, web: receipt.publicUrls!.admin, admin: receipt.publicUrls!.web } });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
+  await writeReceipt({ ...receipt, publicUrls: { web: receipt.publicUrls!.web, admin: receipt.publicUrls!.admin } });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
+  await writeReceipt(receipt);
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "ready" });
+  // One hostname reassigned by the provider is stale for both of its routes' receipt entries.
+  const journal = tunnelPaths(stateDir, "eph").state;
+  const state = JSON.parse(await readFile(journal, "utf8")) as { connector: { urls: Record<string, string> } };
+  state.connector.urls[host("admin")] = "https://reassigned.ngrok-free.app";
+  await writeFile(journal, JSON.stringify(state), { mode: 0o600 });
+  expect(await orchestrator.status({ config, root })).toMatchObject({ state: "degraded" });
+  await orchestrator.down({ config, root, stateDir });
+}, 60_000);
+
 it("keeps a reserved endpoint's pre-start URL for consumers across replacement and crash recovery", async () => {
   const config = manifest({ binding: "share", routes: ["web"] }, { CALLBACK_URL: "{{env.DEVFN_PUBLIC_URL_WEB}}/callback" });
   const planned = (await planPublicUrls({ config, root, profile: "share", stateDir })).urls.web;
@@ -186,6 +225,26 @@ it("rejects a Compose interpolation of an ephemeral URL from the real Compose so
     defaultProfile: "share", profiles: { share: { processes: ["web"], services: ["consumer"], proxy: true, tunnel: { binding: "eph", routes: ["web"], ephemeral: true } } },
     hostnames: { web: { target: "web", path: "/app" } } });
   await writeFile(path.join(root, "compose.yaml"), "services:\n  consumer:\n    image: busybox\n    environment:\n      CALLBACK: ${DEVFN_PUBLIC_URL_WEB}/callback\n");
+  await expect(new DevFnOrchestrator(overrides).up({ config, root, profile: "share", stateDir, allowPublic: true }))
+    .rejects.toThrow("services.consumer.compose: DEVFN_PUBLIC_URL_WEB is the public URL of ephemeral tunnel route web");
+  expect(provider.calls).toEqual([]);
+  await expect(access(path.join(stateDir, "registry.json"))).rejects.toThrow();
+  await expect(access(path.join(stateDir, "tunnel-owners"))).rejects.toThrow();
+});
+
+it("rejects a Compose ephemeral URL reference before Docker when the manifest also references a sibling URL", async () => {
+  const config = validateDevFnConfig({ version: 1, project: { id: "fixture" }, ports: { web: {}, api: {} },
+    processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["web"], env: { API: "{{env.DEVFN_URL_API}}" }, dependsOn: ["api"], health: { type: "http", port: "web", timeoutMs: 20_000 } },
+      api: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["api"], health: { type: "http", port: "api", timeoutMs: 20_000 } } },
+    services: { consumer: { adapter: "compose", service: "consumer", dependsOn: ["web"] } },
+    defaultProfile: "share", profiles: { share: { processes: ["web", "api"], services: ["consumer"], proxy: true, tunnel: { binding: "eph", routes: ["web"], ephemeral: true } } },
+    hostnames: { web: { target: "web", path: "/app" } } });
+  await writeFile(path.join(root, "compose.yaml"), "services:\n  consumer:\n    image: busybox\n    environment:\n      CALLBACK: ${DEVFN_PUBLIC_URL_WEB}/callback\n");
+  // A Docker that fails would otherwise replace the clear message with its own.
+  const toolsDir = path.join(root, "tools");
+  await mkdir(toolsDir);
+  await writeFile(path.join(toolsDir, "docker"), "#!/bin/sh\necho 'fixture docker unavailable' >&2\nexit 1\n", { mode: 0o700 });
+  process.env.PATH = `${toolsDir}${path.delimiter}${originalPath ?? ""}`;
   await expect(new DevFnOrchestrator(overrides).up({ config, root, profile: "share", stateDir, allowPublic: true }))
     .rejects.toThrow("services.consumer.compose: DEVFN_PUBLIC_URL_WEB is the public URL of ephemeral tunnel route web");
   expect(provider.calls).toEqual([]);

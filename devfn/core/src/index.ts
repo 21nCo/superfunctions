@@ -4,7 +4,7 @@ export { oauthRelayStatus, startOAuthRelay, stopOAuthRelay, type OAuthRelayStatu
 export { DevFnOrchestrator, hasRecordedProcessOwner, recoverOrphanedProxyRoutes, resolveAllocationUrls, selectOwnershipListeners, verifyOwnedLoopbackListeners } from "./orchestrator.js";
 export { createPlan } from "./planner.js";
 export { lifecycleOwnerMayRun, planPublicUrls, withdrawLifecycleTunnel, type TunnelOverrides } from "./tunnel.js";
-export { ephemeralOriginDomain, readTunnelBindings, recoverTunnel, registerTunnelBinding, resolveTunnelBinding, tunnelCapabilities, tunnelStatus, unregisterTunnelBinding, type TunnelBinding, type TunnelCapabilities } from "@devfn/proxy/tunnel";
+export { ephemeralOriginDomain, readTunnelBindings, recoverTunnel, registerTunnelBinding, resolveTunnelBinding, tunnelCapabilities, tunnelStatus, unregisterTunnelBinding, type TunnelBinding, type TunnelBindingInput, type TunnelCapabilities } from "@devfn/proxy/tunnel";
 export { resolveEndpointTemplates, resolveLocalHostname, type EndpointResolution, type EndpointResolutionInput, type ResolvedNodeStartup } from "./endpoints.js";
 export { readReceipt, receiptPath, runtimeDirectory, writeEnvironmentOutputs, writeReceipt } from "./runtime.js";
 export * from "./types.js";

@@ -18,8 +18,13 @@ function ngrok(binding: TunnelBinding): NgrokTunnelBinding["ngrok"] {
   return binding.ngrok;
 }
 
-/** The metadata that marks an online ngrok tunnel as run by DevFn for one binding. */
-export const ngrokMarker = (binding: TunnelBinding): string => `devfn-tunnel:${binding.name}`;
+/**
+ * The metadata that marks an online ngrok tunnel as run by DevFn for one
+ * registration of a binding. The registration ID keeps it unique per
+ * machine: another machine's binding of the same name derives the same
+ * hostnames, and pooling would split public traffic between the two.
+ */
+export const ngrokMarker = (binding: TunnelBinding): string => `devfn-tunnel:${binding.name}:${ngrok(binding).registrationId}`;
 
 /** ngrok from an absolute PATH directory; the working directory cannot supply it. */
 export async function ngrokCommand(env: NodeJS.ProcessEnv = process.env): Promise<string> {
@@ -171,7 +176,12 @@ export class NgrokTunnelProvider implements TunnelProvider {
     return await Promise.resolve(false);
   }
 
-  /** A reserved hostname is under the reserved wildcard and served by no agent other than this binding's connector. */
+  /**
+   * A reserved hostname is under the reserved wildcard and served by no
+   * agent other than a connector of this registration, such as the one a
+   * replacement pools beside; any other marker, including one of a
+   * same-named binding registered elsewhere, is a conflict.
+   */
   public async verifyDns(binding: TunnelBinding, hostname: string): Promise<void> {
     if (!isPublicHostname(hostname, binding.domain)) throw new TunnelError("DEVFN_TUNNEL_INVALID", `${hostname} is not one label under ${binding.domain}.`);
     if (ngrok(binding).endpoints === "ephemeral") return;

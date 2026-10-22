@@ -101,9 +101,10 @@ export class FakeTunnelProvider implements TunnelProvider {
   }
 }
 
-export function ngrokFixtureBinding(repositoryIdentity: string, endpoints: "reserved" | "ephemeral" = "reserved", name = "share"): NgrokTunnelBinding {
+/** A registered-shape ngrok binding; registering it assigns a fresh registration ID. */
+export function ngrokFixtureBinding(repositoryIdentity: string, endpoints: "reserved" | "ephemeral" = "reserved", name = "share", registrationId = "c".repeat(32)): NgrokTunnelBinding {
   return { name, provider: "ngrok", domain: endpoints === "reserved" ? "ngrok.example.test" : ephemeralOriginDomain(name), projectId: "fixture", repositoryIdentity, nonproduction: true,
-    ngrok: { endpoints, authtokenEnv: "DEVFN_FIXTURE_NGROK_AUTHTOKEN", ...(endpoints === "reserved" ? { apiKeyEnv: "DEVFN_FIXTURE_NGROK_API_KEY" } : {}) } };
+    ngrok: { endpoints, authtokenEnv: "DEVFN_FIXTURE_NGROK_AUTHTOKEN", ...(endpoints === "reserved" ? { apiKeyEnv: "DEVFN_FIXTURE_NGROK_API_KEY" } : {}), registrationId } };
 }
 
 /**

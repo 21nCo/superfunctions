@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
@@ -16,8 +16,21 @@ import { parseNgrokConnectorConfig, renderNgrokAgentConfig } from "./ngrok.js";
  * the agent reports every endpoint started. The agent receives only PATH,
  * the private HOME and the authtoken; DevFn's process wrapper redacts the
  * authtoken from everything written to the connector log. The connector
- * exits when the agent does, so a dead agent never looks ready.
+ * exits when the agent does, so a dead agent never looks ready, and kills
+ * the agent whenever it exits itself: an agent left behind would keep its
+ * public endpoints forwarding to a freed loopback port that any local
+ * process could bind, past the bridge's allowlist.
  */
+let agent: ChildProcess | undefined;
+// Synchronous, so it holds for every exit: fatal error, signal timeout or the agent's own exit (then a no-op).
+process.on("exit", () => { agent?.kill("SIGKILL"); });
+const fatal = (error: unknown) => {
+  process.stderr.write(`DevFn ngrok connector failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
+};
+process.on("uncaughtException", fatal);
+process.on("unhandledRejection", fatal);
+
 async function main(): Promise<void> {
   const [configFile, readyPortText, command] = process.argv.slice(2);
   const config = parseNgrokConnectorConfig(await readFile(configFile, "utf8"));
@@ -25,6 +38,7 @@ async function main(): Promise<void> {
   if (!home || !path.isAbsolute(home) || !command || !path.isAbsolute(command)) throw new Error("The ngrok connector needs a private HOME and an absolute ngrok path.");
   const bridge = createOriginBridge({ hostnames: config.hostnames, originPort: config.origin.port, ca: await readFile(config.origin.caFile, "utf8") });
   await new Promise<void>((resolve, reject) => { bridge.once("error", reject); bridge.listen(0, "127.0.0.1", resolve); });
+  bridge.on("error", fatal);
   const address = bridge.address();
   const agentFile = path.join(home, `agent-${process.pid}.yml`);
   await writeFile(agentFile, renderNgrokAgentConfig(config, typeof address === "object" && address ? address.port : 0), { mode: 0o600 });
@@ -39,24 +53,23 @@ async function main(): Promise<void> {
     response.end(body);
   });
   await new Promise<void>((resolve, reject) => { readiness.once("error", reject); readiness.listen(Number(readyPortText), "127.0.0.1", resolve); });
+  readiness.on("error", fatal);
 
-  const agent = spawn(command, ["start", "--all", "--config", agentFile], {
+  const child = spawn(command, ["start", "--all", "--config", agentFile], {
     env: { PATH: process.env.PATH ?? "", HOME: home, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), NGROK_AUTHTOKEN: process.env.NGROK_AUTHTOKEN ?? "" },
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
   });
-  readline.createInterface({ input: agent.stdout, crlfDelay: Infinity }).on("line", (line) => {
+  agent = child;
+  readline.createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => {
     const started = startedEndpoint(line);
     if (started && config.hostnames.includes(started.name)) urls[started.name] = started.url;
     process.stdout.write(`${line}\n`);
   });
-  agent.stderr.pipe(process.stderr);
+  child.stderr.pipe(process.stderr);
   const exit = (code: number) => { void rm(agentFile, { force: true }).finally(() => process.exit(code)); };
-  agent.once("error", () => exit(1));
-  agent.once("exit", (code) => exit(code === 0 ? 0 : 1));
-  for (const signal of ["SIGTERM", "SIGINT"] as const) process.once(signal, () => { agent.kill("SIGTERM"); setTimeout(() => exit(0), 2_000).unref(); });
+  child.once("error", () => exit(1));
+  child.once("exit", (code) => exit(code === 0 ? 0 : 1));
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.once(signal, () => { child.kill("SIGTERM"); setTimeout(() => exit(0), 2_000).unref(); });
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`DevFn ngrok connector failed: ${error instanceof Error ? error.message : String(error)}\n`);
-  process.exit(1);
-});
+main().catch(fatal);

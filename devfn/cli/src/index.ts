@@ -15,7 +15,7 @@ import {
 } from "@devfn/config";
 import {
   DevFnError, DevFnOrchestrator, lifecycleOwnerMayRun, oauthRelayStatus, planPublicUrls, readRegisteredDomains, readTunnelBindings, recoverOrphanedProxyRoutes, recoverTunnel, registerDomain, registerTunnelBinding,
-  ephemeralOriginDomain, resolveInstanceIdentity, resolveTunnelBinding, startOAuthRelay, stopOAuthRelay, tunnelStatus, unregisterDomain, unregisterTunnelBinding, type TunnelBinding,
+  ephemeralOriginDomain, resolveInstanceIdentity, resolveTunnelBinding, startOAuthRelay, stopOAuthRelay, tunnelStatus, unregisterDomain, unregisterTunnelBinding, type TunnelBindingInput,
 } from "@devfn/core";
 import { FilePortRegistry, renderPortInventory } from "@devfn/ports";
 import { defaultStateDir } from "@devfn/config";
@@ -245,7 +245,7 @@ async function oauthRelayCommand(args: ParsedArgs, stateDir: string, load: () =>
 }
 
 /** The binding a tunnel register command describes; the options of one provider only. */
-function tunnelBindingInput(args: ParsedArgs, cwd: string, name: string, identity: { projectId: string; repositoryIdentity: string }): TunnelBinding {
+function tunnelBindingInput(args: ParsedArgs, cwd: string, name: string, identity: { projectId: string; repositoryIdentity: string }): TunnelBindingInput {
   const { provider = "cloudflare", domain, accountId, zoneId, tunnelId, credentialsFile, apiTokenEnv, authtokenEnv, apiKeyEnv } = args.tunnel;
   if (!args.nonproduction) throw new DevFnError("DEVFN_RUNTIME_INVALID", "tunnel register requires --nonproduction; DevFn binds only nonproduction tunnels and domains.");
   const base = { name, projectId: identity.projectId, repositoryIdentity: identity.repositoryIdentity, nonproduction: true as const };

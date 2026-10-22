@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 
@@ -43,15 +43,21 @@ export interface CloudflareTunnelBinding extends BindingBase {
  * before start. Ephemeral endpoints get provider-assigned URLs only once the
  * connector runs; their domain is a DevFn-internal origin namespace that is
  * never published. Only the names of the environment variables holding the
- * agent authtoken and, for reserved endpoints, a read-only API key are kept.
+ * agent authtoken and, for reserved endpoints, a read-only API key are kept,
+ * with a random registration ID that marks this registration's endpoints:
+ * another machine's binding of the same name on the same account derives
+ * the same hostnames but never carries it.
  */
 export interface NgrokTunnelBinding extends BindingBase {
   provider: "ngrok";
-  ngrok: { endpoints: "reserved" | "ephemeral"; authtokenEnv: string; apiKeyEnv?: string };
+  ngrok: { endpoints: "reserved" | "ephemeral"; authtokenEnv: string; apiKeyEnv?: string; registrationId: string };
 }
 
 /** A machine-registered public tunnel binding. */
 export type TunnelBinding = CloudflareTunnelBinding | NgrokTunnelBinding;
+
+/** A binding to register; registration assigns an ngrok binding its registration ID. */
+export type TunnelBindingInput = CloudflareTunnelBinding | (Omit<NgrokTunnelBinding, "ngrok"> & { ngrok: Omit<NgrokTunnelBinding["ngrok"], "registrationId"> });
 
 /** When a binding's public URLs are known: before start, or once its connector runs. */
 export type UrlTiming = "pre-start" | "post-start";
@@ -163,15 +169,16 @@ function parseProviderFields(entry: Record<string, unknown>): string[] {
   if (entry.provider === "ngrok") {
     const ngrok = entry.ngrok as Record<string, unknown> | undefined;
     if (!ngrok || typeof ngrok !== "object" || (ngrok.endpoints !== "reserved" && ngrok.endpoints !== "ephemeral") ||
-      typeof ngrok.authtokenEnv !== "string" || !ENV_NAME.test(ngrok.authtokenEnv) || (ngrok.apiKeyEnv !== undefined && (typeof ngrok.apiKeyEnv !== "string" || !ENV_NAME.test(ngrok.apiKeyEnv)))) {
-      throw invalid("An ngrok binding needs reserved or ephemeral endpoints and the environment variable names of its authtoken and optional API key.");
+      typeof ngrok.authtokenEnv !== "string" || !ENV_NAME.test(ngrok.authtokenEnv) || (ngrok.apiKeyEnv !== undefined && (typeof ngrok.apiKeyEnv !== "string" || !ENV_NAME.test(ngrok.apiKeyEnv))) ||
+      typeof ngrok.registrationId !== "string" || !HEX32.test(ngrok.registrationId)) {
+      throw invalid("An ngrok binding needs reserved or ephemeral endpoints, the environment variable names of its authtoken and optional API key, and a 32-hex registration ID.");
     }
     // Reserved URLs are read back through the API before any connector routes them.
     if (ngrok.endpoints === "reserved" && ngrok.apiKeyEnv === undefined) throw invalid("An ngrok binding with reserved endpoints needs an API key environment variable name to verify its reserved domain.");
     if (ngrok.endpoints === "ephemeral" && entry.domain !== ephemeralOriginDomain(String(entry.name))) {
       throw invalid("An ephemeral ngrok binding has no public domain; its origin names are DevFn-internal.");
     }
-    return Object.keys(ngrok).filter((key) => !["endpoints", "authtokenEnv", "apiKeyEnv"].includes(key));
+    return Object.keys(ngrok).filter((key) => !["endpoints", "authtokenEnv", "apiKeyEnv", "registrationId"].includes(key));
   }
   throw invalid("A tunnel provider is cloudflare or ngrok.");
 }
@@ -229,10 +236,12 @@ async function writeBindings(stateDir: string, bindings: TunnelBinding[]): Promi
  * repository and project. The credentials file must be an owner-only regular
  * file; its content is never read. A public domain may not overlap a
  * loopback development domain or another binding, so local and public
- * validation never apply to the same names.
+ * validation never apply to the same names. Each ngrok registration gets a
+ * fresh random registration ID.
  */
-export async function registerTunnelBinding(stateDir: string, input: TunnelBinding): Promise<TunnelBinding> {
-  const binding = parseTunnelBinding({ ...input, repositoryIdentity: await realpath(input.repositoryIdentity).catch(() => input.repositoryIdentity) });
+export async function registerTunnelBinding(stateDir: string, input: TunnelBindingInput): Promise<TunnelBinding> {
+  const binding = parseTunnelBinding({ ...input, repositoryIdentity: await realpath(input.repositoryIdentity).catch(() => input.repositoryIdentity),
+    ...(input.provider === "ngrok" ? { ngrok: { ...input.ngrok, registrationId: randomBytes(16).toString("hex") } } : {}) });
   if (binding.provider === "cloudflare") {
     let entry;
     try { entry = await lstat(binding.cloudflare.credentialsFile); }
