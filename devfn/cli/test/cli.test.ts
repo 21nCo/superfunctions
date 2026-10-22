@@ -2,10 +2,10 @@ import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, write
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FilePortRegistry, isPortAvailable } from "@devfn/ports";
 import { processBirthSignature, validateDevFnConfig } from "@devfn/config";
-import { readReceipt, resolveInstanceIdentity, writeReceipt } from "@devfn/core";
+import { DevFnOrchestrator, readReceipt, resolveInstanceIdentity, writeReceipt } from "@devfn/core";
 import { runCli } from "../src/index.js";
 
 async function withListenerTools<T>(action: () => Promise<T>): Promise<T> {
@@ -393,6 +393,40 @@ describe("devfn CLI", () => {
       await rm(stateDir, { recursive: true, force: true });
     }
   });
+
+  it("shows lifecycle URL map entries whose route names read like secret fields", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "devfn-url-keys-"));
+    const stateDir = await mkdtemp(path.join(tmpdir(), "devfn-url-keys-state-"));
+    await writeFile(path.join(cwd, "server.mjs"), "import { createServer } from 'node:http'; createServer((_request, response) => response.end('ready')).listen(Number(process.env.DEVFN_PORT_SESSION_ID), '127.0.0.1');\n");
+    await writeFile(path.join(cwd, "devfn.config.json"), JSON.stringify({ version: 1, project: { id: "url-keys" }, ports: { "session-id": {} },
+      processes: { web: { adapter: "command", command: [process.execPath, "server.mjs"], ports: ["session-id"], health: { type: "http", port: "session-id", timeoutMs: 5000 } } },
+      profiles: { default: { processes: ["web"] } } }));
+    const invoke = async (command: string) => {
+      let stdout = "";
+      const code = await runCli([command, "--trust", "--json", "--state-dir", stateDir], { cwd, stdout: (text) => { stdout += text; }, stderr: () => undefined });
+      return { code, value: JSON.parse(stdout) as Record<string, any> };
+    };
+    // A tunnel's public URLs need a running connector, which the core suites provide; here status reports fixture URLs for the same routes.
+    const status = DevFnOrchestrator.prototype.status;
+    const spy = vi.spyOn(DevFnOrchestrator.prototype, "status").mockImplementation(async function (this: DevFnOrchestrator, input) {
+      return { ...await status.call(this, input), publicUrls: { "session-id": "https://assigned-1-0.ngrok-free.app", web: "https://assigned-1-1.ngrok-free.app" }, publicUrlsChanged: true, sessionToken: "fixture-secret" } as never;
+    });
+    try {
+      const up = await invoke("up");
+      expect(up.code, JSON.stringify(up.value)).toBe(0);
+      expect(up.value.urls).toEqual({ "session-id": expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/) });
+      const result = await invoke("status");
+      expect(result.value).toMatchObject({ state: "ready", urls: up.value.urls, publicUrlsChanged: true,
+        publicUrls: { "session-id": "https://assigned-1-0.ngrok-free.app", web: "https://assigned-1-1.ngrok-free.app" } });
+      // Only map keys are data: secret-named fields elsewhere stay redacted.
+      expect(result.value.sessionToken).toBe("[REDACTED]");
+    } finally {
+      spy.mockRestore();
+      await invoke("down").catch(() => undefined);
+      await rm(cwd, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  }, 15_000);
 
   it("requires a separate confirmation for public exposure", async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), "devfn-public-"));
